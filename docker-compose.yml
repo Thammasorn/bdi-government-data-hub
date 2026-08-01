@@ -1,4 +1,6 @@
-name: bdi-project
+# Each checkout sets its own COMPOSE_PROJECT_NAME in .env so several developers
+# can run their stacks side by side without colliding on container or volume names.
+name: ${COMPOSE_PROJECT_NAME:-bdi-project}
 
 services:
   postgres:

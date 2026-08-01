@@ -26,6 +26,34 @@ Then:
 Source is bind-mounted, so both the backend (`tsx watch`) and the frontend
 (`next dev`) hot-reload on save.
 
+## Working alongside other developers
+
+On the shared box the repository is checked out once per person:
+
+```
+/hdd1tb/bdi-project/
+├── main/            # the main branch, kept clean
+├── dev/
+│   ├── dev_01/      # one clone per developer, on their own branch
+│   └── dev_02/
+└── new-dev.sh       # creates the next dev clone
+```
+
+Every checkout is an independent clone with its own `.env`. Two settings must
+differ between them or the stacks will fight over Docker names and host ports:
+
+- `COMPOSE_PROJECT_NAME` — namespaces containers, networks and volumes.
+- the five `*_PORT` values — see the convention in `.env.example`.
+
+`new-dev.sh` handles both. Run it from the layout root:
+
+```bash
+/hdd1tb/bdi-project/new-dev.sh 02          # clones dev/dev_02, branch dev_02
+```
+
+Stacks are fully isolated, so `docker compose up` in your own checkout never
+touches anyone else's database or bucket.
+
 ## Layout
 
 ```
