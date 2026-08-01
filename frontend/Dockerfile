@@ -14,7 +14,8 @@ ENV NODE_ENV=development
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 EXPOSE 3000
-CMD ["npm", "run", "dev"]
+# ดูคำอธิบายใน backend/Dockerfile — named volume บัง node_modules ของ image
+CMD ["sh", "-c", "npm install --no-audit --no-fund && npm run dev"]
 
 # ---------- build ----------
 FROM base AS build

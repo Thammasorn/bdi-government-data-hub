@@ -17,7 +17,10 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npx prisma generate
 EXPOSE 4000
-CMD ["npm", "run", "dev"]
+# compose mounts a named volume over /app/node_modules, which shadows whatever
+# the image baked in — so rebuilding alone never picks up new dependencies.
+# Reconciling on every start keeps the volume in step with package.json.
+CMD ["sh", "-c", "npm install --no-audit --no-fund && npx prisma generate && npm run dev"]
 
 # ---------- build ----------
 FROM base AS build
