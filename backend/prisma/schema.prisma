@@ -1,0 +1,13 @@
+// Prisma schema. Docs: https://pris.ly/d/prisma-schema
+//
+// No domain models yet — add yours below, then run:
+//   docker compose exec backend npm run prisma:migrate -- --name init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
