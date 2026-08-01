@@ -1,68 +1,94 @@
-// Server component: talks to the backend over the compose network.
-const API_URL = process.env.INTERNAL_API_URL ?? "http://localhost:4000";
+"use client";
 
-type Check = { status: "up" } | { status: "down"; error: string };
-type Readiness = {
-  status: string;
-  checks: { database: Check; storage: Check };
-};
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 
-async function getReadiness(): Promise<Readiness | null> {
-  try {
-    const res = await fetch(`${API_URL}/health/ready`, { cache: "no-store" });
-    return (await res.json()) as Readiness;
-  } catch {
-    return null;
+import { useSession } from "@/components/SessionProvider";
+import { Button } from "@/components/ui/Button";
+import { DotDecoration } from "@/components/ui/Card";
+import { Spinner } from "@/components/ui/Spinner";
+import { useToast } from "@/components/ui/Toast";
+import { api, ApiError } from "@/lib/api";
+import { isBdiStaff } from "@/lib/status";
+
+export default function HomePage() {
+  const { user, loading } = useSession();
+  const router = useRouter();
+  const { show } = useToast();
+  const [creating, setCreating] = useState(false);
+
+  useEffect(() => {
+    if (loading) return;
+    if (!user) {
+      router.replace("/login");
+      return;
+    }
+    if (isBdiStaff(user.roles)) {
+      router.replace("/admin/organizations");
+      return;
+    }
+    if (user.organizationId) {
+      router.replace(`/organizations/${user.organizationId}`);
+    }
+  }, [user, loading, router]);
+
+  const createOrganization = async () => {
+    setCreating(true);
+    try {
+      const data = await api.post<{ organization: { id: string } }>("/api/organizations", {});
+      router.push(`/organizations/${data.organization.id}/edit`);
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "exists") {
+        router.push(`/organizations/${err.organizationId}/edit`);
+        return;
+      }
+      show({
+        tone: "error",
+        title: "สร้างหน่วยงานไม่สำเร็จ",
+        detail: err instanceof ApiError ? err.message : undefined,
+      });
+      setCreating(false);
+    }
+  };
+
+  if (loading || !user || isBdiStaff(user.roles) || user.organizationId) {
+    return <Spinner />;
   }
-}
 
-function Row({ label, check }: { label: string; check: Check }) {
-  const up = check.status === "up";
+  // สเปก: "ระบบจะแสดงปุ่มสร้างหน่วยงานตรงกลางหน้าจอ ซึ่งเป็นเมนูเดียวที่ผู้ใช้เห็นและทำได้"
   return (
-    <li
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        gap: "1rem",
-        padding: "0.75rem 0",
-        borderBottom: "1px solid var(--border)",
-      }}
-    >
-      <span>{label}</span>
-      <span style={{ color: up ? "var(--up)" : "var(--down)", fontVariantNumeric: "tabular-nums" }}>
-        {up ? "up" : `down — ${check.error}`}
-      </span>
-    </li>
-  );
-}
+    <div className="relative mx-auto flex min-h-[calc(100vh-8.5rem)] max-w-2xl items-center justify-center px-4 py-16">
+      <DotDecoration className="right-0 top-4 h-52 w-52 text-navy-500" />
+      <DotDecoration className="bottom-4 left-0 h-40 w-40 text-coral-500" />
 
-export default async function Home() {
-  const readiness = await getReadiness();
+      <div className="relative text-center">
+        <div className="mx-auto grid h-24 w-24 place-items-center rounded-full bg-coral-50">
+          <svg
+            viewBox="0 0 48 48"
+            className="h-11 w-11 text-navy-800"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            aria-hidden="true"
+          >
+            <path d="M8 42V14l12-6 12 6v28" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M32 42V22h8v20M4 42h40" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M16 20h8M16 27h8M16 34h8" strokeLinecap="round" />
+          </svg>
+        </div>
 
-  return (
-    <main>
-      <h1 style={{ marginBottom: "0.25rem" }}>BDI Project</h1>
-      <p style={{ color: "var(--muted)", marginTop: 0 }}>
-        Next.js · Express · Postgres · MinIO
-      </p>
-
-      <h2 style={{ fontSize: "1rem", marginTop: "2.5rem" }}>Service health</h2>
-      {readiness ? (
-        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-          <Row label="Backend" check={{ status: "up" }} />
-          <Row label="Postgres" check={readiness.checks.database} />
-          <Row label="MinIO" check={readiness.checks.storage} />
-        </ul>
-      ) : (
-        <p style={{ color: "var(--down)" }}>
-          Backend unreachable at <code>{API_URL}</code>.
+        <h1 className="mt-7 text-[28px] font-semibold text-navy-800 sm:text-[30px]">
+          ยังไม่มีหน่วยงานในระบบ
+        </h1>
+        <p className="mx-auto mt-3 max-w-md text-[15px] leading-relaxed text-ink-muted">
+          เริ่มต้นด้วยการสร้างหน่วยงานของคุณ เพื่อเข้าใช้งานแพลตฟอร์มข้อมูลภาครัฐ
+          ระบบจะพาคุณกรอกข้อมูลทีละขั้นและสร้างแบบฟอร์มให้อัตโนมัติ
         </p>
-      )}
 
-      <p style={{ color: "var(--muted)", fontSize: "0.875rem", marginTop: "2.5rem" }}>
-        Edit <code>frontend/app/page.tsx</code> to get started. MinIO console:{" "}
-        <a href="http://localhost:9001">localhost:9001</a>
-      </p>
-    </main>
+        <Button size="lg" className="mt-8" loading={creating} onClick={createOrganization}>
+          สร้างหน่วยงาน
+        </Button>
+      </div>
+    </div>
   );
 }

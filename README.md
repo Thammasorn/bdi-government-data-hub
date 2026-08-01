@@ -1,13 +1,36 @@
-# BDI Project
+# Government Datahub Platform
 
-A Docker Compose stack with four services:
+แพลตฟอร์มรวบรวมข้อมูลจากหน่วยงานรัฐ ของสถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)
+
+สเปกต้นทางอยู่ใน Notion — ที่ขยายเป็นเอกสารพร้อมพัฒนาแล้วอยู่ใน `docs/`:
+
+| เอกสาร | เนื้อหา |
+| --- | --- |
+| [`docs/01-user-journey.md`](docs/01-user-journey.md) | roles, state machine, ทุกขั้นตอนของสองเส้นทาง, อีเมลที่ระบบส่ง, คำถามที่ยังค้าง |
+| [`docs/02-ui-spec.md`](docs/02-ui-spec.md) | design tokens จาก CI จริง, รายการหน้าจอ, รายละเอียดหน้าสำคัญ |
+
+## สิ่งที่ทำงานแล้ว
+
+**Journey A — Admin เชิญผู้ใช้** (สเปกระบุว่าไม่มี UI มีแต่ API)
+`POST /api/admin/invitations` → อีเมลคำเชิญ → ตั้งรหัสผ่าน → ยืนยันตัวตนด้วย OTP ทางอีเมล
+(ThaiD เตรียมที่ไว้ใน UI แล้วแต่ยังไม่มี credentials)
+
+**Journey B — สร้างหน่วยงาน**
+ฟอร์ม 3 ส่วน → บันทึกร่าง → สร้าง PDF จากข้อมูลที่กรอก → นำส่ง →
+BDI Officer ตรวจ → ผู้มีอำนาจกระทำการแทนเห็นชอบ → BDI Approver ลงนาม → เปิดใช้งาน
+ทุกการเปลี่ยนสถานะบันทึก timeline และส่งอีเมลแจ้งผู้เกี่ยวข้อง
+
+## Stack
 
 | Service    | Stack                          | Port(s)      |
 | ---------- | ------------------------------ | ------------ |
 | `postgres` | Postgres 16                    | 5432         |
 | `minio`    | MinIO object storage           | 9000 / 9001  |
-| `backend`  | Node.js · Express · TypeScript · Prisma | 4000 |
-| `frontend` | Next.js 15 · React 19 · TypeScript | 3000     |
+| `backend`  | Node.js · Express · TypeScript · Prisma · PDFKit | 4000 |
+| `frontend` | Next.js 16 · React 19 · TypeScript · Tailwind 4 | 3000 |
+
+ธีมและฟอนต์มาจาก `assets/theme_ci_design/` โดยตรง — ค่าสีสกัดจากไฟล์ `.ai` ด้วยการ render
+แล้ว sample พิกเซล ไม่ได้กะด้วยตา (navy `#192768`, coral `#E5775A`)
 
 ## Getting started
 
@@ -80,16 +103,42 @@ touches anyone else's database or bucket.
 - `GET /health/ready` — checks Postgres (`SELECT 1`) and MinIO (bucket exists).
   Returns `200` when both are up, `503` otherwise, with per-check detail.
 
-## Database
+## เชิญผู้ใช้คนแรก
 
-`prisma/schema.prisma` has no models yet. Add one, then:
+ยังไม่มี UI สำหรับ admin ตามสเปก ให้ยิง API ตรง ๆ (ค่า token อยู่ใน `.env`):
 
 ```bash
-docker compose exec backend npm run prisma:migrate -- --name init
+curl -X POST http://localhost:3110/api/admin/invitations \
+  -H "x-admin-token: $ADMIN_API_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"email":"officer@bdi.or.th","role":"BDI_OFFICER"}'
 ```
 
-In production use `npm run prisma:deploy` instead. To browse data:
-`docker compose exec backend npm run prisma:studio`.
+`role` เลือกได้: `BDI_OFFICER` · `BDI_APPROVER` · `BDI_SPECIALIST` ·
+`ORGANIZATION_USER` · `ORGANIZATION_APPROVER`
+
+ถ้ายังไม่ได้ตั้ง `SMTP_USER` ระบบจะ**ไม่ส่งอีเมลจริง** แต่พิมพ์ลิงก์คำเชิญและรหัส OTP
+ลง log ให้แทน ทดสอบได้ครบโดยไม่ต้องมีเมล:
+
+```bash
+docker compose logs -f backend | grep 'mail:dry-run'
+```
+
+เมื่อจะส่งจริงผ่าน Gmail ให้ตั้ง `SMTP_USER` / `SMTP_PASS` (ต้องเป็น App Password —
+ดูขั้นตอนใน `.env.example`)
+
+## Database
+
+Schema อยู่ที่ `backend/prisma/schema.prisma` แก้แล้วรัน:
+
+```bash
+docker compose exec backend npm run prisma:migrate -- --name <ชื่อ>
+```
+
+บน production ใช้ `npm run prisma:deploy` แทน ดูข้อมูลด้วย
+`docker compose exec backend npm run prisma:studio`
+
+> ติดตั้ง dependency ต้องทำ**ในคอนเทนเนอร์** เพราะ `node_modules` เป็น named volume
+> ที่ docker สร้างเป็น root: `docker compose exec backend npm install <pkg>`
 
 ## Object storage
 

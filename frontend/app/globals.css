@@ -1,39 +1,129 @@
-:root {
-  --bg: #ffffff;
-  --fg: #171717;
-  --muted: #6b7280;
-  --border: #e5e7eb;
-  --up: #15803d;
-  --down: #b91c1c;
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------
+   Design tokens — BDI CI
+   ค่าสีสกัดจาก assets/theme_ci_design/*.ai โดย render แล้ว sample พิกเซล
+   รายละเอียดใน docs/02-ui-spec.md
+   ------------------------------------------------------------------ */
+@theme {
+  --color-navy-50: #eef0f7;
+  --color-navy-100: #d7dcec;
+  --color-navy-200: #aeb8d8;
+  --color-navy-300: #7f8dbe;
+  --color-navy-400: #5364a4;
+  --color-navy-500: #364b96;
+  --color-navy-600: #2b3c80;
+  --color-navy-700: #202f6f;
+  --color-navy-800: #192768;
+  --color-navy-900: #111a49;
+
+  --color-coral-50: #fdf1ee;
+  --color-coral-100: #fbe0da;
+  --color-coral-200: #f5c3b8;
+  --color-coral-300: #efa89a;
+  --color-coral-400: #ea8f7a;
+  --color-coral-500: #e5775a;
+  --color-coral-600: #cf5c3e;
+  --color-coral-700: #a94831;
+  --color-coral-800: #813628;
+
+  --color-ink: #141a33;
+  --color-ink-muted: #5b6178;
+  --color-ink-subtle: #8b90a3;
+  --color-line: #e2e4ec;
+  --color-canvas: #f6f7fb;
+
+  --color-success: #1b7f5a;
+  --color-success-bg: #e3f4ed;
+  --color-warning: #b26a00;
+  --color-warning-bg: #fff3e0;
+  --color-danger: #b3261e;
+  --color-danger-bg: #fdecea;
+
+  --font-display: var(--font-prompt), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-sarabun), ui-sans-serif, system-ui, sans-serif;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+
+  --shadow-card: 0 1px 2px rgb(20 26 51 / 0.06), 0 4px 12px rgb(20 26 51 / 0.05);
+  --shadow-pop: 0 8px 32px rgb(20 26 51 / 0.14);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0a0a0a;
-    --fg: #ededed;
-    --muted: #9ca3af;
-    --border: #262626;
-    --up: #4ade80;
-    --down: #f87171;
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    /* ไทยต้องการที่หายใจให้สระบน-ล่างมากกว่าละติน */
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    line-height: 1.35;
+    letter-spacing: -0.01em;
+  }
+
+  /* งานภาครัฐต้องใช้คีย์บอร์ดล้วนได้ — โฟกัสต้องเห็นชัดเสมอ */
+  :focus-visible {
+    outline: 2px solid var(--color-navy-500);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: var(--color-coral-200);
+    color: var(--color-navy-900);
   }
 }
 
-* {
-  box-sizing: border-box;
+@layer utilities {
+  /* แถบ gradient ประจำแบรนด์ (หน้า Gradient Color ของ CI) */
+  .bg-brand-gradient {
+    background-image: linear-gradient(90deg, var(--color-coral-500), var(--color-navy-800));
+  }
+
+  /* Support element ของ CI — ลายจุด ใช้จาง ๆ เป็นพื้นหลังตกแต่งเท่านั้น */
+  .bg-dot-grid {
+    background-image: radial-gradient(circle, currentColor 1.6px, transparent 1.6px);
+    background-size: 22px 22px;
+  }
+
+  .animate-in-up {
+    animation: in-up 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
 }
 
-html,
-body {
-  padding: 0;
-  margin: 0;
-  background: var(--bg);
-  color: var(--fg);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  line-height: 1.6;
+@keyframes in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
-main {
-  max-width: 42rem;
-  margin: 0 auto;
-  padding: 4rem 1.5rem;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

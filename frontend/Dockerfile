@@ -19,6 +19,9 @@ CMD ["npm", "run", "dev"]
 # ---------- build ----------
 FROM base AS build
 ENV NEXT_TELEMETRY_DISABLED=1
+# ต้องเป็น production ตอน build ไม่งั้น React runtime คนละโหมดกับ output
+# แล้ว prerender /_global-error จะล้มด้วย "Cannot read properties of null (reading 'useContext')"
+ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build

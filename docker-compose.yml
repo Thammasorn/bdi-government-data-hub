@@ -76,6 +76,19 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-bdi-uploads}
       CORS_ORIGIN: http://localhost:${FRONTEND_PORT:-3000}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      JWT_SECRET: ${JWT_SECRET:?ตั้งค่า JWT_SECRET ใน .env ก่อน}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:?ตั้งค่า ADMIN_API_TOKEN ใน .env ก่อน}
+      SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-7}
+      INVITATION_TTL_DAYS: ${INVITATION_TTL_DAYS:-7}
+      OTP_TTL_MINUTES: ${OTP_TTL_MINUTES:-10}
+      OTP_MAX_ATTEMPTS: ${OTP_MAX_ATTEMPTS:-5}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-BDI Datahub <no-reply@bdi.or.th>}
     ports:
       - "${BACKEND_PORT:-4000}:4000"
     volumes:

@@ -1,7 +1,5 @@
-// Prisma schema. Docs: https://pris.ly/d/prisma-schema
-//
-// No domain models yet — add yours below, then run:
-//   docker compose exec backend npm run prisma:migrate -- --name init
+// Government Datahub Platform — data model
+// อ้างอิง docs/01-user-journey.md
 
 generator client {
   provider = "prisma-client-js"
@@ -10,4 +8,229 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------- enums
+
+enum Role {
+  BDI_OFFICER
+  BDI_APPROVER
+  BDI_SPECIALIST
+  ORGANIZATION_USER
+  ORGANIZATION_APPROVER
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+enum OtpPurpose {
+  REGISTRATION
+  LOGIN
+}
+
+/// ลำดับสถานะตาม docs/01-user-journey.md §3.1
+enum OrganizationStatus {
+  DRAFT
+  PENDING_BDI_REVIEW
+  NEEDS_REVISION
+  PENDING_SIGNATORY_REVIEW
+  PENDING_BDI_APPROVAL
+  ACTIVE
+}
+
+enum AttachmentKind {
+  APPOINTMENT_ORDER /// คำสั่งแต่งตั้งผู้มีอำนาจกระทำการแทน (บังคับ)
+  POWER_OF_ATTORNEY /// คำสั่งมอบอำนาจ (ถ้ามี)
+  GENERATED_FORM /// PDF ที่ระบบสร้างจาก template
+}
+
+enum OrganizationEventType {
+  CREATED
+  DRAFT_SAVED
+  SUBMITTED
+  BDI_APPROVED
+  BDI_REVISION_REQUESTED
+  SIGNATORY_INVITED
+  SIGNATORY_APPROVED
+  SIGNATORY_REVISION_REQUESTED
+  FINAL_APPROVED
+  FINAL_REVISION_REQUESTED
+}
+
+// ---------------------------------------------------------------- models
+
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  passwordHash String?
+  prefix       String?
+  firstName    String?
+  lastName     String?
+  phone        String?
+  roles        Role[]
+  status       UserStatus @default(INVITED)
+
+  emailVerifiedAt DateTime?
+  lastLoginAt     DateTime?
+
+  /// หน่วยงานที่ผู้ใช้สังกัด — null สำหรับเจ้าหน้าที่ BDI
+  organizationId String?
+  organization   Organization? @relation("OrganizationMembers", fields: [organizationId], references: [id], onDelete: SetNull)
+
+  createdOrganizations Organization[]      @relation("OrganizationCreator")
+  invitationsSent      Invitation[]        @relation("InvitationInviter")
+  events               OrganizationEvent[]
+  attachments          Attachment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@map("users")
+}
+
+model Invitation {
+  id     String           @id @default(uuid())
+  email  String
+  role   Role
+  status InvitationStatus @default(PENDING)
+
+  /// เก็บเฉพาะ hash ของ token — ตัวจริงอยู่ในอีเมลเท่านั้น
+  tokenHash String   @unique
+  expiresAt DateTime
+
+  /// ผูกกับหน่วยงานเมื่อเป็นการเชิญผู้มีอำนาจกระทำการแทน
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  invitedById String?
+  invitedBy   User?   @relation("InvitationInviter", fields: [invitedById], references: [id], onDelete: SetNull)
+
+  acceptedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([email, status])
+  @@map("invitations")
+}
+
+model OtpCode {
+  id       String     @id @default(uuid())
+  email    String
+  codeHash String
+  purpose  OtpPurpose @default(REGISTRATION)
+
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([email, purpose])
+  @@map("otp_codes")
+}
+
+model Organization {
+  id     String             @id @default(uuid())
+  status OrganizationStatus @default(DRAFT)
+
+  // ── ส่วนที่ 1: ข้อมูลหน่วยงาน ──────────────────────────────
+  name        String
+  addressLine String?
+  province    String?
+  district    String? /// อำเภอ/เขต
+  subdistrict String? /// ตำบล/แขวง
+  postalCode  String?
+  email       String?
+
+  // ── ส่วนที่ 2: ผู้มีอำนาจกระทำการแทน ────────────────────────
+  signatoryPrefix    String?
+  signatoryFirstName String?
+  signatoryLastName  String?
+  signatoryPosition  String?
+  signatoryEmail     String?
+  /// เลขบัตรประชาชน 13 หลัก — ตรวจ checksum ก่อนบันทึก
+  signatoryNationalId String?
+  signatoryPhone      String?
+
+  // ── ส่วนที่ 3: ผู้กรอกข้อมูล ────────────────────────────────
+  contactPrefix     String?
+  contactFirstName  String?
+  contactLastName   String?
+  contactPosition   String?
+  contactDepartment String? /// ฝ่าย/กอง/สำนัก
+  contactEmail      String?
+  contactPhone      String?
+
+  // ── การดำเนินงาน ────────────────────────────────────────────
+  /// ข้อความจากผู้ตรวจเมื่อสถานะเป็น NEEDS_REVISION
+  revisionNote String?
+  submittedAt  DateTime?
+  activatedAt  DateTime?
+
+  createdById String
+  createdBy   User   @relation("OrganizationCreator", fields: [createdById], references: [id])
+
+  members     User[]              @relation("OrganizationMembers")
+  attachments Attachment[]
+  events      OrganizationEvent[]
+  invitations Invitation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([createdById])
+  @@map("organizations")
+}
+
+model Attachment {
+  id   String         @id @default(uuid())
+  kind AttachmentKind
+
+  /// object key ใน MinIO
+  objectKey String
+  filename  String
+  mimeType  String
+  sizeBytes Int
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  uploadedById String?
+  uploadedBy   User?   @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, kind])
+  @@map("attachments")
+}
+
+/// ประวัติทุกการเปลี่ยนสถานะ ใช้แสดง timeline และตรวจสอบย้อนหลัง
+model OrganizationEvent {
+  id   String                @id @default(uuid())
+  type OrganizationEventType
+
+  fromStatus OrganizationStatus?
+  toStatus   OrganizationStatus?
+  note       String?
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  actorId String?
+  actor   User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@map("organization_events")
 }
