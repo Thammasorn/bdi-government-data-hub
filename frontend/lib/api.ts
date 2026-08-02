@@ -1,4 +1,12 @@
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+/**
+ * ค่าว่าง = เรียกที่ origin เดียวกับหน้าเว็บ แล้วให้ rewrite ใน next.config.ts
+ * ส่งต่อไป backend เอง (ดูเหตุผลที่นั่น) — เป็นค่าที่ควรใช้เป็นปกติ
+ *
+ * ตั้ง NEXT_PUBLIC_API_URL เป็น URL เต็มก็ได้ถ้าจงใจให้ยิงข้ามโดเมน
+ * แต่ต้องเพิ่ม origin นั้นใน CORS_ORIGIN ของ backend และรับว่า cookie
+ * จะไม่ถูกส่งถ้าสองฝั่งอยู่คนละ registrable domain
+ */
+const BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export class ApiError extends Error {
   status: number;

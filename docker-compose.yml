@@ -116,7 +116,8 @@ services:
       NODE_ENV: ${NODE_ENV:-development}
       PORT: 3000
       # Browser-side: must be reachable from the host.
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
+      # ว่าง = same-origin (proxy ผ่าน next.config.ts) — ใช้ `-` ไม่ใช่ `:-` เพื่อให้ค่าว่างคงอยู่
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL-}
       NEXT_PUBLIC_THAID_MOCK: ${THAID_MOCK:-false}
       ALLOWED_DEV_ORIGINS: ${APP_URL:-}
       # Server-side (RSC / route handlers): uses the compose network.

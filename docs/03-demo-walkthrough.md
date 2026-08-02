@@ -401,22 +401,35 @@ checkout อื่นห้ามใช้สองพอร์ตนี้
 
 ### 8.1 ตั้งค่าฝั่งเครื่อง
 
-สามค่านี้ใน `.env` ต้องสอดคล้องกัน ไม่งั้นจะเข้าจากภายนอกไม่ได้:
-
 ```dotenv
-APP_URL=https://bdi.thammasorn.org               # ใช้สร้างลิงก์ในอีเมล + เปิด Secure cookie
-NEXT_PUBLIC_API_URL=https://bdi-api.thammasorn.org  # URL ที่ "เบราว์เซอร์" เรียก API
-CORS_ORIGIN=https://bdi.thammasorn.org           # origin ที่ API ยอมรับ (คั่นหลายค่าด้วย comma)
-FRONTEND_PORT=3000
-BACKEND_PORT=4000
+APP_URL=https://bdi.thammasorn.org   # ใช้สร้างลิงก์ในอีเมล + เปิด Secure cookie
+NEXT_PUBLIC_API_URL=                 # ปล่อยว่าง = เรียก API ที่ origin เดียวกับหน้าเว็บ
+CORS_ORIGIN=https://bdi.thammasorn.org,http://localhost:3000
 ```
 
-แต่ละค่าทำหน้าที่ต่างกัน อย่าสับสน:
+พอร์ตไม่ต้องตั้ง — `docker-compose.yml` ตรึง 3000/4000 ไว้แล้ว
 
-- `NEXT_PUBLIC_API_URL` — โค้ดฝั่งเบราว์เซอร์ใช้ **ต้องเป็น URL ที่เครื่องผู้ใช้เปิดได้**
-- `INTERNAL_API_URL` — ฝั่ง server ของ Next ใช้ ตั้งเป็น `http://backend:4000` ใน compose
-  ไม่ต้องแก้ เพราะวิ่งใน network ของ docker
+**เบราว์เซอร์เรียก API ที่ origin เดียวกับหน้าเว็บเสมอ** `next.config.ts` มี rewrite ที่ส่ง
+`/api/*` ต่อไปยัง backend จากฝั่ง server ของ Next ผลคือ:
+
+- เข้าจาก `localhost:3000` → เรียก `localhost:3000/api/...`
+- เข้าจาก `bdi.thammasorn.org` → เรียก `bdi.thammasorn.org/api/...`
+
+ทั้งสองทางไม่มี CORS และ session cookie ไม่กลายเป็น cross-site
+
+> เคยตั้ง `NEXT_PUBLIC_API_URL=https://bdi-api.thammasorn.org` แล้วพบว่า
+> เปิดจาก `localhost:3000` ใช้ไม่ได้ เพราะ preflight ถูกบล็อก และต่อให้เปิด CORS ให้
+> cookie ก็ยังไม่ถูกส่งอยู่ดี (คนละ registrable domain → `SameSite=Lax` ไม่ส่ง)
+
+`bdi-api.thammasorn.org` ยังใช้ได้ตามปกติสำหรับผู้เรียก API จากภายนอก
+(`CORS_ORIGIN` มีไว้เพื่อกรณีนั้น)
+
+ตัวแปรที่เกี่ยวข้องและอย่าสับสน:
+
+- `INTERNAL_API_URL` — ปลายทางของ rewrite ตั้งเป็น `http://backend:4000` ใน compose ไม่ต้องแก้
 - `APP_URL` — ใช้ประกอบลิงก์ในอีเมล ถ้าตั้งผิดผู้ใช้จะกดลิงก์แล้วเปิดไม่ได้
+- ใน compose ต้องเขียน `${NEXT_PUBLIC_API_URL-}` (ขีดเดียว) ไม่ใช่ `:-`
+  เพราะ `:-` จะแทนค่าว่างด้วย default ทำให้ same-origin ไม่ทำงาน
 
 ### 8.2 รันโหมด production
 
@@ -432,11 +445,10 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 > `NEXT_PUBLIC_*` **ถูกฝังลงบันเดิลตอน build** ไม่ได้อ่านตอนรัน
 > เปลี่ยนค่าเมื่อไหร่ต้อง `--build` ใหม่เสมอ ไม่งั้นเบราว์เซอร์จะยังยิงไปที่อยู่เดิม
 
-ตรวจว่าฝังถูก:
+ตรวจว่า proxy ทำงาน:
 
 ```bash
-curl -s http://localhost:3000/login | grep -oE '/_next/static/chunks/[^"]*\.js' | head -6 \
-  | while read -r c; do curl -s "http://localhost:3000$c" | grep -o 'bdi-api\.thammasorn\.org'; done | sort -u
+curl -o /dev/null -w '%{http_code}\n' http://localhost:3000/api/auth/me   # 401 = ถูกต้อง
 ```
 
 กลับไปโหมด dev:
@@ -463,9 +475,8 @@ Tunnel บนเครื่องนี้เป็นแบบ **token-managed
 - **Cookie** ตั้ง `Secure` อัตโนมัติเมื่อ `APP_URL` เป็น https
   ทั้งสองโดเมนอยู่ใต้ `thammasorn.org` เดียวกันจึงนับเป็น same-site — `SameSite=Lax` ส่ง cookie
   ข้าม subdomain ได้อยู่แล้ว ไม่ต้องใช้ `SameSite=None`
-- **เข้าจาก `http://localhost:3000` จะล็อกอินไม่ได้** เมื่อตั้งค่าแบบสาธารณะ
-  เพราะเบราว์เซอร์จะยิงไป API สาธารณะซึ่ง localhost ไม่อยู่ใน `CORS_ORIGIN`
-  ถ้าจะพัฒนาบนเครื่อง ให้ใช้ checkout `dev/dev_NN` ของตัวเองแทน
+- **เข้าจาก `http://localhost:3000` ใช้ได้ปกติ** เพราะ API เรียกที่ origin เดียวกัน
+  (Chrome ถือว่า localhost เป็น secure context จึงรับ cookie ที่มี `Secure` ได้)
 - **`THAID_MOCK` ต้องเป็น `false`** ก่อนเปิดให้คนนอกใช้จริง
   ไม่งั้นใครก็ข้ามการยืนยันตัวตนได้
 - แนะนำให้ครอบด้วย **Cloudflare Access** ถ้ายังไม่อยากให้เปิดสาธารณะจริง ๆ
