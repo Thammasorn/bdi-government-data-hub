@@ -35,6 +35,10 @@ COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev || npm install --omit=dev
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
+# prisma CLI เป็น devDependency จึงไม่ติดมากับ --omit=dev
+# ต้องคัดลอกมาเองเพื่อให้รัน `prisma migrate deploy` ตอนสตาร์ตได้
+COPY --from=build /app/node_modules/prisma ./node_modules/prisma
+COPY --from=build /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
 COPY --from=build /app/dist ./dist
 COPY prisma ./prisma
 USER node

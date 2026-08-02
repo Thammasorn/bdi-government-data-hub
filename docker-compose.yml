@@ -75,7 +75,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-bdi-uploads}
-      CORS_ORIGIN: http://localhost:${FRONTEND_PORT:-3000}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:${FRONTEND_PORT:-3000}}
       APP_URL: ${APP_URL:-http://localhost:3000}
       JWT_SECRET: ${JWT_SECRET:?ตั้งค่า JWT_SECRET ใน .env ก่อน}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:?ตั้งค่า ADMIN_API_TOKEN ใน .env ก่อน}
@@ -90,6 +90,7 @@ services:
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-BDI Datahub <no-reply@bdi.or.th>}
       THAID_MOCK: ${THAID_MOCK:-false}
+      COOKIE_SECURE: ${COOKIE_SECURE:-}
     ports:
       - "${BACKEND_PORT:-4000}:4000"
     volumes:
@@ -115,6 +116,7 @@ services:
       # Browser-side: must be reachable from the host.
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
       NEXT_PUBLIC_THAID_MOCK: ${THAID_MOCK:-false}
+      ALLOWED_DEV_ORIGINS: ${APP_URL:-}
       # Server-side (RSC / route handlers): uses the compose network.
       INTERNAL_API_URL: http://backend:4000
     ports:

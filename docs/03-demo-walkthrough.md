@@ -15,7 +15,7 @@
 
 | checkout | หน้าเว็บ | API | ไฟล์ตั้งค่า |
 | --- | --- | --- | --- |
-| `main` | <http://localhost:3001> | <http://localhost:4000> | `main/.env` |
+| `main` | <http://localhost:3000> · <https://bdi.thammasorn.org> | <http://localhost:4000> · <https://bdi-api.thammasorn.org> | `main/.env` |
 | `dev/dev_01` | <http://localhost:3110> | <http://localhost:4110> | `dev/dev_01/.env` |
 
 พอร์ตของแต่ละ checkout ต่างกันโดยตั้งใจ — ดู [`../README.md`](../README.md) หัวข้อ
@@ -77,7 +77,7 @@ docker compose logs -f backend | grep --line-buffered 'mail:dry-run'
 ```
 [mail:dry-run] ถึง: somchai@moph.go.th
 [mail:dry-run] เรื่อง: คำเชิญเข้าใช้งาน Government Datahub Platform
-[mail:dry-run] ลิงก์: http://localhost:3001/register?token=xxxxxxxx
+[mail:dry-run] ลิงก์: https://bdi.thammasorn.org/register?token=xxxxxxxx
 [mail:dry-run] รหัส OTP: 048213
 ```
 
@@ -372,7 +372,7 @@ docker compose exec backend npm run seed:demo
 | Gmail ตอบ `EAUTH` | ใช้รหัสผ่านปกติแทน App Password หรือมีช่องว่างติดมา | สร้าง App Password ใหม่ ลบช่องว่างออก |
 | `ตั้งค่า JWT_SECRET ใน .env ก่อน` | `.env` ไม่มีตัวแปรที่จำเป็น | คัดลอกจาก `.env.example` มาเติม |
 | ปุ่ม ThaiD ไม่โผล่ | `THAID_MOCK` ไม่ได้เป็น `true` | แก้ `.env` แล้ว `docker compose up -d backend frontend` |
-| พอร์ตชน | มีสแตกอื่นใช้พอร์ตเดียวกัน | แก้พอร์ตใน `.env` — port 3000 ถูก `open-webui` ใช้อยู่ถาวร |
+| พอร์ตชน | มีสแตกอื่นใช้พอร์ตเดียวกัน | แก้พอร์ตใน `.env` — `main` จองไว้ที่ 3000/4000 ห้ามใช้ซ้ำ |
 
 ### ดูข้อมูลในฐานข้อมูลตรง ๆ
 
@@ -389,7 +389,90 @@ docker compose exec postgres psql -U bdi -d bdi     # เปิด psql
 
 ---
 
-## 8. เช็กลิสต์สำหรับสาธิตให้คนอื่นดู
+## 8. เปิดให้เข้าจากภายนอก (main เท่านั้น)
+
+`main` เป็น checkout เดียวที่เปิดสู่สาธารณะ จองพอร์ต **3000 (UI)** และ **4000 (API)** ไว้เสมอ
+checkout อื่นห้ามใช้สองพอร์ตนี้
+
+| โดเมน | ชี้ไปที่ | ทำอะไร |
+| --- | --- | --- |
+| `bdi.thammasorn.org` | `http://localhost:3000` | หน้าเว็บ |
+| `bdi-api.thammasorn.org` | `http://localhost:4000` | API |
+
+### 8.1 ตั้งค่าฝั่งเครื่อง
+
+สามค่านี้ใน `.env` ต้องสอดคล้องกัน ไม่งั้นจะเข้าจากภายนอกไม่ได้:
+
+```dotenv
+APP_URL=https://bdi.thammasorn.org               # ใช้สร้างลิงก์ในอีเมล + เปิด Secure cookie
+NEXT_PUBLIC_API_URL=https://bdi-api.thammasorn.org  # URL ที่ "เบราว์เซอร์" เรียก API
+CORS_ORIGIN=https://bdi.thammasorn.org           # origin ที่ API ยอมรับ (คั่นหลายค่าด้วย comma)
+FRONTEND_PORT=3000
+BACKEND_PORT=4000
+```
+
+แต่ละค่าทำหน้าที่ต่างกัน อย่าสับสน:
+
+- `NEXT_PUBLIC_API_URL` — โค้ดฝั่งเบราว์เซอร์ใช้ **ต้องเป็น URL ที่เครื่องผู้ใช้เปิดได้**
+- `INTERNAL_API_URL` — ฝั่ง server ของ Next ใช้ ตั้งเป็น `http://backend:4000` ใน compose
+  ไม่ต้องแก้ เพราะวิ่งใน network ของ docker
+- `APP_URL` — ใช้ประกอบลิงก์ในอีเมล ถ้าตั้งผิดผู้ใช้จะกดลิงก์แล้วเปิดไม่ได้
+
+### 8.2 รันโหมด production
+
+**ห้ามเปิด dev server สู่สาธารณะ** — มี source map, stack trace เต็ม และ HMR ที่ไม่ทำงานผ่าน tunnel
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+ต่างจากโหมด dev ตรงที่ build เป็นบันเดิลจริง ไม่ bind-mount source เข้าไป
+รันด้วย user `node` และ backend จะ `prisma migrate deploy` ให้อัตโนมัติตอนสตาร์ต
+
+> `NEXT_PUBLIC_*` **ถูกฝังลงบันเดิลตอน build** ไม่ได้อ่านตอนรัน
+> เปลี่ยนค่าเมื่อไหร่ต้อง `--build` ใหม่เสมอ ไม่งั้นเบราว์เซอร์จะยังยิงไปที่อยู่เดิม
+
+ตรวจว่าฝังถูก:
+
+```bash
+curl -s http://localhost:3000/login | grep -oE '/_next/static/chunks/[^"]*\.js' | head -6 \
+  | while read -r c; do curl -s "http://localhost:3000$c" | grep -o 'bdi-api\.thammasorn\.org'; done | sort -u
+```
+
+กลับไปโหมด dev:
+
+```bash
+docker compose up -d --build
+```
+
+### 8.3 ตั้งค่าฝั่ง Cloudflare
+
+Tunnel บนเครื่องนี้เป็นแบบ **token-managed** — คอนฟิกอยู่บน dashboard ไม่ได้อยู่ในเครื่อง
+ไม่มีไฟล์ `/etc/cloudflared/config.yml` ให้แก้
+
+ไปที่ **Zero Trust → Networks → Tunnels → tunnel ของเครื่องนี้ → Public Hostname → Add**
+แล้วเพิ่มสองรายการ:
+
+| Subdomain | Domain | Type | URL |
+| --- | --- | --- | --- |
+| `bdi` | `thammasorn.org` | HTTP | `localhost:3000` |
+| `bdi-api` | `thammasorn.org` | HTTP | `localhost:4000` |
+
+### 8.4 ข้อควรรู้
+
+- **Cookie** ตั้ง `Secure` อัตโนมัติเมื่อ `APP_URL` เป็น https
+  ทั้งสองโดเมนอยู่ใต้ `thammasorn.org` เดียวกันจึงนับเป็น same-site — `SameSite=Lax` ส่ง cookie
+  ข้าม subdomain ได้อยู่แล้ว ไม่ต้องใช้ `SameSite=None`
+- **เข้าจาก `http://localhost:3000` จะล็อกอินไม่ได้** เมื่อตั้งค่าแบบสาธารณะ
+  เพราะเบราว์เซอร์จะยิงไป API สาธารณะซึ่ง localhost ไม่อยู่ใน `CORS_ORIGIN`
+  ถ้าจะพัฒนาบนเครื่อง ให้ใช้ checkout `dev/dev_NN` ของตัวเองแทน
+- **`THAID_MOCK` ต้องเป็น `false`** ก่อนเปิดให้คนนอกใช้จริง
+  ไม่งั้นใครก็ข้ามการยืนยันตัวตนได้
+- แนะนำให้ครอบด้วย **Cloudflare Access** ถ้ายังไม่อยากให้เปิดสาธารณะจริง ๆ
+
+---
+
+## 9. เช็กลิสต์สำหรับสาธิตให้คนอื่นดู
 
 ลำดับที่เล่าได้ลื่นที่สุดใน 10 นาที:
 

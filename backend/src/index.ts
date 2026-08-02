@@ -15,7 +15,8 @@ import { ensureBucket } from "./storage.js";
 const app = express();
 
 app.set("trust proxy", 1);
-app.use(cors({ origin: env.corsOrigin, credentials: true }));
+// credentials: true บังคับให้ต้องระบุ origin เจาะจง ใช้ "*" ไม่ได้
+app.use(cors({ origin: env.corsOrigins, credentials: true }));
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 

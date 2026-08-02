@@ -7,14 +7,26 @@ function required(name: string): string {
   return value;
 }
 
+/**
+ * ตัวแปรที่ตั้งเป็นค่าว่างถือว่า "ไม่ได้ตั้ง" — docker compose ส่ง `FOO=` มาเสมอ
+ * เมื่อเขียน `${FOO:-}` ไว้ ถ้าใช้ `??` ค่าว่างจะทับ default โดยไม่ตั้งใจ
+ */
 function optional(name: string, fallback: string): string {
-  return process.env[name] ?? fallback;
+  const value = process.env[name];
+  return value === undefined || value === "" ? fallback : value;
 }
 
 export const env = {
   nodeEnv: optional("NODE_ENV", "development"),
   port: Number(optional("PORT", "4000")),
-  corsOrigin: optional("CORS_ORIGIN", "http://localhost:3000"),
+  /**
+   * รับได้หลาย origin คั่นด้วย comma เพราะตอนเปิดสู่สาธารณะยังต้องเข้าจาก
+   * localhost ได้ด้วย เช่น "https://bdi.thammasorn.org,http://localhost:3001"
+   */
+  corsOrigins: optional("CORS_ORIGIN", "http://localhost:3000")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean),
   /** ใช้สร้างลิงก์ในอีเมล ต้องเป็น URL ที่ผู้รับเปิดจากเครื่องตัวเองได้ */
   appUrl: optional("APP_URL", "http://localhost:3000"),
 
@@ -33,6 +45,14 @@ export const env = {
      * ต้องเป็น false บน production มิฉะนั้นข้ามการยืนยันตัวตนได้ทั้งหมด
      */
     thaidMock: optional("THAID_MOCK", "false") === "true",
+    /**
+     * ตั้ง Secure ให้ session cookie โดยอัตโนมัติเมื่อ APP_URL เป็น https
+     * (เบราว์เซอร์ทิ้ง cookie ที่มี Secure ถ้าเชื่อมต่อผ่าน http ธรรมดา
+     * จึงเปิดตายตัวไม่ได้ ต้องดูจากที่อยู่จริงที่ผู้ใช้เข้า)
+     */
+    cookieSecure:
+      optional("COOKIE_SECURE", optional("APP_URL", "").startsWith("https://") ? "true" : "false") ===
+      "true",
   },
 
   minio: {

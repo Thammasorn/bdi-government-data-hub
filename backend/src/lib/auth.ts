@@ -59,8 +59,11 @@ export function generateOtp(): string {
 export function cookieOptions() {
   return {
     httpOnly: true,
+    // bdi.thammasorn.org กับ bdi-api.thammasorn.org อยู่ใต้ registrable domain
+    // เดียวกัน จึงนับเป็น same-site — Lax ส่ง cookie ข้าม subdomain ให้อยู่แล้ว
+    // ไม่ต้องใช้ None ซึ่งจะเปิดกว้างเกินจำเป็น
     sameSite: "lax" as const,
-    secure: env.nodeEnv === "production",
+    secure: env.auth.cookieSecure,
     path: "/",
     maxAge: env.auth.sessionTtlDays * 24 * 60 * 60 * 1000,
   };

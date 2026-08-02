@@ -23,6 +23,14 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # ต้องเป็น production ตอน build ไม่งั้น React runtime คนละโหมดกับ output
 # แล้ว prerender /_global-error จะล้มด้วย "Cannot read properties of null (reading 'useContext')"
 ENV NODE_ENV=production
+
+# NEXT_PUBLIC_* ถูกฝังลงบันเดิลตอน build ไม่ได้อ่านตอนรัน
+# ถ้าไม่ส่งเข้ามาตรงนี้ เบราว์เซอร์จะยิงไปที่ localhost แทน API สาธารณะ
+ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_THAID_MOCK
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+ENV NEXT_PUBLIC_THAID_MOCK=${NEXT_PUBLIC_THAID_MOCK}
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build

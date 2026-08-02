@@ -1,0 +1,32 @@
+# โหมด production สำหรับตอนเปิดให้เข้าจากภายนอก
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# ต่างจากโหมด dev ตรงที่:
+#   - build เป็นบันเดิลจริง ไม่มี source map / HMR / stack trace เต็ม ๆ หลุดออกไป
+#   - ไม่ bind-mount source เข้าไป โค้ดที่รันคือสิ่งที่ build ไว้เท่านั้น
+#   - รันด้วย user `node` ไม่ใช่ root
+#
+# NEXT_PUBLIC_* ต้องส่งเป็น build arg เพราะถูกฝังลงบันเดิลตอน build
+# เปลี่ยนค่าแล้วต้อง --build ใหม่เสมอ
+
+services:
+  backend:
+    build:
+      target: runner
+    environment:
+      NODE_ENV: production
+    command: >
+      sh -c "npx prisma migrate deploy && node dist/index.js"
+    volumes: !reset []
+
+  frontend:
+    build:
+      target: runner
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?ตั้ง NEXT_PUBLIC_API_URL ใน .env ก่อน}
+        NEXT_PUBLIC_THAID_MOCK: ${THAID_MOCK:-false}
+    environment:
+      NODE_ENV: production
+      HOSTNAME: "0.0.0.0"
+    volumes: !reset []
