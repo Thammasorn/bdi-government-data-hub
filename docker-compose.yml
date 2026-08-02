@@ -92,7 +92,9 @@ services:
       THAID_MOCK: ${THAID_MOCK:-false}
       COOKIE_SECURE: ${COOKIE_SECURE:-}
     ports:
-      - "${BACKEND_PORT:-4000}:4000"
+      # ตรึงไว้ — โดเมนสาธารณะ bdi-api.thammasorn.org ชี้มาที่พอร์ตนี้
+      # checkout อื่นให้ทับด้วย docker-compose.override.yml (new-dev.sh สร้างให้)
+      - "4000:4000"
     volumes:
       - ./backend:/app
       - backend-node-modules:/app/node_modules
@@ -120,7 +122,8 @@ services:
       # Server-side (RSC / route handlers): uses the compose network.
       INTERNAL_API_URL: http://backend:4000
     ports:
-      - "${FRONTEND_PORT:-3000}:3000"
+      # ตรึงไว้ — โดเมนสาธารณะ bdi.thammasorn.org ชี้มาที่พอร์ตนี้
+      - "3000:3000"
     volumes:
       - ./frontend:/app
       - frontend-node-modules:/app/node_modules
