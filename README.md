@@ -109,7 +109,8 @@ touches anyone else's database or bucket.
 ยังไม่มี UI สำหรับ admin ตามสเปก ให้ยิง API ตรง ๆ (ค่า token อยู่ใน `.env`):
 
 ```bash
-curl -X POST http://localhost:3110/api/admin/invitations \
+source .env
+curl -X POST "http://localhost:${BACKEND_PORT}/api/admin/invitations" \
   -H "x-admin-token: $ADMIN_API_TOKEN" -H 'Content-Type: application/json' \
   -d '{"email":"officer@bdi.or.th","role":"BDI_OFFICER"}'
 ```
