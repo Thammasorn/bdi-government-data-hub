@@ -8,6 +8,7 @@
 | --- | --- |
 | [`docs/01-user-journey.md`](docs/01-user-journey.md) | roles, state machine, ทุกขั้นตอนของสองเส้นทาง, อีเมลที่ระบบส่ง, คำถามที่ยังค้าง |
 | [`docs/02-ui-spec.md`](docs/02-ui-spec.md) | design tokens จาก CI จริง, รายการหน้าจอ, รายละเอียดหน้าสำคัญ |
+| [`docs/03-demo-walkthrough.md`](docs/03-demo-walkthrough.md) | **วิธีเดินระบบทีละขั้น** — เตรียมข้อมูล, บัญชีทดสอบ, สาธิตทั้งสอง flow, แก้ปัญหาที่เจอบ่อย |
 
 ## สิ่งที่ทำงานแล้ว
 
