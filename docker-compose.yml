@@ -89,6 +89,7 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-BDI Datahub <no-reply@bdi.or.th>}
+      THAID_MOCK: ${THAID_MOCK:-false}
     ports:
       - "${BACKEND_PORT:-4000}:4000"
     volumes:
@@ -113,6 +114,7 @@ services:
       PORT: 3000
       # Browser-side: must be reachable from the host.
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
+      NEXT_PUBLIC_THAID_MOCK: ${THAID_MOCK:-false}
       # Server-side (RSC / route handlers): uses the compose network.
       INTERNAL_API_URL: http://backend:4000
     ports:

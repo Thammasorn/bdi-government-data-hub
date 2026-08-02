@@ -19,6 +19,9 @@ interface InvitationInfo {
   roleLabel: string;
 }
 
+/** ยังไม่มี ThaiD จริง — เปิดปุ่มจำลองเฉพาะตอนตั้ง NEXT_PUBLIC_THAID_MOCK=true */
+const THAID_MOCK = process.env.NEXT_PUBLIC_THAID_MOCK === "true";
+
 export default function RegisterPage() {
   return (
     <Suspense fallback={<Spinner className="min-h-screen" />}>
@@ -180,6 +183,7 @@ function OtpStep({ token, email, onBack }: { token: string; email: string; onBac
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [thaidBusy, setThaidBusy] = useState(false);
   const [cooldown, setCooldown] = useState(60);
 
   useEffect(() => {
@@ -210,6 +214,24 @@ function OtpStep({ token, email, onBack }: { token: string; email: string; onBac
   useEffect(() => {
     if (code.length === 6 && !submitting) void submit(code);
   }, [code, submitting, submit]);
+
+  const verifyWithThaiD = async () => {
+    setThaidBusy(true);
+    setError(null);
+    try {
+      const data = await api.post<{ user: SessionUser }>("/api/auth/thaid/verify", { token });
+      setUser(data.user);
+      show({ tone: "success", title: "ยืนยันตัวตนด้วย ThaiD สำเร็จ", detail: "โหมดจำลองสำหรับทดสอบ" });
+      router.push(isBdiStaff(data.user.roles) ? "/admin/organizations" : "/");
+    } catch (err) {
+      show({
+        tone: "error",
+        title: "ยืนยันด้วย ThaiD ไม่สำเร็จ",
+        detail: err instanceof ApiError ? err.message : undefined,
+      });
+      setThaidBusy(false);
+    }
+  };
 
   const resend = async () => {
     try {
@@ -252,14 +274,31 @@ function OtpStep({ token, email, onBack }: { token: string; email: string; onBac
           )}
         </div>
 
-        {/* ThaiD ยังไม่มี client credentials — เตรียมที่ไว้แต่ยังใช้ไม่ได้ */}
+        {/* ThaiD ยังไม่มี client credentials จริง — เปิด mock ไว้ให้ทดลอง flow ได้ */}
         <div className="mt-2 rounded-xl border border-dashed border-line bg-canvas p-4 text-center">
           <p className="text-[13px] text-ink-muted">
             หรือยืนยันตัวตนด้วย <span className="font-medium text-ink">ThaiD</span>
           </p>
-          <Button variant="secondary" size="sm" disabled className="mt-2.5">
-            เร็ว ๆ นี้
-          </Button>
+          {THAID_MOCK ? (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="mt-2.5"
+                loading={thaidBusy}
+                onClick={verifyWithThaiD}
+              >
+                ยืนยันด้วย ThaiD
+              </Button>
+              <p className="mt-2 text-[11px] text-ink-subtle">
+                โหมดจำลองสำหรับทดสอบ ยังไม่ได้เชื่อมต่อระบบจริง
+              </p>
+            </>
+          ) : (
+            <Button variant="secondary" size="sm" disabled className="mt-2.5">
+              เร็ว ๆ นี้
+            </Button>
+          )}
         </div>
       </div>
     </AuthLayout>

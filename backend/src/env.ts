@@ -28,6 +28,11 @@ export const env = {
     otpMaxAttempts: Number(optional("OTP_MAX_ATTEMPTS", "5")),
     /** shared secret สำหรับ API ฝั่ง admin ที่สเปกระบุว่ายังไม่มี UI */
     adminApiToken: required("ADMIN_API_TOKEN"),
+    /**
+     * ยังไม่มี client credentials ของ ThaiD จริง เปิดตัวนี้เพื่อให้ทดลอง flow ได้
+     * ต้องเป็น false บน production มิฉะนั้นข้ามการยืนยันตัวตนได้ทั้งหมด
+     */
+    thaidMock: optional("THAID_MOCK", "false") === "true",
   },
 
   minio: {

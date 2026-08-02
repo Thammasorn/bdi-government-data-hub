@@ -202,6 +202,73 @@ authRouter.post("/verify-otp", async (req, res) => {
   res.json({ user: publicUser(user) });
 });
 
+// ---------------------------------------------------------------- ThaiD (mock)
+
+/**
+ * สเปกให้ยืนยันตัวตนด้วย "email หรือ ThaiD" แต่ยังไม่มี OAuth client จริง
+ * endpoint นี้จำลองผลลัพธ์ของการยืนยันสำเร็จ เพื่อให้ทดลอง flow ได้ครบ
+ * เปิดด้วย THAID_MOCK=true เท่านั้น — ปิดไว้ทุกที่ที่ไม่ใช่เครื่อง dev
+ */
+authRouter.post("/thaid/verify", async (req, res) => {
+  if (!env.auth.thaidMock) {
+    res.status(501).json({
+      error: "not_implemented",
+      message: "ยังไม่ได้เชื่อมต่อ ThaiD กรุณายืนยันตัวตนด้วยรหัสทางอีเมล",
+    });
+    return;
+  }
+
+  const parsed = z.object({ token: z.string().min(1) }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+    return;
+  }
+
+  const { invitation, reason } = await findLiveInvitation(parsed.data.token);
+  if (!invitation) {
+    res.status(410).json({ error: reason, message: "ลิงก์คำเชิญใช้งานไม่ได้แล้ว" });
+    return;
+  }
+
+  const existing = await prisma.user.findUnique({ where: { email: invitation.email } });
+  if (!existing?.passwordHash) {
+    res.status(409).json({
+      error: "incomplete",
+      message: "กรุณากรอกข้อมูลและตั้งรหัสผ่านให้เรียบร้อยก่อน",
+    });
+    return;
+  }
+
+  const user = await prisma.$transaction(async (tx) => {
+    await tx.invitation.update({
+      where: { id: invitation.id },
+      data: { status: InvitationStatus.ACCEPTED, acceptedAt: new Date() },
+    });
+    await tx.otpCode.updateMany({
+      where: { email: invitation.email, purpose: OtpPurpose.REGISTRATION, consumedAt: null },
+      data: { consumedAt: new Date() },
+    });
+    return tx.user.update({
+      where: { email: invitation.email },
+      data: { status: UserStatus.ACTIVE, emailVerifiedAt: new Date(), lastLoginAt: new Date() },
+    });
+  });
+
+  console.log(`[thaid:mock] ยืนยันตัวตนจำลองให้ ${user.email}`);
+
+  res.cookie(
+    SESSION_COOKIE,
+    signSession({
+      sub: user.id,
+      email: user.email,
+      roles: user.roles,
+      organizationId: user.organizationId,
+    }),
+    cookieOptions(),
+  );
+  res.json({ user: publicUser(user), provider: "thaid-mock" });
+});
+
 authRouter.post("/resend-otp", async (req, res) => {
   const token = String(req.body?.token ?? "");
   const { invitation } = await findLiveInvitation(token);
