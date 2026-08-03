@@ -6,9 +6,12 @@
 
 | เอกสาร | เนื้อหา |
 | --- | --- |
-| [`docs/01-user-journey.md`](docs/01-user-journey.md) | roles, state machine, ทุกขั้นตอนของสองเส้นทาง, อีเมลที่ระบบส่ง, คำถามที่ยังค้าง |
+| [`docs/01-user-journey.md`](docs/01-user-journey.md) | roles, state machine, ทุกขั้นตอนของสามเส้นทาง, อีเมลที่ระบบส่ง, คำถามที่ยังค้าง |
 | [`docs/02-ui-spec.md`](docs/02-ui-spec.md) | design tokens จาก CI จริง, รายการหน้าจอ, รายละเอียดหน้าสำคัญ |
-| [`docs/03-demo-walkthrough.md`](docs/03-demo-walkthrough.md) | **วิธีเดินระบบทีละขั้น** — เตรียมข้อมูล, บัญชีทดสอบ, สาธิตทั้งสอง flow, แก้ปัญหาที่เจอบ่อย |
+| [`docs/03-demo-walkthrough.md`](docs/03-demo-walkthrough.md) | **วิธีเดินระบบทีละขั้น** — เตรียมข้อมูล, บัญชีทดสอบ, สาธิตทั้งสาม flow, แก้ปัญหาที่เจอบ่อย · **หัวข้อ 10 = สคริปต์สำหรับสาธิตสด** |
+| [`docs/04-dataset-registration-plan.md`](docs/04-dataset-registration-plan.md) | แผนการพัฒนาเส้นทางชุดข้อมูล — สคีมา, endpoint, หน้าจอ, การตรวจสอบ |
+| [`docs/05-sit-report.md`](docs/05-sit-report.md) | ผล SIT ทั้งสามเส้นทาง (48 กรณี) ข้อบกพร่องและปัญหาการจัดแนวที่แก้แล้ว — ภาพหน้าจอเก็บนอก repo |
+| [`notebooks/journey-a-admin-create-user.ipynb`](notebooks/journey-a-admin-create-user.ipynb) | ยิง API ของ Journey A ทีละขั้นด้วยอีเมลจริง — ใช้แทนหน้าจอที่สเปกไม่ได้ให้ทำ |
 
 ## สิ่งที่ทำงานแล้ว
 
@@ -20,6 +23,12 @@
 ฟอร์ม 3 ส่วน → บันทึกร่าง → สร้าง PDF จากข้อมูลที่กรอก → นำส่ง →
 BDI Officer ตรวจ → ผู้มีอำนาจกระทำการแทนเห็นชอบ → BDI Approver ลงนาม → เปิดใช้งาน
 ทุกการเปลี่ยนสถานะบันทึก timeline และส่งอีเมลแจ้งผู้เกี่ยวข้อง
+
+**Journey C — ขอลงทะเบียนชุดข้อมูล**
+ฟอร์ม 4 ส่วน (metadata · วิธีนำส่ง · เงื่อนไขทางกฎหมาย · เอกสารแนบ) → บันทึกร่าง → สร้าง PDF →
+นำส่ง → BDI Officer ตรวจเบื้องต้น (มอบหมายผู้เชี่ยวชาญได้) → ผู้มีอำนาจของหน่วยงานลงนาม →
+BDI Officer ตรวจซ้ำ → BDI Approver อนุมัติ/ไม่อนุมัติ → ได้เอกสาร A4 ฉบับอนุมัติ
+มีทั้งการแจ้งเตือนในระบบ (กระดิ่งบน header) และ audit log ที่เก็บ diff ของข้อมูลกับ IP
 
 ## Stack
 

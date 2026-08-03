@@ -223,6 +223,201 @@ export async function sendActivated(to: string[], orgName: string, orgId: string
   );
 }
 
+// ------------------------------------------------------------------ Journey C — ชุดข้อมูล
+
+/** ส่งฉบับเดียวกันให้หลายคน — ตัดอีเมลซ้ำออกก่อนเสมอ */
+async function sendMany(to: string[], subject: string, html: string) {
+  const unique = [...new Set(to.filter(Boolean))];
+  if (unique.length === 0) return;
+  await Promise.all(unique.map((addr) => send(addr, subject, html)));
+}
+
+const orgLink = (id: string) => `${env.appUrl}/datasets/${id}`;
+const bdiLink = (id: string) => `${env.appUrl}/admin/datasets/${id}`;
+
+/** หัวเรื่องอ้างเลขที่คำขอเสมอ เพื่อให้ผู้รับที่มีหลายคำขอแยกออกจากกันได้ */
+const datasetSubject = (requestNumber: string, text: string) => `[${requestNumber}] ${text}`;
+
+function datasetSummary(rows: Array<[string, string]>): string {
+  return `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border:1px solid ${BORDER};border-radius:12px;border-collapse:separate;overflow:hidden;">
+    ${rows
+      .map(
+        ([label, value]) => `<tr>
+          <td style="padding:10px 14px;background:#F6F7FB;font:400 13px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};width:38%;">${escapeHtml(label)}</td>
+          <td style="padding:10px 14px;font:600 13px/1.6 'Helvetica Neue',Arial,sans-serif;color:${TEXT};">${escapeHtml(value)}</td>
+        </tr>`,
+      )
+      .join("")}
+  </table>`;
+}
+
+export async function sendDatasetSubmitted(
+  to: string[],
+  info: { requestNumber: string; datasetName: string; organizationName: string; submitter: string; id: string },
+) {
+  await sendMany(
+    to,
+    datasetSubject(info.requestNumber, `มีคำขอลงทะเบียนชุดข้อมูลรอตรวจสอบ: ${info.datasetName}`),
+    layout({
+      title: "มีคำขอลงทะเบียนชุดข้อมูลรอตรวจสอบ",
+      intro: `<strong style="color:${TEXT};">${escapeHtml(info.organizationName)}</strong> นำส่งคำขอลงทะเบียนชุดข้อมูลเข้ามาในระบบ`,
+      body: datasetSummary([
+        ["เลขที่คำขอ", info.requestNumber],
+        ["ชื่อชุดข้อมูล", info.datasetName],
+        ["ผู้นำส่ง", info.submitter],
+      ]),
+      button: { label: "เปิดดูคำขอ", url: bdiLink(info.id) },
+    }),
+  );
+}
+
+export async function sendDatasetRevisionRequested(
+  to: string[],
+  info: { requestNumber: string; datasetName: string; note: string; byName: string; at: Date; id: string },
+) {
+  const when = new Intl.DateTimeFormat("th-TH", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Bangkok",
+  }).format(info.at);
+
+  await sendMany(
+    to,
+    datasetSubject(info.requestNumber, `ต้องปรับปรุงคำขอลงทะเบียนชุดข้อมูล: ${info.datasetName}`),
+    layout({
+      title: "คำขอของคุณต้องปรับปรุง",
+      intro: `ผู้ตรวจสอบขอให้แก้ไขคำขอ <strong style="color:${TEXT};">${escapeHtml(info.datasetName)}</strong> ก่อนดำเนินการต่อ`,
+      // สเปกกำหนดว่าต้องบอกให้ครบว่า "แก้เรื่องอะไร โดยใคร เมื่อไหร่"
+      body: `<div style="background:#FDECEA;border-left:3px solid #B3261E;border-radius:8px;padding:16px;">
+               <div style="font:600 13px/1 'Helvetica Neue',Arial,sans-serif;color:#B3261E;margin-bottom:8px;">สิ่งที่ต้องแก้ไข</div>
+               <div style="font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};white-space:pre-wrap;">${escapeHtml(info.note)}</div>
+               <div style="margin-top:12px;font:400 12px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
+                 โดย ${escapeHtml(info.byName)} · ${when}
+               </div>
+             </div>`,
+      button: { label: "แก้ไขคำขอ", url: orgLink(info.id) },
+    }),
+  );
+}
+
+export async function sendDatasetSpecialistAssigned(
+  to: string,
+  info: { requestNumber: string; datasetName: string; organizationName: string; id: string },
+) {
+  await sendMany(
+    [to],
+    datasetSubject(info.requestNumber, `มอบหมายให้ตรวจชุดข้อมูล: ${info.datasetName}`),
+    layout({
+      title: "คุณได้รับมอบหมายให้ตรวจชุดข้อมูล",
+      intro: `เจ้าหน้าที่ BDI มอบหมายคำขอนี้ให้คุณตรวจในฐานะผู้เชี่ยวชาญข้อมูล`,
+      body: datasetSummary([
+        ["เลขที่คำขอ", info.requestNumber],
+        ["ชื่อชุดข้อมูล", info.datasetName],
+        ["หน่วยงาน", info.organizationName],
+      ]),
+      button: { label: "เปิดดูคำขอ", url: bdiLink(info.id) },
+    }),
+  );
+}
+
+export async function sendDatasetPendingOrgApprover(
+  to: string[],
+  info: { requestNumber: string; datasetName: string; organizationName: string; id: string },
+) {
+  await sendMany(
+    to,
+    datasetSubject(info.requestNumber, `ขอความเห็นชอบชุดข้อมูล: ${info.datasetName}`),
+    layout({
+      title: "ขอความเห็นชอบในฐานะผู้มีอำนาจกระทำการแทน",
+      intro: `คำขอลงทะเบียนชุดข้อมูลของ <strong style="color:${TEXT};">${escapeHtml(info.organizationName)}</strong> ผ่านการตรวจสอบเบื้องต้นจากเจ้าหน้าที่ BDI แล้ว`,
+      body: datasetSummary([
+        ["เลขที่คำขอ", info.requestNumber],
+        ["ชื่อชุดข้อมูล", info.datasetName],
+      ]),
+      button: { label: "ตรวจสอบและลงนาม", url: orgLink(info.id) },
+    }),
+  );
+}
+
+export async function sendDatasetPendingFinalCheck(
+  to: string[],
+  info: { requestNumber: string; datasetName: string; organizationName: string; signedBy: string; id: string },
+) {
+  await sendMany(
+    to,
+    datasetSubject(info.requestNumber, `รอตรวจสอบขั้นสุดท้าย: ${info.datasetName}`),
+    layout({
+      title: "มีคำขอรอการตรวจสอบขั้นสุดท้าย",
+      intro: `ผู้มีอำนาจของ <strong style="color:${TEXT};">${escapeHtml(info.organizationName)}</strong> ลงนามเห็นชอบแล้ว`,
+      body: datasetSummary([
+        ["เลขที่คำขอ", info.requestNumber],
+        ["ชื่อชุดข้อมูล", info.datasetName],
+        ["ผู้ลงนาม", info.signedBy],
+      ]),
+      button: { label: "ตรวจสอบขั้นสุดท้าย", url: bdiLink(info.id) },
+    }),
+  );
+}
+
+export async function sendDatasetPendingBdiApproval(
+  to: string[],
+  info: { requestNumber: string; datasetName: string; organizationName: string; id: string },
+) {
+  await sendMany(
+    to,
+    datasetSubject(info.requestNumber, `รออนุมัติชุดข้อมูล: ${info.datasetName}`),
+    layout({
+      title: "มีคำขอรอการอนุมัติ",
+      intro: `คำขอผ่านการตรวจสอบครบทุกด่านแล้ว รอการพิจารณาขั้นสุดท้ายจากผู้อนุมัติ BDI`,
+      body: datasetSummary([
+        ["เลขที่คำขอ", info.requestNumber],
+        ["ชื่อชุดข้อมูล", info.datasetName],
+        ["หน่วยงาน", info.organizationName],
+      ]),
+      button: { label: "ตรวจสอบและอนุมัติ", url: bdiLink(info.id) },
+    }),
+  );
+}
+
+export async function sendDatasetApproved(
+  to: string[],
+  info: { requestNumber: string; datasetName: string; organizationName: string; id: string },
+) {
+  await sendMany(
+    to,
+    datasetSubject(info.requestNumber, `อนุมัติชุดข้อมูลแล้ว: ${info.datasetName}`),
+    layout({
+      title: "ชุดข้อมูลได้รับอนุมัติแล้ว",
+      intro: `คำขอลงทะเบียนชุดข้อมูล <strong style="color:${TEXT};">${escapeHtml(info.datasetName)}</strong> ผ่านการอนุมัติครบทุกขั้นตอนแล้ว`,
+      body: datasetSummary([
+        ["เลขที่คำขอ", info.requestNumber],
+        ["หน่วยงาน", info.organizationName],
+      ]),
+      button: { label: "เปิดดูและดาวน์โหลดเอกสาร", url: orgLink(info.id) },
+    }),
+  );
+}
+
+export async function sendDatasetRejected(
+  to: string[],
+  info: { requestNumber: string; datasetName: string; reason: string; id: string },
+) {
+  await sendMany(
+    to,
+    datasetSubject(info.requestNumber, `ไม่อนุมัติชุดข้อมูล: ${info.datasetName}`),
+    layout({
+      title: "คำขอลงทะเบียนชุดข้อมูลไม่ได้รับอนุมัติ",
+      intro: `คำขอ <strong style="color:${TEXT};">${escapeHtml(info.datasetName)}</strong> สิ้นสุดกระบวนการโดยไม่ได้รับอนุมัติ`,
+      body: `<div style="background:#FDECEA;border-left:3px solid #B3261E;border-radius:8px;padding:16px;">
+               <div style="font:600 13px/1 'Helvetica Neue',Arial,sans-serif;color:#B3261E;margin-bottom:8px;">เหตุผล</div>
+               <div style="font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};white-space:pre-wrap;">${escapeHtml(info.reason)}</div>
+             </div>`,
+      button: { label: "เปิดดูรายละเอียด", url: orgLink(info.id) },
+      footnote: "หากต้องการยื่นใหม่ กรุณาสร้างคำขอฉบับใหม่และแก้ไขตามเหตุผลข้างต้น",
+    }),
+  );
+}
+
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string,

@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Logo } from "@/components/brand/Logo";
+import { NotificationBell } from "@/components/NotificationBell";
 import { useSession } from "@/components/SessionProvider";
 import { api } from "@/lib/api";
 import { ROLE_LABELS, isBdiStaff } from "@/lib/status";
@@ -29,14 +30,35 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 function navItems(roles: string[], hasOrganization: boolean) {
   if (isBdiStaff(roles)) {
-    const items = [{ href: "/admin/organizations", label: "หน่วยงาน" }];
+    // ผู้เชี่ยวชาญมีบทบาทเฉพาะเส้นทางชุดข้อมูล จึงไม่ต้องเห็นเมนูหน่วยงาน
+    const specialistOnly =
+      roles.includes("BDI_SPECIALIST") &&
+      !roles.includes("BDI_OFFICER") &&
+      !roles.includes("BDI_APPROVER");
+    if (specialistOnly) return [{ href: "/admin/datasets", label: "ชุดข้อมูลที่ได้รับมอบหมาย" }];
+
+    const items = [
+      { href: "/admin/organizations", label: "หน่วยงาน" },
+      { href: "/admin/datasets", label: "ชุดข้อมูล" },
+    ];
     if (roles.includes("BDI_APPROVER")) {
       items.push({ href: "/admin/organizations?status=PENDING_BDI_APPROVAL", label: "รอลงนาม" });
     }
     return items;
   }
+  // ผู้มีอำนาจกระทำการแทนที่ถูกเชิญเข้ามาทีหลังยังไม่ถูกผูก organizationId
+  // แต่ต้องเข้าหน้าชุดข้อมูลได้ เพราะเป็นผู้พิจารณาด่านที่ 2 ของเส้นทาง C
+  if (roles.includes("ORGANIZATION_APPROVER") && !hasOrganization) {
+    return [{ href: "/datasets", label: "ชุดข้อมูล" }];
+  }
+
   // สเปก: ผู้ใช้ที่ยังไม่มีหน่วยงานเห็นได้แค่ปุ่มสร้างหน่วยงานกลางจอ ไม่มีเมนู
-  return hasOrganization ? [{ href: "/", label: "หน่วยงานของฉัน" }] : [];
+  return hasOrganization
+    ? [
+        { href: "/", label: "หน่วยงานของฉัน" },
+        { href: "/datasets", label: "ชุดข้อมูล" },
+      ]
+    : [];
 }
 
 function Header() {
@@ -72,7 +94,10 @@ function Header() {
             })}
           </nav>
 
-          <div className="ml-auto">{user ? <UserMenu /> : <SignInLink />}</div>
+          <div className="ml-auto flex items-center gap-1">
+            {user ? <NotificationBell /> : null}
+            {user ? <UserMenu /> : <SignInLink />}
+          </div>
         </div>
       </div>
     </header>

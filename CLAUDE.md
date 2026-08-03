@@ -9,13 +9,18 @@ themselves, and their registration is approved through a multi-stage workflow.
 
 The spec lives in Notion, not here. `docs/` holds the expanded, buildable version:
 
-- `docs/01-user-journey.md` — roles, the organization state machine, every step of both
-  journeys, the seven emails the system sends, and **open questions still awaiting an answer**
+- `docs/01-user-journey.md` — roles, both state machines, every step of the three journeys,
+  the fifteen emails the system sends, and **open questions still awaiting an answer**
   (marked `[สมมติฐาน]` where the Notion spec was silent or contradictory)
 - `docs/02-ui-spec.md` — design tokens measured from the CI artwork, screen inventory
-- `docs/03-demo-walkthrough.md` — how to run either journey end to end, seed data, public deploy
+- `docs/03-demo-walkthrough.md` — how to run any journey end to end, seed data, public deploy;
+  its §10 is the script for demoing live, and the only part written for an audience
+- `notebooks/journey-a-admin-create-user.ipynb` — Journey A has no UI by design, so this walks
+  its API calls one cell at a time against a checkout with real SMTP configured
+- `docs/04-dataset-registration-plan.md` — how Journey C maps onto schema, endpoints and screens
 
-Read `docs/01-user-journey.md` before touching anything in `backend/src/routes/organizations.ts`.
+Read `docs/01-user-journey.md` before touching anything in `backend/src/routes/organizations.ts`
+or `backend/src/routes/dataset-requests.ts`.
 
 ## Commands
 
@@ -48,16 +53,28 @@ typecheck + production build + driving the real API. If you add tests, wire them
 
 ## Architecture
 
-### The workflow is one state machine in one file
+### Each workflow is one state machine in one file
 
-`backend/src/routes/organizations.ts` holds the whole approval flow. `POST /:id/review` is a
-single endpoint for all three approval stages — who may act is decided by the organization's
-*current status*, not by separate routes. Keep it that way; splitting it scatters the state
-machine.
+`backend/src/routes/organizations.ts` holds the whole organization approval flow, and
+`backend/src/routes/dataset-requests.ts` the whole dataset registration flow. In both,
+`POST /:id/review` is a single endpoint for every approval stage — who may act is decided by
+the record's *current status*, not by separate routes. Keep it that way; splitting it scatters
+the state machine. In the dataset router that decision table lives in one `decide()` function.
 
-Every transition writes an `OrganizationEvent` (actor, from-status, to-status, note). The UI
-timeline and any audit question are answered from that table, so never mutate `status` without
-recording the event.
+Every transition writes an `OrganizationEvent` / `DatasetRequestEvent` (actor, from-status,
+to-status, note). The UI timeline is rendered from those tables, so never mutate `status`
+without recording the event.
+
+### Audit log and in-app notifications (dataset flow)
+
+`ActivityLog` is deliberately **separate** from the event tables: it stores the changed fields
+(before/after) and the caller's IP, and is never shown on screen. `lib/activity.ts` copies the
+actor's name and roles into each row rather than only referencing the user, so old rows stay
+truthful after a rename.
+
+Notifications are written next to every dataset email in `lib/notify.ts`. The spec says they
+need not be real time, so the bell fetches on page load and on navigation — there is no polling
+loop, no websocket. Don't add one without a requirement.
 
 ### Auth
 
@@ -84,6 +101,10 @@ Templates are table-based with inline styles because Gmail and Outlook strip `<s
 `backend/src/lib/pdf.ts` uses PDFKit with Sarabun/Prompt TTFs copied into
 `backend/src/assets/fonts/`. Thai will not render without embedding a Thai face. `npm run build`
 copies `src/data` and `src/assets` into `dist/` because `tsc` does not.
+
+The page footer is drawn at `y=800`, below the bottom margin. PDFKit treats that as overflow
+and appends a blank page per page unless the bottom margin is zeroed for that one write —
+`footer()` does exactly that. Don't "simplify" it away.
 
 ### Thai addresses
 

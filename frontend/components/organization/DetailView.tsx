@@ -43,6 +43,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
   const router = useRouter();
 
   const [org, setOrg] = useState<Organization | null>(null);
+  const [notFound, setNotFound] = useState(false);
   const [modal, setModal] = useState<null | "approve" | "revise">(null);
   const [note, setNote] = useState("");
   const [noteError, setNoteError] = useState<string | undefined>();
@@ -52,12 +53,52 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
     api
       .get<{ organization: Organization }>(`/api/organizations/${id}`)
       .then((d) => setOrg(d.organization))
-      .catch(() => show({ tone: "error", title: "โหลดข้อมูลไม่สำเร็จ" }));
+      .catch((err) => {
+        // 404 = ไม่มีหน่วยงานนี้ หรือไม่มีสิทธิ์เห็น — ปล่อยค้างที่ spinner
+        // ผู้ใช้จะนึกว่าระบบแฮงก์
+        if (err instanceof ApiError && err.status === 404) {
+          setNotFound(true);
+          return;
+        }
+        show({ tone: "error", title: "โหลดข้อมูลไม่สำเร็จ" });
+      });
 
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  if (notFound) {
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-20 text-center sm:px-6">
+        <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-navy-50">
+          <svg
+            viewBox="0 0 24 24"
+            className="h-6 w-6 text-navy-400"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 8v5M12 16h.01" strokeLinecap="round" />
+          </svg>
+        </div>
+        <h1 className="mt-4 text-xl font-semibold text-navy-800">ไม่พบหน่วยงานนี้</h1>
+        <p className="mx-auto mt-2 max-w-md text-[15px] leading-relaxed text-ink-muted">
+          หน่วยงานอาจถูกลบไปแล้ว หรือคุณไม่มีสิทธิ์เข้าถึงหน่วยงานนี้
+        </p>
+        {backHref ? (
+          <Link
+            href={backHref}
+            className="mt-6 inline-block rounded-full border border-line px-5 py-2.5 text-sm font-medium text-navy-800 transition-colors hover:bg-navy-50"
+          >
+            กลับไปที่รายการ
+          </Link>
+        ) : null}
+      </div>
+    );
+  }
 
   if (!org || !user) return <Spinner />;
 
@@ -65,6 +106,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
   const generated = org.attachments.find((a) => a.kind === "GENERATED_FORM");
   const supporting = org.attachments.filter((a) => a.kind !== "GENERATED_FORM");
   const isOwner = org.createdBy.id === user.id;
+  const isMember = user.roles.includes("ORGANIZATION_USER") && user.organizationId === org.id;
 
   const act = async (action: "approve" | "request_revision") => {
     if (action === "request_revision" && note.trim().length < 10) {
@@ -141,6 +183,8 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         </Card>
       ) : null}
 
+      {isMember ? <DatasetEntryCard /> : null}
+
       <div className="flex flex-col gap-6">
         <Card>
           <CardHeader tag="ส่วนที่ 1" title="ข้อมูลหน่วยงาน" />
@@ -211,7 +255,11 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
           <Card>
             <CardHeader title="แบบฟอร์มที่ระบบสร้าง" description="เอกสารที่ใช้ประกอบการพิจารณา" />
             <div className="p-6">
-              <PdfViewer organizationId={org.id} attachmentId={generated.id} filename={generated.filename} />
+              <PdfViewer
+                url={api.fileUrl(`/api/organizations/${org.id}/attachments/${generated.id}`)}
+                filename={generated.filename}
+                title="แบบฟอร์มสร้างหน่วยงาน"
+              />
             </div>
           </Card>
         ) : null}
@@ -271,11 +319,55 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
   );
 }
 
+/**
+ * ทางเข้าเส้นทางชุดข้อมูล (docs/01-user-journey.md §4.1)
+ * ปุ่มยังอยู่แม้กดไม่ได้ พร้อมบอกว่าติดอะไร — ซ่อนปุ่มแล้วผู้ใช้จะไม่รู้ว่าต้องทำอะไรต่อ
+ */
+function DatasetEntryCard() {
+  const router = useRouter();
+  const [eligibility, setEligibility] = useState<{ eligible: boolean; reason: string | null } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    api
+      .get<{ eligible: boolean; reason: string | null }>("/api/dataset-requests/eligibility")
+      .then(setEligibility)
+      .catch(() => undefined);
+  }, []);
+
+  return (
+    <Card className="mb-6">
+      <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="font-medium text-navy-800">ลงทะเบียนชุดข้อมูล</p>
+          <p className="mt-0.5 text-sm text-ink-muted">
+            {eligibility && !eligibility.eligible
+              ? eligibility.reason
+              : "ยื่นคำขอลงทะเบียนชุดข้อมูลของหน่วยงาน และติดตามสถานะการอนุมัติ"}
+          </p>
+        </div>
+        <Button
+          className="shrink-0"
+          disabled={!eligibility?.eligible}
+          onClick={() => router.push("/datasets")}
+        >
+          ไปที่ชุดข้อมูล
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+/** ป้ายกับค่าคนละขนาดตัวอักษร ต้องจัดตามเส้นฐาน ไม่งั้นค่าจะดูต่ำกว่าป้ายเล็กน้อยทุกแถว */
 function Rows({ rows }: { rows: Array<[string, string | null | undefined]> }) {
   return (
     <dl className="divide-y divide-line">
       {rows.map(([label, value]) => (
-        <div key={label} className="grid gap-1 px-6 py-3.5 sm:grid-cols-[11rem_minmax(0,1fr)] sm:gap-4">
+        <div
+          key={label}
+          className="grid gap-1 px-6 py-3.5 sm:grid-cols-[11rem_minmax(0,1fr)] sm:items-baseline sm:gap-4"
+        >
           <dt className="text-sm text-ink-muted">{label}</dt>
           <dd className={value ? "text-[15px] text-ink" : "text-[15px] text-ink-subtle"}>{value || "—"}</dd>
         </div>

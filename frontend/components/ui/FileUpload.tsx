@@ -21,6 +21,8 @@ export function FileUpload({
   uploading,
   onSelect,
   onRemove,
+  accept = "application/pdf,image/jpeg",
+  supportText = "รองรับ PDF หรือ JPG ขนาดไม่เกิน 10 MB",
 }: {
   label: string;
   hint?: string;
@@ -30,6 +32,9 @@ export function FileUpload({
   uploading?: boolean;
   onSelect: (file: File) => void;
   onRemove: () => void;
+  /** ชนิดไฟล์ต่างกันไปตามเอกสาร — เส้นทางชุดข้อมูลรับ XLSX/CSV/JSON ด้วย */
+  accept?: string;
+  supportText?: string;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -99,14 +104,14 @@ export function FileUpload({
           <span className="text-sm font-medium text-navy-700">
             {uploading ? "กำลังอัปโหลด…" : "คลิกเพื่อเลือกไฟล์ หรือลากมาวาง"}
           </span>
-          <span className="text-[12px] text-ink-muted">รองรับ PDF หรือ JPG ขนาดไม่เกิน 10 MB</span>
+          <span className="text-[12px] text-ink-muted">{supportText}</span>
         </button>
       )}
 
       <input
         ref={inputRef}
         type="file"
-        accept="application/pdf,image/jpeg"
+        accept={accept}
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0];

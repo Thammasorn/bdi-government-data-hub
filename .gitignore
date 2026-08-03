@@ -35,6 +35,9 @@ pnpm-debug.log*
 coverage/
 .nyc_output/
 
+# notebooks
+.ipynb_checkpoints/
+
 # editors & OS
 .vscode/*
 !.vscode/extensions.json

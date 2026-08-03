@@ -1,4 +1,15 @@
-import type { OrganizationStatus } from "./status";
+import type {
+  CLASSIFICATION_LABELS,
+  DATASET_CATEGORY_LABELS,
+  DATASET_TYPE_LABELS,
+  DATA_FORMAT_LABELS,
+  DELIVERY_METHOD_LABELS,
+  DatasetRequestStatus,
+  FREQUENCY_LABELS,
+  GEO_COVERAGE_LABELS,
+  LICENSE_LABELS,
+  OrganizationStatus,
+} from "./status";
 
 export interface Attachment {
   id: string;
@@ -80,3 +91,137 @@ export const ATTACHMENT_LABELS: Record<Attachment["kind"], string> = {
   POWER_OF_ATTORNEY: "คำสั่งมอบอำนาจ",
   GENERATED_FORM: "แบบฟอร์มที่ระบบสร้าง",
 };
+
+// ------------------------------------------------------------------ ชุดข้อมูล (Journey C)
+
+export type DatasetType = keyof typeof DATASET_TYPE_LABELS;
+export type DatasetCategory = keyof typeof DATASET_CATEGORY_LABELS;
+export type UpdateFrequency = keyof typeof FREQUENCY_LABELS;
+export type GeoCoverage = keyof typeof GEO_COVERAGE_LABELS;
+export type DeliveryMethod = keyof typeof DELIVERY_METHOD_LABELS;
+export type DataFormat = keyof typeof DATA_FORMAT_LABELS;
+export type DataClassification = keyof typeof CLASSIFICATION_LABELS;
+export type LicenseType = keyof typeof LICENSE_LABELS;
+
+export interface DatasetAttachment {
+  id: string;
+  kind: "DATA_DICTIONARY" | "EXAMPLE_DATA" | "GENERATED_FORM";
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
+export interface DatasetRequestEvent {
+  id: string;
+  type: string;
+  note: string | null;
+  createdAt: string;
+  actor: { firstName: string | null; lastName: string | null; email: string } | null;
+}
+
+export interface DatasetRequest {
+  id: string;
+  requestNumber: string;
+  status: DatasetRequestStatus;
+
+  nameTh: string | null;
+  nameEn: string | null;
+  description: string | null;
+  datasetType: DatasetType | null;
+  category: DatasetCategory | null;
+  keywords: string[];
+  updateFrequency: UpdateFrequency | null;
+  geoCoverage: GeoCoverage | null;
+  dataStartDate: string | null;
+  dataEndDate: string | null;
+  estimatedRecords: number | null;
+  stewardName: string | null;
+  stewardEmail: string | null;
+  stewardPhone: string | null;
+
+  deliveryMethod: DeliveryMethod | null;
+  dataFormat: DataFormat | null;
+  deliveryFrequency: UpdateFrequency | null;
+  deliveryEndpoint: string | null;
+  technicalContactName: string | null;
+  technicalContactEmail: string | null;
+  deliveryNote: string | null;
+
+  dataClassification: DataClassification | null;
+  hasPersonalData: boolean | null;
+  personalDataMeasure: string | null;
+  legalBasis: string | null;
+  licenseType: LicenseType | null;
+  usageRestriction: string | null;
+  legalAcceptedAt: string | null;
+
+  revisionNote: string | null;
+  submittedAt: string | null;
+  orgApproverSignedAt: string | null;
+  orgApproverSignedName: string | null;
+  approvedAt: string | null;
+  approvedByName: string | null;
+  rejectedAt: string | null;
+  rejectedByName: string | null;
+  rejectionReason: string | null;
+  assignedAt: string | null;
+  createdAt: string;
+
+  organization: { id: string; name: string; signatoryEmail: string | null };
+  createdBy: {
+    id: string;
+    email: string;
+    prefix: string | null;
+    firstName: string | null;
+    lastName: string | null;
+  };
+  assignedSpecialist: {
+    id: string;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+  } | null;
+  attachments: DatasetAttachment[];
+  events: DatasetRequestEvent[];
+}
+
+export interface DatasetRequestListItem {
+  id: string;
+  requestNumber: string;
+  nameTh: string | null;
+  status: DatasetRequestStatus;
+  submittedAt: string | null;
+  createdAt: string;
+  organization: { id: string; name: string };
+  createdBy: { firstName: string | null; lastName: string | null; email: string };
+  assignedSpecialist: { id: string; firstName: string | null; lastName: string | null } | null;
+}
+
+export interface SpecialistOption {
+  id: string;
+  email: string;
+  prefix: string | null;
+  firstName: string | null;
+  lastName: string | null;
+}
+
+export const DATASET_ATTACHMENT_LABELS: Record<DatasetAttachment["kind"], string> = {
+  DATA_DICTIONARY: "พจนานุกรมข้อมูล (Data Dictionary)",
+  EXAMPLE_DATA: "ตัวอย่างข้อมูล",
+  GENERATED_FORM: "แบบฟอร์มที่ระบบสร้าง",
+};
+
+export interface AppNotification {
+  id: string;
+  type: string;
+  title: string;
+  body: string | null;
+  link: string | null;
+  readAt: string | null;
+  createdAt: string;
+}
+
+/** ชื่อที่แสดงของคำขอ — ร่างที่ยังไม่ตั้งชื่อให้ใช้เลขที่คำขอแทน */
+export const datasetTitle = (r: { nameTh: string | null; requestNumber: string }) =>
+  r.nameTh?.trim() || `คำขอ ${r.requestNumber}`;

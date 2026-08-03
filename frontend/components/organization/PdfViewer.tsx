@@ -1,19 +1,15 @@
 "use client";
 
-import { api } from "@/lib/api";
-
+/** ฝัง PDF ที่ระบบสร้างไว้ในหน้า — ใช้ทั้งเส้นทางหน่วยงานและเส้นทางชุดข้อมูล */
 export function PdfViewer({
-  organizationId,
-  attachmentId,
+  url,
   filename,
-  title = "แบบฟอร์มสร้างหน่วยงาน",
+  title = "เอกสารที่ระบบสร้าง",
 }: {
-  organizationId: string;
-  attachmentId: string;
+  url: string;
   filename?: string;
   title?: string;
 }) {
-  const url = api.fileUrl(`/api/organizations/${organizationId}/attachments/${attachmentId}`);
   return (
     <div className="overflow-hidden rounded-xl border border-line bg-navy-50">
       <div className="flex items-center justify-between gap-3 border-b border-line bg-white px-4 py-2.5">

@@ -67,6 +67,147 @@ enum OrganizationEventType {
   FINAL_REVISION_REQUESTED
 }
 
+// ── Journey C — ขอลงทะเบียนชุดข้อมูล (docs/01-user-journey.md §4) ──────────
+
+/// ลำดับสถานะตาม docs/01-user-journey.md §4.2
+enum DatasetRequestStatus {
+  DRAFT
+  PENDING_OFFICER_REVIEW /// ด่าน 1 — BDI Officer ตรวจเบื้องต้น
+  PENDING_ORG_APPROVER /// ด่าน 2 — ผู้มีอำนาจของหน่วยงาน
+  PENDING_OFFICER_FINAL_CHECK /// §4.5 ข้อ 4 — BDI Officer ตรวจซ้ำ
+  PENDING_BDI_APPROVAL /// ด่าน 3 — ผู้อนุมัติ BDI
+  NEEDS_REVISION
+  APPROVED
+  REJECTED
+}
+
+enum DatasetRequestEventType {
+  CREATED
+  SUBMITTED
+  SPECIALIST_ASSIGNED
+  SPECIALIST_UNASSIGNED
+  SPECIALIST_COMMENTED /// บันทึกความเห็นโดยไม่เปลี่ยนสถานะ
+  SPECIALIST_REVISION_REQUESTED
+  OFFICER_FORWARDED
+  OFFICER_REVISION_REQUESTED
+  ORG_APPROVER_SIGNED
+  ORG_APPROVER_REVISION_REQUESTED
+  OFFICER_CONFIRMED
+  OFFICER_FINAL_REVISION_REQUESTED
+  BDI_APPROVED
+  BDI_REJECTED
+  BDI_REVISION_REQUESTED
+}
+
+enum DatasetAttachmentKind {
+  DATA_DICTIONARY /// พจนานุกรมข้อมูล (บังคับ)
+  EXAMPLE_DATA /// ตัวอย่างข้อมูล (ถ้ามี)
+  GENERATED_FORM /// PDF ที่ระบบสร้าง
+}
+
+enum DatasetType {
+  RECORD
+  STATISTIC
+  GEOGRAPHIC
+  MULTIMEDIA
+  OTHER
+}
+
+enum DatasetCategory {
+  ECONOMY_FINANCE
+  AGRICULTURE
+  HEALTH
+  EDUCATION
+  TRANSPORT
+  ENERGY
+  ENVIRONMENT
+  SOCIETY
+  PUBLIC_SAFETY
+  SCIENCE_TECH
+  TOURISM_SPORT
+  GOVERNMENT
+}
+
+enum UpdateFrequency {
+  REAL_TIME
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  BIANNUAL
+  YEARLY
+  AS_NEEDED
+}
+
+enum GeoCoverage {
+  NATIONAL
+  REGIONAL
+  PROVINCIAL
+  DISTRICT
+  OTHER
+}
+
+enum DeliveryMethod {
+  API
+  SFTP
+  DATABASE
+  FILE_UPLOAD
+  OTHER
+}
+
+enum DataFormat {
+  CSV
+  JSON
+  XLSX
+  XML
+  PARQUET
+  SHAPEFILE
+  OTHER
+}
+
+enum DataClassification {
+  PUBLIC
+  INTERNAL
+  CONFIDENTIAL
+  SECRET
+}
+
+enum LicenseType {
+  OPEN_GOVERNMENT
+  CC_BY
+  CC_BY_SA
+  CC_BY_NC
+  INTERNAL_ONLY
+  OTHER
+}
+
+/// ชนิดของ in-app notification — คู่กับอีเมลแต่ละฉบับใน §5
+enum NotificationType {
+  DATASET_SUBMITTED
+  DATASET_REVISION_REQUESTED
+  DATASET_SPECIALIST_ASSIGNED
+  DATASET_PENDING_ORG_APPROVER
+  DATASET_PENDING_FINAL_CHECK
+  DATASET_PENDING_BDI_APPROVAL
+  DATASET_APPROVED
+  DATASET_REJECTED
+  DATASET_COMMENTED
+}
+
+/// ประเภทการกระทำใน audit log (§4.9)
+enum ActivityAction {
+  CREATE
+  UPDATE
+  SUBMIT
+  REVIEW
+  APPROVE
+  REJECT
+  RETURN_FOR_REVISION
+  ASSIGN
+  DELETE
+  DOWNLOAD
+}
+
 // ---------------------------------------------------------------- models
 
 model User {
@@ -91,6 +232,12 @@ model User {
   invitationsSent      Invitation[]        @relation("InvitationInviter")
   events               OrganizationEvent[]
   attachments          Attachment[]
+
+  datasetRequests    DatasetRequest[]      @relation("DatasetRequestCreator")
+  assignedDatasets   DatasetRequest[]      @relation("DatasetRequestSpecialist")
+  datasetEvents      DatasetRequestEvent[]
+  datasetAttachments DatasetAttachment[]
+  notifications      Notification[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -152,11 +299,11 @@ model Organization {
   email       String?
 
   // ── ส่วนที่ 2: ผู้มีอำนาจกระทำการแทน ────────────────────────
-  signatoryPrefix    String?
-  signatoryFirstName String?
-  signatoryLastName  String?
-  signatoryPosition  String?
-  signatoryEmail     String?
+  signatoryPrefix     String?
+  signatoryFirstName  String?
+  signatoryLastName   String?
+  signatoryPosition   String?
+  signatoryEmail      String?
   /// เลขบัตรประชาชน 13 หลัก — ตรวจ checksum ก่อนบันทึก
   signatoryNationalId String?
   signatoryPhone      String?
@@ -179,10 +326,11 @@ model Organization {
   createdById String
   createdBy   User   @relation("OrganizationCreator", fields: [createdById], references: [id])
 
-  members     User[]              @relation("OrganizationMembers")
-  attachments Attachment[]
-  events      OrganizationEvent[]
-  invitations Invitation[]
+  members         User[]              @relation("OrganizationMembers")
+  attachments     Attachment[]
+  events          OrganizationEvent[]
+  invitations     Invitation[]
+  datasetRequests DatasetRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -233,4 +381,198 @@ model OrganizationEvent {
 
   @@index([organizationId, createdAt])
   @@map("organization_events")
+}
+
+// ---------------------------------------------- Journey C — ชุดข้อมูล
+
+/**
+ * คำขอลงทะเบียนชุดข้อมูลหนึ่งฉบับ
+ * ทุกฟิลด์ของแบบฟอร์มเป็น optional ในระดับฐานข้อมูล เพราะร่างต้องบันทึกได้ทั้งที่ยังกรอกไม่ครบ
+ * ความครบถ้วนบังคับตอนนำส่งด้วย zod ใน routes/dataset-requests.ts (แบบเดียวกับ Organization)
+ */
+model DatasetRequest {
+  id     String               @id @default(uuid())
+  status DatasetRequestStatus @default(DRAFT)
+
+  /// เลขที่คำขอที่ผู้ใช้อ้างถึง เช่น DR-2026-0001 — ออกให้ตอนสร้างร่าง
+  requestNumber String @unique
+
+  // ── ส่วนที่ 1: metadata ─────────────────────────────────────
+  nameTh           String?
+  nameEn           String?
+  description      String?
+  datasetType      DatasetType?
+  category         DatasetCategory?
+  keywords         String[]         @default([])
+  updateFrequency  UpdateFrequency?
+  geoCoverage      GeoCoverage?
+  dataStartDate    DateTime?
+  dataEndDate      DateTime?
+  estimatedRecords Int?
+  stewardName      String? /// ผู้ประสานงานชุดข้อมูล
+  stewardEmail     String?
+  stewardPhone     String?
+
+  // ── ส่วนที่ 2: วิธีการนำส่ง ────────────────────────────────────
+  deliveryMethod        DeliveryMethod?
+  dataFormat            DataFormat?
+  deliveryFrequency     UpdateFrequency?
+  deliveryEndpoint      String? /// บังคับเมื่อ deliveryMethod เป็น API/SFTP/DATABASE
+  technicalContactName  String?
+  technicalContactEmail String?
+  deliveryNote          String?
+
+  // ── ส่วนที่ 3: เงื่อนไขทางกฎหมาย ───────────────────────────────
+  dataClassification  DataClassification?
+  hasPersonalData     Boolean?
+  personalDataMeasure String?
+  legalBasis          String?
+  licenseType         LicenseType?
+  usageRestriction    String?
+  /// การกดยอมรับเงื่อนไข (LEGAL_ACCEPTANCE ใน ER-diagram ของ Notion)
+  legalAcceptedAt     DateTime?
+  legalAcceptedById   String?
+
+  // ── การดำเนินงาน ────────────────────────────────────────────
+  /// ข้อความจากผู้ตรวจเมื่อสถานะเป็น NEEDS_REVISION
+  revisionNote String?
+  submittedAt  DateTime?
+
+  /**
+   * ผู้ลงนาม/ผู้ตัดสินใจเก็บทั้ง id และชื่อ ณ เวลานั้น เพราะ PDF ฉบับอนุมัติต้องพิมพ์ชื่อได้
+   * เหมือนตอนลงนามแม้ผู้ใช้จะเปลี่ยนชื่อภายหลัง (เหตุผลเดียวกับ ActivityLog)
+   */
+  orgApproverSignedAt   DateTime?
+  orgApproverSignedById String?
+  orgApproverSignedName String?
+
+  approvedAt      DateTime?
+  approvedById    String?
+  approvedByName  String?
+  rejectedAt      DateTime?
+  rejectedById    String?
+  rejectedByName  String?
+  rejectionReason String?
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdById String
+  createdBy   User   @relation("DatasetRequestCreator", fields: [createdById], references: [id])
+
+  /// ผู้เชี่ยวชาญที่ BDI Officer มอบหมาย (ไม่บังคับ ตามสเปกข้อ 2)
+  assignedSpecialistId String?
+  assignedSpecialist   User?     @relation("DatasetRequestSpecialist", fields: [assignedSpecialistId], references: [id], onDelete: SetNull)
+  assignedAt           DateTime?
+
+  attachments DatasetAttachment[]
+  events      DatasetRequestEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, status])
+  @@index([status])
+  @@index([assignedSpecialistId])
+  @@map("dataset_requests")
+}
+
+model DatasetAttachment {
+  id   String                @id @default(uuid())
+  kind DatasetAttachmentKind
+
+  /// object key ใน MinIO
+  objectKey String
+  filename  String
+  mimeType  String
+  sizeBytes Int
+
+  datasetRequestId String
+  datasetRequest   DatasetRequest @relation(fields: [datasetRequestId], references: [id], onDelete: Cascade)
+
+  uploadedById String?
+  uploadedBy   User?   @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([datasetRequestId, kind])
+  @@map("dataset_attachments")
+}
+
+/// timeline ที่ผู้ใช้เห็น — ทุกการเปลี่ยนสถานะต้องเขียนแถวที่นี่
+model DatasetRequestEvent {
+  id   String                  @id @default(uuid())
+  type DatasetRequestEventType
+
+  fromStatus DatasetRequestStatus?
+  toStatus   DatasetRequestStatus?
+  note       String?
+
+  datasetRequestId String
+  datasetRequest   DatasetRequest @relation(fields: [datasetRequestId], references: [id], onDelete: Cascade)
+
+  actorId String?
+  actor   User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([datasetRequestId, createdAt])
+  @@map("dataset_request_events")
+}
+
+/**
+ * การแจ้งเตือนในระบบ — สเปกระบุว่าไม่ต้อง real time
+ * หน้าเว็บ fetch ตอนโหลดหน้าใหม่ก็พอ จึงไม่มี websocket/SSE
+ */
+model Notification {
+  id    String           @id @default(uuid())
+  type  NotificationType
+  title String
+  body  String?
+  /// path ภายในแอป เช่น /datasets/<id> — ไม่เก็บ URL เต็มเพราะโดเมนเปลี่ยนได้
+  link  String?
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+/**
+ * Audit log ตาม docs/01-user-journey.md §4.9
+ * แยกจาก DatasetRequestEvent เพราะเก็บละเอียดกว่า (diff, IP) และไม่ได้แสดงบนหน้าจอ
+ * ชื่อและ role ของผู้กระทำถูกคัดลอกลงแถว ไม่ใช่อ้างอิงอย่างเดียว — log ต้องอ่านได้ถูกต้อง
+ * แม้ผู้ใช้จะเปลี่ยนชื่อหรือถูกลบภายหลัง
+ */
+model ActivityLog {
+  id     String         @id @default(uuid())
+  action ActivityAction
+
+  actorId             String?
+  actorName           String?
+  actorRoles          Role[]  @default([])
+  actorOrganizationId String?
+
+  /// "DatasetRequest" | "Organization" | ...
+  targetType String
+  targetId   String
+  /// เลขอ้างอิงที่คนอ่านรู้เรื่อง เช่น DR-2026-0001
+  targetRef  String?
+
+  /// เก็บเฉพาะฟิลด์ที่เปลี่ยน ไม่ใช่ทั้ง record
+  before Json?
+  after  Json?
+
+  ipAddress String?
+
+  createdAt DateTime @default(now())
+
+  @@index([targetType, targetId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("activity_logs")
 }
