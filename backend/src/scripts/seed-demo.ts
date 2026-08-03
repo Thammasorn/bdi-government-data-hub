@@ -754,6 +754,97 @@ async function seedDatasetRequests(
         },
       ],
     },
+    // สองรายการสุดท้ายมีไว้ให้เปิดโชว์ตอนสาธิต — เป็นสถานะที่เดินไปถึงเองระหว่างสาธิตไม่ทัน
+    {
+      nameTh: "ทะเบียนผู้ประกอบการขนส่งสาธารณะ",
+      status: DatasetRequestStatus.REJECTED,
+      submittedDaysAgo: 30,
+      over: {
+        category: DatasetCategory.TRANSPORT,
+        dataClassification: DataClassification.CONFIDENTIAL,
+        hasPersonalData: true,
+        orgApproverSignedAt: dt(27),
+        orgApproverSignedName: approverName,
+        rejectedAt: dt(24),
+        rejectedById: bdi.approver,
+        rejectedByName: "นางสุดารัตน์ อนุมัติ",
+        rejectionReason:
+          "ชุดข้อมูลนี้มีเลขประจำตัวประชาชนของผู้ประกอบการรายบุคคล แต่ฐานอำนาจที่อ้างครอบคลุมเฉพาะนิติบุคคล จึงยังเปิดเผยข้อมูลส่วนบุคคลไม่ได้ หากหน่วยงานจะนำส่งใหม่ ให้ตัดฟิลด์ที่ระบุตัวบุคคลออกก่อน แล้วยื่นเป็นคำขอฉบับใหม่",
+      },
+      events: [
+        { type: DatasetRequestEventType.CREATED, actorId: ownerId, to: DatasetRequestStatus.DRAFT, at: dt(31) },
+        {
+          type: DatasetRequestEventType.SUBMITTED,
+          actorId: ownerId,
+          from: DatasetRequestStatus.DRAFT,
+          to: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
+          at: dt(30),
+        },
+        {
+          type: DatasetRequestEventType.OFFICER_FORWARDED,
+          actorId: bdi.officer,
+          from: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
+          to: DatasetRequestStatus.PENDING_ORG_APPROVER,
+          at: dt(28),
+        },
+        {
+          type: DatasetRequestEventType.ORG_APPROVER_SIGNED,
+          actorId: null,
+          from: DatasetRequestStatus.PENDING_ORG_APPROVER,
+          to: DatasetRequestStatus.PENDING_OFFICER_FINAL_CHECK,
+          at: dt(27),
+        },
+        {
+          type: DatasetRequestEventType.OFFICER_CONFIRMED,
+          actorId: bdi.officer,
+          from: DatasetRequestStatus.PENDING_OFFICER_FINAL_CHECK,
+          to: DatasetRequestStatus.PENDING_BDI_APPROVAL,
+          at: dt(26),
+        },
+        {
+          type: DatasetRequestEventType.BDI_REJECTED,
+          actorId: bdi.approver,
+          from: DatasetRequestStatus.PENDING_BDI_APPROVAL,
+          to: DatasetRequestStatus.REJECTED,
+          note: "ฐานอำนาจที่อ้างไม่ครอบคลุมข้อมูลส่วนบุคคลของผู้ประกอบการรายบุคคล",
+          at: dt(24),
+        },
+      ],
+    },
+    {
+      nameTh: "สถิติการใช้บริการขนส่งมวลชนรายเดือน",
+      status: DatasetRequestStatus.PENDING_OFFICER_FINAL_CHECK,
+      submittedDaysAgo: 5,
+      over: {
+        category: DatasetCategory.TRANSPORT,
+        orgApproverSignedAt: dt(2),
+        orgApproverSignedName: approverName,
+      },
+      events: [
+        { type: DatasetRequestEventType.CREATED, actorId: ownerId, to: DatasetRequestStatus.DRAFT, at: dt(6) },
+        {
+          type: DatasetRequestEventType.SUBMITTED,
+          actorId: ownerId,
+          from: DatasetRequestStatus.DRAFT,
+          to: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
+          at: dt(5),
+        },
+        {
+          type: DatasetRequestEventType.OFFICER_FORWARDED,
+          actorId: bdi.officer,
+          from: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
+          to: DatasetRequestStatus.PENDING_ORG_APPROVER,
+          at: dt(4),
+        },
+        {
+          type: DatasetRequestEventType.ORG_APPROVER_SIGNED,
+          actorId: null,
+          from: DatasetRequestStatus.PENDING_ORG_APPROVER,
+          to: DatasetRequestStatus.PENDING_OFFICER_FINAL_CHECK,
+          at: dt(2),
+        },
+      ],
+    },
   ];
 
   for (const [index, spec] of specs.entries()) {

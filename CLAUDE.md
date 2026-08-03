@@ -13,7 +13,10 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   the fifteen emails the system sends, and **open questions still awaiting an answer**
   (marked `[สมมติฐาน]` where the Notion spec was silent or contradictory)
 - `docs/02-ui-spec.md` — design tokens measured from the CI artwork, screen inventory
-- `docs/03-demo-walkthrough.md` — how to run any journey end to end, seed data, public deploy
+- `docs/03-demo-walkthrough.md` — how to run any journey end to end, seed data, public deploy;
+  its §10 is the script for demoing live, and the only part written for an audience
+- `notebooks/journey-a-admin-create-user.ipynb` — Journey A has no UI by design, so this walks
+  its API calls one cell at a time against a checkout with real SMTP configured
 - `docs/04-dataset-registration-plan.md` — how Journey C maps onto schema, endpoints and screens
 
 Read `docs/01-user-journey.md` before touching anything in `backend/src/routes/organizations.ts`

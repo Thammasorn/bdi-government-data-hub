@@ -8,9 +8,10 @@
 | --- | --- |
 | [`docs/01-user-journey.md`](docs/01-user-journey.md) | roles, state machine, ทุกขั้นตอนของสามเส้นทาง, อีเมลที่ระบบส่ง, คำถามที่ยังค้าง |
 | [`docs/02-ui-spec.md`](docs/02-ui-spec.md) | design tokens จาก CI จริง, รายการหน้าจอ, รายละเอียดหน้าสำคัญ |
-| [`docs/03-demo-walkthrough.md`](docs/03-demo-walkthrough.md) | **วิธีเดินระบบทีละขั้น** — เตรียมข้อมูล, บัญชีทดสอบ, สาธิตทั้งสาม flow, แก้ปัญหาที่เจอบ่อย |
+| [`docs/03-demo-walkthrough.md`](docs/03-demo-walkthrough.md) | **วิธีเดินระบบทีละขั้น** — เตรียมข้อมูล, บัญชีทดสอบ, สาธิตทั้งสาม flow, แก้ปัญหาที่เจอบ่อย · **หัวข้อ 10 = สคริปต์สำหรับสาธิตสด** |
 | [`docs/04-dataset-registration-plan.md`](docs/04-dataset-registration-plan.md) | แผนการพัฒนาเส้นทางชุดข้อมูล — สคีมา, endpoint, หน้าจอ, การตรวจสอบ |
 | [`docs/05-sit-report.md`](docs/05-sit-report.md) | ผล SIT ทั้งสามเส้นทาง (48 กรณี) ข้อบกพร่องและปัญหาการจัดแนวที่แก้แล้ว — ภาพหน้าจอเก็บนอก repo |
+| [`notebooks/journey-a-admin-create-user.ipynb`](notebooks/journey-a-admin-create-user.ipynb) | ยิง API ของ Journey A ทีละขั้นด้วยอีเมลจริง — ใช้แทนหน้าจอที่สเปกไม่ได้ให้ทำ |
 
 ## สิ่งที่ทำงานแล้ว
 
