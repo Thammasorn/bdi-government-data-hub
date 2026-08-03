@@ -15,7 +15,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
-    "seed:demo": "tsx src/scripts/seed-demo.ts"
+    "seed:demo": "tsx src/scripts/seed-demo.ts",
+    "seed:demo:prod": "node dist/scripts/seed-demo.js"
   },
   "dependencies": {
     "@prisma/client": "^6.1.0",
