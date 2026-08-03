@@ -69,7 +69,11 @@ export default function PreviewPage() {
         <CardHeader title="แบบฟอร์มสร้างหน่วยงาน" description={org.name} />
         <div className="p-6">
           {form ? (
-            <PdfViewer organizationId={org.id} attachmentId={form.id} filename={form.filename} />
+            <PdfViewer
+              url={api.fileUrl(`/api/organizations/${org.id}/attachments/${form.id}`)}
+              filename={form.filename}
+              title="แบบฟอร์มสร้างหน่วยงาน"
+            />
           ) : (
             <p className="rounded-xl bg-warning-bg p-5 text-sm text-warning">
               ยังไม่มีแบบฟอร์ม กรุณากลับไปกด &ldquo;ตรวจสอบและสร้าง PDF&rdquo; อีกครั้ง

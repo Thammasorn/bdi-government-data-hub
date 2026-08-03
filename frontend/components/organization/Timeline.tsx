@@ -8,7 +8,14 @@ export interface OrgEvent {
   actor: { firstName: string | null; lastName: string | null; email: string } | null;
 }
 
-export function Timeline({ events }: { events: OrgEvent[] }) {
+/** ใช้ร่วมกับเส้นทางชุดข้อมูลได้ — ส่ง labels ของ event ชุดอื่นเข้ามาแทนได้ */
+export function Timeline({
+  events,
+  labels = EVENT_LABELS,
+}: {
+  events: OrgEvent[];
+  labels?: Record<string, string>;
+}) {
   if (events.length === 0) {
     return <p className="px-6 py-5 text-sm text-ink-muted">ยังไม่มีประวัติการดำเนินการ</p>;
   }
@@ -32,7 +39,7 @@ export function Timeline({ events }: { events: OrgEvent[] }) {
               } ring-1 ring-line`}
             />
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-ink">{EVENT_LABELS[e.type] ?? e.type}</p>
+              <p className="text-sm font-medium text-ink">{labels[e.type] ?? e.type}</p>
               <p className="mt-0.5 text-[13px] text-ink-muted">
                 {actor} · {formatThaiDate(e.createdAt)}
               </p>

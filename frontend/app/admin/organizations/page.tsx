@@ -149,7 +149,9 @@ function OrganizationTable() {
           <EmptyState hasFilter={selected.size > 0 || query.trim().length > 0} />
         ) : (
           <>
-            <div className="hidden grid-cols-[minmax(0,2fr)_minmax(0,1.6fr)_auto_9rem] gap-4 border-b border-line px-6 py-3 text-[12px] font-semibold uppercase tracking-wide text-ink-subtle md:grid">
+            {/* คอลัมน์สถานะต้องกว้างคงที่ ไม่ใช่ auto — หัวตารางกับแถวเป็นคนละ grid
+                ถ้าใช้ auto ความกว้างจะคิดจากเนื้อหาของแต่ละอันแยกกัน แล้วคอลัมน์จะเหลื่อม */}
+            <div className="hidden grid-cols-[minmax(0,2fr)_minmax(0,1.6fr)_12rem_9rem] gap-4 border-b border-line px-6 py-3 text-[12px] font-semibold uppercase tracking-wide text-ink-subtle md:grid">
               <span>ชื่อหน่วยงาน</span>
               <span>ผู้สร้าง</span>
               <span>สถานะ</span>
@@ -161,7 +163,7 @@ function OrganizationTable() {
                   <button
                     type="button"
                     onClick={() => router.push(`/admin/organizations/${row.id}`)}
-                    className="grid w-full grid-cols-1 items-center gap-2 px-6 py-4 text-left transition-colors hover:bg-navy-50/60 md:grid-cols-[minmax(0,2fr)_minmax(0,1.6fr)_auto_9rem] md:gap-4"
+                    className="grid w-full grid-cols-1 items-center gap-2 px-6 py-4 text-left transition-colors hover:bg-navy-50/60 md:grid-cols-[minmax(0,2fr)_minmax(0,1.6fr)_12rem_9rem] md:gap-4"
                   >
                     <span className="truncate font-medium text-ink">{row.name}</span>
                     <span className="min-w-0">

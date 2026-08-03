@@ -8,7 +8,9 @@ import { env } from "./env.js";
 import { adminRouter } from "./routes/admin.js";
 import { addressRouter } from "./routes/address.js";
 import { authRouter } from "./routes/auth.js";
+import { datasetRequestRouter } from "./routes/dataset-requests.js";
 import { healthRouter } from "./routes/health.js";
+import { notificationRouter } from "./routes/notifications.js";
 import { organizationRouter } from "./routes/organizations.js";
 import { ensureBucket } from "./storage.js";
 
@@ -29,6 +31,8 @@ app.use("/api/auth", authRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/address", addressRouter);
 app.use("/api/organizations", organizationRouter);
+app.use("/api/dataset-requests", datasetRequestRouter);
+app.use("/api/notifications", notificationRouter);
 
 app.use((_req, res) => {
   res.status(404).json({ error: "not_found", message: "ไม่พบเส้นทางนี้" });
