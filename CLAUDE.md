@@ -127,3 +127,7 @@ Two API base URLs, and they are not interchangeable:
 - Route params beat query strings for anything the first client render needs.
   `useSearchParams()` is empty on that render; a page that redirected when its `?id=` was
   missing bounced users away before hydration finished.
+
+
+## Notion
+The related notion for this project are page `Government Datahub Platform` and other related / linked pages.
