@@ -45,7 +45,13 @@ Production build (also what a public deployment must use):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+docker compose exec backend npm run seed:demo:prod     # seed:demo needs tsx, a devDependency
 ```
+
+The production image installs production dependencies only, so `tsx` is not there and
+`npm run seed:demo` fails with `tsx: not found`. `seed:demo:prod` runs the compiled
+`dist/scripts/seed-demo.js` instead — same script, same result. `main` runs in production
+mode, so that is the variant to use there.
 
 There is **no test framework and no ESLint config** in this repo. Verification so far has been
 typecheck + production build + driving the real API. If you add tests, wire them into
@@ -145,6 +151,11 @@ Two API base URLs, and they are not interchangeable:
 - In `docker-compose.prod.yml`, clearing mounts needs `volumes: !reset []`. A plain `volumes: []`
   is appended, not substituted, and the source bind mount keeps shadowing `dist/`.
 - Zod v4: `z.nativeEnum(X, { error: "..." })`. `errorMap` no longer exists.
+- Where `APP_URL` is https (that is `main`), the session cookie is issued `Secure`, so a script
+  that logs in over `http://localhost:4000` gets a 200 and then 401 on every later call — the
+  browser or client never sends the cookie back. Drive that deployment through
+  `https://bdi-api.thammasorn.org` instead. `curl /health/ready` on localhost is still fine;
+  it needs no session.
 - Route params beat query strings for anything the first client render needs.
   `useSearchParams()` is empty on that render; a page that redirected when its `?id=` was
   missing bounced users away before hydration finished.

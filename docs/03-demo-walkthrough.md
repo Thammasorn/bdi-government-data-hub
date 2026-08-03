@@ -127,8 +127,13 @@ docker compose logs backend | grep 'SMTP ยังไม่ได้ตั้ง
 คำสั่งเดียวจบ — **ล้างข้อมูลเดิมทั้งหมดก่อนเสมอ** แล้วสร้างใหม่ รันซ้ำได้ไม่จำกัด:
 
 ```bash
-docker compose exec backend npm run seed:demo
+docker compose exec backend npm run seed:demo         # โหมด dev
+docker compose exec backend npm run seed:demo:prod    # โหมด production (main ใช้อันนี้)
 ```
+
+> อิมเมจ production ลงเฉพาะ dependency ที่ใช้ตอนรัน จึงไม่มี `tsx` — เรียก `seed:demo`
+> ที่นั่นจะได้ `tsx: not found` ใช้ `seed:demo:prod` ซึ่งรันไฟล์ที่ compile แล้วแทน
+> ผลลัพธ์เหมือนกันทุกอย่าง
 
 ได้อะไรมาบ้าง:
 
@@ -449,7 +454,7 @@ docker compose exec postgres psql -U bdi -d bdi -c \
 ### ล้างแค่ข้อมูล (เก็บ container ไว้)
 
 ```bash
-docker compose exec backend npm run seed:demo
+docker compose exec backend npm run seed:demo        # โหมด production ใช้ seed:demo:prod
 ```
 
 ### ล้างฐานข้อมูลให้ว่างเปล่าจริง ๆ
@@ -616,8 +621,9 @@ Tunnel บนเครื่องนี้เป็นแบบ **token-managed
 1. **เลือกเครื่องที่จะสาธิต** — ใช้ `main` (<https://bdi.thammasorn.org>) เพราะเป็น
    checkout เดียวที่ตั้ง SMTP จริง อีเมลจึงเข้ากล่องจดหมายจริงให้ผู้ชมเห็น
    ตรวจว่าพร้อม: `curl -s http://localhost:4000/health/ready`
-2. **ล้างแล้วใส่ข้อมูลตัวอย่างใหม่** — `docker compose exec backend npm run seed:demo`
-   (ทำให้หน้าตัวอย่างใน §10.5 กลับมาอยู่ในสถานะที่ควรเป็น)
+2. **ล้างแล้วใส่ข้อมูลตัวอย่างใหม่** — `docker compose exec backend npm run seed:demo:prod`
+   (บน `main` ต้องใช้ตัวลงท้าย `:prod` — ดูหัวข้อ 3 · ทำให้หน้าตัวอย่างใน §10.5
+   กลับมาอยู่ในสถานะที่ควรเป็น)
 3. **เตรียมอีเมลจริงสองอัน** ใช้ plus-addressing ของ Gmail กล่องเดียวก็พอ
    - `คุณ+user@gmail.com` — ผู้ใช้หน่วยงาน (คนกรอกฟอร์ม)
    - `คุณ+boss@gmail.com` — ผู้มีอำนาจกระทำการแทน (คนลงนามให้หน่วยงาน)
@@ -738,4 +744,4 @@ Tunnel บนเครื่องนี้เป็นแบบ **token-managed
 | อีเมลไม่เข้าสักที | เปิด log ที่เตรียมไว้ — ลิงก์และ OTP อยู่ในนั้นเสมอ (หัวข้อ 2) หรือรันเซลล์ *หาลิงก์และ OTP จาก log* ใน notebook |
 | กด OTP ผิดจนถูกล็อก | กด `ขอรหัสใหม่` (รอ 60 วินาที) หรือใช้ปุ่ม ThaiD ถ้าเปิดโหมดจำลองไว้ |
 | กรอกฟอร์มยาวไม่ทัน | มีร่างที่กรอกไว้แล้ว `DR-<ปี>-0001` ของ `kanya@nso.go.th` เปิดต่อได้เลย |
-| ข้อมูลเละระหว่างซ้อม | `npm run seed:demo` ใช้เวลาไม่ถึงนาที (ล้างข้อมูลทั้งหมด — ดูหัวข้อ 7) |
+| ข้อมูลเละระหว่างซ้อม | `npm run seed:demo:prod` ใช้เวลาไม่ถึงนาที (ล้างข้อมูลทั้งหมด — ดูหัวข้อ 7) |
