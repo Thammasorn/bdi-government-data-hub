@@ -88,6 +88,14 @@ Invite-only. There is no self-signup and no admin UI — the spec says so explic
 `POST /api/admin/invitations` is guarded by a shared secret (`x-admin-token`), not a session,
 because the caller is an operator script.
 
+**The session cookie identifies the user and nothing else.** `requireAuth` re-reads `roles` and
+`organizationId` from the database on every request and overwrites whatever the JWT carried,
+because both change while a session is still valid — creating an organization sets the user's
+`organizationId`, and being named as a signatory adds `ORGANIZATION_APPROVER`. Trusting the
+cookie meant a user who had just created an organization could not register a dataset until
+they logged out and back in. Don't reintroduce reads of `session.roles` / `session.organizationId`
+that bypass this, and don't "optimise" the lookup away.
+
 Registration is two steps: `/register` creates the user as `INVITED`, then `/verify-otp`
 flips it to `ACTIVE` and issues the session. Invitation tokens are stored **hashed**
 (SHA-256, not bcrypt — they need to be looked up by value, and they are 32 random bytes,
