@@ -193,9 +193,13 @@ export interface DatasetRequestListItem {
   status: DatasetRequestStatus;
   submittedAt: string | null;
   createdAt: string;
+  /** เวลาที่แถวนี้ถูกแก้ล่าสุด — หน้าแรกแสดงคู่กับวันที่นำข้อมูลเข้ามา */
+  updatedAt: string;
   organization: { id: string; name: string };
   createdBy: { firstName: string | null; lastName: string | null; email: string };
   assignedSpecialist: { id: string; firstName: string | null; lastName: string | null } | null;
+  /** แบบฟอร์มที่ระบบสร้าง — ว่างได้ ถ้ายังไม่เคยกดตรวจสอบและสร้าง PDF */
+  generatedForm: { id: string; filename: string } | null;
 }
 
 export interface SpecialistOption {

@@ -201,13 +201,27 @@ datasetRequestRouter.get("/", async (req, res) => {
       status: true,
       submittedAt: true,
       createdAt: true,
+      // หน้าแรกของผู้ใช้หน่วยงานต้องบอก "วันเวลาที่มี update ล่าสุด" คู่กับวันที่นำเข้า
+      updatedAt: true,
       organization: { select: { id: true, name: true } },
       createdBy: { select: { firstName: true, lastName: true, email: true } },
       assignedSpecialist: { select: { id: true, firstName: true, lastName: true } },
+      // เอกสารที่ระบบสร้าง — ใช้ทำปุ่มดาวน์โหลดในรายการโดยไม่ต้องเปิดคำขอทีละใบ
+      attachments: {
+        where: { kind: DatasetAttachmentKind.GENERATED_FORM },
+        select: { id: true, filename: true },
+        take: 1,
+      },
     },
   });
 
-  res.json({ requests });
+  // แบนเป็น generatedForm ตัวเดียว — ฝั่งหน้าเว็บสนใจแค่ว่ามีเอกสารให้โหลดไหม ไม่ใช่ทั้งกอง
+  res.json({
+    requests: requests.map(({ attachments, ...rest }) => ({
+      ...rest,
+      generatedForm: attachments[0] ?? null,
+    })),
+  });
 });
 
 /** ให้หน้าเว็บรู้ว่าปุ่ม "ลงทะเบียนชุดข้อมูล" เปิดได้หรือยัง และถ้ายังไม่ได้เพราะอะไร */
@@ -483,9 +497,12 @@ datasetRequestRouter.get("/:id/attachments/:attachmentId", async (req, res) => {
 
   const stream = await minio.getObject(BUCKET, attachment.objectKey);
   res.setHeader("Content-Type", attachment.mimeType);
+  // ค่าปกติเป็น inline เพราะหน้ารายละเอียดฝัง PDF ไว้ใน <iframe>
+  // ปุ่ม "ดาวน์โหลด" ในรายการส่ง ?download=1 มาเพื่อให้เบราว์เซอร์บันทึกไฟล์แทนที่จะเปิดดู
+  const disposition = "download" in req.query ? "attachment" : "inline";
   res.setHeader(
     "Content-Disposition",
-    `inline; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`,
+    `${disposition}; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`,
   );
   stream.pipe(res);
 });
