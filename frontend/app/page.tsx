@@ -1,15 +1,23 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import { DatasetSection } from "@/components/home/DatasetSection";
 import { useSession } from "@/components/SessionProvider";
 import { Button } from "@/components/ui/Button";
-import { DotDecoration } from "@/components/ui/Card";
+import { Card, DotDecoration, StatusBadge } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
-import { isBdiStaff } from "@/lib/status";
+import {
+  isBdiStaff,
+  isPendingDatasetStatus,
+  type DatasetRequestStatus,
+  type OrganizationStatus,
+} from "@/lib/status";
+import type { DatasetRequestListItem } from "@/lib/types";
 
 export default function HomePage() {
   const { user, loading } = useSession();
@@ -23,13 +31,7 @@ export default function HomePage() {
       router.replace("/login");
       return;
     }
-    if (isBdiStaff(user.roles)) {
-      router.replace("/admin/organizations");
-      return;
-    }
-    if (user.organizationId) {
-      router.replace(`/organizations/${user.organizationId}`);
-    }
+    if (isBdiStaff(user.roles)) router.replace("/admin/organizations");
   }, [user, loading, router]);
 
   const createOrganization = async () => {
@@ -51,10 +53,188 @@ export default function HomePage() {
     }
   };
 
-  if (loading || !user || isBdiStaff(user.roles) || user.organizationId) {
-    return <Spinner />;
+  if (loading || !user || isBdiStaff(user.roles)) return <Spinner />;
+
+  // ผู้มีอำนาจกระทำการแทนที่ถูกเชิญเข้ามาทีหลังยังไม่ถูกผูก organizationId
+  // แต่เห็นคำขอของหน่วยงานตัวเองผ่าน signatoryEmail จึงต้องได้หน้าแรกแบบเดียวกัน
+  // ไม่ใช่หน้าชวนสร้างหน่วยงาน
+  const isApprover = user.roles.includes("ORGANIZATION_APPROVER");
+  if (!user.organizationId && !isApprover) {
+    return <CreateOrganizationPrompt loading={creating} onCreate={createOrganization} />;
   }
 
+  return <OrganizationHome isApprover={isApprover} />;
+}
+
+// ---------------------------------------------------------------- หน้าแรกของผู้ใช้หน่วยงาน
+
+/**
+ * สเปก (Notion — User Home page): หน้าแรกของทั้ง Organization Officer และ Organization Approver
+ * แบ่งเป็นสอง section — รายการที่รออนุมัติอยู่บนสุดเสมอ ตามด้วยชุดข้อมูลที่เหลือของหน่วยงาน
+ * ทุกแถวบอกวันเวลาที่นำเข้ามา วันเวลาที่อัปเดตล่าสุด สถานะ ชื่อชุดข้อมูล และปุ่ม view / download
+ */
+function OrganizationHome({ isApprover }: { isApprover: boolean }) {
+  const { user } = useSession();
+  const { show } = useToast();
+  const [rows, setRows] = useState<DatasetRequestListItem[] | null>(null);
+
+  useEffect(() => {
+    // ดึงครั้งเดียวแล้วแบ่ง section ฝั่งหน้าเว็บ — endpoint คืนเฉพาะคำขอที่ผู้ใช้เห็นได้อยู่แล้ว
+    // และยิงสองรอบด้วย ?status= ก็ได้ข้อมูลชุดเดียวกันแต่เสียรอบเน็ตเวิร์กเปล่า ๆ
+    api
+      .get<{ requests: DatasetRequestListItem[] }>("/api/dataset-requests")
+      .then((d) => setRows(d.requests))
+      .catch(() => {
+        setRows([]);
+        show({ tone: "error", title: "โหลดรายการชุดข้อมูลไม่สำเร็จ" });
+      });
+  }, [show]);
+
+  const { pending, others, awaitingMe, counts } = useMemo(() => split(rows ?? []), [rows]);
+
+  const name = user?.firstName?.trim() || user?.email || "";
+  const organization = user?.organization ?? null;
+
+  return (
+    <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+      <HomeHeader name={name} organization={organization} />
+
+      {rows === null ? (
+        <Spinner className="min-h-[40vh]" />
+      ) : (
+        <>
+          <StatTiles counts={counts} total={rows.length} />
+
+          {/* ผู้มีอำนาจกระทำการแทนคือคนเดียวที่กดต่อได้เมื่อคำขอค้างที่ด่านนี้
+              จึงยกขึ้นมาเป็นการ์ดแยก ไม่ให้จมอยู่ในรายการรวม */}
+          {isApprover && awaitingMe.length > 0 ? (
+            <Card className="mb-8 border-l-[3px] border-l-coral-500">
+              <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="font-medium text-navy-800">
+                    รอคุณพิจารณาและลงนาม {awaitingMe.length} รายการ
+                  </p>
+                  <p className="mt-0.5 text-sm text-ink-muted">
+                    คำขอเหล่านี้ผ่านการตรวจสอบเบื้องต้นจาก BDI แล้ว และหยุดรอความเห็นชอบของคุณ
+                  </p>
+                </div>
+                <Link href={`/datasets/${awaitingMe[0].id}`} className="shrink-0">
+                  <Button>เริ่มพิจารณา</Button>
+                </Link>
+              </div>
+            </Card>
+          ) : null}
+
+          <div className="flex flex-col gap-8">
+            <DatasetSection
+              title="รายการข้อมูลที่รออนุมัติ"
+              description="คำขอที่นำส่งแล้วและยังอยู่ระหว่างการพิจารณา เรียงตามวันเวลาที่ส่งคำขอ ล่าสุดอยู่บนสุด"
+              rows={pending}
+              tone="attention"
+              emptyText="ยังไม่มีคำขอที่รอการอนุมัติ"
+            />
+
+            <DatasetSection
+              title="ชุดข้อมูลของหน่วยงาน"
+              description="ชุดข้อมูลที่ลงทะเบียนเข้ามาแล้ว ทั้งฉบับร่าง รายการที่ต้องแก้ไข และรายการที่จบกระบวนการ"
+              rows={others}
+              emptyText="ยังไม่มีชุดข้อมูลอื่นของหน่วยงาน"
+              footer={
+                <Link
+                  href="/datasets"
+                  className="text-sm font-medium text-navy-700 underline-offset-4 hover:underline"
+                >
+                  ดูชุดข้อมูลทั้งหมดพร้อมตัวกรองและการค้นหา →
+                </Link>
+              }
+            />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function HomeHeader({
+  name,
+  organization,
+}: {
+  name: string;
+  organization: { id: string; name: string; status: string } | null;
+}) {
+  const status = organization?.status as OrganizationStatus | undefined;
+
+  return (
+    <header className="relative mb-8 overflow-hidden">
+      <DotDecoration className="-right-4 -top-6 h-36 w-36 text-navy-500" />
+      <div className="relative">
+        <p className="text-[15px] text-ink-muted">สวัสดี {name}</p>
+        <h1 className="mt-1 text-[26px] font-semibold text-navy-800">
+          {organization?.name ?? "หน้าแรก"}
+        </h1>
+        {organization ? (
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            {status ? <StatusBadge status={status} /> : null}
+            <Link
+              href={`/organizations/${organization.id}`}
+              className="text-sm font-medium text-navy-700 underline-offset-4 hover:underline"
+            >
+              ดูข้อมูลหน่วยงานของฉัน →
+            </Link>
+          </div>
+        ) : (
+          <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-ink-muted">
+            คุณเข้าใช้งานในฐานะผู้มีอำนาจกระทำการแทน — ด้านล่างคือคำขอลงทะเบียนชุดข้อมูลของหน่วยงานที่คุณดูแล
+          </p>
+        )}
+
+        {status && status !== "ACTIVE" ? (
+          <div className="mt-5 rounded-xl border-l-[3px] border-warning bg-warning-bg p-5">
+            <p className="text-[13px] font-semibold text-warning">หน่วยงานยังไม่เปิดใช้งาน</p>
+            <p className="mt-1.5 text-[15px] leading-relaxed text-ink">
+              หน่วยงานต้องผ่านการอนุมัติและเปิดใช้งานก่อน จึงจะลงทะเบียนชุดข้อมูลใหม่ได้
+              ระหว่างนี้ยังเปิดดูคำขอเดิมได้ตามปกติ
+            </p>
+          </div>
+        ) : null}
+      </div>
+    </header>
+  );
+}
+
+function StatTiles({
+  counts,
+  total,
+}: {
+  counts: { pending: number; revision: number; approved: number };
+  total: number;
+}) {
+  const tiles = [
+    { label: "ชุดข้อมูลทั้งหมด", value: total, className: "text-navy-800" },
+    { label: "รออนุมัติ", value: counts.pending, className: "text-navy-600" },
+    { label: "รอการแก้ไข", value: counts.revision, className: "text-danger" },
+    { label: "อนุมัติแล้ว", value: counts.approved, className: "text-success" },
+  ];
+
+  return (
+    <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
+      {tiles.map((t) => (
+        <Card key={t.label} className="px-5 py-4">
+          <p className="text-[13px] text-ink-muted">{t.label}</p>
+          <p className={`mt-1 text-[28px] font-semibold leading-tight ${t.className}`}>{t.value}</p>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+function CreateOrganizationPrompt({
+  loading,
+  onCreate,
+}: {
+  loading: boolean;
+  onCreate: () => void;
+}) {
   // สเปก: "ระบบจะแสดงปุ่มสร้างหน่วยงานตรงกลางหน้าจอ ซึ่งเป็นเมนูเดียวที่ผู้ใช้เห็นและทำได้"
   return (
     <div className="relative mx-auto flex min-h-[calc(100vh-8.5rem)] max-w-2xl items-center justify-center px-4 py-16">
@@ -85,10 +265,40 @@ export default function HomePage() {
           ระบบจะพาคุณกรอกข้อมูลทีละขั้นและสร้างแบบฟอร์มให้อัตโนมัติ
         </p>
 
-        <Button size="lg" className="mt-8" loading={creating} onClick={createOrganization}>
+        <Button size="lg" className="mt-8" loading={loading} onClick={onCreate}>
           สร้างหน่วยงาน
         </Button>
       </div>
     </div>
   );
+}
+
+/**
+ * แบ่งคำขอออกเป็นสอง section ตามสเปก แล้วนับยอดสำหรับการ์ดสรุป
+ *
+ * รายการที่รออนุมัติไม่ถูกใส่ซ้ำใน section ล่าง — สเปกเขียนว่า "ตามด้วยชุดข้อมูลของ
+ * organization นั้น ๆ" คือส่วนที่เหลือ ไม่ใช่รายการเดิมซ้ำอีกรอบ
+ *
+ * ทั้งสอง section เรียงตามวันเวลาที่ส่งคำขอจากใหม่ไปเก่า (ร่างที่ยังไม่ส่งใช้วันที่สร้างแทน)
+ * ทิศทางเดียวกับตารางในหน้า /datasets เพื่อไม่ให้ผู้ใช้ต้องอ่านสองแบบในจอเดียว
+ */
+function split(rows: DatasetRequestListItem[]) {
+  const at = (r: DatasetRequestListItem) => new Date(r.submittedAt ?? r.createdAt).getTime();
+  const byNewest = (a: DatasetRequestListItem, b: DatasetRequestListItem) => at(b) - at(a);
+
+  const pending = rows.filter((r) => isPendingDatasetStatus(r.status)).sort(byNewest);
+  const others = rows.filter((r) => !isPendingDatasetStatus(r.status)).sort(byNewest);
+
+  const count = (status: DatasetRequestStatus) => rows.filter((r) => r.status === status).length;
+
+  return {
+    pending,
+    others,
+    awaitingMe: pending.filter((r) => r.status === "PENDING_ORG_APPROVER"),
+    counts: {
+      pending: pending.length,
+      revision: count("NEEDS_REVISION"),
+      approved: count("APPROVED"),
+    },
+  };
 }

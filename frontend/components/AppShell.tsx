@@ -28,7 +28,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
 }
 
-function navItems(roles: string[], hasOrganization: boolean) {
+function navItems(roles: string[], organizationId: string | null) {
+  const hasOrganization = Boolean(organizationId);
   if (isBdiStaff(roles)) {
     // ผู้เชี่ยวชาญมีบทบาทเฉพาะเส้นทางชุดข้อมูล จึงไม่ต้องเห็นเมนูหน่วยงาน
     const specialistOnly =
@@ -47,15 +48,19 @@ function navItems(roles: string[], hasOrganization: boolean) {
     return items;
   }
   // ผู้มีอำนาจกระทำการแทนที่ถูกเชิญเข้ามาทีหลังยังไม่ถูกผูก organizationId
-  // แต่ต้องเข้าหน้าชุดข้อมูลได้ เพราะเป็นผู้พิจารณาด่านที่ 2 ของเส้นทาง C
+  // แต่ต้องเข้าหน้าแรกและหน้าชุดข้อมูลได้ เพราะเป็นผู้พิจารณาด่านที่ 2 ของเส้นทาง C
   if (roles.includes("ORGANIZATION_APPROVER") && !hasOrganization) {
-    return [{ href: "/datasets", label: "ชุดข้อมูล" }];
+    return [
+      { href: "/", label: "หน้าแรก" },
+      { href: "/datasets", label: "ชุดข้อมูล" },
+    ];
   }
 
   // สเปก: ผู้ใช้ที่ยังไม่มีหน่วยงานเห็นได้แค่ปุ่มสร้างหน่วยงานกลางจอ ไม่มีเมนู
   return hasOrganization
     ? [
-        { href: "/", label: "หน่วยงานของฉัน" },
+        { href: "/", label: "หน้าแรก" },
+        { href: `/organizations/${organizationId}`, label: "หน่วยงานของฉัน" },
         { href: "/datasets", label: "ชุดข้อมูล" },
       ]
     : [];
@@ -64,7 +69,7 @@ function navItems(roles: string[], hasOrganization: boolean) {
 function Header() {
   const { user } = useSession();
   const pathname = usePathname();
-  const items = navItems(user?.roles ?? [], Boolean(user?.organizationId));
+  const items = navItems(user?.roles ?? [], user?.organizationId ?? null);
 
   return (
     <header className="sticky top-0 z-40 bg-white/85 backdrop-blur-md">

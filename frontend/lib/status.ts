@@ -68,6 +68,30 @@ export const DATASET_STATUS_META: Record<DatasetRequestStatus, { label: string; 
   REJECTED: { label: "ไม่อนุมัติ", className: "bg-danger-bg text-danger" },
 };
 
+/**
+ * สถานะที่คำขอยัง "รออนุมัติ" อยู่ในสายพาน — ยังไม่จบและไม่ได้ค้างที่หน่วยงาน
+ * หน้าแรกใช้ชุดนี้แยก section บนออกจากรายการชุดข้อมูลทั้งหมด
+ */
+export const PENDING_DATASET_STATUSES: DatasetRequestStatus[] = [
+  "PENDING_OFFICER_REVIEW",
+  "PENDING_ORG_APPROVER",
+  "PENDING_OFFICER_FINAL_CHECK",
+  "PENDING_BDI_APPROVAL",
+];
+
+export const isPendingDatasetStatus = (status: DatasetRequestStatus) =>
+  PENDING_DATASET_STATUSES.includes(status);
+
+/** ด่านที่คำขอค้างอยู่ ใช้บอกผู้ใช้ว่า "ตอนนี้ใครถืออยู่" ไม่ใช่แค่ชื่อสถานะ */
+export const DATASET_PENDING_OWNER: Partial<Record<DatasetRequestStatus, string>> = {
+  PENDING_OFFICER_REVIEW: "เจ้าหน้าที่ BDI กำลังตรวจสอบเบื้องต้น",
+  PENDING_ORG_APPROVER: "ผู้มีอำนาจกระทำการแทนของหน่วยงานกำลังพิจารณา",
+  PENDING_OFFICER_FINAL_CHECK: "เจ้าหน้าที่ BDI กำลังตรวจสอบขั้นสุดท้าย",
+  PENDING_BDI_APPROVAL: "ผู้อนุมัติ BDI กำลังพิจารณา",
+  NEEDS_REVISION: "รอหน่วยงานของคุณแก้ไขและนำส่งใหม่",
+  DRAFT: "ยังเป็นฉบับร่าง ยังไม่ได้นำส่ง",
+};
+
 export const DATASET_EVENT_LABELS: Record<string, string> = {
   CREATED: "สร้างคำขอ",
   SUBMITTED: "นำส่งคำขอ",
