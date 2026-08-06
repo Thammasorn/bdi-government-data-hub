@@ -44,7 +44,7 @@ export function Timeline({
                 {actor} · {formatThaiDate(e.createdAt)}
               </p>
               {e.note ? (
-                <p className="mt-2 whitespace-pre-wrap rounded-lg bg-canvas px-3 py-2 text-[13px] leading-relaxed text-ink">
+                <p className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-canvas px-3 py-2 text-[13px] leading-relaxed text-ink">
                   {e.note}
                 </p>
               ) : null}

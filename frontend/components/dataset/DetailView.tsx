@@ -288,7 +288,9 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
           <p className="text-[13px] font-semibold uppercase tracking-wide text-coral-500">
             {request.requestNumber}
           </p>
-          <h1 className="mt-1 text-[26px] font-semibold text-navy-800">{datasetTitle(request)}</h1>
+          <h1 className="mt-1 break-words text-[26px] font-semibold text-navy-800">
+            {datasetTitle(request)}
+          </h1>
           <p className="mt-1.5 text-[15px] text-ink-muted">
             {request.organization.name} · ยื่นโดย{" "}
             {fullName(request.createdBy.prefix, request.createdBy.firstName, request.createdBy.lastName)}
@@ -300,7 +302,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
       {request.status === "NEEDS_REVISION" && request.revisionNote ? (
         <div className="mb-6 rounded-xl border-l-[3px] border-danger bg-danger-bg p-5">
           <p className="text-[13px] font-semibold text-danger">สิ่งที่ต้องแก้ไข</p>
-          <p className="mt-1.5 whitespace-pre-wrap text-[15px] leading-relaxed text-ink">
+          <p className="mt-1.5 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-ink">
             {request.revisionNote}
           </p>
           {lastRevision ? (
@@ -323,7 +325,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
       {request.status === "REJECTED" && request.rejectionReason ? (
         <div className="mb-6 rounded-xl border-l-[3px] border-danger bg-danger-bg p-5">
           <p className="text-[13px] font-semibold text-danger">เหตุผลที่ไม่อนุมัติ</p>
-          <p className="mt-1.5 whitespace-pre-wrap text-[15px] leading-relaxed text-ink">
+          <p className="mt-1.5 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-ink">
             {request.rejectionReason}
           </p>
           <p className="mt-2 text-[13px] text-ink-muted">
@@ -662,7 +664,11 @@ function Rows({ rows }: { rows: Array<[string, string | null | undefined]> }) {
           <dt className="text-sm text-ink-muted">{label}</dt>
           <dd
             className={
-              value ? "whitespace-pre-wrap text-[15px] text-ink" : "text-[15px] text-ink-subtle"
+              value
+                ? // break-words: ค่าที่ผู้ใช้กรอกเองอาจเป็นสตริงยาวที่ไม่มีช่องว่างเลย
+                  // (endpoint, อีเมล, หมายเหตุ) ซึ่งไม่มีจุดให้ตัดบรรทัดและจะดันทะลุการ์ดออกไป
+                  "whitespace-pre-wrap break-words text-[15px] text-ink"
+                : "text-[15px] text-ink-subtle"
             }
           >
             {value || "—"}

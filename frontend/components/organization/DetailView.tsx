@@ -145,7 +145,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
 
       <header className="mb-7 mt-4 flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="text-[26px] font-semibold text-navy-800">{org.name}</h1>
+          <h1 className="break-words text-[26px] font-semibold text-navy-800">{org.name}</h1>
           <p className="mt-1.5 text-[15px] text-ink-muted">
             ยื่นโดย {fullName(org.createdBy.prefix, org.createdBy.firstName, org.createdBy.lastName)} ·{" "}
             {org.createdBy.email}
@@ -157,7 +157,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
       {org.status === "NEEDS_REVISION" && org.revisionNote ? (
         <div className="mb-6 rounded-xl border-l-[3px] border-danger bg-danger-bg p-5">
           <p className="text-[13px] font-semibold text-danger">สิ่งที่ต้องแก้ไข</p>
-          <p className="mt-1.5 whitespace-pre-wrap text-[15px] leading-relaxed text-ink">{org.revisionNote}</p>
+          <p className="mt-1.5 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-ink">{org.revisionNote}</p>
           {isOwner ? (
             <Button size="sm" className="mt-4" onClick={() => router.push(`/organizations/${org.id}/edit`)}>
               แก้ไขข้อมูล
@@ -369,7 +369,9 @@ function Rows({ rows }: { rows: Array<[string, string | null | undefined]> }) {
           className="grid gap-1 px-6 py-3.5 sm:grid-cols-[11rem_minmax(0,1fr)] sm:items-baseline sm:gap-4"
         >
           <dt className="text-sm text-ink-muted">{label}</dt>
-          <dd className={value ? "text-[15px] text-ink" : "text-[15px] text-ink-subtle"}>{value || "—"}</dd>
+          <dd className={value ? "break-words text-[15px] text-ink" : "text-[15px] text-ink-subtle"}>
+            {value || "—"}
+          </dd>
         </div>
       ))}
     </dl>

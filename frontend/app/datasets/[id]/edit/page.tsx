@@ -273,7 +273,7 @@ export default function EditDatasetRequestPage() {
       {revisionNote ? (
         <div className="mb-7 rounded-xl border-l-[3px] border-danger bg-danger-bg p-5">
           <p className="text-[13px] font-semibold text-danger">สิ่งที่ต้องแก้ไขตามที่ผู้ตรวจสอบระบุ</p>
-          <p className="mt-1.5 whitespace-pre-wrap text-[15px] leading-relaxed text-ink">{revisionNote}</p>
+          <p className="mt-1.5 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-ink">{revisionNote}</p>
         </div>
       ) : null}
 
