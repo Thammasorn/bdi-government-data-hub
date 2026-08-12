@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
-import { InvitationStatus, OtpPurpose, UserStatus } from "@prisma/client";
+import { OtpPurpose, UserAccountStatus } from "@prisma/client";
 
 import { prisma } from "../db.js";
 import { env } from "../env.js";
@@ -10,14 +10,15 @@ import {
   cookieOptions,
   generateOtp,
   hashPassword,
-  hashToken,
   signSession,
   verifyPassword,
 } from "../lib/auth.js";
+import { activeRoleCodes, completeActivation, findUsableActivationKey } from "../lib/iam.js";
 import { sendOtpEmail } from "../lib/mail.js";
+import { ROLE_LABELS } from "../lib/roles.js";
+import { ORGANIZATION_SCOPED_ROLES, type RoleCode } from "../lib/system.js";
 import { emailSchema, formatZodError, passwordSchema, phoneSchema } from "../lib/validation.js";
 import { requireAuth } from "../middleware/auth.js";
-import { ROLE_LABELS } from "../lib/roles.js";
 
 export const authRouter = Router();
 
@@ -28,26 +29,24 @@ const registerSchema = z.object({
   lastName: z.string().trim().min(1, "กรุณากรอกนามสกุล"),
   phone: phoneSchema,
   password: passwordSchema,
+  /**
+   * เลขบัตรประชาชน — sheet `user_account` มาร์ก cid เป็น Required
+   * บังคับเฉพาะบัญชีฝั่งหน่วยงาน เพราะเจ้าหน้าที่ BDI ยังไม่ได้เก็บเลขบัตร
+   * (ดู docs/06-db-migration-plan.md §5 ข้อ 1)
+   */
+  cid: z
+    .string()
+    .trim()
+    .regex(/^\d{13}$/, "เลขประจำตัวประชาชนต้องเป็นตัวเลข 13 หลัก")
+    .optional(),
 });
 
-/** หา invitation ที่ยังใช้ได้จาก token ดิบ */
-async function findLiveInvitation(token: string) {
-  const invitation = await prisma.invitation.findUnique({
-    where: { tokenHash: hashToken(token) },
-  });
-  if (!invitation) return { invitation: null, reason: "not_found" as const };
-  if (invitation.status !== InvitationStatus.PENDING) {
-    return { invitation: null, reason: "used" as const };
-  }
-  if (invitation.expiresAt < new Date()) {
-    await prisma.invitation.update({
-      where: { id: invitation.id },
-      data: { status: InvitationStatus.EXPIRED },
-    });
-    return { invitation: null, reason: "expired" as const };
-  }
-  return { invitation, reason: null };
-}
+const ACTIVATION_FAILURE_MESSAGES: Record<string, string> = {
+  expired: "ลิงก์คำเชิญหมดอายุแล้ว กรุณาติดต่อเจ้าหน้าที่เพื่อขอลิงก์ใหม่",
+  used: "ลิงก์คำเชิญนี้ถูกใช้ไปแล้ว หากคุณมีบัญชีอยู่แล้วให้เข้าสู่ระบบ",
+  revoked: "ลิงก์คำเชิญนี้ถูกยกเลิกแล้ว กรุณาติดต่อเจ้าหน้าที่",
+  not_found: "ไม่พบลิงก์คำเชิญนี้ในระบบ",
+};
 
 async function issueOtp(email: string) {
   const code = generateOtp();
@@ -75,22 +74,18 @@ authRouter.get("/invitation", async (req, res) => {
     res.status(400).json({ error: "invalid", message: "ไม่พบ token" });
     return;
   }
-  const { invitation, reason } = await findLiveInvitation(token);
-  if (!invitation) {
-    const message =
-      reason === "expired"
-        ? "ลิงก์คำเชิญหมดอายุแล้ว กรุณาติดต่อเจ้าหน้าที่เพื่อขอลิงก์ใหม่"
-        : reason === "used"
-          ? "ลิงก์คำเชิญนี้ถูกใช้ไปแล้ว หากคุณมีบัญชีอยู่แล้วให้เข้าสู่ระบบ"
-          : "ไม่พบลิงก์คำเชิญนี้ในระบบ";
-    res.status(410).json({ error: reason, message });
+  const { key, reason } = await findUsableActivationKey(token);
+  if (!key) {
+    res.status(410).json({ error: reason, message: ACTIVATION_FAILURE_MESSAGES[reason!] });
     return;
   }
   res.json({
-    email: invitation.email,
-    role: invitation.role,
-    roleLabel: ROLE_LABELS[invitation.role],
-    expiresAt: invitation.expiresAt,
+    email: key.userAccount.email,
+    role: key.role.code,
+    roleLabel: ROLE_LABELS[key.role.code as RoleCode] ?? key.role.nameTh,
+    organizationId: key.organization.id,
+    organizationName: key.organization.nameTh,
+    expiresAt: key.expiresAt,
   });
 });
 
@@ -102,59 +97,67 @@ authRouter.post("/register", async (req, res) => {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;
   }
-  const { token, prefix, firstName, lastName, phone, password } = parsed.data;
+  const { token, prefix, firstName, lastName, phone, password, cid } = parsed.data;
 
-  const { invitation, reason } = await findLiveInvitation(token);
-  if (!invitation) {
-    res.status(410).json({ error: reason, message: "ลิงก์คำเชิญใช้งานไม่ได้แล้ว" });
+  const { key, reason } = await findUsableActivationKey(token);
+  if (!key) {
+    res.status(410).json({ error: reason, message: ACTIVATION_FAILURE_MESSAGES[reason!] });
     return;
   }
 
-  const existing = await prisma.user.findUnique({ where: { email: invitation.email } });
-  if (existing?.status === UserStatus.ACTIVE) {
+  if (key.userAccount.status === UserAccountStatus.ACTIVE) {
     res.status(409).json({ error: "exists", message: "อีเมลนี้มีบัญชีอยู่แล้ว กรุณาเข้าสู่ระบบ" });
     return;
   }
 
-  const data = {
-    prefix,
-    firstName,
-    lastName,
-    phone,
-    passwordHash: await hashPassword(password),
-    roles: [invitation.role],
-    status: UserStatus.INVITED,
-    organizationId: invitation.organizationId,
-  };
+  if (ORGANIZATION_SCOPED_ROLES.includes(key.role.code as RoleCode) && !cid) {
+    res.status(400).json({
+      error: "validation",
+      fields: { cid: "กรุณากรอกเลขประจำตัวประชาชน 13 หลัก" },
+    });
+    return;
+  }
 
-  await prisma.user.upsert({
-    where: { email: invitation.email },
-    create: { email: invitation.email, ...data },
-    update: data,
+  await prisma.userAccount.update({
+    where: { id: key.userAccountId },
+    data: {
+      prefixTh: prefix,
+      firstnameTh: firstName,
+      lastnameTh: lastName,
+      displayName: `${prefix}${firstName} ${lastName}`,
+      phoneNumber: phone,
+      cid: cid ?? undefined,
+      passwordHash: await hashPassword(password),
+      updatedBy: key.userAccountId,
+    },
   });
 
-  await issueOtp(invitation.email);
-  res.status(202).json({ email: invitation.email, nextStep: "verify_otp" });
+  await issueOtp(key.userAccount.email);
+  res.status(202).json({ email: key.userAccount.email, nextStep: "verify_otp" });
 });
 
 // ---------------------------------------------------------------- ยืนยัน OTP (ขั้นที่ 2)
 
 authRouter.post("/verify-otp", async (req, res) => {
-  const schema = z.object({ token: z.string().min(1), code: z.string().trim().length(6, "รหัสต้องมี 6 หลัก") });
+  const schema = z.object({
+    token: z.string().min(1),
+    code: z.string().trim().length(6, "รหัสต้องมี 6 หลัก"),
+  });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;
   }
 
-  const { invitation, reason } = await findLiveInvitation(parsed.data.token);
-  if (!invitation) {
-    res.status(410).json({ error: reason, message: "ลิงก์คำเชิญใช้งานไม่ได้แล้ว" });
+  const { key, reason } = await findUsableActivationKey(parsed.data.token);
+  if (!key) {
+    res.status(410).json({ error: reason, message: ACTIVATION_FAILURE_MESSAGES[reason!] });
     return;
   }
 
+  const email = key.userAccount.email;
   const otp = await prisma.otpCode.findFirst({
-    where: { email: invitation.email, purpose: OtpPurpose.REGISTRATION, consumedAt: null },
+    where: { email, purpose: OtpPurpose.REGISTRATION, consumedAt: null },
     orderBy: { createdAt: "desc" },
   });
   if (!otp || otp.expiresAt < new Date()) {
@@ -163,7 +166,9 @@ authRouter.post("/verify-otp", async (req, res) => {
   }
   if (otp.attempts >= env.auth.otpMaxAttempts) {
     await prisma.otpCode.update({ where: { id: otp.id }, data: { consumedAt: new Date() } });
-    res.status(429).json({ error: "otp_locked", message: "กรอกรหัสผิดเกินจำนวนที่กำหนด กรุณาขอรหัสใหม่" });
+    res
+      .status(429)
+      .json({ error: "otp_locked", message: "กรอกรหัสผิดเกินจำนวนที่กำหนด กรุณาขอรหัสใหม่" });
     return;
   }
 
@@ -177,29 +182,18 @@ authRouter.post("/verify-otp", async (req, res) => {
     return;
   }
 
-  const user = await prisma.$transaction(async (tx) => {
+  // ขั้นที่ 6–8 ของ lifecycle ใน sheet `activation_key` — ต้องอยู่ใน transaction เดียว
+  await prisma.$transaction(async (tx) => {
     await tx.otpCode.update({ where: { id: otp.id }, data: { consumedAt: new Date() } });
-    await tx.invitation.update({
-      where: { id: invitation.id },
-      data: { status: InvitationStatus.ACCEPTED, acceptedAt: new Date() },
-    });
-    return tx.user.update({
-      where: { email: invitation.email },
-      data: { status: UserStatus.ACTIVE, emailVerifiedAt: new Date(), lastLoginAt: new Date() },
+    await completeActivation(tx, {
+      activationKeyId: key.id,
+      userAccountId: key.userAccountId,
+      roleCode: key.role.code as RoleCode,
+      organizationId: key.organizationId,
     });
   });
 
-  res.cookie(
-    SESSION_COOKIE,
-    signSession({
-      sub: user.id,
-      email: user.email,
-      roles: user.roles,
-      organizationId: user.organizationId,
-    }),
-    cookieOptions(),
-  );
-  res.json({ user: publicUser(user) });
+  await issueSession(res, key.userAccountId);
 });
 
 // ---------------------------------------------------------------- ThaiD (mock)
@@ -208,6 +202,9 @@ authRouter.post("/verify-otp", async (req, res) => {
  * สเปกให้ยืนยันตัวตนด้วย "email หรือ ThaiD" แต่ยังไม่มี OAuth client จริง
  * endpoint นี้จำลองผลลัพธ์ของการยืนยันสำเร็จ เพื่อให้ทดลอง flow ได้ครบ
  * เปิดด้วย THAID_MOCK=true เท่านั้น — ปิดไว้ทุกที่ที่ไม่ใช่เครื่อง dev
+ *
+ * เมื่อเชื่อม ThaiD จริงแล้ว ค่าที่ได้กลับมาจะลงคอลัมน์ user_account.external_subject
+ * ซึ่ง sheet มาร์กว่า Required — ตอนนี้ยังเป็น nullable
  */
 authRouter.post("/thaid/verify", async (req, res) => {
   if (!env.auth.thaidMock) {
@@ -224,14 +221,13 @@ authRouter.post("/thaid/verify", async (req, res) => {
     return;
   }
 
-  const { invitation, reason } = await findLiveInvitation(parsed.data.token);
-  if (!invitation) {
-    res.status(410).json({ error: reason, message: "ลิงก์คำเชิญใช้งานไม่ได้แล้ว" });
+  const { key, reason } = await findUsableActivationKey(parsed.data.token);
+  if (!key) {
+    res.status(410).json({ error: reason, message: ACTIVATION_FAILURE_MESSAGES[reason!] });
     return;
   }
 
-  const existing = await prisma.user.findUnique({ where: { email: invitation.email } });
-  if (!existing?.passwordHash) {
+  if (!key.userAccount.passwordHash) {
     res.status(409).json({
       error: "incomplete",
       message: "กรุณากรอกข้อมูลและตั้งรหัสผ่านให้เรียบร้อยก่อน",
@@ -239,44 +235,40 @@ authRouter.post("/thaid/verify", async (req, res) => {
     return;
   }
 
-  const user = await prisma.$transaction(async (tx) => {
-    await tx.invitation.update({
-      where: { id: invitation.id },
-      data: { status: InvitationStatus.ACCEPTED, acceptedAt: new Date() },
-    });
+  await prisma.$transaction(async (tx) => {
     await tx.otpCode.updateMany({
-      where: { email: invitation.email, purpose: OtpPurpose.REGISTRATION, consumedAt: null },
+      where: {
+        email: key.userAccount.email,
+        purpose: OtpPurpose.REGISTRATION,
+        consumedAt: null,
+      },
       data: { consumedAt: new Date() },
     });
-    return tx.user.update({
-      where: { email: invitation.email },
-      data: { status: UserStatus.ACTIVE, emailVerifiedAt: new Date(), lastLoginAt: new Date() },
+    await tx.userAccount.update({
+      where: { id: key.userAccountId },
+      // ค่าจำลอง — ThaiD จริงจะส่ง subject ของตัวเองมา
+      data: { externalSubject: `thaid-mock:${key.userAccountId}`, updatedBy: key.userAccountId },
+    });
+    await completeActivation(tx, {
+      activationKeyId: key.id,
+      userAccountId: key.userAccountId,
+      roleCode: key.role.code as RoleCode,
+      organizationId: key.organizationId,
     });
   });
 
-  console.log(`[thaid:mock] ยืนยันตัวตนจำลองให้ ${user.email}`);
-
-  res.cookie(
-    SESSION_COOKIE,
-    signSession({
-      sub: user.id,
-      email: user.email,
-      roles: user.roles,
-      organizationId: user.organizationId,
-    }),
-    cookieOptions(),
-  );
-  res.json({ user: publicUser(user), provider: "thaid-mock" });
+  console.log(`[thaid:mock] ยืนยันตัวตนจำลองให้ ${key.userAccount.email}`);
+  await issueSession(res, key.userAccountId, { provider: "thaid-mock" });
 });
 
 authRouter.post("/resend-otp", async (req, res) => {
   const token = String(req.body?.token ?? "");
-  const { invitation } = await findLiveInvitation(token);
-  if (!invitation) {
+  const { key } = await findUsableActivationKey(token);
+  if (!key) {
     res.status(410).json({ error: "invalid", message: "ลิงก์คำเชิญใช้งานไม่ได้แล้ว" });
     return;
   }
-  await issueOtp(invitation.email);
+  await issueOtp(key.userAccount.email);
   res.status(202).json({ ok: true });
 });
 
@@ -290,7 +282,7 @@ authRouter.post("/login", async (req, res) => {
     return;
   }
 
-  const user = await prisma.user.findUnique({ where: { email: parsed.data.email } });
+  const user = await prisma.userAccount.findUnique({ where: { email: parsed.data.email } });
   // ข้อความเดียวกันทุกกรณี ไม่บอกว่าอีเมลมีอยู่จริงหรือไม่
   const invalid = () =>
     res.status(401).json({ error: "invalid_credentials", message: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" });
@@ -299,29 +291,22 @@ authRouter.post("/login", async (req, res) => {
     invalid();
     return;
   }
-  if (user.status !== UserStatus.ACTIVE) {
+  if (user.status !== UserAccountStatus.ACTIVE) {
     res.status(403).json({
       error: "inactive",
       message:
-        user.status === UserStatus.INVITED
+        user.status === UserAccountStatus.PENDING
           ? "บัญชียังลงทะเบียนไม่เสร็จ กรุณาใช้ลิงก์คำเชิญที่ได้รับทางอีเมล"
           : "บัญชีนี้ถูกระงับการใช้งาน",
     });
     return;
   }
 
-  await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
-  res.cookie(
-    SESSION_COOKIE,
-    signSession({
-      sub: user.id,
-      email: user.email,
-      roles: user.roles,
-      organizationId: user.organizationId,
-    }),
-    cookieOptions(),
-  );
-  res.json({ user: publicUser(user) });
+  await prisma.userAccount.update({
+    where: { id: user.id },
+    data: { lastLoginAt: new Date(), updatedBy: user.id },
+  });
+  await issueSession(res, user.id);
 });
 
 authRouter.post("/logout", (_req, res) => {
@@ -330,35 +315,78 @@ authRouter.post("/logout", (_req, res) => {
 });
 
 authRouter.get("/me", requireAuth, async (req, res) => {
-  const user = await prisma.user.findUnique({
-    where: { id: req.session!.sub },
-    include: { organization: { select: { id: true, name: true, status: true } } },
-  });
+  const user = await prisma.userAccount.findUnique({ where: { id: req.session!.sub } });
   if (!user) {
     res.status(401).json({ error: "unauthenticated" });
     return;
   }
-  res.json({ user: { ...publicUser(user), organization: user.organization } });
+  const organization = req.session!.organizationId
+    ? await prisma.organization.findUnique({
+        where: { id: req.session!.organizationId },
+        select: { id: true, nameTh: true, status: true },
+      })
+    : null;
+
+  res.json({
+    user: {
+      ...publicUser(user, req.session!.roles, req.session!.organizationId),
+      organization: organization && {
+        id: organization.id,
+        name: organization.nameTh,
+        status: organization.status,
+      },
+    },
+  });
 });
 
-function publicUser(user: {
-  id: string;
-  email: string;
-  prefix: string | null;
-  firstName: string | null;
-  lastName: string | null;
-  phone: string | null;
-  roles: string[];
-  organizationId: string | null;
-}) {
+/**
+ * ออก session cookie — อ่าน role กับหน่วยงานสดจากฐานข้อมูลเสมอ
+ * ตัว cookie เก็บค่าไว้ก็จริง แต่ requireAuth จะอ่านทับใหม่ทุก request อยู่ดี
+ */
+async function issueSession(res: import("express").Response, userAccountId: string, extra?: object) {
+  const user = await prisma.userAccount.findUniqueOrThrow({ where: { id: userAccountId } });
+  const roles = await activeRoleCodes(prisma, userAccountId);
+  const assignment = await prisma.userRoleAssignment.findFirst({
+    where: {
+      userAccountId,
+      organizationId: { not: null },
+      status: "ACTIVE",
+      OR: [{ effectiveUntil: null }, { effectiveUntil: { gt: new Date() } }],
+    },
+    select: { organizationId: true },
+  });
+  const organizationId = assignment?.organizationId ?? null;
+
+  res.cookie(
+    SESSION_COOKIE,
+    signSession({ sub: user.id, email: user.email, roles, organizationId }),
+    cookieOptions(),
+  );
+  res.json({ user: publicUser(user, roles, organizationId), ...extra });
+}
+
+function publicUser(
+  user: {
+    id: string;
+    email: string;
+    prefixTh: string | null;
+    firstnameTh: string | null;
+    lastnameTh: string | null;
+    phoneNumber: string | null;
+    displayName: string;
+  },
+  roles: RoleCode[],
+  organizationId: string | null,
+) {
   return {
     id: user.id,
     email: user.email,
-    prefix: user.prefix,
-    firstName: user.firstName,
-    lastName: user.lastName,
-    phone: user.phone,
-    roles: user.roles,
-    organizationId: user.organizationId,
+    prefix: user.prefixTh,
+    firstName: user.firstnameTh,
+    lastName: user.lastnameTh,
+    phone: user.phoneNumber,
+    displayName: user.displayName,
+    roles,
+    organizationId,
   };
 }

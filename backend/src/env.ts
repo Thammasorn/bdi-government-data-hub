@@ -41,6 +41,15 @@ export const env = {
     /** shared secret สำหรับ API ฝั่ง admin ที่สเปกระบุว่ายังไม่มี UI */
     adminApiToken: required("ADMIN_API_TOKEN"),
     /**
+     * server_secret ของ activation key
+     * sheet `activation_key` กำหนดว่า key_hash = HMAC-SHA-256(server_secret, raw_activation_key)
+     * ต่างจาก invitation เดิมที่ใช้ SHA-256 เปล่า — HMAC ทำให้ hash ในฐานข้อมูลใช้ไม่ได้เลย
+     * ถ้าไม่มี secret ฝั่ง server
+     * ค่า default มีไว้ให้ dev เท่านั้น ที่ production ต้องตั้งจริง
+     */
+    activationKeySecret: optional("ACTIVATION_KEY_SECRET", "dev-activation-key-secret"),
+    activationKeyTtlDays: Number(optional("ACTIVATION_KEY_TTL_DAYS", "7")),
+    /**
      * ยังไม่มี client credentials ของ ThaiD จริง เปิดตัวนี้เพื่อให้ทดลอง flow ได้
      * ต้องเป็น false บน production มิฉะนั้นข้ามการยืนยันตัวตนได้ทั้งหมด
      */

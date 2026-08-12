@@ -1,17 +1,18 @@
-import { createHash, randomBytes, randomInt } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import type { Role } from "@prisma/client";
 
 import { env } from "../env.js";
+import type { RoleCode } from "./system.js";
 
 export const SESSION_COOKIE = "bdi_session";
 
 export interface SessionPayload {
   sub: string;
   email: string;
-  roles: Role[];
+  /** role.code ของ assignment ที่ยังใช้งานได้ ณ เวลาที่อ่าน — ไม่ได้มาจาก cookie */
+  roles: RoleCode[];
   organizationId: string | null;
 }
 
@@ -49,6 +50,32 @@ export function generateToken(): { token: string; tokenHash: string } {
 
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+/**
+ * Activation key ตาม sheet `activation_key`
+ *
+ * รูปแบบที่ sheet แนะนำ: สุ่มอย่างน้อย 32 ไบต์ แล้วเข้ารหัส URL-safe Base64
+ * ลิงก์ที่ส่งให้ผู้ใช้: {APP_URL}/activate?token=<raw key>
+ *
+ * key_hash = HMAC-SHA-256(server_secret, raw_activation_key)
+ * ต่างจาก invitation เดิมที่ใช้ SHA-256 เปล่า — ถ้าฐานข้อมูลรั่วโดยที่ server secret
+ * ไม่รั่วไปด้วย ผู้โจมตีจะสร้าง key ที่ตรงกับ hash ไม่ได้เลย
+ */
+export function generateActivationKey(): { key: string; keyHash: string } {
+  const key = randomBytes(32).toString("base64url");
+  return { key, keyHash: hashActivationKey(key) };
+}
+
+export function hashActivationKey(key: string): string {
+  return createHmac("sha256", env.auth.activationKeySecret).update(key).digest("hex");
+}
+
+/** เทียบ hash แบบคงเวลา กันการเดาค่าจากเวลาที่ใช้เปรียบเทียบ */
+export function activationKeyMatches(key: string, storedHash: string): boolean {
+  const computed = Buffer.from(hashActivationKey(key), "hex");
+  const stored = Buffer.from(storedHash, "hex");
+  return computed.length === stored.length && timingSafeEqual(computed, stored);
 }
 
 /** OTP 6 หลัก ใช้ randomInt เพื่อไม่ให้เดาลำดับได้ */

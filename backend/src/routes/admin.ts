@@ -1,12 +1,18 @@
 import { Router } from "express";
 import { z } from "zod";
-import { InvitationStatus, Role, UserStatus } from "@prisma/client";
+import { ActivationKeyStatus, AccountType, UserAccountStatus } from "@prisma/client";
 
 import { prisma } from "../db.js";
-import { env } from "../env.js";
-import { generateToken } from "../lib/auth.js";
+import { issueActivationKey } from "../lib/iam.js";
 import { sendInvitationEmail } from "../lib/mail.js";
 import { ROLE_LABELS } from "../lib/roles.js";
+import {
+  BDI_ORGANIZATION_ID,
+  ORGANIZATION_SCOPED_ROLES,
+  ROLE_CODES,
+  SYSTEM_USER_ID,
+  type RoleCode,
+} from "../lib/system.js";
 import { emailSchema, formatZodError } from "../lib/validation.js";
 import { requireAdminToken } from "../middleware/auth.js";
 
@@ -16,8 +22,9 @@ adminRouter.use(requireAdminToken);
 
 const inviteSchema = z.object({
   email: emailSchema,
-  role: z.nativeEnum(Role, { error: "role ไม่ถูกต้อง" }),
+  role: z.enum(Object.values(ROLE_CODES) as [RoleCode, ...RoleCode[]], { error: "role ไม่ถูกต้อง" }),
   organizationId: z.string().uuid().optional(),
+  displayName: z.string().trim().min(1).optional(),
 });
 
 /**
@@ -25,7 +32,11 @@ const inviteSchema = z.object({
  *
  *   POST /api/admin/invitations
  *   x-admin-token: <ADMIN_API_TOKEN>
- *   { "email": "...", "role": "ORGANIZATION_USER" }
+ *   { "email": "...", "role": "ORGANIZATION_USER", "organizationId": "..." }
+ *
+ * เปลี่ยน contract จากของเดิม: ตาม "Suggested lifecycle" ใน sheet `activation_key`
+ * ขั้นที่ 1–3 คือ **สร้าง user_account (PENDING) ก่อน** แล้วค่อยออก activation key
+ * ให้บัญชีนั้น ไม่ใช่ผูกคำเชิญไว้กับอีเมลลอย ๆ แบบเดิม
  */
 adminRouter.post("/invitations", async (req, res) => {
   const parsed = inviteSchema.safeParse(req.body);
@@ -33,84 +44,107 @@ adminRouter.post("/invitations", async (req, res) => {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;
   }
-  const { email, role, organizationId } = parsed.data;
+  const { email, role, displayName } = parsed.data;
 
-  const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing?.status === UserStatus.ACTIVE) {
+  const isOrgScoped = ORGANIZATION_SCOPED_ROLES.includes(role);
+  // activation_key.organization_id เป็น NOT NULL — เจ้าหน้าที่ BDI ผูกกับหน่วยงาน BDI เอง
+  const organizationId = isOrgScoped ? parsed.data.organizationId : BDI_ORGANIZATION_ID;
+
+  if (!organizationId) {
+    res.status(400).json({
+      error: "validation",
+      fields: { organizationId: "role ระดับหน่วยงานต้องระบุ organizationId" },
+    });
+    return;
+  }
+
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { id: true },
+  });
+  if (!organization) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานที่ระบุ" });
+    return;
+  }
+
+  const existing = await prisma.userAccount.findUnique({ where: { email } });
+  if (existing?.status === UserAccountStatus.ACTIVE) {
     res.status(409).json({ error: "exists", message: "อีเมลนี้มีบัญชีในระบบแล้ว" });
     return;
   }
 
-  const invitation = await createInvitation(email, role, organizationId ?? null, null);
+  const result = await prisma.$transaction(async (tx) => {
+    const account =
+      existing ??
+      (await tx.userAccount.create({
+        data: {
+          email,
+          displayName: displayName ?? email,
+          accountType: isOrgScoped ? AccountType.ORGANIZATION : AccountType.BDI,
+          status: UserAccountStatus.PENDING,
+          createdBy: SYSTEM_USER_ID,
+          updatedBy: SYSTEM_USER_ID,
+        },
+      }));
+
+    const { key, record } = await issueActivationKey(tx, {
+      userAccountId: account.id,
+      organizationId,
+      roleCode: role,
+      actorId: SYSTEM_USER_ID,
+    });
+
+    return { account, key, record };
+  });
+
+  await sendInvitationEmail(email, result.key, ROLE_LABELS[role]);
 
   res.status(201).json({
-    invitationId: invitation.id,
+    activationKeyId: result.record.id,
+    userAccountId: result.account.id,
     email,
     role,
     roleLabel: ROLE_LABELS[role],
-    expiresAt: invitation.expiresAt,
+    organizationId,
+    expiresAt: result.record.expiresAt,
   });
 });
 
 adminRouter.get("/invitations", async (_req, res) => {
-  const invitations = await prisma.invitation.findMany({
+  const keys = await prisma.activationKey.findMany({
     orderBy: { createdAt: "desc" },
     take: 100,
     select: {
       id: true,
-      email: true,
-      role: true,
       status: true,
+      issuedAt: true,
       expiresAt: true,
-      acceptedAt: true,
+      usedAt: true,
+      revokedAt: true,
       createdAt: true,
+      userAccount: { select: { id: true, email: true, status: true } },
+      role: { select: { code: true, nameTh: true } },
+      organization: { select: { id: true, nameTh: true } },
     },
   });
-  res.json({ invitations });
+  res.json({ invitations: keys });
 });
 
 adminRouter.post("/invitations/:id/revoke", async (req, res) => {
-  const invitation = await prisma.invitation.findUnique({ where: { id: req.params.id } });
-  if (!invitation || invitation.status !== InvitationStatus.PENDING) {
+  const key = await prisma.activationKey.findUnique({ where: { id: req.params.id } });
+  if (!key || key.status !== ActivationKeyStatus.ISSUED) {
     res.status(404).json({ error: "not_found", message: "ไม่พบคำเชิญที่ยังใช้งานได้" });
     return;
   }
-  await prisma.invitation.update({
-    where: { id: invitation.id },
-    data: { status: InvitationStatus.REVOKED },
+  await prisma.activationKey.update({
+    where: { id: key.id },
+    data: {
+      status: ActivationKeyStatus.REVOKED,
+      revokedAt: new Date(),
+      revokedBy: SYSTEM_USER_ID,
+      revokedReason: String(req.body?.reason ?? "ยกเลิกโดยผู้ดูแลระบบ"),
+      updatedBy: SYSTEM_USER_ID,
+    },
   });
   res.json({ ok: true });
 });
-
-/**
- * ออก token ใหม่และส่งอีเมล — ยกเลิกคำเชิญเดิมที่ยังค้างของอีเมลนี้ก่อน
- * เพื่อไม่ให้มีลิงก์ที่ใช้ได้หลายอันพร้อมกัน
- */
-export async function createInvitation(
-  email: string,
-  role: Role,
-  organizationId: string | null,
-  invitedById: string | null,
-) {
-  const { token, tokenHash } = generateToken();
-
-  const invitation = await prisma.$transaction(async (tx) => {
-    await tx.invitation.updateMany({
-      where: { email, status: InvitationStatus.PENDING },
-      data: { status: InvitationStatus.REVOKED },
-    });
-    return tx.invitation.create({
-      data: {
-        email,
-        role,
-        tokenHash,
-        organizationId,
-        invitedById,
-        expiresAt: new Date(Date.now() + env.auth.invitationTtlDays * 24 * 60 * 60 * 1000),
-      },
-    });
-  });
-
-  await sendInvitationEmail(email, token, ROLE_LABELS[role]);
-  return invitation;
-}
