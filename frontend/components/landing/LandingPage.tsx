@@ -489,14 +489,18 @@ function HowItWorks() {
       </ol>
 
       <figure className="reveal mt-14 overflow-hidden rounded-3xl bg-canvas p-4 shadow-card sm:p-8">
+        {/*
+          ต้นฉบับคือ assets/info_page/home-page-diagram-image.png ขนาด 2832×1504 / 5.6 MB
+          ย่อเหลือ 1600px (พอสำหรับช่องกว้าง 768px บนจอ 2x) แล้วแปลงเป็น WebP
+          เหลือ 84 KB — PNG ที่ขนาดเดียวกันหนัก 1.4 MB เพราะภาพนี้เป็นไล่เฉดทั้งใบ
+        */}
         <Image
-          src="/d2-platform-diagram.png"
-          alt="แผนภาพการทำงานของ D2 — ข้อมูลจากหลายหน่วยงานเข้าสู่แพลตฟอร์มกลางด้านข้อมูลขนาดใหญ่ แล้วนำออกไปใช้เป็นแดชบอร์ด การวางแผน การวิเคราะห์เชิงลึก การกำหนดนโยบาย และการบริหารราชการ"
-          width={740}
-          height={404}
+          src="/d2-platform-diagram.webp"
+          alt="แผนภาพการทำงานของ D2 — ข้อมูลจากหลายหน่วยงาน (A ถึง E และอื่น ๆ) ไหลเข้าสู่แพลตฟอร์มกลางด้านข้อมูลขนาดใหญ่ที่เชื่อมโยง บูรณาการ ปลอดภัย และควบคุมคุณภาพข้อมูล แล้วนำออกไปใช้เป็นแดชบอร์ดและรายงาน การวางแผนและคาดการณ์ การวิเคราะห์เชิงลึก การกำหนดนโยบาย และการบริหารราชการ"
+          width={1600}
+          height={850}
           className="mx-auto h-auto w-full max-w-3xl rounded-xl"
           sizes="(max-width: 768px) 100vw, 768px"
-          priority={false}
         />
       </figure>
     </Section>
