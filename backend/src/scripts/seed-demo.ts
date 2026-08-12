@@ -1,37 +1,44 @@
 /**
- * สร้างข้อมูลตัวอย่างสำหรับทดลองใช้งาน — บัญชีครบทุก role และหน่วยงานครบทุกสถานะ
- * รันซ้ำได้ (ล้างของเดิมก่อนเสมอ)
+ * Demo fixtures บนสคีมาใหม่ (draft_db_design 2026-08-11)
  *
- *   docker compose exec backend npm run seed:demo
+ * ล้างข้อมูลธุรกรรมทั้งหมดแล้วสร้างใหม่ — master data (role, BDI organization,
+ * ตารางที่อยู่) มาจาก seed:masters ซึ่งสคริปต์นี้เรียกให้เองถ้ายังไม่มี
+ *
+ * ชุดข้อมูลตัวอย่างยังเป็นชุดเดิมกับก่อนย้ายสคีมา แต่ "สถานะ" เปลี่ยนวิธีแสดง:
+ * เดิมเก็บด่านไว้ใน status (PENDING_OFFICER_REVIEW ฯลฯ) ตอนนี้ status เหลือเจ็ดค่า
+ * ส่วนด่านอยู่ที่ review_task ที่ยัง active — ดูคอลัมน์ "ด่านที่ค้าง" ในผลลัพธ์ท้ายสคริปต์
  */
+import {
+  AccountType,
+  AssignmentSource,
+  CommentVisibility,
+  DatasetStatus,
+  IntegrationType,
+  OrganizationStatus,
+  Prisma,
+  PrismaClient,
+  RequestStatus,
+  ReviewResult,
+  ReviewTaskStatus,
+  ReviewTaskType,
+  SubjectType,
+  UserAccountStatus,
+} from "@prisma/client";
 import { randomUUID } from "node:crypto";
 
-import {
-  AttachmentKind,
-  DataClassification,
-  DataFormat,
-  DatasetAttachmentKind,
-  DatasetCategory,
-  DatasetRequestEventType,
-  DatasetRequestStatus,
-  DatasetType,
-  DeliveryMethod,
-  GeoCoverage,
-  LicenseType,
-  OrganizationEventType,
-  OrganizationStatus,
-  Role,
-  UpdateFrequency,
-  UserStatus,
-  type DatasetRequest,
-  type Organization,
-  type Prisma,
-} from "@prisma/client";
-
-import { prisma } from "../db.js";
 import { hashPassword } from "../lib/auth.js";
-import { renderDatasetRegistrationForm, renderOrganizationForm } from "../lib/pdf.js";
-import { BUCKET, ensureBucket, minio } from "../storage.js";
+import { assignRole, roleIdByCode } from "../lib/iam.js";
+import { runWithContext } from "../lib/context.js";
+import {
+  BDI_ORGANIZATION_ID,
+  ROLE_CODES,
+  SYSTEM_USER_ID,
+  type RoleCode,
+} from "../lib/system.js";
+import { nextDatasetCode } from "../lib/request-number.js";
+import { ensureBucket } from "../storage.js";
+
+const prisma = new PrismaClient();
 
 const PASSWORD = "bdi12345";
 
@@ -42,121 +49,167 @@ const dt = (daysAgo: number, hour = 10) => {
   return d;
 };
 
+const ORG_SUBJECT = SubjectType.ORGANIZATION_REGISTRATION_REQUEST;
+const DS_SUBJECT = SubjectType.DATASET_REGISTRATION_REQUEST;
+
+// ------------------------------------------------------------------ ผู้ใช้
+
 async function makeUser(opts: {
   email: string;
   prefix: string;
   firstName: string;
   lastName: string;
   phone: string;
-  roles: Role[];
+  cid?: string;
+  accountType: AccountType;
+  role: RoleCode;
   organizationId?: string | null;
+  status?: UserAccountStatus;
 }) {
-  return prisma.user.create({
+  const displayName = `${opts.prefix}${opts.firstName} ${opts.lastName}`;
+  const status = opts.status ?? UserAccountStatus.ACTIVE;
+
+  const user = await prisma.userAccount.create({
     data: {
       email: opts.email,
-      prefix: opts.prefix,
-      firstName: opts.firstName,
-      lastName: opts.lastName,
-      phone: opts.phone,
-      roles: opts.roles,
-      status: UserStatus.ACTIVE,
+      cid: opts.cid ?? null,
+      prefixTh: opts.prefix,
+      firstnameTh: opts.firstName,
+      lastnameTh: opts.lastName,
+      phoneNumber: opts.phone,
+      displayName,
+      accountType: opts.accountType,
+      status,
+      activatedAt: status === UserAccountStatus.ACTIVE ? dt(60) : null,
       passwordHash: await hashPassword(PASSWORD),
-      emailVerifiedAt: dt(30),
+      createdBy: SYSTEM_USER_ID,
+      updatedBy: SYSTEM_USER_ID,
+    },
+  });
+
+  if (status === UserAccountStatus.ACTIVE) {
+    await assignRole(prisma, {
+      userAccountId: user.id,
+      roleCode: opts.role,
       organizationId: opts.organizationId ?? null,
+      actorId: SYSTEM_USER_ID,
+    });
+  }
+
+  return user;
+}
+
+// ------------------------------------------------------------------ review task
+
+/**
+ * สร้าง review_task ที่ปิดไปแล้วหนึ่งด่าน — ใช้ประกอบประวัติของคำขอที่เดินไปไกลแล้ว
+ * ไม่ผ่าน lib/workflow เพราะต้องกำหนดเวลาให้ย้อนหลังได้
+ */
+async function closedTask(params: {
+  subjectType: SubjectType;
+  subjectId: string;
+  taskType: ReviewTaskType;
+  sequenceNumber: number;
+  roundNumber?: number;
+  assignedUserId: string;
+  assignedRole: RoleCode;
+  result: ReviewResult;
+  comment?: string | null;
+  at: Date;
+}) {
+  return prisma.reviewTask.create({
+    data: {
+      subjectType: params.subjectType,
+      subjectId: params.subjectId,
+      taskType: params.taskType,
+      sequenceNumber: params.sequenceNumber,
+      roundNumber: params.roundNumber ?? 1,
+      assignedUserId: params.assignedUserId,
+      assignedRole: params.assignedRole,
+      assignmentSource: AssignmentSource.SYSTEM,
+      status: ReviewTaskStatus.COMPLETED,
+      result: params.result,
+      resultComment: params.comment ?? null,
+      commentVisibility: params.comment ? CommentVisibility.ORGANIZATION : null,
+      assignedAt: params.at,
+      startedAt: params.at,
+      completedAt: params.at,
+      createdBy: SYSTEM_USER_ID,
+      updatedBy: SYSTEM_USER_ID,
     },
   });
 }
 
-/** อัปโหลดไฟล์ตัวอย่าง (คำสั่งแต่งตั้ง) + PDF ที่ระบบสร้าง ให้หน่วยงานหนึ่ง */
-async function attachDocuments(org: Organization, uploadedById: string) {
-  const placeholder = Buffer.from(
-    "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n" +
-      "2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n",
-  );
-  const orderKey = `organizations/${org.id}/APPOINTMENT_ORDER/${randomUUID()}`;
-  await minio.putObject(BUCKET, orderKey, placeholder, placeholder.length, {
-    "Content-Type": "application/pdf",
-  });
-
-  const form = await renderOrganizationForm(org);
-  const formKey = `organizations/${org.id}/form/${randomUUID()}.pdf`;
-  await minio.putObject(BUCKET, formKey, form, form.length, { "Content-Type": "application/pdf" });
-
-  await prisma.attachment.createMany({
-    data: [
-      {
-        kind: AttachmentKind.APPOINTMENT_ORDER,
-        objectKey: orderKey,
-        filename: `คำสั่งแต่งตั้ง-${org.name}.pdf`,
-        mimeType: "application/pdf",
-        sizeBytes: placeholder.length,
-        organizationId: org.id,
-        uploadedById,
-      },
-      {
-        kind: AttachmentKind.GENERATED_FORM,
-        objectKey: formKey,
-        filename: `แบบฟอร์มสร้างหน่วยงาน-${org.name}.pdf`,
-        mimeType: "application/pdf",
-        sizeBytes: form.length,
-        organizationId: org.id,
-        uploadedById,
-      },
-    ],
+/** ด่านที่ยังค้าง — คำขอหนึ่งฉบับมีได้ตัวเดียว (partial unique index บังคับ) */
+async function openTaskRow(params: {
+  subjectType: SubjectType;
+  subjectId: string;
+  taskType: ReviewTaskType;
+  sequenceNumber: number;
+  roundNumber?: number;
+  assignedUserId: string;
+  assignedRole: RoleCode;
+  status?: ReviewTaskStatus;
+  at: Date;
+}) {
+  return prisma.reviewTask.create({
+    data: {
+      subjectType: params.subjectType,
+      subjectId: params.subjectId,
+      taskType: params.taskType,
+      sequenceNumber: params.sequenceNumber,
+      roundNumber: params.roundNumber ?? 1,
+      assignedUserId: params.assignedUserId,
+      assignedRole: params.assignedRole,
+      assignmentSource: AssignmentSource.SYSTEM,
+      status: params.status ?? ReviewTaskStatus.PENDING,
+      startedAt: params.status === ReviewTaskStatus.IN_PROGRESS ? params.at : null,
+      assignedAt: params.at,
+      createdBy: SYSTEM_USER_ID,
+      updatedBy: SYSTEM_USER_ID,
+    },
   });
 }
 
-async function addEvents(
-  organizationId: string,
-  entries: Array<{
-    type: OrganizationEventType;
-    actorId: string | null;
-    from?: OrganizationStatus;
-    to?: OrganizationStatus;
-    note?: string;
-    at: Date;
-  }>,
-) {
-  for (const e of entries) {
-    await prisma.organizationEvent.create({
-      data: {
-        organizationId,
-        type: e.type,
-        actorId: e.actorId,
-        fromStatus: e.from ?? null,
-        toStatus: e.to ?? null,
-        note: e.note ?? null,
-        createdAt: e.at,
-      },
-    });
-  }
-}
+// ------------------------------------------------------------------ main
 
 async function main() {
   await ensureBucket();
 
-  console.log("ล้างข้อมูลเดิม…");
-  await prisma.activityLog.deleteMany();
+  console.log("ล้างข้อมูลธุรกรรมเดิม…");
+  await prisma.auditEvent.deleteMany();
+  await prisma.notificationDelivery.deleteMany();
   await prisma.notification.deleteMany();
-  await prisma.datasetRequestEvent.deleteMany();
-  await prisma.datasetAttachment.deleteMany();
-  await prisma.datasetRequest.deleteMany();
-  await prisma.organizationEvent.deleteMany();
+  await prisma.integrationOperation.deleteMany();
+  await prisma.legalAcceptance.deleteMany();
+  await prisma.signatureConfirmation.deleteMany();
+  await prisma.reviewTask.deleteMany();
+  await prisma.datasetMetadata.deleteMany();
+  await prisma.datasetRegistrationRequest.updateMany({ data: { createdDatasetId: null } });
+  await prisma.dataset.deleteMany();
+  await prisma.datasetRegistrationMetadata.deleteMany();
+  await prisma.datasetRegistrationRequest.deleteMany();
+  await prisma.organizationRegistrationRequest.deleteMany();
   await prisma.attachment.deleteMany();
-  await prisma.invitation.deleteMany();
+  await prisma.activationKey.deleteMany();
   await prisma.otpCode.deleteMany();
-  await prisma.user.updateMany({ data: { organizationId: null } });
-  await prisma.organization.deleteMany();
-  await prisma.user.deleteMany();
+  await prisma.userRoleAssignment.deleteMany();
+  await prisma.organization.deleteMany({ where: { id: { not: BDI_ORGANIZATION_ID } } });
+  await prisma.userAccount.deleteMany({ where: { id: { not: SYSTEM_USER_ID } } });
+
+  // master data ต้องมีอยู่ก่อน — ล้มให้ชัดถ้ายังไม่ได้รัน seed:masters
+  await roleIdByCode(prisma, ROLE_CODES.BDI_OFFICER);
 
   // ---------------------------------------------------------- เจ้าหน้าที่ BDI
+  console.log("สร้างบัญชีเจ้าหน้าที่ BDI…");
   const officer = await makeUser({
     email: "officer@bdi.or.th",
     prefix: "นาย",
     firstName: "ธนกร",
     lastName: "ตรวจสอบ",
     phone: "0810000001",
-    roles: [Role.BDI_OFFICER],
+    accountType: AccountType.BDI,
+    role: ROLE_CODES.BDI_OFFICER,
   });
   const approver = await makeUser({
     email: "approver@bdi.or.th",
@@ -164,7 +217,8 @@ async function main() {
     firstName: "สุดารัตน์",
     lastName: "อนุมัติ",
     phone: "0810000002",
-    roles: [Role.BDI_APPROVER],
+    accountType: AccountType.BDI,
+    role: ROLE_CODES.BDI_FINAL_APPROVER,
   });
   const specialist = await makeUser({
     email: "specialist@bdi.or.th",
@@ -172,720 +226,640 @@ async function main() {
     firstName: "ปกรณ์",
     lastName: "วิเคราะห์",
     phone: "0810000003",
-    roles: [Role.BDI_SPECIALIST],
+    accountType: AccountType.BDI,
+    role: ROLE_CODES.BDI_DATASET_SPECIALIST,
   });
-
-  // ---------------------------------------------------------- หน่วยงานตัวอย่าง
-  const base = (
-    name: string,
-    over: Partial<Prisma.OrganizationCreateInput> = {},
-  ): Prisma.OrganizationCreateInput => ({
-    name,
-    addressLine: "88 หมู่ 4 ถนนติวานนท์",
-    province: "นนทบุรี",
-    district: "เมืองนนทบุรี",
-    subdistrict: "ตลาดขวัญ",
-    postalCode: "11000",
-    email: "contact@agency.go.th",
-    signatoryPrefix: "นาย",
-    signatoryFirstName: "วิชัย",
-    signatoryLastName: "อำนาจเต็ม",
-    signatoryPosition: "ผู้อำนวยการ",
-    signatoryEmail: "signatory@agency.go.th",
-    signatoryNationalId: "1101700207994",
-    signatoryPhone: "0898765432",
-    contactPrefix: "นาย",
-    contactFirstName: "สมชาย",
-    contactLastName: "ใจดี",
-    contactPosition: "นักวิชาการคอมพิวเตอร์ชำนาญการ",
-    contactDepartment: "กลุ่มงานเทคโนโลยีสารสนเทศ",
-    contactEmail: "somchai@moph.go.th",
-    contactPhone: "0812345678",
-    createdBy: { connect: { id: "" } },
-    ...over,
-  });
-
-  type Spec = {
-    name: string;
-    status: OrganizationStatus;
-    owner: { email: string; prefix: string; first: string; last: string; phone: string };
-    over?: Partial<Prisma.OrganizationCreateInput>;
-    submittedDaysAgo?: number;
-    events: (ids: { org: string; owner: string }) => Parameters<typeof addEvents>[1];
-  };
-
-  const specs: Spec[] = [
-    {
-      name: "สำนักงานสาธารณสุขจังหวัดเชียงใหม่",
-      status: OrganizationStatus.PENDING_BDI_REVIEW,
-      owner: { email: "somchai@moph.go.th", prefix: "นาย", first: "สมชาย", last: "ใจดี", phone: "0812345678" },
-      over: {
-        province: "เชียงใหม่",
-        district: "เมืองเชียงใหม่",
-        subdistrict: "สุเทพ",
-        postalCode: "50200",
-        addressLine: "10 ถนนสุเทพ",
-        email: "contact@cmpho.go.th",
-        signatoryPosition: "นายแพทย์สาธารณสุขจังหวัด",
-        signatoryEmail: "wichai@cmpho.go.th",
-      },
-      submittedDaysAgo: 2,
-      events: ({ org, owner }) => [
-        { type: OrganizationEventType.CREATED, actorId: owner, to: OrganizationStatus.DRAFT, at: dt(3) },
-        {
-          type: OrganizationEventType.SUBMITTED,
-          actorId: owner,
-          from: OrganizationStatus.DRAFT,
-          to: OrganizationStatus.PENDING_BDI_REVIEW,
-          at: dt(2),
-        },
-        void org,
-      ].filter(Boolean) as never,
-    },
-    {
-      name: "กรมที่ดิน",
-      status: OrganizationStatus.NEEDS_REVISION,
-      owner: { email: "malee@dol.go.th", prefix: "นางสาว", first: "มาลี", last: "ตั้งใจ", phone: "0823334444" },
-      over: {
-        email: "contact@dol.go.th",
-        contactEmail: "malee@dol.go.th",
-        contactFirstName: "มาลี",
-        contactLastName: "ตั้งใจ",
-        contactPrefix: "นางสาว",
-        revisionNote:
-          "เลขบัตรประชาชนของผู้มีอำนาจกระทำการแทนไม่ตรงกับคำสั่งแต่งตั้งที่แนบมา\nและกรุณาแนบคำสั่งแต่งตั้งฉบับที่มีลายเซ็นครบถ้วน",
-      },
-      submittedDaysAgo: 5,
-      events: ({ owner }) => [
-        { type: OrganizationEventType.CREATED, actorId: owner, to: OrganizationStatus.DRAFT, at: dt(6) },
-        {
-          type: OrganizationEventType.SUBMITTED,
-          actorId: owner,
-          from: OrganizationStatus.DRAFT,
-          to: OrganizationStatus.PENDING_BDI_REVIEW,
-          at: dt(5),
-        },
-        {
-          type: OrganizationEventType.BDI_REVISION_REQUESTED,
-          actorId: officer.id,
-          from: OrganizationStatus.PENDING_BDI_REVIEW,
-          to: OrganizationStatus.NEEDS_REVISION,
-          note: "เลขบัตรประชาชนของผู้มีอำนาจกระทำการแทนไม่ตรงกับคำสั่งแต่งตั้งที่แนบมา",
-          at: dt(4),
-        },
-      ],
-    },
-    {
-      name: "สำนักงานพัฒนาสังคมและความมั่นคงของมนุษย์จังหวัดขอนแก่น",
-      status: OrganizationStatus.PENDING_SIGNATORY_REVIEW,
-      owner: { email: "pranee@m-society.go.th", prefix: "นาง", first: "ปราณี", last: "รอบคอบ", phone: "0834445555" },
-      over: {
-        province: "ขอนแก่น",
-        district: "เมืองขอนแก่น",
-        subdistrict: "ในเมือง",
-        postalCode: "40000",
-        email: "contact@kkpso.go.th",
-        signatoryEmail: "wichai@cmpho.go.th",
-        contactEmail: "pranee@m-society.go.th",
-        contactFirstName: "ปราณี",
-        contactLastName: "รอบคอบ",
-        contactPrefix: "นาง",
-      },
-      submittedDaysAgo: 8,
-      events: ({ owner }) => [
-        { type: OrganizationEventType.CREATED, actorId: owner, to: OrganizationStatus.DRAFT, at: dt(9) },
-        {
-          type: OrganizationEventType.SUBMITTED,
-          actorId: owner,
-          from: OrganizationStatus.DRAFT,
-          to: OrganizationStatus.PENDING_BDI_REVIEW,
-          at: dt(8),
-        },
-        {
-          type: OrganizationEventType.BDI_APPROVED,
-          actorId: officer.id,
-          from: OrganizationStatus.PENDING_BDI_REVIEW,
-          to: OrganizationStatus.PENDING_SIGNATORY_REVIEW,
-          at: dt(7),
-        },
-      ],
-    },
-    {
-      name: "กรมการปกครอง",
-      status: OrganizationStatus.PENDING_BDI_APPROVAL,
-      owner: { email: "anucha@dopa.go.th", prefix: "นาย", first: "อนุชา", last: "มุ่งมั่น", phone: "0845556666" },
-      over: {
-        province: "กรุงเทพมหานคร",
-        district: "พระนคร",
-        subdistrict: "วัดสามพระยา",
-        postalCode: "10200",
-        email: "contact@dopa.go.th",
-        signatoryEmail: "wichai@cmpho.go.th",
-        contactEmail: "anucha@dopa.go.th",
-        contactFirstName: "อนุชา",
-        contactLastName: "มุ่งมั่น",
-      },
-      submittedDaysAgo: 12,
-      events: ({ owner }) => [
-        { type: OrganizationEventType.CREATED, actorId: owner, to: OrganizationStatus.DRAFT, at: dt(13) },
-        {
-          type: OrganizationEventType.SUBMITTED,
-          actorId: owner,
-          from: OrganizationStatus.DRAFT,
-          to: OrganizationStatus.PENDING_BDI_REVIEW,
-          at: dt(12),
-        },
-        {
-          type: OrganizationEventType.BDI_APPROVED,
-          actorId: officer.id,
-          from: OrganizationStatus.PENDING_BDI_REVIEW,
-          to: OrganizationStatus.PENDING_SIGNATORY_REVIEW,
-          at: dt(11),
-        },
-        {
-          type: OrganizationEventType.SIGNATORY_APPROVED,
-          actorId: null,
-          from: OrganizationStatus.PENDING_SIGNATORY_REVIEW,
-          to: OrganizationStatus.PENDING_BDI_APPROVAL,
-          at: dt(10),
-        },
-      ],
-    },
-    {
-      name: "สำนักงานสถิติแห่งชาติ",
-      status: OrganizationStatus.ACTIVE,
-      owner: { email: "kanya@nso.go.th", prefix: "นางสาว", first: "กัญญา", last: "เรียบร้อย", phone: "0856667777" },
-      over: {
-        province: "กรุงเทพมหานคร",
-        district: "หลักสี่",
-        subdistrict: "ทุ่งสองห้อง",
-        postalCode: "10210",
-        email: "contact@nso.go.th",
-        signatoryEmail: "wichai@cmpho.go.th",
-        contactEmail: "kanya@nso.go.th",
-        contactFirstName: "กัญญา",
-        contactLastName: "เรียบร้อย",
-        contactPrefix: "นางสาว",
-        activatedAt: dt(14),
-      },
-      submittedDaysAgo: 20,
-      events: ({ owner }) => [
-        { type: OrganizationEventType.CREATED, actorId: owner, to: OrganizationStatus.DRAFT, at: dt(21) },
-        {
-          type: OrganizationEventType.SUBMITTED,
-          actorId: owner,
-          from: OrganizationStatus.DRAFT,
-          to: OrganizationStatus.PENDING_BDI_REVIEW,
-          at: dt(20),
-        },
-        {
-          type: OrganizationEventType.BDI_APPROVED,
-          actorId: officer.id,
-          from: OrganizationStatus.PENDING_BDI_REVIEW,
-          to: OrganizationStatus.PENDING_SIGNATORY_REVIEW,
-          at: dt(18),
-        },
-        {
-          type: OrganizationEventType.SIGNATORY_APPROVED,
-          actorId: null,
-          from: OrganizationStatus.PENDING_SIGNATORY_REVIEW,
-          to: OrganizationStatus.PENDING_BDI_APPROVAL,
-          at: dt(16),
-        },
-        {
-          type: OrganizationEventType.FINAL_APPROVED,
-          actorId: approver.id,
-          from: OrganizationStatus.PENDING_BDI_APPROVAL,
-          to: OrganizationStatus.ACTIVE,
-          at: dt(14),
-        },
-      ],
-    },
-  ];
-
-  const seeded: Array<{ org: Organization; ownerId: string }> = [];
-
-  for (const spec of specs) {
-    const owner = await makeUser({
-      email: spec.owner.email,
-      prefix: spec.owner.prefix,
-      firstName: spec.owner.first,
-      lastName: spec.owner.last,
-      phone: spec.owner.phone,
-      roles: [Role.ORGANIZATION_USER],
-    });
-
-    const org = await prisma.organization.create({
-      data: {
-        ...base(spec.name, spec.over),
-        status: spec.status,
-        submittedAt: spec.submittedDaysAgo ? dt(spec.submittedDaysAgo) : null,
-        createdBy: { connect: { id: owner.id } },
-      },
-    });
-    await prisma.user.update({ where: { id: owner.id }, data: { organizationId: org.id } });
-    await attachDocuments(org, owner.id);
-    await addEvents(org.id, spec.events({ org: org.id, owner: owner.id }));
-    seeded.push({ org, ownerId: owner.id });
-    console.log(`  ✓ ${spec.name} [${spec.status}] — เจ้าของ ${owner.email}`);
-  }
-
-  // ผู้มีอำนาจกระทำการแทน ใช้อีเมลเดียวกับที่ระบุไว้ในหลายหน่วยงาน
-  await makeUser({
-    email: "wichai@cmpho.go.th",
-    prefix: "นาย",
-    firstName: "วิชัย",
-    lastName: "อำนาจเต็ม",
-    phone: "0898765432",
-    roles: [Role.ORGANIZATION_APPROVER],
-  });
-
-  // ผู้ใช้ที่ยังไม่มีหน่วยงาน — ไว้ดูหน้า empty state
-  await makeUser({
-    email: "newbie@moi.go.th",
+  const legalOfficer = await makeUser({
+    email: "legal@bdi.or.th",
     prefix: "นางสาว",
-    firstName: "ปรียา",
-    lastName: "เริ่มต้น",
-    phone: "0867778888",
-    roles: [Role.ORGANIZATION_USER],
+    firstName: "อารยา",
+    lastName: "นิติกร",
+    phone: "0810000004",
+    accountType: AccountType.BDI,
+    role: ROLE_CODES.BDI_LEGAL_OFFICER,
   });
 
-  // ------------------------------------------------- คำขอลงทะเบียนชุดข้อมูล
-  // ยื่นได้เฉพาะหน่วยงานที่ ACTIVE แล้ว (docs/01-user-journey.md §4.1)
-  const active = seeded.find(({ org }) => org.status === OrganizationStatus.ACTIVE);
-  if (active) {
-    console.log("สร้างคำขอลงทะเบียนชุดข้อมูล…");
-    await seedDatasetRequests(active.org, active.ownerId, {
-      officer: officer.id,
-      approver: approver.id,
-      specialist: specialist.id,
-    });
+  // ---------------------------------------------------------- หน่วยงาน
+  console.log("สร้างหน่วยงานและคำขอลงทะเบียน…");
+
+  interface OrgSpec {
+    code: string;
+    name: string;
+    /** ด่านที่คำขอค้างอยู่ — null = อนุมัติครบแล้ว */
+    stage: ReviewTaskType | null;
+    returned?: boolean;
+    userEmail: string;
+    userName: [string, string, string];
+    approverEmail: string;
+    approverName: [string, string, string];
+    province: string;
+    daysAgo: number;
   }
 
-  console.log(`
-เสร็จแล้ว — ทุกบัญชีใช้รหัสผ่าน: ${PASSWORD}
-
-  officer@bdi.or.th      เจ้าหน้าที่ BDI        มีงานรอตรวจทั้งหน่วยงานและชุดข้อมูล
-  approver@bdi.or.th     ผู้อนุมัติ BDI          มีงานรอลงนามและรออนุมัติชุดข้อมูล
-  specialist@bdi.or.th   ผู้เชี่ยวชาญ BDI        มีชุดข้อมูลที่ได้รับมอบหมาย 1 รายการ
-  wichai@cmpho.go.th     ผู้มีอำนาจกระทำการแทน  มีงานรอเห็นชอบทั้งสองเส้นทาง
-  kanya@nso.go.th        ผู้ใช้หน่วยงาน          หน่วยงานเปิดใช้งานแล้ว มีคำขอชุดข้อมูลครบทุกสถานะ
-  somchai@moph.go.th     ผู้ใช้หน่วยงาน          คำขอสร้างหน่วยงานอยู่ระหว่างตรวจสอบ
-  malee@dol.go.th        ผู้ใช้หน่วยงาน          ถูกส่งกลับให้แก้ไข
-  newbie@moi.go.th       ผู้ใช้หน่วยงาน          ยังไม่มีหน่วยงาน (หน้า empty state)
-`);
-}
-
-// -------------------------------------------------------------- ชุดข้อมูล
-
-/** ข้อมูลที่กรอกครบตามที่ submit ผ่าน — spec แต่ละอันค่อยทับเฉพาะที่ต่าง */
-function datasetBase(): Omit<
-  Prisma.DatasetRequestCreateInput,
-  "requestNumber" | "organization" | "createdBy"
-> {
-  return {
-    nameTh: "สถิติผู้มาใช้บริการศูนย์ราชการรายเดือน",
-    nameEn: "Monthly Government Service Center Visitors",
-    description:
-      "จำนวนผู้มาใช้บริการของศูนย์ราชการรายเดือน แยกตามประเภทบริการและช่วงอายุ รวบรวมจากระบบคิวอัตโนมัติของแต่ละศูนย์ ใช้สำหรับวางแผนกำลังคนและปรับปรุงคุณภาพบริการ",
-    datasetType: DatasetType.STATISTIC,
-    category: DatasetCategory.GOVERNMENT,
-    keywords: ["บริการภาครัฐ", "สถิติผู้ใช้บริการ", "ศูนย์ราชการ"],
-    updateFrequency: UpdateFrequency.MONTHLY,
-    geoCoverage: GeoCoverage.NATIONAL,
-    dataStartDate: new Date("2020-01-01T00:00:00.000Z"),
-    estimatedRecords: 480_000,
-    stewardName: "นางสาวกัญญา เรียบร้อย",
-    stewardEmail: "kanya@nso.go.th",
-    stewardPhone: "0856667777",
-
-    deliveryMethod: DeliveryMethod.API,
-    dataFormat: DataFormat.JSON,
-    deliveryFrequency: UpdateFrequency.MONTHLY,
-    deliveryEndpoint: "https://api.nso.go.th/v1/service-center-visitors",
-    technicalContactName: "นายภาคภูมิ ระบบดี",
-    technicalContactEmail: "it@nso.go.th",
-    deliveryNote: "ต้องใช้ API key ที่ออกให้เป็นรายระบบ ปรับปรุงข้อมูลทุกวันที่ 5 ของเดือนถัดไป",
-
-    dataClassification: DataClassification.PUBLIC,
-    hasPersonalData: false,
-    legalBasis:
-      "พระราชบัญญัติสถิติ พ.ศ. 2550 มาตรา 6 ประกอบระเบียบสำนักนายกรัฐมนตรีว่าด้วยการเปิดเผยข้อมูลภาครัฐ",
-    licenseType: LicenseType.OPEN_GOVERNMENT,
-    usageRestriction: "อ้างอิงแหล่งที่มาทุกครั้งที่นำไปเผยแพร่ต่อ",
-    legalAcceptedAt: dt(9),
-  };
-}
-
-async function attachDatasetDocuments(request: DatasetRequest & { organization: { name: string } }) {
-  const dictionary = Buffer.from(
-    "column_name,data_type,description\nvisit_month,date,เดือนที่ให้บริการ\nservice_type,string,ประเภทบริการ\nvisitors,integer,จำนวนผู้ใช้บริการ\n",
-    "utf8",
-  );
-  const dictKey = `dataset-requests/${request.id}/DATA_DICTIONARY/${randomUUID()}`;
-  await minio.putObject(BUCKET, dictKey, dictionary, dictionary.length, {
-    "Content-Type": "text/csv",
-  });
-
-  const form = await renderDatasetRegistrationForm({ ...request, attachments: [] });
-  const formKey = `dataset-requests/${request.id}/form/${randomUUID()}.pdf`;
-  await minio.putObject(BUCKET, formKey, form, form.length, { "Content-Type": "application/pdf" });
-
-  await prisma.datasetAttachment.createMany({
-    data: [
-      {
-        kind: DatasetAttachmentKind.DATA_DICTIONARY,
-        objectKey: dictKey,
-        filename: `พจนานุกรมข้อมูล-${request.requestNumber}.csv`,
-        mimeType: "text/csv",
-        sizeBytes: dictionary.length,
-        datasetRequestId: request.id,
-      },
-      {
-        kind: DatasetAttachmentKind.GENERATED_FORM,
-        objectKey: formKey,
-        filename: `แบบฟอร์มลงทะเบียนชุดข้อมูล-${request.requestNumber}.pdf`,
-        mimeType: "application/pdf",
-        sizeBytes: form.length,
-        datasetRequestId: request.id,
-      },
-    ],
-  });
-}
-
-async function seedDatasetRequests(
-  org: Organization,
-  ownerId: string,
-  bdi: { officer: string; approver: string; specialist: string },
-) {
-  const year = new Date().getFullYear();
-  const approverName = "นายวิชัย อำนาจเต็ม";
-
-  type DatasetSpec = {
-    nameTh: string;
-    status: DatasetRequestStatus;
-    over?: Partial<Prisma.DatasetRequestCreateInput>;
-    submittedDaysAgo?: number;
-    events: Array<{
-      type: DatasetRequestEventType;
-      actorId: string | null;
-      from?: DatasetRequestStatus;
-      to?: DatasetRequestStatus;
-      note?: string;
-      at: Date;
-    }>;
-  };
-
-  const specs: DatasetSpec[] = [
+  const orgSpecs: OrgSpec[] = [
     {
-      nameTh: "ทะเบียนที่ตั้งหน่วยบริการประชาชน",
-      status: DatasetRequestStatus.DRAFT,
-      over: { legalAcceptedAt: null, keywords: ["หน่วยบริการ"] },
-      events: [
-        { type: DatasetRequestEventType.CREATED, actorId: ownerId, to: DatasetRequestStatus.DRAFT, at: dt(1) },
-      ],
+      code: "ORG-2026-0001",
+      name: "สำนักงานสาธารณสุขจังหวัดเชียงใหม่",
+      stage: ReviewTaskType.BDI_OFFICER_REVIEW,
+      userEmail: "user.cmi@moph.go.th",
+      userName: ["นางสาว", "ณัฐริกา", "ใจดี"],
+      approverEmail: "director.cmi@moph.go.th",
+      approverName: ["นายแพทย์", "สมชาย", "รักษาดี"],
+      province: "เชียงใหม่",
+      daysAgo: 6,
     },
     {
-      nameTh: "สถิติผู้มาใช้บริการศูนย์ราชการรายเดือน",
-      status: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
-      submittedDaysAgo: 3,
-      over: { assignedSpecialist: { connect: { id: bdi.specialist } }, assignedAt: dt(2) },
-      events: [
-        { type: DatasetRequestEventType.CREATED, actorId: ownerId, to: DatasetRequestStatus.DRAFT, at: dt(4) },
-        {
-          type: DatasetRequestEventType.SUBMITTED,
-          actorId: ownerId,
-          from: DatasetRequestStatus.DRAFT,
-          to: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
-          at: dt(3),
-        },
-        {
-          type: DatasetRequestEventType.SPECIALIST_ASSIGNED,
-          actorId: bdi.officer,
-          from: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
-          to: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
-          note: "มอบหมายให้ นายปกรณ์ วิเคราะห์",
-          at: dt(2),
-        },
-      ],
+      code: "ORG-2026-0002",
+      name: "กรมที่ดิน",
+      stage: ReviewTaskType.BDI_OFFICER_REVIEW,
+      returned: true,
+      userEmail: "user@dol.go.th",
+      userName: ["นาย", "วิชัย", "เอกสาร"],
+      approverEmail: "director@dol.go.th",
+      approverName: ["นาง", "ปราณี", "อำนวยการ"],
+      province: "กรุงเทพมหานคร",
+      daysAgo: 9,
     },
     {
-      nameTh: "ดัชนีราคาผู้บริโภครายจังหวัด",
-      status: DatasetRequestStatus.NEEDS_REVISION,
-      submittedDaysAgo: 6,
-      over: {
-        category: DatasetCategory.ECONOMY_FINANCE,
-        revisionNote:
-          "พจนานุกรมข้อมูลยังไม่ระบุหน่วยของค่าดัชนี และช่วงเวลาของข้อมูลไม่ตรงกับที่อธิบายไว้ในคำอธิบายชุดข้อมูล",
-      },
-      events: [
-        { type: DatasetRequestEventType.CREATED, actorId: ownerId, to: DatasetRequestStatus.DRAFT, at: dt(7) },
-        {
-          type: DatasetRequestEventType.SUBMITTED,
-          actorId: ownerId,
-          from: DatasetRequestStatus.DRAFT,
-          to: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
-          at: dt(6),
-        },
-        {
-          type: DatasetRequestEventType.OFFICER_REVISION_REQUESTED,
-          actorId: bdi.officer,
-          from: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
-          to: DatasetRequestStatus.NEEDS_REVISION,
-          note: "พจนานุกรมข้อมูลยังไม่ระบุหน่วยของค่าดัชนี",
-          at: dt(5),
-        },
-      ],
+      code: "ORG-2026-0003",
+      name: "สำนักงานพัฒนาสังคมและความมั่นคงของมนุษย์จังหวัดขอนแก่น",
+      stage: ReviewTaskType.ORGANIZATION_APPROVAL,
+      userEmail: "user.kkn@m-society.go.th",
+      userName: ["นางสาว", "พิมพ์ชนก", "สังคมดี"],
+      approverEmail: "director.kkn@m-society.go.th",
+      approverName: ["นาย", "อนุชา", "พัฒนา"],
+      province: "ขอนแก่น",
+      daysAgo: 12,
     },
     {
-      nameTh: "จำนวนประชากรแยกตามช่วงอายุรายตำบล",
-      status: DatasetRequestStatus.PENDING_ORG_APPROVER,
-      submittedDaysAgo: 9,
-      over: { category: DatasetCategory.SOCIETY, geoCoverage: GeoCoverage.DISTRICT },
-      events: [
-        { type: DatasetRequestEventType.CREATED, actorId: ownerId, to: DatasetRequestStatus.DRAFT, at: dt(10) },
-        {
-          type: DatasetRequestEventType.SUBMITTED,
-          actorId: ownerId,
-          from: DatasetRequestStatus.DRAFT,
-          to: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
-          at: dt(9),
-        },
-        {
-          type: DatasetRequestEventType.OFFICER_FORWARDED,
-          actorId: bdi.officer,
-          from: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
-          to: DatasetRequestStatus.PENDING_ORG_APPROVER,
-          at: dt(8),
-        },
-      ],
+      code: "ORG-2026-0004",
+      name: "กรมการปกครอง",
+      stage: ReviewTaskType.BDI_FINAL_APPROVAL,
+      userEmail: "user@dopa.go.th",
+      userName: ["นาย", "ธีรศักดิ์", "ทะเบียน"],
+      approverEmail: "director@dopa.go.th",
+      approverName: ["นาย", "สุรชัย", "ปกครองดี"],
+      province: "กรุงเทพมหานคร",
+      daysAgo: 16,
     },
     {
-      nameTh: "สถิติแรงงานนอกระบบรายไตรมาส",
-      status: DatasetRequestStatus.PENDING_BDI_APPROVAL,
-      submittedDaysAgo: 14,
-      over: {
-        category: DatasetCategory.SOCIETY,
-        updateFrequency: UpdateFrequency.QUARTERLY,
-        deliveryFrequency: UpdateFrequency.QUARTERLY,
-        orgApproverSignedAt: dt(12),
-        orgApproverSignedName: approverName,
-      },
-      events: [
-        { type: DatasetRequestEventType.CREATED, actorId: ownerId, to: DatasetRequestStatus.DRAFT, at: dt(15) },
-        {
-          type: DatasetRequestEventType.SUBMITTED,
-          actorId: ownerId,
-          from: DatasetRequestStatus.DRAFT,
-          to: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
-          at: dt(14),
-        },
-        {
-          type: DatasetRequestEventType.OFFICER_FORWARDED,
-          actorId: bdi.officer,
-          from: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
-          to: DatasetRequestStatus.PENDING_ORG_APPROVER,
-          at: dt(13),
-        },
-        {
-          type: DatasetRequestEventType.ORG_APPROVER_SIGNED,
-          actorId: null,
-          from: DatasetRequestStatus.PENDING_ORG_APPROVER,
-          to: DatasetRequestStatus.PENDING_OFFICER_FINAL_CHECK,
-          at: dt(12),
-        },
-        {
-          type: DatasetRequestEventType.OFFICER_CONFIRMED,
-          actorId: bdi.officer,
-          from: DatasetRequestStatus.PENDING_OFFICER_FINAL_CHECK,
-          to: DatasetRequestStatus.PENDING_BDI_APPROVAL,
-          at: dt(11),
-        },
-      ],
-    },
-    {
-      nameTh: "ทะเบียนสถานประกอบการรายจังหวัด",
-      status: DatasetRequestStatus.APPROVED,
-      submittedDaysAgo: 25,
-      over: {
-        category: DatasetCategory.ECONOMY_FINANCE,
-        orgApproverSignedAt: dt(21),
-        orgApproverSignedName: approverName,
-        approvedAt: dt(19),
-        approvedByName: "นางสุดารัตน์ อนุมัติ",
-        approvedById: bdi.approver,
-      },
-      events: [
-        { type: DatasetRequestEventType.CREATED, actorId: ownerId, to: DatasetRequestStatus.DRAFT, at: dt(26) },
-        {
-          type: DatasetRequestEventType.SUBMITTED,
-          actorId: ownerId,
-          from: DatasetRequestStatus.DRAFT,
-          to: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
-          at: dt(25),
-        },
-        {
-          type: DatasetRequestEventType.OFFICER_FORWARDED,
-          actorId: bdi.officer,
-          from: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
-          to: DatasetRequestStatus.PENDING_ORG_APPROVER,
-          at: dt(23),
-        },
-        {
-          type: DatasetRequestEventType.ORG_APPROVER_SIGNED,
-          actorId: null,
-          from: DatasetRequestStatus.PENDING_ORG_APPROVER,
-          to: DatasetRequestStatus.PENDING_OFFICER_FINAL_CHECK,
-          at: dt(21),
-        },
-        {
-          type: DatasetRequestEventType.OFFICER_CONFIRMED,
-          actorId: bdi.officer,
-          from: DatasetRequestStatus.PENDING_OFFICER_FINAL_CHECK,
-          to: DatasetRequestStatus.PENDING_BDI_APPROVAL,
-          at: dt(20),
-        },
-        {
-          type: DatasetRequestEventType.BDI_APPROVED,
-          actorId: bdi.approver,
-          from: DatasetRequestStatus.PENDING_BDI_APPROVAL,
-          to: DatasetRequestStatus.APPROVED,
-          at: dt(19),
-        },
-      ],
-    },
-    // สองรายการสุดท้ายมีไว้ให้เปิดโชว์ตอนสาธิต — เป็นสถานะที่เดินไปถึงเองระหว่างสาธิตไม่ทัน
-    {
-      nameTh: "ทะเบียนผู้ประกอบการขนส่งสาธารณะ",
-      status: DatasetRequestStatus.REJECTED,
-      submittedDaysAgo: 30,
-      over: {
-        category: DatasetCategory.TRANSPORT,
-        dataClassification: DataClassification.CONFIDENTIAL,
-        hasPersonalData: true,
-        orgApproverSignedAt: dt(27),
-        orgApproverSignedName: approverName,
-        rejectedAt: dt(24),
-        rejectedById: bdi.approver,
-        rejectedByName: "นางสุดารัตน์ อนุมัติ",
-        rejectionReason:
-          "ชุดข้อมูลนี้มีเลขประจำตัวประชาชนของผู้ประกอบการรายบุคคล แต่ฐานอำนาจที่อ้างครอบคลุมเฉพาะนิติบุคคล จึงยังเปิดเผยข้อมูลส่วนบุคคลไม่ได้ หากหน่วยงานจะนำส่งใหม่ ให้ตัดฟิลด์ที่ระบุตัวบุคคลออกก่อน แล้วยื่นเป็นคำขอฉบับใหม่",
-      },
-      events: [
-        { type: DatasetRequestEventType.CREATED, actorId: ownerId, to: DatasetRequestStatus.DRAFT, at: dt(31) },
-        {
-          type: DatasetRequestEventType.SUBMITTED,
-          actorId: ownerId,
-          from: DatasetRequestStatus.DRAFT,
-          to: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
-          at: dt(30),
-        },
-        {
-          type: DatasetRequestEventType.OFFICER_FORWARDED,
-          actorId: bdi.officer,
-          from: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
-          to: DatasetRequestStatus.PENDING_ORG_APPROVER,
-          at: dt(28),
-        },
-        {
-          type: DatasetRequestEventType.ORG_APPROVER_SIGNED,
-          actorId: null,
-          from: DatasetRequestStatus.PENDING_ORG_APPROVER,
-          to: DatasetRequestStatus.PENDING_OFFICER_FINAL_CHECK,
-          at: dt(27),
-        },
-        {
-          type: DatasetRequestEventType.OFFICER_CONFIRMED,
-          actorId: bdi.officer,
-          from: DatasetRequestStatus.PENDING_OFFICER_FINAL_CHECK,
-          to: DatasetRequestStatus.PENDING_BDI_APPROVAL,
-          at: dt(26),
-        },
-        {
-          type: DatasetRequestEventType.BDI_REJECTED,
-          actorId: bdi.approver,
-          from: DatasetRequestStatus.PENDING_BDI_APPROVAL,
-          to: DatasetRequestStatus.REJECTED,
-          note: "ฐานอำนาจที่อ้างไม่ครอบคลุมข้อมูลส่วนบุคคลของผู้ประกอบการรายบุคคล",
-          at: dt(24),
-        },
-      ],
-    },
-    {
-      nameTh: "สถิติการใช้บริการขนส่งมวลชนรายเดือน",
-      status: DatasetRequestStatus.PENDING_OFFICER_FINAL_CHECK,
-      submittedDaysAgo: 5,
-      over: {
-        category: DatasetCategory.TRANSPORT,
-        orgApproverSignedAt: dt(2),
-        orgApproverSignedName: approverName,
-      },
-      events: [
-        { type: DatasetRequestEventType.CREATED, actorId: ownerId, to: DatasetRequestStatus.DRAFT, at: dt(6) },
-        {
-          type: DatasetRequestEventType.SUBMITTED,
-          actorId: ownerId,
-          from: DatasetRequestStatus.DRAFT,
-          to: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
-          at: dt(5),
-        },
-        {
-          type: DatasetRequestEventType.OFFICER_FORWARDED,
-          actorId: bdi.officer,
-          from: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
-          to: DatasetRequestStatus.PENDING_ORG_APPROVER,
-          at: dt(4),
-        },
-        {
-          type: DatasetRequestEventType.ORG_APPROVER_SIGNED,
-          actorId: null,
-          from: DatasetRequestStatus.PENDING_ORG_APPROVER,
-          to: DatasetRequestStatus.PENDING_OFFICER_FINAL_CHECK,
-          at: dt(2),
-        },
-      ],
+      code: "ORG-2026-0005",
+      name: "สำนักงานสถิติแห่งชาติ",
+      stage: null,
+      userEmail: "user@nso.go.th",
+      userName: ["นางสาว", "ศศิธร", "สถิติดี"],
+      approverEmail: "director@nso.go.th",
+      approverName: ["นาย", "ประเสริฐ", "ข้อมูลดี"],
+      province: "กรุงเทพมหานคร",
+      daysAgo: 30,
     },
   ];
 
-  for (const [index, spec] of specs.entries()) {
-    const request = await prisma.datasetRequest.create({
+  const orgs: Record<string, { orgId: string; requestId: string; userId: string; approverId: string }> =
+    {};
+
+  for (const [index, spec] of orgSpecs.entries()) {
+    const active = spec.stage === null;
+
+    const province = await prisma.province.findFirst({ where: { nameTh: spec.province } });
+    const district = province
+      ? await prisma.district.findFirst({ where: { provinceCode: province.code } })
+      : null;
+    const subDistrict = district
+      ? await prisma.subDistrict.findFirst({ where: { districtCode: district.code } })
+      : null;
+
+    const organization = await prisma.organization.create({
       data: {
-        ...datasetBase(),
-        ...spec.over,
-        nameTh: spec.nameTh,
-        status: spec.status,
-        requestNumber: `DR-${year}-${String(index + 1).padStart(4, "0")}`,
-        submittedAt: spec.submittedDaysAgo ? dt(spec.submittedDaysAgo) : null,
-        organization: { connect: { id: org.id } },
-        createdBy: { connect: { id: ownerId } },
+        organizationCode: spec.code,
+        organizationType: "GOVERNMENT_AGENCY",
+        nameTh: spec.name,
+        status: active ? OrganizationStatus.ACTIVE : OrganizationStatus.PENDING_REGISTRATION,
+        addressLine: "เลขที่ 1 ถนนราชการ",
+        provinceCode: province?.code ?? null,
+        districtCode: district?.code ?? null,
+        subDistrictCode: subDistrict?.code ?? null,
+        postalCode: subDistrict?.postalCode ?? null,
+        email: spec.userEmail,
+        phone: "021234567",
+        activatedAt: active ? dt(spec.daysAgo - 2) : null,
+        activatedBy: active ? approver.id : null,
+        createdAt: dt(spec.daysAgo),
+        createdBy: SYSTEM_USER_ID,
+        updatedBy: SYSTEM_USER_ID,
       },
-      include: { organization: { select: { name: true } } },
     });
 
-    // ร่างยังไม่มีเอกสาร — ผู้ใช้ยังไม่ได้กดสร้าง PDF
-    if (spec.status !== DatasetRequestStatus.DRAFT) await attachDatasetDocuments(request);
+    const orgUser = await makeUser({
+      email: spec.userEmail,
+      prefix: spec.userName[0],
+      firstName: spec.userName[1],
+      lastName: spec.userName[2],
+      phone: "0820000000",
+      cid: `11010000000${index + 1}`.slice(0, 13),
+      accountType: AccountType.ORGANIZATION,
+      role: ROLE_CODES.ORGANIZATION_USER,
+      organizationId: organization.id,
+    });
 
-    for (const e of spec.events) {
-      await prisma.datasetRequestEvent.create({
+    // ผู้มีอำนาจของหน่วยงานที่ยังไม่ถึงด่านลงนาม ยังเป็นบัญชี PENDING
+    const approverActive =
+      spec.stage === null ||
+      spec.stage === ReviewTaskType.ORGANIZATION_APPROVAL ||
+      spec.stage === ReviewTaskType.BDI_FINAL_APPROVAL;
+
+    const orgApprover = await makeUser({
+      email: spec.approverEmail,
+      prefix: spec.approverName[0],
+      firstName: spec.approverName[1],
+      lastName: spec.approverName[2],
+      phone: "0830000000",
+      cid: `31010000000${index + 1}`.slice(0, 13),
+      accountType: AccountType.ORGANIZATION,
+      role: ROLE_CODES.ORGANIZATION_APPROVER,
+      organizationId: organization.id,
+      status: approverActive ? UserAccountStatus.ACTIVE : UserAccountStatus.PENDING,
+    });
+
+    const request = await prisma.organizationRegistrationRequest.create({
+      data: {
+        requestNumber: `ORG-REG-2026-${String(index + 1).padStart(4, "0")}`,
+        organizationId: organization.id,
+        status: RequestStatus.DRAFT,
+        organizationCode: spec.code,
+        organizationType: "GOVERNMENT_AGENCY",
+        organizationNameTh: spec.name,
+        organizationAddressLine: "เลขที่ 1 ถนนราชการ",
+        organizationProvinceCode: province?.code ?? null,
+        organizationDistrictCode: district?.code ?? null,
+        organizationSubdistrictCode: subDistrict?.code ?? null,
+        organizationPostalCode: subDistrict?.postalCode ?? null,
+        organizationEmail: spec.userEmail,
+        organizationPhone: "021234567",
+
+        approverPrefixTh: spec.approverName[0],
+        approverFirstnameTh: spec.approverName[1],
+        approverLastnameTh: spec.approverName[2],
+        approverPositionTh: "ผู้อำนวยการ",
+        approverEmail: spec.approverEmail,
+        approverCid: orgApprover.cid,
+        approverPhoneNumber: "0830000000",
+
+        userPrefixTh: spec.userName[0],
+        userFirstnameTh: spec.userName[1],
+        userLastnameTh: spec.userName[2],
+        userPositionTh: "นักวิเคราะห์นโยบายและแผน",
+        userDepartmentTh: "กลุ่มงานข้อมูลสารสนเทศ",
+        userEmail: spec.userEmail,
+        userPhoneNumber: "0820000000",
+
+        submittedAt: dt(spec.daysAgo - 1),
+        approvedAt: active ? dt(spec.daysAgo - 2) : null,
+        createdAt: dt(spec.daysAgo),
+        createdBy: orgUser.id,
+        updatedBy: orgUser.id,
+      },
+    });
+
+    // ── ประวัติด่านตามสถานะที่ต้องการ ──────────────────────────
+    let seq = 1;
+    const t = (d: number) => dt(spec.daysAgo - d);
+
+    if (spec.stage === ReviewTaskType.BDI_OFFICER_REVIEW && spec.returned) {
+      await closedTask({
+        subjectType: ORG_SUBJECT,
+        subjectId: request.id,
+        taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
+        sequenceNumber: seq++,
+        assignedUserId: officer.id,
+        assignedRole: ROLE_CODES.BDI_OFFICER,
+        result: ReviewResult.RETURNED,
+        comment: "เอกสารคำสั่งแต่งตั้งไม่ชัดเจน กรุณาแนบฉบับที่อ่านออกได้ทั้งหน้า",
+        at: t(1),
+      });
+    } else if (spec.stage === ReviewTaskType.BDI_OFFICER_REVIEW) {
+      await openTaskRow({
+        subjectType: ORG_SUBJECT,
+        subjectId: request.id,
+        taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
+        sequenceNumber: seq++,
+        assignedUserId: officer.id,
+        assignedRole: ROLE_CODES.BDI_OFFICER,
+        at: t(1),
+      });
+    } else if (spec.stage !== null || active) {
+      // ผ่านด่าน officer มาแล้วทุกกรณีที่เหลือ
+      await closedTask({
+        subjectType: ORG_SUBJECT,
+        subjectId: request.id,
+        taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
+        sequenceNumber: seq++,
+        assignedUserId: officer.id,
+        assignedRole: ROLE_CODES.BDI_OFFICER,
+        result: ReviewResult.PASSED,
+        at: t(1),
+      });
+
+      if (spec.stage === ReviewTaskType.ORGANIZATION_APPROVAL) {
+        await openTaskRow({
+          subjectType: ORG_SUBJECT,
+          subjectId: request.id,
+          taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
+          sequenceNumber: seq++,
+          assignedUserId: orgApprover.id,
+          assignedRole: ROLE_CODES.ORGANIZATION_APPROVER,
+          at: t(2),
+        });
+      } else {
+        await closedTask({
+          subjectType: ORG_SUBJECT,
+          subjectId: request.id,
+          taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
+          sequenceNumber: seq++,
+          assignedUserId: orgApprover.id,
+          assignedRole: ROLE_CODES.ORGANIZATION_APPROVER,
+          result: ReviewResult.APPROVED,
+          at: t(2),
+        });
+
+        if (spec.stage === ReviewTaskType.BDI_FINAL_APPROVAL) {
+          await openTaskRow({
+            subjectType: ORG_SUBJECT,
+            subjectId: request.id,
+            taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
+            sequenceNumber: seq++,
+            assignedUserId: approver.id,
+            assignedRole: ROLE_CODES.BDI_FINAL_APPROVER,
+            at: t(3),
+          });
+        } else {
+          await closedTask({
+            subjectType: ORG_SUBJECT,
+            subjectId: request.id,
+            taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
+            sequenceNumber: seq++,
+            assignedUserId: approver.id,
+            assignedRole: ROLE_CODES.BDI_FINAL_APPROVER,
+            result: ReviewResult.APPROVED,
+            at: t(3),
+          });
+        }
+      }
+    }
+
+    await prisma.organizationRegistrationRequest.update({
+      where: { id: request.id },
+      data: { status: await statusOf(ORG_SUBJECT, request.id, true) },
+    });
+
+    orgs[spec.code] = {
+      orgId: organization.id,
+      requestId: request.id,
+      userId: orgUser.id,
+      approverId: orgApprover.id,
+    };
+  }
+
+  // ---------------------------------------------------------- ชุดข้อมูล
+  console.log("สร้างคำขอลงทะเบียนชุดข้อมูล…");
+
+  const nso = orgs["ORG-2026-0005"]!;
+
+  interface DatasetSpec {
+    title: string;
+    stage: ReviewTaskType | null;
+    result?: ReviewResult;
+    daysAgo: number;
+    specialist?: boolean;
+  }
+
+  const datasetSpecs: DatasetSpec[] = [
+    { title: "ทะเบียนที่ตั้งหน่วยบริการประชาชน", stage: null, daysAgo: 3 }, // ร่าง
+    { title: "สถิติผู้มาใช้บริการศูนย์ราชการรายเดือน", stage: ReviewTaskType.BDI_OFFICER_REVIEW, daysAgo: 8 },
+    {
+      title: "ดัชนีราคาผู้บริโภครายจังหวัด",
+      stage: ReviewTaskType.BDI_OFFICER_REVIEW,
+      result: ReviewResult.RETURNED,
+      daysAgo: 11,
+    },
+    { title: "จำนวนประชากรแยกตามช่วงอายุรายตำบล", stage: ReviewTaskType.ORGANIZATION_APPROVAL, daysAgo: 14 },
+    {
+      title: "สถิติการใช้บริการขนส่งมวลชนรายเดือน",
+      stage: ReviewTaskType.BDI_OFFICER_REVIEW,
+      daysAgo: 17,
+      specialist: true,
+    },
+    { title: "สถิติแรงงานนอกระบบรายไตรมาส", stage: ReviewTaskType.BDI_FINAL_APPROVAL, daysAgo: 20 },
+    { title: "ทะเบียนสถานประกอบการรายจังหวัด", stage: null, result: ReviewResult.APPROVED, daysAgo: 26 },
+    {
+      title: "ทะเบียนผู้ประกอบการขนส่งสาธารณะ",
+      stage: null,
+      result: ReviewResult.REJECTED,
+      daysAgo: 28,
+    },
+  ];
+
+  for (const [index, spec] of datasetSpecs.entries()) {
+    const isDraft = spec.stage === null && !spec.result;
+    const t = (d: number) => dt(spec.daysAgo - d);
+
+    const request = await prisma.datasetRegistrationRequest.create({
+      data: {
+        requestNumber: `DS-REG-2026-${String(index + 1).padStart(4, "0")}`,
+        organizationId: nso.orgId,
+        status: RequestStatus.DRAFT,
+        proposedTitle: spec.title,
+        submittedAt: isDraft ? null : dt(spec.daysAgo),
+        approvedAt: spec.result === ReviewResult.APPROVED ? t(4) : null,
+        rejectedAt: spec.result === ReviewResult.REJECTED ? t(3) : null,
+        createdAt: dt(spec.daysAgo + 1),
+        createdBy: nso.userId,
+        updatedBy: nso.userId,
+        metadata: {
+          create: {
+            titleTh: spec.title,
+            titleEn: "Sample dataset",
+            descriptionTh: `${spec.title} — ชุดข้อมูลตัวอย่างสำหรับสาธิตระบบ จัดทำโดยสำนักงานสถิติแห่งชาติ เพื่อใช้ทดสอบกระบวนการลงทะเบียนชุดข้อมูลตั้งแต่ต้นจนจบ`,
+            objective: "ใช้สาธิตกระบวนการลงทะเบียนชุดข้อมูล",
+            datasetCategoryCode: "GOVERNMENT",
+            dataOwnerDepartment: "กลุ่มงานสถิติสารสนเทศ",
+            contactName: "นางสาวศศิธร สถิติดี",
+            contactEmail: "user@nso.go.th",
+            contactPhone: "0820000000",
+            updateFrequency: "MONTHLY",
+            coverageStartDate: new Date("2024-01-01T00:00:00.000Z"),
+            coverageEndDate: new Date("2025-12-31T00:00:00.000Z"),
+            geographicScope: "NATIONAL",
+            containsPersonalData: false,
+            containsSensitiveData: false,
+            accessLevel: "PUBLIC",
+            deliveryMethod: "API",
+            dataFormat: "CSV",
+            additionalMetadataJson: {
+              datasetType: "STATISTIC",
+              keywords: ["สถิติ", "ราชการ"],
+              estimatedRecords: 120000,
+              deliveryFrequency: "MONTHLY",
+              deliveryEndpoint: "https://api.nso.go.th/datasets/sample",
+              technicalContactName: "นายเทคนิค ระบบดี",
+              technicalContactEmail: "tech@nso.go.th",
+              legalBasis: "พระราชบัญญัติสถิติ พ.ศ. 2550 มาตรา 6",
+              licenseType: "OPEN_GOVERNMENT",
+            } as Prisma.InputJsonValue,
+            createdBy: nso.userId,
+            updatedBy: nso.userId,
+          },
+        },
+      },
+    });
+
+    if (isDraft) continue;
+
+    let seq = 1;
+
+    if (spec.specialist) {
+      // officer มอบหมายผู้เชี่ยวชาญ แล้วผู้เชี่ยวชาญบันทึกความเห็นกลับมา
+      await closedTask({
+        subjectType: DS_SUBJECT,
+        subjectId: request.id,
+        taskType: ReviewTaskType.DATASET_SPECIALIST_REVIEW,
+        sequenceNumber: seq++,
+        assignedUserId: specialist.id,
+        assignedRole: ROLE_CODES.BDI_DATASET_SPECIALIST,
+        result: ReviewResult.CONFIRMED,
+        comment: "โครงสร้างข้อมูลเหมาะสม แนะนำให้ระบุหน่วยนับในพจนานุกรมข้อมูลให้ครบ",
+        at: t(1),
+      });
+    }
+
+    if (spec.result === ReviewResult.RETURNED) {
+      await closedTask({
+        subjectType: DS_SUBJECT,
+        subjectId: request.id,
+        taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
+        sequenceNumber: seq++,
+        assignedUserId: officer.id,
+        assignedRole: ROLE_CODES.BDI_OFFICER,
+        result: ReviewResult.RETURNED,
+        comment: "กรุณาระบุฐานอำนาจตามกฎหมายและแนบตัวอย่างข้อมูลเพิ่มเติม",
+        at: t(2),
+      });
+    } else if (spec.stage === ReviewTaskType.BDI_OFFICER_REVIEW) {
+      await openTaskRow({
+        subjectType: DS_SUBJECT,
+        subjectId: request.id,
+        taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
+        sequenceNumber: seq++,
+        roundNumber: spec.specialist ? 2 : 1,
+        assignedUserId: officer.id,
+        assignedRole: ROLE_CODES.BDI_OFFICER,
+        at: t(2),
+      });
+    } else {
+      await closedTask({
+        subjectType: DS_SUBJECT,
+        subjectId: request.id,
+        taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
+        sequenceNumber: seq++,
+        assignedUserId: officer.id,
+        assignedRole: ROLE_CODES.BDI_OFFICER,
+        result: ReviewResult.PASSED,
+        at: t(2),
+      });
+
+      if (spec.stage === ReviewTaskType.ORGANIZATION_APPROVAL) {
+        await openTaskRow({
+          subjectType: DS_SUBJECT,
+          subjectId: request.id,
+          taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
+          sequenceNumber: seq++,
+          assignedUserId: nso.approverId,
+          assignedRole: ROLE_CODES.ORGANIZATION_APPROVER,
+          at: t(3),
+        });
+      } else {
+        const orgApprovalTask = await closedTask({
+          subjectType: DS_SUBJECT,
+          subjectId: request.id,
+          taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
+          sequenceNumber: seq++,
+          assignedUserId: nso.approverId,
+          assignedRole: ROLE_CODES.ORGANIZATION_APPROVER,
+          result: ReviewResult.APPROVED,
+          at: t(3),
+        });
+
+        // ลงนามของผู้มีอำนาจ — signature.signature_confirmation
+        await prisma.signatureConfirmation.create({
+          data: {
+            reviewTaskId: orgApprovalTask.id,
+            subjectType: DS_SUBJECT,
+            subjectId: request.id,
+            userAccountId: nso.approverId,
+            organizationId: nso.orgId,
+            confirmationType: "ORGANIZATION_APPROVAL",
+            confirmationText:
+              "ข้าพเจ้ารับรองว่าข้อมูลในคำขอนี้ถูกต้อง และได้อ่านและยอมรับเอกสารทางกฎหมายที่เกี่ยวข้องครบถ้วนแล้ว",
+            confirmationPayloadJson: {
+              schemaVersion: 1,
+              subjectType: DS_SUBJECT,
+              subjectId: request.id,
+              requestNumber: request.requestNumber,
+              reviewTaskId: orgApprovalTask.id,
+              taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
+            } as Prisma.InputJsonValue,
+            confirmedAt: t(3),
+            ipAddress: "203.0.113.10",
+            createdBy: nso.approverId,
+          },
+        });
+
+        // ตรวจซ้ำโดย officer — BDI_OFFICER_REVIEW รอบที่สอง
+        if (spec.stage === ReviewTaskType.BDI_FINAL_APPROVAL || spec.result) {
+          await closedTask({
+            subjectType: DS_SUBJECT,
+            subjectId: request.id,
+            taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
+            sequenceNumber: seq++,
+            roundNumber: 2,
+            assignedUserId: officer.id,
+            assignedRole: ROLE_CODES.BDI_OFFICER,
+            result: ReviewResult.CONFIRMED,
+            at: t(4),
+          });
+        }
+
+        if (spec.stage === ReviewTaskType.BDI_FINAL_APPROVAL) {
+          await openTaskRow({
+            subjectType: DS_SUBJECT,
+            subjectId: request.id,
+            taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
+            sequenceNumber: seq++,
+            assignedUserId: approver.id,
+            assignedRole: ROLE_CODES.BDI_FINAL_APPROVER,
+            at: t(5),
+          });
+        } else if (spec.result) {
+          await closedTask({
+            subjectType: DS_SUBJECT,
+            subjectId: request.id,
+            taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
+            sequenceNumber: seq++,
+            assignedUserId: approver.id,
+            assignedRole: ROLE_CODES.BDI_FINAL_APPROVER,
+            result: spec.result,
+            comment:
+              spec.result === ReviewResult.REJECTED
+                ? "ชุดข้อมูลซ้ำซ้อนกับที่หน่วยงานอื่นนำส่งแล้ว จึงไม่รับลงทะเบียน"
+                : null,
+            at: t(5),
+          });
+        }
+      }
+    }
+
+    // คำขอที่อนุมัติแล้วต้องมี dataset จริง (ขั้นที่ 3–7 ของภาพใน sheet)
+    if (spec.result === ReviewResult.APPROVED) {
+      const metadata = await prisma.datasetRegistrationMetadata.findUniqueOrThrow({
+        where: { datasetRegistrationRequestId: request.id },
+      });
+
+      const dataset = await prisma.dataset.create({
         data: {
-          datasetRequestId: request.id,
-          type: e.type,
-          actorId: e.actorId,
-          fromStatus: e.from ?? null,
-          toStatus: e.to ?? null,
-          note: e.note ?? null,
-          createdAt: e.at,
+          datasetCode: await nextDatasetCode(prisma),
+          organizationId: nso.orgId,
+          status: DatasetStatus.ACTIVE,
+          sourceDatasetRegistrationRequestId: request.id,
+          activatedAt: t(4),
+          activatedBy: approver.id,
+          createdBy: approver.id,
+          updatedBy: approver.id,
+          metadata: {
+            create: {
+              titleTh: metadata.titleTh,
+              titleEn: metadata.titleEn,
+              descriptionTh: metadata.descriptionTh,
+              objective: metadata.objective,
+              datasetCategoryCode: metadata.datasetCategoryCode,
+              dataOwnerDepartment: metadata.dataOwnerDepartment,
+              contactName: metadata.contactName,
+              contactEmail: metadata.contactEmail,
+              contactPhone: metadata.contactPhone,
+              updateFrequency: metadata.updateFrequency,
+              coverageStartDate: metadata.coverageStartDate,
+              coverageEndDate: metadata.coverageEndDate,
+              geographicScope: metadata.geographicScope,
+              containsPersonalData: metadata.containsPersonalData,
+              containsSensitiveData: metadata.containsSensitiveData,
+              accessLevel: metadata.accessLevel,
+              deliveryMethod: metadata.deliveryMethod,
+              dataFormat: metadata.dataFormat,
+              additionalMetadataJson: metadata.additionalMetadataJson ?? Prisma.DbNull,
+              createdBy: approver.id,
+              updatedBy: approver.id,
+            },
+          },
+        },
+      });
+
+      await prisma.datasetRegistrationRequest.update({
+        where: { id: request.id },
+        data: { createdDatasetId: dataset.id },
+      });
+
+      await prisma.integrationOperation.create({
+        data: {
+          integrationType: IntegrationType.DII,
+          operation: "PUBLISH_DATASET_REFERENCE",
+          subjectType: "DATASET",
+          subjectId: dataset.id,
+          organizationId: nso.orgId,
+          idempotencyKey: `DII:PUBLISH_DATASET_REFERENCE:${dataset.id}`,
+          correlationId: randomUUID(),
         },
       });
     }
 
-    console.log(`  ✓ ${request.requestNumber} ${spec.nameTh} [${spec.status}]`);
+    await prisma.datasetRegistrationRequest.update({
+      where: { id: request.id },
+      data: { status: await statusOf(DS_SUBJECT, request.id, true) },
+    });
   }
+
+  // ---------------------------------------------------------- สรุป
+  const counts = {
+    users: await prisma.userAccount.count(),
+    organizations: await prisma.organization.count(),
+    orgRequests: await prisma.organizationRegistrationRequest.count(),
+    datasetRequests: await prisma.datasetRegistrationRequest.count(),
+    datasets: await prisma.dataset.count(),
+    reviewTasks: await prisma.reviewTask.count(),
+    signatures: await prisma.signatureConfirmation.count(),
+    integrations: await prisma.integrationOperation.count(),
+  };
+
+  console.log("\nเสร็จแล้ว —", JSON.stringify(counts));
+  console.log(`รหัสผ่านของทุกบัญชี: ${PASSWORD}`);
+  console.log(
+    `บัญชี BDI: ${officer.email} · ${approver.email} · ${specialist.email} · ${legalOfficer.email}`,
+  );
 }
 
-main()
-  .catch((err) => {
-    console.error(err);
-    process.exit(1);
-  })
-  .finally(() => prisma.$disconnect());
+/** สถานะที่ derive จาก review_task — ใช้ตัวเดียวกับ runtime เพื่อให้ fixture ตรงกับของจริง */
+async function statusOf(
+  subjectType: SubjectType,
+  subjectId: string,
+  hasSubmitted: boolean,
+): Promise<RequestStatus> {
+  const { deriveRequestStatus } = await import("../lib/workflow.js");
+  return deriveRequestStatus(prisma, { subjectType, subjectId, hasSubmitted, cancelled: false });
+}
+
+runWithContext({ sourceComponent: "seed-demo" }, () =>
+  main()
+    .catch((error) => {
+      console.error(error);
+      process.exitCode = 1;
+    })
+    .finally(() => prisma.$disconnect()),
+);
