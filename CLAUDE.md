@@ -50,8 +50,18 @@ Production build (also what a public deployment must use):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+docker compose exec backend npm run seed:masters:prod  # must run first
 docker compose exec backend npm run seed:demo:prod     # seed:demo needs tsx, a devDependency
 ```
+
+`ACTIVATION_KEY_SECRET` must be set in `.env` before starting production — the backend throws
+at boot without it rather than falling back to the development value.
+
+The baseline migration replaced the two that came before it, so a database still carrying the
+old `_prisma_migrations` rows cannot be brought forward: `migrate deploy` refuses when recorded
+migrations are missing from disk. On a disposable deployment the fix is `down -v` then `up`,
+which is what main was given. Anywhere the data mattered this would need a written backfill —
+see `docs/06-db-migration-plan.md` §7.
 
 The production image installs production dependencies only, so `tsx` is not there and
 `npm run seed:demo` fails with `tsx: not found`. `seed:demo:prod` runs the compiled
@@ -227,6 +237,13 @@ Two API base URLs, and they are not interchangeable:
   `/_global-error` dies with `Cannot read properties of null (reading 'useContext')`.
 - In `docker-compose.prod.yml`, clearing mounts needs `volumes: !reset []`. A plain `volumes: []`
   is appended, not substituted, and the source bind mount keeps shadowing `dist/`.
+- Every service that has its own `build:` block gets its own image, even when the Dockerfile is
+  shared. `delivery-worker` builds `bdi-<project>-delivery-worker`, not the backend image, so
+  `up -d delivery-worker` without `--build` will happily start a stale image built from a
+  different target — the symptom is `Cannot find module /app/dist/...` for a file that is
+  demonstrably in the backend image.
+- A new service added to `docker-compose.yml` is not in `docker-compose.prod.yml` until it is
+  put there. Until then it runs its development command on a production deployment.
 - Zod v4: `z.nativeEnum(X, { error: "..." })`. `errorMap` no longer exists.
 - Where `APP_URL` is https (that is `main`), the session cookie is issued `Secure`, so a script
   that logs in over `http://localhost:4000` gets a 200 and then 401 on every later call — the
