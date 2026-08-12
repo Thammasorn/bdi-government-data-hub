@@ -1,40 +1,75 @@
-import { randomUUID } from "node:crypto";
-
+/**
+ * Journey B — ลงทะเบียนหน่วยงาน
+ *
+ * โครงเปลี่ยนไปจากเดิมสองอย่างใหญ่ ๆ ตามดีไซน์ใน Excel:
+ *
+ * 1. **แยกสองตาราง** organization.organization เก็บสถานะปัจจุบันของหน่วยงาน
+ *    (PENDING_REGISTRATION → ACTIVE) ส่วน organization_registration_request เก็บ
+ *    snapshot ของคำขอพร้อมสถานะ workflow เจ็ดค่า ของเดิมยัดรวมไว้ในตารางเดียว
+ *    `:id` ในทุก route คือ **id ของคำขอ** ไม่ใช่ของหน่วยงาน
+ *
+ * 2. **ด่านอนุมัติย้ายไป review.review_task** POST /:id/review ยังเป็นจุดตัดสินใจเดียว
+ *    ของทุกด่านเหมือนเดิม แต่ตัดสินจาก active review_task แทนที่จะดูจาก status
+ *
+ * ลำดับด่านของ Journey นี้: BDI_OFFICER_REVIEW → ORGANIZATION_APPROVAL → BDI_FINAL_APPROVAL
+ */
 import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
 import {
-  AttachmentKind,
-  OrganizationEventType,
+  AccountType,
+  AttachmentOwnerType,
+  AttachmentType,
   OrganizationStatus,
   Prisma,
-  Role,
-  UserStatus,
+  RequestStatus,
+  ReviewResult,
+  ReviewTaskStatus,
+  ReviewTaskType,
+  SubjectType,
+  UserAccountStatus,
 } from "@prisma/client";
 
 import { prisma } from "../db.js";
-import { isValidAddress, lookupZipcode } from "../lib/address.js";
+import { isValidAddress, lookupZipcode, resolveAddressCodes, resolveAddressNames } from "../lib/address.js";
+import {
+  activeAttachment,
+  activeAttachments,
+  publicAttachment,
+  storeAttachment,
+  streamAttachment,
+} from "../lib/attachment.js";
+import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
+import { assignRole, issueActivationKey } from "../lib/iam.js";
 import {
   sendActivated,
   sendFinalApprovalRequest,
+  sendInvitationEmail,
   sendRevisionRequested,
   sendSignatoryRequest,
   sendSubmittedToOfficers,
 } from "../lib/mail.js";
+import { NotificationType, bdiApproverIds, bdiOfficerIds, emailsOf, notifyUsers, organizationMemberIds } from "../lib/notify.js";
 import { renderOrganizationForm } from "../lib/pdf.js";
-import { isBdiStaff } from "../lib/roles.js";
-import { BUCKET, minio } from "../storage.js";
+import { nextOrganizationCode, nextOrganizationRequestNumber } from "../lib/request-number.js";
+import { ROLE_LABELS, isBdiStaff } from "../lib/roles.js";
+import { ROLE_CODES, SYSTEM_USER_ID, type RoleCode } from "../lib/system.js";
+import { emailSchema, formatZodError, nationalIdSchema, phoneSchema } from "../lib/validation.js";
 import {
-  emailSchema,
-  formatZodError,
-  nationalIdSchema,
-  phoneSchema,
-} from "../lib/validation.js";
+  WorkflowError,
+  activeTask,
+  completeTask,
+  deriveRequestStatus,
+  openTask,
+  startTask,
+  taskHistory,
+} from "../lib/workflow.js";
 import { requireAuth } from "../middleware/auth.js";
-import { createInvitation } from "./admin.js";
 
 export const organizationRouter = Router();
 organizationRouter.use(requireAuth);
+
+const SUBJECT = SubjectType.ORGANIZATION_REGISTRATION_REQUEST;
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const ALLOWED_MIME = new Set(["application/pdf", "image/jpeg", "image/jpg"]);
@@ -49,15 +84,25 @@ const upload = multer({
 
 // ---------------------------------------------------------------- schemas
 
-/** ตอนบันทึกร่างยอมให้ว่างได้ ตอนนำส่งต้องครบ — จึงแยกเป็นสองชุด */
+/**
+ * ตอนบันทึกร่างยอมให้ว่างได้ ตอนนำส่งต้องครบ — จึงแยกเป็นสองชุด
+ *
+ * ชื่อฟิลด์ฝั่ง API ยังเป็นชุดเดิม (name / signatory* / contact*) เพื่อไม่ให้ frontend
+ * ต้องแก้ทั้งฟอร์ม การแปลงไปเป็นคอลัมน์ snapshot ของดีไซน์ (organization_name_th /
+ * approver_* / user_*) เกิดที่ toRequestData() ข้างล่าง
+ */
 const draftSchema = z.object({
   name: z.string().trim().max(200).optional(),
+  nameEn: z.string().trim().max(200).optional(),
+  organizationType: z.string().trim().max(64).optional(),
   addressLine: z.string().trim().max(300).optional(),
   province: z.string().trim().optional(),
   district: z.string().trim().optional(),
   subdistrict: z.string().trim().optional(),
   postalCode: z.string().trim().optional(),
+  phone: z.string().trim().optional(),
   email: z.string().trim().optional(),
+  websiteUrl: z.string().trim().max(500).optional(),
 
   signatoryPrefix: z.string().trim().optional(),
   signatoryFirstName: z.string().trim().optional(),
@@ -66,6 +111,7 @@ const draftSchema = z.object({
   signatoryEmail: z.string().trim().optional(),
   signatoryNationalId: z.string().trim().optional(),
   signatoryPhone: z.string().trim().optional(),
+  signatoryDepartment: z.string().trim().optional(),
 
   contactPrefix: z.string().trim().optional(),
   contactFirstName: z.string().trim().optional(),
@@ -74,6 +120,7 @@ const draftSchema = z.object({
   contactDepartment: z.string().trim().optional(),
   contactEmail: z.string().trim().optional(),
   contactPhone: z.string().trim().optional(),
+  contactNationalId: z.string().trim().optional(),
 });
 
 const submitSchema = z.object({
@@ -102,60 +149,174 @@ const submitSchema = z.object({
   contactPhone: phoneSchema,
 });
 
+type RequestRow = Prisma.OrganizationRegistrationRequestGetPayload<{
+  include: { organization: true };
+}>;
+
+// ---------------------------------------------------------------- mapping
+
+/** แปลงชื่อฟิลด์ฝั่ง API เป็นคอลัมน์ snapshot ตามดีไซน์ */
+async function toRequestData(input: z.infer<typeof draftSchema>) {
+  const codes = await resolveAddressCodes(prisma, input);
+
+  const postalCode =
+    input.postalCode ||
+    (input.province && input.district && input.subdistrict
+      ? (lookupZipcode(input.province, input.district, input.subdistrict) ?? undefined)
+      : undefined);
+
+  return {
+    organizationType: input.organizationType,
+    organizationNameTh: input.name,
+    organizationNameEn: input.nameEn,
+    organizationAddressLine: input.addressLine,
+    organizationProvinceCode: codes.provinceCode,
+    organizationDistrictCode: codes.districtCode,
+    organizationSubdistrictCode: codes.subDistrictCode,
+    organizationPostalCode: postalCode,
+    organizationPhone: input.phone,
+    organizationEmail: input.email,
+    organizationWebsite: input.websiteUrl,
+
+    approverPrefixTh: input.signatoryPrefix,
+    approverFirstnameTh: input.signatoryFirstName,
+    approverLastnameTh: input.signatoryLastName,
+    approverPositionTh: input.signatoryPosition,
+    approverEmail: input.signatoryEmail,
+    approverCid: input.signatoryNationalId,
+    approverPhoneNumber: input.signatoryPhone,
+    approverDepartmentTh: input.signatoryDepartment,
+
+    userPrefixTh: input.contactPrefix,
+    userFirstnameTh: input.contactFirstName,
+    userLastnameTh: input.contactLastName,
+    userPositionTh: input.contactPosition,
+    userDepartmentTh: input.contactDepartment,
+    userEmail: input.contactEmail,
+    userPhoneNumber: input.contactPhone,
+    userCid: input.contactNationalId,
+  };
+}
+
+/**
+ * แปลงกลับเป็นรูปที่ frontend และ zod ชุด submit เข้าใจ
+ * คงชื่อฟิลด์เดิมไว้เพื่อไม่ให้ต้องแก้ฟอร์มทั้งหน้า
+ */
+async function toApiShape(request: RequestRow) {
+  const names = await resolveAddressNames(prisma, {
+    provinceCode: request.organizationProvinceCode,
+    districtCode: request.organizationDistrictCode,
+    subDistrictCode: request.organizationSubdistrictCode,
+  });
+
+  return {
+    id: request.id,
+    requestNumber: request.requestNumber,
+    status: request.status,
+    organizationId: request.organizationId,
+    organizationStatus: request.organization.status,
+    organizationCode: request.organization.organizationCode,
+
+    name: request.organizationNameTh,
+    nameEn: request.organizationNameEn,
+    organizationType: request.organizationType,
+    addressLine: request.organizationAddressLine,
+    province: names.province,
+    district: names.district,
+    subdistrict: names.subdistrict,
+    postalCode: request.organizationPostalCode,
+    phone: request.organizationPhone,
+    email: request.organizationEmail,
+    websiteUrl: request.organizationWebsite,
+
+    signatoryPrefix: request.approverPrefixTh,
+    signatoryFirstName: request.approverFirstnameTh,
+    signatoryLastName: request.approverLastnameTh,
+    signatoryPosition: request.approverPositionTh,
+    signatoryEmail: request.approverEmail,
+    signatoryNationalId: request.approverCid,
+    signatoryPhone: request.approverPhoneNumber,
+
+    contactPrefix: request.userPrefixTh,
+    contactFirstName: request.userFirstnameTh,
+    contactLastName: request.userLastnameTh,
+    contactPosition: request.userPositionTh,
+    contactDepartment: request.userDepartmentTh,
+    contactEmail: request.userEmail,
+    contactPhone: request.userPhoneNumber,
+
+    submittedAt: request.submittedAt,
+    approvedAt: request.approvedAt,
+    rejectedAt: request.rejectedAt,
+    createdAt: request.createdAt,
+    updatedAt: request.updatedAt,
+  };
+}
+
 // ---------------------------------------------------------------- helpers
 
-const detailInclude = {
-  createdBy: { select: { id: true, email: true, prefix: true, firstName: true, lastName: true } },
-  attachments: {
-    select: { id: true, kind: true, filename: true, mimeType: true, sizeBytes: true, createdAt: true },
-    orderBy: { createdAt: "asc" },
-  },
-  events: {
-    orderBy: { createdAt: "asc" },
-    include: { actor: { select: { id: true, firstName: true, lastName: true, email: true } } },
-  },
-} satisfies Prisma.OrganizationInclude;
-
-async function recordEvent(
-  tx: Prisma.TransactionClient,
-  organizationId: string,
-  type: OrganizationEventType,
-  actorId: string | null,
-  fromStatus: OrganizationStatus | null,
-  toStatus: OrganizationStatus | null,
-  note?: string,
-) {
-  await tx.organizationEvent.create({
-    data: { organizationId, type, actorId, fromStatus, toStatus, note },
+/**
+ * เลือกผู้รับมอบหมายของด่านถัดไป
+ *
+ * sheet มาร์ก review_task.assigned_user_id เป็น Required จึงต้องมีคนรับตั้งแต่สร้าง task
+ * เลือกคนที่มี active task น้อยที่สุด เพื่อไม่ให้งานกองที่คนเดียว
+ * (docs/01-user-journey.md §4.4 เขียนว่า "BDI Officer ทุกคนเห็นคำขอทั้งหมด" ใครว่างก่อนหยิบก่อน
+ *  — ดีไซน์บังคับให้มีเจ้าของ จึงมอบหมายอัตโนมัติแล้วให้ reassign ได้ทีหลังแทน)
+ */
+async function pickAssignee(roleCode: RoleCode, organizationId?: string | null): Promise<string | null> {
+  const assignments = await prisma.userRoleAssignment.findMany({
+    where: {
+      role: { code: roleCode, isActive: true },
+      status: "ACTIVE",
+      OR: [{ effectiveUntil: null }, { effectiveUntil: { gt: new Date() } }],
+      userAccount: { status: UserAccountStatus.ACTIVE },
+      ...(organizationId !== undefined ? { organizationId } : {}),
+    },
+    select: { userAccountId: true },
   });
+
+  const candidates = [...new Set(assignments.map((a) => a.userAccountId))];
+  if (candidates.length === 0) return null;
+
+  const loads = await prisma.reviewTask.groupBy({
+    by: ["assignedUserId"],
+    where: {
+      assignedUserId: { in: candidates },
+      status: { in: [ReviewTaskStatus.PENDING, ReviewTaskStatus.IN_PROGRESS] },
+    },
+    _count: { _all: true },
+  });
+
+  const loadByUser = new Map(loads.map((l) => [l.assignedUserId, l._count._all]));
+  return candidates.sort((a, b) => (loadByUser.get(a) ?? 0) - (loadByUser.get(b) ?? 0))[0] ?? null;
 }
 
-/** ผู้ใช้เห็นหน่วยงานนี้ได้ไหม */
+/** ผู้ใช้เห็นคำขอนี้ได้ไหม */
 function canView(
-  session: { sub: string; roles: Role[]; organizationId: string | null },
-  org: { id: string; createdById: string; signatoryEmail: string | null },
-  email: string,
+  session: { sub: string; roles: RoleCode[]; organizationId: string | null; email: string },
+  request: { createdBy: string; organizationId: string; approverEmail: string | null },
 ): boolean {
   if (isBdiStaff(session.roles)) return true;
-  if (org.createdById === session.sub) return true;
-  if (session.organizationId === org.id) return true;
-  return org.signatoryEmail?.toLowerCase() === email.toLowerCase();
+  if (request.createdBy === session.sub) return true;
+  if (session.organizationId === request.organizationId) return true;
+  return request.approverEmail?.toLowerCase() === session.email.toLowerCase();
 }
 
-async function officerEmails(): Promise<string[]> {
-  const users = await prisma.user.findMany({
-    where: { roles: { has: Role.BDI_OFFICER }, status: UserStatus.ACTIVE },
-    select: { email: true },
+/** สถานะของคำขอต้องตรงกับที่ derive จาก review_task เสมอ */
+async function syncStatus(
+  tx: Prisma.TransactionClient,
+  request: { id: string; submittedAt: Date | null; cancelledAt: Date | null },
+) {
+  const status = await deriveRequestStatus(tx, {
+    subjectType: SUBJECT,
+    subjectId: request.id,
+    hasSubmitted: Boolean(request.submittedAt),
+    cancelled: Boolean(request.cancelledAt),
   });
-  return users.map((u) => u.email);
-}
-
-async function approverEmails(): Promise<string[]> {
-  const users = await prisma.user.findMany({
-    where: { roles: { has: Role.BDI_APPROVER }, status: UserStatus.ACTIVE },
-    select: { email: true },
+  return tx.organizationRegistrationRequest.update({
+    where: { id: request.id },
+    data: { status, updatedBy: SYSTEM_USER_ID },
   });
-  return users.map((u) => u.email);
 }
 
 // ---------------------------------------------------------------- list
@@ -164,20 +325,20 @@ organizationRouter.get("/", async (req, res) => {
   const session = req.session!;
   const { status, q } = req.query as { status?: string; q?: string };
 
-  const where: Prisma.OrganizationWhereInput = {};
+  const where: Prisma.OrganizationRegistrationRequestWhereInput = {};
 
   if (!isBdiStaff(session.roles)) {
     where.OR = [
-      { createdById: session.sub },
-      { members: { some: { id: session.sub } } },
-      { signatoryEmail: { equals: session.email, mode: "insensitive" } },
+      { createdBy: session.sub },
+      ...(session.organizationId ? [{ organizationId: session.organizationId }] : []),
+      { approverEmail: { equals: session.email, mode: "insensitive" as const } },
     ];
   }
 
   const statuses = (status ?? "")
     .split(",")
     .map((s) => s.trim())
-    .filter((s): s is OrganizationStatus => s in OrganizationStatus);
+    .filter((s): s is RequestStatus => s in RequestStatus);
   if (statuses.length > 0) where.status = { in: statuses };
 
   if (q?.trim()) {
@@ -185,30 +346,62 @@ organizationRouter.get("/", async (req, res) => {
     where.AND = [
       {
         OR: [
-          { name: { contains: search, mode: "insensitive" } },
-          { createdBy: { email: { contains: search, mode: "insensitive" } } },
-          { createdBy: { firstName: { contains: search, mode: "insensitive" } } },
-          { createdBy: { lastName: { contains: search, mode: "insensitive" } } },
+          { organizationNameTh: { contains: search, mode: "insensitive" } },
+          { requestNumber: { contains: search, mode: "insensitive" } },
+          { userEmail: { contains: search, mode: "insensitive" } },
+          { approverEmail: { contains: search, mode: "insensitive" } },
         ],
       },
     ];
   }
 
-  const organizations = await prisma.organization.findMany({
+  const requests = await prisma.organizationRegistrationRequest.findMany({
     where,
     orderBy: [{ submittedAt: "desc" }, { createdAt: "desc" }],
     take: 200,
     select: {
       id: true,
-      name: true,
+      requestNumber: true,
       status: true,
+      organizationNameTh: true,
+      userEmail: true,
+      userFirstnameTh: true,
+      userLastnameTh: true,
       submittedAt: true,
       createdAt: true,
-      createdBy: { select: { firstName: true, lastName: true, email: true } },
+      organizationId: true,
     },
   });
 
-  res.json({ organizations });
+  // ด่านที่แต่ละคำขอค้างอยู่ — badge บนหน้าจอใช้ค่านี้แทน PENDING_* ที่หายไปจาก status
+  const tasks = await prisma.reviewTask.findMany({
+    where: {
+      subjectType: SUBJECT,
+      subjectId: { in: requests.map((r) => r.id) },
+      status: { in: [ReviewTaskStatus.PENDING, ReviewTaskStatus.IN_PROGRESS] },
+    },
+    select: { subjectId: true, taskType: true, roundNumber: true },
+  });
+  const stageBySubject = new Map(tasks.map((t) => [t.subjectId, t]));
+
+  res.json({
+    organizations: requests.map((r) => ({
+      id: r.id,
+      requestNumber: r.requestNumber,
+      name: r.organizationNameTh,
+      status: r.status,
+      currentTaskType: stageBySubject.get(r.id)?.taskType ?? null,
+      currentRound: stageBySubject.get(r.id)?.roundNumber ?? null,
+      submittedAt: r.submittedAt,
+      createdAt: r.createdAt,
+      organizationId: r.organizationId,
+      createdBy: {
+        email: r.userEmail,
+        firstName: r.userFirstnameTh,
+        lastName: r.userLastnameTh,
+      },
+    })),
+  });
 });
 
 // ---------------------------------------------------------------- create draft
@@ -220,11 +413,16 @@ organizationRouter.post("/", async (req, res) => {
     return;
   }
 
-  const existing = await prisma.organization.findFirst({
-    where: { createdById: session.sub, status: { not: OrganizationStatus.ACTIVE } },
+  const existing = await prisma.organizationRegistrationRequest.findFirst({
+    where: {
+      createdBy: session.sub,
+      status: { notIn: [RequestStatus.APPROVED, RequestStatus.REJECTED, RequestStatus.CANCELLED] },
+    },
   });
   if (existing) {
-    res.status(409).json({ error: "exists", organizationId: existing.id, message: "คุณมีคำขออยู่แล้ว" });
+    res
+      .status(409)
+      .json({ error: "exists", organizationId: existing.id, message: "คุณมีคำขออยู่แล้ว" });
     return;
   }
 
@@ -234,42 +432,117 @@ organizationRouter.post("/", async (req, res) => {
     return;
   }
 
-  const org = await prisma.$transaction(async (tx) => {
-    const created = await tx.organization.create({
-      data: { ...parsed.data, name: parsed.data.name || "หน่วยงานใหม่", createdById: session.sub },
+  const snapshot = await toRequestData(parsed.data);
+
+  const created = await prisma.$transaction(async (tx) => {
+    // หน่วยงานถูกสร้างพร้อมคำขอ แต่ยังเป็น PENDING_REGISTRATION จนกว่าจะอนุมัติครบ
+    const organization = await tx.organization.create({
+      data: {
+        organizationCode: await nextOrganizationCode(tx),
+        organizationType: parsed.data.organizationType ?? null,
+        nameTh: parsed.data.name || "หน่วยงานใหม่",
+        nameEn: parsed.data.nameEn ?? null,
+        status: OrganizationStatus.PENDING_REGISTRATION,
+        createdBy: session.sub,
+        updatedBy: session.sub,
+      },
     });
-    await recordEvent(tx, created.id, OrganizationEventType.CREATED, session.sub, null, created.status);
-    await tx.user.update({ where: { id: session.sub }, data: { organizationId: created.id } });
-    return created;
+
+    const request = await tx.organizationRegistrationRequest.create({
+      data: {
+        requestNumber: await nextOrganizationRequestNumber(tx),
+        organizationId: organization.id,
+        status: RequestStatus.DRAFT,
+        ...snapshot,
+        organizationCode: organization.organizationCode,
+        createdBy: session.sub,
+        updatedBy: session.sub,
+      },
+      include: { organization: true },
+    });
+
+    // ผู้สร้างกลายเป็น ORGANIZATION_USER ของหน่วยงานนี้
+    await assignRole(tx, {
+      userAccountId: session.sub,
+      roleCode: ROLE_CODES.ORGANIZATION_USER,
+      organizationId: organization.id,
+      actorId: session.sub,
+    });
+
+    return request;
   });
 
-  res.status(201).json({ organization: org });
+  await logAudit({
+    action: AuditAction.ORGANIZATION_CREATED,
+    subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
+    subjectId: created.id,
+    organizationId: created.organizationId,
+    after: { requestNumber: created.requestNumber, name: created.organizationNameTh },
+  });
+
+  res.status(201).json({ organization: await toApiShape(created) });
 });
 
 // ---------------------------------------------------------------- detail
 
 organizationRouter.get("/:id", async (req, res) => {
-  const org = await prisma.organization.findUnique({
+  const session = req.session!;
+  const request = await prisma.organizationRegistrationRequest.findUnique({
     where: { id: req.params.id },
-    include: detailInclude,
+    include: { organization: true },
   });
-  if (!org || !canView(req.session!, org, req.session!.email)) {
+  if (!request || !canView(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
-  res.json({ organization: org });
+
+  const [attachments, tasks, active] = await Promise.all([
+    activeAttachments(prisma, AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST, request.id),
+    taskHistory(prisma, SUBJECT, request.id),
+    activeTask(prisma, SUBJECT, request.id),
+  ]);
+
+  res.json({
+    organization: {
+      ...(await toApiShape(request)),
+      currentTaskType: active?.taskType ?? null,
+      currentRound: active?.roundNumber ?? null,
+      currentAssignee: active?.assignedUser?.displayName ?? null,
+      attachments: attachments.map(publicAttachment),
+      // timeline มาจาก review_task แทน organization_events เดิม
+      events: tasks.map((t) => ({
+        id: t.id,
+        taskType: t.taskType,
+        sequenceNumber: t.sequenceNumber,
+        roundNumber: t.roundNumber,
+        status: t.status,
+        result: t.result,
+        note: t.resultComment,
+        actor: t.assignedUser
+          ? { id: t.assignedUser.id, name: t.assignedUser.displayName, email: t.assignedUser.email }
+          : null,
+        assignedAt: t.assignedAt,
+        startedAt: t.startedAt,
+        completedAt: t.completedAt,
+        createdAt: t.assignedAt,
+      })),
+    },
+  });
 });
 
 // ---------------------------------------------------------------- save draft
 
 organizationRouter.patch("/:id", async (req, res) => {
   const session = req.session!;
-  const org = await prisma.organization.findUnique({ where: { id: req.params.id } });
-  if (!org || org.createdById !== session.sub) {
+  const request = await prisma.organizationRegistrationRequest.findUnique({
+    where: { id: req.params.id },
+    include: { organization: true },
+  });
+  if (!request || request.createdBy !== session.sub) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
-  if (org.status !== OrganizationStatus.DRAFT && org.status !== OrganizationStatus.NEEDS_REVISION) {
+  if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
     res.status(409).json({ error: "locked", message: "คำขออยู่ระหว่างการตรวจสอบ แก้ไขไม่ได้" });
     return;
   }
@@ -280,17 +553,30 @@ organizationRouter.patch("/:id", async (req, res) => {
     return;
   }
 
-  const data = { ...parsed.data };
-  // เติมรหัสไปรษณีย์ให้อัตโนมัติเมื่อเลือกตำบลครบ
-  if (data.province && data.district && data.subdistrict && !data.postalCode) {
-    data.postalCode = lookupZipcode(data.province, data.district, data.subdistrict) ?? undefined;
-  }
+  const snapshot = await toRequestData(parsed.data);
 
-  const updated = await prisma.organization.update({
-    where: { id: org.id },
-    data: { ...data, ...(data.name ? { name: data.name } : {}) },
+  const updated = await prisma.$transaction(async (tx) => {
+    const next = await tx.organizationRegistrationRequest.update({
+      where: { id: request.id },
+      data: { ...snapshot, updatedBy: session.sub },
+      include: { organization: true },
+    });
+    // ชื่อหน่วยงานบน master ตามคำขอไปด้วย ตราบใดที่ยังไม่อนุมัติ
+    if (parsed.data.name) {
+      await tx.organization.update({
+        where: { id: request.organizationId },
+        data: {
+          nameTh: parsed.data.name,
+          nameEn: parsed.data.nameEn ?? null,
+          organizationType: parsed.data.organizationType ?? null,
+          updatedBy: session.sub,
+        },
+      });
+    }
+    return next;
   });
-  res.json({ organization: updated });
+
+  res.json({ organization: await toApiShape(updated) });
 });
 
 // ---------------------------------------------------------------- attachments
@@ -298,7 +584,14 @@ organizationRouter.patch("/:id", async (req, res) => {
 organizationRouter.post("/:id/attachments", upload.single("file"), async (req, res) => {
   const session = req.session!;
   const kind = String(req.body?.kind ?? "");
-  if (kind !== AttachmentKind.APPOINTMENT_ORDER && kind !== AttachmentKind.POWER_OF_ATTORNEY) {
+  const attachmentType =
+    kind === "APPOINTMENT_ORDER" || kind === AttachmentType.AUTHORIZED_REPRESENTATIVE_APPOINTMENT_ORDER
+      ? AttachmentType.AUTHORIZED_REPRESENTATIVE_APPOINTMENT_ORDER
+      : kind === "POWER_OF_ATTORNEY"
+        ? AttachmentType.POWER_OF_ATTORNEY
+        : null;
+
+  if (!attachmentType) {
     res.status(400).json({ error: "validation", message: "ประเภทเอกสารไม่ถูกต้อง" });
     return;
   }
@@ -310,82 +603,93 @@ organizationRouter.post("/:id/attachments", upload.single("file"), async (req, r
     return;
   }
 
-  const org = await prisma.organization.findUnique({ where: { id: req.params.id } });
-  if (!org || org.createdById !== session.sub) {
+  const request = await prisma.organizationRegistrationRequest.findUnique({
+    where: { id: req.params.id },
+  });
+  if (!request || request.createdBy !== session.sub) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
 
-  const objectKey = `organizations/${org.id}/${kind}/${randomUUID()}`;
-  await minio.putObject(BUCKET, objectKey, req.file.buffer, req.file.size, {
-    "Content-Type": req.file.mimetype,
+  const attachment = await storeAttachment(prisma, {
+    ownerType: AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
+    ownerId: request.id,
+    attachmentType,
+    file: req.file,
+    uploadedBy: session.sub,
   });
 
-  // เอกสารแต่ละประเภทมีได้ฉบับเดียว — อัปโหลดใหม่แทนที่ของเดิม
-  const previous = await prisma.attachment.findMany({
-    where: { organizationId: org.id, kind: kind as AttachmentKind },
-  });
-  await Promise.all(
-    previous.map((p) => minio.removeObject(BUCKET, p.objectKey).catch(() => undefined)),
-  );
-  await prisma.attachment.deleteMany({ where: { id: { in: previous.map((p) => p.id) } } });
-
-  const attachment = await prisma.attachment.create({
-    data: {
-      kind: kind as AttachmentKind,
-      objectKey,
-      filename: Buffer.from(req.file.originalname, "latin1").toString("utf8"),
-      mimeType: req.file.mimetype,
-      sizeBytes: req.file.size,
-      organizationId: org.id,
-      uploadedById: session.sub,
-    },
-    select: { id: true, kind: true, filename: true, mimeType: true, sizeBytes: true, createdAt: true },
+  // คอลัมน์ FK บนคำขอชี้ไฟล์ปัจจุบันของแต่ละช่อง ตามที่ sheet กำหนดไว้สองคอลัมน์
+  await prisma.organizationRegistrationRequest.update({
+    where: { id: request.id },
+    data:
+      attachmentType === AttachmentType.AUTHORIZED_REPRESENTATIVE_APPOINTMENT_ORDER
+        ? { authorizedRepresentativeAppointmentAttachmentId: attachment.id, updatedBy: session.sub }
+        : { powerOfAttorneyAttachmentId: attachment.id, updatedBy: session.sub },
   });
 
-  res.status(201).json({ attachment });
+  await logAudit({
+    action: attachment.replacedAttachmentId
+      ? AuditAction.ATTACHMENT_REPLACED
+      : AuditAction.ATTACHMENT_UPLOADED,
+    subjectType: AuditSubject.ATTACHMENT,
+    subjectId: attachment.id,
+    organizationId: request.organizationId,
+    after: { attachmentType, filename: attachment.originalFileName },
+  });
+
+  res.status(201).json({ attachment: publicAttachment(attachment) });
 });
 
 organizationRouter.get("/:id/attachments/:attachmentId", async (req, res) => {
-  const org = await prisma.organization.findUnique({ where: { id: req.params.id } });
-  if (!org || !canView(req.session!, org, req.session!.email)) {
+  const session = req.session!;
+  const request = await prisma.organizationRegistrationRequest.findUnique({
+    where: { id: req.params.id },
+  });
+  if (!request || !canView(session, request)) {
     res.status(404).json({ error: "not_found" });
     return;
   }
+
   const attachment = await prisma.attachment.findFirst({
-    where: { id: req.params.attachmentId, organizationId: org.id },
+    where: {
+      id: req.params.attachmentId,
+      ownerType: AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
+      ownerId: request.id,
+    },
   });
   if (!attachment) {
     res.status(404).json({ error: "not_found" });
     return;
   }
 
-  const stream = await minio.getObject(BUCKET, attachment.objectKey);
-  res.setHeader("Content-Type", attachment.mimeType);
-  res.setHeader(
-    "Content-Disposition",
-    `inline; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`,
-  );
-  stream.pipe(res);
+  await logAudit({
+    action: AuditAction.DOCUMENT_DOWNLOADED,
+    subjectType: AuditSubject.ATTACHMENT,
+    subjectId: attachment.id,
+    organizationId: request.organizationId,
+    after: { filename: attachment.originalFileName },
+  });
+
+  await streamAttachment(res, attachment);
 });
 
 // ---------------------------------------------------------------- generate PDF
 
-/**
- * ขั้นตอนที่ 1 ข้อ 5 — ตรวจข้อมูลให้ผ่านก่อน แล้วสร้าง PDF จาก template ให้ผู้ใช้ดู
- */
+/** ขั้นตอนที่ 1 ข้อ 5 — ตรวจข้อมูลให้ผ่านก่อน แล้วสร้าง PDF จาก template ให้ผู้ใช้ดู */
 organizationRouter.post("/:id/generate-form", async (req, res) => {
   const session = req.session!;
-  const org = await prisma.organization.findUnique({
+  const request = await prisma.organizationRegistrationRequest.findUnique({
     where: { id: req.params.id },
-    include: { attachments: true },
+    include: { organization: true },
   });
-  if (!org || org.createdById !== session.sub) {
+  if (!request || request.createdBy !== session.sub) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
 
-  const parsed = submitSchema.safeParse(org);
+  const shape = await toApiShape(request);
+  const parsed = submitSchema.safeParse(shape);
   if (!parsed.success) {
     res.status(400).json({
       error: "validation",
@@ -394,14 +698,21 @@ organizationRouter.post("/:id/generate-form", async (req, res) => {
     });
     return;
   }
-  if (!isValidAddress(org.province!, org.district!, org.subdistrict!)) {
+  if (!isValidAddress(shape.province!, shape.district!, shape.subdistrict!)) {
     res.status(400).json({
       error: "validation",
       fields: { subdistrict: "ที่อยู่ที่เลือกไม่ตรงกับข้อมูลในระบบ" },
     });
     return;
   }
-  if (!org.attachments.some((a) => a.kind === AttachmentKind.APPOINTMENT_ORDER)) {
+
+  const appointment = await activeAttachment(
+    prisma,
+    AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
+    request.id,
+    AttachmentType.AUTHORIZED_REPRESENTATIVE_APPOINTMENT_ORDER,
+  );
+  if (!appointment) {
     res.status(400).json({
       error: "validation",
       fields: { APPOINTMENT_ORDER: "กรุณาแนบคำสั่งแต่งตั้งผู้มีอำนาจกระทำการแทน" },
@@ -409,250 +720,415 @@ organizationRouter.post("/:id/generate-form", async (req, res) => {
     return;
   }
 
-  const pdf = await renderOrganizationForm(org);
-  const objectKey = `organizations/${org.id}/form/${randomUUID()}.pdf`;
-  await minio.putObject(BUCKET, objectKey, pdf, pdf.length, { "Content-Type": "application/pdf" });
-
-  const previous = await prisma.attachment.findMany({
-    where: { organizationId: org.id, kind: AttachmentKind.GENERATED_FORM },
-  });
-  await Promise.all(
-    previous.map((p) => minio.removeObject(BUCKET, p.objectKey).catch(() => undefined)),
-  );
-  await prisma.attachment.deleteMany({ where: { id: { in: previous.map((p) => p.id) } } });
-
-  const attachment = await prisma.attachment.create({
-    data: {
-      kind: AttachmentKind.GENERATED_FORM,
-      objectKey,
-      filename: `แบบฟอร์มสร้างหน่วยงาน-${org.name}.pdf`,
-      mimeType: "application/pdf",
-      sizeBytes: pdf.length,
-      organizationId: org.id,
-      uploadedById: session.sub,
+  const pdf = await renderOrganizationForm(shape);
+  const attachment = await storeAttachment(prisma, {
+    ownerType: AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
+    ownerId: request.id,
+    attachmentType: AttachmentType.GENERATED_FORM,
+    file: {
+      buffer: pdf,
+      originalname: `แบบฟอร์มสร้างหน่วยงาน-${shape.name}.pdf`,
+      mimetype: "application/pdf",
+      size: pdf.length,
     },
-    select: { id: true, kind: true, filename: true, mimeType: true, sizeBytes: true, createdAt: true },
+    uploadedBy: session.sub,
   });
 
-  res.status(201).json({ attachment });
+  res.status(201).json({ attachment: publicAttachment(attachment) });
 });
 
 // ---------------------------------------------------------------- submit
 
 organizationRouter.post("/:id/submit", async (req, res) => {
   const session = req.session!;
-  const org = await prisma.organization.findUnique({
+  const request = await prisma.organizationRegistrationRequest.findUnique({
     where: { id: req.params.id },
-    include: { attachments: true },
+    include: { organization: true },
   });
-  if (!org || org.createdById !== session.sub) {
+  if (!request || request.createdBy !== session.sub) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
-  if (org.status !== OrganizationStatus.DRAFT && org.status !== OrganizationStatus.NEEDS_REVISION) {
+  if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
     res.status(409).json({ error: "locked", message: "คำขอนี้นำส่งไปแล้ว" });
     return;
   }
 
-  const parsed = submitSchema.safeParse(org);
+  const shape = await toApiShape(request);
+  const parsed = submitSchema.safeParse(shape);
   if (!parsed.success) {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;
   }
-  if (!org.attachments.some((a) => a.kind === AttachmentKind.GENERATED_FORM)) {
+
+  const form = await activeAttachment(
+    prisma,
+    AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
+    request.id,
+    AttachmentType.GENERATED_FORM,
+  );
+  if (!form) {
     res.status(400).json({ error: "no_form", message: "กรุณาสร้างและตรวจสอบ PDF ก่อนนำส่ง" });
     return;
   }
 
-  const updated = await prisma.$transaction(async (tx) => {
-    const next = await tx.organization.update({
-      where: { id: org.id },
-      data: {
-        status: OrganizationStatus.PENDING_BDI_REVIEW,
-        submittedAt: new Date(),
-        revisionNote: null,
-      },
+  const officer = await pickAssignee(ROLE_CODES.BDI_OFFICER, null);
+  if (!officer) {
+    res.status(503).json({
+      error: "no_reviewer",
+      message: "ยังไม่มีเจ้าหน้าที่ BDI ในระบบ กรุณาติดต่อผู้ดูแล",
     });
-    await recordEvent(
-      tx,
-      org.id,
-      OrganizationEventType.SUBMITTED,
-      session.sub,
-      org.status,
-      next.status,
-    );
-    return next;
+    return;
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.organizationRegistrationRequest.update({
+      where: { id: request.id },
+      data: { submittedAt: new Date(), updatedBy: session.sub },
+    });
+    await openTask(tx, {
+      subjectType: SUBJECT,
+      subjectId: request.id,
+      taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
+      assignedUserId: officer,
+      assignedRole: ROLE_CODES.BDI_OFFICER,
+      actorId: session.sub,
+    });
+    return syncStatus(tx, { ...request, submittedAt: new Date() });
   });
 
-  const submitter = [org.contactPrefix, org.contactFirstName, org.contactLastName]
+  await logAudit({
+    action: AuditAction.REQUEST_SUBMITTED,
+    subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
+    subjectId: request.id,
+    organizationId: request.organizationId,
+    after: { requestNumber: request.requestNumber },
+  });
+
+  const submitter = [shape.contactPrefix, shape.contactFirstName, shape.contactLastName]
     .filter(Boolean)
     .join(" ");
-  await sendSubmittedToOfficers(await officerEmails(), org.name, submitter || session.email, org.id);
+  // อีเมลไม่ได้ส่งตรงนี้แล้ว — notifyUsers เขียนแถวลง notification_delivery
+  // แล้ว worker เป็นคนประกอบเนื้อและส่ง (src/workers/delivery.ts)
+  void submitter;
+  await notifyUsers(await bdiOfficerIds(), {
+    type: NotificationType.REQUEST_SUBMITTED,
+    title: "มีคำขอลงทะเบียนหน่วยงานใหม่",
+    message: `${shape.name} นำส่งคำขอ ${request.requestNumber}`,
+    subjectType: SUBJECT,
+    subjectId: request.id,
+    organizationId: request.organizationId,
+  });
 
-  res.json({ organization: updated });
+  res.json({ organization: await toApiShape({ ...request, ...updated, organization: request.organization }) });
 });
 
 // ---------------------------------------------------------------- review
 
 const reviewSchema = z.object({
-  action: z.enum(["approve", "request_revision"]),
+  action: z.enum(["approve", "request_revision", "reject"]),
   note: z.string().trim().optional(),
 });
 
 /**
- * จุดตัดสินใจเดียวสำหรับทั้งสามด่าน — ใครทำได้ขึ้นกับสถานะปัจจุบัน
- * รวมไว้ที่เดียวเพื่อให้ state machine อยู่ในไฟล์เดียว ไม่กระจัดกระจาย
+ * จุดตัดสินใจเดียวสำหรับทุกด่าน — ใครทำได้ขึ้นกับ **active review_task** ไม่ใช่ status
+ *
+ * ลำดับด่าน: BDI_OFFICER_REVIEW → ORGANIZATION_APPROVAL → BDI_FINAL_APPROVAL
+ * ผลที่ใช้ได้ต่อด่านถูกบังคับใน lib/workflow.ts ตามตารางในภาพของ sheet `review_task`
  */
-organizationRouter.post("/:id/review", async (req, res) => {
-  const session = req.session!;
-  const parsed = reviewSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
-    return;
-  }
-  const { action, note } = parsed.data;
-
-  if (action === "request_revision" && (note?.length ?? 0) < 10) {
-    res.status(400).json({
-      error: "validation",
-      fields: { note: "กรุณาระบุสิ่งที่ต้องแก้ไขอย่างน้อย 10 ตัวอักษร" },
-    });
-    return;
-  }
-
-  const org = await prisma.organization.findUnique({ where: { id: req.params.id } });
-  if (!org) {
-    res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
-    return;
-  }
-
-  const roles = session.roles;
-  const isSignatory = org.signatoryEmail?.toLowerCase() === session.email.toLowerCase();
-
-  let nextStatus: OrganizationStatus;
-  let eventType: OrganizationEventType;
-
-  switch (org.status) {
-    case OrganizationStatus.PENDING_BDI_REVIEW: {
-      if (!roles.includes(Role.BDI_OFFICER)) {
-        res.status(403).json({ error: "forbidden", message: "เฉพาะเจ้าหน้าที่ BDI เท่านั้น" });
-        return;
-      }
-      nextStatus =
-        action === "approve"
-          ? OrganizationStatus.PENDING_SIGNATORY_REVIEW
-          : OrganizationStatus.NEEDS_REVISION;
-      eventType =
-        action === "approve"
-          ? OrganizationEventType.BDI_APPROVED
-          : OrganizationEventType.BDI_REVISION_REQUESTED;
-      break;
-    }
-    case OrganizationStatus.PENDING_SIGNATORY_REVIEW: {
-      if (!isSignatory && !roles.includes(Role.ORGANIZATION_APPROVER)) {
-        res.status(403).json({ error: "forbidden", message: "เฉพาะผู้มีอำนาจกระทำการแทนเท่านั้น" });
-        return;
-      }
-      nextStatus =
-        action === "approve"
-          ? OrganizationStatus.PENDING_BDI_APPROVAL
-          : OrganizationStatus.NEEDS_REVISION;
-      eventType =
-        action === "approve"
-          ? OrganizationEventType.SIGNATORY_APPROVED
-          : OrganizationEventType.SIGNATORY_REVISION_REQUESTED;
-      break;
-    }
-    case OrganizationStatus.PENDING_BDI_APPROVAL: {
-      if (!roles.includes(Role.BDI_APPROVER)) {
-        res.status(403).json({ error: "forbidden", message: "เฉพาะผู้อนุมัติ BDI เท่านั้น" });
-        return;
-      }
-      nextStatus =
-        action === "approve" ? OrganizationStatus.ACTIVE : OrganizationStatus.NEEDS_REVISION;
-      eventType =
-        action === "approve"
-          ? OrganizationEventType.FINAL_APPROVED
-          : OrganizationEventType.FINAL_REVISION_REQUESTED;
-      break;
-    }
-    default:
-      res.status(409).json({ error: "invalid_state", message: "สถานะปัจจุบันไม่รองรับการดำเนินการนี้" });
+organizationRouter.post("/:id/review", async (req, res, next) => {
+  try {
+    const session = req.session!;
+    const parsed = reviewSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
       return;
-  }
+    }
+    const { action, note } = parsed.data;
 
-  const updated = await prisma.$transaction(async (tx) => {
-    const next = await tx.organization.update({
-      where: { id: org.id },
-      data: {
-        status: nextStatus,
-        revisionNote: action === "request_revision" ? (note ?? null) : null,
-        activatedAt: nextStatus === OrganizationStatus.ACTIVE ? new Date() : org.activatedAt,
-      },
+    if (action !== "approve" && (note?.length ?? 0) < 10) {
+      res.status(400).json({
+        error: "validation",
+        fields: { note: "กรุณาระบุสิ่งที่ต้องแก้ไขอย่างน้อย 10 ตัวอักษร" },
+      });
+      return;
+    }
+
+    const request = await prisma.organizationRegistrationRequest.findUnique({
+      where: { id: req.params.id },
+      include: { organization: true },
     });
-    await recordEvent(tx, org.id, eventType, session.sub, org.status, nextStatus, note);
-    return next;
-  });
+    if (!request) {
+      res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
+      return;
+    }
 
-  await dispatchReviewEmails(org, nextStatus, note, session.sub);
-  res.json({ organization: updated });
+    const task = await activeTask(prisma, SUBJECT, request.id);
+    if (!task) {
+      res
+        .status(409)
+        .json({ error: "invalid_state", message: "สถานะปัจจุบันไม่รองรับการดำเนินการนี้" });
+      return;
+    }
+
+    // ใครมีสิทธิ์ปิด task นี้ — role ที่ตรงกับด่าน หรือเป็นผู้รับมอบหมายโดยตรง
+    const allowedRoles: Record<ReviewTaskType, RoleCode[]> = {
+      [ReviewTaskType.BDI_OFFICER_REVIEW]: [ROLE_CODES.BDI_OFFICER],
+      [ReviewTaskType.ORGANIZATION_APPROVAL]: [ROLE_CODES.ORGANIZATION_APPROVER],
+      [ReviewTaskType.BDI_FINAL_APPROVAL]: [ROLE_CODES.BDI_FINAL_APPROVER],
+      [ReviewTaskType.DATASET_SPECIALIST_REVIEW]: [ROLE_CODES.BDI_DATASET_SPECIALIST],
+      [ReviewTaskType.ORGANIZATION_REVISION]: [ROLE_CODES.ORGANIZATION_USER],
+    };
+    const isApproverByEmail =
+      task.taskType === ReviewTaskType.ORGANIZATION_APPROVAL &&
+      request.approverEmail?.toLowerCase() === session.email.toLowerCase();
+
+    if (!session.roles.some((r) => allowedRoles[task.taskType].includes(r)) && !isApproverByEmail) {
+      res.status(403).json({ error: "forbidden", message: "คุณไม่มีสิทธิ์ดำเนินการขั้นตอนนี้" });
+      return;
+    }
+
+    const result =
+      action === "approve"
+        ? task.taskType === ReviewTaskType.BDI_OFFICER_REVIEW
+          ? ReviewResult.PASSED
+          : ReviewResult.APPROVED
+        : action === "reject"
+          ? ReviewResult.REJECTED
+          : ReviewResult.RETURNED;
+
+    const outcome = await prisma.$transaction(async (tx) => {
+      await startTask(tx, task.id, session.sub);
+      await completeTask(tx, {
+        taskId: task.id,
+        result,
+        comment: note ?? null,
+        commentVisibility: "ORGANIZATION",
+        actorId: session.sub,
+      });
+
+      if (result === ReviewResult.PASSED && task.taskType === ReviewTaskType.BDI_OFFICER_REVIEW) {
+        const approverId = await ensureApproverAccount(tx, request);
+        await openTask(tx, {
+          subjectType: SUBJECT,
+          subjectId: request.id,
+          taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
+          assignedUserId: approverId,
+          assignedRole: ROLE_CODES.ORGANIZATION_APPROVER,
+          assignedById: session.sub,
+          actorId: session.sub,
+        });
+      }
+
+      if (result === ReviewResult.APPROVED && task.taskType === ReviewTaskType.ORGANIZATION_APPROVAL) {
+        const finalApprover = await pickAssignee(ROLE_CODES.BDI_FINAL_APPROVER, null);
+        if (!finalApprover) {
+          throw new WorkflowError(
+            "no_reviewer",
+            "ยังไม่มีผู้อนุมัติ BDI ในระบบ กรุณาติดต่อผู้ดูแล",
+            503,
+          );
+        }
+        await openTask(tx, {
+          subjectType: SUBJECT,
+          subjectId: request.id,
+          taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
+          assignedUserId: finalApprover,
+          assignedRole: ROLE_CODES.BDI_FINAL_APPROVER,
+          assignedById: session.sub,
+          actorId: session.sub,
+        });
+      }
+
+      // อนุมัติขั้นสุดท้าย — หน่วยงานเปิดใช้งานจริง
+      if (result === ReviewResult.APPROVED && task.taskType === ReviewTaskType.BDI_FINAL_APPROVAL) {
+        await tx.organizationRegistrationRequest.update({
+          where: { id: request.id },
+          data: { approvedAt: new Date(), updatedBy: session.sub },
+        });
+        await tx.organization.update({
+          where: { id: request.organizationId },
+          data: {
+            status: OrganizationStatus.ACTIVE,
+            activatedAt: new Date(),
+            activatedBy: session.sub,
+            nameTh: request.organizationNameTh ?? request.organization.nameTh,
+            nameEn: request.organizationNameEn,
+            addressLine: request.organizationAddressLine,
+            provinceCode: request.organizationProvinceCode,
+            districtCode: request.organizationDistrictCode,
+            subDistrictCode: request.organizationSubdistrictCode,
+            postalCode: request.organizationPostalCode,
+            phone: request.organizationPhone,
+            email: request.organizationEmail,
+            websiteUrl: request.organizationWebsite,
+            updatedBy: session.sub,
+          },
+        });
+      }
+
+      if (result === ReviewResult.REJECTED) {
+        await tx.organizationRegistrationRequest.update({
+          where: { id: request.id },
+          data: { rejectedAt: new Date(), updatedBy: session.sub },
+        });
+      }
+
+      return syncStatus(tx, request);
+    });
+
+    await logAudit({
+      action:
+        result === ReviewResult.REJECTED
+          ? AuditAction.REQUEST_REJECTED
+          : result === ReviewResult.RETURNED
+            ? AuditAction.REQUEST_RETURNED
+            : outcome.status === RequestStatus.APPROVED
+              ? AuditAction.REQUEST_APPROVED
+              : AuditAction.REQUEST_SUBMITTED,
+      subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
+      subjectId: request.id,
+      organizationId: request.organizationId,
+      after: { taskType: task.taskType, result, note },
+    });
+
+    await dispatchReviewNotifications(request, task.taskType, result, note);
+
+    const fresh = await prisma.organizationRegistrationRequest.findUniqueOrThrow({
+      where: { id: request.id },
+      include: { organization: true },
+    });
+    res.json({ organization: await toApiShape(fresh) });
+  } catch (err) {
+    if (err instanceof WorkflowError) {
+      res.status(err.status).json({ error: err.code, message: err.message });
+      return;
+    }
+    next(err);
+  }
 });
 
-async function dispatchReviewEmails(
-  org: { id: string; name: string; signatoryEmail: string | null; contactEmail: string | null },
-  nextStatus: OrganizationStatus,
-  note: string | undefined,
-  actorId: string,
-) {
-  if (nextStatus === OrganizationStatus.NEEDS_REVISION) {
-    if (org.contactEmail) await sendRevisionRequested(org.contactEmail, org.name, note ?? "", org.id);
-    return;
+/**
+ * ผู้มีอำนาจกระทำการแทนต้องมี user_account ก่อน เพราะ review_task.assigned_user_id
+ * เป็น NOT NULL — สร้างบัญชี PENDING พร้อม activation key ให้ถ้ายังไม่มี
+ * (ขั้นที่ 1–3 ของ "Suggested lifecycle" ใน sheet `activation_key`)
+ */
+async function ensureApproverAccount(
+  tx: Prisma.TransactionClient,
+  request: RequestRow,
+): Promise<string> {
+  const email = request.approverEmail;
+  if (!email) {
+    throw new WorkflowError("no_approver", "คำขอนี้ยังไม่ได้ระบุอีเมลผู้มีอำนาจกระทำการแทน");
   }
 
-  if (nextStatus === OrganizationStatus.PENDING_SIGNATORY_REVIEW && org.signatoryEmail) {
-    // สเปกขั้นที่ 2 ข้อ 4 — ถ้าผู้มีอำนาจยังไม่มีบัญชี ต้องเพิ่มและส่งลิงก์สมัคร
-    const existing = await prisma.user.findUnique({ where: { email: org.signatoryEmail } });
-    if (!existing || existing.status !== UserStatus.ACTIVE) {
-      const invitation = await createInvitation(
-        org.signatoryEmail,
-        Role.ORGANIZATION_APPROVER,
-        org.id,
-        actorId,
-      );
-      await prisma.organizationEvent.create({
-        data: {
-          organizationId: org.id,
-          type: OrganizationEventType.SIGNATORY_INVITED,
-          actorId,
-          note: `ส่งคำเชิญไปยัง ${org.signatoryEmail}`,
-        },
-      });
-      void invitation;
-      return; // อีเมลคำเชิญถูกส่งไปแล้วใน createInvitation
-    }
-    // มีบัญชีอยู่แล้ว — ผูก role และหน่วยงานให้ แล้วแจ้งไปตรวจสอบ
-    await prisma.user.update({
-      where: { id: existing.id },
+  const displayName =
+    [request.approverPrefixTh, request.approverFirstnameTh, request.approverLastnameTh]
+      .filter(Boolean)
+      .join(" ") || email;
+
+  const existing = await tx.userAccount.findUnique({ where: { email } });
+
+  const account =
+    existing ??
+    (await tx.userAccount.create({
       data: {
-        roles: existing.roles.includes(Role.ORGANIZATION_APPROVER)
-          ? existing.roles
-          : [...existing.roles, Role.ORGANIZATION_APPROVER],
+        email,
+        cid: request.approverCid,
+        prefixTh: request.approverPrefixTh,
+        firstnameTh: request.approverFirstnameTh,
+        lastnameTh: request.approverLastnameTh,
+        phoneNumber: request.approverPhoneNumber,
+        positionTh: request.approverPositionTh,
+        departmentTh: request.approverDepartmentTh,
+        displayName,
+        accountType: AccountType.ORGANIZATION,
+        status: UserAccountStatus.PENDING,
+        createdBy: SYSTEM_USER_ID,
+        updatedBy: SYSTEM_USER_ID,
       },
+    }));
+
+  if (account.status === UserAccountStatus.ACTIVE) {
+    // มีบัญชีอยู่แล้ว — ผูก role ผู้มีอำนาจให้กับหน่วยงานนี้
+    await assignRole(tx, {
+      userAccountId: account.id,
+      roleCode: ROLE_CODES.ORGANIZATION_APPROVER,
+      organizationId: request.organizationId,
+      actorId: SYSTEM_USER_ID,
     });
-    await sendSignatoryRequest(org.signatoryEmail, org.name, org.id);
+  } else {
+    // ยังไม่มีบัญชีใช้งานได้ — ออก activation key ให้ไปสมัคร
+    const { key } = await issueActivationKey(tx, {
+      userAccountId: account.id,
+      organizationId: request.organizationId,
+      roleCode: ROLE_CODES.ORGANIZATION_APPROVER,
+    });
+    // ส่งอีเมลนอก transaction ไม่ได้เพราะต้องใช้ raw key — ยอมส่งในนี้
+    void sendInvitationEmail(email, key, ROLE_LABELS[ROLE_CODES.ORGANIZATION_APPROVER]);
+  }
+
+  return account.id;
+}
+
+async function dispatchReviewNotifications(
+  request: RequestRow,
+  taskType: ReviewTaskType,
+  result: ReviewResult,
+  note: string | undefined,
+) {
+  const name = request.organizationNameTh ?? request.organization.nameTh;
+  const members = await organizationMemberIds(request.organizationId);
+
+  if (result === ReviewResult.RETURNED) {
+    await notifyUsers([...members.users, request.createdBy], {
+      type: NotificationType.REQUEST_RETURNED,
+      title: "คำขอถูกส่งกลับให้แก้ไข",
+      message: note ?? "",
+      subjectType: SUBJECT,
+      subjectId: request.id,
+      organizationId: request.organizationId,
+    });
     return;
   }
 
-  if (nextStatus === OrganizationStatus.PENDING_BDI_APPROVAL) {
-    await sendFinalApprovalRequest(await approverEmails(), org.name, org.id);
+  if (result === ReviewResult.REJECTED) {
+    await notifyUsers([...members.users, request.createdBy], {
+      type: NotificationType.REQUEST_REJECTED,
+      title: "คำขอไม่ได้รับอนุมัติ",
+      message: note ?? "",
+      subjectType: SUBJECT,
+      subjectId: request.id,
+      organizationId: request.organizationId,
+    });
     return;
   }
 
-  if (nextStatus === OrganizationStatus.ACTIVE) {
-    await sendActivated(
-      [org.contactEmail, org.signatoryEmail].filter((e): e is string => Boolean(e)),
-      org.name,
-      org.id,
-    );
+  if (taskType === ReviewTaskType.BDI_OFFICER_REVIEW && request.approverEmail) {
+    await sendSignatoryRequest(request.approverEmail, name, request.id);
+    return;
+  }
+
+  if (taskType === ReviewTaskType.ORGANIZATION_APPROVAL) {
+    await notifyUsers(await bdiApproverIds(), {
+      type: NotificationType.REQUEST_SUBMITTED,
+      title: "มีคำขอรออนุมัติขั้นสุดท้าย",
+      message: `${name} — ${request.requestNumber}`,
+      subjectType: SUBJECT,
+      subjectId: request.id,
+      organizationId: request.organizationId,
+    });
+    return;
+  }
+
+  if (taskType === ReviewTaskType.BDI_FINAL_APPROVAL) {
+    await notifyUsers([...members.users, ...members.approvers, request.createdBy], {
+      type: NotificationType.REQUEST_APPROVED,
+      title: "หน่วยงานได้รับอนุมัติแล้ว",
+      message: `${name} เปิดใช้งานเรียบร้อย`,
+      subjectType: SUBJECT,
+      subjectId: request.id,
+      organizationId: request.organizationId,
+    });
   }
 }

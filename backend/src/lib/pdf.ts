@@ -1,5 +1,4 @@
 import PDFDocument from "pdfkit";
-import type { DatasetRequest, Organization } from "@prisma/client";
 
 import {
   CLASSIFICATION_LABELS,
@@ -12,6 +11,42 @@ import {
   GEO_COVERAGE_LABELS,
   LICENSE_LABELS,
 } from "./dataset.js";
+
+/**
+ * รูปข้อมูลที่ PDF ต้องใช้ — ประกาศเป็น structural type ไม่ผูกกับ Prisma model
+ *
+ * ตั้งแต่แยก organization ออกจาก organization_registration_request แล้ว ข้อมูลที่จะพิมพ์
+ * มาจาก snapshot ของคำขอ (approver_* / user_* / *_code) ไม่ใช่จากตาราง organization
+ * routes/organizations.ts แปลงให้อยู่ในรูปนี้ด้วย toApiShape() ก่อนเรียก
+ */
+export interface OrganizationFormInput {
+  name: string | null;
+  addressLine: string | null;
+  province: string | null;
+  district: string | null;
+  subdistrict: string | null;
+  postalCode: string | null;
+  email: string | null;
+
+  signatoryPrefix: string | null;
+  signatoryFirstName: string | null;
+  signatoryLastName: string | null;
+  signatoryPosition: string | null;
+  signatoryEmail: string | null;
+  signatoryNationalId: string | null;
+  signatoryPhone: string | null;
+
+  contactPrefix: string | null;
+  contactFirstName: string | null;
+  contactLastName: string | null;
+  contactPosition: string | null;
+  contactDepartment: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+
+  submittedAt: Date | null;
+  createdAt: Date | null;
+}
 
 const FONT_DIR = new URL("../assets/fonts/", import.meta.url);
 const font = (file: string) => new URL(file, FONT_DIR).pathname;
@@ -33,7 +68,7 @@ const thaiDate = (d: Date) =>
  * สร้าง PDF แบบฟอร์มขอสร้างหน่วยงานจากข้อมูลที่ผู้ใช้กรอก
  * สเปกใน Notion มีภาพตัวอย่างแต่ไม่มีไฟล์ template จริง จึงวางเลย์เอาต์ใหม่ให้ตรงกับ CI
  */
-export function renderOrganizationForm(org: Organization): Promise<Buffer> {
+export function renderOrganizationForm(org: OrganizationFormInput): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: "A4", margin: PAGE_MARGIN, bufferPages: true });
     const chunks: Buffer[] = [];
@@ -86,10 +121,62 @@ export function renderOrganizationForm(org: Organization): Promise<Buffer> {
 
 // ------------------------------------------------------------------ ชุดข้อมูล
 
-export type DatasetFormInput = DatasetRequest & {
+/**
+ * ข้อมูลที่แบบฟอร์มชุดข้อมูลต้องพิมพ์ — structural type เช่นเดียวกับฝั่งหน่วยงาน
+ *
+ * ประกอบจากคอลัมน์ของ dataset_registration_metadata รวมกับค่าที่อยู่ใน
+ * additional_metadata_json (ดู fromMetadataRow() ใน lib/dataset.ts) — PDF ยังต้อง
+ * พิมพ์ครบทุกช่องที่ผู้ใช้กรอก ไม่ว่าดีไซน์จะให้คอลัมน์ของตัวเองหรือไม่
+ */
+export interface DatasetFormInput {
+  requestNumber: string;
   organization: { name: string };
+  submittedAt: Date | null;
+  createdAt: Date | null;
+
+  nameTh: string | null;
+  nameEn: string | null;
+  description: string | null;
+  datasetType: string | null;
+  category: string | null;
+  keywords: string[];
+  updateFrequency: string | null;
+  geoCoverage: string | null;
+  dataStartDate: Date | null;
+  dataEndDate: Date | null;
+  estimatedRecords: number | null;
+  stewardName: string | null;
+  stewardEmail: string | null;
+  stewardPhone: string | null;
+
+  deliveryMethod: string | null;
+  dataFormat: string | null;
+  deliveryFrequency: string | null;
+  deliveryEndpoint: string | null;
+  technicalContactName: string | null;
+  technicalContactEmail: string | null;
+  deliveryNote: string | null;
+
+  dataClassification: string | null;
+  hasPersonalData: boolean | null;
+  personalDataMeasure: string | null;
+  legalBasis: string | null;
+  licenseType: string | null;
+  usageRestriction: string | null;
+  legalAcceptedAt: Date | null;
+
+  /**
+   * ผู้ลงนามและผู้อนุมัติ — เดิมเป็นคอลัมน์บน dataset_requests
+   * ตอนนี้มาจาก signature.signature_confirmation กับ review.review_task ที่ปิดแล้ว
+   * ยังต้องเก็บ "ชื่อ ณ เวลานั้น" เพื่อให้ PDF ฉบับอนุมัติพิมพ์ชื่อได้ถูกแม้ผู้ใช้เปลี่ยนชื่อภายหลัง
+   */
+  orgApproverSignedName: string | null;
+  orgApproverSignedAt: Date | null;
+  approvedByName: string | null;
+  approvedAt: Date | null;
+
   attachments: Array<{ kind: string; filename: string }>;
-};
+}
 
 /**
  * แบบฟอร์มขอลงทะเบียนชุดข้อมูล (docs/01-user-journey.md §4)
@@ -286,7 +373,7 @@ function header(doc: PDFKit.PDFDocument) {
     });
 }
 
-function title(doc: PDFKit.PDFDocument, org: Organization) {
+function title(doc: PDFKit.PDFDocument, org: OrganizationFormInput) {
   documentTitle(doc, "แบบฟอร์มขอสร้างหน่วยงานในระบบ", [
     `วันที่จัดทำ ${thaiDate(new Date(org.submittedAt ?? org.createdAt ?? new Date()))}`,
   ]);
@@ -351,7 +438,7 @@ function rows(doc: PDFKit.PDFDocument, entries: Array<[string, string | null | u
   }
 }
 
-function signatureBlock(doc: PDFKit.PDFDocument, org: Organization) {
+function signatureBlock(doc: PDFKit.PDFDocument, org: OrganizationFormInput) {
   ensureSpace(doc, 150);
   doc.y += 24;
   const y = doc.y;

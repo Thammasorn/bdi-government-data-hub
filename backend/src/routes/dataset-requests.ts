@@ -1,132 +1,143 @@
-import { randomUUID } from "node:crypto";
-
+/**
+ * Journey C — ขอลงทะเบียนชุดข้อมูล
+ *
+ * โครงตามดีไซน์ใน Excel (ภาพใน sheet `dataset_registration_request`):
+ *
+ *   dataset_registration_request  1:1  dataset_registration_metadata
+ *              │ หลังอนุมัติ
+ *              ▼
+ *          dataset            1:1  dataset_metadata
+ *
+ * ลำดับด่านใน review.review_task:
+ *   BDI_OFFICER_REVIEW → [DATASET_SPECIALIST_REVIEW] → BDI_OFFICER_REVIEW
+ *   → ORGANIZATION_APPROVAL → BDI_OFFICER_REVIEW (ตรวจซ้ำ) → BDI_FINAL_APPROVAL
+ *
+ * ด่าน "ตรวจซ้ำ" ไม่มี task_type ของตัวเองในดีไซน์ — ใช้ BDI_OFFICER_REVIEW รอบถัดไป
+ * แล้วดูจากประวัติว่า ORGANIZATION_APPROVAL ผ่านไปแล้วหรือยัง (nextStageAfter())
+ */
 import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
 import {
-  ActivityAction,
-  DatasetAttachmentKind,
-  DatasetRequestEventType,
-  DatasetRequestStatus,
-  NotificationType,
+  AttachmentOwnerType,
+  AttachmentType,
+  CommentVisibility,
+  DatasetStatus,
+  IntegrationType,
   OrganizationStatus,
   Prisma,
-  Role,
-  UserStatus,
+  RequestStatus,
+  ReviewResult,
+  ReviewTaskStatus,
+  ReviewTaskType,
+  SubjectType,
+  UserAccountStatus,
 } from "@prisma/client";
 
 import { prisma } from "../db.js";
-import { diffFields, logActivity } from "../lib/activity.js";
+import {
+  activeAttachment,
+  activeAttachments,
+  publicAttachment,
+  storeAttachment,
+  streamAttachment,
+} from "../lib/attachment.js";
+import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
+import { correlationId } from "../lib/context.js";
 import {
   DATASET_ALLOWED_MIME,
   DATASET_MAX_UPLOAD_BYTES,
   datasetDraftSchema,
   datasetSubmitSchema,
-  nextRequestNumber,
+  fromMetadataRow,
+  toMetadataColumns,
 } from "../lib/dataset.js";
 import {
   sendDatasetApproved,
-  sendDatasetPendingBdiApproval,
-  sendDatasetPendingFinalCheck,
-  sendDatasetPendingOrgApprover,
   sendDatasetRejected,
   sendDatasetRevisionRequested,
-  sendDatasetSpecialistAssigned,
   sendDatasetSubmitted,
+  sendDatasetPendingBdiApproval,
+  sendDatasetPendingOrgApprover,
+  sendDatasetSpecialistAssigned,
 } from "../lib/mail.js";
 import {
+  NotificationType,
   bdiApproverIds,
   bdiOfficerIds,
-  datasetStakeholderIds,
   emailsOf,
   notifyUsers,
   organizationMemberIds,
 } from "../lib/notify.js";
 import { renderDatasetRegistrationForm } from "../lib/pdf.js";
+import { nextDatasetCode, nextDatasetRequestNumber } from "../lib/request-number.js";
+import { isBdiStaff } from "../lib/roles.js";
+import { ROLE_CODES, SYSTEM_USER_ID, type RoleCode } from "../lib/system.js";
 import { formatZodError } from "../lib/validation.js";
+import {
+  WorkflowError,
+  activeTask,
+  cancelActiveTask,
+  completeTask,
+  deriveRequestStatus,
+  openTask,
+  recordComment,
+  startTask,
+  taskHistory,
+} from "../lib/workflow.js";
 import { requireAuth } from "../middleware/auth.js";
-import { BUCKET, minio } from "../storage.js";
 
 export const datasetRequestRouter = Router();
 datasetRequestRouter.use(requireAuth);
+
+const SUBJECT = SubjectType.DATASET_REGISTRATION_REQUEST;
+const OWNER = AttachmentOwnerType.DATASET_REGISTRATION_REQUEST;
+
+interface Session {
+  sub: string;
+  email: string;
+  roles: RoleCode[];
+  organizationId: string | null;
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: DATASET_MAX_UPLOAD_BYTES },
 });
 
-type Session = { sub: string; email: string; roles: Role[]; organizationId: string | null };
-
 // ---------------------------------------------------------------- helpers
 
-const detailInclude = {
-  organization: { select: { id: true, name: true, signatoryEmail: true } },
-  createdBy: { select: { id: true, email: true, prefix: true, firstName: true, lastName: true } },
-  assignedSpecialist: { select: { id: true, email: true, firstName: true, lastName: true } },
-  attachments: {
-    select: { id: true, kind: true, filename: true, mimeType: true, sizeBytes: true, createdAt: true },
-    orderBy: { createdAt: "asc" },
-  },
-  events: {
-    orderBy: { createdAt: "asc" },
-    include: { actor: { select: { id: true, firstName: true, lastName: true, email: true } } },
-  },
-} satisfies Prisma.DatasetRequestInclude;
+const requestInclude = {
+  metadata: true,
+  organization: { select: { id: true, nameTh: true, status: true } },
+} satisfies Prisma.DatasetRegistrationRequestInclude;
 
-/**
- * ขอบเขตที่ผู้ใช้แต่ละคนเห็น (docs/01-user-journey.md §4.7)
- *
- * คืน where ว่างแปลว่าเห็นทั้งหมด — เจ้าหน้าที่ BDI ฝั่ง officer/approver
- * ที่เหลือประกอบเงื่อนไข OR: หน่วยงานของตัวเอง, เป็นผู้มีอำนาจของหน่วยงานนั้น,
- * หรือเป็นผู้เชี่ยวชาญที่ถูก assign
- */
-function visibilityFilter(session: Session): Prisma.DatasetRequestWhereInput {
-  if (session.roles.includes(Role.BDI_OFFICER) || session.roles.includes(Role.BDI_APPROVER)) {
-    return {};
-  }
+type RequestRow = Prisma.DatasetRegistrationRequestGetPayload<{ include: typeof requestInclude }>;
 
-  const or: Prisma.DatasetRequestWhereInput[] = [
-    { createdById: session.sub },
-    { organization: { signatoryEmail: { equals: session.email, mode: "insensitive" } } },
-  ];
-  if (session.organizationId) or.push({ organizationId: session.organizationId });
-  if (session.roles.includes(Role.BDI_SPECIALIST)) or.push({ assignedSpecialistId: session.sub });
-
-  return { OR: or };
+/** ขอบเขตที่ผู้ใช้แต่ละ role มองเห็น (§4.7) */
+function visibilityFilter(session: Session): Prisma.DatasetRegistrationRequestWhereInput {
+  if (isBdiStaff(session.roles)) return {};
+  if (session.organizationId) return { organizationId: session.organizationId };
+  return { createdBy: session.sub };
 }
 
-async function recordEvent(
-  tx: Prisma.TransactionClient,
-  datasetRequestId: string,
-  type: DatasetRequestEventType,
-  actorId: string | null,
-  fromStatus: DatasetRequestStatus | null,
-  toStatus: DatasetRequestStatus | null,
-  note?: string,
-) {
-  await tx.datasetRequestEvent.create({
-    data: { datasetRequestId, type, actorId, fromStatus, toStatus, note },
-  });
-}
+const datasetLabel = (r: RequestRow) =>
+  r.metadata?.titleTh?.trim() || r.proposedTitle?.trim() || `คำขอ ${r.requestNumber}`;
 
 async function displayName(userId: string): Promise<string> {
-  const user = await prisma.user.findUnique({
+  const user = await prisma.userAccount.findUnique({
     where: { id: userId },
-    select: { prefix: true, firstName: true, lastName: true, email: true },
+    select: { displayName: true, email: true },
   });
-  if (!user) return "ระบบ";
-  return [user.prefix, user.firstName, user.lastName].filter(Boolean).join(" ") || user.email;
+  return user?.displayName || user?.email || "ไม่ทราบชื่อ";
 }
-
-const datasetLabel = (r: { nameTh: string | null; requestNumber: string }) =>
-  r.nameTh?.trim() || `คำขอ ${r.requestNumber}`;
 
 /**
  * เงื่อนไขก่อนสร้างคำขอ (§4.1) — คืนข้อความอธิบายเมื่อยังไม่ครบ
  * ใช้ทั้งตอนสร้างจริงและตอนให้หน้าเว็บรู้ว่าจะเปิดปุ่มได้หรือยัง
  */
 async function prerequisiteError(session: Session): Promise<string | null> {
-  if (!session.roles.includes(Role.ORGANIZATION_USER)) {
+  if (!session.roles.includes(ROLE_CODES.ORGANIZATION_USER)) {
     return "เฉพาะผู้ใช้จากหน่วยงานเท่านั้นที่ยื่นคำขอลงทะเบียนชุดข้อมูลได้";
   }
   if (!session.organizationId) return "กรุณาสร้างหน่วยงานของคุณให้เรียบร้อยก่อน";
@@ -148,18 +159,82 @@ async function prerequisiteError(session: Session): Promise<string | null> {
   return null;
 }
 
-/** แปลงค่าที่รับจากฟอร์มเป็นชุดข้อมูลที่เขียนลงตารางได้ */
-function draftToData(input: z.infer<typeof datasetDraftSchema>, actorId: string) {
-  const { legalAccepted, ...rest } = input;
-  const data: Prisma.DatasetRequestUpdateInput = { ...rest };
-  if (legalAccepted === true) {
-    data.legalAcceptedAt = new Date();
-    data.legalAcceptedById = actorId;
-  } else if (legalAccepted === false) {
-    data.legalAcceptedAt = null;
-    data.legalAcceptedById = null;
-  }
-  return data;
+function mayEdit(session: Session, request: { organizationId: string; createdBy: string }): boolean {
+  if (isBdiStaff(session.roles)) return false;
+  return session.organizationId === request.organizationId || request.createdBy === session.sub;
+}
+
+/** เลือกผู้รับมอบหมายที่ว่างที่สุด — assigned_user_id เป็น NOT NULL ในดีไซน์ */
+async function pickAssignee(roleCode: RoleCode, organizationId?: string | null): Promise<string | null> {
+  const assignments = await prisma.userRoleAssignment.findMany({
+    where: {
+      role: { code: roleCode, isActive: true },
+      status: "ACTIVE",
+      OR: [{ effectiveUntil: null }, { effectiveUntil: { gt: new Date() } }],
+      userAccount: { status: UserAccountStatus.ACTIVE },
+      ...(organizationId !== undefined ? { organizationId } : {}),
+    },
+    select: { userAccountId: true },
+  });
+  const candidates = [...new Set(assignments.map((a) => a.userAccountId))];
+  if (candidates.length === 0) return null;
+
+  const loads = await prisma.reviewTask.groupBy({
+    by: ["assignedUserId"],
+    where: {
+      assignedUserId: { in: candidates },
+      status: { in: [ReviewTaskStatus.PENDING, ReviewTaskStatus.IN_PROGRESS] },
+    },
+    _count: { _all: true },
+  });
+  const loadByUser = new Map(loads.map((l) => [l.assignedUserId, l._count._all]));
+  return candidates.sort((a, b) => (loadByUser.get(a) ?? 0) - (loadByUser.get(b) ?? 0))[0] ?? null;
+}
+
+async function syncStatus(
+  tx: Prisma.TransactionClient,
+  request: { id: string; submittedAt: Date | null; cancelledAt: Date | null },
+) {
+  const status = await deriveRequestStatus(tx, {
+    subjectType: SUBJECT,
+    subjectId: request.id,
+    hasSubmitted: Boolean(request.submittedAt),
+    cancelled: Boolean(request.cancelledAt),
+  });
+  return tx.datasetRegistrationRequest.update({
+    where: { id: request.id },
+    data: { status, updatedBy: SYSTEM_USER_ID },
+  });
+}
+
+/** รูปข้อมูลที่ frontend และ zod ชุด submit ใช้ */
+function toApiShape(request: RequestRow, extra?: Record<string, unknown>) {
+  const metadata = request.metadata
+    ? fromMetadataRow(request.metadata)
+    : fromMetadataRow({
+        titleTh: null, titleEn: null, descriptionTh: null, descriptionEn: null, objective: null,
+        datasetCategoryCode: null, dataOwnerDepartment: null, contactName: null, contactEmail: null,
+        contactPhone: null, updateFrequency: null, coverageStartDate: null, coverageEndDate: null,
+        geographicScope: null, containsPersonalData: null, containsSensitiveData: null,
+        accessLevel: null, deliveryMethod: null, dataFormat: null, additionalMetadataJson: null,
+      });
+
+  return {
+    id: request.id,
+    requestNumber: request.requestNumber,
+    status: request.status,
+    organizationId: request.organizationId,
+    organization: { id: request.organization.id, name: request.organization.nameTh },
+    createdById: request.createdBy,
+    createdDatasetId: request.createdDatasetId,
+    submittedAt: request.submittedAt,
+    approvedAt: request.approvedAt,
+    rejectedAt: request.rejectedAt,
+    createdAt: request.createdAt,
+    updatedAt: request.updatedAt,
+    ...metadata,
+    ...extra,
+  };
 }
 
 // ---------------------------------------------------------------- list
@@ -168,49 +243,53 @@ datasetRequestRouter.get("/", async (req, res) => {
   const session = req.session! as Session;
   const { status, q } = req.query as { status?: string; q?: string };
 
-  const where: Prisma.DatasetRequestWhereInput = { ...visibilityFilter(session) };
+  const where: Prisma.DatasetRegistrationRequestWhereInput = { ...visibilityFilter(session) };
 
   const statuses = (status ?? "")
     .split(",")
     .map((s) => s.trim())
-    .filter((s): s is DatasetRequestStatus => s in DatasetRequestStatus);
+    .filter((s): s is RequestStatus => s in RequestStatus);
   if (statuses.length > 0) where.status = { in: statuses };
 
   if (q?.trim()) {
     const search = q.trim();
-    where.AND = [
-      {
-        OR: [
-          { nameTh: { contains: search, mode: "insensitive" } },
-          { nameEn: { contains: search, mode: "insensitive" } },
-          { requestNumber: { contains: search, mode: "insensitive" } },
-          { organization: { name: { contains: search, mode: "insensitive" } } },
-        ],
-      },
+    where.OR = [
+      { requestNumber: { contains: search, mode: "insensitive" } },
+      { proposedTitle: { contains: search, mode: "insensitive" } },
+      { metadata: { titleTh: { contains: search, mode: "insensitive" } } },
     ];
   }
 
-  const requests = await prisma.datasetRequest.findMany({
+  const requests = await prisma.datasetRegistrationRequest.findMany({
     where,
     orderBy: [{ submittedAt: "desc" }, { createdAt: "desc" }],
     take: 200,
-    select: {
-      id: true,
-      requestNumber: true,
-      nameTh: true,
-      status: true,
-      submittedAt: true,
-      createdAt: true,
-      organization: { select: { id: true, name: true } },
-      createdBy: { select: { firstName: true, lastName: true, email: true } },
-      assignedSpecialist: { select: { id: true, firstName: true, lastName: true } },
-    },
+    include: requestInclude,
   });
 
-  res.json({ requests });
+  const tasks = await prisma.reviewTask.findMany({
+    where: {
+      subjectType: SUBJECT,
+      subjectId: { in: requests.map((r) => r.id) },
+      status: { in: [ReviewTaskStatus.PENDING, ReviewTaskStatus.IN_PROGRESS] },
+    },
+    select: { subjectId: true, taskType: true, roundNumber: true, assignedUserId: true },
+  });
+  const stage = new Map(tasks.map((t) => [t.subjectId, t]));
+
+  res.json({
+    requests: requests.map((r) => ({
+      ...toApiShape(r),
+      currentTaskType: stage.get(r.id)?.taskType ?? null,
+      currentRound: stage.get(r.id)?.roundNumber ?? null,
+      assignedSpecialistId:
+        stage.get(r.id)?.taskType === ReviewTaskType.DATASET_SPECIALIST_REVIEW
+          ? (stage.get(r.id)?.assignedUserId ?? null)
+          : null,
+    })),
+  });
 });
 
-/** ให้หน้าเว็บรู้ว่าปุ่ม "ลงทะเบียนชุดข้อมูล" เปิดได้หรือยัง และถ้ายังไม่ได้เพราะอะไร */
 datasetRequestRouter.get("/eligibility", async (req, res) => {
   const reason = await prerequisiteError(req.session! as Session);
   res.json({ eligible: reason === null, reason });
@@ -219,26 +298,40 @@ datasetRequestRouter.get("/eligibility", async (req, res) => {
 /** รายชื่อผู้เชี่ยวชาญให้ BDI Officer เลือก assign (§4.4) */
 datasetRequestRouter.get("/specialists", async (req, res) => {
   const session = req.session! as Session;
-  if (!session.roles.includes(Role.BDI_OFFICER)) {
+  if (!session.roles.includes(ROLE_CODES.BDI_OFFICER)) {
     res.status(403).json({ error: "forbidden", message: "เฉพาะเจ้าหน้าที่ BDI เท่านั้น" });
     return;
   }
-  const specialists = await prisma.user.findMany({
-    where: { roles: { has: Role.BDI_SPECIALIST }, status: UserStatus.ACTIVE },
-    select: { id: true, email: true, prefix: true, firstName: true, lastName: true },
-    orderBy: { firstName: "asc" },
+  const assignments = await prisma.userRoleAssignment.findMany({
+    where: {
+      role: { code: ROLE_CODES.BDI_DATASET_SPECIALIST, isActive: true },
+      status: "ACTIVE",
+      userAccount: { status: UserAccountStatus.ACTIVE },
+    },
+    select: {
+      userAccount: {
+        select: { id: true, email: true, prefixTh: true, firstnameTh: true, lastnameTh: true },
+      },
+    },
   });
-  res.json({ specialists });
+  res.json({
+    specialists: assignments.map((a) => ({
+      id: a.userAccount.id,
+      email: a.userAccount.email,
+      prefix: a.userAccount.prefixTh,
+      firstName: a.userAccount.firstnameTh,
+      lastName: a.userAccount.lastnameTh,
+    })),
+  });
 });
 
 // ---------------------------------------------------------------- create draft
 
 datasetRequestRouter.post("/", async (req, res) => {
   const session = req.session! as Session;
-
-  const blocked = await prerequisiteError(session);
-  if (blocked) {
-    res.status(403).json({ error: "not_eligible", message: blocked });
+  const reason = await prerequisiteError(session);
+  if (reason) {
+    res.status(403).json({ error: "not_eligible", message: reason });
     return;
   }
 
@@ -248,89 +341,106 @@ datasetRequestRouter.post("/", async (req, res) => {
     return;
   }
 
-  const year = new Date().getFullYear();
-  const created = await createWithRequestNumber(year, async (requestNumber) =>
-    prisma.datasetRequest.create({
+  const { columns, extra } = toMetadataColumns(parsed.data);
+
+  const created = await prisma.$transaction(async (tx) => {
+    const request = await tx.datasetRegistrationRequest.create({
       data: {
-        ...(draftToData(parsed.data, session.sub) as Prisma.DatasetRequestCreateInput),
-        requestNumber,
-        organization: { connect: { id: session.organizationId! } },
-        createdBy: { connect: { id: session.sub } },
+        requestNumber: await nextDatasetRequestNumber(tx),
+        organizationId: session.organizationId!,
+        status: RequestStatus.DRAFT,
+        proposedTitle: parsed.data.nameTh ?? null,
+        createdBy: session.sub,
+        updatedBy: session.sub,
+        metadata: {
+          create: { ...columns, additionalMetadataJson: extra as Prisma.InputJsonValue, createdBy: session.sub, updatedBy: session.sub },
+        },
       },
-    }),
-  );
-
-  await prisma.datasetRequestEvent.create({
-    data: {
-      datasetRequestId: created.id,
-      type: DatasetRequestEventType.CREATED,
-      actorId: session.sub,
-      toStatus: created.status,
-    },
-  });
-  await logActivity({
-    action: ActivityAction.CREATE,
-    actorId: session.sub,
-    targetType: "DatasetRequest",
-    targetId: created.id,
-    targetRef: created.requestNumber,
-    after: { status: created.status },
-    req,
-  });
-
-  res.status(201).json({ request: created });
-});
-
-/**
- * เลขที่คำขอนับแยกรายปี สองคนกดพร้อมกันอาจได้เลขเดียวกัน — ชนแล้วลองใหม่
- * (ทางเลือกคือ sequence ใน Postgres แต่ต้องเขียน SQL ดิบ ซึ่งเกินความจำเป็นที่ปริมาณงานระดับนี้)
- */
-async function createWithRequestNumber<T>(
-  year: number,
-  create: (requestNumber: string) => Promise<T>,
-): Promise<T> {
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const count = await prisma.datasetRequest.count({
-      where: { requestNumber: { startsWith: `DR-${year}-` } },
+      include: requestInclude,
     });
-    try {
-      return await create(nextRequestNumber(year, count + attempt));
-    } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") continue;
-      throw err;
-    }
-  }
-  throw new Error("ออกเลขที่คำขอไม่สำเร็จหลังจากลองหลายครั้ง");
-}
+    return request;
+  });
+
+  await logAudit({
+    action: AuditAction.REQUEST_CREATED,
+    subjectType: AuditSubject.DATASET_REGISTRATION_REQUEST,
+    subjectId: created.id,
+    organizationId: created.organizationId,
+    after: { requestNumber: created.requestNumber },
+  });
+
+  res.status(201).json({ request: toApiShape(created) });
+});
 
 // ---------------------------------------------------------------- detail
 
 datasetRequestRouter.get("/:id", async (req, res) => {
   const session = req.session! as Session;
-  const request = await prisma.datasetRequest.findFirst({
+  const request = await prisma.datasetRegistrationRequest.findFirst({
     where: { id: req.params.id, ...visibilityFilter(session) },
-    include: detailInclude,
+    include: requestInclude,
   });
   if (!request) {
     res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
     return;
   }
-  res.json({ request });
+
+  const [attachments, tasks, active] = await Promise.all([
+    activeAttachments(prisma, OWNER, request.id),
+    taskHistory(prisma, SUBJECT, request.id),
+    activeTask(prisma, SUBJECT, request.id),
+  ]);
+
+  const isOrgSide = !isBdiStaff(session.roles);
+
+  res.json({
+    request: toApiShape(request, {
+      currentTaskType: active?.taskType ?? null,
+      currentRound: active?.roundNumber ?? null,
+      currentAssignee: active?.assignedUser?.displayName ?? null,
+      assignedSpecialistId:
+        active?.taskType === ReviewTaskType.DATASET_SPECIALIST_REVIEW
+          ? active.assignedUserId
+          : null,
+      attachments: attachments.map(publicAttachment),
+      // timeline มาจาก review_task แทน dataset_request_events เดิม
+      // ความเห็นที่ตั้งไว้เป็น BDI_INTERNAL ถูกซ่อนจากฝั่งหน่วยงาน
+      events: tasks.map((t) => ({
+        id: t.id,
+        taskType: t.taskType,
+        sequenceNumber: t.sequenceNumber,
+        roundNumber: t.roundNumber,
+        status: t.status,
+        result: t.result,
+        note:
+          isOrgSide && t.commentVisibility === CommentVisibility.BDI_INTERNAL
+            ? null
+            : t.resultComment,
+        actor: t.assignedUser
+          ? { id: t.assignedUser.id, name: t.assignedUser.displayName, email: t.assignedUser.email }
+          : null,
+        assignedAt: t.assignedAt,
+        startedAt: t.startedAt,
+        completedAt: t.completedAt,
+        createdAt: t.assignedAt,
+      })),
+    }),
+  });
 });
 
 // ---------------------------------------------------------------- save draft
 
 datasetRequestRouter.patch("/:id", async (req, res) => {
   const session = req.session! as Session;
-  const request = await prisma.datasetRequest.findUnique({ where: { id: req.params.id } });
+  const request = await prisma.datasetRegistrationRequest.findUnique({
+    where: { id: req.params.id },
+    include: requestInclude,
+  });
   if (!request || !mayEdit(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
     return;
   }
-  if (
-    request.status !== DatasetRequestStatus.DRAFT &&
-    request.status !== DatasetRequestStatus.NEEDS_REVISION
-  ) {
+  if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
     res.status(409).json({ error: "locked", message: "คำขออยู่ระหว่างการตรวจสอบ แก้ไขไม่ได้" });
     return;
   }
@@ -341,43 +451,42 @@ datasetRequestRouter.patch("/:id", async (req, res) => {
     return;
   }
 
-  const data = draftToData(parsed.data, session.sub);
-  const updated = await prisma.datasetRequest.update({ where: { id: request.id }, data });
-
-  const changes = diffFields(
-    request as unknown as Record<string, unknown>,
-    data as Record<string, unknown>,
+  const { columns, extra } = toMetadataColumns(
+    parsed.data,
+    request.metadata?.additionalMetadataJson,
   );
-  if (changes) {
-    await logActivity({
-      action: ActivityAction.UPDATE,
-      actorId: session.sub,
-      targetType: "DatasetRequest",
-      targetId: request.id,
-      targetRef: request.requestNumber,
-      before: changes.before,
-      after: changes.after,
-      req,
+
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.datasetRegistrationMetadata.upsert({
+      where: { datasetRegistrationRequestId: request.id },
+      update: { ...columns, additionalMetadataJson: extra as Prisma.InputJsonValue, updatedBy: session.sub },
+      create: {
+        datasetRegistrationRequestId: request.id,
+        ...columns,
+        additionalMetadataJson: extra as Prisma.InputJsonValue,
+        createdBy: session.sub,
+        updatedBy: session.sub,
+      },
     });
-  }
+    return tx.datasetRegistrationRequest.update({
+      where: { id: request.id },
+      data: {
+        proposedTitle: parsed.data.nameTh ?? request.proposedTitle,
+        updatedBy: session.sub,
+      },
+      include: requestInclude,
+    });
+  });
 
-  res.json({ request: updated });
+  res.json({ request: toApiShape(updated) });
 });
-
-/** org user คนไหนก็แก้คำขอของหน่วยงานตัวเองได้ ตามสเปกข้อ 1 */
-function mayEdit(session: Session, request: { organizationId: string; createdById: string }): boolean {
-  if (request.createdById === session.sub) return true;
-  return (
-    session.roles.includes(Role.ORGANIZATION_USER) && session.organizationId === request.organizationId
-  );
-}
 
 // ---------------------------------------------------------------- attachments
 
 datasetRequestRouter.post("/:id/attachments", upload.single("file"), async (req, res) => {
   const session = req.session! as Session;
   const kind = String(req.body?.kind ?? "");
-  if (kind !== DatasetAttachmentKind.DATA_DICTIONARY && kind !== DatasetAttachmentKind.EXAMPLE_DATA) {
+  if (kind !== "DATA_DICTIONARY" && kind !== "EXAMPLE_DATA") {
     res.status(400).json({ error: "validation", message: "ประเภทเอกสารไม่ถูกต้อง" });
     return;
   }
@@ -386,108 +495,78 @@ datasetRequestRouter.post("/:id/attachments", upload.single("file"), async (req,
     return;
   }
   if (!DATASET_ALLOWED_MIME[kind].includes(req.file.mimetype)) {
-    res.status(400).json({
-      error: "validation",
-      fields: {
-        [kind]:
-          kind === DatasetAttachmentKind.DATA_DICTIONARY
-            ? "รองรับเฉพาะไฟล์ PDF, XLSX หรือ CSV ขนาดไม่เกิน 10 MB"
-            : "รองรับเฉพาะไฟล์ CSV, XLSX หรือ JSON ขนาดไม่เกิน 10 MB",
-      },
-    });
+    res.status(400).json({ error: "validation", message: "ชนิดไฟล์นี้ไม่รองรับ" });
     return;
   }
 
-  const request = await prisma.datasetRequest.findUnique({ where: { id: req.params.id } });
+  const request = await prisma.datasetRegistrationRequest.findUnique({
+    where: { id: req.params.id },
+  });
   if (!request || !mayEdit(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
     return;
   }
-  if (
-    request.status !== DatasetRequestStatus.DRAFT &&
-    request.status !== DatasetRequestStatus.NEEDS_REVISION
-  ) {
-    res.status(409).json({ error: "locked", message: "คำขออยู่ระหว่างการตรวจสอบ แก้ไขไม่ได้" });
-    return;
-  }
 
-  const objectKey = `dataset-requests/${request.id}/${kind}/${randomUUID()}`;
-  await minio.putObject(BUCKET, objectKey, req.file.buffer, req.file.size, {
-    "Content-Type": req.file.mimetype,
+  const attachmentType =
+    kind === "DATA_DICTIONARY" ? AttachmentType.DATA_DICTIONARY : AttachmentType.EXAMPLE_DATA;
+
+  const attachment = await storeAttachment(prisma, {
+    ownerType: OWNER,
+    ownerId: request.id,
+    attachmentType,
+    file: req.file,
+    uploadedBy: session.sub,
   });
 
-  // เอกสารแต่ละประเภทมีได้ฉบับเดียว — อัปโหลดใหม่แทนที่ของเดิม (เหมือน Journey B)
-  await replacePrevious(request.id, kind);
-
-  const attachment = await prisma.datasetAttachment.create({
-    data: {
-      kind,
-      objectKey,
-      filename: Buffer.from(req.file.originalname, "latin1").toString("utf8"),
-      mimeType: req.file.mimetype,
-      sizeBytes: req.file.size,
-      datasetRequestId: request.id,
-      uploadedById: session.sub,
-    },
-    select: { id: true, kind: true, filename: true, mimeType: true, sizeBytes: true, createdAt: true },
+  await prisma.datasetRegistrationRequest.update({
+    where: { id: request.id },
+    data:
+      kind === "DATA_DICTIONARY"
+        ? { dataDictionaryAttachmentId: attachment.id, updatedBy: session.sub }
+        : { exampleDataAttachmentId: attachment.id, updatedBy: session.sub },
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    actorId: session.sub,
-    targetType: "DatasetRequest",
-    targetId: request.id,
-    targetRef: request.requestNumber,
-    after: { attachment: { kind, filename: attachment.filename } },
-    req,
+  await logAudit({
+    action: attachment.replacedAttachmentId
+      ? AuditAction.ATTACHMENT_REPLACED
+      : AuditAction.ATTACHMENT_UPLOADED,
+    subjectType: AuditSubject.ATTACHMENT,
+    subjectId: attachment.id,
+    organizationId: request.organizationId,
+    after: { attachmentType, filename: attachment.originalFileName },
   });
 
-  res.status(201).json({ attachment });
+  res.status(201).json({ attachment: publicAttachment(attachment) });
 });
-
-async function replacePrevious(datasetRequestId: string, kind: DatasetAttachmentKind) {
-  const previous = await prisma.datasetAttachment.findMany({ where: { datasetRequestId, kind } });
-  await Promise.all(
-    previous.map((p) => minio.removeObject(BUCKET, p.objectKey).catch(() => undefined)),
-  );
-  await prisma.datasetAttachment.deleteMany({ where: { id: { in: previous.map((p) => p.id) } } });
-}
 
 datasetRequestRouter.get("/:id/attachments/:attachmentId", async (req, res) => {
   const session = req.session! as Session;
-  const request = await prisma.datasetRequest.findFirst({
+  const request = await prisma.datasetRegistrationRequest.findFirst({
     where: { id: req.params.id, ...visibilityFilter(session) },
-    select: { id: true, requestNumber: true },
+    select: { id: true, requestNumber: true, organizationId: true },
   });
   if (!request) {
     res.status(404).json({ error: "not_found" });
     return;
   }
-  const attachment = await prisma.datasetAttachment.findFirst({
-    where: { id: req.params.attachmentId, datasetRequestId: request.id },
+
+  const attachment = await prisma.attachment.findFirst({
+    where: { id: req.params.attachmentId, ownerType: OWNER, ownerId: request.id },
   });
   if (!attachment) {
     res.status(404).json({ error: "not_found" });
     return;
   }
 
-  await logActivity({
-    action: ActivityAction.DOWNLOAD,
-    actorId: session.sub,
-    targetType: "DatasetRequest",
-    targetId: request.id,
-    targetRef: request.requestNumber,
-    after: { attachmentId: attachment.id, filename: attachment.filename },
-    req,
+  await logAudit({
+    action: AuditAction.DOCUMENT_DOWNLOADED,
+    subjectType: AuditSubject.ATTACHMENT,
+    subjectId: attachment.id,
+    organizationId: request.organizationId,
+    after: { filename: attachment.originalFileName },
   });
 
-  const stream = await minio.getObject(BUCKET, attachment.objectKey);
-  res.setHeader("Content-Type", attachment.mimeType);
-  res.setHeader(
-    "Content-Disposition",
-    `inline; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`,
-  );
-  stream.pipe(res);
+  await streamAttachment(res, attachment);
 });
 
 // ---------------------------------------------------------------- generate PDF
@@ -495,16 +574,17 @@ datasetRequestRouter.get("/:id/attachments/:attachmentId", async (req, res) => {
 /** §4.3 ข้อ 4 — ต้องผ่าน validation ทั้งฉบับก่อน แล้วจึงสร้าง PDF ให้ตรวจ */
 datasetRequestRouter.post("/:id/generate-form", async (req, res) => {
   const session = req.session! as Session;
-  const request = await prisma.datasetRequest.findUnique({
+  const request = await prisma.datasetRegistrationRequest.findUnique({
     where: { id: req.params.id },
-    include: { attachments: true, organization: { select: { name: true } } },
+    include: requestInclude,
   });
   if (!request || !mayEdit(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
     return;
   }
 
-  const parsed = datasetSubmitSchema.safeParse(request);
+  const shape = toApiShape(request);
+  const parsed = datasetSubmitSchema.safeParse(shape);
   if (!parsed.success) {
     res.status(400).json({
       error: "validation",
@@ -513,593 +593,679 @@ datasetRequestRouter.post("/:id/generate-form", async (req, res) => {
     });
     return;
   }
-  if (!request.attachments.some((a) => a.kind === DatasetAttachmentKind.DATA_DICTIONARY)) {
-    res.status(400).json({
-      error: "validation",
-      fields: { DATA_DICTIONARY: "กรุณาแนบพจนานุกรมข้อมูล (Data Dictionary)" },
-    });
-    return;
-  }
 
-  const attachment = await buildForm(request, session.sub);
-  res.status(201).json({ attachment });
+  const pdf = await renderDatasetRegistrationForm(await buildForm(request));
+  const attachment = await storeAttachment(prisma, {
+    ownerType: OWNER,
+    ownerId: request.id,
+    attachmentType: AttachmentType.GENERATED_FORM,
+    file: {
+      buffer: pdf,
+      originalname: `แบบฟอร์มลงทะเบียนชุดข้อมูล-${request.requestNumber}.pdf`,
+      mimetype: "application/pdf",
+      size: pdf.length,
+    },
+    uploadedBy: session.sub,
+  });
+
+  res.status(201).json({ attachment: publicAttachment(attachment) });
 });
 
-/** สร้าง PDF ฉบับใหม่และแทนที่ฉบับเดิม — ใช้ทั้งตอน preview และตอนอนุมัติ */
-async function buildForm(
-  request: Prisma.DatasetRequestGetPayload<{
-    include: { attachments: true; organization: { select: { name: true } } };
-  }>,
-  actorId: string,
-) {
-  const pdf = await renderDatasetRegistrationForm(request);
-  const objectKey = `dataset-requests/${request.id}/form/${randomUUID()}.pdf`;
-  await minio.putObject(BUCKET, objectKey, pdf, pdf.length, { "Content-Type": "application/pdf" });
-  await replacePrevious(request.id, DatasetAttachmentKind.GENERATED_FORM);
+async function buildForm(request: RequestRow) {
+  const attachments = await activeAttachments(prisma, OWNER, request.id);
+  const shape = toApiShape(request);
 
-  return prisma.datasetAttachment.create({
-    data: {
-      kind: DatasetAttachmentKind.GENERATED_FORM,
-      objectKey,
-      filename: `แบบฟอร์มลงทะเบียนชุดข้อมูล-${request.requestNumber}.pdf`,
-      mimeType: "application/pdf",
-      sizeBytes: pdf.length,
-      datasetRequestId: request.id,
-      uploadedById: actorId,
-    },
-    select: { id: true, kind: true, filename: true, mimeType: true, sizeBytes: true, createdAt: true },
+  // ผู้ลงนามและผู้อนุมัติ — มาจาก signature_confirmation และ review_task ที่ปิดแล้ว
+  const signature = await prisma.signatureConfirmation.findFirst({
+    where: { subjectType: SUBJECT, subjectId: request.id, confirmationType: "ORGANIZATION_APPROVAL" },
+    orderBy: { confirmedAt: "desc" },
+    include: { userAccount: { select: { displayName: true } } },
   });
+  const finalApproval = await prisma.reviewTask.findFirst({
+    where: {
+      subjectType: SUBJECT,
+      subjectId: request.id,
+      taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
+      result: ReviewResult.APPROVED,
+    },
+    orderBy: { completedAt: "desc" },
+    include: { assignedUser: { select: { displayName: true } } },
+  });
+
+  const legal = await prisma.legalAcceptance.findFirst({
+    where: { subjectType: SUBJECT, subjectId: request.id },
+    orderBy: { acceptedAt: "asc" },
+  });
+
+  return {
+    ...shape,
+    requestNumber: request.requestNumber,
+    organization: { name: request.organization.nameTh },
+    submittedAt: request.submittedAt,
+    createdAt: request.createdAt,
+    legalAcceptedAt: legal?.acceptedAt ?? null,
+    orgApproverSignedName: signature?.userAccount.displayName ?? null,
+    orgApproverSignedAt: signature?.confirmedAt ?? null,
+    approvedByName: finalApproval?.assignedUser.displayName ?? null,
+    approvedAt: request.approvedAt,
+    attachments: attachments.map((a) => ({
+      kind: a.attachmentType as string,
+      filename: a.originalFileName,
+    })),
+  };
 }
 
 // ---------------------------------------------------------------- submit
 
 datasetRequestRouter.post("/:id/submit", async (req, res) => {
   const session = req.session! as Session;
-  const request = await prisma.datasetRequest.findUnique({
+  const request = await prisma.datasetRegistrationRequest.findUnique({
     where: { id: req.params.id },
-    include: { attachments: true, organization: { select: { name: true } } },
+    include: requestInclude,
   });
   if (!request || !mayEdit(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
     return;
   }
-  if (
-    request.status !== DatasetRequestStatus.DRAFT &&
-    request.status !== DatasetRequestStatus.NEEDS_REVISION
-  ) {
+  if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
     res.status(409).json({ error: "locked", message: "คำขอนี้นำส่งไปแล้ว" });
     return;
   }
 
-  const parsed = datasetSubmitSchema.safeParse(request);
+  const parsed = datasetSubmitSchema.safeParse(toApiShape(request));
   if (!parsed.success) {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;
   }
-  if (!request.attachments.some((a) => a.kind === DatasetAttachmentKind.DATA_DICTIONARY)) {
+
+  const dictionary = await activeAttachment(prisma, OWNER, request.id, AttachmentType.DATA_DICTIONARY);
+  if (!dictionary) {
     res.status(400).json({
       error: "validation",
       fields: { DATA_DICTIONARY: "กรุณาแนบพจนานุกรมข้อมูล (Data Dictionary)" },
     });
     return;
   }
-  if (!request.attachments.some((a) => a.kind === DatasetAttachmentKind.GENERATED_FORM)) {
+  const form = await activeAttachment(prisma, OWNER, request.id, AttachmentType.GENERATED_FORM);
+  if (!form) {
     res.status(400).json({ error: "no_form", message: "กรุณาสร้างและตรวจสอบ PDF ก่อนนำส่ง" });
     return;
   }
 
-  const updated = await prisma.$transaction(async (tx) => {
-    const next = await tx.datasetRequest.update({
+  const officer = await pickAssignee(ROLE_CODES.BDI_OFFICER, null);
+  if (!officer) {
+    res
+      .status(503)
+      .json({ error: "no_reviewer", message: "ยังไม่มีเจ้าหน้าที่ BDI ในระบบ กรุณาติดต่อผู้ดูแล" });
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.datasetRegistrationRequest.update({
       where: { id: request.id },
-      data: {
-        status: DatasetRequestStatus.PENDING_OFFICER_REVIEW,
-        submittedAt: new Date(),
-        revisionNote: null,
-      },
+      data: { submittedAt: new Date(), updatedBy: session.sub },
     });
-    await recordEvent(
-      tx,
-      request.id,
-      DatasetRequestEventType.SUBMITTED,
-      session.sub,
-      request.status,
-      next.status,
-    );
-    return next;
+    await openTask(tx, {
+      subjectType: SUBJECT,
+      subjectId: request.id,
+      taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
+      assignedUserId: officer,
+      assignedRole: ROLE_CODES.BDI_OFFICER,
+      actorId: session.sub,
+    });
+    await syncStatus(tx, { ...request, submittedAt: new Date() });
   });
 
   const officers = await bdiOfficerIds();
   const info = {
     requestNumber: request.requestNumber,
     datasetName: datasetLabel(request),
-    organizationName: request.organization.name,
+    organizationName: request.organization.nameTh,
     submitter: await displayName(session.sub),
     id: request.id,
   };
   await notifyUsers(officers, {
-    type: NotificationType.DATASET_SUBMITTED,
+    type: NotificationType.REQUEST_SUBMITTED,
     title: `มีคำขอลงทะเบียนชุดข้อมูลใหม่ ${request.requestNumber}`,
-    body: `${info.organizationName} — ${info.datasetName}`,
-    link: `/admin/datasets/${request.id}`,
-  });
-  await sendDatasetSubmitted(await emailsOf(officers), info);
-
-  await logActivity({
-    action: ActivityAction.SUBMIT,
-    actorId: session.sub,
-    targetType: "DatasetRequest",
-    targetId: request.id,
-    targetRef: request.requestNumber,
-    before: { status: request.status },
-    after: { status: updated.status },
-    req,
+    message: `${info.organizationName} — ${info.datasetName}`,
+    subjectType: SUBJECT,
+    subjectId: request.id,
+    organizationId: request.organizationId,
   });
 
-  res.json({ request: updated });
+  await logAudit({
+    action: AuditAction.REQUEST_SUBMITTED,
+    subjectType: AuditSubject.DATASET_REGISTRATION_REQUEST,
+    subjectId: request.id,
+    organizationId: request.organizationId,
+    after: { requestNumber: request.requestNumber },
+  });
+
+  const fresh = await prisma.datasetRegistrationRequest.findUniqueOrThrow({
+    where: { id: request.id },
+    include: requestInclude,
+  });
+  res.json({ request: toApiShape(fresh) });
 });
 
 // ---------------------------------------------------------------- assign specialist
 
 const assignSchema = z.object({ specialistId: z.string().uuid().nullable() });
 
-/** §4.4 ข้อ 3 — assign ผู้เชี่ยวชาญ (ไม่บังคับ) ทำได้เฉพาะระหว่างการตรวจด่านแรก */
-datasetRequestRouter.post("/:id/assign", async (req, res) => {
-  const session = req.session! as Session;
-  if (!session.roles.includes(Role.BDI_OFFICER)) {
-    res.status(403).json({ error: "forbidden", message: "เฉพาะเจ้าหน้าที่ BDI เท่านั้น" });
-    return;
-  }
-
-  const parsed = assignSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
-    return;
-  }
-
-  const request = await prisma.datasetRequest.findUnique({
-    where: { id: req.params.id },
-    include: { organization: { select: { name: true } } },
-  });
-  if (!request) {
-    res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
-    return;
-  }
-  if (request.status !== DatasetRequestStatus.PENDING_OFFICER_REVIEW) {
-    res.status(409).json({
-      error: "invalid_state",
-      message: "มอบหมายผู้เชี่ยวชาญได้เฉพาะตอนที่คำขออยู่ในขั้นตรวจสอบเบื้องต้น",
-    });
-    return;
-  }
-
-  const { specialistId } = parsed.data;
-  if (specialistId) {
-    const specialist = await prisma.user.findFirst({
-      where: { id: specialistId, roles: { has: Role.BDI_SPECIALIST }, status: UserStatus.ACTIVE },
-      select: { id: true, email: true },
-    });
-    if (!specialist) {
-      res.status(400).json({
-        error: "validation",
-        fields: { specialistId: "ไม่พบผู้เชี่ยวชาญที่เลือก หรือบัญชียังไม่เปิดใช้งาน" },
-      });
+/**
+ * มอบหมาย/ถอนผู้เชี่ยวชาญ (§4.4 ข้อ 2 — ไม่บังคับ)
+ *
+ * ของเดิมเป็นคอลัมน์เดียวบนคำขอ แบบใหม่คือเปิด DATASET_SPECIALIST_REVIEW task
+ * เพราะหนึ่งคำขอมี active task ได้ตัวเดียว การมอบหมายจึงต้องปิด task ของ officer ก่อน
+ * และเมื่อผู้เชี่ยวชาญทำเสร็จ ระบบจะเปิด BDI_OFFICER_REVIEW รอบถัดไปคืนให้ officer
+ */
+datasetRequestRouter.post("/:id/assign", async (req, res, next) => {
+  try {
+    const session = req.session! as Session;
+    if (!session.roles.includes(ROLE_CODES.BDI_OFFICER)) {
+      res.status(403).json({ error: "forbidden", message: "เฉพาะเจ้าหน้าที่ BDI เท่านั้น" });
       return;
     }
-  }
+    const parsed = assignSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+      return;
+    }
 
-  const updated = await prisma.$transaction(async (tx) => {
-    const next = await tx.datasetRequest.update({
+    const request = await prisma.datasetRegistrationRequest.findUnique({
+      where: { id: req.params.id },
+      include: requestInclude,
+    });
+    if (!request) {
+      res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
+      return;
+    }
+
+    const current = await activeTask(prisma, SUBJECT, request.id);
+    if (!current) {
+      res.status(409).json({ error: "invalid_state", message: "คำขอนี้ไม่ได้อยู่ระหว่างการตรวจสอบ" });
+      return;
+    }
+
+    const { specialistId } = parsed.data;
+
+    await prisma.$transaction(async (tx) => {
+      if (specialistId) {
+        if (current.taskType !== ReviewTaskType.BDI_OFFICER_REVIEW) {
+          throw new WorkflowError("invalid_state", "มอบหมายผู้เชี่ยวชาญได้เฉพาะช่วงที่ BDI ตรวจสอบ");
+        }
+        await cancelActiveTask(tx, {
+          subjectType: SUBJECT,
+          subjectId: request.id,
+          actorId: session.sub,
+          reason: "มอบหมายให้ผู้เชี่ยวชาญด้านข้อมูลพิจารณา",
+        });
+        await openTask(tx, {
+          subjectType: SUBJECT,
+          subjectId: request.id,
+          taskType: ReviewTaskType.DATASET_SPECIALIST_REVIEW,
+          assignedUserId: specialistId,
+          assignedRole: ROLE_CODES.BDI_DATASET_SPECIALIST,
+          assignedById: session.sub,
+          assignmentSource: "MANUAL",
+          actorId: session.sub,
+        });
+      } else {
+        if (current.taskType !== ReviewTaskType.DATASET_SPECIALIST_REVIEW) {
+          throw new WorkflowError("invalid_state", "ไม่มีผู้เชี่ยวชาญที่ได้รับมอบหมายอยู่");
+        }
+        await cancelActiveTask(tx, {
+          subjectType: SUBJECT,
+          subjectId: request.id,
+          actorId: session.sub,
+          reason: "ถอนการมอบหมายผู้เชี่ยวชาญ",
+        });
+        const officer = await pickAssignee(ROLE_CODES.BDI_OFFICER, null);
+        await openTask(tx, {
+          subjectType: SUBJECT,
+          subjectId: request.id,
+          taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
+          assignedUserId: officer ?? session.sub,
+          assignedRole: ROLE_CODES.BDI_OFFICER,
+          actorId: session.sub,
+        });
+      }
+      await syncStatus(tx, request);
+    });
+
+    if (specialistId) {
+      await notifyUsers([specialistId], {
+        type: NotificationType.SPECIALIST_ASSIGNED,
+        title: `คุณได้รับมอบหมายให้พิจารณา ${request.requestNumber}`,
+        message: datasetLabel(request),
+        subjectType: SUBJECT,
+        subjectId: request.id,
+        organizationId: request.organizationId,
+      });
+      const [specialistEmail] = await emailsOf([specialistId]);
+      if (specialistEmail) {
+        await sendDatasetSpecialistAssigned(specialistEmail, {
+          requestNumber: request.requestNumber,
+          datasetName: datasetLabel(request),
+          organizationName: request.organization.nameTh,
+          id: request.id,
+        });
+      }
+    }
+
+    const fresh = await prisma.datasetRegistrationRequest.findUniqueOrThrow({
       where: { id: request.id },
-      data: {
-        assignedSpecialistId: specialistId,
-        assignedAt: specialistId ? new Date() : null,
-      },
+      include: requestInclude,
     });
-    await recordEvent(
-      tx,
-      request.id,
-      specialistId
-        ? DatasetRequestEventType.SPECIALIST_ASSIGNED
-        : DatasetRequestEventType.SPECIALIST_UNASSIGNED,
-      session.sub,
-      request.status,
-      request.status,
-      specialistId ? `มอบหมายให้ ${await displayName(specialistId)}` : "ยกเลิกการมอบหมาย",
-    );
-    return next;
-  });
-
-  if (specialistId) {
-    const info = {
-      requestNumber: request.requestNumber,
-      datasetName: datasetLabel(request),
-      organizationName: request.organization.name,
-      id: request.id,
-    };
-    await notifyUsers([specialistId], {
-      type: NotificationType.DATASET_SPECIALIST_ASSIGNED,
-      title: `คุณได้รับมอบหมายคำขอ ${request.requestNumber}`,
-      body: info.datasetName,
-      link: `/admin/datasets/${request.id}`,
-    });
-    const [email] = await emailsOf([specialistId]);
-    if (email) await sendDatasetSpecialistAssigned(email, info);
+    res.json({ request: toApiShape(fresh) });
+  } catch (err) {
+    if (err instanceof WorkflowError) {
+      res.status(err.status).json({ error: err.code, message: err.message });
+      return;
+    }
+    next(err);
   }
-
-  await logActivity({
-    action: ActivityAction.ASSIGN,
-    actorId: session.sub,
-    targetType: "DatasetRequest",
-    targetId: request.id,
-    targetRef: request.requestNumber,
-    before: { assignedSpecialistId: request.assignedSpecialistId },
-    after: { assignedSpecialistId: specialistId },
-    req,
-  });
-
-  res.json({ request: updated });
 });
 
 // ---------------------------------------------------------------- review
 
 const reviewSchema = z.object({
-  action: z.enum(["approve", "forward", "confirm", "reject", "request_revision", "comment"]),
+  action: z.enum(["approve", "forward", "confirm", "comment", "request_revision", "reject"]),
   note: z.string().trim().optional(),
 });
 
 /**
- * จุดตัดสินใจเดียวของทั้งสี่ด่าน — ใครทำอะไรได้ตัดสินจาก "สถานะปัจจุบัน" ของคำขอ
- * ไม่ใช่จาก path เหมือน POST /organizations/:id/review เพื่อให้ state machine อยู่ในไฟล์เดียว
+ * จุดตัดสินใจเดียวของทุกด่าน — ตัดสินจาก active review_task ไม่ใช่จาก status
+ * ผลที่ใช้ได้ต่อ task_type ถูกบังคับใน lib/workflow.ts ตามตารางในภาพของ sheet `review_task`
  */
-datasetRequestRouter.post("/:id/review", async (req, res) => {
-  const session = req.session! as Session;
-  const parsed = reviewSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
-    return;
-  }
-  const { action } = parsed.data;
-  const note = parsed.data.note?.trim() ?? "";
+datasetRequestRouter.post("/:id/review", async (req, res, next) => {
+  try {
+    const session = req.session! as Session;
+    const parsed = reviewSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+      return;
+    }
+    const { action, note } = parsed.data;
 
-  if ((action === "request_revision" || action === "reject") && note.length < 10) {
-    res.status(400).json({
-      error: "validation",
-      fields: {
-        note:
-          action === "reject"
-            ? "กรุณาระบุเหตุผลที่ไม่อนุมัติอย่างน้อย 10 ตัวอักษร"
-            : "กรุณาระบุสิ่งที่ต้องแก้ไขอย่างน้อย 10 ตัวอักษร",
-      },
+    if ((action === "request_revision" || action === "reject") && (note?.length ?? 0) < 10) {
+      res.status(400).json({
+        error: "validation",
+        fields: { note: "กรุณาระบุเหตุผลอย่างน้อย 10 ตัวอักษร" },
+      });
+      return;
+    }
+
+    const request = await prisma.datasetRegistrationRequest.findUnique({
+      where: { id: req.params.id },
+      include: requestInclude,
     });
-    return;
-  }
-  if (action === "comment" && note.length === 0) {
-    res.status(400).json({ error: "validation", fields: { note: "กรุณาพิมพ์ความเห็น" } });
-    return;
-  }
+    if (!request) {
+      res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
+      return;
+    }
 
-  const request = await prisma.datasetRequest.findUnique({
-    where: { id: req.params.id },
-    include: { organization: { select: { id: true, name: true, signatoryEmail: true } } },
-  });
-  if (!request) {
-    res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
-    return;
-  }
+    const task = await activeTask(prisma, SUBJECT, request.id);
+    if (!task) {
+      res
+        .status(409)
+        .json({ error: "invalid_state", message: "สถานะปัจจุบันไม่รองรับการดำเนินการนี้" });
+      return;
+    }
 
-  const decision = decide(session, request, action);
-  if ("error" in decision) {
-    res.status(decision.status).json({ error: decision.error, message: decision.message });
-    return;
-  }
+    const allowedRoles: Record<ReviewTaskType, RoleCode[]> = {
+      [ReviewTaskType.BDI_OFFICER_REVIEW]: [ROLE_CODES.BDI_OFFICER],
+      [ReviewTaskType.DATASET_SPECIALIST_REVIEW]: [ROLE_CODES.BDI_DATASET_SPECIALIST],
+      [ReviewTaskType.ORGANIZATION_APPROVAL]: [ROLE_CODES.ORGANIZATION_APPROVER],
+      [ReviewTaskType.BDI_FINAL_APPROVAL]: [ROLE_CODES.BDI_FINAL_APPROVER],
+      [ReviewTaskType.ORGANIZATION_REVISION]: [ROLE_CODES.ORGANIZATION_USER],
+    };
+    const isAssignee = task.assignedUserId === session.sub;
+    if (!session.roles.some((r) => allowedRoles[task.taskType].includes(r)) && !isAssignee) {
+      res.status(403).json({ error: "forbidden", message: "คุณไม่มีสิทธิ์ดำเนินการขั้นตอนนี้" });
+      return;
+    }
 
-  const now = new Date();
-  const actorName = await displayName(session.sub);
+    // บันทึกความเห็นโดยไม่เปลี่ยนด่าน — ผู้เชี่ยวชาญเท่านั้น
+    if (action === "comment") {
+      if (task.taskType !== ReviewTaskType.DATASET_SPECIALIST_REVIEW) {
+        res.status(409).json({ error: "invalid_state", message: "บันทึกความเห็นได้เฉพาะผู้เชี่ยวชาญ" });
+        return;
+      }
+      if (!note) {
+        res.status(400).json({ error: "validation", fields: { note: "กรุณากรอกความเห็น" } });
+        return;
+      }
+      await prisma.$transaction(async (tx) => {
+        await startTask(tx, task.id, session.sub);
+        await recordComment(tx, { taskId: task.id, comment: note, actorId: session.sub });
+        const officer = await pickAssignee(ROLE_CODES.BDI_OFFICER, null);
+        await openTask(tx, {
+          subjectType: SUBJECT,
+          subjectId: request.id,
+          taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
+          assignedUserId: officer ?? task.assignedUserId,
+          assignedRole: ROLE_CODES.BDI_OFFICER,
+          actorId: session.sub,
+        });
+        await syncStatus(tx, request);
+      });
+      const fresh = await prisma.datasetRegistrationRequest.findUniqueOrThrow({
+        where: { id: request.id },
+        include: requestInclude,
+      });
+      res.json({ request: toApiShape(fresh) });
+      return;
+    }
 
-  // ความเห็นของผู้เชี่ยวชาญไม่เปลี่ยนสถานะ — บันทึกลง timeline อย่างเดียว (§4.4 ข้อ 4)
-  if (decision.nextStatus === null) {
-    await prisma.datasetRequestEvent.create({
-      data: {
-        datasetRequestId: request.id,
-        type: decision.eventType,
+    const advance = action === "approve" || action === "forward" || action === "confirm";
+    const result: ReviewResult =
+      action === "reject"
+        ? ReviewResult.REJECTED
+        : action === "request_revision"
+          ? ReviewResult.RETURNED
+          : task.taskType === ReviewTaskType.ORGANIZATION_APPROVAL ||
+              task.taskType === ReviewTaskType.BDI_FINAL_APPROVAL
+            ? ReviewResult.APPROVED
+            : ReviewResult.PASSED;
+
+    await prisma.$transaction(async (tx) => {
+      await startTask(tx, task.id, session.sub);
+      await completeTask(tx, {
+        taskId: task.id,
+        result,
+        comment: note ?? null,
+        commentVisibility: CommentVisibility.ORGANIZATION,
         actorId: session.sub,
-        fromStatus: request.status,
-        toStatus: request.status,
-        note,
-      },
-    });
-    const officers = await bdiOfficerIds();
-    await notifyUsers(officers, {
-      type: NotificationType.DATASET_COMMENTED,
-      title: `ผู้เชี่ยวชาญบันทึกความเห็นในคำขอ ${request.requestNumber}`,
-      body: note,
-      link: `/admin/datasets/${request.id}`,
-    });
-    await logActivity({
-      action: ActivityAction.REVIEW,
-      actorId: session.sub,
-      targetType: "DatasetRequest",
-      targetId: request.id,
-      targetRef: request.requestNumber,
-      after: { comment: note },
-      req,
-    });
-    const refreshed = await prisma.datasetRequest.findUnique({ where: { id: request.id } });
-    res.json({ request: refreshed });
-    return;
-  }
+      });
 
-  const nextStatus = decision.nextStatus;
-  const updated = await prisma.$transaction(async (tx) => {
-    const next = await tx.datasetRequest.update({
+      if (advance) {
+        await nextStageAfter(tx, request, task.taskType, session.sub);
+      }
+
+      if (result === ReviewResult.REJECTED) {
+        await tx.datasetRegistrationRequest.update({
+          where: { id: request.id },
+          data: { rejectedAt: new Date(), updatedBy: session.sub },
+        });
+      }
+
+      await syncStatus(tx, request);
+    });
+
+    await logAudit({
+      action:
+        result === ReviewResult.REJECTED
+          ? AuditAction.REQUEST_REJECTED
+          : result === ReviewResult.RETURNED
+            ? AuditAction.REQUEST_RETURNED
+            : AuditAction.REQUEST_APPROVED,
+      subjectType: AuditSubject.DATASET_REGISTRATION_REQUEST,
+      subjectId: request.id,
+      organizationId: request.organizationId,
+      after: { taskType: task.taskType, result, note },
+    });
+
+    await dispatchDatasetNotifications(request, task.taskType, result, note, session.sub);
+
+    const fresh = await prisma.datasetRegistrationRequest.findUniqueOrThrow({
       where: { id: request.id },
-      data: {
-        status: nextStatus,
-        revisionNote: nextStatus === DatasetRequestStatus.NEEDS_REVISION ? note : null,
-        ...(decision.eventType === DatasetRequestEventType.ORG_APPROVER_SIGNED
-          ? {
-              orgApproverSignedAt: now,
-              orgApproverSignedById: session.sub,
-              orgApproverSignedName: actorName,
-            }
-          : {}),
-        ...(nextStatus === DatasetRequestStatus.APPROVED
-          ? { approvedAt: now, approvedById: session.sub, approvedByName: actorName }
-          : {}),
-        ...(nextStatus === DatasetRequestStatus.REJECTED
-          ? {
-              rejectedAt: now,
-              rejectedById: session.sub,
-              rejectedByName: actorName,
-              rejectionReason: note,
-            }
-          : {}),
-      },
+      include: requestInclude,
     });
-    await recordEvent(
-      tx,
-      request.id,
-      decision.eventType,
-      session.sub,
-      request.status,
-      nextStatus,
-      note || undefined,
-    );
-    return next;
-  });
-
-  // PDF ฉบับอนุมัติต้องมีเลขที่คำขอ ผู้ลงนามทุกด่านและวันที่อนุมัติ จึงสร้างใหม่หลังบันทึกสถานะ
-  if (nextStatus === DatasetRequestStatus.APPROVED) {
-    const full = await prisma.datasetRequest.findUniqueOrThrow({
-      where: { id: request.id },
-      include: { attachments: true, organization: { select: { name: true } } },
-    });
-    await buildForm(full, session.sub);
+    res.json({ request: toApiShape(fresh) });
+  } catch (err) {
+    if (err instanceof WorkflowError) {
+      res.status(err.status).json({ error: err.code, message: err.message });
+      return;
+    }
+    next(err);
   }
-
-  await dispatchDatasetNotifications(request, updated, nextStatus, note, actorName, now);
-  await logActivity({
-    action: activityFor(nextStatus),
-    actorId: session.sub,
-    targetType: "DatasetRequest",
-    targetId: request.id,
-    targetRef: request.requestNumber,
-    before: { status: request.status },
-    after: { status: nextStatus, note: note || undefined },
-    req,
-  });
-
-  res.json({ request: updated });
 });
 
-type Decision =
-  | { nextStatus: DatasetRequestStatus | null; eventType: DatasetRequestEventType }
-  | { error: string; message: string; status: number };
+/**
+ * ด่านถัดไปหลังปิด task หนึ่ง
+ *
+ * BDI_OFFICER_REVIEW มีสองความหมายในเส้นทางนี้ ("ตรวจเบื้องต้น" กับ "ตรวจซ้ำ")
+ * แยกจากกันด้วยว่ามี ORGANIZATION_APPROVAL ที่ปิดแล้วหรือยัง ไม่ใช่ด้วย round_number
+ * เพราะรอบเพิ่มขึ้นทุกครั้งที่ส่งกลับให้แก้ไขหรือมอบหมายผู้เชี่ยวชาญด้วย
+ */
+async function nextStageAfter(
+  tx: Prisma.TransactionClient,
+  request: RequestRow,
+  completed: ReviewTaskType,
+  actorId: string,
+) {
+  const orgApproved = await tx.reviewTask.count({
+    where: {
+      subjectType: SUBJECT,
+      subjectId: request.id,
+      taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
+      result: ReviewResult.APPROVED,
+    },
+  });
 
-const forbidden = (message: string): Decision => ({ error: "forbidden", message, status: 403 });
-const invalidState: Decision = {
-  error: "invalid_state",
-  message: "สถานะปัจจุบันไม่รองรับการดำเนินการนี้",
-  status: 409,
-};
-
-/** ตารางการตัดสินใจตาม docs/04-dataset-registration-plan.md §2.2 */
-function decide(
-  session: Session,
-  request: {
-    status: DatasetRequestStatus;
-    organizationId: string;
-    assignedSpecialistId: string | null;
-    organization: { signatoryEmail: string | null };
-  },
-  action: z.infer<typeof reviewSchema>["action"],
-): Decision {
-  const roles = session.roles;
-  const advance = action === "approve" || action === "forward" || action === "confirm";
-  const isOfficer = roles.includes(Role.BDI_OFFICER);
-  const isSpecialist = request.assignedSpecialistId === session.sub;
-  const isOrgApprover =
-    request.organization.signatoryEmail?.toLowerCase() === session.email.toLowerCase() ||
-    (roles.includes(Role.ORGANIZATION_APPROVER) && session.organizationId === request.organizationId);
-
-  switch (request.status) {
-    case DatasetRequestStatus.PENDING_OFFICER_REVIEW: {
-      if (isOfficer) {
-        if (advance) {
-          return { nextStatus: DatasetRequestStatus.PENDING_ORG_APPROVER, eventType: DatasetRequestEventType.OFFICER_FORWARDED };
-        }
-        if (action === "request_revision") {
-          return { nextStatus: DatasetRequestStatus.NEEDS_REVISION, eventType: DatasetRequestEventType.OFFICER_REVISION_REQUESTED };
-        }
-        return invalidState;
-      }
-      if (isSpecialist) {
-        if (action === "comment") {
-          return { nextStatus: null, eventType: DatasetRequestEventType.SPECIALIST_COMMENTED };
-        }
-        if (action === "request_revision") {
-          return { nextStatus: DatasetRequestStatus.NEEDS_REVISION, eventType: DatasetRequestEventType.SPECIALIST_REVISION_REQUESTED };
-        }
-        return forbidden("ผู้เชี่ยวชาญบันทึกความเห็นหรือส่งกลับให้แก้ไขได้เท่านั้น");
-      }
-      return forbidden("เฉพาะเจ้าหน้าที่ BDI หรือผู้เชี่ยวชาญที่ได้รับมอบหมายเท่านั้น");
+  const open = async (taskType: ReviewTaskType, roleCode: RoleCode, orgScope?: string | null) => {
+    const assignee = await pickAssignee(roleCode, orgScope ?? null);
+    if (!assignee) {
+      throw new WorkflowError(
+        "no_reviewer",
+        `ยังไม่มีผู้รับผิดชอบขั้นตอน ${taskType} ในระบบ กรุณาติดต่อผู้ดูแล`,
+        503,
+      );
     }
+    await openTask(tx, {
+      subjectType: SUBJECT,
+      subjectId: request.id,
+      taskType,
+      assignedUserId: assignee,
+      assignedRole: roleCode,
+      assignedById: actorId,
+      actorId,
+    });
+  };
 
-    case DatasetRequestStatus.PENDING_ORG_APPROVER: {
-      if (!isOrgApprover) return forbidden("เฉพาะผู้มีอำนาจกระทำการแทนของหน่วยงานเท่านั้น");
-      if (advance) {
-        return { nextStatus: DatasetRequestStatus.PENDING_OFFICER_FINAL_CHECK, eventType: DatasetRequestEventType.ORG_APPROVER_SIGNED };
-      }
-      if (action === "request_revision") {
-        return { nextStatus: DatasetRequestStatus.NEEDS_REVISION, eventType: DatasetRequestEventType.ORG_APPROVER_REVISION_REQUESTED };
-      }
-      return invalidState;
-    }
+  switch (completed) {
+    case ReviewTaskType.DATASET_SPECIALIST_REVIEW:
+      // ผู้เชี่ยวชาญพิจารณาเสร็จ — คืนให้ officer ตัดสินใจ
+      await open(ReviewTaskType.BDI_OFFICER_REVIEW, ROLE_CODES.BDI_OFFICER);
+      return;
 
-    case DatasetRequestStatus.PENDING_OFFICER_FINAL_CHECK: {
-      if (!isOfficer) return forbidden("เฉพาะเจ้าหน้าที่ BDI เท่านั้น");
-      if (advance) {
-        return { nextStatus: DatasetRequestStatus.PENDING_BDI_APPROVAL, eventType: DatasetRequestEventType.OFFICER_CONFIRMED };
+    case ReviewTaskType.BDI_OFFICER_REVIEW:
+      if (orgApproved === 0) {
+        await open(
+          ReviewTaskType.ORGANIZATION_APPROVAL,
+          ROLE_CODES.ORGANIZATION_APPROVER,
+          request.organizationId,
+        );
+      } else {
+        // §4.5 ข้อ 4 — ตรวจซ้ำผ่านแล้ว ส่งให้ผู้อนุมัติ BDI
+        await open(ReviewTaskType.BDI_FINAL_APPROVAL, ROLE_CODES.BDI_FINAL_APPROVER);
       }
-      if (action === "request_revision") {
-        return { nextStatus: DatasetRequestStatus.NEEDS_REVISION, eventType: DatasetRequestEventType.OFFICER_FINAL_REVISION_REQUESTED };
-      }
-      return invalidState;
-    }
+      return;
 
-    case DatasetRequestStatus.PENDING_BDI_APPROVAL: {
-      if (!roles.includes(Role.BDI_APPROVER)) return forbidden("เฉพาะผู้อนุมัติ BDI เท่านั้น");
-      if (advance) {
-        return { nextStatus: DatasetRequestStatus.APPROVED, eventType: DatasetRequestEventType.BDI_APPROVED };
-      }
-      if (action === "reject") {
-        return { nextStatus: DatasetRequestStatus.REJECTED, eventType: DatasetRequestEventType.BDI_REJECTED };
-      }
-      if (action === "request_revision") {
-        return { nextStatus: DatasetRequestStatus.NEEDS_REVISION, eventType: DatasetRequestEventType.BDI_REVISION_REQUESTED };
-      }
-      return invalidState;
-    }
+    case ReviewTaskType.ORGANIZATION_APPROVAL:
+      await open(ReviewTaskType.BDI_OFFICER_REVIEW, ROLE_CODES.BDI_OFFICER);
+      return;
+
+    case ReviewTaskType.BDI_FINAL_APPROVAL:
+      await materialiseDataset(tx, request, actorId);
+      return;
 
     default:
-      return invalidState;
+      return;
   }
 }
 
-function activityFor(status: DatasetRequestStatus): ActivityAction {
-  if (status === DatasetRequestStatus.APPROVED) return ActivityAction.APPROVE;
-  if (status === DatasetRequestStatus.REJECTED) return ActivityAction.REJECT;
-  if (status === DatasetRequestStatus.NEEDS_REVISION) return ActivityAction.RETURN_FOR_REVISION;
-  return ActivityAction.REVIEW;
+/**
+ * "การ Copy ข้อมูลเมื่ออนุมัติ" — ภาพใน sheet `dataset_registration_request`
+ *
+ *   1. ปิด BDI Final Approval Task        (ทำไปแล้วที่ผู้เรียก)
+ *   2. เปลี่ยน request.status = APPROVED  (syncStatus() ที่ผู้เรียก)
+ *   3. สร้าง dataset
+ *   4. Copy approved request metadata ไป dataset_metadata
+ *   5. Copy หรือเชื่อม attachment ที่ได้รับอนุมัติ
+ *   6. บันทึก dataset_id กลับใน registration request
+ *   7. สร้าง integration operation สำหรับส่ง DII
+ *   8. Commit
+ */
+async function materialiseDataset(
+  tx: Prisma.TransactionClient,
+  request: RequestRow,
+  actorId: string,
+) {
+  await tx.datasetRegistrationRequest.update({
+    where: { id: request.id },
+    data: { approvedAt: new Date(), updatedBy: actorId },
+  });
+
+  const dataset = await tx.dataset.create({
+    data: {
+      datasetCode: await nextDatasetCode(tx),
+      organizationId: request.organizationId,
+      status: DatasetStatus.ACTIVE,
+      // เชื่อม attachment เดิม ไม่ copy object ใหม่ (ทางเลือก A ในภาพของ sheet)
+      dataDictionaryAttachmentId: request.dataDictionaryAttachmentId,
+      exampleDataAttachmentId: request.exampleDataAttachmentId,
+      sourceDatasetRegistrationRequestId: request.id,
+      activatedAt: new Date(),
+      activatedBy: actorId,
+      createdBy: actorId,
+      updatedBy: actorId,
+    },
+  });
+
+  const m = request.metadata;
+  if (m) {
+    await tx.datasetMetadata.create({
+      data: {
+        datasetId: dataset.id,
+        titleTh: m.titleTh,
+        titleEn: m.titleEn,
+        descriptionTh: m.descriptionTh,
+        descriptionEn: m.descriptionEn,
+        objective: m.objective,
+        datasetCategoryCode: m.datasetCategoryCode,
+        dataOwnerDepartment: m.dataOwnerDepartment,
+        contactName: m.contactName,
+        contactEmail: m.contactEmail,
+        contactPhone: m.contactPhone,
+        updateFrequency: m.updateFrequency,
+        coverageStartDate: m.coverageStartDate,
+        coverageEndDate: m.coverageEndDate,
+        geographicScope: m.geographicScope,
+        containsPersonalData: m.containsPersonalData,
+        containsSensitiveData: m.containsSensitiveData,
+        accessLevel: m.accessLevel,
+        deliveryMethod: m.deliveryMethod,
+        dataFormat: m.dataFormat,
+        additionalMetadataJson: m.additionalMetadataJson ?? Prisma.DbNull,
+        createdBy: actorId,
+        updatedBy: actorId,
+      },
+    });
+  }
+
+  await tx.datasetRegistrationRequest.update({
+    where: { id: request.id },
+    data: { createdDatasetId: dataset.id, updatedBy: actorId },
+  });
+
+  // ขั้นที่ 7 — งานส่ง Dataset Reference ไปยัง DII รอ worker หยิบไปทำ
+  // docs/01-user-journey.md §6 ระบุว่า DII ยังเป็น [Next Phase] จึงมีแค่แถวรอไว้
+  await tx.integrationOperation.create({
+    data: {
+      integrationType: IntegrationType.DII,
+      operation: "PUBLISH_DATASET_REFERENCE",
+      subjectType: "DATASET",
+      subjectId: dataset.id,
+      organizationId: request.organizationId,
+      idempotencyKey: `DII:PUBLISH_DATASET_REFERENCE:${dataset.id}`,
+      correlationId: correlationId(),
+    },
+  });
+
+  return dataset;
 }
 
-/** อีเมลและ in-app notification เดินคู่กันเสมอ (§4.8) */
 async function dispatchDatasetNotifications(
-  before: {
-    id: string;
-    requestNumber: string;
-    nameTh: string | null;
-    organizationId: string;
-    createdById: string;
-    assignedSpecialistId: string | null;
-    organization: { name: string };
-  },
-  after: { orgApproverSignedName: string | null },
-  nextStatus: DatasetRequestStatus,
-  note: string,
-  actorName: string,
-  at: Date,
+  request: RequestRow,
+  taskType: ReviewTaskType,
+  result: ReviewResult,
+  note: string | undefined,
+  actorId: string,
 ) {
+  const members = await organizationMemberIds(request.organizationId);
+  const actorName = await displayName(actorId);
   const info = {
-    requestNumber: before.requestNumber,
-    datasetName: datasetLabel(before),
-    organizationName: before.organization.name,
-    id: before.id,
+    requestNumber: request.requestNumber,
+    datasetName: datasetLabel(request),
+    organizationName: request.organization.nameTh,
+    id: request.id,
   };
 
-  switch (nextStatus) {
-    case DatasetRequestStatus.NEEDS_REVISION: {
-      const members = await organizationMemberIds(before.organizationId);
-      const targets = [...new Set([before.createdById, ...members.users])];
-      await notifyUsers(targets, {
-        type: NotificationType.DATASET_REVISION_REQUESTED,
-        title: `คำขอ ${info.requestNumber} ต้องปรับปรุง`,
-        body: `${actorName}: ${note}`,
-        link: `/datasets/${before.id}`,
-      });
-      await sendDatasetRevisionRequested(await emailsOf(targets), {
-        ...info,
-        note,
-        byName: actorName,
-        at,
-      });
-      return;
-    }
+  if (result === ReviewResult.RETURNED) {
+    await notifyUsers([...members.users, request.createdBy], {
+      type: NotificationType.REQUEST_RETURNED,
+      title: `คำขอ ${request.requestNumber} ถูกส่งกลับให้แก้ไข`,
+      message: note ?? "",
+      subjectType: SUBJECT,
+      subjectId: request.id,
+      organizationId: request.organizationId,
+    });
+    return;
+  }
 
-    case DatasetRequestStatus.PENDING_ORG_APPROVER: {
-      const members = await organizationMemberIds(before.organizationId);
+  if (result === ReviewResult.REJECTED) {
+    await notifyUsers([...members.users, request.createdBy], {
+      type: NotificationType.REQUEST_REJECTED,
+      title: `คำขอ ${request.requestNumber} ไม่ได้รับอนุมัติ`,
+      message: note ?? "",
+      subjectType: SUBJECT,
+      subjectId: request.id,
+      organizationId: request.organizationId,
+    });
+    return;
+  }
+
+  if (taskType === ReviewTaskType.BDI_OFFICER_REVIEW) {
+    const orgApproved = await prisma.reviewTask.count({
+      where: {
+        subjectType: SUBJECT,
+        subjectId: request.id,
+        taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
+        result: ReviewResult.APPROVED,
+      },
+    });
+    if (orgApproved === 0) {
       await notifyUsers(members.approvers, {
-        type: NotificationType.DATASET_PENDING_ORG_APPROVER,
-        title: `รอความเห็นชอบคำขอ ${info.requestNumber}`,
-        body: info.datasetName,
-        link: `/datasets/${before.id}`,
+        type: NotificationType.REQUEST_SUBMITTED,
+        title: `คำขอ ${request.requestNumber} รอคุณลงนาม`,
+        message: info.datasetName,
+        subjectType: SUBJECT,
+        subjectId: request.id,
+        organizationId: request.organizationId,
       });
-      await sendDatasetPendingOrgApprover(await emailsOf(members.approvers), info);
-      return;
+    } else {
+      await notifyUsers(await bdiApproverIds(), {
+        type: NotificationType.REQUEST_SUBMITTED,
+        title: `คำขอ ${request.requestNumber} รออนุมัติขั้นสุดท้าย`,
+        message: info.datasetName,
+        subjectType: SUBJECT,
+        subjectId: request.id,
+        organizationId: request.organizationId,
+      });
     }
+    return;
+  }
 
-    case DatasetRequestStatus.PENDING_OFFICER_FINAL_CHECK: {
-      const officers = await bdiOfficerIds();
-      await notifyUsers(officers, {
-        type: NotificationType.DATASET_PENDING_FINAL_CHECK,
-        title: `รอตรวจสอบขั้นสุดท้าย ${info.requestNumber}`,
-        body: info.datasetName,
-        link: `/admin/datasets/${before.id}`,
-      });
-      await sendDatasetPendingFinalCheck(await emailsOf(officers), {
-        ...info,
-        signedBy: after.orgApproverSignedName ?? actorName,
-      });
-      return;
-    }
-
-    case DatasetRequestStatus.PENDING_BDI_APPROVAL: {
-      const approvers = await bdiApproverIds();
-      await notifyUsers(approvers, {
-        type: NotificationType.DATASET_PENDING_BDI_APPROVAL,
-        title: `รออนุมัติคำขอ ${info.requestNumber}`,
-        body: info.datasetName,
-        link: `/admin/datasets/${before.id}`,
-      });
-      await sendDatasetPendingBdiApproval(await emailsOf(approvers), info);
-      return;
-    }
-
-    case DatasetRequestStatus.APPROVED: {
-      const stakeholders = await datasetStakeholderIds(before);
-      await notifyUsers(stakeholders, {
-        type: NotificationType.DATASET_APPROVED,
-        title: `อนุมัติคำขอ ${info.requestNumber} แล้ว`,
-        body: info.datasetName,
-        link: `/datasets/${before.id}`,
-      });
-      await sendDatasetApproved(await emailsOf(stakeholders), info);
-      return;
-    }
-
-    case DatasetRequestStatus.REJECTED: {
-      const stakeholders = await datasetStakeholderIds(before);
-      await notifyUsers(stakeholders, {
-        type: NotificationType.DATASET_REJECTED,
-        title: `ไม่อนุมัติคำขอ ${info.requestNumber}`,
-        body: note,
-        link: `/datasets/${before.id}`,
-      });
-      await sendDatasetRejected(await emailsOf(stakeholders), { ...info, reason: note });
-      return;
-    }
-
-    default:
-      return;
+  if (taskType === ReviewTaskType.BDI_FINAL_APPROVAL && result === ReviewResult.APPROVED) {
+    await notifyUsers([...members.users, ...members.approvers, request.createdBy], {
+      type: NotificationType.REQUEST_APPROVED,
+      title: `คำขอ ${request.requestNumber} ได้รับอนุมัติแล้ว`,
+      message: info.datasetName,
+      subjectType: SUBJECT,
+      subjectId: request.id,
+      organizationId: request.organizationId,
+    });
   }
 }
