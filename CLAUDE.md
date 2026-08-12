@@ -250,6 +250,14 @@ Two API base URLs, and they are not interchangeable:
   browser or client never sends the cookie back. Drive that deployment through
   `https://bdi-api.thammasorn.org` instead. `curl /health/ready` on localhost is still fine;
   it needs no session.
+- Replacing a file in `public/` under the same name does not reliably replace what
+  `next/image` serves. The optimized derivatives live in `.next/cache`, which is a named
+  volume that survives `restart`, and clearing that directory did not evict all of them —
+  some widths kept returning the previous image while others were correct, which looks like
+  a rendering bug rather than a cache. Import images instead (`import x from "./x.webp"`):
+  Next fingerprints the URL from the file contents, so a changed file is a changed URL, and
+  it reads `width`/`height` off the file rather than trusting numbers typed by hand. Both
+  problems bit at once when the diagram was swapped for one with a different aspect ratio.
 - Route params beat query strings for anything the first client render needs.
   `useSearchParams()` is empty on that render; a page that redirected when its `?id=` was
   missing bounced users away before hydration finished.

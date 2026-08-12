@@ -21,6 +21,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { LogoMark } from "@/components/brand/Logo";
+
+import diagram from "./d2-platform-diagram.webp";
 import {
   BACKGROUND_BANNER,
   BACKGROUND_LEAD,
@@ -492,15 +494,20 @@ function HowItWorks() {
 
       <figure className="reveal mt-14 overflow-hidden rounded-3xl bg-canvas p-4 shadow-card sm:p-8">
         {/*
-          ต้นฉบับคือ assets/info_page/home-page-diagram-image.png ขนาด 2832×1504 / 5.6 MB
-          ย่อเหลือ 1600px (พอสำหรับช่องกว้าง 768px บนจอ 2x) แล้วแปลงเป็น WebP
-          เหลือ 84 KB — PNG ที่ขนาดเดียวกันหนัก 1.4 MB เพราะภาพนี้เป็นไล่เฉดทั้งใบ
+          import แทนการอ้าง path ใน public/ — Next จะใส่ content hash ใน URL ให้เอง
+          และอ่านความกว้าง/สูงจากไฟล์จริง
+
+          ทั้งสองอย่างมีเหตุผลจากของจริง: ตอนเปลี่ยนรูปครั้งก่อน ชื่อไฟล์เท่าเดิม
+          Next เลยเสิร์ฟตัวที่ optimize ไว้ของรูปเก่าต่อในบางความกว้าง (แคชอยู่ใน
+          named volume ที่ไม่หายตอน restart) และ width/height ที่ใส่มือไว้ก็ยังเป็น
+          สัดส่วนเก่า ทำให้จองพื้นที่ผิด · ทั้งคู่จะเกิดกับผู้ใช้จริงหลัง CDN ด้วย ไม่ใช่แค่ในเครื่อง
+
+          ต้นฉบับ assets/info_page/home-page-diagram-image.png (3168×1344 / 5.4 MB)
+          ย่อเหลือ 1600px แล้วแปลงเป็น WebP เหลือ 65 KB
         */}
         <Image
-          src="/d2-platform-diagram.webp"
+          src={diagram}
           alt="แผนภาพการทำงานของ D2 — ข้อมูลจากหลายหน่วยงาน (A ถึง E และอื่น ๆ) ไหลเข้าสู่แพลตฟอร์มกลางด้านข้อมูลขนาดใหญ่ที่เชื่อมโยง บูรณาการ ปลอดภัย และควบคุมคุณภาพข้อมูล แล้วนำออกไปใช้เป็นแดชบอร์ดและรายงาน การวางแผนและคาดการณ์ การวิเคราะห์เชิงลึก การกำหนดนโยบาย และการบริหารราชการ"
-          width={1600}
-          height={850}
           className="mx-auto h-auto w-full max-w-3xl rounded-xl"
           sizes="(max-width: 768px) 100vw, 768px"
         />
