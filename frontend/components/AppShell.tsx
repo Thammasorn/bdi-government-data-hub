@@ -82,7 +82,7 @@ function Header() {
   const items = navItems(user?.roles ?? [], user?.organizationId ?? null);
 
   return (
-    <header className="sticky top-0 z-40 bg-white/85 backdrop-blur-md">
+    <header className="sticky top-0 z-40 bg-white/85 frost-12">
       {/* แถบ gradient ประจำแบรนด์ */}
       <div className="bg-brand-gradient h-[3px]" />
       <div className="border-b border-line">

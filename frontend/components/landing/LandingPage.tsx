@@ -150,7 +150,7 @@ function TopNav({ active }: { active: string }) {
   }, [active]);
 
   return (
-    <header className="sticky top-0 z-30 border-b border-line/70 bg-white/80 backdrop-blur-md">
+    <header className="sticky top-0 z-30 border-b border-line/70 bg-white/80 frost-12">
       <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3 sm:px-6">
         <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="หน้าแรก D2">
           <LogoMark className="h-7 w-auto text-navy-800" />
@@ -328,16 +328,16 @@ function Hero() {
       {/* แสงเรืองสองจุดกับตารางจุด ทำให้พื้นหลังเข้มไม่ตายด้าน */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute -right-32 -top-40 h-[36rem] w-[36rem] rounded-full bg-coral-500/25 blur-3xl"
+        className="pointer-events-none absolute -right-32 -top-40 h-[36rem] w-[36rem] rounded-full bg-coral-500/25 blur-glow"
       />
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute -bottom-56 -left-24 h-[32rem] w-[32rem] rounded-full bg-navy-400/35 blur-3xl"
+        className="pointer-events-none absolute -bottom-56 -left-24 h-[32rem] w-[32rem] rounded-full bg-navy-400/35 blur-glow"
       />
       <div aria-hidden="true" className="bg-dot-grid absolute inset-0 opacity-60" />
 
       <div className="relative mx-auto max-w-6xl px-4 py-20 sm:px-6 lg:py-28">
-        <span className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-4 py-1.5 font-heading text-[13px] font-medium text-white/90 backdrop-blur-sm">
+        <span className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-4 py-1.5 font-heading text-[13px] font-medium text-white/90 frost-4">
           <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-coral-400" />
           {HERO.eyebrow}
         </span>
@@ -358,7 +358,7 @@ function Hero() {
           </Link>
           <a
             href="#connect"
-            className="rounded-full border border-white/30 bg-white/5 px-7 py-3.5 text-[15px] font-medium text-white backdrop-blur-sm transition-colors hover:bg-white/15"
+            className="rounded-full border border-white/30 bg-white/5 px-7 py-3.5 text-[15px] font-medium text-white frost-4 transition-colors hover:bg-white/15"
           >
             ขั้นตอนการขอเชื่อมต่อ
           </a>
@@ -455,7 +455,7 @@ function BdiRole() {
           {BDI_ROLES.map((role) => (
             <li
               key={role}
-              className="reveal flex gap-4 rounded-2xl border border-white/15 bg-white/5 p-5 backdrop-blur-sm"
+              className="reveal flex gap-4 rounded-2xl border border-white/15 bg-white/5 p-5 frost-4"
             >
               <svg className="mt-1 h-5 w-5 shrink-0 text-coral-400" {...iconProps}>
                 <path d="m5 12.5 4.5 4.5L19 7.5" />

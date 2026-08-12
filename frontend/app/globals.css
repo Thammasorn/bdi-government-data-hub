@@ -166,3 +166,38 @@
     background-size: 22px 22px;
   }
 }
+
+@layer utilities {
+  /*
+   * เบลอที่เขียน filter ตรง ๆ แทนที่จะผ่าน utility ของ Tailwind
+   *
+   * Tailwind 4 เขียน `filter: var(--tw-blur,) var(--tw-brightness,) …` แล้วลงทะเบียนตัวแปร
+   * ทุกตัวด้วย @property { syntax: "*" } โดยไม่ใส่ initial-value ตัวที่ยังไม่ถูกตั้งค่าจึงเป็น
+   * guaranteed-invalid และเบราว์เซอร์รุ่นเก่าทำให้ทั้งบรรทัดเป็น invalid — filter ออกมาเป็น none
+   *
+   * โผล่เฉพาะ production เพราะ dev ไม่ได้ emit @property พวกนั้น ตรวจบนเว็บจริงแล้วพบว่า
+   * blur ทุกจุดของแอปตายเงียบ ทั้ง header ที่ควรเบลอ ฉากหลัง modal และแสงเรืองใน hero
+   * ลองตั้งค่าว่างให้ตัวแปรที่ระดับ * แบบที่ Tailwind 3 เคยทำแล้วไม่ช่วย — ค่าว่างใช้กับ
+   * property ที่ลงทะเบียนไว้ไม่ได้
+   *
+   * เขียนค่าเดียวตรง ๆ จึงไม่มีอะไรให้พังทั้งใน dev, prod และเบราว์เซอร์ทุกรุ่น
+   */
+  .blur-glow {
+    filter: blur(64px);
+  }
+
+  .frost-2 {
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+  }
+
+  .frost-4 {
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+  }
+
+  .frost-12 {
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
+}
