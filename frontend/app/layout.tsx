@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 
 import { AppShell } from "@/components/AppShell";
 import { SessionProvider } from "@/components/SessionProvider";
@@ -15,11 +16,14 @@ export const metadata: Metadata = {
   description: "แพลตฟอร์มรวบรวมข้อมูลจากหน่วยงานรัฐ โดยสถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // ชื่อคุกกี้ตรงกับ SESSION_COOKIE ใน backend/src/lib/auth.ts
+  const hasSessionCookie = (await cookies()).has("bdi_session");
+
   return (
     <html lang="th" className={`${prompt.variable} ${sarabun.variable}`}>
       <body>
-        <SessionProvider>
+        <SessionProvider hasSessionCookie={hasSessionCookie}>
           <ToastProvider>
             <AppShell>{children}</AppShell>
           </ToastProvider>

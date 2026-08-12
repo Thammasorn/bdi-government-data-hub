@@ -31,9 +31,25 @@ export function useSession() {
   return ctx;
 }
 
-export function SessionProvider({ children }: { children: ReactNode }) {
+/**
+ * `hasSessionCookie` มาจาก layout ซึ่งเป็น server component และอ่านคุกกี้ได้
+ *
+ * ถ้าไม่มีคุกกี้ก็ไม่ต้องยิง /api/auth/me เลย — เริ่มที่ loading = false ได้ทันที
+ * ผลคือหน้าที่เรนเดอร์ตอนยังไม่ล็อกอิน (หน้าแนะนำระบบ) ออกมาพร้อมเนื้อหาตั้งแต่ HTML
+ * ชุดแรก แทนที่จะเป็น spinner แล้วค่อยสลับหลัง fetch เสร็จ
+ *
+ * คุกกี้เป็นแค่คำใบ้สำหรับการเรนเดอร์ ไม่ใช่การยืนยันตัวตน — ข้อมูลจริงทุกชิ้น
+ * ยังต้องผ่าน API ที่ตรวจลายเซ็นของ JWT อยู่ดี คุกกี้ปลอมจึงได้แค่หน้าเปล่า
+ */
+export function SessionProvider({
+  children,
+  hasSessionCookie = true,
+}: {
+  children: ReactNode;
+  hasSessionCookie?: boolean;
+}) {
   const [user, setUser] = useState<SessionUser | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(hasSessionCookie);
 
   const refresh = useCallback(async () => {
     try {
@@ -47,8 +63,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (!hasSessionCookie) return;
     void refresh();
-  }, [refresh]);
+  }, [refresh, hasSessionCookie]);
 
   const value = useMemo(() => ({ user, loading, refresh, setUser }), [user, loading, refresh]);
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
