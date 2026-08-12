@@ -17,7 +17,7 @@ import { api, ApiError } from "@/lib/api";
 import {
   CLASSIFICATION_LABELS,
   DATASET_CATEGORY_LABELS,
-  DATASET_EVENT_LABELS,
+  taskEventLabel,
   DATASET_TYPE_LABELS,
   DATA_FORMAT_LABELS,
   DELIVERY_METHOD_LABELS,
@@ -42,8 +42,8 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string,
     request.organization.signatoryEmail?.toLowerCase() === email.toLowerCase() ||
     roles.includes("ORGANIZATION_APPROVER");
 
-  switch (request.status) {
-    case "PENDING_OFFICER_REVIEW":
+  switch (request.currentTaskType) {
+    case "BDI_OFFICER_REVIEW":
       if (isOfficer) {
         return {
           advanceLabel: "ส่งต่อให้ผู้มีอำนาจของหน่วยงาน",
@@ -54,19 +54,21 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string,
           canReject: false,
         };
       }
-      if (isSpecialist) {
-        return {
-          advanceLabel: null,
-          hint: "คุณได้รับมอบหมายให้ตรวจชุดข้อมูลนี้ บันทึกความเห็นหรือส่งกลับให้แก้ไขได้",
-          canRevise: true,
-          canAssign: false,
-          canComment: true,
-          canReject: false,
-        };
-      }
       return null;
 
-    case "PENDING_ORG_APPROVER":
+    case "DATASET_SPECIALIST_REVIEW":
+      return isSpecialist || roles.includes("BDI_DATASET_SPECIALIST")
+        ? {
+            advanceLabel: null,
+            hint: "คุณได้รับมอบหมายให้ตรวจชุดข้อมูลนี้ บันทึกความเห็นหรือส่งกลับให้แก้ไขได้",
+            canRevise: true,
+            canAssign: false,
+            canComment: true,
+            canReject: false,
+          }
+        : null;
+
+    case "ORGANIZATION_APPROVAL":
       return isOrgApprover
         ? {
             advanceLabel: "เห็นชอบและลงนาม",
@@ -78,20 +80,8 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string,
           }
         : null;
 
-    case "PENDING_OFFICER_FINAL_CHECK":
-      return isOfficer
-        ? {
-            advanceLabel: "ยืนยันผลการตรวจสอบ",
-            hint: "ตรวจขั้นสุดท้ายก่อนส่งให้ผู้อนุมัติ BDI",
-            canRevise: true,
-            canAssign: false,
-            canComment: false,
-            canReject: false,
-          }
-        : null;
-
-    case "PENDING_BDI_APPROVAL":
-      return roles.includes("BDI_APPROVER")
+    case "BDI_FINAL_APPROVAL":
+      return roles.includes("BDI_FINAL_APPROVER")
         ? {
             advanceLabel: "อนุมัติ",
             hint: "ขั้นตอนสุดท้าย เมื่ออนุมัติแล้วระบบจะออกเอกสารฉบับสมบูรณ์ให้ดาวน์โหลด",
@@ -190,16 +180,15 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
   const ability = decideAbility(request, user.roles, user.id, user.email);
   const generated = request.attachments.find((a) => a.kind === "GENERATED_FORM");
   const supporting = request.attachments.filter((a) => a.kind !== "GENERATED_FORM");
-  const editable = request.status === "DRAFT" || request.status === "NEEDS_REVISION";
+  const editable = request.status === "DRAFT" || request.status === "RETURNED";
   const mayEdit =
     editable &&
     (request.createdBy.id === user.id ||
       (user.roles.includes("ORGANIZATION_USER") && user.organizationId === request.organization.id));
 
   // §4.8 — เมื่อถูกส่งกลับต้องบอกให้ครบว่าแก้เรื่องอะไร โดยใคร เมื่อไหร่
-  const lastRevision = [...request.events]
-    .reverse()
-    .find((e) => e.type.includes("REVISION_REQUESTED"));
+  // "ขอให้ปรับปรุง" = review_task ที่ปิดด้วย result = RETURNED
+  const lastRevision = [...request.events].reverse().find((e) => e.result === "RETURNED");
 
   const closeModal = () => {
     setModal(null);
@@ -294,10 +283,10 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
             {fullName(request.createdBy.prefix, request.createdBy.firstName, request.createdBy.lastName)}
           </p>
         </div>
-        <DatasetStatusBadge status={request.status} />
+        <DatasetStatusBadge status={request.status} currentTaskType={request.currentTaskType} />
       </header>
 
-      {request.status === "NEEDS_REVISION" && request.revisionNote ? (
+      {request.status === "RETURNED" && request.revisionNote ? (
         <div className="mb-6 rounded-xl border-l-[3px] border-danger bg-danger-bg p-5">
           <p className="text-[13px] font-semibold text-danger">สิ่งที่ต้องแก้ไข</p>
           <p className="mt-1.5 whitespace-pre-wrap text-[15px] leading-relaxed text-ink">
@@ -306,10 +295,8 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
           {lastRevision ? (
             <p className="mt-2 text-[13px] text-ink-muted">
               โดย{" "}
-              {lastRevision.actor
-                ? fullName(null, lastRevision.actor.firstName, lastRevision.actor.lastName)
-                : "ระบบ"}{" "}
-              · {formatThaiDate(lastRevision.createdAt)}
+              {lastRevision.actor ? lastRevision.actor.name : "ระบบ"}{" "}
+              · {formatThaiDate(lastRevision.completedAt ?? lastRevision.createdAt)}
             </p>
           ) : null}
           {mayEdit ? (
@@ -517,7 +504,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
             title="ประวัติการดำเนินการ"
             description={`สร้างเมื่อ ${formatThaiDate(request.createdAt)}`}
           />
-          <Timeline events={request.events} labels={DATASET_EVENT_LABELS} />
+          <Timeline events={request.events} />
         </Card>
       </div>
 

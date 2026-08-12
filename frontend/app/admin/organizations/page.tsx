@@ -9,16 +9,17 @@ import { Card, StatusBadge } from "@/components/ui/Card";
 import { SkeletonRows, Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api } from "@/lib/api";
-import { STATUS_META, formatThaiDate, isBdiStaff, type OrganizationStatus } from "@/lib/status";
+import { REQUEST_STATUS_META, formatThaiDate, isBdiStaff, type RequestStatus } from "@/lib/status";
 import type { OrganizationListItem } from "@/lib/types";
 
-const FILTERABLE: OrganizationStatus[] = [
-  "PENDING_BDI_REVIEW",
-  "PENDING_SIGNATORY_REVIEW",
-  "PENDING_BDI_APPROVAL",
-  "NEEDS_REVISION",
-  "ACTIVE",
+// สถานะของ "คำขอ" ไม่ใช่ของหน่วยงาน — ด่านที่รออยู่แสดงแยกด้วย currentTaskType
+const FILTERABLE: RequestStatus[] = [
   "DRAFT",
+  "SUBMITTED",
+  "UNDER_REVIEW",
+  "RETURNED",
+  "APPROVED",
+  "REJECTED",
 ];
 
 export default function AdminOrganizationsPage() {
@@ -38,8 +39,8 @@ function OrganizationTable() {
   const [rows, setRows] = useState<OrganizationListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<Set<OrganizationStatus>>(
-    () => new Set((params.get("status")?.split(",").filter(Boolean) as OrganizationStatus[]) ?? []),
+  const [selected, setSelected] = useState<Set<RequestStatus>>(
+    () => new Set((params.get("status")?.split(",").filter(Boolean) as RequestStatus[]) ?? []),
   );
 
   useEffect(() => {
@@ -67,7 +68,7 @@ function OrganizationTable() {
     return () => clearTimeout(timer);
   }, [statusParam, query, show]);
 
-  const toggle = (status: OrganizationStatus) => {
+  const toggle = (status: RequestStatus) => {
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(status)) next.delete(status);
@@ -126,7 +127,7 @@ function OrganizationTable() {
                     : "border-line bg-white text-ink-muted hover:border-navy-300 hover:text-navy-700",
                 )}
               >
-                {STATUS_META[s].label}
+                {REQUEST_STATUS_META[s].label}
               </button>
             );
           })}

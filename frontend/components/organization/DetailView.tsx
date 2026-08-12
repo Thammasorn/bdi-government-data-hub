@@ -19,17 +19,17 @@ import { ATTACHMENT_LABELS, fullName, type Organization } from "@/lib/types";
 
 /** ผู้ใช้ปัจจุบันตัดสินใจกับคำขอนี้ได้หรือไม่ ขึ้นกับสถานะ + role */
 function decideAbility(org: Organization, roles: string[], email: string) {
-  switch (org.status) {
-    case "PENDING_BDI_REVIEW":
+  switch (org.currentTaskType) {
+    case "BDI_OFFICER_REVIEW":
       return roles.includes("BDI_OFFICER")
         ? { can: true, approveLabel: "อนุมัติ", hint: "ตรวจสอบข้อมูลและเอกสารก่อนส่งต่อให้ผู้มีอำนาจกระทำการแทน" }
         : { can: false };
-    case "PENDING_SIGNATORY_REVIEW":
+    case "ORGANIZATION_APPROVAL":
       return org.signatoryEmail?.toLowerCase() === email.toLowerCase()
         ? { can: true, approveLabel: "เห็นชอบ", hint: "โปรดตรวจสอบเอกสารในฐานะผู้มีอำนาจกระทำการแทน" }
         : { can: false };
-    case "PENDING_BDI_APPROVAL":
-      return roles.includes("BDI_APPROVER")
+    case "BDI_FINAL_APPROVAL":
+      return roles.includes("BDI_FINAL_APPROVER")
         ? { can: true, approveLabel: "เห็นชอบและลงนาม", hint: "ขั้นตอนสุดท้าย เมื่อลงนามแล้วหน่วยงานจะเปิดใช้งานทันที" }
         : { can: false };
     default:
@@ -151,10 +151,10 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
             {org.createdBy.email}
           </p>
         </div>
-        <StatusBadge status={org.status} />
+        <StatusBadge status={org.status} currentTaskType={org.currentTaskType} />
       </header>
 
-      {org.status === "NEEDS_REVISION" && org.revisionNote ? (
+      {org.status === "RETURNED" && org.revisionNote ? (
         <div className="mb-6 rounded-xl border-l-[3px] border-danger bg-danger-bg p-5">
           <p className="text-[13px] font-semibold text-danger">สิ่งที่ต้องแก้ไข</p>
           <p className="mt-1.5 whitespace-pre-wrap text-[15px] leading-relaxed text-ink">{org.revisionNote}</p>
