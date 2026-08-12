@@ -16,7 +16,14 @@ const BARE_ROUTES = ["/login", "/register"];
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const { user, loading } = useSession();
+
   if (BARE_ROUTES.some((r) => pathname.startsWith(r))) {
+    return <>{children}</>;
+  }
+  // หน้าแรกของผู้ที่ยังไม่ล็อกอินคือหน้าแนะนำระบบ ซึ่งมี sidebar และ footer ของตัวเอง
+  // ครอบด้วย header/footer ของแอปอีกชั้นจะได้เมนูสองชุดซ้อนกัน
+  if (pathname === "/" && !loading && !user) {
     return <>{children}</>;
   }
   return (

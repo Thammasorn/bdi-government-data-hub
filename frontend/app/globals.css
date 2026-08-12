@@ -127,3 +127,42 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+@layer utilities {
+  /*
+   * เนื้อหาค่อย ๆ ขึ้นมาเมื่อเลื่อนถึง — ใส่ .reveal ไว้ แล้ว JS เติม .is-in ให้เมื่อเข้าจอ
+   *
+   * ตั้งค่าเริ่มต้นเป็น "มองเห็นแล้ว" ไว้ก่อน แล้วให้ JS เป็นคนซ่อน เพื่อไม่ให้เนื้อหา
+   * หายไปทั้งหน้าถ้า JS ไม่ทำงาน — หน้านี้เป็นหน้าที่คนนอกเข้ามาอ่าน จะพลาดไม่ได้
+   */
+  .reveal {
+    opacity: 1;
+  }
+
+  .js-reveal .reveal {
+    opacity: 0;
+    transform: translateY(14px);
+    transition:
+      opacity 0.55s cubic-bezier(0.22, 1, 0.36, 1),
+      transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .js-reveal .reveal.is-in {
+    opacity: 1;
+    transform: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .js-reveal .reveal {
+      opacity: 1;
+      transform: none;
+      transition: none;
+    }
+  }
+
+  /* ตารางจุดจาง ๆ ใช้เป็นพื้นหลังของ hero */
+  .bg-dot-grid {
+    background-image: radial-gradient(rgb(255 255 255 / 0.13) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+}

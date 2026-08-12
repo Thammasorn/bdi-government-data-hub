@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { DatasetSection } from "@/components/home/DatasetSection";
+import { LandingPage } from "@/components/landing/LandingPage";
 import { useSession } from "@/components/SessionProvider";
 import { Button } from "@/components/ui/Button";
 import { Card, DotDecoration, OrganizationStatusBadge } from "@/components/ui/Card";
@@ -27,10 +28,9 @@ export default function HomePage() {
 
   useEffect(() => {
     if (loading) return;
-    if (!user) {
-      router.replace("/login");
-      return;
-    }
+    // ผู้ที่ยังไม่ล็อกอินได้หน้าแนะนำระบบ ไม่ใช่หน้าล็อกอิน — เดิมเด้งไป /login ทันที
+    // ทำให้ไม่มีที่อธิบายว่าระบบนี้คืออะไรให้คนที่เพิ่งเข้ามาอ่าน
+    if (!user) return;
     if (isBdiStaff(user.roles)) router.replace("/admin/organizations");
   }, [user, loading, router]);
 
@@ -53,7 +53,9 @@ export default function HomePage() {
     }
   };
 
-  if (loading || !user || isBdiStaff(user.roles)) return <Spinner />;
+  if (loading) return <Spinner />;
+  if (!user) return <LandingPage />;
+  if (isBdiStaff(user.roles)) return <Spinner />;
 
   // ผู้มีอำนาจกระทำการแทนที่ถูกเชิญเข้ามาทีหลังยังไม่ถูกผูก organizationId
   // แต่เห็นคำขอของหน่วยงานตัวเองผ่าน signatoryEmail จึงต้องได้หน้าแรกแบบเดียวกัน
