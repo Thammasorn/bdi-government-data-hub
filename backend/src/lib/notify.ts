@@ -1,96 +1,171 @@
 /**
- * In-app notification (docs/01-user-journey.md §4.8)
+ * In-app notification + outbox — schema `notification`
  *
- * สเปกระบุว่าไม่ต้อง real time — หน้าเว็บ fetch ตอนโหลดหน้าใหม่ก็พอ
- * ที่นี่จึงมีแค่การเขียนแถวลงตาราง ไม่มี websocket/SSE
+ * เปลี่ยนจากของเดิมสองเรื่อง:
+ *
+ * 1. `notification` มี subject_type/subject_id/correlation_id และ status
+ *    (UNREAD/READ/ARCHIVED) แทน readAt แบบ nullable · คอลัมน์ `link` หายไปจากดีไซน์
+ *    → derive ลิงก์จาก subject แทน (linkFor() ท้ายไฟล์)
+ *
+ * 2. `notification_delivery` เป็น **outbox queue** — การส่งอีเมลไม่เกิดขึ้นในตัว
+ *    request handler อีกต่อไป แต่เขียนแถวรอไว้ให้ worker หยิบไปส่ง
+ *    (ดู src/workers/delivery.ts)
+ *
+ * ภาพใน sheet `notification_delivery` ระบุว่า notification ที่แสดงในระบบอ่านจาก
+ * ตาราง notification โดยตรง จึงไม่ต้องสร้าง delivery ที่ channel = IN_APP
  */
-import { NotificationType, Role, UserStatus } from "@prisma/client";
+import {
+  DeliveryChannel,
+  DeliveryStatus,
+  NotificationStatus,
+  RoleAssignmentStatus,
+  UserAccountStatus,
+} from "@prisma/client";
 
 import { prisma } from "../db.js";
+import { correlationId } from "./context.js";
+import { activeAssignmentWhere } from "./iam.js";
+import { ROLE_CODES, type RoleCode } from "./system.js";
+
+/** notification type code ตามตัวอย่างในภาพของ sheet `notification` */
+export const NotificationType = {
+  USER_ACTIVATION_INVITATION: "USER_ACTIVATION_INVITATION",
+  USER_REGISTRATION_COMPLETED: "USER_REGISTRATION_COMPLETED",
+  ROLE_ASSIGNMENT_CHANGED: "ROLE_ASSIGNMENT_CHANGED",
+  REQUEST_SUBMITTED: "REQUEST_SUBMITTED",
+  REQUEST_RETURNED: "REQUEST_RETURNED",
+  REQUEST_APPROVED: "REQUEST_APPROVED",
+  REQUEST_REJECTED: "REQUEST_REJECTED",
+  SPECIALIST_ASSIGNED: "SPECIALIST_ASSIGNED",
+  SLA_REMINDER: "SLA_REMINDER",
+  LEGAL_DOCUMENT_UPDATED: "LEGAL_DOCUMENT_UPDATED",
+} as const;
+
+export type NotificationTypeCode = (typeof NotificationType)[keyof typeof NotificationType];
 
 interface NotifyInput {
-  type: NotificationType;
+  type: NotificationTypeCode;
   title: string;
-  body?: string | null;
-  /** path ภายในแอป เช่น /datasets/<id> */
-  link?: string | null;
+  message: string;
+  subjectType?: string | null;
+  subjectId?: string | null;
+  organizationId?: string | null;
+  /**
+   * ส่งอีเมลด้วยหรือไม่ (ค่าเริ่มต้น: ส่ง)
+   *
+   * สร้างแถวใน notification_delivery ให้ worker หยิบไปส่ง — ไม่ส่งเองตรงนี้
+   * เนื้ออีเมลไม่ได้ถูกเก็บลงตาราง worker เป็นคนประกอบตอนส่ง (workers/render.ts)
+   * ตั้ง false สำหรับข้อความที่ไม่ควรออกไปทางอีเมล
+   */
+  email?: boolean;
 }
 
-/** สร้าง notification ให้หลายคนพร้อมกัน (ตัด id ซ้ำและค่าว่างออกให้) */
+/**
+ * สร้าง notification ให้หลายคนพร้อมกัน (ตัด id ซ้ำและค่าว่างออกให้)
+ *
+ * ผู้รับที่สถานะยัง PENDING ก็รับได้ — ภาพใน sheet `notification` ระบุไว้ชัด
+ * ("recipient_user_id ต้องอ้างอิง User Account ที่มีอยู่ในระบบ รวมถึง Account ที่มีสถานะ PENDING")
+ */
 export async function notifyUsers(userIds: Array<string | null | undefined>, input: NotifyInput) {
   const unique = [...new Set(userIds.filter((id): id is string => Boolean(id)))];
   if (unique.length === 0) return;
 
-  await prisma.notification.createMany({
-    data: unique.map((userId) => ({
-      userId,
-      type: input.type,
-      title: input.title,
-      body: input.body ?? null,
-      link: input.link ?? null,
-    })),
+  const correlation = correlationId();
+
+  const recipients = await prisma.userAccount.findMany({
+    where: { id: { in: unique } },
+    select: { id: true, email: true },
+  });
+
+  await prisma.$transaction(async (tx) => {
+    for (const recipient of recipients) {
+      const notification = await tx.notification.create({
+        data: {
+          recipientUserId: recipient.id,
+          notificationType: input.type,
+          title: input.title,
+          message: input.message,
+          subjectType: input.subjectType ?? null,
+          subjectId: input.subjectId ?? null,
+          organizationId: input.organizationId ?? null,
+          status: NotificationStatus.UNREAD,
+          correlationId: correlation,
+        },
+      });
+
+      if (input.email !== false) {
+        await tx.notificationDelivery.create({
+          data: {
+            notificationId: notification.id,
+            channel: DeliveryChannel.EMAIL,
+            destination: recipient.email,
+            status: DeliveryStatus.PENDING,
+            scheduledAt: new Date(),
+            correlationId: correlation,
+          },
+        });
+      }
+    }
   });
 }
 
-async function activeIdsWithRole(role: Role): Promise<string[]> {
-  const users = await prisma.user.findMany({
-    where: { roles: { has: role }, status: UserStatus.ACTIVE },
-    select: { id: true },
+/** id ของผู้ใช้ที่ ACTIVE และถือ role ที่กำหนดอยู่จริง ณ ตอนนี้ */
+async function activeIdsWithRole(roleCode: RoleCode): Promise<string[]> {
+  const rows = await prisma.userRoleAssignment.findMany({
+    where: {
+      ...activeAssignmentWhere(),
+      role: { code: roleCode, isActive: true },
+      userAccount: { status: UserAccountStatus.ACTIVE },
+    },
+    select: { userAccountId: true },
   });
-  return users.map((u) => u.id);
+  return [...new Set(rows.map((r) => r.userAccountId))];
 }
 
-export const bdiOfficerIds = () => activeIdsWithRole(Role.BDI_OFFICER);
-export const bdiApproverIds = () => activeIdsWithRole(Role.BDI_APPROVER);
+export const bdiOfficerIds = () => activeIdsWithRole(ROLE_CODES.BDI_OFFICER);
+export const bdiApproverIds = () => activeIdsWithRole(ROLE_CODES.BDI_FINAL_APPROVER);
+export const bdiSpecialistIds = () => activeIdsWithRole(ROLE_CODES.BDI_DATASET_SPECIALIST);
+export const bdiLegalOfficerIds = () => activeIdsWithRole(ROLE_CODES.BDI_LEGAL_OFFICER);
 
 /**
  * ผู้ใช้ของหน่วยงานหนึ่ง แยกตาม role
  *
- * ผู้มีอำนาจถูกหาได้สองทาง: ผูก organizationId ไว้แล้ว หรืออีเมลตรงกับ signatoryEmail
- * ของหน่วยงาน — เพราะผู้มีอำนาจที่มีบัญชีอยู่ก่อนแล้วจะถูกเพิ่ม role ให้ใน Journey B
- * แต่ยังไม่ถูกย้าย organizationId (docs/01-user-journey.md §4.1)
+ * ของเดิมต้องหาผู้มีอำนาจสองทาง (organizationId หรืออีเมลตรงกับ signatoryEmail)
+ * เพราะ role ยังผูกกับตาราง user โดยตรง แบบใหม่ทุกอย่างอยู่ที่ user_role_assignment
+ * ที่มี organization_id ในตัว จึง query ทางเดียวจบ
  */
 export async function organizationMemberIds(organizationId: string): Promise<{
   users: string[];
   approvers: string[];
 }> {
-  const org = await prisma.organization.findUnique({
-    where: { id: organizationId },
-    select: { signatoryEmail: true },
-  });
-
-  const members = await prisma.user.findMany({
+  const assignments = await prisma.userRoleAssignment.findMany({
     where: {
-      status: UserStatus.ACTIVE,
-      OR: [
-        { organizationId },
-        ...(org?.signatoryEmail
-          ? [{ email: { equals: org.signatoryEmail, mode: "insensitive" as const } }]
-          : []),
-      ],
+      organizationId,
+      ...activeAssignmentWhere(),
+      userAccount: { status: UserAccountStatus.ACTIVE },
     },
-    select: { id: true, email: true, roles: true },
+    select: { userAccountId: true, role: { select: { code: true } } },
   });
 
-  const signatory = org?.signatoryEmail?.toLowerCase();
   return {
-    users: members.filter((m) => m.roles.includes(Role.ORGANIZATION_USER)).map((m) => m.id),
-    approvers: members
-      .filter(
-        (m) => m.roles.includes(Role.ORGANIZATION_APPROVER) || m.email.toLowerCase() === signatory,
-      )
-      .map((m) => m.id),
+    users: assignments
+      .filter((a) => a.role.code === ROLE_CODES.ORGANIZATION_USER)
+      .map((a) => a.userAccountId),
+    approvers: assignments
+      .filter((a) => a.role.code === ROLE_CODES.ORGANIZATION_APPROVER)
+      .map((a) => a.userAccountId),
   };
 }
 
 /**
- * stakeholders ของคำขอหนึ่งฉบับ — docs/01-user-journey.md §4.6 [สมมติฐาน]
- * ผู้สร้าง + ผู้ใช้และผู้มีอำนาจของหน่วยงาน + BDI officer/approver ทุกคน + specialist ที่ถูก assign
+ * stakeholders ของคำขอหนึ่งฉบับ
+ * ผู้สร้าง + ผู้ใช้และผู้มีอำนาจของหน่วยงาน + BDI officer/approver ทุกคน
+ * + ผู้เชี่ยวชาญที่ถือ task อยู่
  */
-export async function datasetStakeholderIds(request: {
+export async function requestStakeholderIds(request: {
   organizationId: string;
-  createdById: string;
-  assignedSpecialistId: string | null;
+  createdBy: string;
+  assignedUserIds?: string[];
 }): Promise<string[]> {
   const [members, officers, approvers] = await Promise.all([
     organizationMemberIds(request.organizationId),
@@ -100,12 +175,12 @@ export async function datasetStakeholderIds(request: {
 
   return [
     ...new Set([
-      request.createdById,
+      request.createdBy,
       ...members.users,
       ...members.approvers,
       ...officers,
       ...approvers,
-      ...(request.assignedSpecialistId ? [request.assignedSpecialistId] : []),
+      ...(request.assignedUserIds ?? []),
     ]),
   ];
 }
@@ -113,9 +188,31 @@ export async function datasetStakeholderIds(request: {
 /** อีเมลของผู้ใช้ตาม id — ใช้ส่งเมลให้ชุดเดียวกับที่แจ้งเตือนในระบบ */
 export async function emailsOf(userIds: string[]): Promise<string[]> {
   if (userIds.length === 0) return [];
-  const users = await prisma.user.findMany({
-    where: { id: { in: userIds }, status: UserStatus.ACTIVE },
+  const users = await prisma.userAccount.findMany({
+    where: { id: { in: userIds }, status: UserAccountStatus.ACTIVE },
     select: { email: true },
   });
   return users.map((u) => u.email);
 }
+
+/**
+ * ลิงก์ในแอปของ notification หนึ่งรายการ
+ *
+ * ดีไซน์ตัดคอลัมน์ `link` ออก เหลือแต่ subject_type/subject_id จึงต้อง derive เอง
+ * เก็บ path ภายในแอปเท่านั้น ไม่เก็บ URL เต็มเพราะโดเมนเปลี่ยนได้
+ */
+export function linkFor(subjectType: string | null, subjectId: string | null): string | null {
+  if (!subjectType || !subjectId) return null;
+  switch (subjectType) {
+    case "ORGANIZATION_REGISTRATION_REQUEST":
+      return `/organizations/${subjectId}`;
+    case "DATASET_REGISTRATION_REQUEST":
+      return `/datasets/${subjectId}`;
+    case "DATASET":
+      return `/datasets/${subjectId}`;
+    default:
+      return null;
+  }
+}
+
+export { RoleAssignmentStatus };

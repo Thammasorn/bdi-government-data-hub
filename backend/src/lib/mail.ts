@@ -102,6 +102,17 @@ async function send(to: string, subject: string, html: string): Promise<void> {
   await tx.sendMail({ from: env.smtp.from, to, subject, html });
 }
 
+/**
+ * ส่งอีเมลจากแถวใน notification outbox
+ *
+ * delivery worker เรียกตัวนี้ — มันมีแค่ title กับ message ของ notification
+ * ไม่ได้ถือ template ของแต่ละเหตุการณ์ จึงห่อด้วย layout กลางให้หน้าตาเหมือนฉบับอื่น
+ * ไม่รับ HTML จากผู้เรียก เพราะข้อความมาจากฐานข้อมูล ต้อง escape ก่อนเสมอ
+ */
+export async function sendRaw(to: string, title: string, message: string): Promise<void> {
+  await send(to, title, layout({ title, intro: escapeHtml(message) }));
+}
+
 // ------------------------------------------------------------------ อีเมลแต่ละชนิด
 
 export async function sendInvitationEmail(to: string, token: string, roleLabel: string) {

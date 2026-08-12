@@ -105,6 +105,38 @@ services:
       retries: 5
       start_period: 20s
 
+  # ตัวส่งอีเมลจาก outbox notification.notification_delivery
+  # สคีมาใหม่ไม่ส่งอีเมลใน request handler แล้ว — เขียนแถวรอไว้ให้ตัวนี้หยิบไปส่ง
+  # ใช้ environment ชุดเดียวกับ backend เพราะต้องต่อ database และ SMTP เหมือนกัน
+  delivery-worker:
+    build:
+      context: ./backend
+      target: dev
+    restart: unless-stopped
+    command: ["npm", "run", "worker:delivery"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bdi}:${POSTGRES_PASSWORD:-bdi_dev_password}@postgres:5432/${POSTGRES_DB:-bdi}?schema=public
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      JWT_SECRET: ${JWT_SECRET:?ตั้งค่า JWT_SECRET ใน .env ก่อน}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:?ตั้งค่า ADMIN_API_TOKEN ใน .env ก่อน}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-BDI Datahub <no-reply@bdi.or.th>}
+      DELIVERY_POLL_INTERVAL_MS: ${DELIVERY_POLL_INTERVAL_MS:-15000}
+      DELIVERY_MAX_ATTEMPTS: ${DELIVERY_MAX_ATTEMPTS:-5}
+    volumes:
+      - ./backend:/app
+      - backend-node-modules:/app/node_modules
+
   frontend:
     build:
       context: ./frontend
