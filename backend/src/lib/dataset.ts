@@ -1,36 +1,25 @@
 /**
  * ป้ายภาษาไทยและกฎการตรวจสอบของคำขอลงทะเบียนชุดข้อมูล
- * อ้างอิง docs/01-user-journey.md §4.3 — ฟิลด์ทั้งหมดเป็น [สมมติฐาน] รอเจ้าของสเปกยืนยัน
+ *
+ * **เปลี่ยนจาก enum เป็นรหัสข้อความตามดีไซน์** sheet `dataset_registration_metadata`
+ * เก็บ dataset_category_code / update_frequency / geographic_scope / delivery_method /
+ * data_format / access_level เป็น VARCHAR ไม่ใช่ enum และหลายช่องยังมาร์ก TO REVIEW ไว้
+ * ค่าที่รับได้จึงบังคับที่ชั้น zod แทนที่จะบังคับด้วย PostgreSQL enum
+ *
+ * **12 ฟิลด์ที่ดีไซน์ตัดออก** (keywords, datasetType, estimatedRecords, licenseType,
+ * legalBasis, personalDataMeasure, usageRestriction, deliveryEndpoint,
+ * technicalContactName/Email, deliveryNote, deliveryFrequency) ทั้งหมดมาจาก
+ * docs/01-user-journey.md §4.3 ที่มาร์ก [สมมติฐาน] ไว้ตั้งแต่ต้น
+ * → ยึด Excel เก็บลง additional_metadata_json (คอลัมน์ "Optional non-core metadata")
+ *   ดู toMetadataColumns() ท้ายไฟล์
  */
-import {
-  DataClassification,
-  DataFormat,
-  DatasetCategory,
-  DatasetRequestStatus,
-  DatasetType,
-  DeliveryMethod,
-  GeoCoverage,
-  LicenseType,
-  UpdateFrequency,
-} from "@prisma/client";
 import { z } from "zod";
 
 import { isValidThaiPhone } from "./validation.js";
 
 // ------------------------------------------------------------------ ป้ายภาษาไทย
 
-export const DATASET_STATUS_LABELS: Record<DatasetRequestStatus, string> = {
-  [DatasetRequestStatus.DRAFT]: "ฉบับร่าง",
-  [DatasetRequestStatus.PENDING_OFFICER_REVIEW]: "รอ BDI ตรวจสอบเบื้องต้น",
-  [DatasetRequestStatus.PENDING_ORG_APPROVER]: "รอผู้มีอำนาจของหน่วยงานพิจารณา",
-  [DatasetRequestStatus.PENDING_OFFICER_FINAL_CHECK]: "รอ BDI ตรวจสอบขั้นสุดท้าย",
-  [DatasetRequestStatus.PENDING_BDI_APPROVAL]: "รอ BDI อนุมัติ",
-  [DatasetRequestStatus.NEEDS_REVISION]: "รอการแก้ไข",
-  [DatasetRequestStatus.APPROVED]: "อนุมัติแล้ว",
-  [DatasetRequestStatus.REJECTED]: "ไม่อนุมัติ",
-};
-
-export const DATASET_TYPE_LABELS: Record<DatasetType, string> = {
+export const DATASET_TYPE_LABELS: Record<string, string> = {
   RECORD: "ข้อมูลระเบียน",
   STATISTIC: "ข้อมูลสถิติ",
   GEOGRAPHIC: "ข้อมูลภูมิสารสนเทศ",
@@ -38,7 +27,7 @@ export const DATASET_TYPE_LABELS: Record<DatasetType, string> = {
   OTHER: "อื่น ๆ",
 };
 
-export const DATASET_CATEGORY_LABELS: Record<DatasetCategory, string> = {
+export const DATASET_CATEGORY_LABELS: Record<string, string> = {
   ECONOMY_FINANCE: "เศรษฐกิจ การเงินและการคลัง",
   AGRICULTURE: "เกษตรกรรม",
   HEALTH: "สาธารณสุข",
@@ -53,7 +42,7 @@ export const DATASET_CATEGORY_LABELS: Record<DatasetCategory, string> = {
   GOVERNMENT: "การบริหารราชการ",
 };
 
-export const FREQUENCY_LABELS: Record<UpdateFrequency, string> = {
+export const FREQUENCY_LABELS: Record<string, string> = {
   REAL_TIME: "ทันที (real-time)",
   DAILY: "รายวัน",
   WEEKLY: "รายสัปดาห์",
@@ -64,7 +53,7 @@ export const FREQUENCY_LABELS: Record<UpdateFrequency, string> = {
   AS_NEEDED: "ตามความจำเป็น",
 };
 
-export const GEO_COVERAGE_LABELS: Record<GeoCoverage, string> = {
+export const GEO_COVERAGE_LABELS: Record<string, string> = {
   NATIONAL: "ทั้งประเทศ",
   REGIONAL: "รายภาค",
   PROVINCIAL: "รายจังหวัด",
@@ -72,7 +61,7 @@ export const GEO_COVERAGE_LABELS: Record<GeoCoverage, string> = {
   OTHER: "อื่น ๆ",
 };
 
-export const DELIVERY_METHOD_LABELS: Record<DeliveryMethod, string> = {
+export const DELIVERY_METHOD_LABELS: Record<string, string> = {
   API: "API",
   SFTP: "SFTP",
   DATABASE: "เชื่อมต่อฐานข้อมูลโดยตรง",
@@ -80,7 +69,7 @@ export const DELIVERY_METHOD_LABELS: Record<DeliveryMethod, string> = {
   OTHER: "อื่น ๆ",
 };
 
-export const DATA_FORMAT_LABELS: Record<DataFormat, string> = {
+export const DATA_FORMAT_LABELS: Record<string, string> = {
   CSV: "CSV",
   JSON: "JSON",
   XLSX: "Excel (XLSX)",
@@ -90,14 +79,15 @@ export const DATA_FORMAT_LABELS: Record<DataFormat, string> = {
   OTHER: "อื่น ๆ",
 };
 
-export const CLASSIFICATION_LABELS: Record<DataClassification, string> = {
+/** sheet เรียกคอลัมน์นี้ว่า access_level — "Access or disclosure classification" */
+export const CLASSIFICATION_LABELS: Record<string, string> = {
   PUBLIC: "สาธารณะ",
   INTERNAL: "ใช้ภายในหน่วยงาน",
   CONFIDENTIAL: "ลับ",
   SECRET: "ลับมาก",
 };
 
-export const LICENSE_LABELS: Record<LicenseType, string> = {
+export const LICENSE_LABELS: Record<string, string> = {
   OPEN_GOVERNMENT: "Open Government License",
   CC_BY: "CC-BY",
   CC_BY_SA: "CC-BY-SA",
@@ -106,12 +96,19 @@ export const LICENSE_LABELS: Record<LicenseType, string> = {
   OTHER: "อื่น ๆ",
 };
 
+const codes = (labels: Record<string, string>) => Object.keys(labels) as [string, ...string[]];
+
+const DATASET_TYPES = codes(DATASET_TYPE_LABELS);
+const CATEGORIES = codes(DATASET_CATEGORY_LABELS);
+const FREQUENCIES = codes(FREQUENCY_LABELS);
+const GEO_SCOPES = codes(GEO_COVERAGE_LABELS);
+const DELIVERY_METHODS = codes(DELIVERY_METHOD_LABELS);
+const DATA_FORMATS = codes(DATA_FORMAT_LABELS);
+const ACCESS_LEVELS = codes(CLASSIFICATION_LABELS);
+const LICENSES = codes(LICENSE_LABELS);
+
 /** ปลายทางบังคับกรอกเฉพาะวิธีนำส่งที่ต้องเชื่อมต่อทางเทคนิค */
-export const ENDPOINT_REQUIRED: DeliveryMethod[] = [
-  DeliveryMethod.API,
-  DeliveryMethod.SFTP,
-  DeliveryMethod.DATABASE,
-];
+export const ENDPOINT_REQUIRED = ["API", "SFTP", "DATABASE"];
 
 // ------------------------------------------------------------------ ไฟล์แนบ
 
@@ -139,16 +136,17 @@ export const DATASET_ALLOWED_MIME: Record<"DATA_DICTIONARY" | "EXAMPLE_DATA", st
   ],
 };
 
-export const DATASET_ATTACHMENT_LABELS = {
+export const DATASET_ATTACHMENT_LABELS: Record<string, string> = {
   DATA_DICTIONARY: "พจนานุกรมข้อมูล (Data Dictionary)",
   EXAMPLE_DATA: "ตัวอย่างข้อมูล",
   GENERATED_FORM: "แบบฟอร์มที่ระบบสร้าง",
-} as const;
+};
 
 // ------------------------------------------------------------------ zod
 
 /** null = ผู้ใช้ล้างค่าทิ้ง, undefined = ไม่ได้แตะช่องนี้ */
 const optionalText = (max: number) => z.string().trim().max(max).nullable().optional();
+const optionalCode = (values: [string, ...string[]]) => z.enum(values).nullable().optional();
 /** ค่าที่มาจากฐานข้อมูลเป็น null ได้ ต่างจากค่าที่ผู้ใช้ส่งเข้ามาซึ่งเป็น undefined */
 const nullableDate = z.date().nullable().optional();
 
@@ -163,39 +161,165 @@ const dateInput = z
 
 /** ตอนบันทึกร่างยอมให้ว่างได้ทุกช่อง — แบบเดียวกับ Journey B */
 export const datasetDraftSchema = z.object({
-  nameTh: optionalText(200),
-  nameEn: optionalText(200),
+  nameTh: optionalText(500),
+  nameEn: optionalText(500),
   description: optionalText(4000),
-  datasetType: z.nativeEnum(DatasetType).nullable().optional(),
-  category: z.nativeEnum(DatasetCategory).nullable().optional(),
-  keywords: z.array(z.string().trim().min(1).max(60)).max(10).optional(),
-  updateFrequency: z.nativeEnum(UpdateFrequency).nullable().optional(),
-  geoCoverage: z.nativeEnum(GeoCoverage).nullable().optional(),
+  descriptionEn: optionalText(4000),
+  objective: optionalText(4000),
+  category: optionalCode(CATEGORIES),
+  dataOwnerDepartment: optionalText(255),
+  updateFrequency: optionalCode(FREQUENCIES),
+  geoCoverage: optionalCode(GEO_SCOPES),
   dataStartDate: dateInput,
   dataEndDate: dateInput,
-  estimatedRecords: z.number().int().min(0).nullable().optional(),
-  stewardName: optionalText(200),
-  stewardEmail: optionalText(200),
-  stewardPhone: optionalText(30),
+  stewardName: optionalText(255),
+  stewardEmail: optionalText(255),
+  stewardPhone: optionalText(32),
 
-  deliveryMethod: z.nativeEnum(DeliveryMethod).nullable().optional(),
-  dataFormat: z.nativeEnum(DataFormat).nullable().optional(),
-  deliveryFrequency: z.nativeEnum(UpdateFrequency).nullable().optional(),
-  deliveryEndpoint: optionalText(500),
-  technicalContactName: optionalText(200),
-  technicalContactEmail: optionalText(200),
-  deliveryNote: optionalText(2000),
+  deliveryMethod: optionalCode(DELIVERY_METHODS),
+  dataFormat: optionalCode(DATA_FORMATS),
 
-  dataClassification: z.nativeEnum(DataClassification).nullable().optional(),
   hasPersonalData: z.boolean().nullable().optional(),
+  hasSensitiveData: z.boolean().nullable().optional(),
+  dataClassification: optionalCode(ACCESS_LEVELS),
+
+  // ── ต่อไปนี้ลง additional_metadata_json ทั้งหมด (ดีไซน์ไม่มีคอลัมน์ให้) ──
+  datasetType: optionalCode(DATASET_TYPES),
+  keywords: z.array(z.string().trim().min(1).max(60)).max(10).optional(),
+  estimatedRecords: z.number().int().min(0).nullable().optional(),
+  deliveryFrequency: optionalCode(FREQUENCIES),
+  deliveryEndpoint: optionalText(500),
+  technicalContactName: optionalText(255),
+  technicalContactEmail: optionalText(255),
+  deliveryNote: optionalText(2000),
   personalDataMeasure: optionalText(2000),
   legalBasis: optionalText(2000),
-  licenseType: z.nativeEnum(LicenseType).nullable().optional(),
+  licenseType: optionalCode(LICENSES),
   usageRestriction: optionalText(2000),
+
   legalAccepted: z.boolean().optional(),
 });
 
 export type DatasetDraftInput = z.infer<typeof datasetDraftSchema>;
+
+/** ฟิลด์ที่ไม่มีคอลัมน์ของตัวเองในดีไซน์ — เก็บรวมใน additional_metadata_json */
+export const EXTRA_METADATA_KEYS = [
+  "datasetType",
+  "keywords",
+  "estimatedRecords",
+  "deliveryFrequency",
+  "deliveryEndpoint",
+  "technicalContactName",
+  "technicalContactEmail",
+  "deliveryNote",
+  "personalDataMeasure",
+  "legalBasis",
+  "licenseType",
+  "usageRestriction",
+] as const;
+
+/**
+ * แยกค่าที่ผู้ใช้กรอกออกเป็น "คอลัมน์จริง" กับ "additional_metadata_json"
+ * ตามที่ sheet `dataset_registration_metadata` กำหนดคอลัมน์ไว้
+ */
+export function toMetadataColumns(input: DatasetDraftInput, previousExtra?: unknown) {
+  const extra: Record<string, unknown> = {
+    ...(typeof previousExtra === "object" && previousExtra !== null ? previousExtra : {}),
+  };
+  for (const key of EXTRA_METADATA_KEYS) {
+    if (input[key] !== undefined) extra[key] = input[key];
+  }
+
+  return {
+    columns: {
+      titleTh: input.nameTh,
+      titleEn: input.nameEn,
+      descriptionTh: input.description,
+      descriptionEn: input.descriptionEn,
+      objective: input.objective,
+      datasetCategoryCode: input.category,
+      dataOwnerDepartment: input.dataOwnerDepartment,
+      contactName: input.stewardName,
+      contactEmail: input.stewardEmail,
+      contactPhone: input.stewardPhone,
+      updateFrequency: input.updateFrequency,
+      coverageStartDate: input.dataStartDate,
+      coverageEndDate: input.dataEndDate,
+      geographicScope: input.geoCoverage,
+      containsPersonalData: input.hasPersonalData,
+      containsSensitiveData: input.hasSensitiveData,
+      accessLevel: input.dataClassification,
+      deliveryMethod: input.deliveryMethod,
+      dataFormat: input.dataFormat,
+    },
+    extra,
+  };
+}
+
+/** แปลงแถว metadata กลับเป็นรูปที่ frontend และ zod ชุด submit ใช้ */
+export function fromMetadataRow(row: {
+  titleTh: string | null;
+  titleEn: string | null;
+  descriptionTh: string | null;
+  descriptionEn: string | null;
+  objective: string | null;
+  datasetCategoryCode: string | null;
+  dataOwnerDepartment: string | null;
+  contactName: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  updateFrequency: string | null;
+  coverageStartDate: Date | null;
+  coverageEndDate: Date | null;
+  geographicScope: string | null;
+  containsPersonalData: boolean | null;
+  containsSensitiveData: boolean | null;
+  accessLevel: string | null;
+  deliveryMethod: string | null;
+  dataFormat: string | null;
+  additionalMetadataJson: unknown;
+}) {
+  const extra = (
+    typeof row.additionalMetadataJson === "object" && row.additionalMetadataJson !== null
+      ? row.additionalMetadataJson
+      : {}
+  ) as Record<string, unknown>;
+
+  return {
+    nameTh: row.titleTh,
+    nameEn: row.titleEn,
+    description: row.descriptionTh,
+    descriptionEn: row.descriptionEn,
+    objective: row.objective,
+    category: row.datasetCategoryCode,
+    dataOwnerDepartment: row.dataOwnerDepartment,
+    stewardName: row.contactName,
+    stewardEmail: row.contactEmail,
+    stewardPhone: row.contactPhone,
+    updateFrequency: row.updateFrequency,
+    dataStartDate: row.coverageStartDate,
+    dataEndDate: row.coverageEndDate,
+    geoCoverage: row.geographicScope,
+    hasPersonalData: row.containsPersonalData,
+    hasSensitiveData: row.containsSensitiveData,
+    dataClassification: row.accessLevel,
+    deliveryMethod: row.deliveryMethod,
+    dataFormat: row.dataFormat,
+
+    datasetType: (extra.datasetType as string | null) ?? null,
+    keywords: (extra.keywords as string[] | undefined) ?? [],
+    estimatedRecords: (extra.estimatedRecords as number | null) ?? null,
+    deliveryFrequency: (extra.deliveryFrequency as string | null) ?? null,
+    deliveryEndpoint: (extra.deliveryEndpoint as string | null) ?? null,
+    technicalContactName: (extra.technicalContactName as string | null) ?? null,
+    technicalContactEmail: (extra.technicalContactEmail as string | null) ?? null,
+    deliveryNote: (extra.deliveryNote as string | null) ?? null,
+    personalDataMeasure: (extra.personalDataMeasure as string | null) ?? null,
+    legalBasis: (extra.legalBasis as string | null) ?? null,
+    licenseType: (extra.licenseType as string | null) ?? null,
+    usageRestriction: (extra.usageRestriction as string | null) ?? null,
+  };
+}
 
 /**
  * ช่องที่ยังว่างในฐานข้อมูลมาเป็น null ไม่ใช่ undefined — ถ้าไม่ระบุ `error` ไว้
@@ -214,50 +338,51 @@ const requiredPhone = (message: string) =>
     "เบอร์โทรศัพท์ไม่ถูกต้อง กรุณากรอกเลข 9–10 หลักขึ้นต้นด้วย 0",
   );
 
-/**
- * ตรวจความครบถ้วนของ "แถวในฐานข้อมูล" ก่อนสร้าง PDF และก่อนนำส่ง
- * (parse ตัว record ตรง ๆ เหมือน submitSchema ของหน่วยงาน)
- */
+const requiredCode = (values: [string, ...string[]], message: string) =>
+  z.enum(values, { error: message });
+
+/** ตรวจความครบถ้วนก่อนสร้าง PDF และก่อนนำส่ง — parse ผลของ fromMetadataRow() */
 export const datasetSubmitSchema = z
   .object({
     nameTh: required("กรุณากรอกชื่อชุดข้อมูล")
       .min(3, "ชื่อชุดข้อมูลต้องมีอย่างน้อย 3 ตัวอักษร")
-      .max(200),
-    nameEn: z.string().trim().max(200).nullable().optional(),
+      .max(500),
+    nameEn: z.string().trim().max(500).nullable().optional(),
     description: required("กรุณากรอกคำอธิบายชุดข้อมูล").min(
       30,
       "คำอธิบายต้องมีอย่างน้อย 30 ตัวอักษร",
     ),
-    datasetType: z.nativeEnum(DatasetType, { error: "กรุณาเลือกประเภทชุดข้อมูล" }),
-    category: z.nativeEnum(DatasetCategory, { error: "กรุณาเลือกหมวดหมู่" }),
-    keywords: z.array(z.string().trim().min(1)).min(1, "กรุณาระบุคำสำคัญอย่างน้อย 1 คำ").max(10),
-    updateFrequency: z.nativeEnum(UpdateFrequency, { error: "กรุณาเลือกความถี่ในการปรับปรุงข้อมูล" }),
-    geoCoverage: z.nativeEnum(GeoCoverage, { error: "กรุณาเลือกขอบเขตเชิงพื้นที่" }),
+    category: requiredCode(CATEGORIES, "กรุณาเลือกหมวดหมู่"),
+    updateFrequency: requiredCode(FREQUENCIES, "กรุณาเลือกความถี่ในการปรับปรุงข้อมูล"),
+    geoCoverage: requiredCode(GEO_SCOPES, "กรุณาเลือกขอบเขตเชิงพื้นที่"),
     dataStartDate: nullableDate,
     dataEndDate: nullableDate,
-    estimatedRecords: z.number().int().min(0).nullable().optional(),
     stewardName: required("กรุณากรอกชื่อผู้ประสานงานชุดข้อมูล"),
     stewardEmail: requiredEmail("กรุณากรอกอีเมลผู้ประสานงานชุดข้อมูล"),
     stewardPhone: requiredPhone("กรุณากรอกเบอร์โทรผู้ประสานงานชุดข้อมูล"),
 
-    deliveryMethod: z.nativeEnum(DeliveryMethod, { error: "กรุณาเลือกวิธีการนำส่งข้อมูล" }),
-    dataFormat: z.nativeEnum(DataFormat, { error: "กรุณาเลือกรูปแบบข้อมูล" }),
-    deliveryFrequency: z.nativeEnum(UpdateFrequency, { error: "กรุณาเลือกความถี่ในการนำส่ง" }),
+    deliveryMethod: requiredCode(DELIVERY_METHODS, "กรุณาเลือกวิธีการนำส่งข้อมูล"),
+    dataFormat: requiredCode(DATA_FORMATS, "กรุณาเลือกรูปแบบข้อมูล"),
+
+    // sheet มาร์กสามช่องนี้เป็น Required
+    hasPersonalData: z.boolean({ error: "กรุณาระบุว่ามีข้อมูลส่วนบุคคลหรือไม่" }),
+    hasSensitiveData: z.boolean({ error: "กรุณาระบุว่ามีข้อมูลอ่อนไหวหรือไม่" }),
+    dataClassification: requiredCode(ACCESS_LEVELS, "กรุณาเลือกชั้นความลับของข้อมูล"),
+
+    keywords: z.array(z.string().trim().min(1)).min(1, "กรุณาระบุคำสำคัญอย่างน้อย 1 คำ").max(10),
+    estimatedRecords: z.number().int().min(0).nullable().optional(),
+    deliveryFrequency: requiredCode(FREQUENCIES, "กรุณาเลือกความถี่ในการนำส่ง"),
     deliveryEndpoint: z.string().trim().max(500).nullable().optional(),
     technicalContactName: required("กรุณากรอกชื่อผู้รับผิดชอบทางเทคนิค"),
     technicalContactEmail: requiredEmail("กรุณากรอกอีเมลผู้รับผิดชอบทางเทคนิค"),
     deliveryNote: z.string().trim().max(2000).nullable().optional(),
-
-    dataClassification: z.nativeEnum(DataClassification, { error: "กรุณาเลือกชั้นความลับของข้อมูล" }),
-    hasPersonalData: z.boolean({ error: "กรุณาระบุว่ามีข้อมูลส่วนบุคคลหรือไม่" }),
     personalDataMeasure: z.string().trim().nullable().optional(),
     legalBasis: required("กรุณาระบุฐานอำนาจตามกฎหมาย").min(
       10,
       "กรุณาระบุฐานอำนาจตามกฎหมายอย่างน้อย 10 ตัวอักษร",
     ),
-    licenseType: z.nativeEnum(LicenseType, { error: "กรุณาเลือกสัญญาอนุญาตให้ใช้ข้อมูล" }),
+    licenseType: requiredCode(LICENSES, "กรุณาเลือกสัญญาอนุญาตให้ใช้ข้อมูล"),
     usageRestriction: z.string().trim().max(2000).nullable().optional(),
-    legalAcceptedAt: z.date({ error: "กรุณากดยอมรับเงื่อนไขการนำส่งข้อมูล" }),
   })
   .superRefine((value, ctx) => {
     if (value.deliveryMethod && ENDPOINT_REQUIRED.includes(value.deliveryMethod) && !value.deliveryEndpoint) {
@@ -282,11 +407,3 @@ export const datasetSubmitSchema = z
       });
     }
   });
-
-/**
- * เลขที่คำขอ DR-<ปี>-<ลำดับ 4 หลัก> นับแยกรายปี
- * มีโอกาสชนกันเมื่อสองคนกดพร้อมกัน — ผู้เรียกต้องลองใหม่เมื่อเจอ unique violation (P2002)
- */
-export function nextRequestNumber(year: number, countThisYear: number): string {
-  return `DR-${year}-${String(countThisYear + 1).padStart(4, "0")}`;
-}

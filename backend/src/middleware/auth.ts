@@ -1,9 +1,11 @@
 import type { NextFunction, Request, Response } from "express";
-import { UserStatus, type Role } from "@prisma/client";
+import { RoleAssignmentStatus, UserAccountStatus } from "@prisma/client";
 
 import { prisma } from "../db.js";
 import { env } from "../env.js";
 import { SESSION_COOKIE, verifySession, type SessionPayload } from "../lib/auth.js";
+import { setActor } from "../lib/context.js";
+import { ORGANIZATION_SCOPED_ROLES, type RoleCode } from "../lib/system.js";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -19,9 +21,15 @@ declare global {
  *
  * cookie บอกได้แค่ว่า "ใคร" — บอกไม่ได้ว่าตอนนี้คนนั้นอยู่หน่วยงานไหนหรือมี role อะไร
  * เพราะทั้งสองอย่างเปลี่ยนได้ระหว่างที่ session ยังไม่หมดอายุ: ผู้ใช้สร้างหน่วยงาน
- * (organizations.ts เขียน organizationId ลงตาราง user) หรือถูกเพิ่มสิทธิ์ผู้มีอำนาจ
- * ตอนหน่วยงานส่งให้ลงนาม ถ้าเชื่อค่าใน cookie ต่อไป คนที่เพิ่งสร้างหน่วยงานเสร็จจะยัง
- * ลงทะเบียนชุดข้อมูลไม่ได้จนกว่าจะออกจากระบบแล้วเข้าใหม่
+ * หรือถูกเพิ่มสิทธิ์ผู้มีอำนาจตอนหน่วยงานส่งให้ลงนาม ถ้าเชื่อค่าใน cookie ต่อไป
+ * คนที่เพิ่งสร้างหน่วยงานเสร็จจะยังลงทะเบียนชุดข้อมูลไม่ได้จนกว่าจะออกจากระบบแล้วเข้าใหม่
+ *
+ * แหล่งข้อมูลย้ายจาก users.roles[] มาที่ iam.user_role_assignment แล้ว แต่กฎเดิมยังอยู่:
+ * ห้าม optimise การอ่านนี้ทิ้ง และห้ามอ่าน roles/organizationId จาก JWT
+ *
+ * assignment ใช้งานได้เมื่อ (sheet `user_role_assignment`):
+ *   status = 'ACTIVE' AND (effective_until IS NULL OR effective_until > CURRENT_TIMESTAMP)
+ * เงื่อนไข effective_until เป็นตัวที่ทำให้ derived status EXPIRED ถูกตัดออกไปเอง
  */
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const unauthenticated = () =>
@@ -35,29 +43,48 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       return;
     }
 
-    const user = await prisma.user.findUnique({
+    const user = await prisma.userAccount.findUnique({
       where: { id: session.sub },
-      select: { id: true, email: true, roles: true, organizationId: true, status: true },
+      select: {
+        id: true,
+        email: true,
+        status: true,
+        roleAssignments: {
+          where: {
+            status: RoleAssignmentStatus.ACTIVE,
+            OR: [{ effectiveUntil: null }, { effectiveUntil: { gt: new Date() } }],
+          },
+          select: { organizationId: true, role: { select: { code: true, isActive: true } } },
+        },
+      },
     });
     // บัญชีถูกลบหรือถูกระงับหลัง cookie ออกไปแล้ว — ตัดสิทธิ์ทันที ไม่รอ cookie หมดอายุ
-    if (!user || user.status !== UserStatus.ACTIVE) {
+    if (!user || user.status !== UserAccountStatus.ACTIVE) {
       unauthenticated();
       return;
     }
 
-    req.session = {
-      sub: user.id,
-      email: user.email,
-      roles: user.roles,
-      organizationId: user.organizationId,
-    };
+    // role ที่ถูกปิดใช้งานใน master (is_active = false) ไม่ให้สิทธิ์อีกต่อไป
+    const assignments = user.roleAssignments.filter((a) => a.role.isActive);
+    const roles = assignments.map((a) => a.role.code as RoleCode);
+
+    // หน่วยงานของผู้ใช้มาจาก assignment ที่เป็น role ระดับหน่วยงานเท่านั้น
+    // เจ้าหน้าที่ BDI ไม่สังกัดหน่วยงาน จึงได้ null ตามเดิม
+    const organizationId =
+      assignments.find(
+        (a) => a.organizationId && ORGANIZATION_SCOPED_ROLES.includes(a.role.code as RoleCode),
+      )?.organizationId ?? null;
+
+    req.session = { sub: user.id, email: user.email, roles, organizationId };
+    // ให้ logAudit() รู้ว่าใครเป็นผู้กระทำ โดยไม่ต้องส่ง actorId ผ่านทุกชั้น
+    setActor(user.id);
     next();
   } catch (err) {
     next(err);
   }
 }
 
-export function requireRole(...allowed: Role[]) {
+export function requireRole(...allowed: RoleCode[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     const roles = req.session?.roles ?? [];
     if (!roles.some((r) => allowed.includes(r))) {

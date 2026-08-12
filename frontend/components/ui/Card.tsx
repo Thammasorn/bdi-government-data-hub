@@ -2,10 +2,9 @@ import clsx from "clsx";
 import type { ReactNode } from "react";
 
 import {
-  DATASET_STATUS_META,
-  STATUS_META,
-  type DatasetRequestStatus,
-  type OrganizationStatus,
+  stageMeta,
+  type RequestStatus,
+  type ReviewTaskType,
 } from "@/lib/status";
 
 export function Card({
@@ -46,14 +45,22 @@ export function CardHeader({
   );
 }
 
+/**
+ * badge สถานะ — รับ currentTaskType มาด้วยได้
+ *
+ * สถานะคำขอเหลือเจ็ดค่าที่ไม่บอกว่า "รอใคร" แล้ว ด่านที่ค้างอยู่จึงมาจาก review_task
+ * stageMeta() เลือกให้ว่าจะแสดงด่านหรือสถานะ
+ */
 export function StatusBadge({
   status,
+  currentTaskType,
   className,
 }: {
-  status: OrganizationStatus;
+  status: RequestStatus;
+  currentTaskType?: ReviewTaskType | null;
   className?: string;
 }) {
-  const meta = STATUS_META[status];
+  const meta = stageMeta(status, currentTaskType);
   return (
     <span
       className={clsx(
@@ -68,14 +75,17 @@ export function StatusBadge({
   );
 }
 
+/** สถานะคำขอชุดข้อมูลใช้ชุดค่าเดียวกับหน่วยงานแล้ว — คงชื่อไว้ให้หน้าเดิมเรียกได้ */
 export function DatasetStatusBadge({
   status,
+  currentTaskType,
   className,
 }: {
-  status: DatasetRequestStatus;
+  status: RequestStatus;
+  currentTaskType?: ReviewTaskType | null;
   className?: string;
 }) {
-  const meta = DATASET_STATUS_META[status];
+  const meta = stageMeta(status, currentTaskType);
   return (
     <span
       className={clsx(

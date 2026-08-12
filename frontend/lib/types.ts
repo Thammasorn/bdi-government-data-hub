@@ -4,11 +4,12 @@ import type {
   DATASET_TYPE_LABELS,
   DATA_FORMAT_LABELS,
   DELIVERY_METHOD_LABELS,
-  DatasetRequestStatus,
+  RequestStatus,
+  ReviewTaskType,
+  ReviewResult,
   FREQUENCY_LABELS,
   GEO_COVERAGE_LABELS,
   LICENSE_LABELS,
-  OrganizationStatus,
 } from "./status";
 
 export interface Attachment {
@@ -20,17 +21,29 @@ export interface Attachment {
   createdAt: string;
 }
 
-export interface OrganizationEvent {
+/**
+ * หนึ่งแถวใน review.review_task — ใช้เป็น timeline ทั้งสอง Journey
+ * ตาราง organization_events / dataset_request_events ถูกตัดออกตามดีไซน์แล้ว
+ */
+export interface ReviewTaskEvent {
   id: string;
-  type: string;
+  taskType: ReviewTaskType;
+  sequenceNumber: number;
+  roundNumber: number;
+  status: string;
+  result: ReviewResult | null;
   note: string | null;
+  actor: { id: string; name: string; email: string } | null;
+  assignedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
   createdAt: string;
-  actor: { firstName: string | null; lastName: string | null; email: string } | null;
 }
 
 export interface Organization {
   id: string;
-  status: OrganizationStatus;
+  status: RequestStatus;
+  currentTaskType: ReviewTaskType | null;
   name: string;
   addressLine: string | null;
   province: string | null;
@@ -68,13 +81,14 @@ export interface Organization {
     lastName: string | null;
   };
   attachments: Attachment[];
-  events: OrganizationEvent[];
+  events: ReviewTaskEvent[];
 }
 
 export interface OrganizationListItem {
   id: string;
   name: string;
-  status: OrganizationStatus;
+  status: RequestStatus;
+  currentTaskType: ReviewTaskType | null;
   submittedAt: string | null;
   createdAt: string;
   createdBy: { firstName: string | null; lastName: string | null; email: string };
@@ -112,18 +126,12 @@ export interface DatasetAttachment {
   createdAt: string;
 }
 
-export interface DatasetRequestEvent {
-  id: string;
-  type: string;
-  note: string | null;
-  createdAt: string;
-  actor: { firstName: string | null; lastName: string | null; email: string } | null;
-}
 
 export interface DatasetRequest {
   id: string;
   requestNumber: string;
-  status: DatasetRequestStatus;
+  status: RequestStatus;
+  currentTaskType: ReviewTaskType | null;
 
   nameTh: string | null;
   nameEn: string | null;
@@ -183,14 +191,15 @@ export interface DatasetRequest {
     lastName: string | null;
   } | null;
   attachments: DatasetAttachment[];
-  events: DatasetRequestEvent[];
+  events: ReviewTaskEvent[];
 }
 
 export interface DatasetRequestListItem {
   id: string;
   requestNumber: string;
   nameTh: string | null;
-  status: DatasetRequestStatus;
+  status: RequestStatus;
+  currentTaskType: ReviewTaskType | null;
   submittedAt: string | null;
   createdAt: string;
   /** เวลาที่แถวนี้ถูกแก้ล่าสุด — หน้าแรกแสดงคู่กับวันที่นำข้อมูลเข้ามา */

@@ -45,3 +45,78 @@ export function isValidAddress(province: string, amphoe: string, subdistrict: st
 export function lookupZipcode(province: string, amphoe: string, subdistrict: string): string | null {
   return listSubdistricts(province, amphoe).find((d) => d.name === subdistrict)?.zipcode ?? null;
 }
+
+/**
+ * แปลง "ชื่อ" ที่ผู้ใช้เลือกเป็น "รหัส" ที่สคีมาใหม่ต้องการ
+ *
+ * sheet `organization` เก็บ province_code / district_code / sub_district_code ไม่ใช่ชื่อ
+ * ตาราง master อยู่ที่ schema `administration` ซึ่ง seed มาจากไฟล์เดียวกันนี้
+ * (ดู src/scripts/seed-masters.ts) รหัสจึงตรงกันเสมอตราบใดที่ยังไม่เปลี่ยนไฟล์ต้นทาง
+ *
+ * คืน null ทีละช่องเมื่อหาไม่เจอ — ร่างที่กรอกไม่ครบต้องบันทึกได้
+ */
+export async function resolveAddressCodes(
+  db: { province: { findFirst: Function }; district: { findFirst: Function }; subDistrict: { findFirst: Function } },
+  address: { province?: string | null; district?: string | null; subdistrict?: string | null },
+): Promise<{ provinceCode: string | null; districtCode: string | null; subDistrictCode: string | null }> {
+  if (!address.province) {
+    return { provinceCode: null, districtCode: null, subDistrictCode: null };
+  }
+
+  const province = (await db.province.findFirst({
+    where: { nameTh: address.province },
+    select: { code: true },
+  })) as { code: string } | null;
+  if (!province) return { provinceCode: null, districtCode: null, subDistrictCode: null };
+
+  if (!address.district) {
+    return { provinceCode: province.code, districtCode: null, subDistrictCode: null };
+  }
+
+  const district = (await db.district.findFirst({
+    where: { nameTh: address.district, provinceCode: province.code },
+    select: { code: true },
+  })) as { code: string } | null;
+  if (!district) {
+    return { provinceCode: province.code, districtCode: null, subDistrictCode: null };
+  }
+
+  if (!address.subdistrict) {
+    return { provinceCode: province.code, districtCode: district.code, subDistrictCode: null };
+  }
+
+  const subDistrict = (await db.subDistrict.findFirst({
+    where: { nameTh: address.subdistrict, districtCode: district.code },
+    select: { code: true },
+  })) as { code: string } | null;
+
+  return {
+    provinceCode: province.code,
+    districtCode: district.code,
+    subDistrictCode: subDistrict?.code ?? null,
+  };
+}
+
+/** แปลงรหัสกลับเป็นชื่อ เพื่อแสดงผลและใส่ใน PDF */
+export async function resolveAddressNames(
+  db: { province: { findUnique: Function }; district: { findUnique: Function }; subDistrict: { findUnique: Function } },
+  codes: { provinceCode?: string | null; districtCode?: string | null; subDistrictCode?: string | null },
+): Promise<{ province: string | null; district: string | null; subdistrict: string | null }> {
+  const [province, district, subDistrict] = await Promise.all([
+    codes.provinceCode
+      ? (db.province.findUnique({ where: { code: codes.provinceCode }, select: { nameTh: true } }) as Promise<{ nameTh: string } | null>)
+      : Promise.resolve(null),
+    codes.districtCode
+      ? (db.district.findUnique({ where: { code: codes.districtCode }, select: { nameTh: true } }) as Promise<{ nameTh: string } | null>)
+      : Promise.resolve(null),
+    codes.subDistrictCode
+      ? (db.subDistrict.findUnique({ where: { code: codes.subDistrictCode }, select: { nameTh: true } }) as Promise<{ nameTh: string } | null>)
+      : Promise.resolve(null),
+  ]);
+
+  return {
+    province: province?.nameTh ?? null,
+    district: district?.nameTh ?? null,
+    subdistrict: subDistrict?.nameTh ?? null,
+  };
+}

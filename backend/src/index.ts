@@ -5,6 +5,7 @@ import { MulterError } from "multer";
 
 import { prisma } from "./db.js";
 import { env } from "./env.js";
+import { correlationMiddleware } from "./lib/context.js";
 import { adminRouter } from "./routes/admin.js";
 import { addressRouter } from "./routes/address.js";
 import { authRouter } from "./routes/auth.js";
@@ -21,6 +22,9 @@ app.set("trust proxy", 1);
 app.use(cors({ origin: env.corsOrigins, credentials: true }));
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
+// ต้องมาก่อน router ทุกตัว — audit_event, notification และ integration_operation
+// บังคับ correlation_id เป็น NOT NULL และอ่านค่าผ่าน AsyncLocalStorage
+app.use(correlationMiddleware);
 
 app.get("/", (_req, res) => {
   res.json({ service: "bdi-datahub-api", version: "0.1.0" });

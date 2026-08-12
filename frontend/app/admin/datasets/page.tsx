@@ -33,9 +33,9 @@ function AdminDatasetList() {
   if (loading || !user) return <Spinner />;
 
   const isSpecialistOnly =
-    user.roles.includes("BDI_SPECIALIST") &&
+    user.roles.includes("BDI_DATASET_SPECIALIST") &&
     !user.roles.includes("BDI_OFFICER") &&
-    !user.roles.includes("BDI_APPROVER");
+    !user.roles.includes("BDI_FINAL_APPROVER");
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">

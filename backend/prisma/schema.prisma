@@ -1,6 +1,13 @@
 // Government Datahub Platform — data model
-// อ้างอิง docs/01-user-journey.md
+//
+// ต้นทางของสคีมานี้คือ assets/db_schema/draft_db_design_downloaded_on_2026-08-11.xlsx
+// (21 sheet — _index + 20 ตาราง + ภาพประกอบในแต่ละ sheet)
+// แผนการย้ายและ gap analysis อยู่ที่ docs/06-db-migration-plan.md
+//
+// **ไฟล์ Excel เป็นแหล่งอ้างอิงหลัก** เมื่อขัดกับ docs/01-user-journey.md ให้ยึด Excel
+// จุดที่จงใจเบี่ยงจาก Excel มี doc comment กำกับไว้ทุกจุด ขึ้นต้นด้วย "เบี่ยงจากดีไซน์:"
 
+// multiSchema เป็น GA ตั้งแต่ Prisma 6.19 — ไม่ต้องประกาศ previewFeatures อีก
 generator client {
   provider = "prisma-client-js"
 }
@@ -8,571 +15,1408 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+
+  schemas = ["administration", "attachment", "audit", "dataset", "iam", "integration", "legal", "notification", "organization", "review", "signature"]
 }
 
-// ---------------------------------------------------------------- enums
+// ═══════════════════════════════════════════════════════════════════ iam
 
-enum Role {
-  BDI_OFFICER
-  BDI_APPROVER
-  BDI_SPECIALIST
-  ORGANIZATION_USER
-  ORGANIZATION_APPROVER
+/// sheet `user_account` — คอลัมน์ account_type
+enum AccountType {
+  ORGANIZATION
+  BDI
+  SYSTEM
+
+  @@schema("iam")
 }
 
-enum UserStatus {
-  INVITED
+/// sheet `user_account` — ตารางสถานะท้าย sheet
+enum UserAccountStatus {
+  PENDING /// สร้างบัญชีแล้ว แต่ยังเปิดใช้งานไม่สมบูรณ์ — login ไม่ได้
+  ACTIVE /// บัญชีพร้อมใช้งานตามปกติ
+  SUSPENDED /// ระงับชั่วคราว เช่น สงสัยว่าบัญชีถูกบุกรุก — กลับมาใช้ได้
+  DEACTIVATED /// ยุติการใช้งานบัญชีแล้ว — โดยปกติกลับมาไม่ได้
+
+  @@schema("iam")
+}
+
+/// sheet `activation_key` — ตารางสถานะท้าย sheet
+enum ActivationKeyStatus {
+  ISSUED /// ออกแล้วและยังไม่ถูกใช้ — ใช้ได้
+  USED /// ถูกใช้สำเร็จแล้ว — ใช้ซ้ำไม่ได้
+  EXPIRED /// หมดอายุเนื่องจากเวลา
+  REVOKED /// ถูกยกเลิกโดยระบบหรือ Admin ก่อนหมดอายุ
+
+  @@schema("iam")
+}
+
+/// sheet `user_role_assignment` — EXPIRED เป็น derived ไม่เก็บในคอลัมน์
+enum RoleAssignmentStatus {
   ACTIVE
-  SUSPENDED
-}
-
-enum InvitationStatus {
-  PENDING
-  ACCEPTED
-  EXPIRED
   REVOKED
+
+  @@schema("iam")
 }
 
+/// เบี่ยงจากดีไซน์: ไม่มีใน Excel
+/// เพิ่มเพราะ ThaID ยังไม่มี client credentials และ docs/01-user-journey.md §A.2
+/// บังคับ 2FA ด้วย email หรือ ThaiD — ดีไซน์รองรับแค่ทางหลัง
+/// ถอดออกทั้งชุดเมื่อ ThaID พร้อม
 enum OtpPurpose {
   REGISTRATION
   LOGIN
+
+  @@schema("iam")
 }
 
-/// ลำดับสถานะตาม docs/01-user-journey.md §3.1
-enum OrganizationStatus {
-  DRAFT
-  PENDING_BDI_REVIEW
-  NEEDS_REVISION
-  PENDING_SIGNATORY_REVIEW
-  PENDING_BDI_APPROVAL
-  ACTIVE
+/// ผู้ใช้งานหนึ่งคน — sheet `user_account`
+///
+/// Business rule ท้าย sheet (Excel ชนะ docs/01-user-journey.md §1 ที่เขียนว่ามีได้หลายคน):
+///   หนึ่ง Organization มี ORGANIZATION_USER ที่ ACTIVE ได้ไม่เกิน 1 คน
+///   หนึ่ง Organization มี ORGANIZATION_APPROVER ที่ ACTIVE ได้ไม่เกิน 1 คน
+/// บังคับด้วย partial unique index บน user_role_assignment (ดู migration)
+model UserAccount {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Citizen Identifier — เลขบัตรประชาชน 13 หลัก
+  /// เบี่ยงจากดีไซน์: Excel มาร์ก Required แต่ทำเป็น nullable เพราะเจ้าหน้าที่ BDI
+  /// ยังไม่ได้เก็บเลขบัตร บังคับที่ชั้น zod เฉพาะ accountType = ORGANIZATION
+  cid String? @db.VarChar(13)
+
+  prefixTh    String? @map("prefix_th") @db.VarChar(64)
+  firstnameTh String? @map("firstname_th") @db.VarChar(255)
+  lastnameTh  String? @map("lastname_th") @db.VarChar(255)
+
+  email        String  @unique @db.VarChar(255)
+  phoneNumber  String? @map("phone_number") @db.VarChar(32)
+  /// ฝ่าย / กอง / สำนัก
+  departmentTh String? @map("department_th") @db.VarChar(255)
+  /// ตำแหน่ง
+  positionTh   String? @map("position_th") @db.VarChar(255)
+  displayName  String  @map("display_name") @db.VarChar(255)
+
+  accountType AccountType       @map("account_type")
+  status      UserAccountStatus @default(PENDING)
+
+  lastLoginAt DateTime? @map("last_login_at") @db.Timestamptz(6)
+  activatedAt DateTime? @map("activated_at") @db.Timestamptz(6)
+
+  suspendedAt      DateTime? @map("suspended_at") @db.Timestamptz(6)
+  suspendedBy      String?   @map("suspended_by") @db.Uuid
+  suspensionReason String?   @map("suspension_reason")
+  deactivatedAt    DateTime? @map("deactivated_at") @db.Timestamptz(6)
+
+  /// Identifier จาก Identity Provider (ThaID)
+  /// เบี่ยงจากดีไซน์: Excel มาร์ก Required แต่ทำเป็น nullable เพราะ ThaID
+  /// ยังไม่มี client credentials — ดู docs/06-db-migration-plan.md §5 ข้อ 2
+  externalSubject String? @unique @map("external_subject") @db.VarChar(255)
+
+  /// เบี่ยงจากดีไซน์: ไม่มีใน Excel — ดู enum OtpPurpose ข้างบน
+  passwordHash String? @map("password_hash")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  activationKeys       ActivationKey[]
+  roleAssignments      UserRoleAssignment[]
+  assignedReviewTasks  ReviewTask[]            @relation("ReviewTaskAssignee")
+  delegatedReviewTasks ReviewTask[]            @relation("ReviewTaskAssigner")
+  legalAcceptances     LegalAcceptance[]
+  signatures           SignatureConfirmation[]
+  notifications        Notification[]
+
+  @@index([status])
+  @@index([accountType])
+  @@index([cid])
+  @@map("user_account")
+  @@schema("iam")
 }
 
-enum AttachmentKind {
-  APPOINTMENT_ORDER /// คำสั่งแต่งตั้งผู้มีอำนาจกระทำการแทน (บังคับ)
-  POWER_OF_ATTORNEY /// คำสั่งมอบอำนาจ (ถ้ามี)
-  GENERATED_FORM /// PDF ที่ระบบสร้างจาก template
+/// sheet `role` — master table แทน enum Role เดิม
+/// รหัสที่ sheet กำหนด: ORGANIZATION_USER · ORGANIZATION_APPROVER · BDI_OFFICER ·
+/// BDI_DATASET_SPECIALIST · BDI_FINAL_APPROVER · BDI_LEGAL_OFFICER · SYSTEM_ADMINISTRATOR
+model Role {
+  id       String  @id @default(uuid()) @db.Uuid
+  code     String  @unique @db.VarChar(64)
+  nameTh   String  @map("name_th") @db.VarChar(255)
+  nameEn   String  @map("name_en") @db.VarChar(255)
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  activationKeys  ActivationKey[]
+  roleAssignments UserRoleAssignment[]
+
+  @@map("role")
+  @@schema("iam")
 }
 
-enum OrganizationEventType {
-  CREATED
-  DRAFT_SAVED
-  SUBMITTED
-  BDI_APPROVED
-  BDI_REVISION_REQUESTED
-  SIGNATORY_INVITED
-  SIGNATORY_APPROVED
-  SIGNATORY_REVISION_REQUESTED
-  FINAL_APPROVED
-  FINAL_REVISION_REQUESTED
+/// sheet `activation_key` — แทน Invitation เดิม
+///
+/// key_hash = HMAC-SHA-256(server_secret, raw_activation_key)  (ตามภาพใน sheet)
+/// raw key = อย่างน้อย 32 random bytes เข้ารหัส URL-safe Base64
+///
+/// _index ระบุ schema `iam` ส่วน SQL ในตัว sheet เขียน `organization.activation_key`
+/// → ยึดตาม _index
+model ActivationKey {
+  id String @id @default(uuid()) @db.Uuid
+
+  userAccountId String      @map("user_account_id") @db.Uuid
+  userAccount   UserAccount @relation(fields: [userAccountId], references: [id], onDelete: Cascade)
+
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  roleId String @map("role_id") @db.Uuid
+  role   Role   @relation(fields: [roleId], references: [id])
+
+  keyHash String              @map("key_hash") @db.VarChar(255)
+  status  ActivationKeyStatus @default(ISSUED)
+
+  issuedAt      DateTime  @default(now()) @map("issued_at") @db.Timestamptz(6)
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt        DateTime? @map("used_at") @db.Timestamptz(6)
+  revokedAt     DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokedBy     String?   @map("revoked_by") @db.Uuid
+  revokedReason String?   @map("revoked_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  /// uq_active_activation_key — one usable key per user, organization, and role
+  /// partial index (WHERE status = 'ISSUED') เพิ่มมือใน migration
+  @@index([keyHash])
+  @@index([userAccountId, organizationId, roleId])
+  @@map("activation_key")
+  @@schema("iam")
 }
 
-// ── Journey C — ขอลงทะเบียนชุดข้อมูล (docs/01-user-journey.md §4) ──────────
+/// sheet `user_role_assignment` — แทน User.roles: Role[] เดิม
+///
+/// assignment ใช้งานได้เมื่อ:
+///   status = 'ACTIVE' AND (effective_until IS NULL OR effective_until > CURRENT_TIMESTAMP)
+/// derived status: REVOKED → REVOKED · เลย effective_until → EXPIRED · นอกนั้น ACTIVE
+model UserRoleAssignment {
+  id String @id @default(uuid()) @db.Uuid
 
-/// ลำดับสถานะตาม docs/01-user-journey.md §4.2
-enum DatasetRequestStatus {
-  DRAFT
-  PENDING_OFFICER_REVIEW /// ด่าน 1 — BDI Officer ตรวจเบื้องต้น
-  PENDING_ORG_APPROVER /// ด่าน 2 — ผู้มีอำนาจของหน่วยงาน
-  PENDING_OFFICER_FINAL_CHECK /// §4.5 ข้อ 4 — BDI Officer ตรวจซ้ำ
-  PENDING_BDI_APPROVAL /// ด่าน 3 — ผู้อนุมัติ BDI
-  NEEDS_REVISION
-  APPROVED
-  REJECTED
-}
+  userAccountId String      @map("user_account_id") @db.Uuid
+  userAccount   UserAccount @relation(fields: [userAccountId], references: [id], onDelete: Cascade)
 
-enum DatasetRequestEventType {
-  CREATED
-  SUBMITTED
-  SPECIALIST_ASSIGNED
-  SPECIALIST_UNASSIGNED
-  SPECIALIST_COMMENTED /// บันทึกความเห็นโดยไม่เปลี่ยนสถานะ
-  SPECIALIST_REVISION_REQUESTED
-  OFFICER_FORWARDED
-  OFFICER_REVISION_REQUESTED
-  ORG_APPROVER_SIGNED
-  ORG_APPROVER_REVISION_REQUESTED
-  OFFICER_CONFIRMED
-  OFFICER_FINAL_REVISION_REQUESTED
-  BDI_APPROVED
-  BDI_REJECTED
-  BDI_REVISION_REQUESTED
-}
-
-enum DatasetAttachmentKind {
-  DATA_DICTIONARY /// พจนานุกรมข้อมูล (บังคับ)
-  EXAMPLE_DATA /// ตัวอย่างข้อมูล (ถ้ามี)
-  GENERATED_FORM /// PDF ที่ระบบสร้าง
-}
-
-enum DatasetType {
-  RECORD
-  STATISTIC
-  GEOGRAPHIC
-  MULTIMEDIA
-  OTHER
-}
-
-enum DatasetCategory {
-  ECONOMY_FINANCE
-  AGRICULTURE
-  HEALTH
-  EDUCATION
-  TRANSPORT
-  ENERGY
-  ENVIRONMENT
-  SOCIETY
-  PUBLIC_SAFETY
-  SCIENCE_TECH
-  TOURISM_SPORT
-  GOVERNMENT
-}
-
-enum UpdateFrequency {
-  REAL_TIME
-  DAILY
-  WEEKLY
-  MONTHLY
-  QUARTERLY
-  BIANNUAL
-  YEARLY
-  AS_NEEDED
-}
-
-enum GeoCoverage {
-  NATIONAL
-  REGIONAL
-  PROVINCIAL
-  DISTRICT
-  OTHER
-}
-
-enum DeliveryMethod {
-  API
-  SFTP
-  DATABASE
-  FILE_UPLOAD
-  OTHER
-}
-
-enum DataFormat {
-  CSV
-  JSON
-  XLSX
-  XML
-  PARQUET
-  SHAPEFILE
-  OTHER
-}
-
-enum DataClassification {
-  PUBLIC
-  INTERNAL
-  CONFIDENTIAL
-  SECRET
-}
-
-enum LicenseType {
-  OPEN_GOVERNMENT
-  CC_BY
-  CC_BY_SA
-  CC_BY_NC
-  INTERNAL_ONLY
-  OTHER
-}
-
-/// ชนิดของ in-app notification — คู่กับอีเมลแต่ละฉบับใน §5
-enum NotificationType {
-  DATASET_SUBMITTED
-  DATASET_REVISION_REQUESTED
-  DATASET_SPECIALIST_ASSIGNED
-  DATASET_PENDING_ORG_APPROVER
-  DATASET_PENDING_FINAL_CHECK
-  DATASET_PENDING_BDI_APPROVAL
-  DATASET_APPROVED
-  DATASET_REJECTED
-  DATASET_COMMENTED
-}
-
-/// ประเภทการกระทำใน audit log (§4.9)
-enum ActivityAction {
-  CREATE
-  UPDATE
-  SUBMIT
-  REVIEW
-  APPROVE
-  REJECT
-  RETURN_FOR_REVISION
-  ASSIGN
-  DELETE
-  DOWNLOAD
-}
-
-// ---------------------------------------------------------------- models
-
-model User {
-  id           String     @id @default(uuid())
-  email        String     @unique
-  passwordHash String?
-  prefix       String?
-  firstName    String?
-  lastName     String?
-  phone        String?
-  roles        Role[]
-  status       UserStatus @default(INVITED)
-
-  emailVerifiedAt DateTime?
-  lastLoginAt     DateTime?
-
-  /// หน่วยงานที่ผู้ใช้สังกัด — null สำหรับเจ้าหน้าที่ BDI
-  organizationId String?
-  organization   Organization? @relation("OrganizationMembers", fields: [organizationId], references: [id], onDelete: SetNull)
-
-  createdOrganizations Organization[]      @relation("OrganizationCreator")
-  invitationsSent      Invitation[]        @relation("InvitationInviter")
-  events               OrganizationEvent[]
-  attachments          Attachment[]
-
-  datasetRequests    DatasetRequest[]      @relation("DatasetRequestCreator")
-  assignedDatasets   DatasetRequest[]      @relation("DatasetRequestSpecialist")
-  datasetEvents      DatasetRequestEvent[]
-  datasetAttachments DatasetAttachment[]
-  notifications      Notification[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([organizationId])
-  @@map("users")
-}
-
-model Invitation {
-  id     String           @id @default(uuid())
-  email  String
-  role   Role
-  status InvitationStatus @default(PENDING)
-
-  /// เก็บเฉพาะ hash ของ token — ตัวจริงอยู่ในอีเมลเท่านั้น
-  tokenHash String   @unique
-  expiresAt DateTime
-
-  /// ผูกกับหน่วยงานเมื่อเป็นการเชิญผู้มีอำนาจกระทำการแทน
-  organizationId String?
+  /// Conditional — NULL สำหรับ role ที่ไม่ผูกกับหน่วยงาน (BDI, SYSTEM)
+  organizationId String?       @map("organization_id") @db.Uuid
   organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  invitedById String?
-  invitedBy   User?   @relation("InvitationInviter", fields: [invitedById], references: [id], onDelete: SetNull)
+  roleId String @map("role_id") @db.Uuid
+  role   Role   @relation(fields: [roleId], references: [id])
 
-  acceptedAt DateTime?
-  createdAt  DateTime  @default(now())
+  effectiveFrom  DateTime  @default(now()) @map("effective_from") @db.Timestamptz(6)
+  effectiveUntil DateTime? @map("effective_until") @db.Timestamptz(6)
 
-  @@index([email, status])
-  @@map("invitations")
+  status           RoleAssignmentStatus @default(ACTIVE)
+  revokedBy        String?              @map("revoked_by") @db.Uuid
+  revokedAt        DateTime?            @map("revoked_at") @db.Timestamptz(6)
+  revocationReason String?              @map("revocation_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  @@index([userAccountId, status])
+  @@index([organizationId, roleId, status])
+  @@map("user_role_assignment")
+  @@schema("iam")
 }
 
+/// เบี่ยงจากดีไซน์: ไม่มีใน Excel — ดู enum OtpPurpose
 model OtpCode {
-  id       String     @id @default(uuid())
-  email    String
-  codeHash String
+  id       String     @id @default(uuid()) @db.Uuid
+  email    String     @db.VarChar(255)
+  codeHash String     @map("code_hash")
   purpose  OtpPurpose @default(REGISTRATION)
 
   attempts   Int       @default(0)
-  expiresAt  DateTime
-  consumedAt DateTime?
-  createdAt  DateTime  @default(now())
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([email, purpose])
-  @@map("otp_codes")
+  @@map("otp_code")
+  @@schema("iam")
 }
 
+// ══════════════════════════════════════════════════════════ organization
+
+/// sheet `organization` — ตารางสถานะท้าย sheet
+enum OrganizationStatus {
+  PENDING_REGISTRATION /// มี record แล้ว แต่กระบวนการลงทะเบียนยังไม่เสร็จ
+  ACTIVE /// ลงทะเบียนและอนุมัติครบแล้ว ใช้งานระบบได้
+  SUSPENDED /// ระงับชั่วคราว เปิดกลับมาได้
+  INACTIVE /// เลิกใช้งานหรือถูกปิดถาวรในเชิงธุรกิจ
+
+  @@schema("organization")
+}
+
+/// หน่วยงานที่ลงทะเบียนในระบบ — sheet `organization`
+/// เก็บ **สถานะปัจจุบัน** ส่วน snapshot ของคำขออยู่ที่ OrganizationRegistrationRequest
 model Organization {
-  id     String             @id @default(uuid())
-  status OrganizationStatus @default(DRAFT)
+  id String @id @default(uuid()) @db.Uuid
 
-  // ── ส่วนที่ 1: ข้อมูลหน่วยงาน ──────────────────────────────
-  name        String
-  addressLine String?
-  province    String?
-  district    String? /// อำเภอ/เขต
-  subdistrict String? /// ตำบล/แขวง
-  postalCode  String?
-  email       String?
+  /// Self-reference hierarchy
+  parentOrganizationId String?        @map("parent_organization_id") @db.Uuid
+  parentOrganization   Organization?  @relation("OrganizationHierarchy", fields: [parentOrganizationId], references: [id], onDelete: SetNull)
+  childOrganizations   Organization[] @relation("OrganizationHierarchy")
 
-  // ── ส่วนที่ 2: ผู้มีอำนาจกระทำการแทน ────────────────────────
-  signatoryPrefix     String?
-  signatoryFirstName  String?
-  signatoryLastName   String?
-  signatoryPosition   String?
-  signatoryEmail      String?
-  /// เลขบัตรประชาชน 13 หลัก — ตรวจ checksum ก่อนบันทึก
-  signatoryNationalId String?
-  signatoryPhone      String?
+  /// Government or legal registration number
+  /// sheet ถามไว้เอง: "ปรึกษาพี่แก้ว มีรหัสหน่วยงานไหม ??" — ระหว่างรอคำตอบระบบออกให้เป็น ORG-<ปี>-<ลำดับ>
+  organizationCode String  @unique @map("organization_code") @db.VarChar(64)
+  /// Organization classification — sheet ถามไว้เอง: "ต้องการเก็บประเภทหน่วยงานแบบไหนบ้าง ?"
+  /// ยังเป็น TO REVIEW จึงเก็บเป็น VARCHAR ไม่ผูก enum
+  organizationType String? @map("organization_type") @db.VarChar(64)
 
-  // ── ส่วนที่ 3: ผู้กรอกข้อมูล ────────────────────────────────
-  contactPrefix     String?
-  contactFirstName  String?
-  contactLastName   String?
-  contactPosition   String?
-  contactDepartment String? /// ฝ่าย/กอง/สำนัก
-  contactEmail      String?
-  contactPhone      String?
+  nameTh String  @map("name_th") @db.VarChar(255)
+  nameEn String? @map("name_en") @db.VarChar(255)
 
-  // ── การดำเนินงาน ────────────────────────────────────────────
-  /// ข้อความจากผู้ตรวจเมื่อสถานะเป็น NEEDS_REVISION
-  revisionNote String?
-  submittedAt  DateTime?
-  activatedAt  DateTime?
+  status OrganizationStatus @default(PENDING_REGISTRATION)
 
-  createdById String
-  createdBy   User   @relation("OrganizationCreator", fields: [createdById], references: [id])
+  addressLine     String? @map("address_line") @db.VarChar(500)
+  subDistrictCode String? @map("sub_district_code") @db.VarChar(16)
+  districtCode    String? @map("district_code") @db.VarChar(16)
+  provinceCode    String? @map("province_code") @db.VarChar(16)
+  postalCode      String? @map("postal_code") @db.VarChar(16)
+  phone           String? @db.VarChar(32)
+  email           String? @db.VarChar(255)
+  websiteUrl      String? @map("website_url") @db.VarChar(500)
 
-  members         User[]              @relation("OrganizationMembers")
-  attachments     Attachment[]
-  events          OrganizationEvent[]
-  invitations     Invitation[]
-  datasetRequests DatasetRequest[]
+  activatedAt      DateTime? @map("activated_at") @db.Timestamptz(6)
+  activatedBy      String?   @map("activated_by") @db.Uuid
+  suspendedAt      DateTime? @map("suspended_at") @db.Timestamptz(6)
+  suspendedBy      String?   @map("suspended_by") @db.Uuid
+  suspensionReason String?   @map("suspension_reason")
+  deactivatedAt    DateTime? @map("deactivated_at") @db.Timestamptz(6)
+  deactivatedBy    String?   @map("deactivated_by") @db.Uuid
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  registrationRequests  OrganizationRegistrationRequest[]
+  datasetRequests       DatasetRegistrationRequest[]
+  datasets              Dataset[]
+  activationKeys        ActivationKey[]
+  roleAssignments       UserRoleAssignment[]
+  legalAcceptances      LegalAcceptance[]
+  signatures            SignatureConfirmation[]
+  notifications         Notification[]
+  integrationOperations IntegrationOperation[]
 
   @@index([status])
-  @@index([createdById])
-  @@map("organizations")
+  @@index([provinceCode])
+  @@map("organization")
+  @@schema("organization")
 }
 
-model Attachment {
-  id   String         @id @default(uuid())
-  kind AttachmentKind
+// ════════════════════════════════════════════════════════════════ review
 
-  /// object key ใน MinIO
-  objectKey String
-  filename  String
-  mimeType  String
-  sizeBytes Int
+/// ประเภทคำขอที่อ้างถึงแบบ polymorphic
+/// ใช้ร่วมกันใน review_task · legal_acceptance · signature_confirmation · attachment
+/// DATASET_REQUEST (Journey D) ยังไม่มีตาราง แต่ค่าถูกกำหนดไว้ล่วงหน้าแล้วใน Excel
+enum SubjectType {
+  ORGANIZATION_REGISTRATION_REQUEST
+  DATASET_REGISTRATION_REQUEST
+  DATASET_REQUEST
 
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  uploadedById String?
-  uploadedBy   User?   @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-
-  @@index([organizationId, kind])
-  @@map("attachments")
+  @@schema("review")
 }
 
-/// ประวัติทุกการเปลี่ยนสถานะ ใช้แสดง timeline และตรวจสอบย้อนหลัง
-model OrganizationEvent {
-  id   String                @id @default(uuid())
-  type OrganizationEventType
+/// สถานะคำขอ — ชุดเดียวกันทั้ง org_registration_request และ dataset_registration_request
+enum RequestStatus {
+  DRAFT /// ผู้ใช้กำลังกรอกคำขอ ยังไม่ส่ง
+  SUBMITTED /// ส่งแล้ว รอผู้รับผิดชอบเริ่มตรวจ
+  UNDER_REVIEW /// ผู้รับผิดชอบเริ่มเปิดตรวจหรือดำเนินการแล้ว
+  RETURNED /// ส่งกลับให้ Organization User แก้ไข
+  APPROVED /// ผ่านการอนุมัติครบทุกขั้นตอน
+  REJECTED /// ถูกปฏิเสธและ workflow สิ้นสุด
+  CANCELLED /// ถูกยกเลิกก่อน workflow สิ้นสุด
 
-  fromStatus OrganizationStatus?
-  toStatus   OrganizationStatus?
-  note       String?
-
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  actorId String?
-  actor   User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-
-  @@index([organizationId, createdAt])
-  @@map("organization_events")
+  @@schema("review")
 }
 
-// ---------------------------------------------- Journey C — ชุดข้อมูล
+/// sheet `review_task` — คอลัมน์ task_type (ภาพ "action_type" ใน sheet)
+/// `BDI_FINAL_APPROVEAL` ในเซลล์เป็นคำสะกดผิด — ภาพ allowed-result ใน sheet เดียวกัน
+/// เขียน BDI_FINAL_APPROVAL จึงยึดตามภาพ
+enum ReviewTaskType {
+  BDI_OFFICER_REVIEW /// การตรวจสอบโดย BDI Officer
+  DATASET_SPECIALIST_REVIEW /// การตรวจสอบโดย BDI Dataset Specialist
+  ORGANIZATION_APPROVAL /// การพิจารณาโดยผู้มีอำนาจของหน่วยงาน
+  BDI_FINAL_APPROVAL /// การอนุมัติขั้นสุดท้ายโดย BDI
+  ORGANIZATION_REVISION /// ช่วงที่หน่วยงานกำลังแก้ไขข้อมูลตามที่ถูก Return
 
-/**
- * คำขอลงทะเบียนชุดข้อมูลหนึ่งฉบับ
- * ทุกฟิลด์ของแบบฟอร์มเป็น optional ในระดับฐานข้อมูล เพราะร่างต้องบันทึกได้ทั้งที่ยังกรอกไม่ครบ
- * ความครบถ้วนบังคับตอนนำส่งด้วย zod ใน routes/dataset-requests.ts (แบบเดียวกับ Organization)
- */
-model DatasetRequest {
-  id     String               @id @default(uuid())
-  status DatasetRequestStatus @default(DRAFT)
+  @@schema("review")
+}
 
-  /// เลขที่คำขอที่ผู้ใช้อ้างถึง เช่น DR-2026-0001 — ออกให้ตอนสร้างร่าง
-  requestNumber String @unique
+enum AssignmentSource {
+  SYSTEM
+  MANUAL
+  JIRA
 
-  // ── ส่วนที่ 1: metadata ─────────────────────────────────────
-  nameTh           String?
-  nameEn           String?
-  description      String?
-  datasetType      DatasetType?
-  category         DatasetCategory?
-  keywords         String[]         @default([])
-  updateFrequency  UpdateFrequency?
-  geoCoverage      GeoCoverage?
-  dataStartDate    DateTime?
-  dataEndDate      DateTime?
-  estimatedRecords Int?
-  stewardName      String? /// ผู้ประสานงานชุดข้อมูล
-  stewardEmail     String?
-  stewardPhone     String?
+  @@schema("review")
+}
 
-  // ── ส่วนที่ 2: วิธีการนำส่ง ────────────────────────────────────
-  deliveryMethod        DeliveryMethod?
-  dataFormat            DataFormat?
-  deliveryFrequency     UpdateFrequency?
-  deliveryEndpoint      String? /// บังคับเมื่อ deliveryMethod เป็น API/SFTP/DATABASE
-  technicalContactName  String?
-  technicalContactEmail String?
-  deliveryNote          String?
+/// sheet `review_task` — ตารางสถานะท้าย sheet
+enum ReviewTaskStatus {
+  PENDING /// สร้างและมอบหมายแล้ว ยังไม่เริ่ม — active, ยังไม่มี result
+  IN_PROGRESS /// เริ่มตรวจสอบหรือพิจารณาแล้ว — active, ยังไม่มี result
+  COMPLETED /// ดำเนินการเสร็จและบันทึกผลแล้ว — ไม่ active, มี result
+  CANCELLED /// ถูกยกเลิกโดยไม่เกิดผล — ไม่ active, ไม่มี result
+  REASSIGNED /// ปิดเพราะเปลี่ยนผู้รับมอบหมาย และมี task ใหม่รับช่วง
 
-  // ── ส่วนที่ 3: เงื่อนไขทางกฎหมาย ───────────────────────────────
-  dataClassification  DataClassification?
-  hasPersonalData     Boolean?
-  personalDataMeasure String?
-  legalBasis          String?
-  licenseType         LicenseType?
-  usageRestriction    String?
-  /// การกดยอมรับเงื่อนไข (LEGAL_ACCEPTANCE ใน ER-diagram ของ Notion)
-  legalAcceptedAt     DateTime?
-  legalAcceptedById   String?
+  @@schema("review")
+}
 
-  // ── การดำเนินงาน ────────────────────────────────────────────
-  /// ข้อความจากผู้ตรวจเมื่อสถานะเป็น NEEDS_REVISION
-  revisionNote String?
-  submittedAt  DateTime?
+/// sheet `review_task` — คอลัมน์ result (ภาพ "result" ใน sheet)
+/// ค่าที่อนุญาตขึ้นกับ task_type:
+///   BDI_OFFICER_REVIEW        → PASSED, RETURNED, REJECTED, CONFIRMED
+///   DATASET_SPECIALIST_REVIEW → PASSED, RETURNED, REJECTED, CONFIRMED
+///   ORGANIZATION_APPROVAL     → APPROVED, RETURNED, REJECTED
+///   BDI_FINAL_APPROVAL        → APPROVED, RETURNED, REJECTED
+///   ORGANIZATION_REVISION     → COMPLETED หรือ CONFIRMED
+/// บังคับที่ชั้นแอปใน lib/workflow.ts
+enum ReviewResult {
+  PASSED /// Review ผ่าน สามารถไปขั้นตอนถัดไป
+  APPROVED /// Approver อนุมัติ
+  RETURNED /// ส่งกลับเพื่อแก้ไข — ต้องมี result_comment เสมอ
+  REJECTED /// ไม่อนุมัติหรือยุติคำขอ — ต้องมี result_comment เสมอ
+  CONFIRMED /// ยืนยันการตรวจสอบหรือการดำเนินการ โดยไม่ถือเป็น Approval
+  COMPLETED /// ใช้กับ ORGANIZATION_REVISION
 
-  /**
-   * ผู้ลงนาม/ผู้ตัดสินใจเก็บทั้ง id และชื่อ ณ เวลานั้น เพราะ PDF ฉบับอนุมัติต้องพิมพ์ชื่อได้
-   * เหมือนตอนลงนามแม้ผู้ใช้จะเปลี่ยนชื่อภายหลัง (เหตุผลเดียวกับ ActivityLog)
-   */
-  orgApproverSignedAt   DateTime?
-  orgApproverSignedById String?
-  orgApproverSignedName String?
+  @@schema("review")
+}
 
-  approvedAt      DateTime?
-  approvedById    String?
-  approvedByName  String?
-  rejectedAt      DateTime?
-  rejectedById    String?
-  rejectedByName  String?
-  rejectionReason String?
+/// sheet `review_task` — คอลัมน์ comment_visibility
+enum CommentVisibility {
+  ORGANIZATION /// Organization User และ Organization Approver เห็นได้
+  BDI_INTERNAL /// แสดงเฉพาะผู้ใช้งานภายใน BDI
+  ALL /// แสดงได้ทั้ง Organization และ BDI
 
-  organizationId String
+  @@schema("review")
+}
+
+/// ขั้นตอน Review หรือ Approval หนึ่งขั้นของคำขอหนึ่งฉบับ — sheet `review_task`
+///
+/// ตารางนี้คือแกนกลางของ workflow: request.status เหลือ 7 ค่าหยาบ ๆ
+/// ส่วน "อยู่ด่านไหน ใครถือ" อยู่ที่นี่ ความสัมพันธ์ตามภาพใน sheet org_registration_request:
+///   DRAFT        → ยังไม่มี active task
+///   SUBMITTED    → active task เป็น PENDING
+///   UNDER_REVIEW → active task เป็น IN_PROGRESS
+///   RETURNED     → task ล่าสุด COMPLETED + result = RETURNED
+///   APPROVED     → final approval task COMPLETED + result = APPROVED
+///   REJECTED     → task ล่าสุด COMPLETED + result = REJECTED
+///   CANCELLED    → ไม่มี active task หรือ active task ถูก CANCELLED
+///
+/// หนึ่ง Request มี Active Task ได้ไม่เกินหนึ่งรายการ — partial unique index ใน migration
+model ReviewTask {
+  id String @id @default(uuid()) @db.Uuid
+
+  subjectType SubjectType @map("subject_type")
+  /// Logical reference ไปยัง request ที่เกี่ยวข้อง — ไม่ใช่ FK จริงเพราะ polymorphic
+  subjectId   String      @map("subject_id") @db.Uuid
+
+  taskType       ReviewTaskType @map("task_type")
+  /// ลำดับของ action ภายในคำขอ
+  sequenceNumber Int            @map("sequence_number")
+  /// รอบการดำเนินการของ task_type เดียวกัน เริ่มต้นที่ 1
+  /// ด่าน "BDI Officer ตรวจซ้ำ" เดิม = BDI_OFFICER_REVIEW round 2 + result CONFIRMED
+  roundNumber    Int            @default(1) @map("round_number")
+
+  assignedUserId String      @map("assigned_user_id") @db.Uuid
+  assignedUser   UserAccount @relation("ReviewTaskAssignee", fields: [assignedUserId], references: [id])
+
+  /// Role ที่ผู้รับมอบหมายใช้ดำเนินการใน task นี้ — เก็บ role.code ณ เวลานั้น
+  assignedRole String @map("assigned_role") @db.VarChar(64)
+
+  /// NULL ได้เมื่อระบบเป็นผู้สร้างอัตโนมัติ
+  assignedById String?      @map("assigned_by") @db.Uuid
+  assignedBy   UserAccount? @relation("ReviewTaskAssigner", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  assignmentSource AssignmentSource @map("assignment_source")
+
+  status ReviewTaskStatus @default(PENDING)
+  result ReviewResult?
+
+  /// result IN ('RETURNED', 'REJECTED') ต้องมี result_comment เสมอ
+  resultComment    String? @map("result_comment")
+  /// รายละเอียดผลแบบ structured สำหรับ checklist เฉพาะขั้นตอน
+  resultDetailJson Json?   @map("result_detail_json")
+
+  commentVisibility CommentVisibility? @map("comment_visibility")
+
+  /// Self-FK ไปยัง task เดิม กรณีเกิดการ reassign
+  reassignedFromTaskId String?      @map("reassigned_from_action_id") @db.Uuid
+  reassignedFromTask   ReviewTask?  @relation("ReviewTaskReassignment", fields: [reassignedFromTaskId], references: [id], onDelete: SetNull)
+  reassignedToTasks    ReviewTask[] @relation("ReviewTaskReassignment")
+
+  assignedAt  DateTime  @default(now()) @map("assigned_at") @db.Timestamptz(6)
+  startedAt   DateTime? @map("started_at") @db.Timestamptz(6)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+  dueAt       DateTime? @map("due_at") @db.Timestamptz(6)
+
+  cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancelledBy        String?   @map("cancelled_by") @db.Uuid
+  cancellationReason String?   @map("cancellation_reason") @db.VarChar(500)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  legalAcceptances LegalAcceptance[]
+  signatures       SignatureConfirmation[]
+
+  @@index([subjectType, subjectId, sequenceNumber])
+  @@index([assignedUserId, status])
+  @@index([status, taskType])
+  @@map("review_task")
+  @@schema("review")
+}
+
+// ═══════════════════════════════════════════════════ organization request
+
+/// คำขอลงทะเบียนหน่วยงานหนึ่งฉบับ — sheet `org_registration_request`
+///
+/// ทุกฟิลด์ snapshot เป็น optional ในระดับฐานข้อมูล เพราะร่างต้องบันทึกได้ทั้งที่ยังกรอกไม่ครบ
+/// ความครบถ้วนบังคับตอนนำส่งด้วย zod
+model OrganizationRegistrationRequest {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Business reference เช่น ORG-REG-2026-0001
+  /// (format จากตัวอย่าง payload ใน sheet signature_confirmation)
+  requestNumber String @unique @map("request_number") @db.VarChar(64)
+
+  organizationId String       @map("organization_id") @db.Uuid
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  createdById String
-  createdBy   User   @relation("DatasetRequestCreator", fields: [createdById], references: [id])
+  status RequestStatus @default(DRAFT)
 
-  /// ผู้เชี่ยวชาญที่ BDI Officer มอบหมาย (ไม่บังคับ ตามสเปกข้อ 2)
-  assignedSpecialistId String?
-  assignedSpecialist   User?     @relation("DatasetRequestSpecialist", fields: [assignedSpecialistId], references: [id], onDelete: SetNull)
-  assignedAt           DateTime?
+  // ── snapshot ข้อมูลหน่วยงาน ────────────────────────────────────
+  organizationCode            String? @map("organization_code") @db.VarChar(64)
+  organizationType            String? @map("organization_type") @db.VarChar(64)
+  organizationNameTh          String? @map("organization_name_th") @db.VarChar(255)
+  organizationNameEn          String? @map("organization_name_en") @db.VarChar(255)
+  organizationAddressLine     String? @map("organization_address_line") @db.VarChar(500)
+  organizationSubdistrictCode String? @map("organization_subdistrict_code") @db.VarChar(16)
+  organizationDistrictCode    String? @map("organization_district_code") @db.VarChar(16)
+  organizationProvinceCode    String? @map("organization_province_code") @db.VarChar(16)
+  organizationPostalCode      String? @map("organization_postal_code") @db.VarChar(16)
+  organizationPhone           String? @map("organization_phone") @db.VarChar(32)
+  organizationEmail           String? @map("organization_email") @db.VarChar(255)
+  organizationWebsite         String? @map("organization_website") @db.VarChar(500)
 
-  attachments DatasetAttachment[]
-  events      DatasetRequestEvent[]
+  // ── snapshot ผู้มีอำนาจกระทำการแทน ─────────────────────────────
+  approverCid          String? @map("approver_cid") @db.VarChar(13)
+  approverPrefixTh     String? @map("approver_prefix_th") @db.VarChar(64)
+  approverFirstnameTh  String? @map("approver_firstname_th") @db.VarChar(255)
+  approverLastnameTh   String? @map("approver_lastname_th") @db.VarChar(255)
+  approverEmail        String? @map("approver_email") @db.VarChar(255)
+  approverPhoneNumber  String? @map("approver_phone_number") @db.VarChar(32)
+  approverDepartmentTh String? @map("approver_department_th") @db.VarChar(255)
+  approverPositionTh   String? @map("approver_position_th") @db.VarChar(255)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // ── snapshot ผู้ดำเนินการของหน่วยงาน ───────────────────────────
+  userCid          String? @map("user_cid") @db.VarChar(13)
+  userPrefixTh     String? @map("user_prefix_th") @db.VarChar(64)
+  userFirstnameTh  String? @map("user_firstname_th") @db.VarChar(255)
+  userLastnameTh   String? @map("user_lastname_th") @db.VarChar(255)
+  userEmail        String? @map("user_email") @db.VarChar(255)
+  userPhoneNumber  String? @map("user_phone_number") @db.VarChar(32)
+  userDepartmentTh String? @map("user_department_th") @db.VarChar(255)
+  userPositionTh   String? @map("user_position_th") @db.VarChar(255)
+
+  /// ข้อมูลอื่น ๆ เพิ่มเติมนอกเหนือ form กำหนด
+  additionalDetailJson Json? @map("additional_detail_json")
+
+  /// คำสั่งแต่งตั้งผู้มีอำนาจกระทำการแทนหน่วยงาน — Required ก่อน submit
+  authorizedRepresentativeAppointmentAttachmentId String?     @map("authorized_representative_appointment_attachment_id") @db.Uuid
+  authorizedRepresentativeAppointmentAttachment   Attachment? @relation("OrgRequestAppointmentOrder", fields: [authorizedRepresentativeAppointmentAttachmentId], references: [id], onDelete: SetNull)
+
+  /// คำสั่งมอบอำนาจ ถ้ามี
+  powerOfAttorneyAttachmentId String?     @map("power_of_attorney_attachment_id") @db.Uuid
+  powerOfAttorneyAttachment   Attachment? @relation("OrgRequestPowerOfAttorney", fields: [powerOfAttorneyAttachmentId], references: [id], onDelete: SetNull)
+
+  submittedAt        DateTime? @map("submitted_at") @db.Timestamptz(6)
+  approvedAt         DateTime? @map("approved_at") @db.Timestamptz(6)
+  rejectedAt         DateTime? @map("rejected_at") @db.Timestamptz(6)
+  cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancelledBy        String?   @map("cancelled_by") @db.Uuid
+  cancellationReason String?   @map("cancellation_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
 
   @@index([organizationId, status])
   @@index([status])
-  @@index([assignedSpecialistId])
-  @@map("dataset_requests")
+  @@map("organization_registration_request")
+  @@schema("organization")
 }
 
-model DatasetAttachment {
-  id   String                @id @default(uuid())
-  kind DatasetAttachmentKind
+// ════════════════════════════════════════════════════════════ attachment
 
-  /// object key ใน MinIO
-  objectKey String
-  filename  String
-  mimeType  String
-  sizeBytes Int
+/// sheet `attachment` — คอลัมน์ owner_type
+enum AttachmentOwnerType {
+  ORGANIZATION_REGISTRATION_REQUEST
+  DATASET_REGISTRATION_REQUEST
+  DATASET_REQUEST
+  /// เบี่ยงจากดีไซน์: เพิ่มเพราะ legal_document_version.attachment_id ชี้มาที่ตารางนี้
+  /// แต่ Excel ไม่ได้ลิสต์ owner_type สำหรับไฟล์เอกสารกฎหมาย
+  LEGAL_DOCUMENT_VERSION
+  /// เบี่ยงจากดีไซน์: เพิ่มเพราะ dataset.dataset ถือ attachment ต่อจากคำขอที่อนุมัติแล้ว
+  DATASET
 
-  datasetRequestId String
-  datasetRequest   DatasetRequest @relation(fields: [datasetRequestId], references: [id], onDelete: Cascade)
-
-  uploadedById String?
-  uploadedBy   User?   @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-
-  @@index([datasetRequestId, kind])
-  @@map("dataset_attachments")
+  @@schema("attachment")
 }
 
-/// timeline ที่ผู้ใช้เห็น — ทุกการเปลี่ยนสถานะต้องเขียนแถวที่นี่
-model DatasetRequestEvent {
-  id   String                  @id @default(uuid())
-  type DatasetRequestEventType
+/// sheet `attachment` — คอลัมน์ attachment_type
+enum AttachmentType {
+  AUTHORIZED_REPRESENTATIVE_APPOINTMENT_ORDER /// คำสั่งแต่งตั้งผู้มีอำนาจกระทำการแทนหน่วยงาน
+  POWER_OF_ATTORNEY /// คำสั่งมอบอำนาจ
+  DATA_DICTIONARY /// พจนานุกรมข้อมูล
+  EXAMPLE_DATA /// ตัวอย่างข้อมูล
+  /// เบี่ยงจากดีไซน์: เพิ่มสองค่า — Excel ลิสต์แค่สี่ค่าข้างบน
+  /// GENERATED_FORM = PDF ที่ระบบสร้างจาก template (ของเดิมมี ระบบยังต้องใช้)
+  /// LEGAL_DOCUMENT = ไฟล์เอกสารกฎหมายที่ legal_document_version อ้างถึง
+  GENERATED_FORM
+  LEGAL_DOCUMENT
 
-  fromStatus DatasetRequestStatus?
-  toStatus   DatasetRequestStatus?
-  note       String?
-
-  datasetRequestId String
-  datasetRequest   DatasetRequest @relation(fields: [datasetRequestId], references: [id], onDelete: Cascade)
-
-  actorId String?
-  actor   User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-
-  @@index([datasetRequestId, createdAt])
-  @@map("dataset_request_events")
+  @@schema("attachment")
 }
 
-/**
- * การแจ้งเตือนในระบบ — สเปกระบุว่าไม่ต้อง real time
- * หน้าเว็บ fetch ตอนโหลดหน้าใหม่ก็พอ จึงไม่มี websocket/SSE
- */
+/// sheet `attachment` — ตารางสถานะท้าย sheet
+enum AttachmentStatus {
+  ACTIVE /// ไฟล์ปัจจุบันของตำแหน่งเอกสารนั้น — ใช้ได้เมื่อ scan_status = CLEAN
+  REPLACED /// เคยเป็นไฟล์ปัจจุบัน แต่ถูกไฟล์ใหม่แทนที่แล้ว
+  DELETED /// ถูกลบออกจากการใช้งานเชิงธุรกิจ
+
+  @@schema("attachment")
+}
+
+/// sheet `attachment` — คอลัมน์ scan_status (sheet เขียนกำกับว่า "น่าจะยังไม่มี")
+enum ScanStatus {
+  PENDING /// อัปโหลดแล้ว แต่ยังไม่ได้ตรวจ หรือกำลังรอตรวจ
+  CLEAN /// สแกนแล้ว ไม่พบภัยคุกคาม
+  REJECTED /// ไม่ผ่าน validation หรือไม่อนุญาตให้เก็บ
+  QUARANTINED /// ถูกแยกไปพื้นที่กักกันเพื่อรอตรวจสอบเพิ่มเติม
+
+  @@schema("attachment")
+}
+
+/// ไฟล์แนบทุกชนิดในระบบ — sheet `attachment`
+/// รวม attachments + dataset_attachments เดิมเป็นตารางเดียวแบบ polymorphic
+///
+/// storage_key convention (ภาพใน sheet):
+///   {environment}/{owner_type}/{owner_id}/{attachment_type}/{attachment_id}/{stored_file_name}
+/// attachment_id อยู่ใน path เพื่อให้อัปโหลดทับไม่ต้อง overwrite object เดิม
+/// ไฟล์เก่าเปลี่ยนเป็น status = REPLACED และยังอ่านย้อนหลังได้
+///
+/// หนึ่ง slot (owner_type, owner_id, attachment_type) มี ACTIVE ได้แถวเดียว
+/// — partial unique index ใน migration
+model Attachment {
+  id String @id @default(uuid()) @db.Uuid
+
+  ownerType AttachmentOwnerType @map("owner_type")
+  /// Logical reference — ไม่ใช่ FK จริงเพราะ polymorphic
+  ownerId   String              @map("owner_id") @db.Uuid
+
+  attachmentType AttachmentType @map("attachment_type")
+
+  originalFileName String  @map("original_file_name") @db.VarChar(500)
+  storageBucket    String  @map("storage_bucket") @db.VarChar(128)
+  storageKey       String  @map("storage_key") @db.VarChar(1024)
+  mimeType         String  @map("mime_type") @db.VarChar(255)
+  /// Normalized extension เช่น pdf, xlsx
+  fileExtension    String? @map("file_extension") @db.VarChar(32)
+  fileSizeBytes    BigInt  @map("file_size_bytes")
+  /// SHA-256 ของไฟล์ — ตรวจว่าอ่านไม่เสียหาย ไม่ถูกเปลี่ยน ไม่ถูกแทนที่โดยไม่ผ่านระบบ
+  contentHash      String  @map("content_hash") @db.VarChar(128)
+
+  status AttachmentStatus @default(ACTIVE)
+
+  replacedAttachmentId String?     @unique @map("replaced_attachment_id") @db.Uuid
+  replacedAttachment   Attachment? @relation("AttachmentReplacement", fields: [replacedAttachmentId], references: [id], onDelete: SetNull)
+  replacedByAttachment Attachment? @relation("AttachmentReplacement")
+
+  scanStatus       ScanStatus @default(PENDING) @map("scan_status")
+  scanCompletedAt  DateTime?  @map("scan_completed_at") @db.Timestamptz(6)
+  scanResultDetail Json?      @map("scan_result_detail")
+
+  uploadedAt DateTime @default(now()) @map("uploaded_at") @db.Timestamptz(6)
+  uploadedBy String   @map("uploaded_by") @db.Uuid
+
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+  deletedBy      String?   @map("deleted_by") @db.Uuid
+  deletionReason String?   @map("deletion_reason")
+
+  orgRequestsAsAppointmentOrder OrganizationRegistrationRequest[] @relation("OrgRequestAppointmentOrder")
+  orgRequestsAsPowerOfAttorney  OrganizationRegistrationRequest[] @relation("OrgRequestPowerOfAttorney")
+  datasetRequestsAsDictionary   DatasetRegistrationRequest[]      @relation("DatasetRequestDictionary")
+  datasetRequestsAsExampleData  DatasetRegistrationRequest[]      @relation("DatasetRequestExampleData")
+  datasetsAsDictionary          Dataset[]                         @relation("DatasetDictionary")
+  datasetsAsExampleData         Dataset[]                         @relation("DatasetExampleData")
+  legalDocumentVersions         LegalDocumentVersion[]
+
+  @@index([ownerType, ownerId, attachmentType])
+  @@index([contentHash])
+  @@map("attachment")
+  @@schema("attachment")
+}
+
+// ═══════════════════════════════════════════════════════════════ dataset
+
+/// sheet `dataset` — คอลัมน์ status
+/// sheet เขียนกำกับว่า "ไม่ได้คิดกรณีมีการ update ข้อมูล > ให้สร้างเป็นชุดใหม่ไปเลย"
+/// จึงไม่มี dataset versioning ในเฟสนี้ โดยตั้งใจ
+enum DatasetStatus {
+  ACTIVE
+  INACTIVE
+
+  @@schema("dataset")
+}
+
+/// คำขอลงทะเบียนชุดข้อมูลหนึ่งฉบับ — sheet `dataset_registration_request`
+///
+/// metadata ทั้งหมดอยู่ที่ DatasetRegistrationMetadata (1:1)
+/// Excel มีคอลัมน์ metadata_json มาร์ก Required แต่ note เขียนว่า "แยกอีกตาราง
+/// dataset_registration_metadata" — ขัดกันเอง จึงตัดคอลัมน์นั้นทิ้งและใช้ตารางแยกอย่างเดียว
+model DatasetRegistrationRequest {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Unique business reference เช่น DS-REG-2026-0001
+  requestNumber String @unique @map("request_number") @db.VarChar(64)
+
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  status RequestStatus @default(DRAFT)
+
+  proposedTitle String? @map("proposed_title") @db.VarChar(500)
+
+  dataDictionaryAttachmentId String?     @map("data_dictionary_attachment_id") @db.Uuid
+  dataDictionaryAttachment   Attachment? @relation("DatasetRequestDictionary", fields: [dataDictionaryAttachmentId], references: [id], onDelete: SetNull)
+
+  exampleDataAttachmentId String?     @map("example_data_attachment_id") @db.Uuid
+  exampleDataAttachment   Attachment? @relation("DatasetRequestExampleData", fields: [exampleDataAttachmentId], references: [id], onDelete: SetNull)
+
+  additionalDetailJson Json? @map("additional_detail_json")
+
+  /// FK to dataset หลังอนุมัติ — เติมค่าใน transaction เดียวกับที่สร้าง Dataset
+  createdDatasetId String?  @unique @map("created_dataset_id") @db.Uuid
+  createdDataset   Dataset? @relation("DatasetFromRequest", fields: [createdDatasetId], references: [id], onDelete: SetNull)
+
+  submittedAt        DateTime? @map("submitted_at") @db.Timestamptz(6)
+  approvedAt         DateTime? @map("approved_at") @db.Timestamptz(6)
+  rejectedAt         DateTime? @map("rejected_at") @db.Timestamptz(6)
+  cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancelledBy        String?   @map("cancelled_by") @db.Uuid
+  cancellationReason String?   @map("cancellation_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  metadata        DatasetRegistrationMetadata?
+  sourcedDatasets Dataset[]                    @relation("DatasetSourceRequest")
+
+  @@index([organizationId, status])
+  @@index([status])
+  @@map("dataset_registration_request")
+  @@schema("dataset")
+}
+
+/// Snapshot metadata ที่ผู้ใช้ยื่นในคำขอ — sheet `dataset_registration_metadata`
+///
+/// ฟิลด์ที่ระบบเดิมมีแต่ Excel ไม่มี (keywords, dataset_type, estimated_records,
+/// license_type, legal_basis, personal_data_measure, usage_restriction,
+/// delivery_endpoint, technical_contact_name/email, delivery_note, delivery_frequency)
+/// ทั้งหมดมาจาก docs/01-user-journey.md §4.3 ที่มาร์ก [สมมติฐาน] ไว้ตั้งแต่ต้น
+/// → ยึด Excel เก็บลง additional_metadata_json
+model DatasetRegistrationMetadata {
+  id String @id @default(uuid()) @db.Uuid
+
+  datasetRegistrationRequestId String                     @unique @map("dataset_registration_request_id") @db.Uuid
+  datasetRegistrationRequest   DatasetRegistrationRequest @relation(fields: [datasetRegistrationRequestId], references: [id], onDelete: Cascade)
+
+  titleTh       String? @map("title_th") @db.VarChar(500)
+  titleEn       String? @map("title_en") @db.VarChar(500)
+  descriptionTh String? @map("description_th")
+  descriptionEn String? @map("description_en")
+  /// Purpose of dataset
+  objective     String?
+
+  /// ยัง TO REVIEW ใน Excel จึงเก็บเป็น VARCHAR ไม่ผูก enum
+  datasetCategoryCode String? @map("dataset_category_code") @db.VarChar(64)
+  dataOwnerDepartment String? @map("data_owner_department") @db.VarChar(255)
+
+  contactName  String? @map("contact_name") @db.VarChar(255)
+  contactEmail String? @map("contact_email") @db.VarChar(255)
+  contactPhone String? @map("contact_phone") @db.VarChar(32)
+
+  updateFrequency   String?   @map("update_frequency") @db.VarChar(64)
+  coverageStartDate DateTime? @map("coverage_start_date") @db.Date
+  coverageEndDate   DateTime? @map("coverage_end_date") @db.Date
+  geographicScope   String?   @map("geographic_scope") @db.VarChar(64)
+
+  containsPersonalData  Boolean? @map("contains_personal_data")
+  containsSensitiveData Boolean? @map("contains_sensitive_data")
+  /// Access or disclosure classification
+  accessLevel           String?  @map("access_level") @db.VarChar(64)
+
+  deliveryMethod String? @map("delivery_method") @db.VarChar(64)
+  /// CSV, JSON, API, DATABASE, etc.
+  dataFormat     String? @map("data_format") @db.VarChar(64)
+
+  /// Optional non-core metadata — ที่พักของ 12 ฟิลด์ที่ Excel ตัดออก
+  additionalMetadataJson Json? @map("additional_metadata_json")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  @@map("dataset_registration_metadata")
+  @@schema("dataset")
+}
+
+/// Dataset Master ที่ผ่านการอนุมัติแล้ว — sheet `dataset`
+///
+/// สร้างเมื่อ BDI Final Approver อนุมัติคำขอครั้งแรก ใน transaction เดียว (ภาพใน sheet):
+///   1. ปิด BDI Final Approval Task
+///   2. เปลี่ยน request.status = APPROVED
+///   3. สร้าง dataset
+///   4. copy approved request metadata ไป dataset_metadata
+///   5. copy หรือเชื่อม attachment ที่ได้รับอนุมัติ
+///   6. บันทึก dataset_id กลับใน registration request
+///   7. สร้าง integration operation สำหรับส่ง DII
+///   8. commit
+model Dataset {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Unique business identifier
+  datasetCode String @unique @map("dataset_code") @db.VarChar(64)
+
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  status DatasetStatus @default(ACTIVE)
+
+  dataDictionaryAttachmentId String?     @map("data_dictionary_attachment_id") @db.Uuid
+  dataDictionaryAttachment   Attachment? @relation("DatasetDictionary", fields: [dataDictionaryAttachmentId], references: [id], onDelete: SetNull)
+
+  exampleDataAttachmentId String?     @map("example_data_attachment_id") @db.Uuid
+  exampleDataAttachment   Attachment? @relation("DatasetExampleData", fields: [exampleDataAttachmentId], references: [id], onDelete: SetNull)
+
+  additionalDetailJson Json? @map("additional_detail_json")
+
+  sourceDatasetRegistrationRequestId String                     @map("source_dataset_registration_request_id") @db.Uuid
+  sourceDatasetRegistrationRequest   DatasetRegistrationRequest @relation("DatasetSourceRequest", fields: [sourceDatasetRegistrationRequestId], references: [id])
+
+  activatedAt   DateTime? @map("activated_at") @db.Timestamptz(6)
+  activatedBy   String?   @map("activated_by") @db.Uuid
+  deactivatedAt DateTime? @map("deactivated_at") @db.Timestamptz(6)
+  deactivatedBy String?   @map("deactivated_by") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  metadata            DatasetMetadata?
+  registrationRequest DatasetRegistrationRequest? @relation("DatasetFromRequest")
+
+  @@index([organizationId, status])
+  @@map("dataset")
+  @@schema("dataset")
+}
+
+/// Metadata ปัจจุบันที่ได้รับการอนุมัติและใช้เผยแพร่หรือส่งต่อ DII — sheet `dataset_metadata`
+/// โครงเหมือน DatasetRegistrationMetadata ทุกคอลัมน์ ต่างที่ผูกกับ dataset
+model DatasetMetadata {
+  id String @id @default(uuid()) @db.Uuid
+
+  datasetId String  @unique @map("dataset_id") @db.Uuid
+  dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+  titleTh       String? @map("title_th") @db.VarChar(500)
+  titleEn       String? @map("title_en") @db.VarChar(500)
+  descriptionTh String? @map("description_th")
+  descriptionEn String? @map("description_en")
+  objective     String?
+
+  datasetCategoryCode String? @map("dataset_category_code") @db.VarChar(64)
+  dataOwnerDepartment String? @map("data_owner_department") @db.VarChar(255)
+
+  contactName  String? @map("contact_name") @db.VarChar(255)
+  contactEmail String? @map("contact_email") @db.VarChar(255)
+  contactPhone String? @map("contact_phone") @db.VarChar(32)
+
+  updateFrequency   String?   @map("update_frequency") @db.VarChar(64)
+  coverageStartDate DateTime? @map("coverage_start_date") @db.Date
+  coverageEndDate   DateTime? @map("coverage_end_date") @db.Date
+  geographicScope   String?   @map("geographic_scope") @db.VarChar(64)
+
+  containsPersonalData  Boolean? @map("contains_personal_data")
+  containsSensitiveData Boolean? @map("contains_sensitive_data")
+  accessLevel           String?  @map("access_level") @db.VarChar(64)
+
+  deliveryMethod String? @map("delivery_method") @db.VarChar(64)
+  dataFormat     String? @map("data_format") @db.VarChar(64)
+
+  additionalMetadataJson Json? @map("additional_metadata_json")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  @@map("dataset_metadata")
+  @@schema("dataset")
+}
+
+// ═════════════════════════════════════════════════════════════════ legal
+
+/// sheet `legal_document` — ตารางสถานะท้าย sheet
+enum LegalDocumentStatus {
+  DRAFT /// สร้างประเภทเอกสารไว้แล้ว แต่ยังไม่เปิดใช้งาน — เตรียม version ได้
+  ACTIVE /// กำลังใช้งาน และอาจมี published version ที่ต้องยอมรับ
+  RETIRED /// เลิกใช้แล้ว ไม่ต้องใช้กับธุรกรรมใหม่
+
+  @@schema("legal")
+}
+
+/// sheet `legal_document_version` — ตารางสถานะท้าย sheet
+enum LegalDocumentVersionStatus {
+  DRAFT /// กำลังจัดทำและยังแก้ไขได้ — ยังไม่แสดง
+  PUBLISHED /// เผยแพร่แล้วและพร้อมให้ผู้ใช้ยอมรับ
+  SUPERSEDED /// เคย published แต่มี version ใหม่มาแทน — ไม่ใช้รับ acceptance ใหม่
+  RETIRED /// ยกเลิกการใช้งาน — เก็บไว้เป็นหลักฐานย้อนหลัง
+
+  @@schema("legal")
+}
+
+/// sheet `legal_acceptance` — คอลัมน์ acceptance_method
+enum AcceptanceMethod {
+  CHECKBOX
+  BUTTON
+
+  @@schema("legal")
+}
+
+/// ประเภท/ชุดเอกสารทางกฎหมาย — sheet `legal_document`
+///
+/// document_type และ name_th/name_en ยัง TO REVIEW / TODO ใน Excel
+/// จึงเก็บ document_type เป็น VARCHAR (ค่าตัวอย่าง: TERMS_OF_USE, DATA_SHARING_AGREEMENT,
+/// PERSONAL_DATA_PROTECTION_NOTICE, …)
+model LegalDocument {
+  id String @id @default(uuid()) @db.Uuid
+
+  documentType String @map("document_type") @db.VarChar(64)
+  /// Unique document code — A0, A1, A2, A3, A4
+  documentCode String @unique @map("document_code") @db.VarChar(16)
+
+  nameTh String  @map("name_th") @db.VarChar(500)
+  nameEn String? @map("name_en") @db.VarChar(500)
+
+  /// Flow ที่เอกสารนี้นำไปใช้ เช่น ORGANIZATION_REGISTRATION, DATASET_REGISTRATION, DATASET_REQUEST
+  applicationScope              String  @map("application_scope") @db.VarChar(64)
+  /// ลำดับการแสดงเอกสารภายใน scope
+  displayOrder                  Int     @map("display_order")
+  /// ผู้ใช้ต้องยอมรับเอกสารนี้หรือไม่
+  isRequired                    Boolean @default(true) @map("is_required")
+  /// ต้องรวม acceptance นี้ในการลงนามหรือไม่
+  requiresSignatureConfirmation Boolean @default(false) @map("requires_signature_confirmation")
+
+  status LegalDocumentStatus @default(DRAFT)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+
+  versions LegalDocumentVersion[]
+
+  @@index([applicationScope, status, displayOrder])
+  @@map("legal_document")
+  @@schema("legal")
+}
+
+/// เนื้อหาแต่ละเวอร์ชันของเอกสาร — sheet `legal_document_version`
+///
+/// ตารางสรุปการทำงานร่วมกัน (ท้าย sheet):
+///   document ACTIVE + version PUBLISHED  → แสดงให้ผู้ใช้ยอมรับ
+///   document ACTIVE + version SUPERSEDED → ไม่รับ acceptance ใหม่ ประวัติเดิมยังตรวจสอบได้
+///   นอกนั้นไม่แสดงและยอมรับไม่ได้
+model LegalDocumentVersion {
+  id String @id @default(uuid()) @db.Uuid
+
+  legalDocumentId String        @map("legal_document_id") @db.Uuid
+  legalDocument   LegalDocument @relation(fields: [legalDocumentId], references: [id], onDelete: Cascade)
+
+  versionNumber Int @map("version_number")
+
+  attachmentId String     @map("attachment_id") @db.Uuid
+  attachment   Attachment @relation(fields: [attachmentId], references: [id])
+
+  contentHash String @map("content_hash") @db.VarChar(128)
+
+  status               LegalDocumentVersionStatus @default(DRAFT)
+  /// กำหนดว่า Organization ต้องยอมรับ version นี้ใหม่หรือไม่
+  requiresReacceptance Boolean                    @default(false) @map("requires_reacceptance")
+
+  effectiveAt  DateTime? @map("effective_at") @db.Timestamptz(6)
+  publishedAt  DateTime? @map("published_at") @db.Timestamptz(6)
+  publishedBy  String?   @map("published_by") @db.Uuid
+  supersededAt DateTime? @map("superseded_at") @db.Timestamptz(6)
+  retiredAt    DateTime? @map("retired_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+
+  acceptances LegalAcceptance[]
+
+  @@unique([legalDocumentId, versionNumber])
+  @@index([status])
+  @@map("legal_document_version")
+  @@schema("legal")
+}
+
+/// หลักฐานว่าใครยอมรับ version ใด ภายใต้บริบทใด — sheet `legal_acceptance`
+///
+/// Legal Compliance Status (derived, ไม่เก็บเป็นคอลัมน์):
+///   COMPLIANT          → ยอมรับ version ที่บังคับใช้ครบทั้งหมดแล้ว → ทำ Dataset Registration ได้
+///   PENDING_ACCEPTANCE → ยังยอมรับไม่ครบ → ทำไม่ได้
+model LegalAcceptance {
+  id String @id @default(uuid()) @db.Uuid
+
+  legalDocumentVersionId String               @map("legal_document_version_id") @db.Uuid
+  legalDocumentVersion   LegalDocumentVersion @relation(fields: [legalDocumentVersionId], references: [id])
+
+  userAccountId String      @map("user_account_id") @db.Uuid
+  userAccount   UserAccount @relation(fields: [userAccountId], references: [id])
+
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  subjectType SubjectType @map("subject_type")
+  subjectId   String      @map("subject_id") @db.Uuid
+
+  /// FK to review_task ที่ทำให้เกิดการยอมรับ
+  reviewTaskId String     @map("review_task_id") @db.Uuid
+  reviewTask   ReviewTask @relation(fields: [reviewTaskId], references: [id])
+
+  /// FK to signature_confirmation ที่ครอบคลุม acceptance นี้
+  signatureConfirmationId String?                @map("signature_confirmation_id") @db.Uuid
+  signatureConfirmation   SignatureConfirmation? @relation(fields: [signatureConfirmationId], references: [id], onDelete: SetNull)
+
+  acceptanceMethod AcceptanceMethod @map("acceptance_method")
+  acceptedAt       DateTime         @default(now()) @map("accepted_at") @db.Timestamptz(6)
+
+  ipAddress String? @map("ip_address") @db.VarChar(64)
+  userAgent String? @map("user_agent")
+
+  acceptanceContextJson Json? @map("acceptance_context_json")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+
+  @@index([organizationId, legalDocumentVersionId])
+  @@index([subjectType, subjectId])
+  @@index([reviewTaskId, acceptedAt])
+  @@map("legal_acceptance")
+  @@schema("legal")
+}
+
+// ═════════════════════════════════════════════════════════════ signature
+
+/// sheet `signature_confirmation` — คอลัมน์ confirmation_type
+enum ConfirmationType {
+  ORGANIZATION_APPROVAL
+  BDI_FINAL_APPROVAL
+
+  @@schema("signature")
+}
+
+/// การลงนาม/ยืนยันหนึ่งครั้ง — sheet `signature_confirmation`
+///
+/// หนึ่ง review_task มี signature_confirmation ได้ 1 รายการ และครอบคลุม legal_acceptance
+/// ทุกแถวของ task เดียวกัน จึงไม่ต้องมี junction table (ภาพใน sheet)
+///
+/// confirmation_payload_json คือ snapshot ข้อมูลที่อยู่ภายใต้การยืนยัน — เก็บ requestData,
+/// attachments (พร้อม contentHash) และ legalAcceptances (พร้อม documentCode, versionNumber,
+/// documentContentHash) ตามตัวอย่างเต็มใน sheet
+model SignatureConfirmation {
+  id String @id @default(uuid()) @db.Uuid
+
+  reviewTaskId String     @map("review_task_id") @db.Uuid
+  reviewTask   ReviewTask @relation(fields: [reviewTaskId], references: [id])
+
+  /// derive ได้จาก review_task — เก็บซ้ำเพื่อ audit/query ง่าย (sheet ระบุไว้เอง)
+  subjectType SubjectType @map("subject_type")
+  subjectId   String      @map("subject_id") @db.Uuid
+
+  userAccountId String      @map("user_account_id") @db.Uuid
+  userAccount   UserAccount @relation(fields: [userAccountId], references: [id])
+
+  organizationId String?       @map("organization_id") @db.Uuid
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  confirmationType ConfirmationType @map("confirmation_type")
+  /// ข้อความยืนยันที่แสดงต่อผู้ใช้งานก่อนกดลงนาม — เก็บข้อความจริง ณ เวลานั้น
+  confirmationText String           @map("confirmation_text")
+
+  confirmationPayloadJson Json?   @map("confirmation_payload_json")
+  payloadHash             String? @map("payload_hash") @db.VarChar(128)
+
+  confirmedAt DateTime @default(now()) @map("confirmed_at") @db.Timestamptz(6)
+  ipAddress   String?  @map("ip_address") @db.VarChar(64)
+  userAgent   String?  @map("user_agent")
+
+  confirmationContextJson Json? @map("confirmation_context_json")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+
+  legalAcceptances LegalAcceptance[]
+
+  @@index([subjectType, subjectId])
+  @@index([userAccountId, confirmedAt])
+  @@map("signature_confirmation")
+  @@schema("signature")
+}
+
+// ═════════════════════════════════════════════════════════════════ audit
+
+/// sheet `audit.audit_event` — คอลัมน์ actor_type
+enum AuditActorType {
+  USER
+  SYSTEM
+  EXTERNAL
+  ANONYMOUS
+
+  @@schema("audit")
+}
+
+enum AuditResult {
+  SUCCESS
+  FAILURE
+
+  @@schema("audit")
+}
+
+/// Immutable audit event — sheet `audit.audit_event`
+///
+/// action codes (ตัวอย่างใน sheet): USER_ACCOUNT_CREATED · USER_ACCOUNT_ACTIVATED ·
+/// ACTIVATION_KEY_ISSUED/USED/REVOKED/EXPIRED · ROLE_ASSIGNED/REVOKED ·
+/// ORGANIZATION_CREATED/UPDATED/ACTIVATED · REQUEST_CREATED/SUBMITTED/RETURNED/APPROVED/REJECTED ·
+/// ATTACHMENT_UPLOADED/REPLACED/DELETED · LOGIN_SUCCEEDED/FAILED · DATA_EXPORTED · DOCUMENT_DOWNLOADED
+///
+/// source_component (ตัวอย่างใน sheet): web-portal · admin-portal · iam-service ·
+/// organization-service · request-service · approval-service · jira-integration ·
+/// dii-integration · notification-worker · activation-expiry-job
+///
+/// ทั้งสองคอลัมน์เก็บเป็น VARCHAR ตาม Excel เพราะรายการยังขยายได้
+model AuditEvent {
+  id String @id @default(uuid()) @db.Uuid
+
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+
+  actorType AuditActorType @map("actor_type")
+  /// เช่น user_account.id — NULL ได้เมื่อ anonymous หรือไม่ทราบ (ไม่ผูก FK ตาม Excel)
+  actorId   String?        @map("actor_id") @db.Uuid
+
+  /// Stable action code
+  action      String  @db.VarChar(128)
+  /// ประเภท domain object ที่ได้รับผล เช่น USER_ACCOUNT, ORGANIZATION, DATA_REQUEST
+  subjectType String  @map("subject_type") @db.VarChar(64)
+  /// NULL ได้ถ้ายังไม่มี object เจาะจง
+  subjectId   String? @map("subject_id") @db.Uuid
+
+  organizationId String? @map("organization_id") @db.Uuid
+
+  result AuditResult
+
+  /// Sanitized state ก่อน/หลังการเปลี่ยน
+  beforeSummaryJson Json? @map("before_summary_json")
+  afterSummaryJson  Json? @map("after_summary_json")
+
+  ipAddress String? @map("ip_address") @db.VarChar(64)
+  userAgent String? @map("user_agent")
+
+  /// ทุก action ที่อยู่ใน HTTP request หรือ business workflow เดียวกันต้องใช้ค่าเดียวกัน
+  correlationId   String @map("correlation_id") @db.VarChar(64)
+  sourceComponent String @map("source_component") @db.VarChar(64)
+
+  /// Context เพิ่มเติมที่ไม่เข้าคอลัมน์อื่น เช่น { "failure_reason": "INVALID_CREDENTIAL" }
+  /// เบี่ยงจากดีไซน์: เก็บ actorName / actorRoles ไว้ที่นี่ด้วย
+  /// เพราะ Excel มีแต่ actor_id ซึ่งทำให้ log อ่านผิดเมื่อผู้ใช้เปลี่ยนชื่อ
+  metadataJson Json? @map("metadata_json")
+
+  @@index([subjectType, subjectId, occurredAt])
+  @@index([actorId, occurredAt])
+  @@index([correlationId])
+  @@map("audit_event")
+  @@schema("audit")
+}
+
+// ══════════════════════════════════════════════════════════ notification
+
+/// sheet `notification` — คอลัมน์ status
+enum NotificationStatus {
+  UNREAD
+  READ /// ต้องมีค่า read_at
+  ARCHIVED /// ควรมีค่า archived_at
+
+  @@schema("notification")
+}
+
+/// sheet `notification_delivery` — คอลัมน์ channel
+enum DeliveryChannel {
+  EMAIL
+  SMS
+  LINE
+  WEBHOOK
+
+  @@schema("notification")
+}
+
+/// sheet `notification_delivery` — ตารางสถานะในภาพท้าย sheet
+enum DeliveryStatus {
+  PENDING /// รอ delivery worker
+  PROCESSING /// worker กำลังประมวลผล
+  SENT /// provider รับข้อความแล้ว — ควรมี sent_at
+  DELIVERED /// provider ยืนยันส่งสำเร็จ — ต้องมี delivered_at
+  FAILED /// ครั้งล่าสุดล้มเหลว แต่ retry ได้
+  DEAD_LETTER /// เกิน retry limit หรือความล้มเหลวกู้ไม่ได้
+  CANCELLED /// ถูกยกเลิกก่อนส่งสำเร็จ
+
+  @@schema("notification")
+}
+
+/// ข้อความแจ้งเตือนหนึ่งรายการสำหรับผู้รับหนึ่งคน — sheet `notification`
+///
+/// ข้อจำกัดจากภาพใน sheet:
+/// - recipient ต้องเป็น user_account ที่มีอยู่จริง รวมถึงบัญชีที่ยัง PENDING
+/// - notification ไม่ใช่ technical log หรือ audit log
+/// - ข้อความต้องไม่มี secret, credential หรือ sensitive identifier ที่ไม่จำเป็น
+///
+/// notification ที่แสดงในระบบอ่านจากตารางนี้โดยตรง จึงไม่ต้องสร้าง delivery ที่ channel = IN_APP
 model Notification {
-  id    String           @id @default(uuid())
-  type  NotificationType
-  title String
-  body  String?
-  /// path ภายในแอป เช่น /datasets/<id> — ไม่เก็บ URL เต็มเพราะโดเมนเปลี่ยนได้
-  link  String?
+  id String @id @default(uuid()) @db.Uuid
 
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recipientUserId String      @map("recipient_user_id") @db.Uuid
+  recipientUser   UserAccount @relation(fields: [recipientUserId], references: [id], onDelete: Cascade)
 
-  readAt    DateTime?
-  createdAt DateTime  @default(now())
+  /// Notification type code เช่น USER_ACTIVATION_INVITATION, REQUEST_SUBMITTED,
+  /// REQUEST_RETURNED, REQUEST_APPROVED, REQUEST_REJECTED, SPECIALIST_ASSIGNED,
+  /// SLA_REMINDER, LEGAL_DOCUMENT_UPDATED
+  notificationType String @map("notification_type") @db.VarChar(64)
 
-  @@index([userId, readAt])
-  @@index([userId, createdAt])
-  @@map("notifications")
+  title   String @db.VarChar(500)
+  message String
+
+  subjectType String? @map("subject_type") @db.VarChar(64)
+  subjectId   String? @map("subject_id") @db.Uuid
+
+  organizationId String?       @map("organization_id") @db.Uuid
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  status NotificationStatus @default(UNREAD)
+
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  readAt     DateTime? @map("read_at") @db.Timestamptz(6)
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(6)
+
+  correlationId String @map("correlation_id") @db.Uuid
+
+  deliveries NotificationDelivery[]
+
+  @@index([recipientUserId, status])
+  @@index([recipientUserId, createdAt])
+  @@map("notification")
+  @@schema("notification")
 }
 
-/**
- * Audit log ตาม docs/01-user-journey.md §4.9
- * แยกจาก DatasetRequestEvent เพราะเก็บละเอียดกว่า (diff, IP) และไม่ได้แสดงบนหน้าจอ
- * ชื่อและ role ของผู้กระทำถูกคัดลอกลงแถว ไม่ใช่อ้างอิงอย่างเดียว — log ต้องอ่านได้ถูกต้อง
- * แม้ผู้ใช้จะเปลี่ยนชื่อหรือถูกลบภายหลัง
- */
-model ActivityLog {
-  id     String         @id @default(uuid())
-  action ActivityAction
+/// Outbox queue สำหรับส่ง notification ผ่านช่องทางภายนอก — sheet `notification_delivery`
+///
+/// ข้อจำกัดจากภาพใน sheet:
+/// - attempt_count เริ่มต้นที่ 0
+/// - delivery worker ต้องใช้ row lock กันไม่ให้ worker หลายตัวส่งรายการเดียวกันพร้อมกัน
+/// - sensitive token หรือ credential ห้ามเก็บเป็น plain text
+model NotificationDelivery {
+  id String @id @default(uuid()) @db.Uuid
 
-  actorId             String?
-  actorName           String?
-  actorRoles          Role[]  @default([])
-  actorOrganizationId String?
+  notificationId String       @map("notification_id") @db.Uuid
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
 
-  /// "DatasetRequest" | "Organization" | ...
-  targetType String
-  targetId   String
-  /// เลขอ้างอิงที่คนอ่านรู้เรื่อง เช่น DR-2026-0001
-  targetRef  String?
+  channel     DeliveryChannel
+  /// Email address หรือปลายทางตาม channel
+  destination String          @db.VarChar(500)
 
-  /// เก็บเฉพาะฟิลด์ที่เปลี่ยน ไม่ใช่ทั้ง record
-  before Json?
-  after  Json?
+  status DeliveryStatus @default(PENDING)
 
-  ipAddress String?
+  /// เวลาที่เร็วที่สุดที่เริ่มส่งได้
+  scheduledAt  DateTime  @default(now()) @map("scheduled_at") @db.Timestamptz(6)
+  processingAt DateTime? @map("processing_at") @db.Timestamptz(6)
+  sentAt       DateTime? @map("sent_at") @db.Timestamptz(6)
+  deliveredAt  DateTime? @map("delivered_at") @db.Timestamptz(6)
 
-  createdAt DateTime @default(now())
+  attemptCount  Int       @default(0) @map("attempt_count")
+  nextRetryAt   DateTime? @map("next_retry_at") @db.Timestamptz(6)
+  lastAttemptAt DateTime? @map("last_attempt_at") @db.Timestamptz(6)
 
-  @@index([targetType, targetId, createdAt])
-  @@index([actorId, createdAt])
-  @@map("activity_logs")
+  provider          String? @db.VarChar(64)
+  providerReference String? @map("provider_reference") @db.VarChar(255)
+  lastErrorCode     String? @map("last_error_code") @db.VarChar(64)
+  lastErrorMessage  String? @map("last_error_message")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  correlationId String @map("correlation_id") @db.Uuid
+  /// Concurrency version — worker ใช้คู่กับ row lock
+  version       Int    @default(0)
+
+  @@index([status, scheduledAt])
+  @@index([notificationId])
+  @@map("notification_delivery")
+  @@schema("notification")
+}
+
+// ═══════════════════════════════════════════════════════════ integration
+
+enum IntegrationType {
+  THAID
+  JIRA
+  DII
+
+  @@schema("integration")
+}
+
+/// sheet `integration_operation` — คอลัมน์ status
+enum IntegrationStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  DEAD_LETTER
+  CANCELLED
+
+  @@schema("integration")
+}
+
+/// General integration tracking record สำหรับ logical integration operation หนึ่งงาน
+/// — sheet `integration_operation`
+///
+/// operation codes (ภาพใน sheet):
+///   JIRA  → CREATE_ISSUE · UPDATE_ISSUE · SYNC_STATUS
+///   DII   → PUBLISH_DATASET_REFERENCE · PUBLISH_APPROVAL_REFERENCE · UPDATE_TRANSFER_STATUS
+///   THAID → VERIFY_IDENTITY
+model IntegrationOperation {
+  id String @id @default(uuid()) @db.Uuid
+
+  integrationType IntegrationType @map("integration_type")
+  operation       String          @db.VarChar(64)
+
+  subjectType String @map("subject_type") @db.VarChar(64)
+  subjectId   String @map("subject_id") @db.Uuid
+
+  organizationId String?       @map("organization_id") @db.Uuid
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  /// Unique retry-safe key
+  idempotencyKey String @unique @map("idempotency_key") @db.VarChar(255)
+
+  status       IntegrationStatus @default(PENDING)
+  attemptCount Int               @default(0) @map("attempt_count")
+
+  scheduledAt   DateTime  @default(now()) @map("scheduled_at") @db.Timestamptz(6)
+  processingAt  DateTime? @map("processing_at") @db.Timestamptz(6)
+  nextRetryAt   DateTime? @map("next_retry_at") @db.Timestamptz(6)
+  lastAttemptAt DateTime? @map("last_attempt_at") @db.Timestamptz(6)
+
+  /// Reference ที่ระบบปลายทางส่งกลับมา
+  externalReference String? @map("external_reference") @db.VarChar(255)
+  lastErrorCode     String? @map("last_error_code") @db.VarChar(64)
+  lastErrorMessage  String? @map("last_error_message")
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  correlationId String @map("correlation_id") @db.Uuid
+  version       Int    @default(0)
+
+  @@index([status, scheduledAt])
+  @@index([subjectType, subjectId])
+  @@map("integration_operation")
+  @@schema("integration")
+}
+
+// ════════════════════════════════════════════════════════ administration
+
+// เบี่ยงจากดีไซน์: ทั้งสามตารางนี้ไม่มี sheet ใน Excel
+// ภาพ "5. Schema Overview" ระบุ schema `administration` ว่าเป็น
+// "Configuration, lookup, holiday calendar" และภาพรายการ Master ระบุ `province` ไว้
+// organization ใช้ province_code / district_code / sub_district_code จึงต้องมีตาราง master รองรับ
+//
+// seed จาก backend/src/data/thai-address.json (77 จังหวัด / 927 อำเภอ / 7,423 ตำบล)
+// ซึ่ง main/CLAUDE.md ระบุว่า vendored ไว้โดยตั้งใจ ห้ามเอา npm package กลับมา
+// ไฟล์นั้นมีแต่ "ชื่อ" ไม่มีรหัส → รหัสที่ seed ให้เป็นรหัสที่ระบบสร้างเอง (เสถียรตามลำดับในไฟล์)
+// **ต้องแทนที่ด้วยรหัส TIS-1099 ของจริงเมื่อได้ข้อมูลมา**
+
+model Province {
+  code   String  @id @db.VarChar(16)
+  nameTh String  @map("name_th") @db.VarChar(255)
+  nameEn String? @map("name_en") @db.VarChar(255)
+
+  districts District[]
+
+  @@map("province")
+  @@schema("administration")
+}
+
+model District {
+  code   String  @id @db.VarChar(16)
+  nameTh String  @map("name_th") @db.VarChar(255)
+  nameEn String? @map("name_en") @db.VarChar(255)
+
+  provinceCode String   @map("province_code") @db.VarChar(16)
+  province     Province @relation(fields: [provinceCode], references: [code], onDelete: Cascade)
+
+  subDistricts SubDistrict[]
+
+  @@index([provinceCode])
+  @@map("district")
+  @@schema("administration")
+}
+
+model SubDistrict {
+  code   String  @id @db.VarChar(16)
+  nameTh String  @map("name_th") @db.VarChar(255)
+  nameEn String? @map("name_en") @db.VarChar(255)
+
+  districtCode String   @map("district_code") @db.VarChar(16)
+  district     District @relation(fields: [districtCode], references: [code], onDelete: Cascade)
+
+  postalCode String? @map("postal_code") @db.VarChar(16)
+
+  @@index([districtCode])
+  @@map("sub_district")
+  @@schema("administration")
 }

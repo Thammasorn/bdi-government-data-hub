@@ -13,11 +13,9 @@ import { datasetTitle, type DatasetRequestListItem } from "@/lib/types";
 
 const FILTERABLE: DatasetRequestStatus[] = [
   "DRAFT",
-  "PENDING_OFFICER_REVIEW",
-  "PENDING_ORG_APPROVER",
-  "PENDING_OFFICER_FINAL_CHECK",
-  "PENDING_BDI_APPROVAL",
-  "NEEDS_REVISION",
+  "SUBMITTED",
+  "UNDER_REVIEW",
+  "RETURNED",
   "APPROVED",
   "REJECTED",
 ];

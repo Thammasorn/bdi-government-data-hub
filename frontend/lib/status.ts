@@ -1,114 +1,195 @@
-export type OrganizationStatus =
-  | "DRAFT"
-  | "PENDING_BDI_REVIEW"
-  | "NEEDS_REVISION"
-  | "PENDING_SIGNATORY_REVIEW"
-  | "PENDING_BDI_APPROVAL"
-  | "ACTIVE";
+/**
+ * ป้ายและสีของสถานะ — ตรงกับสคีมาใน
+ * assets/db_schema/draft_db_design_downloaded_on_2026-08-11.xlsx
+ *
+ * สถานะของ "คำขอ" ยุบเหลือเจ็ดค่าที่ใช้ร่วมกันทั้ง Journey B และ C ส่วน "ด่านที่กำลังรอ"
+ * ย้ายไปอยู่ที่ review_task แล้ว API จึงส่ง currentTaskType มาคู่กับ status เสมอ
+ * badge บนหน้าจอควรแสดง stageLabel() ซึ่งเลือกใช้ด่านเมื่อมี และใช้สถานะเมื่อไม่มี
+ */
 
+/** organization.organization — sheet `organization` */
+export type OrganizationStatus = "PENDING_REGISTRATION" | "ACTIVE" | "SUSPENDED" | "INACTIVE";
+
+/** สถานะคำขอ — ชุดเดียวกันทั้งสอง Journey */
+export type RequestStatus =
+  | "DRAFT"
+  | "SUBMITTED"
+  | "UNDER_REVIEW"
+  | "RETURNED"
+  | "APPROVED"
+  | "REJECTED"
+  | "CANCELLED";
+
+/** review.review_task.task_type */
+export type ReviewTaskType =
+  | "BDI_OFFICER_REVIEW"
+  | "DATASET_SPECIALIST_REVIEW"
+  | "ORGANIZATION_APPROVAL"
+  | "BDI_FINAL_APPROVAL"
+  | "ORGANIZATION_REVISION";
+
+/** review.review_task.result */
+export type ReviewResult =
+  | "PASSED"
+  | "APPROVED"
+  | "RETURNED"
+  | "REJECTED"
+  | "CONFIRMED"
+  | "COMPLETED";
+
+/** iam.role.code — sheet `role` */
 export type Role =
-  | "BDI_OFFICER"
-  | "BDI_APPROVER"
-  | "BDI_SPECIALIST"
   | "ORGANIZATION_USER"
-  | "ORGANIZATION_APPROVER";
+  | "ORGANIZATION_APPROVER"
+  | "BDI_OFFICER"
+  | "BDI_DATASET_SPECIALIST"
+  | "BDI_FINAL_APPROVER"
+  | "BDI_LEGAL_OFFICER"
+  | "SYSTEM_ADMINISTRATOR";
 
 /** สีตาม docs/02-ui-spec.md §1.3 — ทุก badge มีทั้งสีและข้อความ ไม่สื่อด้วยสีอย่างเดียว */
-export const STATUS_META: Record<OrganizationStatus, { label: string; className: string }> = {
+export const REQUEST_STATUS_META: Record<RequestStatus, { label: string; className: string }> = {
   DRAFT: { label: "ฉบับร่าง", className: "bg-navy-50 text-ink-muted" },
-  PENDING_BDI_REVIEW: { label: "รอตรวจสอบจาก BDI", className: "bg-warning-bg text-warning" },
-  PENDING_SIGNATORY_REVIEW: { label: "รอตรวจสอบจากผู้มีอำนาจ", className: "bg-navy-100 text-navy-600" },
-  PENDING_BDI_APPROVAL: { label: "รอ BDI ลงนาม", className: "bg-navy-100 text-navy-800" },
-  NEEDS_REVISION: { label: "รอการแก้ไข", className: "bg-danger-bg text-danger" },
-  ACTIVE: { label: "เปิดใช้งาน", className: "bg-success-bg text-success" },
-};
-
-export const ROLE_LABELS: Record<Role, string> = {
-  BDI_OFFICER: "เจ้าหน้าที่ BDI",
-  BDI_APPROVER: "ผู้อนุมัติ BDI",
-  BDI_SPECIALIST: "ผู้เชี่ยวชาญ BDI",
-  ORGANIZATION_USER: "ผู้ใช้จากหน่วยงาน",
-  ORGANIZATION_APPROVER: "ผู้มีอำนาจกระทำการแทน",
-};
-
-export const EVENT_LABELS: Record<string, string> = {
-  CREATED: "สร้างคำขอ",
-  DRAFT_SAVED: "บันทึกฉบับร่าง",
-  SUBMITTED: "นำส่งฟอร์มสร้างหน่วยงาน",
-  BDI_APPROVED: "เจ้าหน้าที่ BDI อนุมัติ",
-  BDI_REVISION_REQUESTED: "เจ้าหน้าที่ BDI ขอให้ปรับปรุง",
-  SIGNATORY_INVITED: "ส่งคำเชิญให้ผู้มีอำนาจกระทำการแทน",
-  SIGNATORY_APPROVED: "ผู้มีอำนาจกระทำการแทนเห็นชอบ",
-  SIGNATORY_REVISION_REQUESTED: "ผู้มีอำนาจกระทำการแทนขอให้ปรับปรุง",
-  FINAL_APPROVED: "BDI เห็นชอบและลงนาม",
-  FINAL_REVISION_REQUESTED: "ผู้อนุมัติ BDI ขอให้ปรับปรุง",
-};
-
-// ------------------------------------------------------------------ ชุดข้อมูล (Journey C)
-
-export type DatasetRequestStatus =
-  | "DRAFT"
-  | "PENDING_OFFICER_REVIEW"
-  | "PENDING_ORG_APPROVER"
-  | "PENDING_OFFICER_FINAL_CHECK"
-  | "PENDING_BDI_APPROVAL"
-  | "NEEDS_REVISION"
-  | "APPROVED"
-  | "REJECTED";
-
-/** สีชุดเดียวกับสถานะหน่วยงาน — ทุก badge มีทั้งสีและข้อความ ไม่สื่อด้วยสีอย่างเดียว */
-export const DATASET_STATUS_META: Record<DatasetRequestStatus, { label: string; className: string }> = {
-  DRAFT: { label: "ฉบับร่าง", className: "bg-navy-50 text-ink-muted" },
-  PENDING_OFFICER_REVIEW: { label: "รอ BDI ตรวจสอบเบื้องต้น", className: "bg-warning-bg text-warning" },
-  PENDING_ORG_APPROVER: { label: "รอผู้มีอำนาจของหน่วยงาน", className: "bg-navy-100 text-navy-600" },
-  PENDING_OFFICER_FINAL_CHECK: { label: "รอ BDI ตรวจสอบขั้นสุดท้าย", className: "bg-warning-bg text-warning" },
-  PENDING_BDI_APPROVAL: { label: "รอ BDI อนุมัติ", className: "bg-navy-100 text-navy-800" },
-  NEEDS_REVISION: { label: "รอการแก้ไข", className: "bg-danger-bg text-danger" },
+  SUBMITTED: { label: "นำส่งแล้ว", className: "bg-warning-bg text-warning" },
+  UNDER_REVIEW: { label: "กำลังพิจารณา", className: "bg-navy-100 text-navy-600" },
+  RETURNED: { label: "รอการแก้ไข", className: "bg-danger-bg text-danger" },
   APPROVED: { label: "อนุมัติแล้ว", className: "bg-success-bg text-success" },
   REJECTED: { label: "ไม่อนุมัติ", className: "bg-danger-bg text-danger" },
+  CANCELLED: { label: "ยกเลิกแล้ว", className: "bg-navy-50 text-ink-muted" },
+};
+
+export const ORGANIZATION_STATUS_META: Record<
+  OrganizationStatus,
+  { label: string; className: string }
+> = {
+  PENDING_REGISTRATION: { label: "อยู่ระหว่างลงทะเบียน", className: "bg-warning-bg text-warning" },
+  ACTIVE: { label: "เปิดใช้งาน", className: "bg-success-bg text-success" },
+  SUSPENDED: { label: "ระงับชั่วคราว", className: "bg-danger-bg text-danger" },
+  INACTIVE: { label: "ยุติการใช้งาน", className: "bg-navy-50 text-ink-muted" },
 };
 
 /**
- * สถานะที่คำขอยัง "รออนุมัติ" อยู่ในสายพาน — ยังไม่จบและไม่ได้ค้างที่หน่วยงาน
+ * คำขอที่ยัง "เดินอยู่ในสายพาน" — ยังไม่จบ และไม่ได้ค้างอยู่ที่หน่วยงาน
  * หน้าแรกใช้ชุดนี้แยก section บนออกจากรายการชุดข้อมูลทั้งหมด
+ *
+ * เดิมเป็นรายการของ PENDING_* ทีละด่าน ตอนนี้ด่านย้ายไป review_task แล้ว
+ * เหลือสองสถานะที่แปลว่ากำลังรอผู้ตรวจ: นำส่งแล้วแต่ยังไม่มีใครเปิด และเปิดตรวจอยู่
  */
-export const PENDING_DATASET_STATUSES: DatasetRequestStatus[] = [
-  "PENDING_OFFICER_REVIEW",
-  "PENDING_ORG_APPROVER",
-  "PENDING_OFFICER_FINAL_CHECK",
-  "PENDING_BDI_APPROVAL",
-];
+export const PENDING_DATASET_STATUSES: RequestStatus[] = ["SUBMITTED", "UNDER_REVIEW"];
 
-export const isPendingDatasetStatus = (status: DatasetRequestStatus) =>
+export const isPendingDatasetStatus = (status: RequestStatus) =>
   PENDING_DATASET_STATUSES.includes(status);
 
-/** ด่านที่คำขอค้างอยู่ ใช้บอกผู้ใช้ว่า "ตอนนี้ใครถืออยู่" ไม่ใช่แค่ชื่อสถานะ */
-export const DATASET_PENDING_OWNER: Partial<Record<DatasetRequestStatus, string>> = {
-  PENDING_OFFICER_REVIEW: "เจ้าหน้าที่ BDI กำลังตรวจสอบเบื้องต้น",
-  PENDING_ORG_APPROVER: "ผู้มีอำนาจกระทำการแทนของหน่วยงานกำลังพิจารณา",
-  PENDING_OFFICER_FINAL_CHECK: "เจ้าหน้าที่ BDI กำลังตรวจสอบขั้นสุดท้าย",
-  PENDING_BDI_APPROVAL: "ผู้อนุมัติ BDI กำลังพิจารณา",
-  NEEDS_REVISION: "รอหน่วยงานของคุณแก้ไขและนำส่งใหม่",
-  DRAFT: "ยังเป็นฉบับร่าง ยังไม่ได้นำส่ง",
+/**
+ * ประโยคบอกผู้ใช้ว่า "ตอนนี้ใครถืออยู่" ไม่ใช่แค่ชื่อสถานะ
+ *
+ * ระหว่างที่คำขอเดินอยู่ คำตอบมาจากด่านใน review_task ส่วนสถานะที่จบแล้วหรือ
+ * ยังไม่ได้เริ่ม ตอบจากตัวสถานะเอง
+ */
+export function datasetPendingOwner(
+  status: RequestStatus,
+  currentTaskType?: ReviewTaskType | null,
+): string {
+  if (currentTaskType && isPendingDatasetStatus(status)) {
+    return {
+      BDI_OFFICER_REVIEW: "เจ้าหน้าที่ BDI กำลังตรวจสอบ",
+      DATASET_SPECIALIST_REVIEW: "ผู้เชี่ยวชาญด้านข้อมูลกำลังพิจารณา",
+      ORGANIZATION_APPROVAL: "ผู้มีอำนาจกระทำการแทนของหน่วยงานกำลังพิจารณา",
+      BDI_FINAL_APPROVAL: "ผู้อนุมัติ BDI กำลังพิจารณา",
+      ORGANIZATION_REVISION: "รอหน่วยงานของคุณแก้ไข",
+    }[currentTaskType];
+  }
+  return {
+    DRAFT: "ยังเป็นฉบับร่าง ยังไม่ได้นำส่ง",
+    SUBMITTED: "รอผู้ตรวจเริ่มดำเนินการ",
+    UNDER_REVIEW: "อยู่ระหว่างการพิจารณา",
+    RETURNED: "รอหน่วยงานของคุณแก้ไขและนำส่งใหม่",
+    APPROVED: "อนุมัติเรียบร้อยแล้ว",
+    REJECTED: "ไม่ได้รับอนุมัติ",
+    CANCELLED: "ยกเลิกแล้ว",
+  }[status];
+}
+
+/** ด่านที่คำขอกำลังรออยู่ — แทน PENDING_* ที่หายไปจาก status */
+export const TASK_TYPE_META: Record<ReviewTaskType, { label: string; className: string }> = {
+  BDI_OFFICER_REVIEW: { label: "รอเจ้าหน้าที่ BDI ตรวจสอบ", className: "bg-warning-bg text-warning" },
+  DATASET_SPECIALIST_REVIEW: {
+    label: "รอผู้เชี่ยวชาญด้านข้อมูลพิจารณา",
+    className: "bg-navy-100 text-navy-600",
+  },
+  ORGANIZATION_APPROVAL: {
+    label: "รอผู้มีอำนาจของหน่วยงานลงนาม",
+    className: "bg-navy-100 text-navy-600",
+  },
+  BDI_FINAL_APPROVAL: { label: "รอ BDI อนุมัติขั้นสุดท้าย", className: "bg-navy-100 text-navy-800" },
+  ORGANIZATION_REVISION: { label: "รอหน่วยงานแก้ไข", className: "bg-danger-bg text-danger" },
 };
 
-export const DATASET_EVENT_LABELS: Record<string, string> = {
-  CREATED: "สร้างคำขอ",
-  SUBMITTED: "นำส่งคำขอ",
-  SPECIALIST_ASSIGNED: "มอบหมายผู้เชี่ยวชาญ",
-  SPECIALIST_UNASSIGNED: "ยกเลิกการมอบหมายผู้เชี่ยวชาญ",
-  SPECIALIST_COMMENTED: "ผู้เชี่ยวชาญบันทึกความเห็น",
-  SPECIALIST_REVISION_REQUESTED: "ผู้เชี่ยวชาญขอให้ปรับปรุง",
-  OFFICER_FORWARDED: "เจ้าหน้าที่ BDI ส่งต่อให้ผู้มีอำนาจ",
-  OFFICER_REVISION_REQUESTED: "เจ้าหน้าที่ BDI ขอให้ปรับปรุง",
-  ORG_APPROVER_SIGNED: "ผู้มีอำนาจกระทำการแทนลงนามเห็นชอบ",
-  ORG_APPROVER_REVISION_REQUESTED: "ผู้มีอำนาจกระทำการแทนขอให้ปรับปรุง",
-  OFFICER_CONFIRMED: "เจ้าหน้าที่ BDI ยืนยันผลการตรวจสอบ",
-  OFFICER_FINAL_REVISION_REQUESTED: "เจ้าหน้าที่ BDI ขอให้ปรับปรุง (ตรวจขั้นสุดท้าย)",
-  BDI_APPROVED: "ผู้อนุมัติ BDI อนุมัติ",
-  BDI_REJECTED: "ผู้อนุมัติ BDI ไม่อนุมัติ",
-  BDI_REVISION_REQUESTED: "ผู้อนุมัติ BDI ขอให้ปรับปรุง",
+export const REVIEW_RESULT_LABELS: Record<ReviewResult, string> = {
+  PASSED: "ผ่านการตรวจสอบ",
+  APPROVED: "อนุมัติ",
+  RETURNED: "ส่งกลับให้แก้ไข",
+  REJECTED: "ไม่อนุมัติ",
+  CONFIRMED: "ยืนยันผลการตรวจสอบ",
+  COMPLETED: "ดำเนินการเสร็จ",
 };
+
+/**
+ * badge ที่ผู้ใช้ควรเห็น
+ *
+ * ระหว่างที่คำขอยังเดินอยู่ ด่านบอกความหมายได้มากกว่าสถานะ (SUBMITTED เฉย ๆ
+ * ไม่บอกว่ารอใคร) จบแล้วค่อยกลับไปใช้สถานะ
+ */
+export function stageMeta(
+  status: RequestStatus,
+  currentTaskType?: ReviewTaskType | null,
+): { label: string; className: string } {
+  if (currentTaskType && (status === "SUBMITTED" || status === "UNDER_REVIEW")) {
+    return TASK_TYPE_META[currentTaskType];
+  }
+  return REQUEST_STATUS_META[status];
+}
+
+export const ROLE_LABELS: Record<Role, string> = {
+  ORGANIZATION_USER: "ผู้ดำเนินการของหน่วยงาน",
+  ORGANIZATION_APPROVER: "ผู้มีอำนาจกระทำการแทนของหน่วยงาน",
+  BDI_OFFICER: "ผู้ดำเนินการของ BDI",
+  BDI_DATASET_SPECIALIST: "ผู้เชี่ยวชาญด้านข้อมูลของ BDI",
+  BDI_FINAL_APPROVER: "ผู้มีอำนาจกระทำการแทนของ BDI",
+  BDI_LEGAL_OFFICER: "ผู้ดำเนินการทางกฎหมายของ BDI",
+  SYSTEM_ADMINISTRATOR: "ผู้ดูแลระบบ",
+};
+
+/**
+ * บรรทัด timeline — ประกอบจาก review_task ไม่ใช่ตาราง event เดิม
+ * ("ผู้เชี่ยวชาญบันทึกความเห็น" = DATASET_SPECIALIST_REVIEW ที่ result = CONFIRMED)
+ */
+export function taskEventLabel(taskType: ReviewTaskType, result?: ReviewResult | null): string {
+  const actor = {
+    BDI_OFFICER_REVIEW: "เจ้าหน้าที่ BDI",
+    DATASET_SPECIALIST_REVIEW: "ผู้เชี่ยวชาญด้านข้อมูล",
+    ORGANIZATION_APPROVAL: "ผู้มีอำนาจกระทำการแทน",
+    BDI_FINAL_APPROVAL: "ผู้อนุมัติ BDI",
+    ORGANIZATION_REVISION: "หน่วยงาน",
+  }[taskType];
+
+  if (!result) return `รอ${actor}ดำเนินการ`;
+  return `${actor}${
+    {
+      PASSED: "ตรวจสอบผ่าน",
+      APPROVED: "อนุมัติ",
+      RETURNED: "ขอให้ปรับปรุง",
+      REJECTED: "ไม่อนุมัติ",
+      CONFIRMED: "ยืนยันผลการตรวจสอบ",
+      COMPLETED: "ดำเนินการเสร็จ",
+    }[result]
+  }`;
+}
+
+// เก็บชื่อเดิมไว้ให้โค้ดหน้าเว็บที่ยังอ้างถึงอยู่ ไม่ต้องแก้ทุกไฟล์พร้อมกัน
+export const STATUS_META = REQUEST_STATUS_META;
+export const DATASET_STATUS_META = REQUEST_STATUS_META;
+export type DatasetRequestStatus = RequestStatus;
 
 /** ป้ายของ enum ในแบบฟอร์ม — ต้องตรงกับ backend/src/lib/dataset.ts */
 export const DATASET_TYPE_LABELS = {
@@ -195,7 +276,9 @@ export const optionsOf = <T extends Record<string, string>>(map: T) =>
   Object.entries(map) as Array<[keyof T & string, string]>;
 
 export const isBdiStaff = (roles: string[]) =>
-  roles.some((r) => r === "BDI_OFFICER" || r === "BDI_APPROVER" || r === "BDI_SPECIALIST");
+  roles.some((r) =>
+    ["BDI_OFFICER", "BDI_DATASET_SPECIALIST", "BDI_FINAL_APPROVER", "BDI_LEGAL_OFFICER"].includes(r),
+  );
 
 export const PREFIXES = ["นาย", "นาง", "นางสาว", "ดร.", "ผศ.ดร.", "รศ.ดร.", "ศ.ดร."];
 

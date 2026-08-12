@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 
 import { Card, DatasetStatusBadge } from "@/components/ui/Card";
 import { api } from "@/lib/api";
-import { DATASET_PENDING_OWNER, formatThaiDate, isPendingDatasetStatus } from "@/lib/status";
+import { datasetPendingOwner, formatThaiDate, isPendingDatasetStatus } from "@/lib/status";
 import { datasetTitle, type DatasetRequestListItem } from "@/lib/types";
 
 /**
@@ -71,7 +71,7 @@ export function DatasetSection({
 }
 
 function DatasetRow({ row }: { row: DatasetRequestListItem }) {
-  const owner = DATASET_PENDING_OWNER[row.status];
+  const owner = datasetPendingOwner(row.status, row.currentTaskType);
   // วันที่นำข้อมูลเข้ามา = วันที่นำส่งคำขอ ร่างที่ยังไม่ได้ส่งยังไม่มี จึงถอยไปใช้วันที่สร้าง
   const enteredAt = row.submittedAt ?? row.createdAt;
   const enteredLabel = row.submittedAt ? "นำส่งเมื่อ" : "สร้างร่างเมื่อ";
