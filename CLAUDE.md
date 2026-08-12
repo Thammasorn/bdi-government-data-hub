@@ -239,4 +239,58 @@ Two API base URLs, and they are not interchangeable:
 
 
 ## Notion
-The related notion for this project are page `Government Datahub Platform` and other related / linked pages.
+
+Work is tracked in Notion, not in this repo's issues.
+
+- Project page: **Government Datahub Platform**
+  https://app.notion.com/p/3aeee3954ee8800d9468cbb1982655e3
+- Task database on that page: **Task Board**
+  https://app.notion.com/p/3b9ee3954ee880b2a324ffad3a38e1ae
+
+The spec pages (user journeys, Authentication & User Account, Database Design, Admin Portal)
+hang off the project page. `docs/` is the expanded, buildable version of those — when the two
+disagree, ask; don't silently follow one.
+
+Each Task Board card is one unit of work. Post progress, open questions and remaining items
+back onto the card as you go, so the board is readable without opening the repo.
+
+## Starting a task
+
+One task, one branch, one checkout. Both the branch and the directory are named after the
+Task Board card, so `git branch` and `ls dev/` answer the same question.
+
+```bash
+./new-dev.sh 04 setup-database-from-bdi-schema
+#            ^^ port slot, still two digits — see the machine notes
+```
+
+That creates `dev/dev_<YYYYMMDD>_<branch>/`, checks out the branch, and writes the port
+overrides. Then publish the branch immediately, before writing any code:
+
+```bash
+git push -u origin setup-database-from-bdi-schema
+```
+
+Pushing first is the point: it means the work is recoverable from the moment it starts, and
+other people can see the task is being worked on rather than discovering it at merge time.
+
+**Branch name** — the card title in kebab-case. "Setup Database from BDI Schema" becomes
+`setup-database-from-bdi-schema`. No prefixes; the card title already says what it is.
+
+**Directory** — `dev/dev_<YYYYMMDD>_<branchname>`, where the date is the day the checkout was
+made. Two checkouts of the same branch on different days are a normal thing to want; the date
+keeps them apart, and it makes stale checkouts obvious in `ls dev/`.
+
+Checkouts made before this convention (`dev/dev_01`, `dev_02`, `dev_03`) keep their names.
+Don't rename them — the compose project name is derived from the directory, so renaming
+orphans the containers and volumes.
+
+## Commits
+
+Subject lines are plain statements of what changed, in the imperative, with no `feat:` /
+`fix:` prefixes — read `git log` before writing one. The body explains **why**: what was
+observed, what the cause turned out to be, what was decided and what was rejected. A commit
+that only restates its diff in prose is not worth the body.
+
+Cutovers that break the build halfway (a schema replacement, say) are still split into
+reviewable commits, but say so in the message — someone will try to bisect it eventually.
