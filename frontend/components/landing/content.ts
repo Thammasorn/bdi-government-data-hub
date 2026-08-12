@@ -13,33 +13,47 @@
 
 export interface Section {
   id: string;
-  /** ข้อความใน sidebar — ขึ้นบรรทัดใหม่ตามที่สไลด์จัดไว้ */
-  navLabel: string[];
+  /** ข้อความบนแถบนำทาง — สั้นกว่าหัวข้อจริง เพราะต้องเรียงได้สิบหัวข้อในแถบเดียว */
+  navLabel: string;
   heading: string;
-  lead?: string;
+  /** คำกำกับเล็ก ๆ เหนือหัวข้อ ช่วยให้กวาดตาหาหัวข้อได้เร็วกว่าอ่านหัวข้อทั้งอัน */
+  eyebrow?: string;
   pending?: boolean;
 }
 
 export const SECTIONS: Section[] = [
-  { id: "background", navLabel: ["ความเป็นมา"], heading: "ความเป็นมา" },
-  { id: "objectives", navLabel: ["วัตถุประสงค์"], heading: "วัตถุประสงค์" },
-  { id: "bdi-role", navLabel: ["บทบาทของ BDI"], heading: "บทบาทของ BDI" },
-  { id: "how-it-works", navLabel: ["D2 ทำงานอย่างไร"], heading: "D2 ทำงานอย่างไร" },
-  { id: "benefits", navLabel: ["ประโยชน์ของ D2"], heading: "ประโยชน์ของ D2" },
+  { id: "background", navLabel: "ความเป็นมา", heading: "ความเป็นมา", eyebrow: "เกี่ยวกับ D2" },
+  { id: "objectives", navLabel: "วัตถุประสงค์", heading: "วัตถุประสงค์", eyebrow: "เกี่ยวกับ D2" },
+  { id: "bdi-role", navLabel: "บทบาท BDI", heading: "บทบาทของ BDI", eyebrow: "เกี่ยวกับ D2" },
+  {
+    id: "how-it-works",
+    navLabel: "การทำงาน",
+    heading: "D2 ทำงานอย่างไร",
+    eyebrow: "กลไกของแพลตฟอร์ม",
+  },
+  { id: "benefits", navLabel: "ประโยชน์", heading: "ประโยชน์ของ D2", eyebrow: "กลไกของแพลตฟอร์ม" },
   {
     id: "connect",
-    navLabel: ["ขั้นตอน", "การขอเชื่อมต่อระบบ"],
+    navLabel: "ขั้นตอนเชื่อมต่อ",
     heading: "ขั้นตอนการขอเชื่อมต่อระบบ",
+    eyebrow: "เริ่มใช้งาน",
   },
   {
     id: "legal",
-    navLabel: ["กฎหมาย", "และเอกสารที่เกี่ยวข้อง"],
+    navLabel: "กฎหมายและเอกสาร",
     heading: "กฎหมายและเอกสารที่เกี่ยวข้อง",
+    eyebrow: "เริ่มใช้งาน",
   },
-  { id: "faq", navLabel: ["คำถามที่พบบ่อย", "FAQ"], heading: "คำถามที่พบบ่อย (FAQ)", pending: true },
-  { id: "news", navLabel: ["ข่าวสารและประกาศ"], heading: "ข่าวสารและประกาศ", pending: true },
-  { id: "contact", navLabel: ["ติดต่อเรา"], heading: "ติดต่อเรา", pending: true },
+  { id: "faq", navLabel: "FAQ", heading: "คำถามที่พบบ่อย", pending: true },
+  { id: "news", navLabel: "ข่าวสาร", heading: "ข่าวสารและประกาศ", pending: true },
+  { id: "contact", navLabel: "ติดต่อเรา", heading: "ติดต่อเรา", pending: true },
 ];
+
+/**
+ * คำสี่คำใต้ hero — ยกมาจากแถบล่างของภาพไดอะแกรมในสไลด์ที่ 5 ตรง ๆ
+ * (เชื่อมโยง · บูรณาการ · ปลอดภัย · คุณภาพข้อมูล) ไม่ได้คิดขึ้นใหม่
+ */
+export const CAPABILITIES = ["เชื่อมโยง", "บูรณาการ", "ปลอดภัย", "คุณภาพข้อมูล"];
 
 // ── hero ────────────────────────────────────────────────────────────────
 
