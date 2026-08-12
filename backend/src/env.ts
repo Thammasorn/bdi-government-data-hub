@@ -16,6 +16,21 @@ function optional(name: string, fallback: string): string {
   return value === undefined || value === "" ? fallback : value;
 }
 
+/**
+ * ความลับที่มีค่า default ให้ตอน dev เพื่อความสะดวก แต่ห้ามใช้ค่านั้นจริง
+ *
+ * ปล่อยให้ fallback เงียบ ๆ บน production คือสิ่งที่แย่ที่สุดของทั้งสองทาง —
+ * ระบบบูตได้ตามปกติ ดูเหมือนทุกอย่างเรียบร้อย ทั้งที่ค่าที่ใช้อยู่เขียนไว้ในซอร์ส
+ */
+function requiredInProduction(name: string, devFallback: string): string {
+  const value = process.env[name];
+  if (value) return value;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(`Missing required environment variable in production: ${name}`);
+  }
+  return devFallback;
+}
+
 export const env = {
   nodeEnv: optional("NODE_ENV", "development"),
   port: Number(optional("PORT", "4000")),
@@ -47,7 +62,10 @@ export const env = {
      * ถ้าไม่มี secret ฝั่ง server
      * ค่า default มีไว้ให้ dev เท่านั้น ที่ production ต้องตั้งจริง
      */
-    activationKeySecret: optional("ACTIVATION_KEY_SECRET", "dev-activation-key-secret"),
+    activationKeySecret: requiredInProduction(
+      "ACTIVATION_KEY_SECRET",
+      "dev-activation-key-secret",
+    ),
     activationKeyTtlDays: Number(optional("ACTIVATION_KEY_TTL_DAYS", "7")),
     /**
      * ยังไม่มี client credentials ของ ThaiD จริง เปิดตัวนี้เพื่อให้ทดลอง flow ได้
