@@ -2,7 +2,9 @@ import clsx from "clsx";
 import type { ReactNode } from "react";
 
 import {
+  ORGANIZATION_STATUS_META,
   stageMeta,
+  type OrganizationStatus,
   type RequestStatus,
   type ReviewTaskType,
 } from "@/lib/status";
@@ -107,5 +109,34 @@ export function DotDecoration({ className }: { className?: string }) {
       aria-hidden="true"
       className={clsx("bg-dot-grid pointer-events-none absolute opacity-[0.09]", className)}
     />
+  );
+}
+
+/**
+ * สถานะของ "หน่วยงาน" ไม่ใช่ของคำขอ
+ *
+ * ตั้งแต่แยก organization ออกจาก organization_registration_request สองอย่างนี้เป็น
+ * คนละชุดค่ากันจริง ๆ — หน่วยงานมี PENDING_REGISTRATION/ACTIVE/SUSPENDED/INACTIVE
+ * ส่วนคำขอมีเจ็ดค่าของ workflow ใช้ badge ตัวเดียวกันไม่ได้
+ */
+export function OrganizationStatusBadge({
+  status,
+  className,
+}: {
+  status: OrganizationStatus;
+  className?: string;
+}) {
+  const meta = ORGANIZATION_STATUS_META[status];
+  return (
+    <span
+      className={clsx(
+        "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1 text-[13px] font-medium",
+        meta.className,
+        className,
+      )}
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" aria-hidden="true" />
+      {meta.label}
+    </span>
   );
 }

@@ -30,3 +30,17 @@ services:
       NODE_ENV: production
       HOSTNAME: "0.0.0.0"
     volumes: !reset []
+
+  # worker ต้องรันเป็น production ด้วย ไม่งั้นมันจะรัน tsx จาก source ที่ bind-mount ไว้
+  # ทั้งที่ backend ข้าง ๆ รันบันเดิลที่ build แล้ว — และ NODE_ENV จะไม่ใช่ production
+  # ทำให้ด่านตรวจ secret ใน env.ts ไม่ทำงานกับ process นี้
+  #
+  # ไม่รัน migrate deploy ที่นี่ backend เป็นคนรันให้ตอนบูต worker แค่รอ
+  # ตารางพร้อม (tick แรกอาจล้มเหลวถ้าชิงกันบูต แล้วรอบถัดไปจะผ่านเอง)
+  delivery-worker:
+    build:
+      target: runner
+    environment:
+      NODE_ENV: production
+    command: ["node", "dist/workers/delivery.js"]
+    volumes: !reset []

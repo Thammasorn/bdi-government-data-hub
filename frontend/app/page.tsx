@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { DatasetSection } from "@/components/home/DatasetSection";
 import { useSession } from "@/components/SessionProvider";
 import { Button } from "@/components/ui/Button";
-import { Card, DotDecoration, StatusBadge } from "@/components/ui/Card";
+import { Card, DotDecoration, OrganizationStatusBadge } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
@@ -174,7 +174,7 @@ function HomeHeader({
         </h1>
         {organization ? (
           <div className="mt-3 flex flex-wrap items-center gap-3">
-            {status ? <StatusBadge status={status} /> : null}
+            {status ? <OrganizationStatusBadge status={status} /> : null}
             <Link
               href={`/organizations/${organization.id}`}
               className="text-sm font-medium text-navy-700 underline-offset-4 hover:underline"
@@ -294,10 +294,10 @@ function split(rows: DatasetRequestListItem[]) {
   return {
     pending,
     others,
-    awaitingMe: pending.filter((r) => r.status === "PENDING_ORG_APPROVER"),
+    awaitingMe: pending.filter((r) => r.currentTaskType === "ORGANIZATION_APPROVAL"),
     counts: {
       pending: pending.length,
-      revision: count("NEEDS_REVISION"),
+      revision: count("RETURNED"),
       approved: count("APPROVED"),
     },
   };

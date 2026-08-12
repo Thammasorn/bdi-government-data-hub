@@ -95,7 +95,7 @@ function DatasetRow({ row }: { row: DatasetRequestListItem }) {
       </div>
 
       <div className="min-w-0">
-        <DatasetStatusBadge status={row.status} />
+        <DatasetStatusBadge status={row.status} currentTaskType={row.currentTaskType} />
         {owner ? (
           // ปล่อยให้ตัดบรรทัดได้ ข้อความบอกด่านยาวกว่าความกว้างคอลัมน์ ตัดท้ายทิ้งแล้วอ่านไม่รู้เรื่อง
           <span className="mt-1 block text-[12.5px] leading-snug text-ink-muted">{owner}</span>
