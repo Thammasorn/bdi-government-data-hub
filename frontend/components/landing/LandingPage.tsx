@@ -33,7 +33,9 @@ import {
   CONNECT_STEPS,
   HERO,
   HOW_IT_WORKS,
-  LEGAL_DOCUMENTS,
+  LEGAL_ANNEXES,
+  LEGAL_ANNEX_LABEL,
+  LEGAL_PRIMARY,
   LEGAL_REGULATION,
   OBJECTIVES,
   OBJECTIVES_BANNER,
@@ -562,6 +564,20 @@ function Connect() {
   );
 }
 
+/** ป้ายรหัสเอกสาร — ตัวหลักทึบ ตัวภาคผนวกจางลงหนึ่งระดับเพื่อบอกลำดับชั้นซ้ำอีกทาง */
+function DocCode({ code, muted = false }: { code: string; muted?: boolean }) {
+  return (
+    <span
+      className={clsx(
+        "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg font-heading text-[13px] font-semibold",
+        muted ? "bg-navy-50 text-navy-700" : "bg-navy-800 text-white",
+      )}
+    >
+      {code}
+    </span>
+  );
+}
+
 function Legal() {
   return (
     <Section id="legal" tone="canvas">
@@ -577,22 +593,37 @@ function Legal() {
       <h3 className="reveal mt-10 font-heading text-[17px] font-semibold text-navy-800">
         เอกสารที่เกี่ยวข้อง
       </h3>
-      <ul className="mt-3 space-y-2">
-        {LEGAL_DOCUMENTS.map((doc) => (
-          <li
-            key={doc.code}
-            className={clsx(
-              "reveal flex items-center gap-4 rounded-2xl bg-white px-6 py-4 shadow-card",
-              doc.annex && "sm:ml-10",
-            )}
-          >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-navy-800 font-heading text-[13px] font-semibold text-white">
-              {doc.code}
-            </span>
-            <span className="text-[16px] leading-[1.7] text-ink">{doc.title}</span>
-          </li>
-        ))}
-      </ul>
+
+      {/* ข้อตกลงหลัก */}
+      {/* ข้อความตัดบรรทัดเฉพาะจอแคบ ป้ายรหัสจึงชิดบนที่นั่น ส่วนจอกว้างเป็นบรรทัดเดียว จัดกึ่งกลางถูกกว่า */}
+      <div className="reveal mt-3 flex items-start gap-4 rounded-2xl bg-white px-6 py-4 shadow-card sm:items-center">
+        <DocCode code={LEGAL_PRIMARY.code} />
+        <span className="text-[16px] leading-[1.7] text-ink">{LEGAL_PRIMARY.title}</span>
+      </div>
+
+      {/*
+        ภาคผนวกอยู่ในกล่องเดียวที่มีหัวข้อกำกับและเส้นนำทางด้านซ้าย
+        ก่อนหน้านี้เยื้องทีละใบด้วย ml เฉย ๆ ซึ่งทำให้การ์ดสั้นลงโดยขอบขวายังชนที่เดิม
+        และไม่มีอะไรบอกว่าเยื้องเพราะอะไร — อ่านเหมือนเรนเดอร์พลาดมากกว่าลำดับชั้น
+      */}
+      <div className="reveal mt-4 rounded-2xl bg-white p-5 shadow-card sm:p-6">
+        <p className="font-heading text-[14px] font-semibold text-ink-muted">
+          {LEGAL_ANNEX_LABEL}
+          <span className="ml-2 font-sans font-normal text-ink-subtle">แนบท้าย A0</span>
+        </p>
+        <ul className="mt-3 border-l-2 border-navy-100 pl-5 sm:pl-6">
+          {LEGAL_ANNEXES.map((doc) => (
+            <li
+              key={doc.code}
+              className="flex items-start gap-4 border-t border-line py-3.5 first:border-t-0 first:pt-0 last:pb-0 sm:items-center"
+            >
+              <DocCode code={doc.code} muted />
+              <span className="text-[15px] leading-[1.7] text-ink">{doc.title}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
       <p className="reveal mt-5 text-[14px] text-ink-subtle">
         ลิงก์ดาวน์โหลดเอกสารแต่ละฉบับอยู่ระหว่างจัดเตรียม
       </p>

@@ -201,13 +201,20 @@ export const CONNECT_NOTE =
  */
 export const LEGAL_REGULATION = "ระเบียบสำนักนายกรัฐมนตรีว่าด้วยการแบ่งปันข้อมูลดิจิทัล พ.ศ. 2569";
 
-export const LEGAL_DOCUMENTS = [
-  { code: "A0", title: "ข้อตกลงในการบริหารจัดการและแบ่งปันข้อมูล", annex: false },
-  { code: "A1", title: "ข้อตกลงในการประมวลผลข้อมูล (Data Processing Agreement)", annex: true },
-  {
-    code: "A2",
-    title: "ข้อตกลงประมวลผลข้อมูลส่วนบุคคล (Personal Data Processing Agreement)",
-    annex: true,
-  },
-  { code: "A3", title: "ข้อตกลงรักษาความลับ (Non-Disclosure Agreement)", annex: true },
+/**
+ * สไลด์จัดเอกสารเป็นสองชั้น: A0 เป็นข้อตกลงหลัก ส่วน A1–A3 อยู่ใต้หัวข้อ "เอกสารภาคผนวก"
+ * แยกเป็นสองค่าแทนที่จะใช้ธง annex บนรายการเดียว เพราะความสัมพันธ์นี้ต้องเห็นได้จากโครงสร้าง
+ * ไม่ใช่จากระยะเยื้องที่ไม่มีอะไรอธิบาย
+ */
+export const LEGAL_PRIMARY = {
+  code: "A0",
+  title: "ข้อตกลงในการบริหารจัดการและแบ่งปันข้อมูล",
+};
+
+export const LEGAL_ANNEX_LABEL = "เอกสารภาคผนวก";
+
+export const LEGAL_ANNEXES = [
+  { code: "A1", title: "ข้อตกลงในการประมวลผลข้อมูล (Data Processing Agreement)" },
+  { code: "A2", title: "ข้อตกลงประมวลผลข้อมูลส่วนบุคคล (Personal Data Processing Agreement)" },
+  { code: "A3", title: "ข้อตกลงรักษาความลับ (Non-Disclosure Agreement)" },
 ];
