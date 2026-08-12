@@ -268,8 +268,18 @@ The spec pages (user journeys, Authentication & User Account, Database Design, A
 hang off the project page. `docs/` is the expanded, buildable version of those — when the two
 disagree, ask; don't silently follow one.
 
-Each Task Board card is one unit of work. Post progress, open questions and remaining items
-back onto the card as you go, so the board is readable without opening the repo.
+Each Task Board card is one unit of work. **Write progress back onto its card as you go — every
+time, not only when asked.** The board is how everyone who is not reading the repo sees what is
+happening; work that exists only as commits is invisible to them, and the questions raised along
+the way get lost.
+
+Append a dated section rather than rewriting the card, so the history reads in order. Cover what
+was done, what was decided and why, what broke, what was verified, and what is still outstanding
+as checkboxes. Correct anything earlier on the card that the new work has made untrue — a card
+that contradicts itself is worse than one that is out of date. Say plainly when something is
+*not* finished (a branch not pushed, work not merged); a card listing only successes reads as
+done. Open questions belong on the card too, since that is where the person who can answer them
+will look.
 
 ## Starting a task
 
