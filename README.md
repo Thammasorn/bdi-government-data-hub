@@ -124,7 +124,7 @@ curl -X POST "http://localhost:${BACKEND_PORT}/api/admin/invitations" \
   -d '{"email":"officer@bdi.or.th","role":"BDI_OFFICER"}'
 ```
 
-`role` เลือกได้: `BDI_OFFICER` · `BDI_APPROVER` · `BDI_SPECIALIST` ·
+`role` เลือกได้: `BDI_OFFICER` · `BDI_FINAL_APPROVER` · `BDI_DATASET_SPECIALIST` ·
 `ORGANIZATION_USER` · `ORGANIZATION_APPROVER`
 
 ถ้ายังไม่ได้ตั้ง `SMTP_USER` ระบบจะ**ไม่ส่งอีเมลจริง** แต่พิมพ์ลิงก์คำเชิญและรหัส OTP
