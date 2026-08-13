@@ -41,7 +41,7 @@ export default function HomePage() {
       router.push(`/organizations/${data.organization.id}/edit`);
     } catch (err) {
       if (err instanceof ApiError && err.code === "exists") {
-        router.push(`/organizations/${err.organizationId}/edit`);
+        router.push(`/organizations/${err.requestId}/edit`);
         return;
       }
       show({

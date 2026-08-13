@@ -53,7 +53,12 @@ import { NotificationType, bdiApproverIds, bdiOfficerIds, emailsOf, notifyUsers,
 import { renderOrganizationForm } from "../lib/pdf.js";
 import { nextOrganizationCode, nextOrganizationRequestNumber } from "../lib/request-number.js";
 import { ROLE_LABELS, isBdiStaff } from "../lib/roles.js";
-import { ROLE_CODES, SYSTEM_USER_ID, type RoleCode } from "../lib/system.js";
+import {
+  PLACEHOLDER_ORGANIZATION_NAME,
+  ROLE_CODES,
+  SYSTEM_USER_ID,
+  type RoleCode,
+} from "../lib/system.js";
 import { emailSchema, formatZodError, nationalIdSchema, phoneSchema } from "../lib/validation.js";
 import {
   WorkflowError,
@@ -420,9 +425,8 @@ organizationRouter.post("/", async (req, res) => {
     },
   });
   if (existing) {
-    res
-      .status(409)
-      .json({ error: "exists", organizationId: existing.id, message: "คุณมีคำขออยู่แล้ว" });
+    // requestId ไม่ใช่ id ของหน่วยงาน — `:id` ทุกเส้นทางของ router นี้คือ id ของคำขอ
+    res.status(409).json({ error: "exists", requestId: existing.id, message: "คุณมีคำขออยู่แล้ว" });
     return;
   }
 
@@ -440,7 +444,7 @@ organizationRouter.post("/", async (req, res) => {
       data: {
         organizationCode: await nextOrganizationCode(tx),
         organizationType: parsed.data.organizationType ?? null,
-        nameTh: parsed.data.name || "หน่วยงานใหม่",
+        nameTh: parsed.data.name || PLACEHOLDER_ORGANIZATION_NAME,
         nameEn: parsed.data.nameEn ?? null,
         status: OrganizationStatus.PENDING_REGISTRATION,
         createdBy: session.sub,
