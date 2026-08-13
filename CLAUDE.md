@@ -261,6 +261,18 @@ Two API base URLs, and they are not interchangeable:
 - Route params beat query strings for anything the first client render needs.
   `useSearchParams()` is empty on that render; a page that redirected when its `?id=` was
   missing bounced users away before hydration finished.
+- **Express 4 does not catch async handler rejections** — an `async` route that throws
+  produces an unhandled rejection, and Node 22 exits on those, so the whole API dies
+  instead of returning 500 and the error middleware in `index.ts` never runs.
+  `GET /api/organizations/mine` was enough to do it: no such route, so it matched
+  `GET /:id`, and Prisma raised P2023 on a non-UUID. Route files therefore import
+  `Router` from `lib/async-route.js`, not from `express` — keep it that way for new
+  route files. Both routers also 404 a non-UUID `:id` in `router.param()`.
+- The two `BDI_OFFICER_REVIEW` rounds look identical to anything reading `task_type`.
+  Round one goes to the organization for signature, the re-check after signing goes to
+  BDI final approval. Backend and `components/dataset/DetailView.tsx` both decide by
+  whether an `ORGANIZATION_APPROVAL` has completed — a screen keyed on `task_type`
+  alone will show the wrong button and nothing will fail loudly.
 
 
 ## Notion
