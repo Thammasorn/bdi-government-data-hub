@@ -25,7 +25,6 @@ services:
       target: runner
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
-        NEXT_PUBLIC_THAID_MOCK: ${THAID_MOCK:-false}
     environment:
       NODE_ENV: production
       HOSTNAME: "0.0.0.0"

@@ -31,6 +31,9 @@ function requiredInProduction(name: string, devFallback: string): string {
   return devFallback;
 }
 
+/** อ่านก่อนสร้าง env เพราะ redirect_uri ของ ThaiD ตั้งต้นจากค่านี้ */
+const APP_URL = optional("APP_URL", "http://localhost:3000").replace(/\/$/, "");
+
 export const env = {
   nodeEnv: optional("NODE_ENV", "development"),
   port: Number(optional("PORT", "4000")),
@@ -43,7 +46,7 @@ export const env = {
     .map((o) => o.trim())
     .filter(Boolean),
   /** ใช้สร้างลิงก์ในอีเมล ต้องเป็น URL ที่ผู้รับเปิดจากเครื่องตัวเองได้ */
-  appUrl: optional("APP_URL", "http://localhost:3000"),
+  appUrl: APP_URL,
 
   databaseUrl: required("DATABASE_URL"),
 
@@ -68,11 +71,6 @@ export const env = {
     ),
     activationKeyTtlDays: Number(optional("ACTIVATION_KEY_TTL_DAYS", "7")),
     /**
-     * ยังไม่มี client credentials ของ ThaiD จริง เปิดตัวนี้เพื่อให้ทดลอง flow ได้
-     * ต้องเป็น false บน production มิฉะนั้นข้ามการยืนยันตัวตนได้ทั้งหมด
-     */
-    thaidMock: optional("THAID_MOCK", "false") === "true",
-    /**
      * ตั้ง Secure ให้ session cookie โดยอัตโนมัติเมื่อ APP_URL เป็น https
      * (เบราว์เซอร์ทิ้ง cookie ที่มี Secure ถ้าเชื่อมต่อผ่าน http ธรรมดา
      * จึงเปิดตายตัวไม่ได้ ต้องดูจากที่อยู่จริงที่ผู้ใช้เข้า)
@@ -80,6 +78,40 @@ export const env = {
     cookieSecure:
       optional("COOKIE_SECURE", optional("APP_URL", "").startsWith("https://") ? "true" : "false") ===
       "true",
+  },
+
+  /**
+   * ThaiD (DOPA IdP) — OAuth 2.0 authorization code flow
+   *
+   * ทุกค่าอ่านจาก environment เพราะ sandbox กับของจริงคนละ host คนละ client และ
+   * redirect_uri ต้อง "ตรงตัวอักษร" กับที่ลงทะเบียนไว้กับกรมการปกครอง ไม่งั้นได้
+   * invalid_request ตั้งแต่ขั้น authorize (ทดลองแล้วเป็นแบบนั้นจริง)
+   *
+   * scope ตั้งต้นรวม `pid` เพราะทั้ง flow ตั้งอยู่บนการเทียบเลขประจำตัวประชาชน
+   * ถ้า client ที่ใช้ยังไม่ได้รับสิทธิ์ scope นี้ กรมการปกครองจะตอบ invalid_scope
+   * ตั้งแต่ขั้น authorize — แก้ที่การลงทะเบียน ไม่ใช่ที่โค้ด
+   */
+  thaid: {
+    /**
+     * ข้ามการเรียก ThaiD จริงแล้วสมมติว่า "เลขบัตรตรง" — สำหรับ deployment ที่ยังไม่มี
+     * client credentials เท่านั้น ต้องเป็น false ทุกที่ที่ไม่ใช่เครื่อง dev
+     * มิฉะนั้นการยืนยันตัวตนทั้งขั้นตอนกลายเป็นแค่การกดปุ่ม
+     */
+    mock: optional("THAID_MOCK", "false") === "true",
+    rootUrl: optional("THAID_ROOT_URL", "https://imauthsbx.bora.dopa.go.th").replace(/\/$/, ""),
+    clientId: optional("THAID_CLIENT_ID", ""),
+    clientSecret: optional("THAID_CLIENT_SECRET", ""),
+    /** บาง environment ของ BORA ต้องแนบ api key มาด้วย ปล่อยว่างได้ถ้าไม่ต้อง */
+    apiKey: optional("THAID_API_KEY", ""),
+    redirectUri: optional("THAID_REDIRECT_URI", `${APP_URL}/auth/callback/thaid`),
+    scope: optional(
+      "THAID_SCOPE",
+      "openid pid title given_name middle_name family_name name given_name_en family_name_en name_en",
+    ),
+    /** อายุของ state ที่ค้างรอ callback — ยาวพอให้เปิดแอป ThaiD บนมือถือแล้วกลับมา */
+    stateTtlMinutes: Number(optional("THAID_STATE_TTL_MINUTES", "15")),
+    /** ยืนยันตัวตนแล้วมีเวลาเท่านี้ในการตั้งรหัสผ่านให้จบ ก่อนต้องยืนยันใหม่ */
+    verificationTtlMinutes: Number(optional("THAID_VERIFICATION_TTL_MINUTES", "30")),
   },
 
   minio: {

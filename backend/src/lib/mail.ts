@@ -116,7 +116,7 @@ export async function sendRaw(to: string, title: string, message: string): Promi
 // ------------------------------------------------------------------ อีเมลแต่ละชนิด
 
 export async function sendInvitationEmail(to: string, token: string, roleLabel: string) {
-  const url = `${env.appUrl}/register?token=${token}`;
+  const url = `${env.appUrl}/activate?token=${token}`;
   await send(
     to,
     "คำเชิญเข้าใช้งาน Government Datahub Platform",
@@ -124,9 +124,10 @@ export async function sendInvitationEmail(to: string, token: string, roleLabel: 
       title: "คุณได้รับเชิญให้เข้าใช้งานระบบ",
       intro: `สถาบันข้อมูลขนาดใหญ่ (BDI) เชิญคุณเข้าใช้งาน Government Datahub Platform ในสิทธิ์ <strong style="color:${TEXT};">${roleLabel}</strong>`,
       body: `<p style="margin:0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-               กดปุ่มด้านล่างเพื่อตั้งรหัสผ่านและยืนยันตัวตน ลิงก์นี้ใช้ได้ ${env.auth.invitationTtlDays} วัน
+               กดปุ่มด้านล่างเพื่อยืนยันตัวตนด้วย ThaiD แล้วตั้งรหัสผ่าน
+               ลิงก์นี้ใช้ได้ ${env.auth.activationKeyTtlDays} วัน
              </p>`,
-      button: { label: "เริ่มลงทะเบียน", url },
+      button: { label: "เปิดใช้งานบัญชี", url },
     }),
   );
 }

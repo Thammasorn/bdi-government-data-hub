@@ -215,13 +215,36 @@ export type ActivationLookupFailure = "not_found" | "used" | "expired" | "revoke
 export async function findUsableActivationKey(rawKey: string) {
   const record = await prisma.activationKey.findFirst({
     where: { keyHash: hashActivationKey(rawKey) },
-    include: {
-      userAccount: true,
-      organization: { select: { id: true, nameTh: true, status: true } },
-      role: { select: { id: true, code: true, nameTh: true } },
-    },
+    include: ACTIVATION_KEY_INCLUDE,
   });
+  return evaluateActivationKey(record);
+}
 
+/**
+ * เหมือน findUsableActivationKey แต่หาจาก id ของแถว
+ *
+ * callback ของ ThaiD ไม่มี raw key อยู่ในมือ (จงใจ — คีย์จริงไม่เคยถูกส่งผ่าน
+ * ThaiD หรือถูกเก็บลงฐานข้อมูล) มีแต่ subject_id ของ integration_operation
+ */
+export async function usableActivationKeyById(id: string) {
+  const record = await prisma.activationKey.findUnique({
+    where: { id },
+    include: ACTIVATION_KEY_INCLUDE,
+  });
+  return evaluateActivationKey(record);
+}
+
+const ACTIVATION_KEY_INCLUDE = {
+  userAccount: true,
+  organization: { select: { id: true, nameTh: true, status: true } },
+  role: { select: { id: true, code: true, nameTh: true } },
+} as const;
+
+type ActivationKeyRecord = Prisma.ActivationKeyGetPayload<{
+  include: typeof ACTIVATION_KEY_INCLUDE;
+}> | null;
+
+async function evaluateActivationKey(record: ActivationKeyRecord) {
   if (!record) return { key: null, reason: "not_found" as ActivationLookupFailure };
   if (record.status === ActivationKeyStatus.USED) {
     return { key: null, reason: "used" as ActivationLookupFailure };
@@ -240,6 +263,29 @@ export async function findUsableActivationKey(rawKey: string) {
   }
 
   return { key: record, reason: null };
+}
+
+/**
+ * ยกเลิกคีย์ที่ยังใช้ได้อยู่
+ *
+ * §2.4 ของสเปกสั่งไว้ว่าเลขบัตรจาก ThaiD ไม่ตรงกับที่บันทึกไว้ → REVOKED ไม่ใช่แค่
+ * ปฏิเสธครั้งนั้น คนที่ถือลิงก์ต้องขอใบใหม่จากเจ้าหน้าที่ ลองสุ่มเลขบัตรซ้ำ ๆ ไม่ได้
+ */
+export async function revokeActivationKey(
+  db: Db,
+  params: { activationKeyId: string; reason: string; actorId?: string },
+) {
+  const actorId = params.actorId ?? SYSTEM_USER_ID;
+  await db.activationKey.update({
+    where: { id: params.activationKeyId },
+    data: {
+      status: ActivationKeyStatus.REVOKED,
+      revokedAt: new Date(),
+      revokedBy: actorId,
+      revokedReason: params.reason,
+      updatedBy: actorId,
+    },
+  });
 }
 
 /**

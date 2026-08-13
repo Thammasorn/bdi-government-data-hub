@@ -52,6 +52,14 @@ export const AuditAction = {
   LOGIN_SUCCEEDED: "LOGIN_SUCCEEDED",
   LOGIN_FAILED: "LOGIN_FAILED",
 
+  /**
+   * ยืนยันตัวตนกับ ThaiD — เพิ่มจากรายการตัวอย่างใน sheet
+   * §2.4 สั่งให้ "บันทึก Log การทำรายการ" ตอนเลขบัตรไม่ตรงโดยเฉพาะ ซึ่งไม่มี action
+   * เดิมอันไหนตรงความหมาย (LOGIN_FAILED คนละเรื่อง — ยังไม่มีบัญชีให้ล็อกอินด้วยซ้ำ)
+   */
+  IDENTITY_VERIFIED: "IDENTITY_VERIFIED",
+  IDENTITY_VERIFICATION_FAILED: "IDENTITY_VERIFICATION_FAILED",
+
   DATA_EXPORTED: "DATA_EXPORTED",
   DOCUMENT_DOWNLOADED: "DOCUMENT_DOWNLOADED",
 } as const;

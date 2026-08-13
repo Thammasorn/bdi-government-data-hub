@@ -92,6 +92,12 @@ services:
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-BDI Datahub <no-reply@bdi.or.th>}
       THAID_MOCK: ${THAID_MOCK:-false}
+      THAID_ROOT_URL: ${THAID_ROOT_URL:-}
+      THAID_CLIENT_ID: ${THAID_CLIENT_ID:-}
+      THAID_CLIENT_SECRET: ${THAID_CLIENT_SECRET:-}
+      THAID_API_KEY: ${THAID_API_KEY:-}
+      THAID_REDIRECT_URI: ${THAID_REDIRECT_URI:-}
+      THAID_SCOPE: ${THAID_SCOPE:-}
       COOKIE_SECURE: ${COOKIE_SECURE:-}
     ports:
       # ตรึงไว้ — โดเมนสาธารณะ bdi-api.thammasorn.org ชี้มาที่พอร์ตนี้
@@ -153,7 +159,6 @@ services:
       # Browser-side: must be reachable from the host.
       # ว่าง = same-origin (proxy ผ่าน next.config.ts) — ใช้ `-` ไม่ใช่ `:-` เพื่อให้ค่าว่างคงอยู่
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL-}
-      NEXT_PUBLIC_THAID_MOCK: ${THAID_MOCK:-false}
       ALLOWED_DEV_ORIGINS: ${APP_URL:-}
       # Server-side (RSC / route handlers): uses the compose network.
       INTERNAL_API_URL: http://backend:4000

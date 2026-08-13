@@ -24,7 +24,7 @@ import {
   SYSTEM_USER_ID,
   type RoleCode,
 } from "../lib/system.js";
-import { emailSchema, formatZodError } from "../lib/validation.js";
+import { emailSchema, formatZodError, nationalIdSchema } from "../lib/validation.js";
 import { requireAdminToken } from "../middleware/auth.js";
 
 export const adminRouter = Router();
@@ -36,6 +36,15 @@ const inviteSchema = z.object({
   role: z.enum(Object.values(ROLE_CODES) as [RoleCode, ...RoleCode[]], { error: "role ไม่ถูกต้อง" }),
   organizationId: z.string().uuid().optional(),
   displayName: z.string().trim().min(1).optional(),
+  /**
+   * เลขประจำตัวประชาชนของคนที่ถูกเชิญ — บังคับทุก role
+   *
+   * §2.4 ของสเปก ThaiD ให้เทียบเลขบัตรที่ ThaiD ส่งกลับมากับ "CID ที่ถูกบันทึกไว้
+   * ในระบบตอนสร้างบัญชี" ไม่ใช่เลขที่ผู้ใช้พิมพ์เองตอนลงทะเบียน — ถ้าให้ผู้ใช้กรอกเอง
+   * การเทียบก็ไม่ได้พิสูจน์อะไร เพราะเขากรอกเลขของบัตรที่ถืออยู่ในมือได้เสมอ
+   * เจ้าหน้าที่จึงต้องกรอกจากเอกสารที่หน่วยงานส่งมา ตั้งแต่ตอนสร้างบัญชี
+   */
+  cid: nationalIdSchema,
 });
 
 /**
@@ -43,7 +52,7 @@ const inviteSchema = z.object({
  *
  *   POST /api/admin/invitations
  *   x-admin-token: <ADMIN_API_TOKEN>
- *   { "email": "...", "role": "ORGANIZATION_USER", "organizationId": "..." }
+ *   { "email": "...", "role": "ORGANIZATION_USER", "organizationId": "...", "cid": "1234567890121" }
  *
  * เปลี่ยน contract จากของเดิม: ตาม "Suggested lifecycle" ใน sheet `activation_key`
  * ขั้นที่ 1–3 คือ **สร้าง user_account (PENDING) ก่อน** แล้วค่อยออก activation key
@@ -55,7 +64,7 @@ adminRouter.post("/invitations", async (req, res) => {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;
   }
-  const { email, role, displayName } = parsed.data;
+  const { email, role, displayName, cid } = parsed.data;
 
   const isOrgScoped = ORGANIZATION_SCOPED_ROLES.includes(role);
   // activation_key.organization_id เป็น NOT NULL — เจ้าหน้าที่ BDI ผูกกับหน่วยงาน BDI เอง
@@ -79,18 +88,23 @@ adminRouter.post("/invitations", async (req, res) => {
   }
 
   const result = await prisma.$transaction(async (tx) => {
-    const account =
-      existing ??
-      (await tx.userAccount.create({
-        data: {
-          email,
-          displayName: displayName ?? email,
-          accountType: isOrgScoped ? AccountType.ORGANIZATION : AccountType.BDI,
-          status: UserAccountStatus.PENDING,
-          createdBy: SYSTEM_USER_ID,
-          updatedBy: SYSTEM_USER_ID,
-        },
-      }));
+    // เชิญซ้ำบัญชีที่ยัง PENDING ถือว่าเจ้าหน้าที่กำลังแก้ข้อมูลที่กรอกผิด — เขียนทับเลขบัตรเดิม
+    const account = existing
+      ? await tx.userAccount.update({
+          where: { id: existing.id },
+          data: { cid, updatedBy: SYSTEM_USER_ID },
+        })
+      : await tx.userAccount.create({
+          data: {
+            email,
+            cid,
+            displayName: displayName ?? email,
+            accountType: isOrgScoped ? AccountType.ORGANIZATION : AccountType.BDI,
+            status: UserAccountStatus.PENDING,
+            createdBy: SYSTEM_USER_ID,
+            updatedBy: SYSTEM_USER_ID,
+          },
+        });
 
     /**
      * เชิญคนที่จะมา "สร้างหน่วยงานของตัวเอง" (Journey B) โดยไม่ระบุหน่วยงาน
