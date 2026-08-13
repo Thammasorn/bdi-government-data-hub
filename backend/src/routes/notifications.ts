@@ -5,7 +5,7 @@
  * สถานะเปลี่ยนจาก readAt แบบ nullable เป็น enum UNREAD/READ/ARCHIVED
  * CHECK constraint ในฐานข้อมูลบังคับว่า READ ต้องมี read_at และ ARCHIVED ต้องมี archived_at
  */
-import { Router } from "express";
+import { Router } from "../lib/async-route.js";
 import { NotificationStatus } from "@prisma/client";
 
 import { prisma } from "../db.js";

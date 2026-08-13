@@ -1,14 +1,25 @@
-import { Router } from "express";
+import { Router } from "../lib/async-route.js";
 import { z } from "zod";
-import { ActivationKeyStatus, AccountType, UserAccountStatus } from "@prisma/client";
+import {
+  ActivationKeyStatus,
+  AccountType,
+  OrganizationStatus,
+  RequestStatus,
+  UserAccountStatus,
+} from "@prisma/client";
 
 import { prisma } from "../db.js";
 import { issueActivationKey } from "../lib/iam.js";
+import {
+  nextOrganizationCode,
+  nextOrganizationRequestNumber,
+} from "../lib/request-number.js";
 import { sendInvitationEmail } from "../lib/mail.js";
 import { ROLE_LABELS } from "../lib/roles.js";
 import {
   BDI_ORGANIZATION_ID,
   ORGANIZATION_SCOPED_ROLES,
+  PLACEHOLDER_ORGANIZATION_NAME,
   ROLE_CODES,
   SYSTEM_USER_ID,
   type RoleCode,
@@ -48,23 +59,17 @@ adminRouter.post("/invitations", async (req, res) => {
 
   const isOrgScoped = ORGANIZATION_SCOPED_ROLES.includes(role);
   // activation_key.organization_id เป็น NOT NULL — เจ้าหน้าที่ BDI ผูกกับหน่วยงาน BDI เอง
-  const organizationId = isOrgScoped ? parsed.data.organizationId : BDI_ORGANIZATION_ID;
+  const requestedOrganizationId = isOrgScoped ? parsed.data.organizationId : BDI_ORGANIZATION_ID;
 
-  if (!organizationId) {
-    res.status(400).json({
-      error: "validation",
-      fields: { organizationId: "role ระดับหน่วยงานต้องระบุ organizationId" },
+  if (requestedOrganizationId) {
+    const organization = await prisma.organization.findUnique({
+      where: { id: requestedOrganizationId },
+      select: { id: true },
     });
-    return;
-  }
-
-  const organization = await prisma.organization.findUnique({
-    where: { id: organizationId },
-    select: { id: true },
-  });
-  if (!organization) {
-    res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานที่ระบุ" });
-    return;
+    if (!organization) {
+      res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานที่ระบุ" });
+      return;
+    }
   }
 
   const existing = await prisma.userAccount.findUnique({ where: { email } });
@@ -87,6 +92,42 @@ adminRouter.post("/invitations", async (req, res) => {
         },
       }));
 
+    /**
+     * เชิญคนที่จะมา "สร้างหน่วยงานของตัวเอง" (Journey B) โดยไม่ระบุหน่วยงาน
+     *
+     * activation_key.organization_id เป็น NOT NULL ตามดีไซน์ แต่ตอนเชิญยังไม่มีหน่วยงาน
+     * ให้ผูก — ถ้าบังคับให้ระบุ เส้นทางนี้จะเข้าไม่ได้เลย เพราะหน่วยงานเกิดหลังจากที่
+     * ผู้ใช้ล็อกอินเข้ามากรอกฟอร์ม
+     *
+     * จึงสร้างหน่วยงานเปล่าสถานะ PENDING_REGISTRATION พร้อมคำขอฉบับร่างไว้ล่วงหน้า
+     * ให้เป็นของบัญชีนั้น ผู้ใช้กด "สร้างหน่วยงาน" แล้วจะเจอร่างใบนี้แทนที่จะได้ใบใหม่
+     * (POST /api/organizations ตอบ 409 พร้อม id ของร่างเดิม แล้วหน้าเว็บพาไปแก้ต่อ)
+     */
+    let organizationId = requestedOrganizationId;
+    if (!organizationId) {
+      const placeholder = await tx.organization.create({
+        data: {
+          organizationCode: await nextOrganizationCode(tx),
+          nameTh: PLACEHOLDER_ORGANIZATION_NAME,
+          status: OrganizationStatus.PENDING_REGISTRATION,
+          createdBy: SYSTEM_USER_ID,
+          updatedBy: SYSTEM_USER_ID,
+        },
+      });
+      await tx.organizationRegistrationRequest.create({
+        data: {
+          requestNumber: await nextOrganizationRequestNumber(tx),
+          organizationId: placeholder.id,
+          organizationCode: placeholder.organizationCode,
+          status: RequestStatus.DRAFT,
+          userEmail: email,
+          createdBy: account.id,
+          updatedBy: account.id,
+        },
+      });
+      organizationId = placeholder.id;
+    }
+
     const { key, record } = await issueActivationKey(tx, {
       userAccountId: account.id,
       organizationId,
@@ -94,7 +135,7 @@ adminRouter.post("/invitations", async (req, res) => {
       actorId: SYSTEM_USER_ID,
     });
 
-    return { account, key, record };
+    return { account, key, record, organizationId };
   });
 
   await sendInvitationEmail(email, result.key, ROLE_LABELS[role]);
@@ -105,7 +146,7 @@ adminRouter.post("/invitations", async (req, res) => {
     email,
     role,
     roleLabel: ROLE_LABELS[role],
-    organizationId,
+    organizationId: result.organizationId,
     expiresAt: result.record.expiresAt,
   });
 });

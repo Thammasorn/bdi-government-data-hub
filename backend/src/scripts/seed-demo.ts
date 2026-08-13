@@ -31,6 +31,7 @@ import { assignRole, roleIdByCode } from "../lib/iam.js";
 import { runWithContext } from "../lib/context.js";
 import {
   BDI_ORGANIZATION_ID,
+  PLACEHOLDER_ORGANIZATION_NAME,
   ROLE_CODES,
   SYSTEM_USER_ID,
   type RoleCode,
@@ -520,6 +521,52 @@ async function main() {
     };
   }
 
+  // ------------------------------------------- ผู้ใช้ที่เพิ่งรับคำเชิญ ยังไม่มีหน่วยงาน
+  /**
+   * จุดเริ่มต้นของ Journey B ที่เดินจากหน้าเว็บได้ทันทีโดยไม่ต้องยิงคำเชิญเอง
+   *
+   * สร้างให้เหมือนสิ่งที่ POST /api/admin/invitations ทิ้งไว้หลังผู้ใช้ยืนยัน OTP แล้ว:
+   * หน่วยงานเปล่าสถานะ PENDING_REGISTRATION ชื่อ "หน่วยงานใหม่" พร้อมคำขอฉบับร่าง
+   * ที่ยังไม่มีเนื้อหา — ไม่ใช่บัญชีที่ organization_id เป็น NULL ซึ่งออกคีย์ไม่ได้
+   */
+  console.log("สร้างผู้ใช้ที่ยังไม่มีหน่วยงาน…");
+
+  const newcomerOrg = await prisma.organization.create({
+    data: {
+      organizationCode: "ORG-2026-0006",
+      nameTh: PLACEHOLDER_ORGANIZATION_NAME,
+      status: OrganizationStatus.PENDING_REGISTRATION,
+      createdAt: dt(1),
+      createdBy: SYSTEM_USER_ID,
+      updatedBy: SYSTEM_USER_ID,
+    },
+  });
+
+  const newcomer = await makeUser({
+    email: "newbie@moi.go.th",
+    prefix: "นาย",
+    firstName: "ภานุพงศ์",
+    lastName: "เริ่มต้น",
+    phone: "0840000000",
+    cid: "1101000000060",
+    accountType: AccountType.ORGANIZATION,
+    role: ROLE_CODES.ORGANIZATION_USER,
+    organizationId: newcomerOrg.id,
+  });
+
+  await prisma.organizationRegistrationRequest.create({
+    data: {
+      requestNumber: "ORG-REG-2026-0006",
+      organizationId: newcomerOrg.id,
+      organizationCode: newcomerOrg.organizationCode,
+      status: RequestStatus.DRAFT,
+      userEmail: newcomer.email,
+      createdAt: dt(1),
+      createdBy: newcomer.id,
+      updatedBy: newcomer.id,
+    },
+  });
+
   // ---------------------------------------------------------- ชุดข้อมูล
   console.log("สร้างคำขอลงทะเบียนชุดข้อมูล…");
 
@@ -531,6 +578,13 @@ async function main() {
     result?: ReviewResult;
     daysAgo: number;
     specialist?: boolean;
+    /**
+     * ค้างที่ BDI_OFFICER_REVIEW **รอบสอง** คือด่านตรวจซ้ำหลังผู้มีอำนาจลงนามแล้ว
+     *
+     * ด่านตรวจรอบแรกกับด่านตรวจซ้ำใช้ task_type เดียวกัน ต่างกันตรงที่มี
+     * ORGANIZATION_APPROVAL ปิดไปแล้วหรือยัง — ธงนี้บอกให้ seed เดินไปทางนั้น
+     */
+    recheck?: boolean;
   }
 
   const datasetSpecs: DatasetSpec[] = [
@@ -556,6 +610,12 @@ async function main() {
       stage: null,
       result: ReviewResult.REJECTED,
       daysAgo: 28,
+    },
+    {
+      title: "ทะเบียนโครงการวิจัยที่ได้รับทุนภาครัฐ",
+      stage: ReviewTaskType.BDI_OFFICER_REVIEW,
+      recheck: true,
+      daysAgo: 22,
     },
   ];
 
@@ -644,7 +704,7 @@ async function main() {
         comment: "กรุณาระบุฐานอำนาจตามกฎหมายและแนบตัวอย่างข้อมูลเพิ่มเติม",
         at: t(2),
       });
-    } else if (spec.stage === ReviewTaskType.BDI_OFFICER_REVIEW) {
+    } else if (spec.stage === ReviewTaskType.BDI_OFFICER_REVIEW && !spec.recheck) {
       await openTaskRow({
         subjectType: DS_SUBJECT,
         subjectId: request.id,
@@ -715,7 +775,18 @@ async function main() {
         });
 
         // ตรวจซ้ำโดย officer — BDI_OFFICER_REVIEW รอบที่สอง
-        if (spec.stage === ReviewTaskType.BDI_FINAL_APPROVAL || spec.result) {
+        if (spec.recheck) {
+          await openTaskRow({
+            subjectType: DS_SUBJECT,
+            subjectId: request.id,
+            taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
+            sequenceNumber: seq++,
+            roundNumber: 2,
+            assignedUserId: officer.id,
+            assignedRole: ROLE_CODES.BDI_OFFICER,
+            at: t(4),
+          });
+        } else if (spec.stage === ReviewTaskType.BDI_FINAL_APPROVAL || spec.result) {
           await closedTask({
             subjectType: DS_SUBJECT,
             subjectId: request.id,

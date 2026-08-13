@@ -75,3 +75,13 @@ export const ORGANIZATION_SCOPED_ROLES: RoleCode[] = [
   ROLE_CODES.ORGANIZATION_USER,
   ROLE_CODES.ORGANIZATION_APPROVER,
 ];
+
+/**
+ * ชื่อของหน่วยงานที่ยังไม่มีใครกรอกชื่อให้
+ *
+ * activation_key.organization_id เป็น NOT NULL ตอนเชิญคนที่จะมาสร้างหน่วยงานของตัวเอง
+ * (Journey B) จึงต้องมีแถวหน่วยงานรออยู่ก่อนตั้งแต่ตอนเชิญ ทั้งที่ยังไม่รู้ชื่อ
+ * ใช้ที่ POST /api/admin/invitations · POST /api/organizations และ seed:demo —
+ * ผู้ใช้เห็นชื่อนี้บนหน้าจอจนกว่าจะกรอกส่วนที่ 1 ของฟอร์ม
+ */
+export const PLACEHOLDER_ORGANIZATION_NAME = "หน่วยงานใหม่";

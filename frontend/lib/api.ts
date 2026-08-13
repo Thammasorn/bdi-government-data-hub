@@ -12,8 +12,8 @@ export class ApiError extends Error {
   status: number;
   code: string;
   fields: Record<string, string>;
-  /** ส่งกลับมาพร้อม code "exists" เพื่อพาผู้ใช้ไปที่คำขอเดิมของเขา */
-  organizationId?: string;
+  /** ส่งกลับมาพร้อม code "exists" — id ของ "คำขอ" เดิมของเขา ไม่ใช่ของหน่วยงาน */
+  requestId?: string;
 
   constructor(
     status: number,
@@ -21,14 +21,14 @@ export class ApiError extends Error {
       error?: string;
       message?: string;
       fields?: Record<string, string>;
-      organizationId?: string;
+      requestId?: string;
     },
   ) {
     super(body.message ?? "เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง");
     this.status = status;
     this.code = body.error ?? "unknown";
     this.fields = body.fields ?? {};
-    this.organizationId = body.organizationId;
+    this.requestId = body.requestId;
   }
 }
 

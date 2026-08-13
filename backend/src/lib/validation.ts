@@ -1,5 +1,17 @@
 import { z } from "zod";
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * ทุก id ที่รับมาจาก path เป็น UUID
+ *
+ * Postgres โยน error ถ้าเทียบคอลัมน์ uuid กับข้อความที่ไม่ใช่ UUID — ปล่อยให้ค่าที่
+ * ไม่ใช่ UUID ไหลไปถึง Prisma จะได้ 500 ทั้งที่ความหมายจริงคือ "ไม่พบ"
+ */
+export function isUuid(value: string): boolean {
+  return UUID_RE.test(value);
+}
+
 /**
  * เลขบัตรประชาชนไทย 13 หลัก — หลักสุดท้ายเป็น check digit
  * นำ 12 หลักแรกคูณน้ำหนัก 13..2 รวมกัน แล้ว (11 - ผลรวม % 11) % 10

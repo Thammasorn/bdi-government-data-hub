@@ -14,8 +14,8 @@
 | Role | รหัสในระบบ | ขอบเขต | หน้าที่ |
 | --- | --- | --- | --- |
 | BDI Officer | `BDI_OFFICER` | ทั้งระบบ | ตรวจสอบข้อมูลหน่วยงานและคำขอลงทะเบียนชุดข้อมูล อนุมัติหรือส่งกลับให้แก้ |
-| BDI Approver | `BDI_APPROVER` | ทั้งระบบ | เห็นชอบและลงนามขั้นสุดท้าย ทำให้หน่วยงานเปิดใช้งาน / อนุมัติหรือไม่อนุมัติชุดข้อมูล |
-| BDI Specialist | `BDI_SPECIALIST` | เฉพาะคำขอที่ถูก assign | ผู้เชี่ยวชาญข้อมูล — ตรวจเนื้อหาชุดข้อมูลที่ BDI Officer มอบหมายให้ (เส้นทาง C) |
+| BDI Approver | `BDI_FINAL_APPROVER` | ทั้งระบบ | เห็นชอบและลงนามขั้นสุดท้าย ทำให้หน่วยงานเปิดใช้งาน / อนุมัติหรือไม่อนุมัติชุดข้อมูล |
+| BDI Specialist | `BDI_DATASET_SPECIALIST` | เฉพาะคำขอที่ถูก assign | ผู้เชี่ยวชาญข้อมูล — ตรวจเนื้อหาชุดข้อมูลที่ BDI Officer มอบหมายให้ (เส้นทาง C) |
 | Organization User | `ORG_USER` | หน่วยงานตนเอง | กรอกและนำส่งฟอร์มสร้างหน่วยงาน และคำขอลงทะเบียนชุดข้อมูล |
 | Organization Approver | `ORG_APPROVER` | หน่วยงานตนเอง | ผู้มีอำนาจกระทำการแทน — ตรวจ PDF และให้ความเห็นชอบ |
 
@@ -57,7 +57,10 @@ Content-Type: application/json
 { "email": "somchai@moph.go.th", "role": "ORGANIZATION_USER" }
 ```
 
-- `role` เลือกได้: `BDI_OFFICER` · `BDI_APPROVER` · `BDI_SPECIALIST` · `ORGANIZATION_USER` · `ORGANIZATION_APPROVER`
+- `role` เลือกได้: `BDI_OFFICER` · `BDI_FINAL_APPROVER` · `BDI_DATASET_SPECIALIST` ·
+  `BDI_LEGAL_OFFICER` · `SYSTEM_ADMINISTRATOR` · `ORGANIZATION_USER` · `ORGANIZATION_APPROVER`
+- `organizationId` ไม่บังคับแม้กับ role ฝั่งหน่วยงาน — เว้นไว้แปลว่าคนนี้จะมาสร้าง
+  หน่วยงานของตัวเอง ระบบเตรียมหน่วยงานเปล่ากับคำขอฉบับร่างรอไว้ให้
 - ตรวจ format อีเมล และกันเชิญซ้ำ (ถ้ามี invitation ที่ยัง `PENDING` อยู่ → ออก token ใหม่แทนที่ของเดิม)
 - ถ้าอีเมลนี้เป็น user อยู่แล้ว → `409` พร้อมบอกว่ามีบัญชีแล้ว
 - ตอบกลับ `201` พร้อม `invitationId`, `expiresAt` (ไม่คืน token ใน response — token อยู่ในอีเมลเท่านั้น)
@@ -344,7 +347,7 @@ BDI Officer **ทุกคนเห็นคำขอทั้งหมดใน
 2. **ข้อมูลไม่เพียงพอ** → `ต้องปรับปรุง` + ระบุรายการที่ต้องแก้ (≥ 10 ตัวอักษร)
    → `NEEDS_REVISION` + อีเมล + in-app notification ถึง Org User
 3. **ข้อมูลเพียงพอ** → เลือกทำอย่างใดอย่างหนึ่งหรือทั้งสอง
-   - **Assign Data Specialist (ไม่บังคับ)** — เลือกจากบัญชี `BDI_SPECIALIST` ที่มีอยู่แล้วในระบบ
+   - **Assign Data Specialist (ไม่บังคับ)** — เลือกจากบัญชี `BDI_DATASET_SPECIALIST` ที่มีอยู่แล้วในระบบ
      กด assign แล้วคำขอจะขึ้นในหน้ารายการของผู้เชี่ยวชาญคนนั้น
      พร้อมส่งอีเมล + notification ให้ผู้เชี่ยวชาญ (ถอน assign ได้)
    - **ส่งต่อ** — `PENDING_ORG_APPROVER` + แจ้งผู้มีอำนาจของหน่วยงาน
@@ -394,8 +397,8 @@ Org Approver **เห็นคำขอทุกรายการในหน�
 | `ORG_USER` | ทุกคำขอของหน่วยงานตนเอง (จัดการได้แม้ไม่ได้เป็นคนสร้าง) |
 | `ORG_APPROVER` | ทุกคำขอของหน่วยงานตนเอง |
 | `BDI_OFFICER` | ทุกคำขอในระบบ |
-| `BDI_APPROVER` | ทุกคำขอในระบบ **[สมมติฐาน]** (สเปกระบุชัดเฉพาะ Officer) |
-| `BDI_SPECIALIST` | เฉพาะคำขอที่ถูก assign ให้ตนเอง |
+| `BDI_FINAL_APPROVER` | ทุกคำขอในระบบ **[สมมติฐาน]** (สเปกระบุชัดเฉพาะ Officer) |
+| `BDI_DATASET_SPECIALIST` | เฉพาะคำขอที่ถูก assign ให้ตนเอง |
 
 ### 4.8 การแจ้งเตือนในระบบ (in-app notification)
 
