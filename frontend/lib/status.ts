@@ -280,6 +280,13 @@ export const isBdiStaff = (roles: string[]) =>
     ["BDI_OFFICER", "BDI_DATASET_SPECIALIST", "BDI_FINAL_APPROVER", "BDI_LEGAL_OFFICER"].includes(r),
   );
 
+/**
+ * role ที่ผูกกับหน่วยงาน — ตรงกับ ORGANIZATION_SCOPED_ROLES ใน backend/src/lib/system.ts
+ * สองตัวนี้บังคับกรอกเลขประจำตัวประชาชนตอนลงทะเบียน (ดีไซน์มาร์ก cid เป็น Required)
+ */
+export const isOrganizationScopedRole = (role: string) =>
+  role === "ORGANIZATION_USER" || role === "ORGANIZATION_APPROVER";
+
 export const PREFIXES = ["นาย", "นาง", "นางสาว", "ดร.", "ผศ.ดร.", "รศ.ดร.", "ศ.ดร."];
 
 export function formatThaiDate(value: string | Date | null | undefined): string {

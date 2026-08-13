@@ -12,10 +12,12 @@ import { OtpInput } from "@/components/ui/OtpInput";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
-import { PREFIXES, isBdiStaff } from "@/lib/status";
+import { PREFIXES, isBdiStaff, isOrganizationScopedRole } from "@/lib/status";
 
 interface InvitationInfo {
   email: string;
+  /** รหัส role ของคำเชิญ — ใช้ตัดสินว่าต้องกรอกเลขประจำตัวประชาชนไหม */
+  role: string;
   roleLabel: string;
 }
 
@@ -75,7 +77,10 @@ function DetailsStep({
     lastName: "",
     phone: "",
     password: "",
+    cid: "",
   });
+  // บัญชีฝั่งหน่วยงานต้องมีเลขประจำตัวประชาชน ฝั่ง BDI ยังไม่เก็บ
+  const needsCid = isOrganizationScopedRole(invitation.role);
   const [fields, setFields] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
 
@@ -86,16 +91,33 @@ function DetailsStep({
     setSubmitting(true);
     setFields({});
     try {
-      await api.post("/api/auth/register", { token, ...form });
+      const { cid, ...rest } = form;
+      await api.post("/api/auth/register", {
+        token,
+        ...rest,
+        ...(needsCid ? { cid: cid.replace(/\D/g, "") } : {}),
+      });
       show({ tone: "success", title: "ส่งรหัสยืนยันแล้ว", detail: `ตรวจสอบอีเมล ${invitation.email}` });
       onDone();
     } catch (err) {
       if (err instanceof ApiError) {
         setFields(err.fields);
+        /**
+         * ถ้า backend ตีกลับช่องที่ฟอร์มนี้ไม่มี ข้อความจะไม่ถูกแสดงที่ไหนเลย
+         * ผู้ใช้เห็นแค่ "กรุณาตรวจสอบข้อมูลที่กรอก" โดยไม่มีช่องไหนขึ้นแดง —
+         * เคยเกิดมาแล้วกับ cid จึงเอาข้อความพวกนั้นขึ้น toast แทนที่จะทิ้ง
+         */
+        const unbound = Object.entries(err.fields)
+          .filter(([key]) => !(key in form))
+          .map(([, message]) => message);
         if (Object.keys(err.fields).length === 0) {
           show({ tone: "error", title: "ลงทะเบียนไม่สำเร็จ", detail: err.message });
         } else {
-          show({ tone: "error", title: "กรุณาตรวจสอบข้อมูลที่กรอก" });
+          show({
+            tone: "error",
+            title: "กรุณาตรวจสอบข้อมูลที่กรอก",
+            detail: unbound.length ? unbound.join(" · ") : undefined,
+          });
         }
       }
       setSubmitting(false);
@@ -154,6 +176,19 @@ function DetailsStep({
           onChange={(e) => set("phone")(e.target.value)}
           error={fields.phone}
         />
+        {needsCid ? (
+          <TextField
+            label="เลขประจำตัวประชาชน"
+            required
+            inputMode="numeric"
+            maxLength={13}
+            placeholder="1234567890123"
+            value={form.cid}
+            onChange={(e) => set("cid")(e.target.value.replace(/\D/g, "").slice(0, 13))}
+            error={fields.cid}
+            hint="ตัวเลข 13 หลัก ตามที่ปรากฏบนบัตรประชาชน"
+          />
+        ) : null}
         <TextField
           label="ตั้งรหัสผ่าน"
           type="password"
