@@ -13,7 +13,7 @@
  *
  * ลำดับด่านของ Journey นี้: BDI_OFFICER_REVIEW → ORGANIZATION_APPROVAL → BDI_FINAL_APPROVAL
  */
-import { Router } from "express";
+import { Router } from "../lib/async-route.js";
 import multer from "multer";
 import { z } from "zod";
 import {
@@ -59,7 +59,13 @@ import {
   SYSTEM_USER_ID,
   type RoleCode,
 } from "../lib/system.js";
-import { emailSchema, formatZodError, nationalIdSchema, phoneSchema } from "../lib/validation.js";
+import {
+  emailSchema,
+  formatZodError,
+  isUuid,
+  nationalIdSchema,
+  phoneSchema,
+} from "../lib/validation.js";
 import {
   WorkflowError,
   activeTask,
@@ -73,6 +79,22 @@ import { requireAuth } from "../middleware/auth.js";
 
 export const organizationRouter = Router();
 organizationRouter.use(requireAuth);
+
+/**
+ * `:id` / `:attachmentId` เป็น UUID เสมอ — ตัดค่าที่ไม่ใช่ทิ้งตั้งแต่ต้นทาง
+ *
+ * ไม่อย่างนั้น path อย่าง /api/organizations/mine จะเข้ามาที่ GET /:id แล้ว Prisma
+ * โยน P2023 ผลเป็น 500 ทั้งที่คำตอบที่ถูกคือ 404
+ */
+for (const name of ["id", "attachmentId"]) {
+  organizationRouter.param(name, (_req, res, next, value: string) => {
+    if (!isUuid(value)) {
+      res.status(404).json({ error: "not_found", message: "ไม่พบรายการนี้" });
+      return;
+    }
+    next();
+  });
+}
 
 const SUBJECT = SubjectType.ORGANIZATION_REGISTRATION_REQUEST;
 

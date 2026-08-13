@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router } from "../lib/async-route.js";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { OtpPurpose, UserAccountStatus } from "@prisma/client";

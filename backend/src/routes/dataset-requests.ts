@@ -15,7 +15,7 @@
  * ด่าน "ตรวจซ้ำ" ไม่มี task_type ของตัวเองในดีไซน์ — ใช้ BDI_OFFICER_REVIEW รอบถัดไป
  * แล้วดูจากประวัติว่า ORGANIZATION_APPROVAL ผ่านไปแล้วหรือยัง (nextStageAfter())
  */
-import { Router } from "express";
+import { Router } from "../lib/async-route.js";
 import multer from "multer";
 import { z } from "zod";
 import {
@@ -74,7 +74,7 @@ import { renderDatasetRegistrationForm } from "../lib/pdf.js";
 import { nextDatasetCode, nextDatasetRequestNumber } from "../lib/request-number.js";
 import { isBdiStaff } from "../lib/roles.js";
 import { ROLE_CODES, SYSTEM_USER_ID, type RoleCode } from "../lib/system.js";
-import { formatZodError } from "../lib/validation.js";
+import { formatZodError, isUuid } from "../lib/validation.js";
 import {
   WorkflowError,
   activeTask,
@@ -90,6 +90,17 @@ import { requireAuth } from "../middleware/auth.js";
 
 export const datasetRequestRouter = Router();
 datasetRequestRouter.use(requireAuth);
+
+/** เหมือน organizationRouter — id ที่ไม่ใช่ UUID คือ 404 ไม่ใช่ 500 */
+for (const name of ["id", "attachmentId"]) {
+  datasetRequestRouter.param(name, (_req, res, next, value: string) => {
+    if (!isUuid(value)) {
+      res.status(404).json({ error: "not_found", message: "ไม่พบรายการนี้" });
+      return;
+    }
+    next();
+  });
+}
 
 const SUBJECT = SubjectType.DATASET_REGISTRATION_REQUEST;
 const OWNER = AttachmentOwnerType.DATASET_REGISTRATION_REQUEST;

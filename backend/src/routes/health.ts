@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router } from "../lib/async-route.js";
 
 import { pingDatabase } from "../db.js";
 import { pingStorage } from "../storage.js";
