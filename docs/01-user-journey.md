@@ -38,10 +38,10 @@ Admin (นอกระบบ)  ──คุยกับหน่วยงาน�
    └────────────────┘
         │  ส่งอีเมลเชิญ
         ▼
-   ผู้ถูกเชิญเปิดลิงก์  /register?token=...
+   ผู้ถูกเชิญเปิดลิงก์  /activate?token=...   (หรือกรอก key เองจากหน้า login)
         │
+        ▼  ยืนยันตัวตนด้วย ThaiD → เทียบ pid กับ cid ที่เจ้าหน้าที่บันทึกไว้
         ▼  กรอกชื่อ-สกุล, เบอร์โทร, ตั้งรหัสผ่าน
-        ▼  ยืนยันตัวตนสองชั้น (2FA)
    ┌────────────────┐
    │  User          │  status = ACTIVE, role ตามที่ระบุตอนเชิญ
    └────────────────┘  Invitation → ACCEPTED
@@ -54,13 +54,15 @@ POST /api/admin/invitations
 x-admin-token: <ADMIN_API_TOKEN>
 Content-Type: application/json
 
-{ "email": "somchai@moph.go.th", "role": "ORGANIZATION_USER" }
+{ "email": "somchai@moph.go.th", "role": "ORGANIZATION_USER", "cid": "1234567890121" }
 ```
 
 - `role` เลือกได้: `BDI_OFFICER` · `BDI_FINAL_APPROVER` · `BDI_DATASET_SPECIALIST` ·
   `BDI_LEGAL_OFFICER` · `SYSTEM_ADMINISTRATOR` · `ORGANIZATION_USER` · `ORGANIZATION_APPROVER`
 - `organizationId` ไม่บังคับแม้กับ role ฝั่งหน่วยงาน — เว้นไว้แปลว่าคนนี้จะมาสร้าง
   หน่วยงานของตัวเอง ระบบเตรียมหน่วยงานเปล่ากับคำขอฉบับร่างรอไว้ให้
+- `cid` **บังคับทุก role** — เป็นเลขที่ ThaiD จะถูกนำมาเทียบด้วยตอนเปิดใช้งานบัญชี
+  (ดู `docs/07-thaid-integration.md` §1) ตรวจ checksum เลขบัตร 13 หลักที่ชั้น zod
 - ตรวจ format อีเมล และกันเชิญซ้ำ (ถ้ามี invitation ที่ยัง `PENDING` อยู่ → ออก token ใหม่แทนที่ของเดิม)
 - ถ้าอีเมลนี้เป็น user อยู่แล้ว → `409` พร้อมบอกว่ามีบัญชีแล้ว
 - ตอบกลับ `201` พร้อม `invitationId`, `expiresAt` (ไม่คืน token ใน response — token อยู่ในอีเมลเท่านั้น)
@@ -68,11 +70,13 @@ Content-Type: application/json
 ### A.2 การสมัครและ 2FA
 
 สเปกระบุ *"ระหว่างการสมัครต้องมี two factor authen ด้วย email หรือ ThaiD"*
+การ์ด **ThaiD Integration** (2026-08-13) ตัดสินให้ขั้นเปิดใช้งานบัญชีใช้ ThaiD ทางเดียว
+ส่วน Email OTP ย้ายไปเป็นชั้นที่สองของการ **เข้าสู่ระบบด้วยรหัสผ่าน**
 
-| ช่องทาง | สถานะการพัฒนา |
+| ช่องทาง | ใช้ที่ไหน |
 | --- | --- |
-| **Email OTP** | ทำจริงในเฟสนี้ — ส่งรหัส 6 หลัก อายุ 10 นาที ขอใหม่ได้ทุก 60 วินาที |
-| **ThaiD** | เตรียม `AuthProvider` interface + ปุ่มในหน้า UI ที่ยัง disabled — ต้องใช้ OAuth client จริงจาก ThaiD ซึ่งยังไม่มี |
+| **ThaiD** | เปิดใช้งานบัญชี (บังคับ) และเข้าสู่ระบบแทนรหัสผ่านก็ได้ — OAuth 2.0 code flow จริง |
+| **Email OTP** | ชั้นที่สองของการเข้าสู่ระบบด้วยรหัสผ่าน — 6 หลัก อายุ 10 นาที ขอใหม่ได้ทุก 60 วินาที |
 
 ขั้นตอน:
 
@@ -464,7 +468,9 @@ Notion เขียนคำถามเหล่านี้ไว้เอง 
 3. **ขั้นตอนที่ 2 ข้อ 5 ในสเปกเขียนค้างไว้** ("เมื่อผู้มีอำนาจกระทำการแทน") — ตีความตามข้อ 3.4
 4. **การลงนามของ BDI Approver** — สเปกเขียนว่า "ลงนาม" ยังไม่ระบุว่าเป็น digital signature จริง
    หรือแค่กดยืนยัน ตอนนี้ทำเป็นกดยืนยันพร้อมบันทึกผู้ลงนามและเวลาลง audit log
-5. **ThaiD** — ยังไม่มี client credentials จึงเตรียมโครงไว้แต่ยังใช้ไม่ได้
+5. ~~**ThaiD** — ยังไม่มี client credentials~~ — **เชื่อมแล้ว** (2026-08-13)
+   ดู `docs/07-thaid-integration.md` เหลือแต่ขอ scope `pid` กับ redirect URI ของโดเมนจริง
+   จากกรมการปกครอง
 6. **PDF template** — สเปกมีภาพตัวอย่างแต่ไม่มีไฟล์ template จริง จึงสร้างเทมเพลตขึ้นใหม่
    ให้ตรงกับโครงสร้างข้อมูลและ CI
 

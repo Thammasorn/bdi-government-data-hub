@@ -18,6 +18,8 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
 - `notebooks/journey-a-admin-create-user.ipynb` — Journey A has no UI by design, so this walks
   its API calls one cell at a time against a checkout with real SMTP configured
 - `docs/04-dataset-registration-plan.md` — how Journey C maps onto schema, endpoints and screens
+- `docs/07-thaid-integration.md` — the ThaiD flow, its configuration, what DOPA has not
+  granted us yet, and the SIT run that exercised it against their sandbox
 
 Read `docs/01-user-journey.md` before touching anything in `backend/src/routes/organizations.ts`
 or `backend/src/routes/dataset-requests.ts`.
@@ -155,14 +157,40 @@ The key is hashed with **HMAC-SHA-256** (`ACTIVATION_KEY_SECRET`), not bare SHA-
 database leak alone cannot produce a usable key. `organization_id` is NOT NULL there, which is
 why BDI itself is a row in `organization.organization` (`lib/system.ts`).
 
-Registration is still two steps: `/register` fills in the profile, `/verify-otp` flips the
-account to `ACTIVE`, creates the role assignment and marks the key `USED` — all in one
-transaction. **`password_hash` and `iam.otp_code` are deliberate additions not present in the
-Excel**, kept because ThaID has no client credentials yet and §A.2 requires 2FA; both come out
-when ThaID lands. `cid` and `external_subject` are nullable for the same reason.
+Activation is ThaiD-first and has no email-OTP variant. `POST /api/auth/thaid/start` →
+the user verifies on ThaiD → `POST /api/auth/thaid/callback` compares the `pid` claim with
+`user_account.cid` → `POST /api/auth/activate` sets the password and flips the account to
+`ACTIVE`, creates the role assignment and marks the key `USED`, all in one transaction.
+**`password_hash` and `iam.otp_code` are deliberate additions not present in the Excel**;
+they now carry the password + OTP login path, not activation.
 
-`POST /api/auth/thaid/verify` is a stand-in for ThaiD, which has no client credentials yet.
-It is gated on `THAID_MOCK` and returns 501 when off. It must be `false` anywhere real.
+`POST /api/admin/invitations` therefore **requires `cid`** for every role. The whole flow
+rests on comparing against a CID recorded when the account was created — a CID the user
+typed themselves would prove nothing.
+
+Activation does **not** touch `organization.status`. An organisation goes `ACTIVE` only when
+its registration request clears `BDI_FINAL_APPROVAL` (Journey B). The Notion card §2.5 says
+otherwise; that was raised and settled on 2026-08-13 in favour of Journey B.
+
+### ThaiD
+
+`lib/thaid.ts` talks to DOPA (authorize URL, token exchange, ES256 id_token verification
+against their JWKS, revoke); `lib/thaid-flow.ts` keeps the in-flight state. Both the OAuth
+`state` and the "identity verified" receipt live in `integration.integration_operation`
+(`THAID` / `VERIFY_IDENTITY` for activation, `AUTHENTICATE` for login) rather than a new
+table — the sheet already designates that table for this, and every attempt, including the
+failures, lands in it for free.
+
+The raw activation key is never sent to ThaiD and never stored: the callback finds its way
+back through `subject_id`, which is the `activation_key` row id.
+
+A CID mismatch is not just a rejection — §2.4 of the card requires the key to be `REVOKED`
+and the attempt logged (`IDENTITY_VERIFICATION_FAILED` with `failure_reason: CID_MISMATCH`),
+so a wrong card cannot be retried against the same link.
+
+`THAID_MOCK=true` skips DOPA entirely and treats the account's own CID as the answer. It is
+for deployments without client credentials only, and must be `false` anywhere real —
+otherwise identity verification is just a button.
 
 ### Email
 
@@ -268,6 +296,16 @@ Two API base URLs, and they are not interchangeable:
   `GET /:id`, and Prisma raised P2023 on a non-UUID. Route files therefore import
   `Router` from `lib/async-route.js`, not from `express` — keep it that way for new
   route files. Both routers also 404 a non-UUID `:id` in `router.param()`.
+- The ThaiD sandbox sits behind a WAF that blocks any user agent containing
+  `HeadlessChrome` — it answers with an HTML page saying "Web Page Blocked!" instead of
+  redirecting, which reads like a broken client. Screenshot runs must override the user
+  agent. Its login page also polls for the QR scan forever, so `waitUntil: "networkidle"`
+  never resolves there.
+- The client credentials registered for this project (`assets/thaid/env_dev.txt`) are
+  **not granted the `pid` scope** and are pinned to `http://localhost:3000/auth/callback/thaid`.
+  Asking for `pid` with them returns `invalid_scope` at the authorize step, and no CID means
+  no CID matching. Development therefore runs on DOPA's sandbox demo client, which accepts
+  any `redirect_uri` and grants `pid`. Both gaps are DOPA-side registration changes, not code.
 - The two `BDI_OFFICER_REVIEW` rounds look identical to anything reading `task_type`.
   Round one goes to the organization for signature, the re-check after signing goes to
   BDI final approval. Backend and `components/dataset/DetailView.tsx` both decide by

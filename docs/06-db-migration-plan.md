@@ -320,13 +320,16 @@ review_task และเขียน audit_event"* ดู §4 ข้อ 3
 
 1. ~~**`user_account.cid` Required แต่ไม่มีข้อมูล**~~ — **ตัดสินแล้ว: nullable**
    แล้วบังคับที่ชั้น zod เฉพาะ `account_type='ORGANIZATION'`
+   *ปรับปรุง 2026-08-13:* `POST /api/admin/invitations` บังคับ `cid` **ทุก role** แล้ว
+   (การเทียบเลขบัตรกับ ThaID ต้องมีเลขตั้งต้น) คอลัมน์ยัง nullable เพราะบัญชีเก่ายังไม่มีค่า
    (เหตุผลเดิม: ปัจจุบันเก็บเลขบัตรเฉพาะของผู้มีอำนาจกระทำการแทน บน `Organization` ถ้าบังคับจริง
    คนของ BDI จะสมัครไม่ได้) — ยังควรแจ้งเจ้าของสเปกว่าเบี่ยงจากดีไซน์ตรงนี้
 
 2. ~~**`external_subject` Required แต่ ThaID ยังไม่มี credentials**~~ — **ตัดสินแล้ว:
-   nullable + unique** จนกว่า ThaID จะเชื่อมได้
-   (`docs/01-user-journey.md` §6 ข้อ 5 และ `main/CLAUDE.md` ยืนยันว่า `/api/auth/thaid/verify`
-   เป็น mock ที่ปิดอยู่)
+   nullable + unique**
+   *ปรับปรุง 2026-08-13:* เชื่อม ThaID จริงแล้ว (`docs/07-thaid-integration.md`) บัญชีที่เปิด
+   ใช้งานตั้งแต่นี้ไปจะมี `external_subject` = `sub` จาก id_token เสมอ ยังคง nullable ไว้
+   เพราะบัญชีเก่าที่ seed มาก่อนหน้านี้ไม่มีค่า
 
 3. ~~**แบบใหม่ไม่มี password และไม่มี OTP**~~ — **ตัดสินแล้ว: เก็บทั้งคู่ไว้เป็นส่วนขยาย**
    `iam.user_account.password_hash` และตาราง `iam.otp_code` อยู่ต่อ พร้อม doc comment ในสคีมา
@@ -334,7 +337,10 @@ review_task และเขียน audit_event"* ดู §4 ข้อ 3
    และ §A.2 บังคับ 2FA"* เมื่อ ThaID พร้อมค่อยถอดออกทั้งชุด
    สเปกที่รองรับมติข้อนี้: `docs/01-user-journey.md` §A.2 *"ต้องมี two factor authen ด้วย
    email หรือ ThaiD"* — ดีไซน์รองรับแค่ทางหลัง
-   **ยังต้องแจ้งเจ้าของสเปก** ว่านี่เป็นการเพิ่มจากดีไซน์โดยตั้งใจ ไม่ใช่การอ่านผิด
+   *ปรับปรุง 2026-08-13:* การ์ด **ThaiD Integration** ยืนยันให้เก็บทั้งคู่ไว้ — Login Step
+   เขียนไว้ตรง ๆ ว่า *"login โดยวิธี password + otp จาก email หรือจะผ่าน ThaID ก็ได้"*
+   ทั้งสองอย่างจึงไม่ใช่ส่วนขยายชั่วคราวอีกต่อไป แต่ **ขั้นเปิดใช้งานบัญชีเลิกใช้ OTP แล้ว**
+   ใช้ ThaID ทางเดียว
 
 4. **`organization_code` Required — มีรหัสหน่วยงานจริงไหม?**
    sheet ถามคำถามนี้ไว้เอง (*"ปรึกษาพี่แก้ว มีรหัสหน่วยงานไหม ??"*) และเป็น unique key เชิงธุรกิจ
@@ -420,7 +426,7 @@ review_task และเขียน audit_event"* ดู §4 ข้อ 3
 - `lib/roles.ts` — rename 2 role, เพิ่ม 2 role ใหม่ + label ไทย
 - `routes/admin.ts` — invitation → สร้าง `user_account` PENDING + ออก `activation_key`
   (HMAC-SHA-256, env var ใหม่ `ACTIVATION_KEY_SECRET`)
-- `routes/auth.ts` — register/verify-otp ตามผลของ §5 ข้อ 3
+- `routes/auth.ts` — activate/thaid + login OTP ตามผลของ §5 ข้อ 3
 
   *เสร็จเมื่อ*: `notebooks/journey-a-admin-create-user.ipynb` รันผ่านทุก cell
 
