@@ -105,7 +105,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
   const ability = decideAbility(org, user.roles, user.email);
   const generated = org.attachments.find((a) => a.kind === "GENERATED_FORM");
   const supporting = org.attachments.filter((a) => a.kind !== "GENERATED_FORM");
-  const isOwner = org.createdBy.id === user.id;
+  const isOwner = org.createdBy?.id === user.id;
   const isMember = user.roles.includes("ORGANIZATION_USER") && user.organizationId === org.id;
 
   const act = async (action: "approve" | "request_revision") => {
@@ -146,10 +146,13 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
       <header className="mb-7 mt-4 flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <h1 className="break-words text-[26px] font-semibold text-navy-800">{org.name}</h1>
-          <p className="mt-1.5 text-[15px] text-ink-muted">
-            ยื่นโดย {fullName(org.createdBy.prefix, org.createdBy.firstName, org.createdBy.lastName)} ·{" "}
-            {org.createdBy.email}
-          </p>
+          {org.createdBy ? (
+            <p className="mt-1.5 text-[15px] text-ink-muted">
+              ยื่นโดย{" "}
+              {fullName(org.createdBy.prefix, org.createdBy.firstName, org.createdBy.lastName)} ·{" "}
+              {org.createdBy.email}
+            </p>
+          ) : null}
         </div>
         <StatusBadge status={org.status} currentTaskType={org.currentTaskType} />
       </header>

@@ -204,7 +204,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
   const editable = request.status === "DRAFT" || request.status === "RETURNED";
   const mayEdit =
     editable &&
-    (request.createdBy.id === user.id ||
+    (request.createdBy?.id === user.id ||
       (user.roles.includes("ORGANIZATION_USER") && user.organizationId === request.organization.id));
 
   // §4.8 — เมื่อถูกส่งกลับต้องบอกให้ครบว่าแก้เรื่องอะไร โดยใคร เมื่อไหร่
@@ -302,8 +302,17 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
             {datasetTitle(request)}
           </h1>
           <p className="mt-1.5 text-[15px] text-ink-muted">
-            {request.organization.name} · ยื่นโดย{" "}
-            {fullName(request.createdBy.prefix, request.createdBy.firstName, request.createdBy.lastName)}
+            {request.organization.name}
+            {request.createdBy ? (
+              <>
+                {" · ยื่นโดย "}
+                {fullName(
+                  request.createdBy.prefix,
+                  request.createdBy.firstName,
+                  request.createdBy.lastName,
+                )}
+              </>
+            ) : null}
           </p>
         </div>
         <DatasetStatusBadge status={request.status} currentTaskType={request.currentTaskType} />

@@ -73,13 +73,14 @@ export interface Organization {
   activatedAt: string | null;
   createdAt: string;
 
+  /** null ได้ ถ้าหาบัญชีผู้ยื่นไม่เจอ — หน้าจอต้องรับมือ ไม่ใช่ deref ตรง ๆ */
   createdBy: {
     id: string;
     email: string;
     prefix: string | null;
     firstName: string | null;
     lastName: string | null;
-  };
+  } | null;
   attachments: Attachment[];
   events: ReviewTaskEvent[];
 }
@@ -177,13 +178,14 @@ export interface DatasetRequest {
   createdAt: string;
 
   organization: { id: string; name: string; signatoryEmail: string | null };
+  /** null ได้ ถ้าหาบัญชีผู้ยื่นไม่เจอ — หน้าจอต้องรับมือ ไม่ใช่ deref ตรง ๆ */
   createdBy: {
     id: string;
     email: string;
     prefix: string | null;
     firstName: string | null;
     lastName: string | null;
-  };
+  } | null;
   assignedSpecialist: {
     id: string;
     email: string;

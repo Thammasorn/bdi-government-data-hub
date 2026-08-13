@@ -522,15 +522,31 @@ organizationRouter.get("/:id", async (req, res) => {
     return;
   }
 
-  const [attachments, tasks, active] = await Promise.all([
+  const [attachments, tasks, active, creator] = await Promise.all([
     activeAttachments(prisma, AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST, request.id),
     taskHistory(prisma, SUBJECT, request.id),
     activeTask(prisma, SUBJECT, request.id),
+    // created_by เป็นคอลัมน์ uuid เปล่า ไม่ใช่ relation จึงต้องอ่านเอง
+    prisma.userAccount.findUnique({
+      where: { id: request.createdBy },
+      select: { id: true, email: true, prefixTh: true, firstnameTh: true, lastnameTh: true },
+    }),
   ]);
 
   res.json({
     organization: {
       ...(await toApiShape(request)),
+      // หน้ารายละเอียดเขียนว่า "ยื่นโดย <ชื่อ>" และใช้ id ตัดสินว่าเป็นเจ้าของคำขอไหม
+      // ตกหล่นไปตอนย้ายสคีมา เหลือแต่ createdBy ที่เป็น uuid เปล่า
+      createdBy: creator
+        ? {
+            id: creator.id,
+            email: creator.email,
+            prefix: creator.prefixTh,
+            firstName: creator.firstnameTh,
+            lastName: creator.lastnameTh,
+          }
+        : null,
       currentTaskType: active?.taskType ?? null,
       currentRound: active?.roundNumber ?? null,
       currentAssignee: active?.assignedUser?.displayName ?? null,
