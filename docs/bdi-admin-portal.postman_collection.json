@@ -3,7 +3,7 @@
     "name": "BDI Government Datahub — Admin Portal API",
     "_postman_id": "b91d5f2a-7c4e-4a3d-9f61-2ad0c5e18f30",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Journey A — สร้างหน่วยงานและส่งลิงก์เปิดใช้งานบัญชีให้ผู้ใช้ (\"ไม่มี UI แต่ต้องมี api\")\n\nทุก endpoint ในนี้ป้องกันด้วย shared secret `x-admin-token` ไม่ใช่ session — ผู้เรียกคือสคริปต์ฝั่ง admin ไม่ใช่เบราว์เซอร์ ตั้งค่าที่ตัวแปร `adminToken` (ค่าเดียวกับ `ADMIN_API_TOKEN` ใน `.env` ของ checkout)\n\n## ตั้งค่าก่อนใช้\n\n**นำเข้า environment มาด้วย** แล้วเลือกจากมุมขวาบนของ Postman — มีให้สามชุดในโฟลเดอร์ `docs/` เดียวกัน\n\n| ไฟล์ | ชี้ไปที่ | `adminToken` |\n| --- | --- | --- |\n| `bdi-dev-checkout.postman_environment.json` | `http://localhost:4170` (dev slot 07) | ใส่มาให้แล้ว (`dev-admin-token-change-me` ค่าเดียวกับ `.env.example`) |\n| `bdi-main-local.postman_environment.json` | `http://localhost:4000` (checkout `main`) | **ว่าง — ต้องใส่เอง** |\n| `bdi-public.postman_environment.json` | `https://bdi-api.thammasorn.org` | **ว่าง — ต้องใส่เอง** |\n\nช่องที่ว่างไว้เป็นชนิด *secret* และจงใจไม่ใส่ค่ามาให้ เพราะ `main` กับ deployment สาธารณะใช้ token จริงที่อยู่ใน `.env` ซึ่ง git ไม่ติดตาม — **ห้ามคอมมิตค่านั้นลงไฟล์เหล่านี้** อ่านค่ามาวางเองด้วย\n\n```bash\ngrep ADMIN_API_TOKEN /hdd1tb/bdi-project/main/.env\n```\n\n**ใช้ dev checkout อื่น** ให้แก้ `baseUrl` เป็น `http://localhost:41N0` เมื่อ `NN` คือ port slot ของ checkout นั้น (slot 01 → 4110, slot 07 → 4170) ดู `grep BACKEND_PORT .env` ของ checkout นั้นได้เลย\n\n`organizationId` กับ `activationKeyId` ไม่ต้องกรอกเอง — สคริปต์ Tests ของแต่ละ request เก็บให้อัตโนมัติ\n\n> ยิงใส่ `bdi-api.thammasorn.org` คือยิงใส่ระบบที่คนอื่นเปิดดูอยู่จริง คำเชิญที่สร้างจากตรงนั้น **ส่งอีเมลออกไปจริง** (main ตั้ง SMTP ไว้) — ทดสอบบน dev checkout ก่อนเสมอ\n\n## ลำดับการใช้งาน\n\n1. **สร้างหน่วยงาน + เชิญผู้ใช้หน่วยงาน** — ไม่ส่ง `organizationId` มา ระบบสร้างหน่วยงาน (`PENDING_REGISTRATION`) พร้อมคำขอจดทะเบียนฉบับร่างให้เอง แล้วเก็บ id ไว้ในตัวแปร\n2. **เชิญผู้มีอำนาจลงนามเข้าหน่วยงานเดิม** — ใช้ `organizationId` จากข้อ 1\n3. **ดูรายการคำเชิญ** / **ยกเลิกคำเชิญ** ตามต้องการ\n\nแก้ข้อมูลหน่วยงานภายหลังได้ด้วย `PATCH` (request E) — แต่ถ้าผู้ใช้เปิดคำขอจดทะเบียนไปแล้ว การแก้จะไม่ไปปรากฏในฟอร์มของเขา response จะเตือนไว้ให้\n\n## ลิงก์เปิดใช้งานอยู่ที่ไหน\n\nคีย์ดิบ **ไม่ถูกส่งกลับมาใน response** โดยตั้งใจ — มันถูกส่งไปที่อีเมลของผู้ถูกเชิญเท่านั้น และในฐานข้อมูลเก็บเป็น HMAC-SHA-256 (ดู `docs/09-auth-tokens.md` ข้อ 2)\n\nบน checkout ที่ยังไม่ได้ตั้ง SMTP (`SMTP_USER` ว่าง) ระบบจะพิมพ์อีเมลทั้งฉบับลง log แทนการส่งจริง:\n\n```bash\ndocker compose logs backend | grep 'activate?token='\n```\n\nบน checkout ที่ตั้ง SMTP จริง (เช่น `main`) อีเมลจะถูกส่งออกไปจริง — ระวังเวลาทดสอบด้วยอีเมลปลอม\n\n## หมายเหตุที่ทำให้ไม่งง\n\n- **`cid` บังคับทุก role** เพราะ §2.4 ให้เทียบเลขบัตรจาก ThaiD กับเลขที่เจ้าหน้าที่บันทึกไว้ตอนสร้างบัญชี ถ้าให้ผู้ใช้กรอกเองการเทียบก็ไม่พิสูจน์อะไร · ตรวจ checksum ด้วย เลขมั่วจะได้ 400\n- **role ฝั่ง BDI ไม่ต้องส่ง `organizationId`** ระบบผูกกับหน่วยงาน BDI ให้เอง (`activation_key.organization_id` เป็น NOT NULL)\n- **เชิญซ้ำอีเมลที่ยัง `PENDING`** ถือว่าเจ้าหน้าที่แก้ข้อมูลที่กรอกผิด — เขียนทับเลขบัตรเดิมและออกคีย์ใหม่ ส่วนคีย์ใบเก่าของ (บัญชี, หน่วยงาน, role) เดียวกันจะถูก `REVOKED` อัตโนมัติ\n- **เชิญอีเมลที่ `ACTIVE` แล้ว** ตอบ 409 `exists`\n- หน่วยงานจะเป็น `ACTIVE` ก็ต่อเมื่อคำขอจดทะเบียนผ่าน `BDI_FINAL_APPROVAL` (Journey B) การเปิดใช้งานบัญชีไม่แตะสถานะหน่วยงาน"
+    "description": "Journey A — create an organization ahead of time and send someone an activation link. The spec says these steps have no UI, so the caller here is an operator script rather than a browser.\n\nEvery request is guarded by the `x-admin-token` shared secret, set once at the collection level from the `adminToken` variable.\n\n## Before you start\n\n**Import an environment too** and pick it from the selector at the top right. Three sit next to this file in `docs/`:\n\n| File | Points at | `adminToken` |\n| --- | --- | --- |\n| `bdi-dev-checkout.postman_environment.json` | `http://localhost:4170` (dev slot 07) | filled in — `dev-admin-token-change-me`, the same placeholder as `.env.example` |\n| `bdi-main-local.postman_environment.json` | `http://localhost:4000` (the `main` checkout) | **empty — fill it in yourself** |\n| `bdi-public.postman_environment.json` | `https://bdi-api.thammasorn.org` | **empty — fill it in yourself** |\n\nThe empty ones are typed *secret* and left blank on purpose: `main` and the public deployment use a real token that lives only in `.env`, which git does not track. A Postman environment is exactly the kind of file that gets exported and passed around, so **do not commit that value back into it**.\n\n```bash\ngrep ADMIN_API_TOKEN /hdd1tb/bdi-project/main/.env\n```\n\n**For a different dev checkout**, change `baseUrl` to `http://localhost:41N0`, where `NN` is that checkout's port slot (slot 01 → 4110, slot 07 → 4170). `grep BACKEND_PORT .env` in the checkout tells you.\n\n`organizationId` and `activationKeyId` fill themselves in — each request's Tests script captures them.\n\n## The order to run them in\n\n1. **A** creates the organization and captures its id.\n2. **1** invites the organization's user, binding the invitation to that id. The activation link now leads the user straight to the organization you prepared.\n3. **2** invites the signing authority into the same organization.\n4. **4** / **5** list and revoke invitations as needed.\n\n**E** edits an organization afterwards — but once the user has opened their registration request, the edit no longer reaches their form, and the response says so.\n\n## Where the activation link is\n\n**The raw key is never returned.** It goes only to the invitee's email, and the database stores an HMAC of it (see `docs/09-auth-tokens.md` §2).\n\nOn a checkout with no SMTP configured (`SMTP_USER` empty) the mailer prints the whole email to stdout instead of sending it:\n\n```bash\ndocker compose logs backend | grep 'activate?token='\n```\n\nOn a checkout with real SMTP — `main` has it — **the email is actually sent**, so be careful inviting made-up addresses.\n\n> Pointing this at `bdi-api.thammasorn.org` means acting on the deployment other people are looking at, and invitations created there send real mail. Try it on a dev checkout first.\n\n## Things that save you a puzzled ten minutes\n\n- **`cid` is required for every role.** §2.4 compares the national ID from ThaiD against the one an officer recorded when the account was created; a number the user typed themselves would prove nothing. The checksum is validated, so an invented number returns 400.\n- **BDI roles need no `organizationId`** — they are attached to the BDI organization automatically, which is a row in `organization.organization` like any other.\n- **Re-inviting an address that is still `PENDING`** is treated as an officer fixing a typo: the national ID is overwritten and a fresh key issued, while the previous key for that (account, organization, role) is revoked.\n- **Inviting an address that is already `ACTIVE`** returns 409.\n- An organization becomes `ACTIVE` only when its registration request clears `BDI_FINAL_APPROVAL` (Journey B). Creating it here, and activating accounts in it, leave it `PENDING_REGISTRATION`."
   },
   "auth": {
     "type": "apikey",
@@ -36,28 +36,25 @@
       "key": "adminToken",
       "value": "dev-admin-token-change-me",
       "type": "string",
-      "description": "ADMIN_API_TOKEN ใน .env ของ checkout"
+      "description": "ADMIN_API_TOKEN from that checkout's .env"
     },
     {
       "key": "organizationId",
       "value": "",
       "type": "string",
-      "description": "เก็บอัตโนมัติจากคำเชิญใบแรก"
+      "description": "captured automatically by request A"
     },
     {
       "key": "activationKeyId",
       "value": "",
       "type": "string",
-      "description": "เก็บอัตโนมัติจากคำเชิญใบล่าสุด"
+      "description": "captured automatically by the latest invitation"
     }
   ],
   "item": [
     {
-      "name": "0 · Health check (ไม่ต้องใช้ token)",
+      "name": "0 · Health check (no token needed)",
       "request": {
-        "auth": {
-          "type": "noauth"
-        },
         "method": "GET",
         "header": [],
         "url": {
@@ -70,12 +67,15 @@
             "ready"
           ]
         },
-        "description": "ยิงก่อนเพื่อยืนยันว่า baseUrl ชี้ถูก checkout — ตอบ 200 เมื่อ backend ต่อฐานข้อมูลได้แล้ว"
+        "description": "Run this first to confirm `baseUrl` points at the checkout you think it does. Returns 200 once the backend has its database connection.",
+        "auth": {
+          "type": "noauth"
+        }
       },
       "response": []
     },
     {
-      "name": "A · สร้างหน่วยงานล่วงหน้า (ครบข้อมูล)",
+      "name": "A · Create an organization (full details)",
       "event": [
         {
           "listen": "test",
@@ -84,7 +84,7 @@
             "exec": [
               "pm.test('201 Created', () => pm.response.to.have.status(201));",
               "const org = pm.response.json().organization;",
-              "pm.test('สถานะเริ่มต้นเป็น PENDING_REGISTRATION', () => pm.expect(org.status).to.eql('PENDING_REGISTRATION'));",
+              "pm.test('starts as PENDING_REGISTRATION', () => pm.expect(org.status).to.eql('PENDING_REGISTRATION'));",
               "pm.collectionVariables.set('organizationId', org.id);",
               "console.log('organizationId =', org.id, '| code =', org.organizationCode);"
             ]
@@ -99,16 +99,6 @@
             "value": "application/json"
           }
         ],
-        "body": {
-          "mode": "raw",
-          "language": "json",
-          "raw": "{\n  \"organizationCode\": \"MOI-0001\",\n  \"nameTh\": \"กรมส่งเสริมการปกครองท้องถิ่น\",\n  \"nameEn\": \"Department of Local Administration\",\n  \"organizationType\": \"กรม\",\n  \"addressLine\": \"เลขที่ 1 ถนนนครราชสีมา\",\n  \"province\": \"กรุงเทพมหานคร\",\n  \"district\": \"ดุสิต\",\n  \"subdistrict\": \"ดุสิต\",\n  \"phone\": \"021234567\",\n  \"email\": \"contact@dla.go.th\",\n  \"websiteUrl\": \"https://www.dla.go.th\"\n}",
-          "options": {
-            "raw": {
-              "language": "json"
-            }
-          }
-        },
         "url": {
           "raw": "{{baseUrl}}/api/admin/organizations",
           "host": [
@@ -120,12 +110,21 @@
             "organizations"
           ]
         },
-        "description": "การ์ด **Admin Prefill Organization Form** ข้อ 1 — สร้างหน่วยงานไว้ก่อนที่ผู้ใช้จะมาลงทะเบียน ทุกค่าที่กรอกที่นี่จะไปโผล่เป็นค่าตั้งต้นในฟอร์มลงทะเบียนของผู้ใช้\n\n### บังคับแค่สองช่อง\n\n| field | บังคับ | หมายเหตุ |\n| --- | --- | --- |\n| `organizationCode` | ✅ | **unique** ทั้งระบบ · ซ้ำได้ 409 `code_exists` · รับจาก admin ไม่ใช่ generate ให้ |\n| `nameTh` | ✅ | ชื่อภาษาไทย |\n| ที่เหลือทั้งหมด | — | `nameEn` `organizationType` `addressLine` `province` `district` `subdistrict` `postalCode` `phone` `email` `websiteUrl` `parentOrganizationId` |\n\nบังคับสองช่องนี้เพราะเป็นสองคอลัมน์ที่ฐานข้อมูลกำหนดเป็น NOT NULL จริง ๆ — admin ที่รู้แค่ชื่อกับรหัสก็สร้างไว้ก่อนได้ ผู้ใช้มากรอกส่วนที่เหลือตอนลงทะเบียน\n\n### ที่อยู่\n\nส่งเป็น **ชื่อ** ไม่ใช่รหัส และชื่อในระบบ **ไม่มีคำนำหน้า** — `\"ดุสิต\"` ไม่ใช่ `\"เขตดุสิต\"` ชื่อที่เทียบไม่ได้จะได้ 400 พร้อมบอกว่าช่องไหน (ไม่ใช่บันทึกเป็นค่าว่างเงียบ ๆ)\n\nกรอกครบทั้งสามระดับแล้วไม่ต้องใส่ `postalCode` — ระบบเติมให้เอง\n\n### สถานะ\n\nสร้างเสร็จได้ `PENDING_REGISTRATION` เสมอ และจะเป็น `ACTIVE` ก็ต่อเมื่อคำขอจดทะเบียนผ่าน `BDI_FINAL_APPROVAL` (การ์ดข้อ 5)"
+        "description": "Create the organization before anyone registers. Everything entered here becomes the starting values in that user's registration form.\n\n### Only two fields are required\n\n| Field | Required | Notes |\n| --- | --- | --- |\n| `organizationCode` | ✅ | **Unique across the system.** A duplicate returns 409 `code_exists`. Supplied by the admin, not generated — the schema note has asked for the real government code since the migration |\n| `nameTh` | ✅ | Thai name |\n| everything else | — | `nameEn` `organizationType` `addressLine` `province` `district` `subdistrict` `postalCode` `phone` `email` `websiteUrl` `parentOrganizationId` |\n\nThose two are required because they are the two columns the database itself declares NOT NULL. An admin who knows only the name and the code can still register the organization now and let the user fill in the rest.\n\n### Addresses\n\nSend **names**, not codes — and the master list stores them **without a prefix**: `\"ดุสิต\"`, not `\"เขตดุสิต\"`. A name that cannot be resolved returns 400 naming the field, rather than being stored as null behind your back; you have no dropdown out here, and a silently address-less organization is worse than an error.\n\nGive all three levels and you can omit `postalCode` — it is filled in for you.\n\n### Status\n\nAlways created `PENDING_REGISTRATION`. It becomes `ACTIVE` only when the registration request clears `BDI_FINAL_APPROVAL`.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"organizationCode\": \"MOI-0001\",\n  \"nameTh\": \"กรมส่งเสริมการปกครองท้องถิ่น\",\n  \"nameEn\": \"Department of Local Administration\",\n  \"organizationType\": \"กรม\",\n  \"addressLine\": \"เลขที่ 1 ถนนนครราชสีมา\",\n  \"province\": \"กรุงเทพมหานคร\",\n  \"district\": \"ดุสิต\",\n  \"subdistrict\": \"ดุสิต\",\n  \"phone\": \"021234567\",\n  \"email\": \"contact@dla.go.th\",\n  \"websiteUrl\": \"https://www.dla.go.th\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
       },
       "response": []
     },
     {
-      "name": "B · สร้างหน่วยงานล่วงหน้า (ขั้นต่ำ)",
+      "name": "B · Create an organization (bare minimum)",
       "request": {
         "method": "POST",
         "header": [
@@ -134,15 +133,6 @@
             "value": "application/json"
           }
         ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"organizationCode\": \"MOI-0002\",\n  \"nameTh\": \"กรมโยธาธิการและผังเมือง\"\n}",
-          "options": {
-            "raw": {
-              "language": "json"
-            }
-          }
-        },
         "url": {
           "raw": "{{baseUrl}}/api/admin/organizations",
           "host": [
@@ -154,12 +144,21 @@
             "organizations"
           ]
         },
-        "description": "รู้แค่รหัสกับชื่อก็สร้างได้ ที่เหลือผู้ใช้กรอกเองตอนลงทะเบียน\n\nลองลบ `organizationCode` ออกแล้วยิงดู จะได้ 400 พร้อม `fields.organizationCode`"
+        "description": "Knowing the code and the name is enough. The user completes the rest during registration.\n\nDelete `organizationCode` and send it again to see the 400, with the message bound to `fields.organizationCode`.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"organizationCode\": \"MOI-0002\",\n  \"nameTh\": \"กรมโยธาธิการและผังเมือง\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
       },
       "response": []
     },
     {
-      "name": "C · รายการหน่วยงาน",
+      "name": "C · List organizations",
       "event": [
         {
           "listen": "test",
@@ -195,17 +194,17 @@
             {
               "key": "q",
               "value": "",
-              "description": "ค้นจากชื่อไทย/อังกฤษ/รหัส",
+              "description": "matches Thai name, English name, or code",
               "disabled": true
             }
           ]
         },
-        "description": "การ์ดข้อ 2 — ใช้หา `organizationId` ไปใส่ในคำเชิญ คืนไม่เกิน 200 รายการ เรียงใหม่ไปเก่า\n\nทั้งสอง query ไม่บังคับ ใส่ `status` ที่ไม่มีในรายการจะได้ 400"
+        "description": "Find the `organizationId` to put in an invitation. Returns at most 200, newest first.\n\nBoth query parameters are optional. A `status` outside the enum returns 400."
       },
       "response": []
     },
     {
-      "name": "D · รายละเอียดหน่วยงาน",
+      "name": "D · Organization detail",
       "request": {
         "method": "GET",
         "header": [],
@@ -221,12 +220,12 @@
             "{{organizationId}}"
           ]
         },
-        "description": "นอกจากข้อมูลหน่วยงานแล้วยังบอกด้วยว่าเรื่องไปถึงไหน:\n\n- `registrationRequests` — คำขอจดทะเบียนของหน่วยงานนี้ (เลขที่คำขอ · สถานะ · วันนำส่ง)\n- `invitations` — คำเชิญที่ออกให้หน่วยงานนี้ พร้อมสถานะบัญชีของผู้ถูกเชิญ\n\nid ที่ไม่ใช่ UUID หรือไม่มีจริง ตอบ 404"
+        "description": "Beyond the organization itself, this answers \"how far has this got?\":\n\n- `registrationRequests` — its registration requests, with request number, status and submission date\n- `invitations` — invitations issued for it, with each invitee's account status\n\nAn id that is not a UUID, or does not exist, returns 404."
       },
       "response": []
     },
     {
-      "name": "E · แก้ข้อมูลหน่วยงาน",
+      "name": "E · Update an organization",
       "event": [
         {
           "listen": "test",
@@ -237,7 +236,7 @@
               "const body = pm.response.json();",
               "if (body.warning) {",
               "    console.warn('⚠ ' + body.warning.message);",
-              "    console.warn('คำขอที่เปิดอยู่:', body.warning.request.requestNumber, body.warning.request.status);",
+              "    console.warn('open request:', body.warning.request.requestNumber, body.warning.request.status);",
               "}"
             ]
           }
@@ -251,15 +250,6 @@
             "value": "application/json"
           }
         ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"nameTh\": \"กรมส่งเสริมการปกครองท้องถิ่น (แก้ไขแล้ว)\",\n  \"phone\": \"029876543\",\n  \"websiteUrl\": null\n}",
-          "options": {
-            "raw": {
-              "language": "json"
-            }
-          }
-        },
         "url": {
           "raw": "{{baseUrl}}/api/admin/organizations/{{organizationId}}",
           "host": [
@@ -272,12 +262,21 @@
             "{{organizationId}}"
           ]
         },
-        "description": "แก้หน่วยงานที่สร้างไว้ — **ส่งมาเฉพาะช่องที่จะแก้** ช่องที่ไม่ส่งมาไม่ถูกแตะ\n\n### `null` ต่างจากไม่ส่ง\n\n| ส่งอะไร | ผล |\n| --- | --- |\n| ไม่มี key นั้นเลย | ไม่แตะค่าเดิม |\n| `\"phone\": null` | ล้างค่าเป็นว่าง |\n| `\"phone\": \"029876543\"` | ตั้งค่าใหม่ |\n\n`organizationCode` กับ `nameTh` เป็นคอลัมน์ NOT NULL จึงล้างไม่ได้ — ส่ง `null` หรือค่าว่างมาได้ 400\n\n### แก้ที่อยู่บางส่วนได้\n\nส่งมาแค่ `subdistrict` ระบบจะใช้จังหวัด/อำเภอเดิมประกอบในการเทียบ ไม่ใช่ล้างที่อยู่ทิ้งทั้งชุด และถ้าย้ายที่อยู่โดยไม่ได้ส่ง `postalCode` มาด้วย ระบบจะหารหัสไปรษณีย์ให้ใหม่เอง\n\n### ⚠️ คำเตือน `registration_in_progress`\n\nถ้าหน่วยงานนี้มีคำขอจดทะเบียนที่เปิดอยู่แล้ว response จะมี `warning` ติดมาด้วย เพราะ **การแก้ตรงนี้ไปไม่ถึงฟอร์มของผู้ใช้** — คำขอคัดลอกข้อมูลไปตั้งแต่ตอนเปิด และไม่ถูกเขียนทับ (ไม่งั้นจะไปลบสิ่งที่ผู้ใช้พิมพ์ไปแล้ว) ต้องให้ผู้ใช้แก้ในฟอร์มเอง\n\nการแก้ยังบันทึกลง `audit_event` (`ORGANIZATION_UPDATED`) พร้อมค่าก่อน/หลังเสมอ\n\n### ที่พลาดได้\n\n| status | error | สาเหตุ |\n| --- | --- | --- |\n| 400 | `validation` | รหัสไปรษณีย์ผิดรูปแบบ · ชื่อ/รหัสว่าง · ชื่อจังหวัด-อำเภอ-ตำบลเทียบไม่ได้ · ตั้งตัวเองเป็นต้นสังกัด |\n| 404 | `not_found` | ไม่มีหน่วยงานนี้ หรือไม่พบต้นสังกัดที่ระบุ |\n| 409 | `code_exists` | รหัสใหม่ชนกับหน่วยงานอื่น |"
+        "description": "**Send only the fields you are changing.** Anything you leave out is untouched.\n\n### `null` and absent mean different things\n\n| What you send | Result |\n| --- | --- |\n| the key is not there | the column keeps its value |\n| `\"phone\": null` | the value is cleared |\n| `\"phone\": \"029876543\"` | the value is replaced |\n\n`organizationCode` and `nameTh` accept neither — they are NOT NULL columns, so `null` or an empty string returns 400.\n\n### Partial address edits work\n\nSend only `subdistrict` and it is resolved against the province and district already stored, rather than against the fragment alone — which would fail to match and blank the whole address. Move an organization without stating a `postalCode` and a new one is looked up for you.\n\n### ⚠️ The `registration_in_progress` warning\n\nIf the organization already has an open registration request, the response carries a `warning`. **Your edit does not reach the user's form**: the request copied its values when the user opened it, and is deliberately not rewritten, because that would erase whatever they have already typed. They have to change it in the form themselves.\n\nEvery edit is written to `audit_event` as `ORGANIZATION_UPDATED` with before and after.\n\n### What can go wrong\n\n| Status | Error | Cause |\n| --- | --- | --- |\n| 400 | `validation` | malformed postal code · empty name or code · an address name that does not resolve · making an organization its own parent |\n| 404 | `not_found` | no such organization, or no such parent |\n| 409 | `code_exists` | the new code belongs to another organization |",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"nameTh\": \"กรมส่งเสริมการปกครองท้องถิ่น (แก้ไขแล้ว)\",\n  \"phone\": \"029876543\",\n  \"websiteUrl\": null\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
       },
       "response": []
     },
     {
-      "name": "1 · เชิญผู้ใช้เข้าหน่วยงานที่สร้างไว้",
+      "name": "1 · Invite a user into that organization",
       "event": [
         {
           "listen": "test",
@@ -287,16 +286,14 @@
               "pm.test('201 Created', () => pm.response.to.have.status(201));",
               "",
               "const body = pm.response.json();",
-              "pm.test('ได้ organizationId ของหน่วยงานที่เพิ่งสร้าง', () => {",
-              "    pm.expect(body.organizationId).to.be.a('string').and.not.empty;",
+              "pm.test('bound to the organization from request A', () => {",
+              "    pm.expect(body.organizationId).to.eql(pm.collectionVariables.get('organizationId'));",
               "});",
               "",
-              "pm.collectionVariables.set('organizationId', body.organizationId);",
               "pm.collectionVariables.set('activationKeyId', body.activationKeyId);",
               "",
-              "console.log('organizationId =', body.organizationId);",
               "console.log('activationKeyId =', body.activationKeyId);",
-              "console.log('ลิงก์เปิดใช้งานอยู่ในอีเมล — บน checkout ที่ไม่ได้ตั้ง SMTP ดูที่:');",
+              "console.log('The activation link is in the invitee\\'s email. With no SMTP configured, find it with:');",
               "console.log(\"  docker compose logs backend | grep 'activate?token='\");"
             ]
           }
@@ -310,15 +307,6 @@
             "value": "application/json"
           }
         ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"email\": \"somchai@agency.go.th\",\n  \"role\": \"ORGANIZATION_USER\",\n  \"cid\": \"1101700207129\",\n  \"organizationId\": \"{{organizationId}}\",\n  \"displayName\": \"สมชาย ทดสอบ\"\n}",
-          "options": {
-            "raw": {
-              "language": "json"
-            }
-          }
-        },
         "url": {
           "raw": "{{baseUrl}}/api/admin/invitations",
           "host": [
@@ -330,12 +318,21 @@
             "invitations"
           ]
         },
-        "description": "การ์ดข้อ 3 — `organizationId` ผูกคำเชิญเข้ากับหน่วยงานที่ admin สร้างไว้ (request A) ลิงก์เปิดใช้งานจึงพาผู้ใช้ไปที่หน่วยงานนั้นโดยตรง\n\n**ถ้าไม่ส่ง `organizationId` มา** ระบบจะสร้างหน่วยงานชั่วคราว (ชื่อ \"หน่วยงานใหม่\") พร้อมคำขอฉบับร่างให้แทน — เส้นทางเดิมสำหรับกรณีที่ยังไม่รู้ว่าเป็นหน่วยงานไหน ไม่มีอะไรให้ prefill\n\n### body\n\n| field | บังคับ | หมายเหตุ |\n| --- | --- | --- |\n| `email` | ✅ | อีเมลผู้ถูกเชิญ |\n| `role` | ✅ | `ORGANIZATION_USER` · `ORGANIZATION_APPROVER` · `BDI_OFFICER` · `BDI_DATASET_SPECIALIST` · `BDI_FINAL_APPROVER` · `BDI_LEGAL_OFFICER` · `SYSTEM_ADMINISTRATOR` |\n| `cid` | ✅ | เลขประจำตัวประชาชน 13 หลัก ตรวจ checksum |\n| `organizationId` | — | หน่วยงานที่สร้างไว้ล่วงหน้า · role ฝั่ง BDI ไม่ต้องใส่ |\n| `displayName` | — | ค่าตั้งต้นคืออีเมล |\n\n### ที่พลาดได้\n\n| status | error | สาเหตุ |\n| --- | --- | --- |\n| 400 | `validation` | `cid` ผิด checksum, อีเมลไม่ถูกรูปแบบ, `role` ไม่รู้จัก |\n| 401 | `unauthenticated` | `x-admin-token` ผิดหรือไม่ได้ส่ง |\n| 404 | `not_found` | `organizationId` ถูกรูปแบบแต่ไม่มีอยู่จริง |\n| 409 | `exists` | อีเมลนี้มีบัญชี `ACTIVE` แล้ว |"
+        "description": "`organizationId` ties the invitation to the organization created in request A, so the activation link leads this person straight to it.\n\n**Leave `organizationId` out** and the system creates a placeholder organization named \"หน่วยงานใหม่\" with a draft request instead — the older path, for when you do not yet know which organization this is. There is nothing to prefill in that case.\n\n### Body\n\n| Field | Required | Notes |\n| --- | --- | --- |\n| `email` | ✅ | the invitee |\n| `role` | ✅ | `ORGANIZATION_USER` · `ORGANIZATION_APPROVER` · `BDI_OFFICER` · `BDI_DATASET_SPECIALIST` · `BDI_FINAL_APPROVER` · `BDI_LEGAL_OFFICER` · `SYSTEM_ADMINISTRATOR` |\n| `cid` | ✅ | 13-digit national ID, checksum validated |\n| `organizationId` | — | the pre-created organization · BDI roles do not need it |\n| `displayName` | — | defaults to the email address |\n\n### Response 201\n\n```json\n{\n  \"activationKeyId\": \"uuid\",\n  \"userAccountId\": \"uuid\",\n  \"email\": \"somchai@agency.go.th\",\n  \"role\": \"ORGANIZATION_USER\",\n  \"roleLabel\": \"ผู้ดำเนินการของหน่วยงาน\",\n  \"organizationId\": \"uuid\",\n  \"expiresAt\": \"2026-08-23T…Z\"\n}\n```\n\n### What can go wrong\n\n| Status | Error | Cause |\n| --- | --- | --- |\n| 400 | `validation` | bad `cid` checksum · malformed email · unknown `role` |\n| 401 | `unauthenticated` | wrong or missing `x-admin-token` |\n| 404 | `not_found` | `organizationId` is well-formed but does not exist |\n| 409 | `exists` | that email already has an `ACTIVE` account |\n\n`organizationId` must be a **valid v4 UUID** — Zod checks the version and variant bits, so something like `11111111-2222-3333-4444-555555555555` is rejected as 400 `Invalid UUID` before the lookup ever happens, not 404.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"somchai@agency.go.th\",\n  \"role\": \"ORGANIZATION_USER\",\n  \"cid\": \"1101700207129\",\n  \"organizationId\": \"{{organizationId}}\",\n  \"displayName\": \"สมชาย ทดสอบ\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
       },
       "response": []
     },
     {
-      "name": "2 · เชิญผู้มีอำนาจลงนามเข้าหน่วยงานเดิม",
+      "name": "2 · Invite the signing authority into the same organization",
       "event": [
         {
           "listen": "test",
@@ -343,12 +340,10 @@
             "type": "text/javascript",
             "exec": [
               "pm.test('201 Created', () => pm.response.to.have.status(201));",
-              "",
               "const body = pm.response.json();",
-              "pm.test('อยู่หน่วยงานเดียวกับใบแรก', () => {",
+              "pm.test('same organization as the first invitation', () => {",
               "    pm.expect(body.organizationId).to.eql(pm.collectionVariables.get('organizationId'));",
               "});",
-              "",
               "pm.collectionVariables.set('activationKeyId', body.activationKeyId);"
             ]
           }
@@ -362,15 +357,6 @@
             "value": "application/json"
           }
         ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"email\": \"director@agency.go.th\",\n  \"role\": \"ORGANIZATION_APPROVER\",\n  \"cid\": \"3100600123450\",\n  \"organizationId\": \"{{organizationId}}\",\n  \"displayName\": \"ผู้อำนวยการ ทดสอบ\"\n}",
-          "options": {
-            "raw": {
-              "language": "json"
-            }
-          }
-        },
         "url": {
           "raw": "{{baseUrl}}/api/admin/invitations",
           "host": [
@@ -382,12 +368,21 @@
             "invitations"
           ]
         },
-        "description": "เชิญคนที่สองเข้าหน่วยงานเดิมด้วย `organizationId` ที่ request ก่อนหน้าเก็บไว้ให้\n\nหนึ่งหน่วยงานมี `ORGANIZATION_USER` ที่ยังใช้งานอยู่ได้หนึ่งคน และ `ORGANIZATION_APPROVER` หนึ่งคน (partial unique index ตามที่ดีไซน์กำหนด) — ข้อจำกัดนี้บังคับตอน **เปิดใช้งานบัญชี** ไม่ใช่ตอนเชิญ เชิญซ้ำจึงผ่านที่ขั้นนี้แต่ไปล้มทีหลัง"
+        "description": "A second person into the same organization, using the `organizationId` the earlier request stored.\n\nAn organization holds **one active `ORGANIZATION_USER` and one active `ORGANIZATION_APPROVER`**. That rule is enforced when an account is **activated**, not when it is invited — so inviting a second person of the same role succeeds here and takes effect later, revoking whoever held it before.\n\nBoth people edit the *same* registration request. Whoever starts registering first opens it; the other one is taken to that request rather than starting a rival one.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"director@agency.go.th\",\n  \"role\": \"ORGANIZATION_APPROVER\",\n  \"cid\": \"3100600123450\",\n  \"organizationId\": \"{{organizationId}}\",\n  \"displayName\": \"ผู้อำนวยการ ทดสอบ\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
       },
       "response": []
     },
     {
-      "name": "3 · เชิญเจ้าหน้าที่ BDI (ไม่ต้องมี organizationId)",
+      "name": "3 · Invite BDI staff (no organizationId)",
       "event": [
         {
           "listen": "test",
@@ -395,7 +390,11 @@
             "type": "text/javascript",
             "exec": [
               "pm.test('201 Created', () => pm.response.to.have.status(201));",
-              "pm.collectionVariables.set('activationKeyId', pm.response.json().activationKeyId);"
+              "const body = pm.response.json();",
+              "pm.test('attached to the BDI organization', () => {",
+              "    pm.expect(body.organizationId).to.eql('00000000-0000-0000-0000-0000000000b0');",
+              "});",
+              "pm.collectionVariables.set('activationKeyId', body.activationKeyId);"
             ]
           }
         }
@@ -408,15 +407,6 @@
             "value": "application/json"
           }
         ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"email\": \"officer@bdi.or.th\",\n  \"role\": \"BDI_OFFICER\",\n  \"cid\": \"1101700207129\"\n}",
-          "options": {
-            "raw": {
-              "language": "json"
-            }
-          }
-        },
         "url": {
           "raw": "{{baseUrl}}/api/admin/invitations",
           "host": [
@@ -428,12 +418,21 @@
             "invitations"
           ]
         },
-        "description": "role ฝั่ง BDI (`BDI_OFFICER`, `BDI_DATASET_SPECIALIST`, `BDI_FINAL_APPROVER`, `BDI_LEGAL_OFFICER`, `SYSTEM_ADMINISTRATOR`) ถูกผูกกับหน่วยงาน BDI ให้อัตโนมัติ ส่ง `organizationId` มาก็ไม่มีผล\n\nBDI เองเป็นแถวหนึ่งใน `organization.organization` เพราะ `activation_key.organization_id` เป็น NOT NULL"
+        "description": "BDI roles — `BDI_OFFICER`, `BDI_DATASET_SPECIALIST`, `BDI_FINAL_APPROVER`, `BDI_LEGAL_OFFICER`, `SYSTEM_ADMINISTRATOR` — are attached to the BDI organization automatically. Sending an `organizationId` has no effect.\n\nBDI is a row in `organization.organization` like any other, which is why `activation_key.organization_id` can be NOT NULL. **Since 2026-08-16 the resulting role assignment carries that organization too**, where it used to be null, so the database can answer which organization a BDI officer belongs to.\n\n**The BDI organization holds as many people per role as you like** — three officers is normal. The uniqueness rule above applies only to ordinary organizations.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"officer@bdi.or.th\",\n  \"role\": \"BDI_OFFICER\",\n  \"cid\": \"1101700207129\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
       },
       "response": []
     },
     {
-      "name": "4 · ดูรายการคำเชิญ",
+      "name": "4 · List invitations",
       "event": [
         {
           "listen": "test",
@@ -442,7 +441,7 @@
             "exec": [
               "pm.test('200 OK', () => pm.response.to.have.status(200));",
               "const { invitations } = pm.response.json();",
-              "pm.test('เป็น array', () => pm.expect(invitations).to.be.an('array'));",
+              "pm.test('is an array', () => pm.expect(invitations).to.be.an('array'));",
               "console.table(invitations.map((i) => ({",
               "    email: i.userAccount.email,",
               "    role: i.role.code,",
@@ -468,12 +467,12 @@
             "invitations"
           ]
         },
-        "description": "คืนคำเชิญ 100 ใบล่าสุด เรียงใหม่ไปเก่า ไม่มี pagination\n\nแต่ละใบมี `id` · `status` (`ISSUED` / `USED` / `REVOKED` / `EXPIRED`) · `issuedAt` · `expiresAt` · `usedAt` · `revokedAt` · `userAccount {id,email,status}` · `role {code,nameTh}` · `organization {id,nameTh}`\n\n**ไม่มีคีย์ดิบในผลลัพธ์** ฐานข้อมูลเก็บแค่ HMAC ของมัน"
+        "description": "The 100 most recent invitations, newest first. No pagination.\n\nEach carries `id` · `status` (`ISSUED` / `USED` / `REVOKED` / `EXPIRED`) · `issuedAt` · `expiresAt` · `usedAt` · `revokedAt` · `userAccount {id,email,status}` · `role {code,nameTh}` · `organization {id,nameTh}`.\n\n**The raw key is not in the response** — the database holds only its HMAC."
       },
       "response": []
     },
     {
-      "name": "5 · ยกเลิกคำเชิญ",
+      "name": "5 · Revoke an invitation",
       "event": [
         {
           "listen": "test",
@@ -494,15 +493,6 @@
             "value": "application/json"
           }
         ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"reason\": \"ส่งผิดคน\"\n}",
-          "options": {
-            "raw": {
-              "language": "json"
-            }
-          }
-        },
         "url": {
           "raw": "{{baseUrl}}/api/admin/invitations/{{activationKeyId}}/revoke",
           "host": [
@@ -514,10 +504,18 @@
             "invitations",
             "{{activationKeyId}}",
             "revoke"
-          ],
-          "variable": []
+          ]
         },
-        "description": "ยกเลิกคำเชิญที่ยัง `ISSUED` อยู่ ลิงก์เดิมใช้ไม่ได้ทันที\n\n`{{activationKeyId}}` มาจากคำเชิญใบล่าสุดที่ยิงไปในคอลเลกชันนี้ แก้เป็น id อื่นได้จากผลลัพธ์ของ request ก่อนหน้า\n\n`reason` ไม่บังคับ (ค่าตั้งต้น \"ยกเลิกโดยผู้ดูแลระบบ\") แต่ควรใส่ เพราะมันถูกเก็บลง `activation_key.revoked_reason` และเป็นสิ่งเดียวที่บอกได้ว่าทำไม\n\nคีย์ที่ `USED` หรือ `REVOKED` ไปแล้วตอบ 404 `not_found` — ยกเลิกซ้ำไม่ได้"
+        "description": "Revokes an invitation that is still `ISSUED`; the link stops working immediately.\n\n`{{activationKeyId}}` holds whichever invitation this collection created last. Replace it with an id from request 4 to revoke a different one.\n\n`reason` is optional (it defaults to \"ยกเลิกโดยผู้ดูแลระบบ\") but worth sending — it is stored in `activation_key.revoked_reason` and is the only record of why.\n\nA key that is already `USED` or `REVOKED` returns 404: revoking twice is not possible.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"sent to the wrong person\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
       },
       "response": []
     }

@@ -1,7 +1,7 @@
 # หน่วยงานที่เจ้าหน้าที่สร้างไว้ล่วงหน้า และการเติมฟอร์มให้ผู้ใช้
 
 การ์ด Notion: **Admin Prefill Organization Form** (Task Board, 2026-08-16)
-คอลเลกชัน Postman: `docs/bdi-admin-portal.postman_collection.json` (request A–E)
+คอลเลกชัน Postman: `docs/bdi-admin-portal.postman_collection.json` (request A–E) — คำอธิบายในนั้นเป็นภาษาอังกฤษ
 environment: `docs/bdi-dev-checkout` · `bdi-main-local` · `bdi-public` (`.postman_environment.json`)
 — นำเข้าคอลเลกชันกับ environment แล้วเลือก environment ที่มุมขวาบนก่อนยิง
 
