@@ -28,6 +28,9 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   the session table that replaced the old JWT
 - `docs/10-admin-prefill-organization.md` — organizations an admin creates ahead of time,
   and how their data reaches the user's registration form
+- `docs/11-metadata-registration-form.md` — the dataset metadata form: which sheet of
+  `metadata_mapping.xlsx` decides what, every field and its code list, the conditions table
+  (what forces or hides what), and the open questions left in it
 - `docs/bdi-admin-portal.postman_collection.json` — Journey A as a runnable collection,
   with three `*.postman_environment.json` files beside it (dev checkout / main / public).
   The admin token is left empty in the last two on purpose — it is a real secret from `.env`
@@ -90,7 +93,10 @@ typecheck + production build + driving the real API. If you add tests, wire them
 ### The schema follows the Excel design, not the markdown docs
 
 `assets/db_schema/draft_db_design_downloaded_on_2026-08-11.xlsx` is the authority for the data
-model — 20 tables across 10 Postgres schemas (`iam`, `organization`, `dataset`, `review`,
+model, **except for `dataset_registration_metadata` and `dataset_metadata`, which follow the
+2026-08-16 download** of the same workbook — those two tables were re-cut to match the metadata
+registration form (`docs/11-metadata-registration-form.md`). Everything else is unchanged
+between the two files. Together: 20 tables across 10 Postgres schemas (`iam`, `organization`, `dataset`, `review`,
 `legal`, `signature`, `attachment`, `notification`, `integration`, `audit`) plus an
 `administration` schema for the address masters. Where it contradicts `docs/01-user-journey.md`,
 **the Excel wins**; every deliberate deviation carries a `เบี่ยงจากดีไซน์:` comment in
@@ -308,6 +314,12 @@ sampled from the `.ai` files in `assets/theme_ci_design/`, not chosen by eye —
 navy `#192768`, coral `#E5775A`. The same values are duplicated as constants in
 `mail.ts` and `pdf.ts` (email clients have no CSS, PDFKit has no CSS); change all three together.
 
+`frontend/lib/dataset-form.ts` is a **deliberate copy** of the code lists and the conditions
+engine in `backend/src/lib/dataset.ts` — the form has to show what a choice forces the moment
+it is made, so it cannot ask the API on every change. The backend re-applies the same rules
+before every write (`normaliseMetadata`), so a stale copy is a UI bug, never a data bug.
+Change both files together, like the CI colors.
+
 Fonts are self-hosted via `next/font/local` from `frontend/public/fonts/` — no Google Fonts,
 so it works behind a firewall.
 
@@ -389,6 +401,20 @@ Two API base URLs, and they are not interchangeable:
   `subject_type_supported: ["public"]`, so the pairwise scenario is off the table there;
   production is still a different system. That document also answers PKCE (not advertised)
   and refresh tokens (the grant is supported) — §4.4 has the whole reading of it.
+- Giving BDI staff a real organisation broke every automatic assignment. `pickAssignee()` was
+  called with `organizationId: null` to mean "BDI side, no organisation", which after
+  2026-08-16 matches nobody — `POST /:id/submit` answered 503 `no_reviewer` on both journeys
+  while the officers were sitting right there. BDI picks now pass `BDI_ORGANIZATION_ID`.
+- `publicAttachment()` used to return the slot as `attachmentType`, but every screen (and the
+  `Attachment` type in `frontend/lib/types.ts`) reads `kind`. `a.kind` was `undefined`
+  everywhere, so the preview page never found the generated PDF and **"นำส่งคำขอ" stayed
+  disabled in both journeys** although the API had built the file. It returns `kind` now.
+- `decodeOriginalName()` (multer hands `originalname` over as latin1) must only touch names
+  that came in over multipart. Running it on a filename the code wrote itself turns Thai into
+  mojibake — that is why uploads go through `uploadedFile(req.file)` and `storeAttachment`
+  no longer decodes.
+- `rows()` in `pdf.ts` measured only the value column, so a label that wrapped to two lines had
+  the divider drawn through it and the next row on top of it. It takes the taller of the two now.
 - The two `BDI_OFFICER_REVIEW` rounds look identical to anything reading `task_type`.
   Round one goes to the organization for signature, the re-check after signing goes to
   BDI final approval. Backend and `components/dataset/DetailView.tsx` both decide by
