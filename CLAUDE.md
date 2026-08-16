@@ -20,6 +20,8 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
 - `docs/04-dataset-registration-plan.md` — how Journey C maps onto schema, endpoints and screens
 - `docs/07-thaid-integration.md` — the ThaiD flow, its configuration, what DOPA has not
   granted us yet, and the SIT run that exercised it against their sandbox
+- `docs/08-database-access.md` — connecting DBeaver (or psql) to a checkout's database:
+  which port belongs to which checkout, the schema layout, and what not to edit by hand
 
 Read `docs/01-user-journey.md` before touching anything in `backend/src/routes/organizations.ts`
 or `backend/src/routes/dataset-requests.ts`.
