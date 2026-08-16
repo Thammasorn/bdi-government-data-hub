@@ -42,15 +42,19 @@ import {
   publicAttachment,
   storeAttachment,
   streamAttachment,
+  uploadedFile,
 } from "../lib/attachment.js";
 import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
 import { correlationId } from "../lib/context.js";
 import {
   DATASET_ALLOWED_MIME,
   DATASET_MAX_UPLOAD_BYTES,
+  EMPTY_METADATA,
   datasetDraftSchema,
   datasetSubmitSchema,
   fromMetadataRow,
+  mergeMetadata,
+  normaliseMetadata,
   toMetadataColumns,
 } from "../lib/dataset.js";
 import {
@@ -73,7 +77,12 @@ import {
 import { renderDatasetRegistrationForm } from "../lib/pdf.js";
 import { nextDatasetCode, nextDatasetRequestNumber } from "../lib/request-number.js";
 import { isBdiStaff } from "../lib/roles.js";
-import { ROLE_CODES, SYSTEM_USER_ID, type RoleCode } from "../lib/system.js";
+import {
+  BDI_ORGANIZATION_ID,
+  ROLE_CODES,
+  SYSTEM_USER_ID,
+  type RoleCode,
+} from "../lib/system.js";
 import { formatZodError, isUuid } from "../lib/validation.js";
 import {
   WorkflowError,
@@ -134,7 +143,7 @@ function visibilityFilter(session: Session): Prisma.DatasetRegistrationRequestWh
 }
 
 const datasetLabel = (r: RequestRow) =>
-  r.metadata?.titleTh?.trim() || r.proposedTitle?.trim() || `คำขอ ${r.requestNumber}`;
+  r.metadata?.title?.trim() || r.proposedTitle?.trim() || `คำขอ ${r.requestNumber}`;
 
 async function displayName(userId: string): Promise<string> {
   const user = await prisma.userAccount.findUnique({
@@ -176,7 +185,14 @@ function mayEdit(session: Session, request: { organizationId: string; createdBy:
   return session.organizationId === request.organizationId || request.createdBy === session.sub;
 }
 
-/** เลือกผู้รับมอบหมายที่ว่างที่สุด — assigned_user_id เป็น NOT NULL ในดีไซน์ */
+/**
+ * เลือกผู้รับมอบหมายที่ว่างที่สุด — assigned_user_id เป็น NOT NULL ในดีไซน์
+ *
+ * เจ้าหน้าที่ BDI สังกัดหน่วยงาน BDI ตั้งแต่ 2026-08-16 — เดิม organization_id ของพวกเขา
+ * เป็น NULL ผู้เรียกจึงส่ง `null` มาเพื่อหมายถึง "ฝั่ง BDI ไม่ผูกหน่วยงาน" ตอนนี้ตัวกรองนั้น
+ * ไม่ตรงกับใครเลย ผลคือ submit ตอบ 503 no_reviewer ทั้งที่มีเจ้าหน้าที่อยู่ครบ
+ * จึงต้องส่ง BDI_ORGANIZATION_ID มาแทน
+ */
 async function pickAssignee(roleCode: RoleCode, organizationId?: string | null): Promise<string | null> {
   const assignments = await prisma.userRoleAssignment.findMany({
     where: {
@@ -219,19 +235,29 @@ async function syncStatus(
   });
 }
 
+/**
+ * เวลาที่ผู้ยื่นติ๊กยอมรับเงื่อนไขการนำส่งข้อมูล
+ *
+ * **ยังไม่ได้เก็บใน legal.legal_acceptance** ตารางนั้นบังคับทั้ง legal_document_version_id
+ * และ review_task_id ซึ่งตอนกรอกร่างยังไม่มีทั้งคู่ (task เปิดตอนนำส่ง และเอกสารกฎหมาย
+ * ที่ seed ไว้ยังเป็น DRAFT ไม่มีเนื้อหาจริง) จึงพักไว้ที่ additional_metadata_json ก่อน
+ * ของเดิมไม่ได้เก็บที่ไหนเลย ช่องนี้ในแบบฟอร์ม PDF จึงพิมพ์ "—" ทั้งที่ผู้ใช้ติ๊กแล้ว
+ */
+const LEGAL_ACCEPTED_AT = "legalAcceptedAt";
+
+function legalAcceptedAtOf(row: { additionalMetadataJson?: unknown } | null): string | null {
+  const extra = row?.additionalMetadataJson;
+  if (typeof extra !== "object" || extra === null) return null;
+  const value = (extra as Record<string, unknown>)[LEGAL_ACCEPTED_AT];
+  return typeof value === "string" ? value : null;
+}
+
 /** รูปข้อมูลที่ frontend และ zod ชุด submit ใช้ */
 function toApiShape(request: RequestRow, extra?: Record<string, unknown>) {
-  const metadata = request.metadata
-    ? fromMetadataRow(request.metadata)
-    : fromMetadataRow({
-        titleTh: null, titleEn: null, descriptionTh: null, descriptionEn: null, objective: null,
-        datasetCategoryCode: null, dataOwnerDepartment: null, contactName: null, contactEmail: null,
-        contactPhone: null, updateFrequency: null, coverageStartDate: null, coverageEndDate: null,
-        geographicScope: null, containsPersonalData: null, containsSensitiveData: null,
-        accessLevel: null, deliveryMethod: null, dataFormat: null, additionalMetadataJson: null,
-      });
+  const metadata = fromMetadataRow(request.metadata);
 
   return {
+    legalAcceptedAt: legalAcceptedAtOf(request.metadata),
     id: request.id,
     requestNumber: request.requestNumber,
     status: request.status,
@@ -268,7 +294,8 @@ datasetRequestRouter.get("/", async (req, res) => {
     where.OR = [
       { requestNumber: { contains: search, mode: "insensitive" } },
       { proposedTitle: { contains: search, mode: "insensitive" } },
-      { metadata: { titleTh: { contains: search, mode: "insensitive" } } },
+      { metadata: { title: { contains: search, mode: "insensitive" } } },
+      { metadata: { name: { contains: search, mode: "insensitive" } } },
     ];
   }
 
@@ -368,7 +395,7 @@ datasetRequestRouter.post("/", async (req, res) => {
     return;
   }
 
-  const { columns, extra } = toMetadataColumns(parsed.data);
+  const { columns, extra } = toMetadataColumns(mergeMetadata(EMPTY_METADATA, parsed.data));
 
   const created = await prisma.$transaction(async (tx) => {
     const request = await tx.datasetRegistrationRequest.create({
@@ -376,11 +403,18 @@ datasetRequestRouter.post("/", async (req, res) => {
         requestNumber: await nextDatasetRequestNumber(tx),
         organizationId: session.organizationId!,
         status: RequestStatus.DRAFT,
-        proposedTitle: parsed.data.nameTh ?? null,
+        proposedTitle: parsed.data.title ?? null,
         createdBy: session.sub,
         updatedBy: session.sub,
         metadata: {
-          create: { ...columns, additionalMetadataJson: extra as Prisma.InputJsonValue, createdBy: session.sub, updatedBy: session.sub },
+          create: {
+            ...columns,
+            // ชีทเขียนว่า owner_org fixed เป็นหน่วยงานที่กรอกข้อมูล — คัดลอกมา ไม่ให้ผู้ใช้เลือก
+            ownerOrgId: session.organizationId!,
+            additionalMetadataJson: extra as Prisma.InputJsonValue,
+            createdBy: session.sub,
+            updatedBy: session.sub,
+          },
         },
       },
       include: requestInclude,
@@ -493,10 +527,15 @@ datasetRequestRouter.patch("/:id", async (req, res) => {
     return;
   }
 
-  const { columns, extra } = toMetadataColumns(
-    parsed.data,
-    request.metadata?.additionalMetadataJson,
-  );
+  // รวมกับค่าที่บันทึกไว้เดิมก่อนเสมอ กฎในชีท conditions ตัดสินจากคำตอบทั้งใบ
+  // ไม่ใช่เฉพาะช่องที่เพิ่งแก้ (เปลี่ยนหมวดหมู่ข้อมูลอย่างเดียวก็เปลี่ยนค่าอีกหกช่องได้)
+  const values = mergeMetadata(fromMetadataRow(request.metadata), parsed.data);
+  const { columns, extra } = toMetadataColumns(values, request.metadata?.additionalMetadataJson);
+  if (parsed.data.legalAccepted !== undefined) {
+    extra[LEGAL_ACCEPTED_AT] = parsed.data.legalAccepted
+      ? (legalAcceptedAtOf(request.metadata) ?? new Date().toISOString())
+      : null;
+  }
 
   const updated = await prisma.$transaction(async (tx) => {
     await tx.datasetRegistrationMetadata.upsert({
@@ -505,6 +544,7 @@ datasetRequestRouter.patch("/:id", async (req, res) => {
       create: {
         datasetRegistrationRequestId: request.id,
         ...columns,
+        ownerOrgId: request.organizationId,
         additionalMetadataJson: extra as Prisma.InputJsonValue,
         createdBy: session.sub,
         updatedBy: session.sub,
@@ -513,7 +553,7 @@ datasetRequestRouter.patch("/:id", async (req, res) => {
     return tx.datasetRegistrationRequest.update({
       where: { id: request.id },
       data: {
-        proposedTitle: parsed.data.nameTh ?? request.proposedTitle,
+        proposedTitle: values.title ?? request.proposedTitle,
         updatedBy: session.sub,
       },
       include: requestInclude,
@@ -556,7 +596,7 @@ datasetRequestRouter.post("/:id/attachments", upload.single("file"), async (req,
     ownerType: OWNER,
     ownerId: request.id,
     attachmentType,
-    file: req.file,
+    file: uploadedFile(req.file),
     uploadedBy: session.sub,
   });
 
@@ -637,6 +677,14 @@ datasetRequestRouter.post("/:id/generate-form", async (req, res) => {
     });
     return;
   }
+  // เอกสารที่หน่วยงานลงนามต้องมีการยืนยันของผู้ยื่นกำกับ ไม่ใช่ช่องติ๊กที่หน้าเว็บบังคับฝ่ายเดียว
+  if (!legalAcceptedAtOf(request.metadata)) {
+    res.status(400).json({
+      error: "validation",
+      fields: { legalAcceptedAt: "กรุณายืนยันความถูกต้องของข้อมูลก่อนสร้างแบบฟอร์ม" },
+    });
+    return;
+  }
 
   const pdf = await renderDatasetRegistrationForm(await buildForm(request));
   const attachment = await storeAttachment(prisma, {
@@ -676,10 +724,13 @@ async function buildForm(request: RequestRow) {
     include: { assignedUser: { select: { displayName: true } } },
   });
 
+  // ถ้าวันข้างหน้ามีแถวใน legal.legal_acceptance จริงให้ถือแถวนั้นก่อน
+  // ระหว่างนี้ใช้เวลาที่ผู้ยื่นติ๊กยอมรับซึ่งพักไว้ใน additional_metadata_json
   const legal = await prisma.legalAcceptance.findFirst({
     where: { subjectType: SUBJECT, subjectId: request.id },
     orderBy: { acceptedAt: "asc" },
   });
+  const acceptedAt = legal?.acceptedAt ?? (shape.legalAcceptedAt ? new Date(shape.legalAcceptedAt) : null);
 
   return {
     ...shape,
@@ -687,7 +738,8 @@ async function buildForm(request: RequestRow) {
     organization: { name: request.organization.nameTh },
     submittedAt: request.submittedAt,
     createdAt: request.createdAt,
-    legalAcceptedAt: legal?.acceptedAt ?? null,
+    legalAcceptedAt: acceptedAt,
+    submitterName: await displayName(request.createdBy),
     orgApproverSignedName: signature?.userAccount.displayName ?? null,
     orgApproverSignedAt: signature?.confirmedAt ?? null,
     approvedByName: finalApproval?.assignedUser.displayName ?? null,
@@ -736,7 +788,7 @@ datasetRequestRouter.post("/:id/submit", async (req, res) => {
     return;
   }
 
-  const officer = await pickAssignee(ROLE_CODES.BDI_OFFICER, null);
+  const officer = await pickAssignee(ROLE_CODES.BDI_OFFICER, BDI_ORGANIZATION_ID);
   if (!officer) {
     res
       .status(503)
@@ -864,7 +916,7 @@ datasetRequestRouter.post("/:id/assign", async (req, res, next) => {
           actorId: session.sub,
           reason: "ถอนการมอบหมายผู้เชี่ยวชาญ",
         });
-        const officer = await pickAssignee(ROLE_CODES.BDI_OFFICER, null);
+        const officer = await pickAssignee(ROLE_CODES.BDI_OFFICER, BDI_ORGANIZATION_ID);
         await openTask(tx, {
           subjectType: SUBJECT,
           subjectId: request.id,
@@ -983,7 +1035,7 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
       await prisma.$transaction(async (tx) => {
         await startTask(tx, task.id, session.sub);
         await recordComment(tx, { taskId: task.id, comment: note, actorId: session.sub });
-        const officer = await pickAssignee(ROLE_CODES.BDI_OFFICER, null);
+        const officer = await pickAssignee(ROLE_CODES.BDI_OFFICER, BDI_ORGANIZATION_ID);
         await openTask(tx, {
           subjectType: SUBJECT,
           subjectId: request.id,
@@ -1089,7 +1141,8 @@ async function nextStageAfter(
   });
 
   const open = async (taskType: ReviewTaskType, roleCode: RoleCode, orgScope?: string | null) => {
-    const assignee = await pickAssignee(roleCode, orgScope ?? null);
+    // ไม่ระบุ orgScope = ด่านฝั่ง BDI ซึ่งอยู่ในหน่วยงาน BDI
+    const assignee = await pickAssignee(roleCode, orgScope ?? BDI_ORGANIZATION_ID);
     if (!assignee) {
       throw new WorkflowError(
         "no_reviewer",
@@ -1180,28 +1233,13 @@ async function materialiseDataset(
 
   const m = request.metadata;
   if (m) {
+    // สองตารางมีคอลัมน์ชุดเดียวกันทั้งหมด ต่างแค่ FK ที่ผูก — คัดลอกทั้งแถวโดยตัดคอลัมน์
+    // ที่เป็นของแถวเดิมออก ถ้าไล่เขียนทีละช่อง คอลัมน์ที่เพิ่มทีหลังจะเงียบหายตอนอนุมัติ
+    const { id, datasetRegistrationRequestId, createdAt, createdBy, updatedAt, updatedBy, ...copied } = m;
     await tx.datasetMetadata.create({
       data: {
+        ...copied,
         datasetId: dataset.id,
-        titleTh: m.titleTh,
-        titleEn: m.titleEn,
-        descriptionTh: m.descriptionTh,
-        descriptionEn: m.descriptionEn,
-        objective: m.objective,
-        datasetCategoryCode: m.datasetCategoryCode,
-        dataOwnerDepartment: m.dataOwnerDepartment,
-        contactName: m.contactName,
-        contactEmail: m.contactEmail,
-        contactPhone: m.contactPhone,
-        updateFrequency: m.updateFrequency,
-        coverageStartDate: m.coverageStartDate,
-        coverageEndDate: m.coverageEndDate,
-        geographicScope: m.geographicScope,
-        containsPersonalData: m.containsPersonalData,
-        containsSensitiveData: m.containsSensitiveData,
-        accessLevel: m.accessLevel,
-        deliveryMethod: m.deliveryMethod,
-        dataFormat: m.dataFormat,
         additionalMetadataJson: m.additionalMetadataJson ?? Prisma.DbNull,
         createdBy: actorId,
         updatedBy: actorId,

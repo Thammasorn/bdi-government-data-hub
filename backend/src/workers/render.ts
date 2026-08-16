@@ -43,14 +43,14 @@ async function datasetInfo(prisma: PrismaClient, subjectId: string) {
   const request = await prisma.datasetRegistrationRequest.findUnique({
     where: { id: subjectId },
     include: {
-      metadata: { select: { titleTh: true } },
+      metadata: { select: { title: true } },
       organization: { select: { nameTh: true } },
     },
   });
   if (!request) return null;
   return {
     requestNumber: request.requestNumber,
-    datasetName: request.metadata?.titleTh || request.proposedTitle || `คำขอ ${request.requestNumber}`,
+    datasetName: request.metadata?.title || request.proposedTitle || `คำขอ ${request.requestNumber}`,
     organizationName: request.organization.nameTh,
     id: request.id,
   };

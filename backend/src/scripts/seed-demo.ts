@@ -27,6 +27,12 @@ import {
 import { randomUUID } from "node:crypto";
 
 import { hashPassword } from "../lib/auth.js";
+import {
+  EMPTY_METADATA,
+  normaliseMetadata,
+  toMetadataColumns,
+  type MetadataValues,
+} from "../lib/dataset.js";
 import { assignRole, roleIdByCode } from "../lib/iam.js";
 import { runWithContext } from "../lib/context.js";
 import {
@@ -585,6 +591,38 @@ async function main() {
      * ORGANIZATION_APPROVAL ปิดไปแล้วหรือยัง — ธงนี้บอกให้ seed เดินไปทางนั้น
      */
     recheck?: boolean;
+    /** ทับค่า metadata ตั้งต้น เพื่อให้ตัวอย่างครอบคลุมหลายกิ่งของชีท conditions */
+    metadata?: Partial<MetadataValues>;
+  }
+
+  /**
+   * metadata ตัวอย่างหนึ่งชุด — ผ่าน normaliseMetadata() เหมือนที่ API ทำ
+   * ถ้า seed เขียนคอลัมน์เองตรง ๆ fixtures จะขัดกับกฎในชีทได้ (เช่น หมวดสาธารณะ
+   * แต่ไม่อนุญาตให้ส่งต่อข้อมูลรวม) แล้วหน้าจอจะแสดงสิ่งที่ผู้ใช้กรอกแบบนั้นไม่ได้
+   */
+  function datasetMetadataFixture(spec: DatasetSpec) {
+    const values = normaliseMetadata({
+      ...EMPTY_METADATA,
+      dataType: "3",
+      dataTopic: "05",
+      title: spec.title,
+      name: "Sample dataset",
+      maintainer: "กลุ่มงานสถิติสารสนเทศ",
+      maintainerEmail: "user@nso.go.th",
+      tagString: "สถิติ,ราชการ",
+      notes: `${spec.title} — ชุดข้อมูลตัวอย่างสำหรับสาธิตระบบ จัดทำโดยสำนักงานสถิติแห่งชาติ เพื่อใช้ทดสอบกระบวนการลงทะเบียนชุดข้อมูลตั้งแต่ต้นจนจบ`,
+      objective:
+        "ใช้สาธิตกระบวนการลงทะเบียนชุดข้อมูลตั้งแต่ร่างจนถึงอนุมัติ และใช้ทดสอบการแสดงผลของแบบฟอร์มที่ระบบสร้าง",
+      updateFrequencyUnit: "M",
+      updateFrequencyInterval: 1,
+      deliveryFrequency: "2",
+      geoCoverage: "06",
+      dataSource: "สำมะโนประชากรและเคหะ (สำนักงานสถิติแห่งชาติ)",
+      dataFormat: "3",
+      dataCategory: "a",
+      ...spec.metadata,
+    });
+    return toMetadataColumns(values);
   }
 
   const datasetSpecs: DatasetSpec[] = [
@@ -596,7 +634,31 @@ async function main() {
       result: ReviewResult.RETURNED,
       daysAgo: 11,
     },
-    { title: "จำนวนประชากรแยกตามช่วงอายุรายตำบล", stage: ReviewTaskType.ORGANIZATION_APPROVAL, daysAgo: 14 },
+    {
+      // ตัวอย่างที่เดินกิ่ง "มีข้อมูลส่วนบุคคล" ของชีท conditions ครบทั้งแถว
+      title: "จำนวนประชากรแยกตามช่วงอายุรายตำบล",
+      stage: ReviewTaskType.ORGANIZATION_APPROVAL,
+      daysAgo: 14,
+      metadata: {
+        dataType: "1",
+        dataCategory: "b",
+        containsPersonalData: true,
+        personalDataTypes: "ชื่อ-นามสกุล เลขประจำตัวประชาชน วันเดือนปีเกิด ที่อยู่ตามทะเบียนบ้าน",
+        dataSubjectCategories: "ประชาชนที่มีชื่ออยู่ในทะเบียนบ้านในเขตพื้นที่รับผิดชอบ",
+        personalDataProcessingPeriod: "b",
+        personalDataProcessingPeriodYear: 3,
+        personalDataProcessingPeriodMonth: 6,
+        dataClassification: "03",
+        allowOriginalRawDataRetention: true,
+        allowOriginalRawDataSharing: false,
+        allowTransformedRawDataSharing: true,
+        transformedRawDataRecipients: "กรมการปกครอง, สำนักงานสภาพัฒนาการเศรษฐกิจและสังคมแห่งชาติ",
+        allowTransformedRawDataGdxSharing: false,
+        allowAggregatedDataSharing: true,
+        aggregatedDataRecipients: "หน่วยงานของรัฐที่ร้องขอผ่านระบบกลาง",
+        authorizePersonalDataAnonymization: true,
+      },
+    },
     {
       title: "สถิติการใช้บริการขนส่งมวลชนรายเดือน",
       stage: ReviewTaskType.BDI_OFFICER_REVIEW,
@@ -610,6 +672,20 @@ async function main() {
       stage: null,
       result: ReviewResult.REJECTED,
       daysAgo: 28,
+      metadata: {
+        dataType: "1",
+        dataTopic: "99",
+        dataTopicOther: "การกำกับดูแลผู้ประกอบการขนส่ง",
+        dataCategory: "c",
+        dataClassification: "04",
+        dataFormat: "4",
+        dataFormatOther: "ระบบเชื่อมโยงข้อมูลของกรมการขนส่งทางบก",
+        updateFrequencyUnit: "U",
+        allowOriginalRawDataRetention: false,
+        allowTransformedRawDataSharing: false,
+        allowTransformedRawDataGdxSharing: false,
+        allowAggregatedDataSharing: true,
+      },
     },
     {
       title: "ทะเบียนโครงการวิจัยที่ได้รับทุนภาครัฐ",
@@ -622,6 +698,7 @@ async function main() {
   for (const [index, spec] of datasetSpecs.entries()) {
     const isDraft = spec.stage === null && !spec.result;
     const t = (d: number) => dt(spec.daysAgo - d);
+    const { columns, extra } = datasetMetadataFixture(spec);
 
     const request = await prisma.datasetRegistrationRequest.create({
       data: {
@@ -637,35 +714,9 @@ async function main() {
         updatedBy: nso.userId,
         metadata: {
           create: {
-            titleTh: spec.title,
-            titleEn: "Sample dataset",
-            descriptionTh: `${spec.title} — ชุดข้อมูลตัวอย่างสำหรับสาธิตระบบ จัดทำโดยสำนักงานสถิติแห่งชาติ เพื่อใช้ทดสอบกระบวนการลงทะเบียนชุดข้อมูลตั้งแต่ต้นจนจบ`,
-            objective: "ใช้สาธิตกระบวนการลงทะเบียนชุดข้อมูล",
-            datasetCategoryCode: "GOVERNMENT",
-            dataOwnerDepartment: "กลุ่มงานสถิติสารสนเทศ",
-            contactName: "นางสาวศศิธร สถิติดี",
-            contactEmail: "user@nso.go.th",
-            contactPhone: "0820000000",
-            updateFrequency: "MONTHLY",
-            coverageStartDate: new Date("2024-01-01T00:00:00.000Z"),
-            coverageEndDate: new Date("2025-12-31T00:00:00.000Z"),
-            geographicScope: "NATIONAL",
-            containsPersonalData: false,
-            containsSensitiveData: false,
-            accessLevel: "PUBLIC",
-            deliveryMethod: "API",
-            dataFormat: "CSV",
-            additionalMetadataJson: {
-              datasetType: "STATISTIC",
-              keywords: ["สถิติ", "ราชการ"],
-              estimatedRecords: 120000,
-              deliveryFrequency: "MONTHLY",
-              deliveryEndpoint: "https://api.nso.go.th/datasets/sample",
-              technicalContactName: "นายเทคนิค ระบบดี",
-              technicalContactEmail: "tech@nso.go.th",
-              legalBasis: "พระราชบัญญัติสถิติ พ.ศ. 2550 มาตรา 6",
-              licenseType: "OPEN_GOVERNMENT",
-            } as Prisma.InputJsonValue,
+            ...columns,
+            ownerOrgId: nso.orgId,
+            additionalMetadataJson: extra as Prisma.InputJsonValue,
             createdBy: nso.userId,
             updatedBy: nso.userId,
           },
@@ -834,6 +885,15 @@ async function main() {
       const metadata = await prisma.datasetRegistrationMetadata.findUniqueOrThrow({
         where: { datasetRegistrationRequestId: request.id },
       });
+      const {
+        id: _metadataId,
+        datasetRegistrationRequestId: _requestId,
+        createdAt: _metadataCreatedAt,
+        createdBy: _metadataCreatedBy,
+        updatedAt: _metadataUpdatedAt,
+        updatedBy: _metadataUpdatedBy,
+        ...copiedMetadata
+      } = metadata;
 
       const dataset = await prisma.dataset.create({
         data: {
@@ -846,25 +906,9 @@ async function main() {
           createdBy: approver.id,
           updatedBy: approver.id,
           metadata: {
+            // คัดลอกทั้งแถวแบบเดียวกับ materialiseDataset() ใน routes/dataset-requests.ts
             create: {
-              titleTh: metadata.titleTh,
-              titleEn: metadata.titleEn,
-              descriptionTh: metadata.descriptionTh,
-              objective: metadata.objective,
-              datasetCategoryCode: metadata.datasetCategoryCode,
-              dataOwnerDepartment: metadata.dataOwnerDepartment,
-              contactName: metadata.contactName,
-              contactEmail: metadata.contactEmail,
-              contactPhone: metadata.contactPhone,
-              updateFrequency: metadata.updateFrequency,
-              coverageStartDate: metadata.coverageStartDate,
-              coverageEndDate: metadata.coverageEndDate,
-              geographicScope: metadata.geographicScope,
-              containsPersonalData: metadata.containsPersonalData,
-              containsSensitiveData: metadata.containsSensitiveData,
-              accessLevel: metadata.accessLevel,
-              deliveryMethod: metadata.deliveryMethod,
-              dataFormat: metadata.dataFormat,
+              ...copiedMetadata,
               additionalMetadataJson: metadata.additionalMetadataJson ?? Prisma.DbNull,
               createdBy: approver.id,
               updatedBy: approver.id,
