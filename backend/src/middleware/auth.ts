@@ -68,12 +68,21 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     const assignments = user.roleAssignments.filter((a) => a.role.isActive);
     const roles = assignments.map((a) => a.role.code as RoleCode);
 
-    // หน่วยงานของผู้ใช้มาจาก assignment ที่เป็น role ระดับหน่วยงานเท่านั้น
-    // เจ้าหน้าที่ BDI ไม่สังกัดหน่วยงาน จึงได้ null ตามเดิม
+    /**
+     * หน่วยงานของผู้ใช้ — role ระดับหน่วยงานมาก่อน แล้วค่อยตกมาที่ assignment อื่น
+     *
+     * ลำดับนี้สำคัญกับคนที่ถือทั้งสองฝั่ง (เช่นเจ้าหน้าที่ BDI ที่ถูกเชิญเข้าหน่วยงานด้วย):
+     * หน่วยงานที่เขาสังกัดจริงต้องชนะหน่วยงาน BDI ไม่ใช่แล้วแต่ลำดับแถวที่ query คืนมา
+     *
+     * เจ้าหน้าที่ BDI ได้ id ของหน่วยงาน BDI แล้ว (เดิมเป็น null) — ทุกที่ที่เช็กขอบเขต
+     * การมองเห็นดู isBdiStaff() ก่อนอยู่แล้ว ค่านี้จึงไม่ไปแคบสิทธิ์ใคร
+     */
     const organizationId =
       assignments.find(
         (a) => a.organizationId && ORGANIZATION_SCOPED_ROLES.includes(a.role.code as RoleCode),
-      )?.organizationId ?? null;
+      )?.organizationId ??
+      assignments.find((a) => a.organizationId)?.organizationId ??
+      null;
 
     req.session = { sub: user.id, email: user.email, roles, organizationId };
     // ให้ logAudit() รู้ว่าใครเป็นผู้กระทำ โดยไม่ต้องส่ง actorId ผ่านทุกชั้น

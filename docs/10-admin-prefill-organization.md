@@ -151,7 +151,42 @@ snapshot ของคำขอ ณ วินาทีนั้น ถ้าค�
 - **`toApiShape()` ไม่เคยคืน `contactNationalId`** ทั้งที่ `draftSchema` รับและ
   `toRequestData()` บันทึกลง `user_cid` — เขียนได้แต่อ่านกลับไม่ได้มาตั้งแต่ต้น เติมให้ครบแล้ว
 
-## 8. ยังไม่ได้ทำ
+## 8. เจ้าหน้าที่ BDI ก็สังกัดหน่วยงาน (2026-08-16)
+
+`user_role_assignment.organization_id` ของ role ฝั่ง BDI/SYSTEM เคยเป็น `NULL` ทั้งที่
+`activation_key.organization_id` ของคนกลุ่มเดียวกันชี้มาที่หน่วยงาน BDI มาตลอด — ถามจาก
+ฐานข้อมูลว่า "เจ้าหน้าที่คนนี้อยู่หน่วยงานไหน" จึงไม่ได้คำตอบ ตอนนี้เติมให้ตรงกันแล้ว
+และ `requireAuth` / `issueSession` คืน `organizationId` ของ BDI ให้เจ้าหน้าที่ BDI ด้วย
+
+**สิ่งที่ต้องรื้อเพื่อทำข้อนี้:** `uq_active_org_scoped_role_assignment` คือ
+`UNIQUE (organization_id, role_id) WHERE status='ACTIVE'` ซึ่ง **ไม่ได้จำกัดเฉพาะ role
+ที่ผูกกับหน่วยงาน** เจ้าหน้าที่ BDI รอดมาได้เพราะ `organization_id` เป็น NULL และ Postgres
+นับ NULL ว่าไม่ซ้ำกัน พอเติมหน่วยงานจริงลงไป เจ้าหน้าที่ BDI คนที่สองของ role เดิมจะชนทันที
+(ทดสอบในทรานแซกชันที่ rollback แล้ว: main มี `BDI_OFFICER` 3 คน จึงล้มจริง)
+
+เขียน index ให้แยกตาม role ไม่ได้ เพราะ `role.id` ถูกสุ่มใหม่ทุกฐานข้อมูล (`seed:masters`
+ไม่ได้กำหนด id ตายตัว — ตรวจแล้วว่า main กับ dev checkout ได้คนละค่า) จึงตัดสินให้
+**ลบ index ออกแล้วย้ายกติกาไปบังคับที่ `lib/iam.ts` → `assignRole()`** ซึ่งเลือกได้ว่า
+หน่วยงาน BDI ยกเว้นจากกติกา มีเจ้าหน้าที่กี่คนต่อ role ก็ได้
+
+| | ก่อน | หลัง |
+|---|---|---|
+| `organization_id` ของ role ฝั่ง BDI | `NULL` | หน่วยงาน BDI |
+| กติกาหนึ่ง role หนึ่งคนต่อหน่วยงาน | partial unique index | `assignRole()` (เพิกถอนคนเดิมก่อน เหมือนเดิม) |
+| หน่วยงาน BDI | อยู่นอกกติกาโดยบังเอิญ (เพราะ NULL) | อยู่นอกกติกาโดยตั้งใจ |
+| `session.organizationId` ของเจ้าหน้าที่ BDI | `null` | หน่วยงาน BDI |
+
+**สิ่งที่แลกไป:** การเขียนพร้อมกันสองรายการไม่มีตาข่ายที่ชั้นฐานข้อมูลรับแล้ว `assignRole`
+ถูกเรียกในทรานแซกชันเดียวกับการเปิดใช้งานบัญชีเสมอ ซึ่งครอบเส้นทางที่มีอยู่จริงทั้งหมด
+
+**ตรวจแล้วว่าไม่ไปแคบสิทธิ์ใคร** — ทุกจุดที่อ่าน `session.organizationId`
+(`visibilityFilter` · `canView` · `mayEdit` · `prerequisiteError` · `POST /api/organizations`)
+เช็ก `isBdiStaff()` ก่อนเสมอ SIT ข้อ 3 ยืนยันว่าเจ้าหน้าที่ BDI ยังเห็นคำขอครบทุกหน่วยงาน
+
+migration: `20260816120000_bdi_staff_belong_to_bdi_organization` (ลบ index + backfill แถวเดิม)
+สคริปต์ตรวจ: `sit-evidence/admin-prefill-20260816/verify-bdi-org.mjs` — **ผ่าน 11 จาก 11 ข้อ**
+
+## 9. ยังไม่ได้ทำ
 
 - [ ] **ลบหน่วยงานที่สร้างไว้** — ยังไม่มี `DELETE` การ์ดไม่ได้ขอ และหน่วยงานที่มีคำเชิญ
       หรือคำขอผูกอยู่แล้วลบทิ้งเฉย ๆ ไม่ได้ (FK cascade จะลากคำเชิญไปด้วย)

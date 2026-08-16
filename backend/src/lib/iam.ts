@@ -18,7 +18,12 @@ import {
 import { prisma } from "../db.js";
 import { env } from "../env.js";
 import { generateActivationKey, hashActivationKey } from "./auth.js";
-import { ORGANIZATION_SCOPED_ROLES, SYSTEM_USER_ID, type RoleCode } from "./system.js";
+import {
+  BDI_ORGANIZATION_ID,
+  ORGANIZATION_SCOPED_ROLES,
+  SYSTEM_USER_ID,
+  type RoleCode,
+} from "./system.js";
 
 /** ใช้ได้ทั้ง prisma ปกติและ tx ใน $transaction */
 export type Db = PrismaClient | Prisma.TransactionClient;
@@ -58,12 +63,17 @@ export function derivedAssignmentStatus(assignment: {
 /**
  * มอบ role ให้ผู้ใช้
  *
- * role ระดับหน่วยงานต้องมี organizationId เสมอ ส่วน role ฝั่ง BDI ต้องเป็น null
- * (sheet มาร์กคอลัมน์นี้ว่า Conditional — Organization scope)
+ * **ทุก assignment มีหน่วยงานเสมอ** — role ระดับหน่วยงานใช้หน่วยงานที่ระบุมา
+ * ส่วน role ฝั่ง BDI/SYSTEM สังกัดหน่วยงาน BDI ซึ่งเป็นแถวหนึ่งใน organization.organization
+ * อยู่แล้ว (เดิมตรงนี้เป็น null ทำให้ตอบจากฐานข้อมูลไม่ได้ว่าเจ้าหน้าที่ BDI อยู่หน่วยงานไหน
+ * ทั้งที่ activation_key ของเขาชี้มาที่ BDI มาตลอด — เปลี่ยนเมื่อ 2026-08-16)
  *
- * partial unique index uq_active_org_scoped_role_assignment บังคับว่าหนึ่งหน่วยงาน
- * มี ORGANIZATION_USER / ORGANIZATION_APPROVER ที่ ACTIVE ได้อย่างละคนเดียว
- * จึงเพิกถอนคนเดิมก่อนเสมอ ไม่ปล่อยให้ insert ชนแล้วโยน error ออกไปหา client
+ * กติกา "หนึ่งหน่วยงานมี ORGANIZATION_USER / ORGANIZATION_APPROVER ที่ ACTIVE ได้อย่างละคน"
+ * บังคับที่นี่ ไม่ใช่ที่ฐานข้อมูลอีกแล้ว — `uq_active_org_scoped_role_assignment` ถูกลบไป
+ * เพราะมันคลุมทุก role ไม่ใช่แค่สองตัวนี้ พอเจ้าหน้าที่ BDI มีหน่วยงานจริงก็ชนกันเอง
+ * และเขียน index ให้แยก role ไม่ได้ (role.id สุ่มใหม่ทุกฐานข้อมูล)
+ *
+ * **หน่วยงาน BDI ยกเว้นจากกติกานี้** มีเจ้าหน้าที่กี่คนต่อ role ก็ได้
  */
 export async function assignRole(
   db: Db,
@@ -77,7 +87,9 @@ export async function assignRole(
 ) {
   const { userAccountId, roleCode, actorId } = params;
   const isOrgScoped = ORGANIZATION_SCOPED_ROLES.includes(roleCode);
-  const organizationId = isOrgScoped ? (params.organizationId ?? null) : null;
+  const organizationId = isOrgScoped
+    ? (params.organizationId ?? null)
+    : (params.organizationId ?? BDI_ORGANIZATION_ID);
 
   if (isOrgScoped && !organizationId) {
     throw new Error(`role "${roleCode}" ต้องระบุ organizationId`);
@@ -85,7 +97,14 @@ export async function assignRole(
 
   const roleId = await roleIdByCode(db, roleCode);
 
-  if (isOrgScoped && organizationId) {
+  /**
+   * หนึ่ง role หนึ่งคนต่อหนึ่งหน่วยงาน — เพิกถอนคนเดิมก่อนเสมอ ไม่ใช่ปฏิเสธคนใหม่
+   * (พฤติกรรมเดิมตั้งแต่ตอนที่ยังมี unique index คอยรับอยู่ ไม่ได้เปลี่ยน)
+   *
+   * ไม่ใช้กับหน่วยงาน BDI เพราะเจ้าหน้าที่ BDI มีหลายคนต่อ role เป็นเรื่องปกติ —
+   * ถ้าเพิกถอนคนเดิม การเปิดใช้งานบัญชีเจ้าหน้าที่คนที่สองจะไปปิดสิทธิ์คนแรกเงียบ ๆ
+   */
+  if (isOrgScoped && organizationId && organizationId !== BDI_ORGANIZATION_ID) {
     await revokeRoleAssignments(db, {
       organizationId,
       roleId,
@@ -157,6 +176,7 @@ export async function activeRoleCodes(db: Db, userAccountId: string): Promise<Ro
  *
  * ยกเลิกคีย์ที่ยัง ISSUED ของ (user, organization, role) เดิมก่อน เพื่อไม่ให้มีลิงก์
  * ที่ใช้ได้หลายอันพร้อมกัน — และเพื่อไม่ให้ชน partial unique index uq_active_activation_key
+ * (index ของ activation_key ยังอยู่ ตัวที่ถูกลบไปคือของ user_role_assignment)
  *
  * คืน raw key กลับมาให้ผู้เรียกส่งอีเมล ฐานข้อมูลเก็บแค่ HMAC
  */

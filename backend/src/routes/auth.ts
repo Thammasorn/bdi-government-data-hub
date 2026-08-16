@@ -23,7 +23,7 @@ import {
 } from "../lib/iam.js";
 import { sendOtpEmail } from "../lib/mail.js";
 import { ROLE_LABELS } from "../lib/roles.js";
-import { type RoleCode } from "../lib/system.js";
+import { ORGANIZATION_SCOPED_ROLES, type RoleCode } from "../lib/system.js";
 import {
   ThaidError,
   authorizeUrl,
@@ -648,16 +648,24 @@ authRouter.get("/me", requireAuth, async (req, res) => {
 async function issueSession(res: import("express").Response, userAccountId: string, extra?: object) {
   const user = await prisma.userAccount.findUniqueOrThrow({ where: { id: userAccountId } });
   const roles = await activeRoleCodes(prisma, userAccountId);
-  const assignment = await prisma.userRoleAssignment.findFirst({
+  /**
+   * เรียงให้ role ระดับหน่วยงานมาก่อน ให้ตรงกับที่ requireAuth เลือก — ไม่งั้นคนที่ถือ
+   * ทั้ง role ของหน่วยงานและของ BDI จะได้หน่วยงานคนละแห่งใน cookie กับในคำขอถัดไป
+   */
+  const assignments = await prisma.userRoleAssignment.findMany({
     where: {
       userAccountId,
       organizationId: { not: null },
       status: "ACTIVE",
       OR: [{ effectiveUntil: null }, { effectiveUntil: { gt: new Date() } }],
     },
-    select: { organizationId: true },
+    select: { organizationId: true, role: { select: { code: true } } },
   });
-  const organizationId = assignment?.organizationId ?? null;
+  const organizationId =
+    assignments.find((a) => ORGANIZATION_SCOPED_ROLES.includes(a.role.code as RoleCode))
+      ?.organizationId ??
+    assignments[0]?.organizationId ??
+    null;
 
   res.cookie(
     SESSION_COOKIE,

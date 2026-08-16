@@ -157,9 +157,23 @@ effective_until > now())` — the source moved, the rule did not. Don't reintrod
 
 Roles are rows in `iam.role`, not an enum. Two codes changed from the old model:
 `BDI_APPROVER` → `BDI_FINAL_APPROVER` and `BDI_SPECIALIST` → `BDI_DATASET_SPECIALIST`; two are
-new (`BDI_LEGAL_OFFICER`, `SYSTEM_ADMINISTRATOR`). A partial unique index enforces the Excel's
-rule that one organisation has at most one active `ORGANIZATION_USER` and one active
-`ORGANIZATION_APPROVER` — this contradicts `docs/01-user-journey.md` §1, and the Excel wins.
+new (`BDI_LEGAL_OFFICER`, `SYSTEM_ADMINISTRATOR`).
+
+**Every role assignment carries an organisation, BDI staff included** — they belong to the BDI
+organisation row, the same one their activation key has always pointed at. It was `NULL` until
+2026-08-16, which meant the database could not answer "which organisation is this person in?"
+for BDI staff.
+
+The Excel's rule that one organisation has at most one active `ORGANIZATION_USER` and one
+active `ORGANIZATION_APPROVER` (this contradicts `docs/01-user-journey.md` §1; the Excel wins)
+is now enforced in `assignRole`, not by a database index. `uq_active_org_scoped_role_assignment`
+covered *every* role rather than those two, and only missed BDI staff because their
+organisation was NULL and Postgres counts NULLs as distinct; giving them a real organisation
+would have capped BDI at one officer in total. A partial index cannot express "these two roles"
+because `role.id` is regenerated per database. **The BDI organisation is exempt from the rule** —
+many officers per role is normal there. The trade-off is that concurrent writes no longer have
+a database-level net; `assignRole` runs inside the activation transaction, which covers the
+paths that exist.
 
 `Invitation` is replaced by `iam.activation_key`, following the lifecycle in that sheet: create
 the `user_account` as `PENDING` first, then issue a key for (account, organisation, role).
