@@ -65,15 +65,9 @@ async function main() {
     if (!env.smtp.enabled) {
       console.log("[backend] SMTP ยังไม่ได้ตั้งค่า — อีเมลจะถูกพิมพ์ลง log แทนการส่งจริง");
     }
-    // ดังไว้ตั้งแต่บูต การยืนยันตัวตนที่ไม่เทียบเลขบัตรไม่ควรเป็นเรื่องที่รู้กันเงียบ ๆ
-    if (!env.thaid.requireCidMatch) {
-      console.warn(
-        "[backend] THAID_REQUIRE_CID_MATCH=false — ยืนยันตัวตนผ่าน ThaiD โดย" +
-          "ไม่เทียบเลขประจำตัวประชาชน ใครที่ถือลิงก์เปิดใช้งานและมีบัญชี ThaiD ก็เปิดบัญชีนั้นได้",
-      );
-    }
-    if (env.thaid.mock) {
-      console.warn("[backend] THAID_MOCK=true — ข้ามการเรียก ThaiD จริงทั้งหมด");
+    // บอกไว้ตั้งแต่บูตว่าเลขบัตรจะมาจาก claim ไหน เวลาไล่ปัญหาจะได้ไม่ต้องเดา
+    if (!env.thaid.usePid) {
+      console.log("[backend] THAID_USE_PID=false — ใช้ claim `sub` เป็นเลขประจำตัวประชาชน");
     }
   });
 

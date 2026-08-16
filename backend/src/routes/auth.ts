@@ -38,7 +38,6 @@ import {
   purposeOf,
   startThaidOperation,
   succeedThaidOperation,
-  type ThaidPurpose,
 } from "../lib/thaid-flow.js";
 import { emailSchema, formatZodError, passwordSchema, phoneSchema } from "../lib/validation.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -101,11 +100,6 @@ authRouter.get("/invitation", async (req, res) => {
     expiresAt: key.expiresAt,
     /** บัญชีที่ไม่มีเลขบัตรในระบบยืนยันด้วย ThaiD ไม่ได้ — หน้าเว็บต้องบอกให้ชัด */
     cidHint: maskCid(key.userAccount.cid),
-    /**
-     * deployment นี้เทียบเลขบัตรจริงหรือไม่ (THAID_REQUIRE_CID_MATCH)
-     * หน้าเว็บบอกผู้ใช้ว่าจะเกิดอะไรขึ้น จึงต้องพูดตามที่ระบบทำจริง ไม่ใช่ตามที่สเปกเขียน
-     */
-    cidCheck: env.thaid.requireCidMatch,
     identityVerified: Boolean(verification),
   });
 });
@@ -130,7 +124,7 @@ authRouter.post("/thaid/start", async (req, res) => {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;
   }
-  if (!thaidConfigured() && !env.thaid.mock) {
+  if (!thaidConfigured()) {
     res.status(501).json({
       error: "not_configured",
       message: "ระบบยังไม่ได้ตั้งค่าการเชื่อมต่อ ThaiD กรุณาติดต่อผู้ดูแลระบบ",
@@ -152,8 +146,8 @@ authRouter.post("/thaid/start", async (req, res) => {
       return;
     }
     // ไม่มีเลขบัตรบันทึกไว้ = ไม่มีอะไรให้เทียบ ปิดทางตั้งแต่ต้นดีกว่าปล่อยให้ผู้ใช้
-    // เสียเวลาไปยืนยันกับ ThaiD แล้วค่อยล้มตอนกลับมา — เว้นแต่ระบบไม่ได้เทียบอยู่แล้ว
-    if (env.thaid.requireCidMatch && !key.userAccount.cid) {
+    // เสียเวลาไปยืนยันกับ ThaiD แล้วค่อยล้มตอนกลับมา
+    if (!key.userAccount.cid) {
       res.status(409).json({
         error: "cid_missing",
         message:
@@ -171,15 +165,7 @@ authRouter.post("/thaid/start", async (req, res) => {
     organizationId,
   });
 
-  /**
-   * โหมดจำลอง: ข้ามกรมการปกครองไปเลย ส่งกลับที่หน้า callback ของเราเองพร้อม code ปลอม
-   * หน้าเว็บจึงเดินเส้นทางเดียวกันทุกประการ ต่างแค่ไม่มีการเรียกออกนอกระบบ
-   */
-  const url = env.thaid.mock
-    ? `${env.appUrl}/auth/callback/thaid?code=MOCK&state=${encodeURIComponent(state)}`
-    : authorizeUrl(state);
-
-  res.json({ authorizeUrl: url, mock: env.thaid.mock });
+  res.json({ authorizeUrl: authorizeUrl(state) });
 });
 
 const callbackSchema = z.object({
@@ -238,9 +224,7 @@ authRouter.post("/thaid/callback", async (req, res) => {
 
   let identity: ThaidIdentity;
   try {
-    identity = env.thaid.mock
-      ? await mockIdentity(operation.subjectId, purpose)
-      : await resolveIdentity(parsed.data.code);
+    identity = await resolveIdentity(parsed.data.code);
   } catch (err) {
     const code = err instanceof ThaidError ? err.code : "unexpected";
     const detail = err instanceof Error ? err.message : String(err);
@@ -254,14 +238,22 @@ authRouter.post("/thaid/callback", async (req, res) => {
   }
 
   /**
-   * ไม่มี pid = เทียบเลขบัตรไม่ได้ ปกติถือเป็นความล้มเหลว เพราะทั้ง §2.4 ตั้งอยู่บนการเทียบ
-   * ยกเว้น deployment ที่ตั้ง THAID_REQUIRE_CID_MATCH=false ไว้ (client ยังไม่ได้ scope `pid`)
-   * ตรงนั้นเดินต่อโดยผูกบัญชีด้วย `sub` แทน — ดูคำเตือนที่ env.ts
+   * ไม่มีเลขบัตร = เทียบไม่ได้ = ยืนยันตัวตนไม่ได้ ทั้ง §2.4 ตั้งอยู่บนการเทียบ
+   *
+   * จงใจไม่ยกเลิกคีย์ตรงนี้ ต่างจากกรณี "เลขไม่ตรง" — เลขบัตรที่หายไปหรืออ่านไม่ออก
+   * แปลว่าฝั่งเราตั้งค่า claim ไว้ผิด (`THAID_USE_PID` / scope) ไม่ใช่ผู้ใช้ถือบัตรผิดใบ
+   * ลงโทษลิงก์ของเขาเพราะเราตั้งค่าพลาดไม่ได้
    */
-  if (!identity.pid && env.thaid.requireCidMatch) {
-    await failThaidOperation(operation, "pid_missing", "ThaiD ไม่ได้ส่ง pid มาด้วย (scope pid?)");
+  if (!identity.pid) {
+    const claim = env.thaid.usePid ? "pid" : "sub";
+    await failThaidOperation(
+      operation,
+      "cid_unavailable",
+      `claim ${claim} ไม่มา หรือไม่ใช่เลขประจำตัวประชาชนที่ถูกต้อง (THAID_USE_PID/scope ตั้งถูกหรือไม่)`,
+    );
+    console.error(`[thaid] ไม่ได้เลขบัตรจาก claim ${claim} — ตรวจ THAID_USE_PID และ THAID_SCOPE`);
     res.status(502).json({
-      error: "pid_missing",
+      error: "cid_unavailable",
       message: "ระบบไม่ได้รับเลขประจำตัวประชาชนจาก ThaiD จึงยืนยันตัวตนไม่ได้ กรุณาติดต่อผู้ดูแลระบบ",
     });
     return;
@@ -280,13 +272,7 @@ authRouter.post("/thaid/callback", async (req, res) => {
     return;
   }
 
-  /**
-   * เทียบเมื่อมีของให้เทียบครบทั้งสองฝั่ง ถ้า `pid` ไม่มาและ deployment ยอมให้ข้าม
-   * (THAID_REQUIRE_CID_MATCH=false) ก็ไม่มีอะไรให้ตัดสิน — ผ่านไปโดยบันทึกไว้ว่าไม่ได้เทียบ
-   * แต่ถ้า `pid` มาแล้วไม่ตรง ยังยกเลิกคีย์เหมือนเดิมไม่ว่าจะตั้งค่าไว้อย่างไร
-   */
-  const cidVerified = Boolean(identity.pid && key.userAccount.cid);
-  if ((env.thaid.requireCidMatch || cidVerified) && key.userAccount.cid !== identity.pid) {
+  if (key.userAccount.cid !== identity.pid) {
     await revokeActivationKey(prisma, {
       activationKeyId: key.id,
       reason: "เลขประจำตัวประชาชนจาก ThaiD ไม่ตรงกับที่บันทึกไว้",
@@ -325,8 +311,8 @@ authRouter.post("/thaid/callback", async (req, res) => {
       user_account_id: key.userAccountId,
       thaid_subject: identity.subject,
       integration_operation_id: operation.id,
-      /** ผ่านการยืนยันแล้ว แต่ได้เทียบเลขบัตรจริงหรือไม่ — ต่างกันมากตอนย้อนอ่าน log */
-      cid_verified: cidVerified,
+      /** เลขบัตรที่เทียบมาจาก claim ไหน — ย้อนอ่าน log แล้วรู้ว่าตอนนั้นตั้งค่าไว้อย่างไร */
+      cid_source: env.thaid.usePid ? "pid" : "sub",
     },
   });
 
@@ -344,32 +330,19 @@ authRouter.post("/thaid/callback", async (req, res) => {
   });
 });
 
-/**
- * เข้าสู่ระบบด้วย ThaiD — จับคู่บัญชีด้วยเลขบัตร ไม่ใช่อีเมล
- *
- * เมื่อ client ไม่ได้รับ scope `pid` ไม่มีเลขบัตรให้จับคู่ จึงใช้ `sub` ที่บันทึกไว้เป็น
- * `external_subject` ตอนเปิดใช้งานบัญชีแทน — หมายความว่าเข้าสู่ระบบด้วย ThaiD ได้เฉพาะ
- * บัญชีที่เคยเปิดใช้งานผ่าน ThaiD ด้วย client ชุดเดียวกันมาก่อน (sub ผูกกับ client)
- */
+/** เข้าสู่ระบบด้วย ThaiD — จับคู่บัญชีด้วยเลขบัตร ไม่ใช่อีเมล */
 async function thaidLogin(
   res: import("express").Response,
   operation: IntegrationOperation,
   identity: ThaidIdentity,
 ) {
   const matches = await prisma.userAccount.findMany({
-    where: {
-      status: UserAccountStatus.ACTIVE,
-      ...(identity.pid ? { cid: identity.pid } : { externalSubject: identity.subject }),
-    },
+    where: { cid: identity.pid, status: UserAccountStatus.ACTIVE },
     select: { id: true, email: true, externalSubject: true },
   });
 
   if (matches.length === 0) {
-    await failThaidOperation(
-      operation,
-      "account_not_found",
-      identity.pid ? "ไม่มีบัญชีที่ผูกกับเลขบัตรนี้" : "ไม่มีบัญชีที่ผูกกับ ThaiD บัญชีนี้",
-    );
+    await failThaidOperation(operation, "account_not_found", "ไม่มีบัญชีที่ผูกกับเลขบัตรนี้");
     await logAudit({
       action: AuditAction.LOGIN_FAILED,
       subjectType: AuditSubject.USER_ACCOUNT,
@@ -378,9 +351,7 @@ async function thaidLogin(
     });
     res.status(403).json({
       error: "account_not_found",
-      message:
-        (identity.pid ? "ไม่พบบัญชีที่ผูกกับเลขประจำตัวประชาชนนี้ " : "ไม่พบบัญชีที่ผูกกับ ThaiD บัญชีนี้ ") +
-        "กรุณาเปิดใช้งานบัญชีจากลิงก์คำเชิญก่อน",
+      message: "ไม่พบบัญชีที่ผูกกับเลขประจำตัวประชาชนนี้ กรุณาเปิดใช้งานบัญชีจากลิงก์คำเชิญก่อน",
     });
     return;
   }
@@ -414,30 +385,6 @@ async function thaidLogin(
   });
 
   await issueSession(res, user.id, { purpose: "login", provider: "thaid" });
-}
-
-/**
- * โหมดจำลอง — ใช้เลขบัตรของบัญชีเองเป็นคำตอบ จึง "ตรง" เสมอ
- * มีไว้ให้ deployment ที่ยังไม่มี client credentials เดิน flow ได้เท่านั้น
- */
-async function mockIdentity(subjectId: string, purpose: ThaidPurpose): Promise<ThaidIdentity> {
-  if (purpose === "login") {
-    throw new ThaidError("mock_unsupported", "โหมดจำลองไม่รองรับการเข้าสู่ระบบด้วย ThaiD");
-  }
-  const { key } = await usableActivationKeyById(subjectId);
-  if (!key?.userAccount.cid) {
-    throw new ThaidError("mock_unavailable", "บัญชีนี้ไม่มีเลขบัตรให้จำลอง");
-  }
-  console.log(`[thaid:mock] จำลองการยืนยันตัวตนของ ${key.userAccount.email}`);
-  return {
-    pid: key.userAccount.cid,
-    subject: `thaid-mock:${key.userAccountId}`,
-    titleTh: null,
-    givenNameTh: null,
-    familyNameTh: null,
-    nameTh: null,
-    nameEn: null,
-  };
 }
 
 // ---------------------------------------------------------------- สร้างบัญชี (§2.5)

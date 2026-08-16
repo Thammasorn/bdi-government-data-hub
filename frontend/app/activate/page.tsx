@@ -30,8 +30,6 @@ interface InvitationInfo {
   organizationName: string;
   expiresAt: string;
   cidHint: string | null;
-  /** deployment นี้เทียบเลขบัตรที่ได้จาก ThaiD กับที่บันทึกไว้หรือไม่ */
-  cidCheck: boolean;
   identityVerified: boolean;
 }
 
@@ -142,41 +140,24 @@ function IdentityStep({ token, invitation }: { token: string; invitation: Invita
     >
       <div className="flex flex-col gap-5">
         <div className="rounded-xl border border-line bg-canvas p-5">
-          {/* พูดตามที่ระบบทำจริง — deployment ที่ยังไม่ได้รับ scope pid เทียบเลขบัตรไม่ได้ */}
-          {invitation.cidCheck ? (
-            <>
-              <p className="text-sm leading-relaxed text-ink-muted">
-                ระบบจะเปรียบเทียบเลขประจำตัวประชาชนที่ได้จาก ThaiD
-                กับเลขที่เจ้าหน้าที่บันทึกไว้ตอนสร้างบัญชีของคุณ
-                {invitation.cidHint ? (
-                  <>
-                    {" "}
-                    (ลงท้ายด้วย{" "}
-                    <span className="font-medium tabular-nums text-ink">
-                      {invitation.cidHint.slice(-4)}
-                    </span>
-                    )
-                  </>
-                ) : null}
-              </p>
-              <p className="mt-3 text-[13px] leading-relaxed text-ink-subtle">
-                หากเลขไม่ตรงกัน ลิงก์เปิดใช้งานนี้จะถูกยกเลิกทันทีเพื่อความปลอดภัย
-                และต้องขอลิงก์ใหม่จากเจ้าหน้าที่
-              </p>
-            </>
-          ) : (
-            <>
-              <p className="text-sm leading-relaxed text-ink-muted">
-                ระบบจะพาคุณไปยืนยันตัวตนกับ ThaiD ของกรมการปกครอง แล้วผูกบัญชีนี้เข้ากับ
-                ThaiD ที่คุณใช้ยืนยัน
-              </p>
-              <p className="mt-3 text-[13px] leading-relaxed text-ink-subtle">
-                ขณะนี้ระบบยังไม่ได้รับสิทธิ์อ่านเลขประจำตัวประชาชนจากกรมการปกครอง
-                จึงยังเทียบกับเลขที่เจ้าหน้าที่บันทึกไว้ไม่ได้ กรุณาเปิดใช้งานจากลิงก์ที่ส่งถึงคุณเท่านั้น
-                และอย่าส่งต่อให้ผู้อื่น
-              </p>
-            </>
-          )}
+          <p className="text-sm leading-relaxed text-ink-muted">
+            ระบบจะเปรียบเทียบเลขประจำตัวประชาชนที่ได้จาก ThaiD
+            กับเลขที่เจ้าหน้าที่บันทึกไว้ตอนสร้างบัญชีของคุณ
+            {invitation.cidHint ? (
+              <>
+                {" "}
+                (ลงท้ายด้วย{" "}
+                <span className="font-medium tabular-nums text-ink">
+                  {invitation.cidHint.slice(-4)}
+                </span>
+                )
+              </>
+            ) : null}
+          </p>
+          <p className="mt-3 text-[13px] leading-relaxed text-ink-subtle">
+            หากเลขไม่ตรงกัน ลิงก์เปิดใช้งานนี้จะถูกยกเลิกทันทีเพื่อความปลอดภัย
+            และต้องขอลิงก์ใหม่จากเจ้าหน้าที่
+          </p>
         </div>
 
         <ThaidButton
@@ -259,9 +240,7 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>
         <div className="rounded-xl bg-success-bg px-4 py-3 text-[13px] leading-relaxed text-success">
-          {invitation.cidCheck
-            ? "ยืนยันตัวตนด้วย ThaiD สำเร็จ — เลขประจำตัวประชาชนตรงกับที่บันทึกไว้ในระบบ"
-            : "ยืนยันตัวตนด้วย ThaiD สำเร็จ"}
+          ยืนยันตัวตนด้วย ThaiD สำเร็จ — เลขประจำตัวประชาชนตรงกับที่บันทึกไว้ในระบบ
         </div>
 
         <TextField label="อีเมล" value={invitation.email} readOnly disabled hint="อีเมลนี้มาจากคำเชิญ แก้ไขไม่ได้" />

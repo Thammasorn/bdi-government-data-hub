@@ -91,14 +91,13 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-BDI Datahub <no-reply@bdi.or.th>}
-      THAID_MOCK: ${THAID_MOCK:-false}
       THAID_ROOT_URL: ${THAID_ROOT_URL:-}
       THAID_CLIENT_ID: ${THAID_CLIENT_ID:-}
       THAID_CLIENT_SECRET: ${THAID_CLIENT_SECRET:-}
       THAID_API_KEY: ${THAID_API_KEY:-}
       THAID_REDIRECT_URI: ${THAID_REDIRECT_URI:-}
       THAID_SCOPE: ${THAID_SCOPE:-}
-      THAID_REQUIRE_CID_MATCH: ${THAID_REQUIRE_CID_MATCH:-true}
+      THAID_USE_PID: ${THAID_USE_PID:-true}
       COOKIE_SECURE: ${COOKIE_SECURE:-}
     ports:
       # ตรึงไว้ — โดเมนสาธารณะ bdi-api.thammasorn.org ชี้มาที่พอร์ตนี้

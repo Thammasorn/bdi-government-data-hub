@@ -55,7 +55,7 @@ export function ThaidButton({
   const start = async () => {
     setBusy(true);
     try {
-      const { authorizeUrl } = await api.post<{ authorizeUrl: string; mock: boolean }>(
+      const { authorizeUrl } = await api.post<{ authorizeUrl: string }>(
         "/api/auth/thaid/start",
         { purpose, ...(token ? { token } : {}) },
       );

@@ -22,10 +22,14 @@ import { createPublicKey, randomBytes, type JsonWebKey, type KeyObject } from "n
 import jwt from "jsonwebtoken";
 
 import { env } from "../env.js";
+import { isValidThaiNationalId } from "./validation.js";
 
 /** ข้อมูลผู้ใช้ที่ ThaiD ส่งกลับมา — เก็บเฉพาะที่ระบบนี้ใช้ */
 export interface ThaidIdentity {
-  /** เลขประจำตัวประชาชน 13 หลัก มีเฉพาะเมื่อ client ได้รับสิทธิ์ scope `pid` */
+  /**
+   * เลขประจำตัวประชาชน 13 หลักที่ผ่าน checksum แล้ว อ่านจาก claim ที่ `THAID_USE_PID`
+   * กำหนด (`pid` หรือ `sub`) เป็น null เมื่อ claim นั้นไม่มา หรือมาแล้วไม่ใช่เลขบัตร
+   */
   pid: string | null;
   /** sub ของ id_token — ลงคอลัมน์ user_account.external_subject */
   subject: string;
@@ -207,14 +211,20 @@ function asString(value: unknown): string | null {
  *
  * เมื่อขอ scope `openid` ข้อมูลทั้งหมดอยู่ใน id_token (คู่มือ §6.2.2) แต่ token response
  * ก็แนบ scope value มาตรง ๆ ได้เหมือนกันเมื่อไม่ได้ขอ openid — รับทั้งสองทางไว้
+ *
+ * เลขบัตรมาจาก claim ที่ `THAID_USE_PID` เลือกไว้ และ **ต้องผ่าน checksum ก่อนถึงจะนับ**
+ * ถ้าไม่ผ่านให้เป็น null ปลายทางจะปฏิเสธการยืนยันตัวตนแทนที่จะเอาไปเทียบแล้วได้ "ไม่ตรง"
+ * — ค่าทึบที่ IdP บางเจ้าใส่มาใน `sub` ไม่ใช่ความผิดของผู้ใช้ จะไปยกเลิกคีย์เขาไม่ได้
  */
 export function toIdentity(claims: IdTokenClaims, fallback: Record<string, unknown> = {}): ThaidIdentity {
   const pick = (name: string) => asString(claims[name]) ?? asString(fallback[name]);
   const subject = pick("sub");
   if (!subject) throw new ThaidError("invalid_id_token", "id_token ไม่มี sub");
 
+  const claimed = env.thaid.usePid ? pick("pid") : subject;
+
   return {
-    pid: pick("pid"),
+    pid: claimed && isValidThaiNationalId(claimed) ? claimed.replace(/\D/g, "") : null,
     subject,
     titleTh: pick("title"),
     givenNameTh: pick("given_name"),

@@ -190,20 +190,22 @@ A CID mismatch is not just a rejection — §2.4 of the card requires the key to
 and the attempt logged (`IDENTITY_VERIFICATION_FAILED` with `failure_reason: CID_MISMATCH`),
 so a wrong card cannot be retried against the same link.
 
-`THAID_MOCK=true` skips DOPA entirely and treats the account's own CID as the answer. It is
-for deployments without client credentials only, and must be `false` anywhere real —
-otherwise identity verification is just a button.
+**There is no mock mode.** Every deployment talks to DOPA for real; one without client
+credentials answers 501 `not_configured` at `POST /api/auth/thaid/start` rather than waving
+the user through. A previous `THAID_MOCK` did the latter and was removed — a switch that
+turns identity verification into a button is not something to leave lying in a repo.
 
-`THAID_REQUIRE_CID_MATCH=false` is the weaker, more specific escape hatch: DOPA still gets
-called for real, the id_token is still verified, but an identity that arrives without a `pid`
-claim is accepted instead of rejected, and ThaiD login matches on `external_subject` rather
-than `cid`. It exists because the project's registered client is not granted the `pid` scope,
-so with `true` every activation ends at `pid_missing`. It **does** weaken §2.4 — whoever holds
-the activation link can activate the account with their own ThaiD — so it is off by default,
-warns at boot, records `cid_verified: false` on the audit event, and changes what `/activate`
-tells the user. A `pid` that arrives and *disagrees* still revokes the key either way.
-Turn it off the day the `pid` scope is granted; `docs/07-thaid-integration.md` §4.2 is the
-full comparison.
+`THAID_USE_PID` chooses **which claim the CID is read from** — `pid` (the manual's answer,
+needs the `pid` scope) or `sub`. It is not a switch that disables the check: the comparison
+against `user_account.cid` runs either way, and a mismatch revokes the key either way. It
+exists because DOPA has not granted this project's client the `pid` scope, while `sub` comes
+back as the 13-digit national ID.
+
+Whichever claim it reads, the value must pass the national-ID checksum before it counts
+(`toIdentity()` in `lib/thaid.ts`). A claim that is missing or opaque yields 502
+`cid_unavailable` and **does not** revoke the activation key — an unreadable CID means our
+configuration is wrong, not that the user presented the wrong card, and their link must not
+be destroyed for our mistake. `docs/07-thaid-integration.md` §4.2 has the full table.
 
 ### Email
 
