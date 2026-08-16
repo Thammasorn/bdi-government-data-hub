@@ -2,6 +2,13 @@
 
 การ์ด Notion: **Admin Prefill Organization Form** (Task Board, 2026-08-16)
 คอลเลกชัน Postman: `docs/bdi-admin-portal.postman_collection.json` (request A–E)
+environment: `docs/bdi-dev-checkout` · `bdi-main-local` · `bdi-public` (`.postman_environment.json`)
+— นำเข้าคอลเลกชันกับ environment แล้วเลือก environment ที่มุมขวาบนก่อนยิง
+
+`adminToken` ของ `main` และของ deployment สาธารณะ **ปล่อยว่างไว้ในไฟล์โดยตั้งใจ** (ชนิด secret)
+เพราะเป็น token จริงที่อยู่ใน `.env` ซึ่ง git ไม่ติดตาม อ่านมาวางเองด้วย
+`grep ADMIN_API_TOKEN main/.env` — **ห้ามคอมมิตค่านั้นลงไฟล์ environment**
+ส่วนของ dev checkout ใส่มาให้แล้วเพราะเป็นค่าตัวอย่างเดียวกับใน `.env.example`
 
 ---
 

@@ -27,7 +27,9 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   expires. **There is no refresh token**; §1.4 explains what follows from that
 - `docs/10-admin-prefill-organization.md` — organizations an admin creates ahead of time,
   and how their data reaches the user's registration form
-- `docs/bdi-admin-portal.postman_collection.json` — Journey A as a runnable collection
+- `docs/bdi-admin-portal.postman_collection.json` — Journey A as a runnable collection,
+  with three `*.postman_environment.json` files beside it (dev checkout / main / public).
+  The admin token is left empty in the last two on purpose — it is a real secret from `.env`
 
 Read `docs/01-user-journey.md` before touching anything in `backend/src/routes/organizations.ts`
 or `backend/src/routes/dataset-requests.ts`.
