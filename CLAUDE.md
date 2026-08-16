@@ -317,6 +317,14 @@ Two API base URLs, and they are not interchangeable:
   Asking for `pid` with them returns `invalid_scope` at the authorize step, and no CID means
   no CID matching. Development therefore runs on DOPA's sandbox demo client, which accepts
   any `redirect_uri` and grants `pid`. Both gaps are DOPA-side registration changes, not code.
+  Because of the pinned redirect URI, **the project's own credentials can only be exercised
+  from `main`** (it owns port 3000); no dev checkout can be used with them.
+- DOPA's `sub` is the 13-digit national ID — verified on both the demo client and the
+  project's client, with `scope=openid` and nothing else. So the CID comparison is
+  recoverable without the `pid` scope. It is deliberately not wired up yet: OIDC does not
+  promise `sub` is anything in particular, and if production issued a pairwise opaque `sub`
+  instead, comparing it to `cid` would revoke activation keys for legitimate users. Ask DOPA
+  what `sub` is before relying on it — `docs/07-thaid-integration.md` §4.3.
 - The two `BDI_OFFICER_REVIEW` rounds look identical to anything reading `task_type`.
   Round one goes to the organization for signature, the re-check after signing goes to
   BDI final approval. Backend and `components/dataset/DetailView.tsx` both decide by
