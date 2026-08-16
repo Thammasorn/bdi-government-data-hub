@@ -250,6 +250,197 @@ adminRouter.get("/organizations", async (req, res) => {
 });
 
 /**
+ * แก้ข้อมูลหน่วยงานที่สร้างไว้ — ทุกช่องไม่บังคับ ส่งมาเฉพาะที่จะแก้
+ *
+ * `null` = ล้างค่าทิ้ง ต่างจากไม่ส่ง key มาเลยซึ่งแปลว่า "ไม่แตะ"
+ * สองช่องที่ฐานข้อมูลบังคับ (`organizationCode` / `nameTh`) ล้างไม่ได้ จึงไม่รับ null
+ */
+const adminOrganizationPatchSchema = z.object({
+  organizationCode: z.string().trim().min(1, "รหัสหน่วยงานว่างไม่ได้").max(64).optional(),
+  nameTh: z.string().trim().min(1, "ชื่อหน่วยงานว่างไม่ได้").max(255).optional(),
+  nameEn: z.string().trim().max(255).nullable().optional(),
+  organizationType: z.string().trim().max(64).nullable().optional(),
+  addressLine: z.string().trim().max(500).nullable().optional(),
+  province: z.string().trim().nullable().optional(),
+  district: z.string().trim().nullable().optional(),
+  subdistrict: z.string().trim().nullable().optional(),
+  postalCode: z
+    .string()
+    .trim()
+    .regex(/^\d{5}$/, "รหัสไปรษณีย์ต้องเป็นตัวเลข 5 หลัก")
+    .nullable()
+    .optional(),
+  phone: z.string().trim().max(32).nullable().optional(),
+  email: emailSchema.nullable().optional(),
+  websiteUrl: z.string().trim().max(500).nullable().optional(),
+  parentOrganizationId: z.string().uuid().nullable().optional(),
+});
+
+adminRouter.patch("/organizations/:id", async (req, res) => {
+  const parsedId = z.string().uuid().safeParse(req.params.id);
+  if (!parsedId.success) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานที่ระบุ" });
+    return;
+  }
+  const parsed = adminOrganizationPatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+    return;
+  }
+  const input = parsed.data;
+
+  const before = await prisma.organization.findUnique({ where: { id: parsedId.data } });
+  if (!before) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานที่ระบุ" });
+    return;
+  }
+
+  if (input.organizationCode && input.organizationCode !== before.organizationCode) {
+    const taken = await prisma.organization.findUnique({
+      where: { organizationCode: input.organizationCode },
+      select: { id: true },
+    });
+    if (taken) {
+      res.status(409).json({
+        error: "code_exists",
+        message: "รหัสหน่วยงานนี้ถูกใช้ไปแล้ว",
+        organizationId: taken.id,
+      });
+      return;
+    }
+  }
+
+  if (input.parentOrganizationId) {
+    if (input.parentOrganizationId === before.id) {
+      res.status(400).json({
+        error: "validation",
+        fields: { parentOrganizationId: "หน่วยงานเป็นต้นสังกัดของตัวเองไม่ได้" },
+      });
+      return;
+    }
+    const parent = await prisma.organization.findUnique({
+      where: { id: input.parentOrganizationId },
+      select: { id: true },
+    });
+    if (!parent) {
+      res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานต้นสังกัดที่ระบุ" });
+      return;
+    }
+  }
+
+  /**
+   * ที่อยู่ต้องแปลงจาก "ที่อยู่หลังแก้ทั้งชุด" ไม่ใช่เฉพาะช่องที่ส่งมา — ส่งมาแค่ตำบล
+   * ก็ต้องใช้จังหวัด/อำเภอเดิมประกอบ ไม่งั้นเทียบไม่เจอแล้วกลายเป็นล้างที่อยู่ทิ้งทั้งชุด
+   */
+  const touchesAddress =
+    input.province !== undefined || input.district !== undefined || input.subdistrict !== undefined;
+  const currentNames = await resolveAddressNames(prisma, {
+    provinceCode: before.provinceCode,
+    districtCode: before.districtCode,
+    subDistrictCode: before.subDistrictCode,
+  });
+  const merged = {
+    province: input.province !== undefined ? input.province : currentNames.province,
+    district: input.district !== undefined ? input.district : currentNames.district,
+    subdistrict: input.subdistrict !== undefined ? input.subdistrict : currentNames.subdistrict,
+  };
+
+  let codes = {
+    provinceCode: before.provinceCode,
+    districtCode: before.districtCode,
+    subDistrictCode: before.subDistrictCode,
+  };
+  if (touchesAddress) {
+    codes = await resolveAddressCodes(prisma, merged);
+    const addressFields: Record<string, string> = {};
+    if (merged.province && !codes.provinceCode) {
+      addressFields.province = "ไม่พบจังหวัดนี้ ใช้ชื่อตามข้อมูลกลาง เช่น \"กรุงเทพมหานคร\"";
+    }
+    if (merged.district && !codes.districtCode) {
+      addressFields.district = "ไม่พบอำเภอ/เขตนี้ในจังหวัดที่เลือก ชื่อในระบบไม่มีคำนำหน้า เช่น \"ดุสิต\"";
+    }
+    if (merged.subdistrict && !codes.subDistrictCode) {
+      addressFields.subdistrict = "ไม่พบตำบล/แขวงนี้ในอำเภอที่เลือก ชื่อในระบบไม่มีคำนำหน้า เช่น \"ดุสิต\"";
+    }
+    if (Object.keys(addressFields).length > 0) {
+      res.status(400).json({ error: "validation", fields: addressFields });
+      return;
+    }
+  }
+
+  /** ย้ายที่อยู่แล้วไม่ได้บอกรหัสไปรษณีย์มาด้วย = ให้ระบบหาให้ใหม่ ไม่ใช่ค้างของที่เดิม */
+  const postalCode =
+    input.postalCode !== undefined
+      ? input.postalCode
+      : touchesAddress && merged.province && merged.district && merged.subdistrict
+        ? (lookupZipcode(merged.province, merged.district, merged.subdistrict) ?? before.postalCode)
+        : before.postalCode;
+
+  const organization = await prisma.organization.update({
+    where: { id: before.id },
+    data: {
+      ...(input.organizationCode !== undefined ? { organizationCode: input.organizationCode } : {}),
+      ...(input.nameTh !== undefined ? { nameTh: input.nameTh } : {}),
+      ...(input.nameEn !== undefined ? { nameEn: input.nameEn } : {}),
+      ...(input.organizationType !== undefined ? { organizationType: input.organizationType } : {}),
+      ...(input.addressLine !== undefined ? { addressLine: input.addressLine } : {}),
+      ...(touchesAddress
+        ? {
+            provinceCode: codes.provinceCode,
+            districtCode: codes.districtCode,
+            subDistrictCode: codes.subDistrictCode,
+          }
+        : {}),
+      postalCode,
+      ...(input.phone !== undefined ? { phone: input.phone } : {}),
+      ...(input.email !== undefined ? { email: input.email } : {}),
+      ...(input.websiteUrl !== undefined ? { websiteUrl: input.websiteUrl } : {}),
+      ...(input.parentOrganizationId !== undefined
+        ? { parentOrganizationId: input.parentOrganizationId }
+        : {}),
+      updatedBy: SYSTEM_USER_ID,
+    },
+  });
+
+  await logAudit({
+    action: AuditAction.ORGANIZATION_UPDATED,
+    subjectType: AuditSubject.ORGANIZATION,
+    subjectId: organization.id,
+    organizationId: organization.id,
+    before: { organizationCode: before.organizationCode, nameTh: before.nameTh },
+    after: { organizationCode: organization.organizationCode, nameTh: organization.nameTh },
+    metadata: { updated_via: "ADMIN_API", fields: Object.keys(input) },
+  });
+
+  /**
+   * ฟอร์มของผู้ใช้คัดลอกข้อมูลไปตั้งแต่ตอนเปิดคำขอ การแก้ที่นี่จึงไปไม่ถึงคำขอที่เปิดแล้ว
+   * บอกกลับไปตรง ๆ ดีกว่าให้ admin เข้าใจว่าแก้แล้วผู้ใช้จะเห็น
+   */
+  const openRequest = await prisma.organizationRegistrationRequest.findFirst({
+    where: {
+      organizationId: organization.id,
+      status: { notIn: [RequestStatus.APPROVED, RequestStatus.REJECTED, RequestStatus.CANCELLED] },
+    },
+    select: { id: true, requestNumber: true, status: true },
+  });
+
+  res.json({
+    organization: await toAdminOrganizationShape(organization),
+    ...(openRequest
+      ? {
+          warning: {
+            code: "registration_in_progress",
+            message:
+              "หน่วยงานนี้มีคำขอจดทะเบียนที่เปิดอยู่แล้ว การแก้ตรงนี้จะไม่ไปปรากฏในฟอร์มของผู้ใช้ " +
+              "เพราะคำขอคัดลอกข้อมูลไปตั้งแต่ตอนเปิด ต้องให้ผู้ใช้แก้ในฟอร์มเอง",
+            request: openRequest,
+          },
+        }
+      : {}),
+  });
+});
+
+/**
  * รายละเอียดหน่วยงานหนึ่งแห่ง พร้อมสิ่งที่ admin ต้องดูเพื่อรู้ว่าเรื่องไปถึงไหนแล้ว:
  * คำขอจดทะเบียนที่ยังเปิดอยู่ และคำเชิญที่ออกให้หน่วยงานนี้
  */

@@ -3,7 +3,7 @@
     "name": "BDI Government Datahub — Admin Portal API",
     "_postman_id": "b91d5f2a-7c4e-4a3d-9f61-2ad0c5e18f30",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Journey A — สร้างหน่วยงานและส่งลิงก์เปิดใช้งานบัญชีให้ผู้ใช้ (\"ไม่มี UI แต่ต้องมี api\")\n\nทุก endpoint ในนี้ป้องกันด้วย shared secret `x-admin-token` ไม่ใช่ session — ผู้เรียกคือสคริปต์ฝั่ง admin ไม่ใช่เบราว์เซอร์ ตั้งค่าที่ตัวแปร `adminToken` (ค่าเดียวกับ `ADMIN_API_TOKEN` ใน `.env` ของ checkout)\n\n## ตั้งค่าก่อนใช้\n\n| ตัวแปร | ค่า |\n| --- | --- |\n| `baseUrl` | `http://localhost:4000` สำหรับ checkout `main` · dev slot `NN` ใช้ `http://localhost:41N0` |\n| `adminToken` | `grep ADMIN_API_TOKEN .env` ของ checkout นั้น |\n\n`organizationId` กับ `activationKeyId` ไม่ต้องกรอกเอง — สคริปต์ Tests ของแต่ละ request เก็บให้อัตโนมัติ\n\n## ลำดับการใช้งาน\n\n1. **สร้างหน่วยงาน + เชิญผู้ใช้หน่วยงาน** — ไม่ส่ง `organizationId` มา ระบบสร้างหน่วยงาน (`PENDING_REGISTRATION`) พร้อมคำขอจดทะเบียนฉบับร่างให้เอง แล้วเก็บ id ไว้ในตัวแปร\n2. **เชิญผู้มีอำนาจลงนามเข้าหน่วยงานเดิม** — ใช้ `organizationId` จากข้อ 1\n3. **ดูรายการคำเชิญ** / **ยกเลิกคำเชิญ** ตามต้องการ\n\n## ลิงก์เปิดใช้งานอยู่ที่ไหน\n\nคีย์ดิบ **ไม่ถูกส่งกลับมาใน response** โดยตั้งใจ — มันถูกส่งไปที่อีเมลของผู้ถูกเชิญเท่านั้น และในฐานข้อมูลเก็บเป็น HMAC-SHA-256 (ดู `docs/09-auth-tokens.md` ข้อ 2)\n\nบน checkout ที่ยังไม่ได้ตั้ง SMTP (`SMTP_USER` ว่าง) ระบบจะพิมพ์อีเมลทั้งฉบับลง log แทนการส่งจริง:\n\n```bash\ndocker compose logs backend | grep 'activate?token='\n```\n\nบน checkout ที่ตั้ง SMTP จริง (เช่น `main`) อีเมลจะถูกส่งออกไปจริง — ระวังเวลาทดสอบด้วยอีเมลปลอม\n\n## หมายเหตุที่ทำให้ไม่งง\n\n- **`cid` บังคับทุก role** เพราะ §2.4 ให้เทียบเลขบัตรจาก ThaiD กับเลขที่เจ้าหน้าที่บันทึกไว้ตอนสร้างบัญชี ถ้าให้ผู้ใช้กรอกเองการเทียบก็ไม่พิสูจน์อะไร · ตรวจ checksum ด้วย เลขมั่วจะได้ 400\n- **role ฝั่ง BDI ไม่ต้องส่ง `organizationId`** ระบบผูกกับหน่วยงาน BDI ให้เอง (`activation_key.organization_id` เป็น NOT NULL)\n- **เชิญซ้ำอีเมลที่ยัง `PENDING`** ถือว่าเจ้าหน้าที่แก้ข้อมูลที่กรอกผิด — เขียนทับเลขบัตรเดิมและออกคีย์ใหม่ ส่วนคีย์ใบเก่าของ (บัญชี, หน่วยงาน, role) เดียวกันจะถูก `REVOKED` อัตโนมัติ\n- **เชิญอีเมลที่ `ACTIVE` แล้ว** ตอบ 409 `exists`\n- หน่วยงานจะเป็น `ACTIVE` ก็ต่อเมื่อคำขอจดทะเบียนผ่าน `BDI_FINAL_APPROVAL` (Journey B) การเปิดใช้งานบัญชีไม่แตะสถานะหน่วยงาน"
+    "description": "Journey A — สร้างหน่วยงานและส่งลิงก์เปิดใช้งานบัญชีให้ผู้ใช้ (\"ไม่มี UI แต่ต้องมี api\")\n\nทุก endpoint ในนี้ป้องกันด้วย shared secret `x-admin-token` ไม่ใช่ session — ผู้เรียกคือสคริปต์ฝั่ง admin ไม่ใช่เบราว์เซอร์ ตั้งค่าที่ตัวแปร `adminToken` (ค่าเดียวกับ `ADMIN_API_TOKEN` ใน `.env` ของ checkout)\n\n## ตั้งค่าก่อนใช้\n\n| ตัวแปร | ค่า |\n| --- | --- |\n| `baseUrl` | `http://localhost:4000` สำหรับ checkout `main` · dev slot `NN` ใช้ `http://localhost:41N0` |\n| `adminToken` | `grep ADMIN_API_TOKEN .env` ของ checkout นั้น |\n\n`organizationId` กับ `activationKeyId` ไม่ต้องกรอกเอง — สคริปต์ Tests ของแต่ละ request เก็บให้อัตโนมัติ\n\n## ลำดับการใช้งาน\n\n1. **สร้างหน่วยงาน + เชิญผู้ใช้หน่วยงาน** — ไม่ส่ง `organizationId` มา ระบบสร้างหน่วยงาน (`PENDING_REGISTRATION`) พร้อมคำขอจดทะเบียนฉบับร่างให้เอง แล้วเก็บ id ไว้ในตัวแปร\n2. **เชิญผู้มีอำนาจลงนามเข้าหน่วยงานเดิม** — ใช้ `organizationId` จากข้อ 1\n3. **ดูรายการคำเชิญ** / **ยกเลิกคำเชิญ** ตามต้องการ\n\nแก้ข้อมูลหน่วยงานภายหลังได้ด้วย `PATCH` (request E) — แต่ถ้าผู้ใช้เปิดคำขอจดทะเบียนไปแล้ว การแก้จะไม่ไปปรากฏในฟอร์มของเขา response จะเตือนไว้ให้\n\n## ลิงก์เปิดใช้งานอยู่ที่ไหน\n\nคีย์ดิบ **ไม่ถูกส่งกลับมาใน response** โดยตั้งใจ — มันถูกส่งไปที่อีเมลของผู้ถูกเชิญเท่านั้น และในฐานข้อมูลเก็บเป็น HMAC-SHA-256 (ดู `docs/09-auth-tokens.md` ข้อ 2)\n\nบน checkout ที่ยังไม่ได้ตั้ง SMTP (`SMTP_USER` ว่าง) ระบบจะพิมพ์อีเมลทั้งฉบับลง log แทนการส่งจริง:\n\n```bash\ndocker compose logs backend | grep 'activate?token='\n```\n\nบน checkout ที่ตั้ง SMTP จริง (เช่น `main`) อีเมลจะถูกส่งออกไปจริง — ระวังเวลาทดสอบด้วยอีเมลปลอม\n\n## หมายเหตุที่ทำให้ไม่งง\n\n- **`cid` บังคับทุก role** เพราะ §2.4 ให้เทียบเลขบัตรจาก ThaiD กับเลขที่เจ้าหน้าที่บันทึกไว้ตอนสร้างบัญชี ถ้าให้ผู้ใช้กรอกเองการเทียบก็ไม่พิสูจน์อะไร · ตรวจ checksum ด้วย เลขมั่วจะได้ 400\n- **role ฝั่ง BDI ไม่ต้องส่ง `organizationId`** ระบบผูกกับหน่วยงาน BDI ให้เอง (`activation_key.organization_id` เป็น NOT NULL)\n- **เชิญซ้ำอีเมลที่ยัง `PENDING`** ถือว่าเจ้าหน้าที่แก้ข้อมูลที่กรอกผิด — เขียนทับเลขบัตรเดิมและออกคีย์ใหม่ ส่วนคีย์ใบเก่าของ (บัญชี, หน่วยงาน, role) เดียวกันจะถูก `REVOKED` อัตโนมัติ\n- **เชิญอีเมลที่ `ACTIVE` แล้ว** ตอบ 409 `exists`\n- หน่วยงานจะเป็น `ACTIVE` ก็ต่อเมื่อคำขอจดทะเบียนผ่าน `BDI_FINAL_APPROVAL` (Journey B) การเปิดใช้งานบัญชีไม่แตะสถานะหน่วยงาน"
   },
   "auth": {
     "type": "apikey",
@@ -222,6 +222,57 @@
           ]
         },
         "description": "นอกจากข้อมูลหน่วยงานแล้วยังบอกด้วยว่าเรื่องไปถึงไหน:\n\n- `registrationRequests` — คำขอจดทะเบียนของหน่วยงานนี้ (เลขที่คำขอ · สถานะ · วันนำส่ง)\n- `invitations` — คำเชิญที่ออกให้หน่วยงานนี้ พร้อมสถานะบัญชีของผู้ถูกเชิญ\n\nid ที่ไม่ใช่ UUID หรือไม่มีจริง ตอบ 404"
+      },
+      "response": []
+    },
+    {
+      "name": "E · แก้ข้อมูลหน่วยงาน",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "if (body.warning) {",
+              "    console.warn('⚠ ' + body.warning.message);",
+              "    console.warn('คำขอที่เปิดอยู่:', body.warning.request.requestNumber, body.warning.request.status);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"nameTh\": \"กรมส่งเสริมการปกครองท้องถิ่น (แก้ไขแล้ว)\",\n  \"phone\": \"029876543\",\n  \"websiteUrl\": null\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/organizations/{{organizationId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "organizations",
+            "{{organizationId}}"
+          ]
+        },
+        "description": "แก้หน่วยงานที่สร้างไว้ — **ส่งมาเฉพาะช่องที่จะแก้** ช่องที่ไม่ส่งมาไม่ถูกแตะ\n\n### `null` ต่างจากไม่ส่ง\n\n| ส่งอะไร | ผล |\n| --- | --- |\n| ไม่มี key นั้นเลย | ไม่แตะค่าเดิม |\n| `\"phone\": null` | ล้างค่าเป็นว่าง |\n| `\"phone\": \"029876543\"` | ตั้งค่าใหม่ |\n\n`organizationCode` กับ `nameTh` เป็นคอลัมน์ NOT NULL จึงล้างไม่ได้ — ส่ง `null` หรือค่าว่างมาได้ 400\n\n### แก้ที่อยู่บางส่วนได้\n\nส่งมาแค่ `subdistrict` ระบบจะใช้จังหวัด/อำเภอเดิมประกอบในการเทียบ ไม่ใช่ล้างที่อยู่ทิ้งทั้งชุด และถ้าย้ายที่อยู่โดยไม่ได้ส่ง `postalCode` มาด้วย ระบบจะหารหัสไปรษณีย์ให้ใหม่เอง\n\n### ⚠️ คำเตือน `registration_in_progress`\n\nถ้าหน่วยงานนี้มีคำขอจดทะเบียนที่เปิดอยู่แล้ว response จะมี `warning` ติดมาด้วย เพราะ **การแก้ตรงนี้ไปไม่ถึงฟอร์มของผู้ใช้** — คำขอคัดลอกข้อมูลไปตั้งแต่ตอนเปิด และไม่ถูกเขียนทับ (ไม่งั้นจะไปลบสิ่งที่ผู้ใช้พิมพ์ไปแล้ว) ต้องให้ผู้ใช้แก้ในฟอร์มเอง\n\nการแก้ยังบันทึกลง `audit_event` (`ORGANIZATION_UPDATED`) พร้อมค่าก่อน/หลังเสมอ\n\n### ที่พลาดได้\n\n| status | error | สาเหตุ |\n| --- | --- | --- |\n| 400 | `validation` | รหัสไปรษณีย์ผิดรูปแบบ · ชื่อ/รหัสว่าง · ชื่อจังหวัด-อำเภอ-ตำบลเทียบไม่ได้ · ตั้งตัวเองเป็นต้นสังกัด |\n| 404 | `not_found` | ไม่มีหน่วยงานนี้ หรือไม่พบต้นสังกัดที่ระบุ |\n| 409 | `code_exists` | รหัสใหม่ชนกับหน่วยงานอื่น |"
       },
       "response": []
     },
