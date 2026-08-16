@@ -69,9 +69,26 @@ export function fileExtensionOf(originalName: string): string | null {
   return match?.[1]?.toLowerCase() ?? null;
 }
 
-/** multer เก็บ originalname มาเป็น latin1 — แปลงกลับเป็น utf8 ไม่งั้นชื่อไฟล์ไทยเพี้ยน */
+/**
+ * multer เก็บ originalname มาเป็น latin1 — แปลงกลับเป็น utf8 ไม่งั้นชื่อไฟล์ไทยเพี้ยน
+ *
+ * **ใช้กับไฟล์ที่มาจาก multipart เท่านั้น** ชื่อไฟล์ที่โค้ดเราตั้งเอง (PDF ที่ระบบสร้าง)
+ * เป็น utf8 อยู่แล้ว การอ่านมันเป็น latin1 จะเก็บแค่ไบต์ล่างของทุกตัวอักษร แล้วชื่อไทย
+ * จะกลายเป็นขยะ — เคยหลุดไปแล้วครั้งหนึ่งกับ "แบบฟอร์มลงทะเบียนชุดข้อมูล-….pdf"
+ * จึงเรียกที่ขอบ HTTP ผ่าน uploadedFile() ไม่ใช่ข้างใน storeAttachment()
+ */
 export function decodeOriginalName(originalName: string): string {
   return Buffer.from(originalName, "latin1").toString("utf8");
+}
+
+/** ไฟล์จาก multer → รูปที่ storeAttachment รับ พร้อมแก้ชื่อไฟล์ให้เป็น utf8 */
+export function uploadedFile(file: {
+  buffer: Buffer;
+  originalname: string;
+  mimetype: string;
+  size: number;
+}) {
+  return { ...file, originalname: decodeOriginalName(file.originalname) };
 }
 
 export function sha256(buffer: Buffer): string {
@@ -96,7 +113,7 @@ export async function storeAttachment(
   },
 ) {
   const attachmentId = randomUUID();
-  const originalFileName = decodeOriginalName(params.file.originalname);
+  const originalFileName = params.file.originalname;
   const extension = fileExtensionOf(originalFileName);
 
   const storageKey = buildStorageKey({
@@ -235,7 +252,13 @@ export function publicAttachment(attachment: {
 }) {
   return {
     id: attachment.id,
-    attachmentType: attachment.attachmentType,
+    /**
+     * หน้าเว็บทุกหน้าอ่านช่องนี้ว่า `kind` (และ type ฝั่งนั้นก็ประกาศไว้แบบนั้น)
+     * เดิมส่งชื่อ `attachmentType` ออกไป ทำให้ `a.kind` เป็น undefined ทั้งระบบ:
+     * หน้าตรวจสอบก่อนนำส่งหาแบบฟอร์มที่ระบบสร้างไม่เจอ ปุ่ม "นำส่งคำขอ" จึงกดไม่ได้
+     * ทั้งสอง Journey ทั้งที่ backend สร้าง PDF ให้เรียบร้อยแล้ว
+     */
+    kind: attachment.attachmentType,
     filename: attachment.originalFileName,
     mimeType: attachment.mimeType,
     sizeBytes: Number(attachment.fileSizeBytes),

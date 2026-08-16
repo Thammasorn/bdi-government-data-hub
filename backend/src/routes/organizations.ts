@@ -38,6 +38,7 @@ import {
   publicAttachment,
   storeAttachment,
   streamAttachment,
+  uploadedFile,
 } from "../lib/attachment.js";
 import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
 import { assignRole, issueActivationKey } from "../lib/iam.js";
@@ -55,6 +56,7 @@ import { nextOrganizationCode, nextOrganizationRequestNumber } from "../lib/requ
 import { ROLE_LABELS, isBdiStaff } from "../lib/roles.js";
 import {
   PLACEHOLDER_ORGANIZATION_NAME,
+  BDI_ORGANIZATION_ID,
   ROLE_CODES,
   SYSTEM_USER_ID,
   type RoleCode,
@@ -345,6 +347,11 @@ async function toApiShape(request: RequestRow) {
  * เลือกคนที่มี active task น้อยที่สุด เพื่อไม่ให้งานกองที่คนเดียว
  * (docs/01-user-journey.md §4.4 เขียนว่า "BDI Officer ทุกคนเห็นคำขอทั้งหมด" ใครว่างก่อนหยิบก่อน
  *  — ดีไซน์บังคับให้มีเจ้าของ จึงมอบหมายอัตโนมัติแล้วให้ reassign ได้ทีหลังแทน)
+ *
+ * เจ้าหน้าที่ BDI สังกัดหน่วยงาน BDI ตั้งแต่ 2026-08-16 — เดิม organization_id ของพวกเขา
+ * เป็น NULL ผู้เรียกจึงส่ง `null` มาเพื่อหมายถึง "ฝั่ง BDI ไม่ผูกหน่วยงาน" ตอนนี้ตัวกรองนั้น
+ * ไม่ตรงกับใครเลย ผลคือ submit ตอบ 503 no_reviewer ทั้งที่มีเจ้าหน้าที่อยู่ครบ
+ * จึงต้องส่ง BDI_ORGANIZATION_ID มาแทน
  */
 async function pickAssignee(roleCode: RoleCode, organizationId?: string | null): Promise<string | null> {
   const assignments = await prisma.userRoleAssignment.findMany({
@@ -775,7 +782,7 @@ organizationRouter.post("/:id/attachments", upload.single("file"), async (req, r
     ownerType: AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
     ownerId: request.id,
     attachmentType,
-    file: req.file,
+    file: uploadedFile(req.file),
     uploadedBy: session.sub,
   });
 
@@ -948,7 +955,7 @@ organizationRouter.post("/:id/submit", async (req, res) => {
     return;
   }
 
-  const officer = await pickAssignee(ROLE_CODES.BDI_OFFICER, null);
+  const officer = await pickAssignee(ROLE_CODES.BDI_OFFICER, BDI_ORGANIZATION_ID);
   if (!officer) {
     res.status(503).json({
       error: "no_reviewer",
@@ -1097,7 +1104,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
       }
 
       if (result === ReviewResult.APPROVED && task.taskType === ReviewTaskType.ORGANIZATION_APPROVAL) {
-        const finalApprover = await pickAssignee(ROLE_CODES.BDI_FINAL_APPROVER, null);
+        const finalApprover = await pickAssignee(ROLE_CODES.BDI_FINAL_APPROVER, BDI_ORGANIZATION_ID);
         if (!finalApprover) {
           throw new WorkflowError(
             "no_reviewer",
