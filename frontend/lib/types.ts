@@ -44,6 +44,8 @@ export interface Organization {
   id: string;
   status: RequestStatus;
   currentTaskType: ReviewTaskType | null;
+  /** รหัสหน่วยงาน — เจ้าหน้าที่กรอกไว้ล่วงหน้า ผู้ใช้ยืนยัน/แก้ไขในฟอร์ม */
+  organizationCode: string | null;
   name: string;
   addressLine: string | null;
   province: string | null;

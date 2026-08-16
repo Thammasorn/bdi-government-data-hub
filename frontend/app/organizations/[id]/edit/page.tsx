@@ -15,6 +15,7 @@ import { api, ApiError } from "@/lib/api";
 import { PREFIXES } from "@/lib/status";
 
 const EMPTY = {
+  organizationCode: "",
   name: "",
   addressLine: "",
   province: "",
@@ -46,7 +47,7 @@ const SECTIONS = [
 ];
 
 const SECTION_FIELDS: Record<string, Array<keyof FormState>> = {
-  "section-1": ["name", "addressLine", "province", "district", "subdistrict", "postalCode", "email"],
+  "section-1": ["organizationCode", "name", "addressLine", "province", "district", "subdistrict", "postalCode", "email"],
   "section-2": [
     "signatoryPrefix",
     "signatoryFirstName",
@@ -282,6 +283,9 @@ export default function EditOrganizationPage() {
           <Card id={SECTIONS[0].id} className="scroll-mt-24">
             <CardHeader tag={SECTIONS[0].tag} title={SECTIONS[0].title} description="ข้อมูลทั่วไปและที่ตั้งของหน่วยงาน" />
             <div className="grid gap-5 p-6">
+              <Wrap name="organizationCode">
+                <TextField label="รหัสหน่วยงาน" required value={form.organizationCode} onChange={(e) => set("organizationCode", e.target.value)} error={fields.organizationCode} hint="เจ้าหน้าที่กรอกไว้ให้แล้ว ตรวจสอบและแก้ไขได้หากไม่ถูกต้อง" />
+              </Wrap>
               <Wrap name="name">
                 <TextField label="ชื่อหน่วยงาน" required value={form.name} onChange={(e) => set("name", e.target.value)} error={fields.name} placeholder="เช่น สำนักงานปลัดกระทรวงสาธารณสุข" />
               </Wrap>

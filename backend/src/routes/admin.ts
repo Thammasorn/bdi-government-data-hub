@@ -9,6 +9,8 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "../db.js";
+import { lookupZipcode, resolveAddressCodes, resolveAddressNames } from "../lib/address.js";
+import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
 import { issueActivationKey } from "../lib/iam.js";
 import {
   nextOrganizationCode,
@@ -30,6 +32,265 @@ import { requireAdminToken } from "../middleware/auth.js";
 export const adminRouter = Router();
 
 adminRouter.use(requireAdminToken);
+
+// ---------------------------------------------------------------- หน่วยงานที่ admin สร้างล่วงหน้า
+
+/**
+ * การ์ด "Admin Prefill Organization Form" ข้อ 1
+ *
+ * บังคับเฉพาะคอลัมน์ที่ฐานข้อมูลบังคับจริง — `organization_code` กับ `name_th` เป็น NOT NULL
+ * ที่เหลือ nullable ทั้งหมด จึงปล่อยให้ว่างได้ ตามที่ตัดสินไว้ 2026-08-16
+ * (ให้ admin สร้างหน่วยงานได้แม้รู้แค่ชื่อกับรหัส แล้วผู้ใช้มากรอกส่วนที่เหลือตอนลงทะเบียน)
+ *
+ * `organization_code` รับจาก admin ไม่ใช่ generate เอง — `request-number.ts` เขียนคำถามนี้ไว้
+ * ตั้งแต่ตอนย้ายสคีมาแล้วว่า "ถ้าได้รหัสราชการจริงมาแล้ว ให้รับค่าจากผู้ใช้แทนการ generate"
+ */
+const adminOrganizationSchema = z.object({
+  organizationCode: z
+    .string()
+    .trim()
+    .min(1, "กรุณากรอกรหัสหน่วยงาน")
+    .max(64, "รหัสหน่วยงานยาวเกิน 64 ตัวอักษร"),
+  nameTh: z.string().trim().min(1, "กรุณากรอกชื่อหน่วยงาน (ภาษาไทย)").max(255),
+  nameEn: z.string().trim().max(255).optional(),
+  organizationType: z.string().trim().max(64).optional(),
+  /** ที่อยู่รับเป็น "ชื่อ" จังหวัด/อำเภอ/ตำบล เหมือนฟอร์มลงทะเบียน แล้วแปลงเป็นรหัสให้ */
+  addressLine: z.string().trim().max(500).optional(),
+  province: z.string().trim().optional(),
+  district: z.string().trim().optional(),
+  subdistrict: z.string().trim().optional(),
+  postalCode: z.string().trim().regex(/^\d{5}$/, "รหัสไปรษณีย์ต้องเป็นตัวเลข 5 หลัก").optional(),
+  phone: z.string().trim().max(32).optional(),
+  email: emailSchema.optional(),
+  websiteUrl: z.string().trim().max(500).optional(),
+  parentOrganizationId: z.string().uuid().optional(),
+});
+
+/** รูปแบบที่ทุก endpoint ของหมวดนี้ตอบกลับ — ที่อยู่คืนเป็นชื่อ ไม่ใช่รหัส */
+async function toAdminOrganizationShape(org: {
+  id: string;
+  organizationCode: string;
+  organizationType: string | null;
+  nameTh: string;
+  nameEn: string | null;
+  status: OrganizationStatus;
+  addressLine: string | null;
+  provinceCode: string | null;
+  districtCode: string | null;
+  subDistrictCode: string | null;
+  postalCode: string | null;
+  phone: string | null;
+  email: string | null;
+  websiteUrl: string | null;
+  parentOrganizationId: string | null;
+  activatedAt: Date | null;
+  createdAt: Date;
+}) {
+  const names = await resolveAddressNames(prisma, {
+    provinceCode: org.provinceCode,
+    districtCode: org.districtCode,
+    subDistrictCode: org.subDistrictCode,
+  });
+  return {
+    id: org.id,
+    organizationCode: org.organizationCode,
+    organizationType: org.organizationType,
+    nameTh: org.nameTh,
+    nameEn: org.nameEn,
+    status: org.status,
+    addressLine: org.addressLine,
+    province: names.province,
+    district: names.district,
+    subdistrict: names.subdistrict,
+    postalCode: org.postalCode,
+    phone: org.phone,
+    email: org.email,
+    websiteUrl: org.websiteUrl,
+    parentOrganizationId: org.parentOrganizationId,
+    activatedAt: org.activatedAt,
+    createdAt: org.createdAt,
+  };
+}
+
+/**
+ * สร้างหน่วยงานล่วงหน้า — สถานะ `PENDING_REGISTRATION` จนกว่าคำขอจดทะเบียนจะผ่าน
+ * `BDI_FINAL_APPROVAL` (การ์ดข้อ 5 · ตรงกับ Journey B ที่ทำไว้แล้ว)
+ *
+ * จงใจ **ไม่** สร้างคำขอจดทะเบียนที่นี่ — คำขอเกิดตอนผู้ใช้เริ่มลงทะเบียนจริง
+ * แล้วคัดลอกข้อมูลจากแถวนี้ไปเป็นค่าตั้งต้น (ดู `POST /api/organizations`)
+ * ถ้าสร้างไว้ตั้งแต่ตอนนี้ การที่ admin แก้ข้อมูลหน่วยงานทีหลังจะไม่ไปถึงฟอร์มของผู้ใช้
+ */
+adminRouter.post("/organizations", async (req, res) => {
+  const parsed = adminOrganizationSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+    return;
+  }
+  const input = parsed.data;
+
+  const duplicate = await prisma.organization.findUnique({
+    where: { organizationCode: input.organizationCode },
+    select: { id: true },
+  });
+  if (duplicate) {
+    res.status(409).json({
+      error: "code_exists",
+      message: "รหัสหน่วยงานนี้ถูกใช้ไปแล้ว",
+      organizationId: duplicate.id,
+    });
+    return;
+  }
+
+  if (input.parentOrganizationId) {
+    const parent = await prisma.organization.findUnique({
+      where: { id: input.parentOrganizationId },
+      select: { id: true },
+    });
+    if (!parent) {
+      res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานต้นสังกัดที่ระบุ" });
+      return;
+    }
+  }
+
+  /**
+   * ที่อยู่ไม่บังคับ แต่ถ้ากรอกมาแล้วเทียบกับ master ไม่ได้ต้องบอก ไม่ใช่เก็บเป็น null เงียบ ๆ
+   *
+   * admin ยิง API เอาเองไม่มี dropdown ให้เลือกเหมือนฟอร์มลงทะเบียน โอกาสพิมพ์ชื่อไม่ตรง
+   * จึงสูง — และชื่อใน master ไม่มีคำนำหน้า ("ดุสิต" ไม่ใช่ "เขตดุสิต") ถ้าปล่อยผ่าน
+   * หน่วยงานจะถูกสร้างโดยไม่มีที่อยู่ทั้งที่คนสร้างเชื่อว่ากรอกไปแล้ว
+   */
+  const codes = await resolveAddressCodes(prisma, input);
+  const addressFields: Record<string, string> = {};
+  if (input.province && !codes.provinceCode) {
+    addressFields.province = "ไม่พบจังหวัดนี้ ใช้ชื่อตามข้อมูลกลาง เช่น \"กรุงเทพมหานคร\"";
+  }
+  if (input.district && !codes.districtCode) {
+    addressFields.district = "ไม่พบอำเภอ/เขตนี้ในจังหวัดที่เลือก ชื่อในระบบไม่มีคำนำหน้า เช่น \"ดุสิต\"";
+  }
+  if (input.subdistrict && !codes.subDistrictCode) {
+    addressFields.subdistrict = "ไม่พบตำบล/แขวงนี้ในอำเภอที่เลือก ชื่อในระบบไม่มีคำนำหน้า เช่น \"ดุสิต\"";
+  }
+  if (Object.keys(addressFields).length > 0) {
+    res.status(400).json({ error: "validation", fields: addressFields });
+    return;
+  }
+
+  /** เติมรหัสไปรษณีย์ให้เองเมื่อระบุที่อยู่ครบ เหมือนที่ฟอร์มลงทะเบียนทำ */
+  const postalCode =
+    input.postalCode ||
+    (input.province && input.district && input.subdistrict
+      ? (lookupZipcode(input.province, input.district, input.subdistrict) ?? null)
+      : null);
+
+  const organization = await prisma.organization.create({
+    data: {
+      organizationCode: input.organizationCode,
+      organizationType: input.organizationType ?? null,
+      nameTh: input.nameTh,
+      nameEn: input.nameEn ?? null,
+      status: OrganizationStatus.PENDING_REGISTRATION,
+      addressLine: input.addressLine ?? null,
+      provinceCode: codes.provinceCode ?? null,
+      districtCode: codes.districtCode ?? null,
+      subDistrictCode: codes.subDistrictCode ?? null,
+      postalCode,
+      phone: input.phone ?? null,
+      email: input.email ?? null,
+      websiteUrl: input.websiteUrl ?? null,
+      parentOrganizationId: input.parentOrganizationId ?? null,
+      createdBy: SYSTEM_USER_ID,
+      updatedBy: SYSTEM_USER_ID,
+    },
+  });
+
+  await logAudit({
+    action: AuditAction.ORGANIZATION_CREATED,
+    subjectType: AuditSubject.ORGANIZATION,
+    subjectId: organization.id,
+    organizationId: organization.id,
+    metadata: { organization_code: organization.organizationCode, created_via: "ADMIN_API" },
+  });
+
+  res.status(201).json({ organization: await toAdminOrganizationShape(organization) });
+});
+
+/**
+ * รายการหน่วยงาน — การ์ดข้อ 2 ("ใช้อ้างอิงตอนส่งคำเชิญ")
+ * `?status=` กรองตามสถานะ · `?q=` ค้นจากชื่อไทย/อังกฤษ/รหัส
+ */
+adminRouter.get("/organizations", async (req, res) => {
+  const status = typeof req.query.status === "string" ? req.query.status : undefined;
+  if (status && !Object.values(OrganizationStatus).includes(status as OrganizationStatus)) {
+    res.status(400).json({
+      error: "validation",
+      fields: { status: `status ต้องเป็นค่าใดค่าหนึ่งใน ${Object.values(OrganizationStatus).join(", ")}` },
+    });
+    return;
+  }
+  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+
+  const organizations = await prisma.organization.findMany({
+    where: {
+      ...(status ? { status: status as OrganizationStatus } : {}),
+      ...(q
+        ? {
+            OR: [
+              { nameTh: { contains: q, mode: "insensitive" as const } },
+              { nameEn: { contains: q, mode: "insensitive" as const } },
+              { organizationCode: { contains: q, mode: "insensitive" as const } },
+            ],
+          }
+        : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take: 200,
+  });
+
+  res.json({ organizations: await Promise.all(organizations.map(toAdminOrganizationShape)) });
+});
+
+/**
+ * รายละเอียดหน่วยงานหนึ่งแห่ง พร้อมสิ่งที่ admin ต้องดูเพื่อรู้ว่าเรื่องไปถึงไหนแล้ว:
+ * คำขอจดทะเบียนที่ยังเปิดอยู่ และคำเชิญที่ออกให้หน่วยงานนี้
+ */
+adminRouter.get("/organizations/:id", async (req, res) => {
+  const parsedId = z.string().uuid().safeParse(req.params.id);
+  if (!parsedId.success) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานที่ระบุ" });
+    return;
+  }
+
+  const organization = await prisma.organization.findUnique({ where: { id: parsedId.data } });
+  if (!organization) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานที่ระบุ" });
+    return;
+  }
+
+  const requests = await prisma.organizationRegistrationRequest.findMany({
+    where: { organizationId: organization.id },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, requestNumber: true, status: true, submittedAt: true, createdAt: true },
+  });
+  const invitations = await prisma.activationKey.findMany({
+    where: { organizationId: organization.id },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      status: true,
+      expiresAt: true,
+      userAccount: { select: { email: true, status: true } },
+      role: { select: { code: true } },
+    },
+  });
+
+  res.json({
+    organization: await toAdminOrganizationShape(organization),
+    registrationRequests: requests,
+    invitations,
+  });
+});
+
+// ---------------------------------------------------------------- คำเชิญผู้ใช้
 
 const inviteSchema = z.object({
   email: emailSchema,

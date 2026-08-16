@@ -119,6 +119,8 @@ const upload = multer({
  * approver_* / user_*) เกิดที่ toRequestData() ข้างล่าง
  */
 const draftSchema = z.object({
+  /** รหัสหน่วยงาน — admin กรอกไว้ล่วงหน้า ผู้ใช้แค่ตรวจและแก้ถ้าไม่ถูก */
+  organizationCode: z.string().trim().max(64).optional(),
   name: z.string().trim().max(200).optional(),
   nameEn: z.string().trim().max(200).optional(),
   organizationType: z.string().trim().max(64).optional(),
@@ -151,6 +153,7 @@ const draftSchema = z.object({
 });
 
 const submitSchema = z.object({
+  organizationCode: z.string().trim().min(1, "กรุณากรอกรหัสหน่วยงาน").max(64),
   name: z.string().trim().min(3, "ชื่อหน่วยงานต้องมีอย่างน้อย 3 ตัวอักษร").max(200),
   addressLine: z.string().trim().min(1, "กรุณากรอกที่อยู่"),
   province: z.string().trim().min(1, "กรุณาเลือกจังหวัด"),
@@ -193,6 +196,7 @@ async function toRequestData(input: z.infer<typeof draftSchema>) {
       : undefined);
 
   return {
+    organizationCode: input.organizationCode,
     organizationType: input.organizationType,
     organizationNameTh: input.name,
     organizationNameEn: input.nameEn,
@@ -226,6 +230,56 @@ async function toRequestData(input: z.infer<typeof draftSchema>) {
 }
 
 /**
+ * ค่าตั้งต้นของคำขอ คัดจากแถว organization ที่ admin สร้างไว้ล่วงหน้า
+ *
+ * เป็นการคัดลอก ไม่ใช่การอ้างอิง — คำขอเก็บ snapshot ตามดีไซน์ ผู้ใช้แก้ในคำขอได้
+ * โดยไม่กระทบ master และ master จะถูกเขียนทับด้วย snapshot อีกทีตอนอนุมัติขั้นสุดท้าย
+ */
+function prefillFromOrganization(org: {
+  organizationCode: string;
+  organizationType: string | null;
+  nameTh: string;
+  nameEn: string | null;
+  addressLine: string | null;
+  provinceCode: string | null;
+  districtCode: string | null;
+  subDistrictCode: string | null;
+  postalCode: string | null;
+  phone: string | null;
+  email: string | null;
+  websiteUrl: string | null;
+}) {
+  return {
+    organizationCode: org.organizationCode,
+    organizationType: org.organizationType,
+    // ชื่อชั่วคราวที่ระบบตั้งให้เองไม่ใช่ข้อมูลจริง อย่าเอาไปเติมในฟอร์มให้ผู้ใช้ต้องมาลบ
+    organizationNameTh: org.nameTh === PLACEHOLDER_ORGANIZATION_NAME ? null : org.nameTh,
+    organizationNameEn: org.nameEn,
+    organizationAddressLine: org.addressLine,
+    organizationProvinceCode: org.provinceCode,
+    organizationDistrictCode: org.districtCode,
+    organizationSubdistrictCode: org.subDistrictCode,
+    organizationPostalCode: org.postalCode,
+    organizationPhone: org.phone,
+    organizationEmail: org.email,
+    organizationWebsite: org.websiteUrl,
+  };
+}
+
+/**
+ * ตัด key ที่ไม่มีค่าออก เพื่อไม่ให้ body ที่ไม่ได้ส่งอะไรมาไปลบค่าที่ prefill ไว้
+ *
+ * ต้องตัด `null` ด้วยไม่ใช่แค่ `undefined` — `resolveAddressCodes()` คืน null (ไม่ใช่
+ * undefined) เมื่อไม่ได้ส่งที่อยู่มา ถ้ากรองแค่ undefined รหัสจังหวัด/อำเภอ/ตำบล
+ * ที่คัดลอกมาจากหน่วยงานจะถูกทับด้วย null ทันที (เจอตอน SIT รอบแรก ที่อยู่หายทั้งชุด)
+ */
+function providedOnly<T extends object>(value: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, v]) => v !== undefined && v !== null),
+  ) as Partial<T>;
+}
+
+/**
  * แปลงกลับเป็นรูปที่ frontend และ zod ชุด submit เข้าใจ
  * คงชื่อฟิลด์เดิมไว้เพื่อไม่ให้ต้องแก้ฟอร์มทั้งหน้า
  */
@@ -242,7 +296,8 @@ async function toApiShape(request: RequestRow) {
     status: request.status,
     organizationId: request.organizationId,
     organizationStatus: request.organization.status,
-    organizationCode: request.organization.organizationCode,
+    // snapshot ของคำขอมาก่อน master — ผู้ใช้แก้รหัสในฟอร์มได้ และค่าจะไปทับ master ตอนอนุมัติ
+    organizationCode: request.organizationCode ?? request.organization.organizationCode,
 
     name: request.organizationNameTh,
     nameEn: request.organizationNameEn,
@@ -269,6 +324,7 @@ async function toApiShape(request: RequestRow) {
     contactLastName: request.userLastnameTh,
     contactPosition: request.userPositionTh,
     contactDepartment: request.userDepartmentTh,
+    contactNationalId: request.userCid,
     contactEmail: request.userEmail,
     contactPhone: request.userPhoneNumber,
 
@@ -440,10 +496,20 @@ organizationRouter.post("/", async (req, res) => {
     return;
   }
 
+  /**
+   * คำขอที่ยังไม่จบ นับทั้งของที่ตัวเองสร้างและของหน่วยงานที่ตัวเองสังกัด
+   *
+   * ข้อหลังจำเป็นตั้งแต่มีคำเชิญที่ผูก `organization_id` มาให้: ผู้ใช้คนที่สองของหน่วยงาน
+   * (เช่นผู้มีอำนาจลงนาม) ไม่ได้เป็นคนสร้างคำขอ ถ้าดูแค่ `createdBy` เขาจะได้คำขอใบใหม่
+   * พร้อมหน่วยงานใหม่ทั้งที่หน่วยงานของเขามีอยู่แล้ว
+   */
   const existing = await prisma.organizationRegistrationRequest.findFirst({
     where: {
-      createdBy: session.sub,
       status: { notIn: [RequestStatus.APPROVED, RequestStatus.REJECTED, RequestStatus.CANCELLED] },
+      OR: [
+        { createdBy: session.sub },
+        ...(session.organizationId ? [{ organizationId: session.organizationId }] : []),
+      ],
     },
   });
   if (existing) {
@@ -459,6 +525,58 @@ organizationRouter.post("/", async (req, res) => {
   }
 
   const snapshot = await toRequestData(parsed.data);
+
+  /**
+   * ผู้ใช้ที่มาจากคำเชิญมีหน่วยงานอยู่แล้ว — เปิดคำขอให้หน่วยงานนั้น ไม่ใช่สร้างหน่วยงานใหม่
+   * แล้วเติมฟอร์มด้วยสิ่งที่ admin บันทึกไว้ (การ์ด "Admin Prefill Organization Form" ข้อ 4)
+   *
+   * คัดลอกตอนนี้ ไม่ใช่ตอนออกคำเชิญ เพื่อให้ได้ค่าล่าสุดที่ admin แก้ไว้จนถึงวินาทีนี้
+   */
+  if (session.organizationId) {
+    const organization = await prisma.organization.findUnique({
+      where: { id: session.organizationId },
+    });
+    if (!organization) {
+      res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานของคุณ" });
+      return;
+    }
+
+    const account = await prisma.userAccount.findUnique({ where: { id: session.sub } });
+    const prefilled = await prisma.organizationRegistrationRequest.create({
+      data: {
+        requestNumber: await nextOrganizationRequestNumber(prisma),
+        organizationId: organization.id,
+        status: RequestStatus.DRAFT,
+        ...prefillFromOrganization(organization),
+        // ผู้กรอกคือผู้ประสานงานโดยปริยาย เอาจากบัญชีที่ ThaiD ยืนยันมาแล้ว ผู้ใช้แก้ได้
+        userPrefixTh: account?.prefixTh ?? undefined,
+        userFirstnameTh: account?.firstnameTh ?? undefined,
+        userLastnameTh: account?.lastnameTh ?? undefined,
+        userEmail: account?.email,
+        userPhoneNumber: account?.phoneNumber ?? undefined,
+        userCid: account?.cid ?? undefined,
+        // ค่าที่ส่งมากับ body (ถ้ามี) ชนะค่าที่คัดลอกมา
+        ...providedOnly(snapshot),
+        createdBy: session.sub,
+        updatedBy: session.sub,
+      },
+      include: { organization: true },
+    });
+
+    await logAudit({
+      action: AuditAction.ORGANIZATION_UPDATED,
+      subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
+      subjectId: prefilled.id,
+      organizationId: organization.id,
+      metadata: {
+        prefilled_from: "ADMIN_ORGANIZATION",
+        organization_code: organization.organizationCode,
+      },
+    });
+
+    res.status(201).json({ organization: await toApiShape(prefilled) });
+    return;
+  }
 
   const created = await prisma.$transaction(async (tx) => {
     // หน่วยงานถูกสร้างพร้อมคำขอ แต่ยังเป็น PENDING_REGISTRATION จนกว่าจะอนุมัติครบ
@@ -803,6 +921,22 @@ organizationRouter.post("/:id/submit", async (req, res) => {
     return;
   }
 
+  /**
+   * รหัสหน่วยงานเป็น unique ที่ระดับตาราง — ถ้าปล่อยให้ผู้ใช้ส่งรหัสของหน่วยงานอื่นเข้ามา
+   * จะไปพังตอนอนุมัติขั้นสุดท้าย (P2002) ซึ่งเป็นคนละคนและคนละเวลา บอกตั้งแต่ตอนนำส่งดีกว่า
+   */
+  const codeOwner = await prisma.organization.findUnique({
+    where: { organizationCode: parsed.data.organizationCode },
+    select: { id: true },
+  });
+  if (codeOwner && codeOwner.id !== request.organizationId) {
+    res.status(400).json({
+      error: "validation",
+      fields: { organizationCode: "รหัสหน่วยงานนี้ถูกใช้กับหน่วยงานอื่นแล้ว" },
+    });
+    return;
+  }
+
   const form = await activeAttachment(
     prisma,
     AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
@@ -994,6 +1128,8 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
             status: OrganizationStatus.ACTIVE,
             activatedAt: new Date(),
             activatedBy: session.sub,
+            // รหัสที่ผู้ใช้ยืนยันในฟอร์มมีน้ำหนักกว่าที่ admin กรอกไว้ตอนสร้าง
+            organizationCode: request.organizationCode ?? request.organization.organizationCode,
             nameTh: request.organizationNameTh ?? request.organization.nameTh,
             nameEn: request.organizationNameEn,
             addressLine: request.organizationAddressLine,

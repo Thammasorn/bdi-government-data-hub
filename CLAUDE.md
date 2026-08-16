@@ -25,6 +25,8 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
 - `docs/09-auth-tokens.md` — every token in the system (session JWT, activation key, OTP,
   admin token, ThaiD's tokens, OAuth state): where each lives, how it is hashed, when it
   expires. **There is no refresh token**; §1.4 explains what follows from that
+- `docs/10-admin-prefill-organization.md` — organizations an admin creates ahead of time,
+  and how their data reaches the user's registration form
 - `docs/bdi-admin-portal.postman_collection.json` — Journey A as a runnable collection
 
 Read `docs/01-user-journey.md` before touching anything in `backend/src/routes/organizations.ts`
@@ -169,6 +171,17 @@ the user verifies on ThaiD → `POST /api/auth/thaid/callback` compares the `pid
 `ACTIVE`, creates the role assignment and marks the key `USED`, all in one transaction.
 **`password_hash` and `iam.otp_code` are deliberate additions not present in the Excel**;
 they now carry the password + OTP login path, not activation.
+
+An admin can create the organization before anyone registers
+(`POST /api/admin/organizations`) and bind it to the invitation with `organizationId`.
+Only `organization_code` and `name_th` are required there — the two columns the database
+itself makes NOT NULL — and the code is supplied, not generated. When that user starts
+registering, `POST /api/organizations` opens the draft **against their existing
+organization** and copies its columns into the request snapshot; it no longer creates a
+second organization. It also looks for an in-flight request by organization, not just by
+`created_by`, so the second person invited into the same organization edits the same
+request rather than starting a rival one. `docs/10-admin-prefill-organization.md` has the
+decisions behind it.
 
 `POST /api/admin/invitations` therefore **requires `cid`** for every role. The whole flow
 rests on comparing against a CID recorded when the account was created — a CID the user
