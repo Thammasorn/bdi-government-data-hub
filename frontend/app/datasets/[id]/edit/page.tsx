@@ -12,91 +12,65 @@ import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
 import {
-  CLASSIFICATION_LABELS,
-  DATASET_CATEGORY_LABELS,
-  DATASET_TYPE_LABELS,
+  ASSIGN_LABELS,
+  DATA_CATEGORY_LABELS,
+  DATA_CLASSIFICATION_LABELS,
   DATA_FORMAT_LABELS,
-  DELIVERY_METHOD_LABELS,
-  ENDPOINT_REQUIRED_METHODS,
-  FREQUENCY_LABELS,
+  DATA_TOPIC_LABELS,
+  DATA_TYPE_LABELS,
+  DELIVERY_FREQUENCY_LABELS,
+  EMPTY_FORM,
   GEO_COVERAGE_LABELS,
+  GRANT_LABELS,
+  HAVE_LABELS,
   LICENSE_LABELS,
-  optionsOf,
-} from "@/lib/status";
+  PERSONAL_DATA_PERIOD_LABELS,
+  UPDATE_FREQUENCY_UNIT_LABELS,
+  applyRules,
+  formRules,
+  optionsFor,
+  splitTags,
+  toFormState,
+  toPayload,
+  type FormField,
+  type FormState,
+} from "@/lib/dataset-form";
 import type { DatasetRequest } from "@/lib/types";
 
-const EMPTY = {
-  nameTh: "",
-  nameEn: "",
-  description: "",
-  datasetType: "",
-  category: "",
-  updateFrequency: "",
-  geoCoverage: "",
-  dataStartDate: "",
-  dataEndDate: "",
-  estimatedRecords: "",
-  stewardName: "",
-  stewardEmail: "",
-  stewardPhone: "",
-
-  deliveryMethod: "",
-  dataFormat: "",
-  deliveryFrequency: "",
-  deliveryEndpoint: "",
-  technicalContactName: "",
-  technicalContactEmail: "",
-  deliveryNote: "",
-
-  dataClassification: "",
-  hasPersonalData: "",
-  personalDataMeasure: "",
-  legalBasis: "",
-  licenseType: "",
-  usageRestriction: "",
-};
-type FormState = typeof EMPTY;
-
-/** ช่องที่เก็บเป็น enum ในฐานข้อมูล — ค่าว่างต้องส่ง null ไม่ใช่สตริงว่าง */
-const ENUM_KEYS: Array<keyof FormState> = [
-  "datasetType",
-  "category",
-  "updateFrequency",
-  "geoCoverage",
-  "deliveryMethod",
-  "dataFormat",
-  "deliveryFrequency",
-  "dataClassification",
-  "licenseType",
-];
-
 const SECTIONS = [
-  { id: "section-1", tag: "ส่วนที่ 1", title: "ข้อมูลชุดข้อมูล" },
-  { id: "section-2", tag: "ส่วนที่ 2", title: "วิธีการนำส่งข้อมูล" },
-  { id: "section-3", tag: "ส่วนที่ 3", title: "เงื่อนไขทางกฎหมาย" },
-  { id: "section-4", tag: "ส่วนที่ 4", title: "เอกสารแนบ" },
+  { id: "section-1", tag: "ส่วนที่ 1", title: "ประเภทและชื่อชุดข้อมูล" },
+  { id: "section-2", tag: "ส่วนที่ 2", title: "ความถี่ ขอบเขต และการนำส่ง" },
+  { id: "section-3", tag: "ส่วนที่ 3", title: "หมวดหมู่และระดับชั้นข้อมูล" },
+  { id: "section-4", tag: "ส่วนที่ 4", title: "การจัดเก็บและส่งต่อข้อมูล" },
+  { id: "section-5", tag: "ส่วนที่ 5", title: "เอกสารแนบ" },
 ];
 
-const REQUIRED_BY_SECTION: Record<string, Array<keyof FormState>> = {
+/**
+ * ช่องบังคับของแต่ละส่วน สำหรับแถบความคืบหน้าด้านซ้าย
+ * ช่องที่ขึ้นกับเงื่อนไข (ประเด็นอื่น ๆ, รายละเอียดข้อมูลส่วนบุคคล ฯลฯ) ถูกเติมตอนคำนวณ
+ * เพราะบังคับกรอกก็ต่อเมื่อชีท conditions สั่งให้ถาม
+ */
+const REQUIRED_BY_SECTION: Record<string, FormField[]> = {
   "section-1": [
-    "nameTh",
-    "description",
-    "datasetType",
-    "category",
-    "updateFrequency",
-    "geoCoverage",
-    "stewardName",
-    "stewardEmail",
-    "stewardPhone",
+    "dataType",
+    "dataTopic",
+    "title",
+    "name",
+    "maintainer",
+    "maintainerEmail",
+    "tagString",
+    "notes",
+    "objective",
   ],
-  "section-2": [
-    "deliveryMethod",
-    "dataFormat",
-    "deliveryFrequency",
-    "technicalContactName",
-    "technicalContactEmail",
+  "section-2": ["updateFrequencyUnit", "deliveryFrequency", "geoCoverage", "dataSource", "dataFormat"],
+  "section-3": ["dataCategory", "containsPersonalData", "dataClassification", "licenseId"],
+  "section-4": [
+    "allowOriginalRawDataRetention",
+    "allowOriginalRawDataSharing",
+    "allowTransformedRawDataSharing",
+    "allowTransformedRawDataGdxSharing",
+    "allowAggregatedDataSharing",
   ],
-  "section-3": ["dataClassification", "hasPersonalData", "legalBasis", "licenseType"],
 };
 
 export default function EditDatasetRequestPage() {
@@ -104,8 +78,7 @@ export default function EditDatasetRequestPage() {
   const { id } = useParams<{ id: string }>();
   const { show } = useToast();
 
-  const [form, setForm] = useState<FormState>(EMPTY);
-  const [keywords, setKeywords] = useState<string[]>([]);
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [legalAccepted, setLegalAccepted] = useState(false);
   const [fields, setFields] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -113,6 +86,7 @@ export default function EditDatasetRequestPage() {
   const [generating, setGenerating] = useState(false);
   const [revisionNote, setRevisionNote] = useState<string | null>(null);
   const [requestNumber, setRequestNumber] = useState("");
+  const [organizationName, setOrganizationName] = useState("");
 
   const [dictionary, setDictionary] = useState<UploadedFile | null>(null);
   const [example, setExample] = useState<UploadedFile | null>(null);
@@ -124,19 +98,11 @@ export default function EditDatasetRequestPage() {
     api
       .get<{ request: DatasetRequest }>(`/api/dataset-requests/${id}`)
       .then(({ request }) => {
-        const next = { ...EMPTY };
-        for (const key of Object.keys(EMPTY) as Array<keyof FormState>) {
-          const value = request[key as keyof DatasetRequest];
-          if (typeof value === "string") next[key] = key.endsWith("Date") ? value.slice(0, 10) : value;
-          if (typeof value === "number") next[key] = String(value);
-        }
-        next.hasPersonalData =
-          request.hasPersonalData === null ? "" : request.hasPersonalData ? "yes" : "no";
-        setForm(next);
-        setKeywords(request.keywords);
+        setForm(toFormState(request as unknown as Partial<Record<FormField, unknown>>));
         setLegalAccepted(Boolean(request.legalAcceptedAt));
         setRevisionNote(request.revisionNote);
         setRequestNumber(request.requestNumber);
+        setOrganizationName(request.organization?.name ?? "");
         const find = (kind: string) => request.attachments.find((a) => a.kind === kind) ?? null;
         setDictionary(find("DATA_DICTIONARY"));
         setExample(find("EXAMPLE_DATA"));
@@ -145,46 +111,72 @@ export default function EditDatasetRequestPage() {
       .finally(() => setLoading(false));
   }, [id, show]);
 
-  const set = (key: keyof FormState, value: string) => {
-    setForm((f) => ({ ...f, [key]: value }));
+  /**
+   * ทุกการเปลี่ยนค่าเดินผ่าน applyRules() — เลือกหมวดหมู่ "ข้อมูลสาธารณะ" แล้วระดับชั้น
+   * สัญญาอนุญาต และสิทธิการส่งต่อเปลี่ยนตามทันทีบนหน้าจอ ไม่ต้องรอบันทึกก่อน
+   */
+  const set = (key: FormField, value: string) => {
+    setForm((f) => applyRules({ ...f, [key]: value }, f));
     clearError(key);
   };
 
   /** ล้าง error ของช่องที่เพิ่งแก้ ไม่งั้นขอบแดงค้างทั้งที่ผู้ใช้แก้ให้ถูกแล้ว */
   const clearError = (key: string) => setFields((f) => (f[key] ? { ...f, [key]: "" } : f));
 
+  const rules = useMemo(() => formRules(form), [form]);
+
   const completion = useMemo(() => {
+    const conditional: Record<string, FormField[]> = {
+      "section-1": rules.dataTopicOther.visible ? ["dataTopicOther"] : [],
+      "section-2": [
+        ...(rules.updateFrequencyInterval.visible ? (["updateFrequencyInterval"] as FormField[]) : []),
+        ...(rules.dataFormatOther.visible ? (["dataFormatOther"] as FormField[]) : []),
+      ],
+      "section-3": rules.personalDataDetail.visible
+        ? ([
+            "personalDataTypes",
+            "dataSubjectCategories",
+            "personalDataProcessingPeriod",
+          ] as FormField[])
+        : [],
+      "section-4": [
+        ...(rules.authorizePersonalDataAnonymization.visible
+          ? (["authorizePersonalDataAnonymization"] as FormField[])
+          : []),
+        ...(rules.transformedRawDataRecipients.visible
+          ? (["transformedRawDataRecipients"] as FormField[])
+          : []),
+        ...(rules.transformedRawDataGdxRecipients.visible
+          ? (["transformedRawDataGdxRecipients"] as FormField[])
+          : []),
+        ...(rules.aggregatedDataRecipients.visible
+          ? (["aggregatedDataRecipients"] as FormField[])
+          : []),
+      ],
+    };
+
     const done: Record<string, boolean> = {};
     for (const [section, keys] of Object.entries(REQUIRED_BY_SECTION)) {
-      done[section] = keys.every((k) => form[k].trim().length > 0);
+      done[section] = [...keys, ...(conditional[section] ?? [])].every(
+        (k) => form[k].trim().length > 0,
+      );
     }
-    done["section-1"] = done["section-1"] && keywords.length > 0;
-    done["section-3"] = done["section-3"] && legalAccepted;
-    done["section-4"] = dictionary !== null;
+    if (rules.personalDataPeriodAmount.visible) {
+      const years = Number(form.personalDataProcessingPeriodYear || 0);
+      const months = Number(form.personalDataProcessingPeriodMonth || 0);
+      done["section-3"] = Boolean(done["section-3"]) && years + months > 0;
+    }
+    done["section-4"] = Boolean(done["section-4"]) && legalAccepted;
+    done["section-5"] = dictionary !== null;
     return done;
-  }, [form, keywords, legalAccepted, dictionary]);
-
-  const endpointRequired = ENDPOINT_REQUIRED_METHODS.includes(form.deliveryMethod);
+  }, [form, rules, legalAccepted, dictionary]);
 
   // ---------- actions ----------
-  const payload = () => {
-    const body: Record<string, unknown> = { keywords, legalAccepted };
-    for (const key of Object.keys(EMPTY) as Array<keyof FormState>) {
-      const raw = form[key].trim();
-      if (key === "hasPersonalData") {
-        body[key] = raw === "" ? null : raw === "yes";
-      } else if (key === "estimatedRecords") {
-        body[key] = raw === "" ? null : Number(raw);
-      } else if (ENUM_KEYS.includes(key) || key.endsWith("Date")) {
-        body[key] = raw === "" ? null : raw;
-      } else {
-        body[key] = raw === "" ? null : raw;
-      }
-    }
-    return body;
-  };
-
-  const persist = () => api.patch<{ request: DatasetRequest }>(`/api/dataset-requests/${id}`, payload());
+  const persist = () =>
+    api.patch<{ request: DatasetRequest }>(`/api/dataset-requests/${id}`, {
+      ...toPayload(form),
+      legalAccepted,
+    });
 
   const saveDraft = async () => {
     setSaving(true);
@@ -266,7 +258,8 @@ export default function EditDatasetRequestPage() {
         </p>
         <h1 className="mt-1 text-[26px] font-semibold text-navy-800">ลงทะเบียนชุดข้อมูล</h1>
         <p className="mt-1.5 text-[15px] text-ink-muted">
-          กรอกข้อมูลให้ครบทั้งสี่ส่วน ระบบจะสร้างแบบฟอร์ม PDF ให้ตรวจสอบก่อนนำส่ง
+          กรอกข้อมูลให้ครบทั้งห้าส่วน ระบบจะสร้างแบบฟอร์ม PDF ให้ตรวจสอบก่อนนำส่ง
+          บางช่องระบบกำหนดค่าให้เองตามหมวดหมู่และระดับชั้นของข้อมูล
         </p>
       </header>
 
@@ -282,320 +275,504 @@ export default function EditDatasetRequestPage() {
 
         <form ref={formRef} onSubmit={generateForm} className="flex flex-col gap-6" noValidate>
           {/* ---------------- ส่วนที่ 1 ---------------- */}
-          <Card id={SECTIONS[0].id} className="scroll-mt-24">
+          <Card id={SECTIONS[0]!.id} className="scroll-mt-24">
             <CardHeader
-              tag={SECTIONS[0].tag}
-              title={SECTIONS[0].title}
-              description="ข้อมูลที่ใช้อธิบายชุดข้อมูลในทะเบียน"
+              tag={SECTIONS[0]!.tag}
+              title={SECTIONS[0]!.title}
+              description="ข้อมูลที่ใช้อธิบายชุดข้อมูลในบัญชีข้อมูลภาครัฐ"
             />
             <div className="grid gap-5 p-6">
-              <Wrap name="nameTh">
-                <TextField
-                  label="ชื่อชุดข้อมูล (ภาษาไทย)"
-                  required
-                  value={form.nameTh}
-                  onChange={(e) => set("nameTh", e.target.value)}
-                  error={fields.nameTh}
-                  placeholder="เช่น สถิติผู้ป่วยนอกรายเดือน"
-                />
-              </Wrap>
-              <Wrap name="nameEn">
-                <TextField
-                  label="ชื่อชุดข้อมูล (ภาษาอังกฤษ)"
-                  value={form.nameEn}
-                  onChange={(e) => set("nameEn", e.target.value)}
-                  error={fields.nameEn}
-                />
-              </Wrap>
-              <Wrap name="description">
-                <TextAreaField
-                  label="คำอธิบายชุดข้อมูล"
-                  required
-                  value={form.description}
-                  onChange={(e) => set("description", e.target.value)}
-                  error={fields.description}
-                  hint="อธิบายว่าชุดข้อมูลนี้คืออะไร เก็บจากที่ไหน และนำไปใช้ทำอะไรได้ (อย่างน้อย 30 ตัวอักษร)"
-                />
-              </Wrap>
               <div className="grid gap-5 sm:grid-cols-2">
-                <Wrap name="datasetType">
+                <Wrap name="dataType">
                   <Choice
-                    label="ประเภทชุดข้อมูล"
+                    label="ประเภทข้อมูล"
                     required
-                    value={form.datasetType}
-                    onChange={(v) => set("datasetType", v)}
-                    error={fields.datasetType}
-                    options={optionsOf(DATASET_TYPE_LABELS)}
+                    value={form.dataType}
+                    onChange={(v) => set("dataType", v)}
+                    error={fields.dataType}
+                    options={optionsFor(DATA_TYPE_LABELS)}
                   />
                 </Wrap>
-                <Wrap name="category">
+                <Wrap name="dataTopic">
                   <Choice
-                    label="หมวดหมู่"
+                    label="ประเด็น"
                     required
-                    value={form.category}
-                    onChange={(v) => set("category", v)}
-                    error={fields.category}
-                    options={optionsOf(DATASET_CATEGORY_LABELS)}
+                    value={form.dataTopic}
+                    onChange={(v) => set("dataTopic", v)}
+                    error={fields.dataTopic}
+                    options={optionsFor(DATA_TOPIC_LABELS)}
                   />
                 </Wrap>
               </div>
-              <Wrap name="keywords">
-                <KeywordInput
-                  value={keywords}
-                  onChange={(next) => {
-                    setKeywords(next);
-                    clearError("keywords");
-                  }}
-                  error={fields.keywords}
-                />
-              </Wrap>
+              {rules.dataTopicOther.visible ? (
+                <Wrap name="dataTopicOther">
+                  <TextField
+                    label="ระบุประเด็นอื่น ๆ"
+                    required
+                    maxLength={150}
+                    value={form.dataTopicOther}
+                    onChange={(e) => set("dataTopicOther", e.target.value)}
+                    error={fields.dataTopicOther}
+                  />
+                </Wrap>
+              ) : null}
               <div className="grid gap-5 sm:grid-cols-2">
-                <Wrap name="updateFrequency">
-                  <Choice
-                    label="ความถี่ในการปรับปรุงข้อมูล"
+                <Wrap name="title">
+                  <TextField
+                    label="ชื่อชุดข้อมูล (ภาษาไทย)"
                     required
-                    value={form.updateFrequency}
-                    onChange={(v) => set("updateFrequency", v)}
-                    error={fields.updateFrequency}
-                    options={optionsOf(FREQUENCY_LABELS)}
+                    maxLength={150}
+                    value={form.title}
+                    onChange={(e) => set("title", e.target.value)}
+                    error={fields.title}
+                    placeholder="เช่น สถิติผู้ป่วยนอกรายเดือน"
                   />
                 </Wrap>
-                <Wrap name="geoCoverage">
-                  <Choice
-                    label="ขอบเขตเชิงพื้นที่"
+                <Wrap name="name">
+                  <TextField
+                    label="ชื่อชุดข้อมูล (ภาษาอังกฤษ)"
                     required
-                    value={form.geoCoverage}
-                    onChange={(v) => set("geoCoverage", v)}
-                    error={fields.geoCoverage}
-                    options={optionsOf(GEO_COVERAGE_LABELS)}
+                    maxLength={150}
+                    value={form.name}
+                    onChange={(e) => set("name", e.target.value)}
+                    error={fields.name}
+                    placeholder="เช่น Monthly Outpatient Statistics"
                   />
                 </Wrap>
               </div>
-              <div className="grid gap-5 sm:grid-cols-3">
-                <Wrap name="dataStartDate">
+              <ReadOnlyField
+                label="องค์กร"
+                value={organizationName}
+                hint="ชุดข้อมูลเป็นของหน่วยงานที่ท่านสังกัด ระบบกรอกให้อัตโนมัติ"
+              />
+              <div className="grid gap-5 sm:grid-cols-2">
+                <Wrap name="maintainer">
                   <TextField
-                    label="ข้อมูลเริ่มตั้งแต่"
-                    type="date"
-                    value={form.dataStartDate}
-                    onChange={(e) => set("dataStartDate", e.target.value)}
-                    error={fields.dataStartDate}
-                  />
-                </Wrap>
-                <Wrap name="dataEndDate">
-                  <TextField
-                    label="ถึงวันที่"
-                    type="date"
-                    value={form.dataEndDate}
-                    onChange={(e) => set("dataEndDate", e.target.value)}
-                    error={fields.dataEndDate}
-                    hint="เว้นว่างถ้ายังเก็บต่อเนื่อง"
-                  />
-                </Wrap>
-                <Wrap name="estimatedRecords">
-                  <TextField
-                    label="จำนวนรายการโดยประมาณ"
-                    inputMode="numeric"
-                    value={form.estimatedRecords}
-                    onChange={(e) => set("estimatedRecords", e.target.value.replace(/\D/g, ""))}
-                    error={fields.estimatedRecords}
-                  />
-                </Wrap>
-              </div>
-              <div className="grid gap-5 border-t border-line pt-5 sm:grid-cols-3">
-                <Wrap name="stewardName">
-                  <TextField
-                    label="ผู้ประสานงานชุดข้อมูล"
+                    label="ชื่อผู้ติดต่อ"
                     required
-                    value={form.stewardName}
-                    onChange={(e) => set("stewardName", e.target.value)}
-                    error={fields.stewardName}
+                    maxLength={150}
+                    value={form.maintainer}
+                    onChange={(e) => set("maintainer", e.target.value)}
+                    error={fields.maintainer}
+                    hint="ชื่อกอง สำนัก หรือฝ่ายที่ได้รับมอบหมายให้รับผิดชอบข้อมูล"
                   />
                 </Wrap>
-                <Wrap name="stewardEmail">
+                <Wrap name="maintainerEmail">
                   <TextField
-                    label="อีเมล"
+                    label="อีเมลผู้ติดต่อ"
                     required
                     type="email"
-                    value={form.stewardEmail}
-                    onChange={(e) => set("stewardEmail", e.target.value)}
-                    error={fields.stewardEmail}
-                  />
-                </Wrap>
-                <Wrap name="stewardPhone">
-                  <TextField
-                    label="เบอร์โทรศัพท์"
-                    required
-                    inputMode="tel"
-                    value={form.stewardPhone}
-                    onChange={(e) => set("stewardPhone", e.target.value)}
-                    error={fields.stewardPhone}
+                    maxLength={50}
+                    value={form.maintainerEmail}
+                    onChange={(e) => set("maintainerEmail", e.target.value)}
+                    error={fields.maintainerEmail}
+                    hint="อีเมลของกอง สำนัก หรือฝ่าย ไม่ใช่อีเมลส่วนตัว"
                   />
                 </Wrap>
               </div>
+              <Wrap name="tagString">
+                <KeywordInput
+                  value={form.tagString}
+                  onChange={(next) => set("tagString", next)}
+                  error={fields.tagString}
+                />
+              </Wrap>
+              <Wrap name="notes">
+                <TextAreaField
+                  label="รายละเอียด"
+                  required
+                  maxLength={1000}
+                  value={form.notes}
+                  onChange={(e) => set("notes", e.target.value)}
+                  error={fields.notes}
+                  hint={counterHint(
+                    form.notes,
+                    1000,
+                    "อธิบายว่าชุดข้อมูลนี้คืออะไร จัดเก็บอย่างไร และกลุ่มเป้าหมายผู้ใช้เป็นใคร (อย่างน้อย 30 ตัวอักษร)",
+                  )}
+                />
+              </Wrap>
+              <Wrap name="objective">
+                <TextAreaField
+                  label="วัตถุประสงค์"
+                  required
+                  maxLength={1000}
+                  value={form.objective}
+                  onChange={(e) => set("objective", e.target.value)}
+                  error={fields.objective}
+                  hint={counterHint(
+                    form.objective,
+                    1000,
+                    "ที่มาและวัตถุประสงค์ของการจัดทำชุดข้อมูล เช่น กฎหมาย ภารกิจ หรือโครงการตามแผนยุทธศาสตร์ (อย่างน้อย 30 ตัวอักษร)",
+                  )}
+                />
+              </Wrap>
             </div>
           </Card>
 
           {/* ---------------- ส่วนที่ 2 ---------------- */}
-          <Card id={SECTIONS[1].id} className="scroll-mt-24">
+          <Card id={SECTIONS[1]!.id} className="scroll-mt-24">
             <CardHeader
-              tag={SECTIONS[1].tag}
-              title={SECTIONS[1].title}
-              description="ช่องทางและรูปแบบที่หน่วยงานจะส่งข้อมูลเข้าสู่แพลตฟอร์ม"
+              tag={SECTIONS[1]!.tag}
+              title={SECTIONS[1]!.title}
+              description="ความถี่ของข้อมูล ขอบเขตพื้นที่ แหล่งที่มา และรูปแบบที่จะนำส่ง"
             />
             <div className="grid gap-5 p-6">
-              <div className="grid gap-5 sm:grid-cols-3">
-                <Wrap name="deliveryMethod">
+              <div className="grid gap-5 sm:grid-cols-2">
+                <Wrap name="updateFrequencyUnit">
                   <Choice
-                    label="วิธีการนำส่ง"
+                    label="หน่วยความถี่ของการปรับปรุงข้อมูลต้นทาง"
                     required
-                    value={form.deliveryMethod}
-                    onChange={(v) => set("deliveryMethod", v)}
-                    error={fields.deliveryMethod}
-                    options={optionsOf(DELIVERY_METHOD_LABELS)}
+                    value={form.updateFrequencyUnit}
+                    onChange={(v) => set("updateFrequencyUnit", v)}
+                    error={fields.updateFrequencyUnit}
+                    options={optionsFor(UPDATE_FREQUENCY_UNIT_LABELS)}
                   />
                 </Wrap>
-                <Wrap name="dataFormat">
-                  <Choice
-                    label="รูปแบบข้อมูล"
-                    required
-                    value={form.dataFormat}
-                    onChange={(v) => set("dataFormat", v)}
-                    error={fields.dataFormat}
-                    options={optionsOf(DATA_FORMAT_LABELS)}
-                  />
-                </Wrap>
+                {rules.updateFrequencyInterval.visible ? (
+                  <Wrap name="updateFrequencyInterval">
+                    <TextField
+                      label="ค่าความถี่ของการปรับปรุงข้อมูลต้นทาง"
+                      required
+                      inputMode="numeric"
+                      value={form.updateFrequencyInterval}
+                      onChange={(e) =>
+                        set("updateFrequencyInterval", e.target.value.replace(/\D/g, ""))
+                      }
+                      error={fields.updateFrequencyInterval}
+                      hint={`ปรับปรุงทุกกี่${
+                        UPDATE_FREQUENCY_UNIT_LABELS[
+                          form.updateFrequencyUnit as keyof typeof UPDATE_FREQUENCY_UNIT_LABELS
+                        ] ?? "หน่วย"
+                      } เช่น ทุก 2 ปี ให้กรอก 2`}
+                    />
+                  </Wrap>
+                ) : null}
+              </div>
+              <div className="grid gap-5 sm:grid-cols-2">
                 <Wrap name="deliveryFrequency">
                   <Choice
-                    label="ความถี่ในการนำส่ง"
+                    label="ความถี่ของการนำส่งข้อมูลเข้าสู่ระบบกลาง"
                     required
                     value={form.deliveryFrequency}
                     onChange={(v) => set("deliveryFrequency", v)}
                     error={fields.deliveryFrequency}
-                    options={optionsOf(FREQUENCY_LABELS)}
+                    options={optionsFor(DELIVERY_FREQUENCY_LABELS)}
+                  />
+                </Wrap>
+                <Wrap name="geoCoverage">
+                  <Choice
+                    label="ความละเอียดเชิงภูมิศาสตร์"
+                    required
+                    value={form.geoCoverage}
+                    onChange={(v) => set("geoCoverage", v)}
+                    error={fields.geoCoverage}
+                    options={optionsFor(GEO_COVERAGE_LABELS)}
+                    hint="มิติการจัดจำแนกพื้นที่ในระดับย่อยที่สุดที่จัดเก็บหรือนำเสนอ"
                   />
                 </Wrap>
               </div>
-              <Wrap name="deliveryEndpoint">
+              <Wrap name="dataSource">
                 <TextField
-                  label="ปลายทาง / endpoint"
-                  required={endpointRequired}
-                  value={form.deliveryEndpoint}
-                  onChange={(e) => set("deliveryEndpoint", e.target.value)}
-                  error={fields.deliveryEndpoint}
-                  hint={
-                    endpointRequired
-                      ? "เช่น https://api.agency.go.th/v1/datasets หรือชื่อเซิร์ฟเวอร์ SFTP"
-                      : "กรอกเมื่อวิธีการนำส่งต้องเชื่อมต่อทางเทคนิค"
-                  }
+                  label="แหล่งที่มาของข้อมูล"
+                  required
+                  maxLength={200}
+                  value={form.dataSource}
+                  onChange={(e) => set("dataSource", e.target.value)}
+                  error={fields.dataSource}
+                  hint="ระบุแหล่งที่มาพร้อมหน่วยงานที่จัดทำ เช่น สำรวจภาวะการทำงานของประชากร (สำนักงานสถิติแห่งชาติ)"
                 />
               </Wrap>
               <div className="grid gap-5 sm:grid-cols-2">
-                <Wrap name="technicalContactName">
-                  <TextField
-                    label="ผู้รับผิดชอบทางเทคนิค"
+                <Wrap name="dataFormat">
+                  <Choice
+                    label="รูปแบบการนำส่งข้อมูล"
                     required
-                    value={form.technicalContactName}
-                    onChange={(e) => set("technicalContactName", e.target.value)}
-                    error={fields.technicalContactName}
+                    value={form.dataFormat}
+                    onChange={(v) => set("dataFormat", v)}
+                    error={fields.dataFormat}
+                    options={optionsFor(DATA_FORMAT_LABELS)}
                   />
                 </Wrap>
-                <Wrap name="technicalContactEmail">
-                  <TextField
-                    label="อีเมลผู้รับผิดชอบทางเทคนิค"
-                    required
-                    type="email"
-                    value={form.technicalContactEmail}
-                    onChange={(e) => set("technicalContactEmail", e.target.value)}
-                    error={fields.technicalContactEmail}
-                  />
-                </Wrap>
+                {rules.dataFormatOther.visible ? (
+                  <Wrap name="dataFormatOther">
+                    <TextField
+                      label="ชื่อระบบเชื่อมโยงข้อมูล"
+                      required
+                      maxLength={150}
+                      value={form.dataFormatOther}
+                      onChange={(e) => set("dataFormatOther", e.target.value)}
+                      error={fields.dataFormatOther}
+                    />
+                  </Wrap>
+                ) : null}
               </div>
-              <Wrap name="deliveryNote">
-                <TextAreaField
-                  label="หมายเหตุการนำส่ง"
-                  value={form.deliveryNote}
-                  onChange={(e) => set("deliveryNote", e.target.value)}
-                  error={fields.deliveryNote}
-                />
-              </Wrap>
             </div>
           </Card>
 
           {/* ---------------- ส่วนที่ 3 ---------------- */}
-          <Card id={SECTIONS[2].id} className="scroll-mt-24">
+          <Card id={SECTIONS[2]!.id} className="scroll-mt-24">
             <CardHeader
-              tag={SECTIONS[2].tag}
-              title={SECTIONS[2].title}
-              description="ชั้นความลับ ฐานอำนาจ และเงื่อนไขการใช้ข้อมูล"
+              tag={SECTIONS[2]!.tag}
+              title={SECTIONS[2]!.title}
+              description="หมวดหมู่ตามธรรมาภิบาลข้อมูลภาครัฐเป็นตัวกำหนดระดับชั้นและสัญญาอนุญาตที่เลือกได้"
             />
             <div className="grid gap-5 p-6">
+              <Wrap name="dataCategory">
+                <Choice
+                  label="หมวดหมู่ข้อมูลตามธรรมาภิบาลภาครัฐ"
+                  required
+                  value={form.dataCategory}
+                  onChange={(v) => set("dataCategory", v)}
+                  error={fields.dataCategory}
+                  options={optionsFor(DATA_CATEGORY_LABELS)}
+                />
+              </Wrap>
+              <Wrap name="containsPersonalData">
+                <YesNo
+                  label="ชุดข้อมูลนี้มีข้อมูลส่วนบุคคลหรือไม่"
+                  required
+                  labels={HAVE_LABELS}
+                  value={form.containsPersonalData}
+                  forced={rules.containsPersonalData.forced}
+                  onChange={(v) => set("containsPersonalData", v)}
+                  error={fields.containsPersonalData}
+                  hint="ข้อมูลส่วนบุคคลตาม พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562"
+                  forcedHint="ข้อมูลสาธารณะต้องไม่มีข้อมูลส่วนบุคคล"
+                />
+              </Wrap>
+
+              {rules.personalDataDetail.visible ? (
+                <div className="grid gap-5 rounded-xl bg-canvas p-5">
+                  <p className="text-[13px] font-semibold text-navy-800">
+                    รายละเอียดข้อมูลส่วนบุคคล
+                  </p>
+                  <Wrap name="personalDataTypes">
+                    <TextAreaField
+                      label="ประเภทของข้อมูลส่วนบุคคล"
+                      required
+                      value={form.personalDataTypes}
+                      onChange={(e) => set("personalDataTypes", e.target.value)}
+                      error={fields.personalDataTypes}
+                      hint="เช่น ชื่อ-นามสกุล เลขประจำตัวประชาชน ที่อยู่ เบอร์โทรศัพท์"
+                    />
+                  </Wrap>
+                  <Wrap name="dataSubjectCategories">
+                    <TextAreaField
+                      label="กลุ่มหรือประเภทของเจ้าของข้อมูลส่วนบุคคล"
+                      required
+                      value={form.dataSubjectCategories}
+                      onChange={(e) => set("dataSubjectCategories", e.target.value)}
+                      error={fields.dataSubjectCategories}
+                      hint="เช่น ผู้รับบริการของหน่วยงาน ผู้ประกอบการที่ขึ้นทะเบียน"
+                    />
+                  </Wrap>
+                  <Wrap name="personalDataProcessingPeriod">
+                    <Choice
+                      label="ระยะเวลาประมวลผลข้อมูลส่วนบุคคล"
+                      required
+                      value={form.personalDataProcessingPeriod}
+                      onChange={(v) => set("personalDataProcessingPeriod", v)}
+                      error={fields.personalDataProcessingPeriod}
+                      options={optionsFor(PERSONAL_DATA_PERIOD_LABELS)}
+                    />
+                  </Wrap>
+                  {rules.personalDataPeriodAmount.visible ? (
+                    <div className="grid gap-5 sm:grid-cols-2">
+                      <Wrap name="personalDataProcessingPeriodYear">
+                        <TextField
+                          label="จำนวนปี"
+                          inputMode="numeric"
+                          value={form.personalDataProcessingPeriodYear}
+                          onChange={(e) =>
+                            set("personalDataProcessingPeriodYear", e.target.value.replace(/\D/g, ""))
+                          }
+                          error={fields.personalDataProcessingPeriodYear}
+                          hint="นับจากวันที่เอกสารฉบับนี้มีผล"
+                        />
+                      </Wrap>
+                      <Wrap name="personalDataProcessingPeriodMonth">
+                        <TextField
+                          label="จำนวนเดือน"
+                          inputMode="numeric"
+                          value={form.personalDataProcessingPeriodMonth}
+                          onChange={(e) =>
+                            set(
+                              "personalDataProcessingPeriodMonth",
+                              e.target.value.replace(/\D/g, ""),
+                            )
+                          }
+                          error={fields.personalDataProcessingPeriodMonth}
+                          hint="0–11 เดือน ถ้ามากกว่านั้นให้กรอกเป็นจำนวนปี"
+                        />
+                      </Wrap>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
               <div className="grid gap-5 sm:grid-cols-2">
                 <Wrap name="dataClassification">
                   <Choice
-                    label="ชั้นความลับของข้อมูล"
+                    label="ระดับชั้นข้อมูล"
                     required
                     value={form.dataClassification}
                     onChange={(v) => set("dataClassification", v)}
                     error={fields.dataClassification}
-                    options={optionsOf(CLASSIFICATION_LABELS)}
+                    options={optionsFor(DATA_CLASSIFICATION_LABELS, rules.dataClassification.options)}
+                    forced={Boolean(rules.dataClassification.forced)}
+                    disabledHint={
+                      form.dataCategory
+                        ? "ระบบกำหนดให้ตามหมวดหมู่ข้อมูลที่เลือก"
+                        : "เลือกหมวดหมู่ข้อมูลก่อน จึงจะเลือกระดับชั้นได้"
+                    }
+                    hint="ชั้นความลับตาม พ.ร.บ.ข้อมูลข่าวสารของราชการ พ.ศ. 2540"
                   />
                 </Wrap>
-                <Wrap name="hasPersonalData">
-                  <SelectField
-                    label="มีข้อมูลส่วนบุคคลหรือไม่"
-                    required
-                    value={form.hasPersonalData}
-                    onChange={(e) => set("hasPersonalData", e.target.value)}
-                    error={fields.hasPersonalData}
-                  >
-                    <option value="">เลือก</option>
-                    <option value="yes">มี</option>
-                    <option value="no">ไม่มี</option>
-                  </SelectField>
-                </Wrap>
-              </div>
-              {form.hasPersonalData === "yes" ? (
-                <Wrap name="personalDataMeasure">
-                  <TextAreaField
-                    label="มาตรการคุ้มครองข้อมูลส่วนบุคคล"
-                    required
-                    value={form.personalDataMeasure}
-                    onChange={(e) => set("personalDataMeasure", e.target.value)}
-                    error={fields.personalDataMeasure}
-                    hint="เช่น การทำข้อมูลนิรนาม การจำกัดสิทธิ์เข้าถึง (อย่างน้อย 20 ตัวอักษร)"
-                  />
-                </Wrap>
-              ) : null}
-              <Wrap name="legalBasis">
-                <TextAreaField
-                  label="ฐานอำนาจตามกฎหมาย"
-                  required
-                  value={form.legalBasis}
-                  onChange={(e) => set("legalBasis", e.target.value)}
-                  error={fields.legalBasis}
-                  hint="ระบุกฎหมายหรือระเบียบที่ให้อำนาจหน่วยงานเผยแพร่/แลกเปลี่ยนข้อมูลชุดนี้"
-                />
-              </Wrap>
-              <div className="grid gap-5 sm:grid-cols-2">
-                <Wrap name="licenseType">
+                <Wrap name="licenseId">
                   <Choice
                     label="สัญญาอนุญาตให้ใช้ข้อมูล"
                     required
-                    value={form.licenseType}
-                    onChange={(v) => set("licenseType", v)}
-                    error={fields.licenseType}
-                    options={optionsOf(LICENSE_LABELS)}
-                  />
-                </Wrap>
-                <Wrap name="usageRestriction">
-                  <TextField
-                    label="ข้อจำกัดการใช้ข้อมูล"
-                    value={form.usageRestriction}
-                    onChange={(e) => set("usageRestriction", e.target.value)}
-                    error={fields.usageRestriction}
+                    value={form.licenseId}
+                    onChange={(v) => set("licenseId", v)}
+                    error={fields.licenseId}
+                    options={optionsFor(LICENSE_LABELS, rules.licenseId.options)}
+                    forced={Boolean(rules.licenseId.forced)}
+                    disabledHint={
+                      form.dataClassification
+                        ? "ระบบกำหนดให้ตามระดับชั้นข้อมูลที่เลือก"
+                        : "เลือกระดับชั้นข้อมูลก่อน จึงจะเลือกสัญญาอนุญาตได้"
+                    }
                   />
                 </Wrap>
               </div>
+            </div>
+          </Card>
+
+          {/* ---------------- ส่วนที่ 4 ---------------- */}
+          <Card id={SECTIONS[3]!.id} className="scroll-mt-24">
+            <CardHeader
+              tag={SECTIONS[3]!.tag}
+              title={SECTIONS[3]!.title}
+              description="สิทธิที่หน่วยงานให้สำนักงานในการจัดเก็บและส่งต่อข้อมูล — “อนุญาต” คือส่งต่อได้ทันที “ไม่อนุญาต” คือต้องขออนุญาตเป็นครั้ง ๆ ไป"
+            />
+            <div className="grid gap-5 p-6">
+              <Wrap name="allowOriginalRawDataRetention">
+                <YesNo
+                  label="ท่านอนุญาตให้สำนักงานยังคงจัดเก็บข้อมูลดิบต้นฉบับ (original raw data) แม้ถูกแปลงสภาพแล้วหรือไม่"
+                  required
+                  labels={GRANT_LABELS}
+                  value={form.allowOriginalRawDataRetention}
+                  forced={rules.allowOriginalRawDataRetention.forced}
+                  onChange={(v) => set("allowOriginalRawDataRetention", v)}
+                  error={fields.allowOriginalRawDataRetention}
+                  forcedHint="ชุดข้อมูลที่เปิดเผยได้ทั้งฉบับ อนุญาตให้ทุกข้อโดยอัตโนมัติ"
+                />
+              </Wrap>
+              <Wrap name="allowOriginalRawDataSharing">
+                <YesNo
+                  label="กรณีให้สำนักงานเก็บข้อมูลดิบต้นฉบับ ท่านอนุญาตให้ส่งต่อข้อมูลดิบต้นฉบับนั้นแก่หน่วยงานของรัฐอื่นใช้ประโยชน์หรือไม่"
+                  required
+                  labels={GRANT_LABELS}
+                  value={form.allowOriginalRawDataSharing}
+                  forced={rules.allowOriginalRawDataSharing.forced}
+                  onChange={(v) => set("allowOriginalRawDataSharing", v)}
+                  error={fields.allowOriginalRawDataSharing}
+                  forcedHint={
+                    form.allowOriginalRawDataRetention === "N"
+                      ? "ไม่ได้ให้สำนักงานเก็บข้อมูลดิบต้นฉบับไว้ จึงส่งต่อไม่ได้"
+                      : "ชุดข้อมูลที่เปิดเผยได้ทั้งฉบับ อนุญาตให้ทุกข้อโดยอัตโนมัติ"
+                  }
+                />
+              </Wrap>
+              <Wrap name="allowTransformedRawDataSharing">
+                <YesNo
+                  label="ท่านอนุญาตให้สำนักงานส่งต่อข้อมูลดิบแปลงสภาพที่สร้างจากข้อมูลดิบต้นฉบับของท่าน ไปยังระบบเชื่อมโยงข้อมูลอื่นหรือไม่"
+                  required
+                  labels={GRANT_LABELS}
+                  value={form.allowTransformedRawDataSharing}
+                  forced={rules.allowTransformedRawDataSharing.forced}
+                  onChange={(v) => set("allowTransformedRawDataSharing", v)}
+                  error={fields.allowTransformedRawDataSharing}
+                  forcedHint="ข้อมูลระดับนี้ส่งต่อข้อมูลแปลงสภาพได้โดยอัตโนมัติ"
+                />
+              </Wrap>
+              {rules.transformedRawDataRecipients.visible ? (
+                <Wrap name="transformedRawDataRecipients">
+                  <TextAreaField
+                    label="หน่วยงานปลายทางที่อนุญาตให้ส่งต่อข้อมูลดิบแปลงสภาพ"
+                    required
+                    maxLength={500}
+                    value={form.transformedRawDataRecipients}
+                    onChange={(e) => set("transformedRawDataRecipients", e.target.value)}
+                    error={fields.transformedRawDataRecipients}
+                    hint="ชุดข้อมูลมีข้อมูลส่วนบุคคล จึงต้องระบุว่าอนุญาตให้ส่งต่อไปยังหน่วยงานใดบ้าง"
+                  />
+                </Wrap>
+              ) : null}
+              <Wrap name="allowTransformedRawDataGdxSharing">
+                <YesNo
+                  label="ท่านอนุญาตให้สำนักงานส่งต่อข้อมูลดิบแปลงสภาพ ไปยังศูนย์แลกเปลี่ยนข้อมูลกลางภาครัฐ (GDX) หรือไม่"
+                  required
+                  labels={GRANT_LABELS}
+                  value={form.allowTransformedRawDataGdxSharing}
+                  forced={rules.allowTransformedRawDataGdxSharing.forced}
+                  onChange={(v) => set("allowTransformedRawDataGdxSharing", v)}
+                  error={fields.allowTransformedRawDataGdxSharing}
+                  forcedHint="ข้อมูลระดับนี้ส่งต่อข้อมูลแปลงสภาพได้โดยอัตโนมัติ"
+                />
+              </Wrap>
+              {rules.transformedRawDataGdxRecipients.visible ? (
+                <Wrap name="transformedRawDataGdxRecipients">
+                  <TextAreaField
+                    label="หน่วยงานที่อนุญาตให้รับข้อมูลผ่าน GDX"
+                    required
+                    maxLength={500}
+                    value={form.transformedRawDataGdxRecipients}
+                    onChange={(e) => set("transformedRawDataGdxRecipients", e.target.value)}
+                    error={fields.transformedRawDataGdxRecipients}
+                  />
+                </Wrap>
+              ) : null}
+              <Wrap name="allowAggregatedDataSharing">
+                <YesNo
+                  label="ท่านอนุญาตให้สำนักงานส่งต่อข้อมูลรวม (aggregated data) ที่สร้างจากข้อมูลดิบต้นฉบับของท่านหรือไม่"
+                  required
+                  labels={GRANT_LABELS}
+                  value={form.allowAggregatedDataSharing}
+                  forced={rules.allowAggregatedDataSharing.forced}
+                  onChange={(v) => set("allowAggregatedDataSharing", v)}
+                  error={fields.allowAggregatedDataSharing}
+                  forcedHint="ข้อมูลระดับนี้ส่งต่อข้อมูลรวมได้โดยอัตโนมัติ"
+                />
+              </Wrap>
+              {rules.aggregatedDataRecipients.visible ? (
+                <Wrap name="aggregatedDataRecipients">
+                  <TextAreaField
+                    label="หน่วยงานปลายทางที่อนุญาตให้รับข้อมูลรวม"
+                    required
+                    maxLength={500}
+                    value={form.aggregatedDataRecipients}
+                    onChange={(e) => set("aggregatedDataRecipients", e.target.value)}
+                    error={fields.aggregatedDataRecipients}
+                  />
+                </Wrap>
+              ) : null}
+              {rules.authorizePersonalDataAnonymization.visible ? (
+                <Wrap name="authorizePersonalDataAnonymization">
+                  <YesNo
+                    label="ท่านมอบหมายให้สำนักงานประมวลผลข้อมูลส่วนบุคคลซึ่งเป็นข้อมูลดิบต้นฉบับ ให้เป็นข้อมูลที่ไม่สามารถระบุตัวตนได้ เพื่อการใช้ประโยชน์เชิงวิเคราะห์ต่อไปหรือไม่"
+                    required
+                    labels={ASSIGN_LABELS}
+                    value={form.authorizePersonalDataAnonymization}
+                    forced=""
+                    onChange={(v) => set("authorizePersonalDataAnonymization", v)}
+                    error={fields.authorizePersonalDataAnonymization}
+                    hint="ถ้าไม่มอบหมาย สำนักงานจะนำข้อมูลชุดนี้ไปใช้สร้างแบบจำลองไม่ได้"
+                  />
+                </Wrap>
+              ) : null}
+
               <div data-field="legalAcceptedAt" className="rounded-xl bg-canvas p-4">
                 <label className="flex items-start gap-3">
                   <input
@@ -621,11 +798,11 @@ export default function EditDatasetRequestPage() {
             </div>
           </Card>
 
-          {/* ---------------- ส่วนที่ 4 ---------------- */}
-          <Card id={SECTIONS[3].id} className="scroll-mt-24">
+          {/* ---------------- ส่วนที่ 5 ---------------- */}
+          <Card id={SECTIONS[4]!.id} className="scroll-mt-24">
             <CardHeader
-              tag={SECTIONS[3].tag}
-              title={SECTIONS[3].title}
+              tag={SECTIONS[4]!.tag}
+              title={SECTIONS[4]!.title}
               description="พจนานุกรมข้อมูลบังคับแนบ ตัวอย่างข้อมูลแนบได้ถ้ามี"
             />
             <div className="grid gap-5 p-6 sm:grid-cols-2">
@@ -678,6 +855,11 @@ function Wrap({ name, children }: { name: string; children: ReactNode }) {
   return <div data-field={name}>{children}</div>;
 }
 
+/** ตัวนับตัวอักษรต่อท้ายคำแนะนำ — ช่องที่มีเพดานความยาวควรบอกว่าเหลือเท่าไร */
+function counterHint(value: string, max: number, hint: string): string {
+  return `${hint} · ${value.length.toLocaleString("th-TH")}/${max.toLocaleString("th-TH")}`;
+}
+
 function Choice({
   label,
   required,
@@ -685,6 +867,9 @@ function Choice({
   onChange,
   error,
   options,
+  hint,
+  forced,
+  disabledHint,
 }: {
   label: string;
   required?: boolean;
@@ -692,13 +877,20 @@ function Choice({
   onChange: (value: string) => void;
   error?: string;
   options: Array<[string, string]>;
+  hint?: string;
+  /** true = ชีท conditions บังคับค่านี้ ผู้ใช้เปลี่ยนไม่ได้ แต่ยังต้องเห็น */
+  forced?: boolean;
+  disabledHint?: string;
 }) {
+  const locked = Boolean(forced) || options.length === 0;
   return (
     <SelectField
       label={label}
       required={required}
       value={value}
       error={error}
+      disabled={locked}
+      hint={locked ? (disabledHint ?? hint) : hint}
       onChange={(e) => onChange(e.target.value)}
     >
       <option value="">เลือก</option>
@@ -711,32 +903,130 @@ function Choice({
   );
 }
 
-/** คำสำคัญเป็นชิป — พิมพ์แล้วกด Enter หรือคอมมาเพื่อเพิ่ม */
+/**
+ * คำถามใช่/ไม่ใช่ — ใช้ radio ไม่ใช่ dropdown เพราะคำถามยาวและมีแค่สองคำตอบ
+ * ค่าที่ถูกบังคับยังแสดงเป็นตัวเลือกที่ถูกเลือกไว้ พร้อมเหตุผล ตามหมายเหตุท้ายชีท conditions
+ */
+function YesNo({
+  label,
+  required,
+  labels,
+  value,
+  forced,
+  onChange,
+  error,
+  hint,
+  forcedHint,
+}: {
+  label: string;
+  required?: boolean;
+  labels: { Y: string; N: string };
+  value: string;
+  forced: string;
+  onChange: (value: string) => void;
+  error?: string;
+  hint?: string;
+  forcedHint?: string;
+}) {
+  const locked = forced !== "";
+  return (
+    <fieldset
+      className={clsx(
+        "rounded-xl border p-4",
+        error ? "border-danger" : "border-line",
+        locked && "bg-navy-50/40",
+      )}
+      aria-invalid={error ? true : undefined}
+    >
+      <legend className="px-1 text-sm font-medium leading-relaxed text-ink">
+        {label}
+        {required ? <span className="ml-1 text-coral-500">*</span> : null}
+      </legend>
+      <div className="mt-2 flex flex-wrap gap-x-6 gap-y-2">
+        {(["Y", "N"] as const).map((code) => (
+          <label
+            key={code}
+            className={clsx(
+              "flex items-center gap-2 text-[15px]",
+              locked ? "text-ink-muted" : "cursor-pointer text-ink",
+            )}
+          >
+            <input
+              type="radio"
+              name={label}
+              value={code}
+              checked={value === code}
+              disabled={locked}
+              onChange={() => onChange(code)}
+              className="h-4 w-4 border-line text-coral-500 focus:ring-2 focus:ring-navy-100"
+            />
+            {labels[code]}
+          </label>
+        ))}
+      </div>
+      {error ? (
+        <p className="mt-2 text-[13px] text-danger" role="alert">
+          {error}
+        </p>
+      ) : locked ? (
+        <p className="mt-2 flex items-start gap-1.5 text-[13px] text-ink-muted">
+          <svg viewBox="0 0 16 16" className="mt-0.5 h-3.5 w-3.5 shrink-0" fill="currentColor" aria-hidden="true">
+            <path d="M8 1a3 3 0 0 0-3 3v2H4.5A1.5 1.5 0 0 0 3 7.5v6A1.5 1.5 0 0 0 4.5 15h7a1.5 1.5 0 0 0 1.5-1.5v-6A1.5 1.5 0 0 0 11.5 6H11V4a3 3 0 0 0-3-3m0 1.5A1.5 1.5 0 0 1 9.5 4v2h-3V4A1.5 1.5 0 0 1 8 2.5" />
+          </svg>
+          <span>ระบบกำหนดให้เป็น “{labels[forced as "Y" | "N"]}” — {forcedHint}</span>
+        </p>
+      ) : hint ? (
+        <p className="mt-2 text-[13px] text-ink-muted">{hint}</p>
+      ) : null}
+    </fieldset>
+  );
+}
+
+/** ช่องที่ระบบกรอกให้และผู้ใช้แก้ไม่ได้ — แสดงเหมือนช่องอื่นเพื่อให้อ่านฟอร์มได้ต่อเนื่อง */
+function ReadOnlyField({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-sm font-medium text-ink">{label}</span>
+      <p className="flex h-11 items-center rounded-[10px] border border-line bg-navy-50/60 px-3.5 text-[15px] text-ink-muted">
+        {value || "—"}
+      </p>
+      {hint ? <p className="text-[13px] text-ink-muted">{hint}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * คำสำคัญเป็นชิป — พิมพ์แล้วกด Enter หรือคอมมาเพื่อเพิ่ม
+ * เก็บลงฐานข้อมูลเป็นสตริงเดียวคั่นด้วย "," ตามคอลัมน์ tag_string ในชีท
+ */
 function KeywordInput({
   value,
   onChange,
   error,
 }: {
-  value: string[];
-  onChange: (next: string[]) => void;
+  value: string;
+  onChange: (next: string) => void;
   error?: string;
 }) {
   const [draft, setDraft] = useState("");
+  const tags = splitTags(value);
 
   const add = () => {
     const word = draft.trim().replace(/,$/, "");
-    if (!word || value.includes(word) || value.length >= 10) {
+    if (!word || tags.includes(word)) {
       setDraft("");
       return;
     }
-    onChange([...value, word]);
+    onChange([...tags, word].join(","));
     setDraft("");
   };
+
+  const remaining = 200 - value.length;
 
   return (
     <div className="flex flex-col gap-1.5">
       <span className="text-sm font-medium text-ink">
-        คำสำคัญ (keywords)
+        คำสำคัญ หรือคำค้น
         <span className="ml-1 text-coral-500">*</span>
       </span>
       <div
@@ -745,7 +1035,7 @@ function KeywordInput({
           error ? "border-danger" : "border-line",
         )}
       >
-        {value.map((word) => (
+        {tags.map((word) => (
           <span
             key={word}
             className="inline-flex items-center gap-1.5 rounded-full bg-navy-50 py-1 pl-3 pr-2 text-[13px] text-navy-800"
@@ -754,7 +1044,7 @@ function KeywordInput({
             <button
               type="button"
               aria-label={`ลบคำสำคัญ ${word}`}
-              onClick={() => onChange(value.filter((w) => w !== word))}
+              onClick={() => onChange(tags.filter((w) => w !== word).join(","))}
               className="grid h-4 w-4 place-items-center rounded-full text-navy-600 transition-colors hover:bg-navy-200"
             >
               ×
@@ -771,7 +1061,8 @@ function KeywordInput({
             }
           }}
           onBlur={add}
-          placeholder={value.length === 0 ? "พิมพ์คำสำคัญแล้วกด Enter" : ""}
+          maxLength={Math.max(remaining, 0)}
+          placeholder={tags.length === 0 ? "พิมพ์คำสำคัญแล้วกด Enter" : ""}
           className="h-8 min-w-40 flex-1 bg-transparent px-1.5 text-[15px] outline-none placeholder:text-ink-subtle"
         />
       </div>
@@ -780,7 +1071,9 @@ function KeywordInput({
           {error}
         </p>
       ) : (
-        <p className="text-[13px] text-ink-muted">อย่างน้อย 1 คำ ไม่เกิน 10 คำ</p>
+        <p className="text-[13px] text-ink-muted">
+          อย่างน้อย 1 คำ · รวมกันไม่เกิน 200 ตัวอักษร (เหลือ {Math.max(remaining, 0).toLocaleString("th-TH")})
+        </p>
       )}
     </div>
   );

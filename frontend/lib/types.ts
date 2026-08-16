@@ -1,16 +1,4 @@
-import type {
-  CLASSIFICATION_LABELS,
-  DATASET_CATEGORY_LABELS,
-  DATASET_TYPE_LABELS,
-  DATA_FORMAT_LABELS,
-  DELIVERY_METHOD_LABELS,
-  RequestStatus,
-  ReviewTaskType,
-  ReviewResult,
-  FREQUENCY_LABELS,
-  GEO_COVERAGE_LABELS,
-  LICENSE_LABELS,
-} from "./status";
+import type { RequestStatus, ReviewTaskType, ReviewResult } from "./status";
 
 export interface Attachment {
   id: string;
@@ -111,15 +99,6 @@ export const ATTACHMENT_LABELS: Record<Attachment["kind"], string> = {
 
 // ------------------------------------------------------------------ ชุดข้อมูล (Journey C)
 
-export type DatasetType = keyof typeof DATASET_TYPE_LABELS;
-export type DatasetCategory = keyof typeof DATASET_CATEGORY_LABELS;
-export type UpdateFrequency = keyof typeof FREQUENCY_LABELS;
-export type GeoCoverage = keyof typeof GEO_COVERAGE_LABELS;
-export type DeliveryMethod = keyof typeof DELIVERY_METHOD_LABELS;
-export type DataFormat = keyof typeof DATA_FORMAT_LABELS;
-export type DataClassification = keyof typeof CLASSIFICATION_LABELS;
-export type LicenseType = keyof typeof LICENSE_LABELS;
-
 export interface DatasetAttachment {
   id: string;
   kind: "DATA_DICTIONARY" | "EXAMPLE_DATA" | "GENERATED_FORM";
@@ -136,35 +115,47 @@ export interface DatasetRequest {
   status: RequestStatus;
   currentTaskType: ReviewTaskType | null;
 
-  nameTh: string | null;
-  nameEn: string | null;
-  description: string | null;
-  datasetType: DatasetType | null;
-  category: DatasetCategory | null;
-  keywords: string[];
-  updateFrequency: UpdateFrequency | null;
-  geoCoverage: GeoCoverage | null;
-  dataStartDate: string | null;
-  dataEndDate: string | null;
-  estimatedRecords: number | null;
-  stewardName: string | null;
-  stewardEmail: string | null;
-  stewardPhone: string | null;
+  /**
+   * metadata ตามชีท A4_dataset_metadata ของ metadata_mapping.xlsx
+   * ชื่อฟิลด์ตรงกับคอลัมน์ในฐานข้อมูล และเก็บเป็น **รหัส** ของมาตรฐาน ("1", "01", "G0")
+   * ป้ายภาษาไทยของแต่ละรหัสอยู่ใน lib/dataset-form.ts
+   */
+  dataType: string | null;
+  dataTopic: string | null;
+  dataTopicOther: string | null;
+  title: string | null;
+  name: string | null;
+  maintainer: string | null;
+  maintainerEmail: string | null;
+  tagString: string | null;
+  notes: string | null;
+  objective: string | null;
+  updateFrequencyUnit: string | null;
+  updateFrequencyInterval: number | null;
+  deliveryFrequency: string | null;
+  geoCoverage: string | null;
+  dataSource: string | null;
+  dataFormat: string | null;
+  dataFormatOther: string | null;
+  dataCategory: string | null;
+  containsPersonalData: boolean | null;
+  personalDataTypes: string | null;
+  dataSubjectCategories: string | null;
+  personalDataProcessingPeriod: string | null;
+  personalDataProcessingPeriodYear: number | null;
+  personalDataProcessingPeriodMonth: number | null;
+  dataClassification: string | null;
+  licenseId: string | null;
+  allowOriginalRawDataRetention: boolean | null;
+  allowOriginalRawDataSharing: boolean | null;
+  allowTransformedRawDataSharing: boolean | null;
+  allowTransformedRawDataGdxSharing: boolean | null;
+  allowAggregatedDataSharing: boolean | null;
+  authorizePersonalDataAnonymization: boolean | null;
+  transformedRawDataRecipients: string | null;
+  transformedRawDataGdxRecipients: string | null;
+  aggregatedDataRecipients: string | null;
 
-  deliveryMethod: DeliveryMethod | null;
-  dataFormat: DataFormat | null;
-  deliveryFrequency: UpdateFrequency | null;
-  deliveryEndpoint: string | null;
-  technicalContactName: string | null;
-  technicalContactEmail: string | null;
-  deliveryNote: string | null;
-
-  dataClassification: DataClassification | null;
-  hasPersonalData: boolean | null;
-  personalDataMeasure: string | null;
-  legalBasis: string | null;
-  licenseType: LicenseType | null;
-  usageRestriction: string | null;
   legalAcceptedAt: string | null;
 
   revisionNote: string | null;
@@ -201,7 +192,8 @@ export interface DatasetRequest {
 export interface DatasetRequestListItem {
   id: string;
   requestNumber: string;
-  nameTh: string | null;
+  /** ชื่อชุดข้อมูลภาษาไทย — คอลัมน์ `title` ในชีท A4_dataset_metadata */
+  title: string | null;
   status: RequestStatus;
   currentTaskType: ReviewTaskType | null;
   submittedAt: string | null;
@@ -240,5 +232,5 @@ export interface AppNotification {
 }
 
 /** ชื่อที่แสดงของคำขอ — ร่างที่ยังไม่ตั้งชื่อให้ใช้เลขที่คำขอแทน */
-export const datasetTitle = (r: { nameTh: string | null; requestNumber: string }) =>
-  r.nameTh?.trim() || `คำขอ ${r.requestNumber}`;
+export const datasetTitle = (r: { title: string | null; requestNumber: string }) =>
+  r.title?.trim() || `คำขอ ${r.requestNumber}`;
