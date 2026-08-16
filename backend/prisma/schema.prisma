@@ -121,6 +121,7 @@ model UserAccount {
 
   activationKeys       ActivationKey[]
   roleAssignments      UserRoleAssignment[]
+  sessions             Session[]
   assignedReviewTasks  ReviewTask[]            @relation("ReviewTaskAssignee")
   delegatedReviewTasks ReviewTask[]            @relation("ReviewTaskAssigner")
   legalAcceptances     LegalAcceptance[]
@@ -232,6 +233,67 @@ model UserRoleAssignment {
   @@index([userAccountId, status])
   @@index([organizationId, roleId, status])
   @@map("user_role_assignment")
+  @@schema("iam")
+}
+
+/// เหตุผลที่ session ถูกเพิกถอน — ใช้ทั้งในคอลัมน์ revoked_reason และใน audit_event
+///
+/// เบี่ยงจากดีไซน์: ไม่มีใน Excel (ตาราง session เองก็ไม่มี — ดู model Session)
+enum SessionRevokeReason {
+  LOGOUT /// ผู้ใช้กดออกจากระบบบนอุปกรณ์นี้
+  LOGOUT_ALL /// ผู้ใช้กดออกจากระบบทุกอุปกรณ์
+  PASSWORD_CHANGED /// ตั้งรหัสผ่านใหม่ — ใบอื่นของบัญชีเดียวกันตายทั้งหมด
+  ACCOUNT_SUSPENDED /// บัญชีถูกระงับหรือยุติการใช้งาน
+  ROTATED /// ออกใบใหม่แทนใบเดิมตอนสิทธิ์เปลี่ยนระดับ (กัน session fixation)
+  EXPIRED /// หมดอายุแบบ absolute หรือ idle แล้วถูกเก็บกวาด
+
+  @@schema("iam")
+}
+
+/// session ที่ยังเปิดอยู่หนึ่งใบ = cookie `bdi_session` หนึ่งใบ
+///
+/// เบี่ยงจากดีไซน์: **ไม่มีตารางนี้ใน Excel** เหมือน `password_hash` และ `iam.otp_code`
+/// ที่เพิ่มมาก่อนหน้า ดีไซน์ไม่ได้ระบุวิธีเก็บ session ไว้เลย ของเดิมจึงเป็น JWT ที่ไม่มี
+/// สถานะฝั่ง server — ซึ่งแปลว่า logout จริง ๆ ทำไม่ได้ (docs/09-auth-tokens.md §1.4)
+///
+/// cookie เก็บค่าสุ่ม 32 ไบต์แบบ opaque ตัวแถวนี้เก็บแค่ **SHA-256 ของค่านั้น**
+/// ใช้ SHA-256 ไม่ใช่ bcrypt ด้วยเหตุผลเดียวกับ `generateToken()` — ค่าสุ่มความยาวเต็ม
+/// ไม่ใช่รหัสผ่านที่คนตั้งเอง จึงไม่มีอะไรให้ brute-force และต้อง lookup ด้วยค่าตรง ๆ
+///
+/// อายุมีสองชั้นและต้องผ่านทั้งคู่: `expires_at` (absolute, SESSION_TTL_DAYS)
+/// และ `last_seen_at` (idle, SESSION_IDLE_HOURS)
+model Session {
+  id String @id @default(uuid()) @db.Uuid
+
+  userAccountId String      @map("user_account_id") @db.Uuid
+  userAccount   UserAccount @relation(fields: [userAccountId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 (hex) ของ session id ที่อยู่ใน cookie — ค่าดิบไม่เคยถูกเขียนลงฐานข้อมูล
+  tokenHash String @unique @map("token_hash") @db.VarChar(64)
+
+  issuedAt  DateTime @default(now()) @map("issued_at") @db.Timestamptz(6)
+  /// absolute expiry — ต่ออายุไม่ได้ ครบแล้วต้องเข้าสู่ระบบใหม่
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  /// idle expiry — ขยับทุก request ที่ผ่าน requireAuth
+  lastSeenAt DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+
+  revokedAt     DateTime?            @map("revoked_at") @db.Timestamptz(6)
+  revokedReason SessionRevokeReason? @map("revoked_reason")
+
+  /// บันทึกไว้เพื่อให้สอบสวนย้อนหลังได้ว่า session ใบไหนมาจากที่ใด
+  /// (audit_event เก็บสองค่านี้อยู่แล้ว จึงไม่ใช่ข้อมูลชนิดใหม่สำหรับระบบ)
+  userAgent String? @map("user_agent")
+  ipAddress String? @map("ip_address") @db.VarChar(64)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  /// ใบที่ยังใช้ได้ของบัญชีหนึ่ง — เส้นทางของ "ออกจากระบบทุกอุปกรณ์"
+  @@index([userAccountId, revokedAt])
+  @@index([expiresAt])
+  @@map("session")
   @@schema("iam")
 }
 
@@ -1341,6 +1403,13 @@ model IntegrationOperation {
 
   /// Unique retry-safe key
   idempotencyKey String @unique @map("idempotency_key") @db.VarChar(255)
+
+  /// เบี่ยงจากดีไซน์: ไม่มีใน Excel
+  /// OIDC `nonce` ของคำขอนี้ (RECOMMENDED ใน code flow) สุ่มคู่กับ `state` แล้วเอามาเทียบ
+  /// กับ claim `nonce` ใน id_token ตอน callback — `state` กัน CSRF ได้อยู่แล้ว แต่กัน
+  /// id_token ที่ถูกยัดมาจากที่อื่นไม่ได้ เก็บเป็นคอลัมน์ของตัวเองเพราะ external_reference
+  /// มีความหมายอื่นอยู่แล้ว (reference ที่ปลายทางส่งกลับมา)
+  requestNonce String? @map("request_nonce") @db.VarChar(255)
 
   status       IntegrationStatus @default(PENDING)
   attemptCount Int               @default(0) @map("attempt_count")

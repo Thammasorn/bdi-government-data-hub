@@ -19,7 +19,7 @@ import { IntegrationStatus, IntegrationType, type IntegrationOperation } from "@
 import { prisma } from "../db.js";
 import { env } from "../env.js";
 import { correlationId } from "./context.js";
-import { generateState } from "./thaid.js";
+import { generateNonce, generateState } from "./thaid.js";
 
 /**
  * operation code
@@ -58,8 +58,9 @@ export async function startThaidOperation(params: {
   purpose: ThaidPurpose;
   subjectId?: string;
   organizationId?: string | null;
-}): Promise<{ state: string; operation: IntegrationOperation }> {
+}): Promise<{ state: string; nonce: string; operation: IntegrationOperation }> {
   const state = generateState();
+  const nonce = generateNonce();
   const operation = await prisma.integrationOperation.create({
     data: {
       integrationType: IntegrationType.THAID,
@@ -68,11 +69,16 @@ export async function startThaidOperation(params: {
       subjectId: params.subjectId ?? randomUUID(),
       organizationId: params.organizationId ?? null,
       idempotencyKey: `thaid:${state}`,
+      /**
+       * `nonce` เก็บคู่กับ `state` ในแถวเดียวกัน callback จึงเทียบได้โดยไม่ต้องเชื่อ
+       * อะไรที่เดินทางผ่านเบราว์เซอร์ — เหตุผลเดียวกับที่ state ไม่ได้อยู่ใน cookie
+       */
+      requestNonce: nonce,
       status: IntegrationStatus.PENDING,
       correlationId: correlationId(),
     },
   });
-  return { state, operation };
+  return { state, nonce, operation };
 }
 
 export type StateFailure = "not_found" | "expired" | "already_used";

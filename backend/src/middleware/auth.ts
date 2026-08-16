@@ -1,10 +1,13 @@
+import { timingSafeEqual } from "node:crypto";
+
 import type { NextFunction, Request, Response } from "express";
-import { RoleAssignmentStatus, UserAccountStatus } from "@prisma/client";
+import { RoleAssignmentStatus, SessionRevokeReason, UserAccountStatus } from "@prisma/client";
 
 import { prisma } from "../db.js";
 import { env } from "../env.js";
-import { SESSION_COOKIE, verifySession, type SessionPayload } from "../lib/auth.js";
+import { SESSION_COOKIE, hashToken, type SessionPayload } from "../lib/auth.js";
 import { setActor } from "../lib/context.js";
+import { resolveSession, revokeSessionsFor } from "../lib/session.js";
 import { ORGANIZATION_SCOPED_ROLES, type RoleCode } from "../lib/system.js";
 
 declare global {
@@ -18,6 +21,10 @@ declare global {
 
 /**
  * ยืนยันตัวตนจาก cookie แล้ว **อ่านสิทธิ์กับหน่วยงานใหม่จากฐานข้อมูลทุกครั้ง**
+ *
+ * cookie เก็บค่าสุ่ม opaque ที่ชี้ไปยังแถว `iam.session` — ตัวมันเองไม่ได้บอกอะไรเลย
+ * แม้แต่ว่าเป็นของใคร แถว session ต้องยังไม่ถูกเพิกถอนและยังไม่หมดอายุทั้ง absolute
+ * และ idle มิฉะนั้น 401 (ดู lib/session.ts)
  *
  * cookie บอกได้แค่ว่า "ใคร" — บอกไม่ได้ว่าตอนนี้คนนั้นอยู่หน่วยงานไหนหรือมี role อะไร
  * เพราะทั้งสองอย่างเปลี่ยนได้ระหว่างที่ session ยังไม่หมดอายุ: ผู้ใช้สร้างหน่วยงาน
@@ -36,15 +43,19 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     res.status(401).json({ error: "unauthenticated", message: "กรุณาเข้าสู่ระบบ" });
 
   try {
-    const token = req.cookies?.[SESSION_COOKIE];
-    const session = token ? verifySession(token) : null;
+    const rawSessionId = req.cookies?.[SESSION_COOKIE];
+    if (!rawSessionId) {
+      unauthenticated();
+      return;
+    }
+    const { session } = await resolveSession(rawSessionId);
     if (!session) {
       unauthenticated();
       return;
     }
 
     const user = await prisma.userAccount.findUnique({
-      where: { id: session.sub },
+      where: { id: session.userAccountId },
       select: {
         id: true,
         email: true,
@@ -58,8 +69,18 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
         },
       },
     });
-    // บัญชีถูกลบหรือถูกระงับหลัง cookie ออกไปแล้ว — ตัดสิทธิ์ทันที ไม่รอ cookie หมดอายุ
+    /**
+     * บัญชีถูกลบหรือถูกระงับหลัง cookie ออกไปแล้ว — ตัดสิทธิ์ทันที ไม่รอ cookie หมดอายุ
+     *
+     * ตอนนี้ปิด session ของบัญชีนั้นทิ้งด้วย ไม่ใช่แค่ปฏิเสธ request นี้: การระงับบัญชี
+     * ยังไม่มี endpoint ของตัวเอง (ทำผ่านฐานข้อมูลตรง ๆ) แถวที่ค้างอยู่จึงต้องถูกปิด
+     * ที่นี่ ไม่งั้น "ดูว่าใครล็อกอินค้างอยู่" จะรวมคนที่เข้าไม่ได้แล้วไปด้วย
+     */
     if (!user || user.status !== UserAccountStatus.ACTIVE) {
+      await revokeSessionsFor(prisma, {
+        userAccountId: session.userAccountId,
+        reason: SessionRevokeReason.ACCOUNT_SUSPENDED,
+      });
       unauthenticated();
       return;
     }
@@ -84,7 +105,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       assignments.find((a) => a.organizationId)?.organizationId ??
       null;
 
-    req.session = { sub: user.id, email: user.email, roles, organizationId };
+    req.session = { sub: user.id, email: user.email, roles, organizationId, sessionId: session.id };
     // ให้ logAudit() รู้ว่าใครเป็นผู้กระทำ โดยไม่ต้องส่ง actorId ผ่านทุกชั้น
     setActor(user.id);
     next();
@@ -105,12 +126,32 @@ export function requireRole(...allowed: RoleCode[]) {
 }
 
 /**
+ * เทียบความลับสองค่าโดยใช้เวลาเท่ากันเสมอ ไม่ว่าจะต่างกันตั้งแต่ตัวแรกหรือตัวสุดท้าย
+ *
+ * `timingSafeEqual` โยนเมื่อความยาวไม่เท่ากัน ซึ่งเท่ากับบอกความยาวของค่าจริงออกไป
+ * จึง hash ทั้งสองฝั่งก่อน — ได้ buffer ยาวเท่ากันเสมอ และความยาวของค่าจริงหายไปด้วย
+ * (`activationKeyMatches()` ไม่ต้องทำขั้นนี้เพราะเทียบ hash กับ hash อยู่แล้ว)
+ */
+function secretMatches(provided: string, expected: string): boolean {
+  return timingSafeEqual(
+    Buffer.from(hashToken(provided), "hex"),
+    Buffer.from(hashToken(expected), "hex"),
+  );
+}
+
+/**
  * สเปกระบุว่าขั้นตอนเชิญผู้ใช้ "ไม่มี UI แต่ต้องมี api" จึงป้องกันด้วย shared secret
  * แทนที่จะใช้ session — ผู้เรียกเป็นสคริปต์ฝั่ง admin ไม่ใช่เบราว์เซอร์
+ *
+ * ข้อจำกัดที่ **ยอมรับไว้ ไม่ใช่มองข้าม** (ตัดสิน 2026-08-16): token นี้ไม่หมดอายุ
+ * ไม่หมุน และไม่ผูกกับตัวบุคคล `audit_event` ของงานที่ทำผ่านเส้นทางนี้จึงบอกได้แค่
+ * "ระบบทำ" การย้ายไปใช้บัญชีจริงที่มี role `SYSTEM_ADMINISTRATOR` เป็นงานของการ์ด
+ * Admin Portal ซึ่งยังไม่มีหน้าจอ — ทำที่นี่จะพัง Postman collection และ notebook
+ * ที่ใช้เส้นทางนี้อยู่ โดยที่ยังไม่มีอะไรมาแทน
  */
 export function requireAdminToken(req: Request, res: Response, next: NextFunction) {
   const provided = req.header("x-admin-token");
-  if (!provided || provided !== env.auth.adminApiToken) {
+  if (!provided || !secretMatches(provided, env.auth.adminApiToken)) {
     res.status(401).json({ error: "unauthenticated", message: "x-admin-token ไม่ถูกต้อง" });
     return;
   }

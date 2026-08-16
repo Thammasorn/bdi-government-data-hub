@@ -1,19 +1,27 @@
 import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
 
 import { env } from "../env.js";
 import type { RoleCode } from "./system.js";
 
 export const SESSION_COOKIE = "bdi_session";
 
+/**
+ * สิ่งที่ requireAuth ประกอบขึ้นต่อ request — **ไม่ได้อ่านมาจาก cookie**
+ *
+ * cookie เก็บแค่ค่าสุ่ม opaque ที่ชี้ไปยังแถว `iam.session` ทุกฟิลด์ในนี้มาจากฐานข้อมูล
+ * ณ เวลาที่ยิง request (ของเดิมเป็น JWT ที่แบก roles/organizationId มาในตัว แล้วถูก
+ * เขียนทับอยู่ดี — payload นั้นจึงมีแต่โอกาสทำให้เข้าใจผิด)
+ */
 export interface SessionPayload {
   sub: string;
   email: string;
-  /** role.code ของ assignment ที่ยังใช้งานได้ ณ เวลาที่อ่าน — ไม่ได้มาจาก cookie */
+  /** role.code ของ assignment ที่ยังใช้งานได้ ณ เวลาที่อ่าน */
   roles: RoleCode[];
   organizationId: string | null;
+  /** id ของแถว iam.session ที่ request นี้เดินทางมาด้วย — ใช้ตอน logout และตอนหมุนใบ */
+  sessionId: string;
 }
 
 export async function hashPassword(plain: string): Promise<string> {
@@ -22,20 +30,6 @@ export async function hashPassword(plain: string): Promise<string> {
 
 export async function verifyPassword(plain: string, hash: string): Promise<boolean> {
   return bcrypt.compare(plain, hash);
-}
-
-export function signSession(payload: SessionPayload): string {
-  return jwt.sign(payload, env.auth.jwtSecret, {
-    expiresIn: `${env.auth.sessionTtlDays}d`,
-  });
-}
-
-export function verifySession(token: string): SessionPayload | null {
-  try {
-    return jwt.verify(token, env.auth.jwtSecret) as SessionPayload;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -81,6 +75,17 @@ export function activationKeyMatches(key: string, storedHash: string): boolean {
 /** OTP 6 หลัก ใช้ randomInt เพื่อไม่ให้เดาลำดับได้ */
 export function generateOtp(): string {
   return String(randomInt(0, 1_000_000)).padStart(6, "0");
+}
+
+/**
+ * ค่าที่ใส่ใน cookie `bdi_session` — สุ่ม 32 ไบต์ ไม่มีข้อมูลอยู่ในตัวมันเอง
+ *
+ * ใช้ `generateToken()` ตัวเดียวกับ activation key/OTP link: 32 ไบต์ base64url
+ * เก็บฝั่ง server เป็น SHA-256 ฐานข้อมูลที่รั่วออกไปจึงไม่มี cookie ที่ใช้ได้อยู่ในนั้น
+ */
+export function generateSessionId(): { sessionId: string; sessionIdHash: string } {
+  const { token, tokenHash } = generateToken();
+  return { sessionId: token, sessionIdHash: tokenHash };
 }
 
 export function cookieOptions() {

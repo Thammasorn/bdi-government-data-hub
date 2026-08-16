@@ -1,30 +1,34 @@
 # โทเคนทั้งหมดในระบบ — ออกที่ไหน เก็บอย่างไร หมดอายุเมื่อไร
 
-> **ระบบนี้ไม่มี refresh token** และไม่มีตาราง session — ดูข้อ 1.4 ว่าทำไม และมันแปลว่าอะไร
-> ถ้าเข้ามาหาว่า "access token กับ refresh token คู่กันทำงานยังไง" คำตอบคือไม่มีคู่นั้น
+> **ระบบนี้ไม่มี refresh token** — และไม่ต้องมี เพราะ session เป็น opaque session id
+> ที่มีตารางอยู่ฝั่ง server เพิกถอนได้ทีละใบ (ข้อ 1.4) refresh token มีไว้แก้ปัญหาของ
+> access token อายุสั้นที่เพิกถอนไม่ได้ ซึ่งเป็นปัญหาที่ระบบนี้ไม่มีแล้ว
 
-ระบบมีของที่เป็น "โทเคน" อยู่ 6 อย่าง แต่ละอย่างตอบคำถามคนละข้อ
+ระบบมีของที่เป็น "โทเคน" อยู่ 7 อย่าง แต่ละอย่างตอบคำถามคนละข้อ
 
 | # | โทเคน | ตอบว่า | อายุ | เก็บที่ฝั่ง server |
 |---|---|---|---|---|
-| 1 | Session JWT | "คุณคือใคร" (หลังเข้าสู่ระบบแล้ว) | 7 วัน | **ไม่เก็บ** |
+| 1 | Session id (opaque) | "คุณคือใคร" (หลังเข้าสู่ระบบแล้ว) | 7 วัน / ไม่ใช้งาน 8 ชม. | SHA-256 ใน `iam.session` |
 | 2 | Activation key | "คุณคือคนที่ถูกเชิญ" | 7 วัน | HMAC-SHA-256 |
 | 3 | OTP | "อีเมลนี้เป็นของคุณจริง" | 10 นาที | bcrypt |
 | 4 | `x-admin-token` | "ผู้เรียกคือสคริปต์ฝั่ง admin" | ไม่หมดอายุ | ค่าคงที่ใน env |
 | 5 | โทเคนจาก ThaiD | "กรมการปกครองยืนยันตัวตนให้แล้ว" | ใช้ครั้งเดียวแล้วทิ้ง | **ไม่เก็บ** |
 | 6 | OAuth `state` | "callback นี้มาจากคำขอที่เราเป็นคนเริ่ม" | 15 นาที | `integration_operation` |
+| 7 | OIDC `nonce` | "id_token ใบนี้ออกให้คำขอของเราจริง" | 15 นาที | `integration_operation` |
 
 โค้ดที่เกี่ยวข้องอยู่ใน `backend/src/lib/auth.ts` (สร้าง/แฮช/ตรวจ),
-`backend/src/middleware/auth.ts` (บังคับใช้) และ `backend/src/routes/auth.ts` (เส้นทางทั้งหมด)
+`backend/src/lib/session.ts` (วงจรชีวิตของ session), `backend/src/middleware/auth.ts`
+(บังคับใช้) และ `backend/src/routes/auth.ts` (เส้นทางทั้งหมด)
 
 ---
 
-## 1. Session JWT — โทเคนเดียวที่ใช้เรียก API ทั่วไป
+## 1. Session id — โทเคนเดียวที่ใช้เรียก API ทั่วไป
 
 ### 1.1 หน้าตาและที่อยู่
 
-เป็น JWT ลงลายเซ็น HS256 ด้วย `JWT_SECRET` อยู่ใน **cookie ชื่อ `bdi_session`** เท่านั้น
-ไม่เคยอยู่ใน `Authorization: Bearer` ไม่เคยอยู่ใน localStorage และ JavaScript อ่านไม่ได้
+เป็น **ค่าสุ่ม 32 ไบต์ เข้ารหัส base64url** ไม่มีข้อมูลอยู่ในตัวมันเอง อยู่ใน
+**cookie ชื่อ `bdi_session`** เท่านั้น ไม่เคยอยู่ใน `Authorization: Bearer`
+ไม่เคยอยู่ใน localStorage และ JavaScript อ่านไม่ได้
 
 ```js
 // lib/auth.ts
@@ -37,7 +41,15 @@
   registrable domain เดียวกัน จึงนับเป็น same-site อยู่แล้ว ไม่ต้องใช้ `None` ซึ่งเปิดกว้างเกิน
 - **`secure`** — เปิดอัตโนมัติเมื่อ `APP_URL` เป็น https (ตั้งทับได้ด้วย `COOKIE_SECURE`)
 
-payload มีแค่ `sub` `email` `roles` `organizationId` — ดู 1.3 ว่าทำไมสองอันหลังแทบไม่มีความหมาย
+ฝั่ง server มีแถวใน **`iam.session`** ที่เก็บ `SHA-256` ของค่านั้น (ไม่ใช่ค่าดิบ) พร้อม
+`expires_at` · `last_seen_at` · `revoked_at` · `revoked_reason` · `ip_address` · `user_agent`
+ฐานข้อมูลที่รั่วออกไปจึงไม่มี cookie ที่ใช้ได้อยู่ในนั้น เหตุผลที่ใช้ SHA-256 ไม่ใช่ bcrypt
+เหมือนกับ activation key: ค่านี้เป็นค่าสุ่มความยาวเต็ม ไม่ใช่รหัสผ่านที่คนตั้งเอง
+
+**เดิมเป็น JWT ลงลายเซ็น HS256** ที่แบก `sub`/`email`/`roles`/`organizationId` มาในตัว
+เปลี่ยนเมื่อ 2026-08-16 — payload นั้นถูก `requireAuth` เขียนทับทุก request อยู่แล้ว
+จึงมีแต่โอกาสทำให้เข้าใจผิด และการไม่มีสถานะฝั่ง server แปลว่า logout จริง ๆ ทำไม่ได้
+**`JWT_SECRET` ไม่มีอีกแล้ว** (`jsonwebtoken` ยังอยู่ ใช้ตรวจลายเซ็น id_token ของ ThaiD)
 
 ### 1.2 ออกเมื่อไร
 
@@ -58,40 +70,68 @@ payload มีแค่ `sub` `email` `roles` `organizationId` — ดู 1.3 �
 
 ```ts
 // middleware/auth.ts — ย่อ
-const session = verifySession(token);              // ได้ sub มาเท่านั้นที่นับ
-const user = await prisma.userAccount.findUnique({ where: { id: session.sub }, ... });
-if (!user || user.status !== ACTIVE) return 401;   // บัญชีถูกระงับ = ตัดสิทธิ์ทันที
-req.session = { sub, email, roles: <จาก DB>, organizationId: <จาก DB> };
+const { session } = await resolveSession(rawSessionId);   // แถวใน iam.session หรือ null
+if (!session) return 401;                                 // ถูกเพิกถอน / หมดอายุ / ไม่มีอยู่จริง
+const user = await prisma.userAccount.findUnique({ where: { id: session.userAccountId }, ... });
+if (!user || user.status !== ACTIVE) return 401;          // บัญชีถูกระงับ = ตัดสิทธิ์ทันที
+req.session = { sub, email, roles: <จาก DB>, organizationId: <จาก DB>, sessionId };
 ```
 
 เหตุผลคือทั้ง role และหน่วยงานเปลี่ยนได้ระหว่างที่ session ยังไม่หมดอายุ (ผู้ใช้สร้างหน่วยงาน
 หรือถูกเพิ่มเป็นผู้มีอำนาจ) ถ้าเชื่อค่าใน cookie ต่อไป คนที่เพิ่งสร้างหน่วยงานเสร็จจะยังทำอะไร
 ไม่ได้จนกว่าจะออกจากระบบแล้วเข้าใหม่
 
-**ห้าม optimise การอ่านนี้ทิ้ง** และห้ามอ่าน `roles` / `organizationId` จาก JWT ตรง ๆ
+**ห้าม optimise การอ่านนี้ทิ้ง** และห้ามย้าย `roles` / `organizationId` กลับไปเก็บใน cookie
 (ย้ำไว้ใน `CLAUDE.md` ด้วย เพราะเป็นของที่ดู "เกินจำเป็น" สำหรับคนที่เพิ่งอ่านโค้ด)
 
-### 1.4 ไม่มี refresh token และไม่มีตาราง session
+การเปลี่ยนมาใช้ตาราง session เพิ่ม query อีกหนึ่งครั้งต่อ request ซึ่งแทบไม่มีความหมายที่นี่ —
+ระบบนี้อ่านฐานข้อมูลทุก request อยู่แล้วโดยตั้งใจ เหตุผลปกติที่คนเลือก stateless JWT
+("ไม่ต้องแตะฐานข้อมูล") จึงเป็นราคาที่จ่ายไปโดยไม่เคยได้ของแลกตั้งแต่แรก
 
-ทางเลือกที่ระบบนี้เลือกคือ **JWT อายุยาว (7 วัน) ตัวเดียว ไม่มีการต่ออายุ ไม่มีการหมุน**
-ไม่มีตาราง `session` ไม่มี blacklist ไม่มี jti
+### 1.4 ตาราง `iam.session` — เพิกถอนได้ทีละใบ
 
-ผลที่ตามมา ต้องรู้ให้ครบทั้งสองด้าน
+> เดิมหัวข้อนี้ชื่อ "ไม่มี refresh token และไม่มีตาราง session" และอธิบายข้อจำกัดของ JWT
+> อายุยาวใบเดียวที่เพิกถอนไม่ได้ การ์ด **Session and Token Hardening** (2026-08-16)
+> คือการไปแก้มัน ข้อความข้างล่างนี้คือสิ่งที่เป็นจริงหลังการ์ดนั้น
 
-- ✅ ตรวจ session ไม่ต้องแตะฐานข้อมูลสำหรับตัว token เอง (แต่ก็ยัง query user ทุก request
-  ตามข้อ 1.3 อยู่ดี — ประโยชน์ด้าน performance จึงน้อยกว่าที่คนมักคิด)
-- ✅ `POST /api/auth/logout` ล้าง cookie แล้วจบ ไม่มี state ค้าง
-- ❌ **logout ฝั่ง server ทำไม่ได้** ถ้ามีคนคัดลอก cookie ออกไป มันใช้ได้จนครบ 7 วัน
-  การ logout ล้างแค่ cookie ในเบราว์เซอร์ตัวเอง ไม่ได้ทำให้ token ใบนั้นใช้ไม่ได้
-- ❌ **เปลี่ยนรหัสผ่านไม่ได้เตะ session เดิมออก** เพราะไม่มีอะไรผูก session กับรหัสผ่าน
-- ✅ **สวิตช์ที่มีจริงคือสถานะบัญชี** — `requireAuth` เช็ก `status !== ACTIVE` ทุก request
-  ตั้งบัญชีเป็น `SUSPENDED` หรือ `DEACTIVATED` แล้ว token ทุกใบของคนนั้นตายทันที
-  เช่นเดียวกับการถอน role assignment ซึ่งมีผลทันทีเหมือนกัน
-- ❌ **เปลี่ยน `JWT_SECRET` = เตะทุกคนออกพร้อมกัน** เป็นวิธี revoke แบบเหวี่ยงแหที่มีอยู่วิธีเดียว
+session หนึ่งใบ = แถวหนึ่งแถวใน `iam.session` cookie ถือแค่ค่าสุ่มที่ชี้มาที่แถวนั้น
+ทุก request `requireAuth` อ่านแถวนี้ ถ้า `revoked_at` ไม่เป็น null หรือหมดอายุ → 401 ทันที
 
-ถ้าวันหนึ่งต้องการ revoke รายคนจริง ๆ ทางที่ตรงที่สุดคือใส่ `jti` ลง JWT แล้วเก็บตาราง
-session ที่ถูกเพิกถอน — ยังไม่ทำเพราะยังไม่มีข้อกำหนดที่ต้องใช้ และ "ระงับบัญชี" ครอบคลุม
-เคสที่นึกออกทั้งหมดแล้ว
+**อายุมีสองชั้น ต้องผ่านทั้งคู่**
+
+| ชั้น | คอลัมน์ | ค่าตั้งต้น | ต่ออายุได้ไหม |
+|---|---|---|---|
+| absolute | `expires_at` | `SESSION_TTL_DAYS` = 7 วัน | ไม่ได้ ครบแล้วต้องเข้าสู่ระบบใหม่ |
+| idle | `last_seen_at` | `SESSION_IDLE_HOURS` = 8 ชั่วโมง | ขยับทุกครั้งที่ใช้งาน |
+
+`last_seen_at` ถูกเขียนอย่างมากทุก 1 นาที (`TOUCH_INTERVAL_MS` ใน `lib/session.ts`)
+ไม่ใช่ทุก request — หน้าเว็บหน้าเดียวยิง API หลายสิบครั้ง และ idle ที่นับเป็นชั่วโมง
+ไม่ต้องการความละเอียดกว่านั้น ใบที่หมดอายุถูกปิดเป็น `EXPIRED` ตอนมีคนเอามายิง
+จึงไม่ต้องมี cron มาไล่เก็บ
+
+**สิ่งที่ทำได้แล้ว** (ทั้งหมดทำไม่ได้ก่อน 2026-08-16)
+
+| ต้องทำได้ | ทำอย่างไร |
+|---|---|
+| logout แล้ว session นั้นใช้ไม่ได้อีกจริง ๆ | `POST /api/auth/logout` ปิดแถว (`LOGOUT`) |
+| ออกจากระบบทุกอุปกรณ์ | `POST /api/auth/logout-all` (`LOGOUT_ALL`) |
+| ดูว่ามีใบไหนค้างอยู่บ้าง | `GET /api/auth/sessions` |
+| หมดอายุแบบ idle | ตารางข้างบน |
+| หมุนใบตอนสิทธิ์เปลี่ยนระดับ | `issueSession()` เพิกถอนใบที่ผู้เรียกถือมา (`ROTATED`) กัน session fixation |
+| ระงับบัญชีแล้วตัดสิทธิ์ทันที | เหมือนเดิม — `requireAuth` เช็ก `status !== ACTIVE` ทุก request<br>และตอนนี้ปิดแถว session ที่ค้างอยู่ให้ด้วย (`ACCOUNT_SUSPENDED`) |
+
+การเพิกถอนทุกครั้งลง `audit_event` ด้วย action `SESSION_REVOKED` และเหตุผลอยู่ใน
+`metadata_json.reason` — แยก logout · logout ทุกอุปกรณ์ · เปลี่ยนรหัสผ่าน · ระงับบัญชี ·
+หมุนใบ · หมดอายุ (ซึ่งยังแยกต่อได้อีกว่า `ABSOLUTE` หรือ `IDLE`)
+
+**ที่ยังไม่มี**: endpoint เปลี่ยนรหัสผ่าน `SessionRevokeReason.PASSWORD_CHANGED` และ
+`revokeSessionsFor(..., { exceptSessionId })` เขียนรออยู่แล้ว แต่ยังไม่มีเส้นทางไหนเรียก
+เพราะระบบยังไม่มีการเปลี่ยนรหัสผ่าน (ตัดสินไว้ 2026-08-16 ว่าไม่เพิ่มในการ์ดนี้)
+เมื่อเพิ่ม endpoint นั้น สิ่งที่ต้องทำคือเรียกฟังก์ชันนั้นหนึ่งบรรทัด
+
+**ยังไม่มี refresh token และไม่ตั้งใจจะมี** — refresh token คู่กับ access token อายุสั้น
+มีไว้แก้ปัญหา "เพิกถอน token ที่กระจายไปแล้วไม่ได้" ซึ่งตารางนี้แก้ไปแล้วโดยตรง
+รูปแบบนั้นเหมาะกับ API ที่มี client หลายชนิด ไม่ใช่ browser app ที่มี cookie อยู่แล้ว
 
 ### 1.5 ฝั่งเบราว์เซอร์
 
@@ -146,8 +186,14 @@ OTP แบบ `REGISTRATION` อีกแล้ว
 `audit_event` ของงานที่ทำผ่านเส้นทางนี้จึงบอกได้แค่ว่า "ระบบทำ" ไม่ได้บอกว่าเจ้าหน้าที่คนไหน
 ถ้าวันหนึ่งต้องรู้ตัวบุคคล ต้องเปลี่ยนไปใช้บัญชีจริงที่มี role `SYSTEM_ADMINISTRATOR`
 
-การเทียบใช้ `!==` ธรรมดา ไม่ใช่ `timingSafeEqual` — ต่างจาก activation key ตรงนี้
-ยังไม่ได้แก้ ถ้าจะแก้ก็ควรแก้ (`middleware/auth.ts` → `requireAdminToken`)
+การเทียบใช้ `timingSafeEqual` แล้วตั้งแต่ 2026-08-16 (เดิมเป็น `!==` ธรรมดา)
+โดย hash ทั้งสองฝั่งก่อนเทียบ — `timingSafeEqual` โยนเมื่อความยาวไม่เท่ากัน ซึ่งเท่ากับ
+บอกความยาวของความลับออกไป การ hash ก่อนทำให้ buffer ยาวเท่ากันเสมอและความยาวจริงหายไปด้วย
+(`activationKeyMatches()` ไม่ต้องทำขั้นนี้เพราะเทียบ hash กับ hash อยู่แล้ว)
+
+**ตัดสินแล้วว่ายอมรับข้อจำกัดข้างบนต่อไปในตอนนี้** (2026-08-16): การย้ายไปใช้บัญชีจริง
+ที่มี role `SYSTEM_ADMINISTRATOR` เป็นงานของการ์ด Admin Portal ซึ่งยังไม่มีหน้าจอ —
+ทำตอนนี้จะพัง Postman collection และ notebook ที่ใช้เส้นทางนี้อยู่ โดยยังไม่มีอะไรมาแทน
 
 คอลเลกชัน Postman ของ endpoint กลุ่มนี้อยู่ที่ `docs/bdi-admin-portal.postman_collection.json`
 (สร้างหน่วยงาน + ส่งลิงก์เปิดใช้งาน + ดู/ยกเลิกคำเชิญ)
@@ -159,11 +205,21 @@ OTP แบบ `REGISTRATION` อีกแล้ว
 1. เอา `code` ไปแลกที่ `/api/v2/oauth2/token/` ด้วย Basic auth (`client_id:client_secret`)
 2. ตรวจลายเซ็น **ES256** ของ `id_token` กับ JWKS ของกรมการปกครอง (แคช 1 ชั่วโมง เลือกคีย์
    ตาม `kid` ถ้าเจอ kid ที่ไม่รู้จักให้ล้างแคชแล้วดึงใหม่หนึ่งครั้ง) พร้อมตรวจ `aud` และ `iss`
-3. เรียก `/api/v2/oauth2/revoke/` คืน access token ทิ้ง แบบไม่รอผลและไม่ให้พัง flow
+3. ตรวจ claim `nonce` กับที่บันทึกไว้ตอนเริ่มคำขอ (ข้อ 7)
+4. เรียก `/api/v2/oauth2/revoke/` คืน **ทั้ง access token และ refresh token** ทิ้ง
+   แต่ละใบส่ง `token_type_hint` ตาม RFC 7009 แบบไม่รอผลและไม่ให้พัง flow
 
 **access token, refresh token และ id_token ไม่เคยถูกเก็บลงฐานข้อมูล** ระบบนี้ใช้ ThaiD เพื่อ
-"ยืนยันตัวตนครั้งเดียว" ไม่ได้ใช้เรียก API อื่นของกรมการปกครองต่อ `refresh_token` มีอยู่ใน
-type ของ response เพราะสเปกส่งมา แต่ไม่มีโค้ดไหนอ่านมันเลย
+"ยืนยันตัวตนครั้งเดียว" ไม่ได้ใช้เรียก API อื่นของกรมการปกครองต่อ
+
+ก่อน 2026-08-16 `revokeToken()` ส่งเฉพาะ access token — ถ้ากรมการปกครองออก refresh token
+มาด้วย ใบนั้นจะถูกทิ้งเฉย ๆ แล้วยังมีชีวิตอยู่ฝั่งเขาจนหมดอายุ RFC 7009 §2.1 บอกว่าการ
+เพิกถอน refresh token *ควร* ทำให้ access token ที่ออกจากใบเดียวกันตายตามไปด้วย แต่ "ควร"
+ไม่ใช่ "ต้อง" และเราไม่รู้ว่าเขาทำแบบไหน จึงส่งทั้งสองใบ ไม่ใช่ใบเดียวแล้วหวังผลพลอยได้
+
+**ยังไม่เคยเห็น refresh token จริง** — `TokenResponse` ประกาศไว้เป็น optional ตามสเปก
+`resolveIdentity()` จึงเขียนลง log ว่ารอบนี้ได้มาหรือไม่ (แค่ "มี"/"ไม่มี" ไม่ใช่ตัว token)
+เพื่อให้การยิงจริงบน `main` ตอบคำถามนี้ได้
 
 สิ่งเดียวที่เหลือไว้คือ `sub` ลงคอลัมน์ `user_account.external_subject` และ
 `integration_operation.external_reference` — เลขบัตรที่ใช้เทียบไม่ถูกเก็บ
@@ -186,11 +242,37 @@ id_token มาถึงเราทาง back channel ผ่าน TLS มา�
 (`THAID_VERIFICATION_TTL_MINUTES`) — `POST /api/auth/activate` เรียก `latestVerification()`
 อ่านจากฐานข้อมูล ไม่เชื่อคำบอกเล่าจากเบราว์เซอร์
 
-## 7. ตัวแปรที่เกี่ยวข้องทั้งหมด
+## 7. OIDC `nonce` — ผูก id_token เข้ากับคำขอที่เราเริ่ม
+
+`state` ตอบว่า "callback นี้มาจากคำขอที่เราเป็นคนเริ่ม" แต่ไม่ได้ตอบว่า "id_token ใบนี้
+ออกให้คำขอนั้น" `nonce` (OIDC Core §3.1.2.1, RECOMMENDED สำหรับ code flow) ตอบข้อหลัง:
+สุ่ม 24 ไบต์คู่กับ `state` เก็บใน `integration_operation.request_nonce` ส่งไปกับ
+authorization request แล้วต้องกลับมาเป็น claim ใน id_token
+
+**claim ที่ไม่ตรง กับ claim ที่ไม่มีมาเลย คนละเรื่องกัน**
+
+| กรณี | ผล |
+|---|---|
+| `nonce` ไม่ตรง | ปฏิเสธ 403 เสมอ — id_token ใบนี้ไม่ได้ออกให้คำขอนี้ |
+| `nonce` ไม่มีมา | เตือนใน log แล้วไปต่อ · ตั้ง `THAID_REQUIRE_NONCE=true` ให้ปฏิเสธ |
+
+ที่ยอมให้ผ่านเมื่อ claim ไม่มา เพราะ **ยังไม่ได้ยืนยันว่ากรมการปกครองสะท้อน `nonce` กลับมา**
+ปฏิเสธไว้ก่อนเท่ากับพังการยืนยันตัวตนทั้งระบบเพราะของที่สเปกเรียกว่า RECOMMENDED
+เมื่อยิงจริงแล้วเห็นว่ามีมา ให้เปิดตัวแปรนั้นเป็น `true`
+
+ทั้งสองกรณี **ไม่เพิกถอน activation key** ด้วยเหตุผลเดียวกับ `cid_unavailable`:
+ผู้ใช้ไม่ได้ทำอะไรผิด ความผิดพลาดอยู่ฝั่งการตั้งค่าหรือฝั่ง IdP — และถ้าเป็นการยัด
+id_token มาจริง การทำลายลิงก์ของเหยื่อก็จะกลายเป็นวิธียกเลิกลิงก์ของคนอื่นเสียเอง
+
+**PKCE (RFC 7636) ยังไม่ได้ทำ** — OAuth 2.1 บังคับกับทุก client แต่ต้องรู้ก่อนว่า
+กรมการปกครองรองรับ `code_challenge` หรือไม่ ทำฝ่ายเดียวไม่ได้ ถามพร้อมกับเรื่อง scope `pid`
+และ redirect URI ของโดเมนจริง (`docs/07-thaid-integration.md` §4.3)
+
+## 8. ตัวแปรที่เกี่ยวข้องทั้งหมด
 
 ```bash
-JWT_SECRET=                    # ลงลายเซ็น session — เปลี่ยนค่า = เตะทุกคนออก
-SESSION_TTL_DAYS=7
+SESSION_TTL_DAYS=7             # absolute expiry ของ session
+SESSION_IDLE_HOURS=8           # ไม่ได้ใช้งานนานเท่านี้แล้วตาย
 COOKIE_SECURE=                 # ว่าง = เปิดเองเมื่อ APP_URL เป็น https
 OTP_TTL_MINUTES=10
 OTP_MAX_ATTEMPTS=5
@@ -199,17 +281,23 @@ ACTIVATION_KEY_SECRET=         # HMAC ของ activation key — บังค�
 ADMIN_API_TOKEN=               # ค่าใน header x-admin-token
 THAID_STATE_TTL_MINUTES=15
 THAID_VERIFICATION_TTL_MINUTES=30
+THAID_REQUIRE_NONCE=false      # ดูข้อ 7
 ```
 
-`JWT_SECRET` และ `ADMIN_API_TOKEN` อยู่ใน `.env` ซึ่ง git ไม่ติดตาม **ห้ามย้ายไปไฟล์ที่ track ไว้**
+**ไม่มี `JWT_SECRET` แล้ว** ตั้งแต่ 2026-08-16 — session ไม่ใช่ JWT อีกต่อไป ถ้ายังมีค่านี้
+ค้างอยู่ใน `.env` ก็ไม่มีอะไรอ่านมัน ลบทิ้งได้
 
-## 8. สรุปสั้น ๆ สำหรับคนที่มาจากระบบที่มี refresh token
+`ACTIVATION_KEY_SECRET` และ `ADMIN_API_TOKEN` อยู่ใน `.env` ซึ่ง git ไม่ติดตาม
+**ห้ามย้ายไปไฟล์ที่ track ไว้**
+
+## 9. สรุปสั้น ๆ สำหรับคนที่มาจากระบบที่มี refresh token
 
 | คำถามที่มักถาม | คำตอบของระบบนี้ |
 |---|---|
-| access token อยู่ที่ไหน | cookie `bdi_session` เท่านั้น อ่านจาก JS ไม่ได้ |
-| refresh token อยู่ที่ไหน | ไม่มี |
-| ต่ออายุ session อย่างไร | ไม่ต่อ ครบ 7 วันแล้วเข้าสู่ระบบใหม่ |
-| บังคับให้ผู้ใช้คนหนึ่งออกจากระบบทันที | ตั้ง `user_account.status` เป็น `SUSPENDED`/`DEACTIVATED` |
-| บังคับให้ทุกคนออกจากระบบ | เปลี่ยน `JWT_SECRET` แล้วรีสตาร์ต backend |
+| access token อยู่ที่ไหน | cookie `bdi_session` เท่านั้น เป็นค่าสุ่ม opaque อ่านจาก JS ไม่ได้ |
+| refresh token อยู่ที่ไหน | ไม่มี และไม่ต้องมี — ดูข้อ 1.4 |
+| ต่ออายุ session อย่างไร | absolute ต่อไม่ได้ (7 วัน) · idle ขยับเองทุกครั้งที่ใช้งาน (8 ชม.) |
+| บังคับให้ผู้ใช้คนหนึ่งออกจากระบบทันที | `POST /api/auth/logout-all` หรือตั้ง `user_account.status` เป็น `SUSPENDED`/`DEACTIVATED` |
+| ให้ session ใบเดียวตาย | `POST /api/auth/logout` — หรือ `UPDATE iam.session SET revoked_at = now()` |
+| บังคับให้ทุกคนออกจากระบบ | `UPDATE iam.session SET revoked_at = now() WHERE revoked_at IS NULL` (ไม่ต้องรีสตาร์ต ไม่ต้องหมุนความลับ) |
 | เรียก API ด้วย Bearer token ได้ไหม | ไม่ได้ ยกเว้น `/api/admin/*` ที่ใช้ `x-admin-token` |

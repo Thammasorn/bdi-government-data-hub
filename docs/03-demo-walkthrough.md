@@ -541,7 +541,7 @@ docker compose exec backend npm run seed:demo
 | หน้าเว็บ 500 หลัง pull | cache `.next` ค้างจาก build เก่า | `docker compose rm -sf frontend && docker volume rm <project>_frontend-next-cache && docker compose up -d frontend` |
 | ไม่ได้รับอีเมล | ยังอยู่โหมด dry-run | ดู log ตามหัวข้อ 2 |
 | Gmail ตอบ `EAUTH` | ใช้รหัสผ่านปกติแทน App Password หรือมีช่องว่างติดมา | สร้าง App Password ใหม่ ลบช่องว่างออก |
-| `ตั้งค่า JWT_SECRET ใน .env ก่อน` | `.env` ไม่มีตัวแปรที่จำเป็น | คัดลอกจาก `.env.example` มาเติม |
+| `ตั้งค่า ADMIN_API_TOKEN ใน .env ก่อน` | `.env` ไม่มีตัวแปรที่จำเป็น | คัดลอกจาก `.env.example` มาเติม |
 | กดปุ่ม ThaiD แล้วขึ้น "ระบบยังไม่ได้ตั้งค่าการเชื่อมต่อ ThaiD" | ไม่ได้ตั้ง `THAID_CLIENT_ID` / `THAID_CLIENT_SECRET` | เติมใน `.env` (ค่าอยู่ใน `assets/thaid/`) แล้ว `docker compose up -d backend` |
 | ThaiD ตอบ `invalid_request` เรื่อง redirect uri | `THAID_REDIRECT_URI` ไม่ตรงกับที่ลงทะเบียนไว้กับกรมการปกครอง | ดู `docs/07-thaid-integration.md` §4 |
 | พอร์ตชน | มีสแตกอื่นใช้พอร์ตเดียวกัน | แก้พอร์ตใน `.env` — `main` จองไว้ที่ 3000/4000 ห้ามใช้ซ้ำ |

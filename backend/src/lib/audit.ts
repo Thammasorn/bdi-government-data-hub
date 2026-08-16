@@ -53,6 +53,14 @@ export const AuditAction = {
   LOGIN_FAILED: "LOGIN_FAILED",
 
   /**
+   * session ถูกเพิกถอน — เพิ่มจากรายการตัวอย่างใน sheet พร้อมตาราง `iam.session`
+   * เหตุผลอยู่ใน `metadata_json.reason` (LOGOUT · LOGOUT_ALL · PASSWORD_CHANGED ·
+   * ACCOUNT_SUSPENDED · ROTATED · EXPIRED) ไม่ได้แยกเป็น action คนละตัว เพราะทั้งหมด
+   * คือเหตุการณ์เดียวกันที่มีสาเหตุต่างกัน และ sheet ไม่มี action ไหนตรงความหมายอยู่แล้ว
+   */
+  SESSION_REVOKED: "SESSION_REVOKED",
+
+  /**
    * ยืนยันตัวตนกับ ThaiD — เพิ่มจากรายการตัวอย่างใน sheet
    * §2.4 สั่งให้ "บันทึก Log การทำรายการ" ตอนเลขบัตรไม่ตรงโดยเฉพาะ ซึ่งไม่มี action
    * เดิมอันไหนตรงความหมาย (LOGIN_FAILED คนละเรื่อง — ยังไม่มีบัญชีให้ล็อกอินด้วยซ้ำ)
@@ -71,6 +79,8 @@ export const AuditSubject = {
   USER_ACCOUNT: "USER_ACCOUNT",
   USER_ROLE_ASSIGNMENT: "USER_ROLE_ASSIGNMENT",
   USER_ACTIVATION_KEY: "USER_ACTIVATION_KEY",
+  /** แถว `iam.session` หนึ่งใบ — เพิ่มพร้อมตารางนั้น ไม่มีใน sheet */
+  SESSION: "SESSION",
   ORGANIZATION: "ORGANIZATION",
   ORGANIZATION_REGISTRATION_REQUEST: "ORGANIZATION_REGISTRATION_REQUEST",
   DATASET: "DATASET",

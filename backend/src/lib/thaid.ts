@@ -58,18 +58,30 @@ export function thaidConfigured(): boolean {
  * scope คั่นด้วยช่องว่าง (คู่มือ §6.1.1) — URLSearchParams เข้ารหัสเป็น `+`
  * ซึ่ง ThaiD อ่านได้ตามปกติของ application/x-www-form-urlencoded
  */
-export function authorizeUrl(state: string): string {
+export function authorizeUrl(state: string, nonce: string): string {
   const params = new URLSearchParams({
     response_type: "code",
     client_id: env.thaid.clientId,
     redirect_uri: env.thaid.redirectUri,
     scope: env.thaid.scope,
     state,
+    nonce,
   });
   return `${env.thaid.rootUrl}/api/v2/oauth2/auth/?${params.toString()}`;
 }
 
 export function generateState(): string {
+  return randomBytes(24).toString("base64url");
+}
+
+/**
+ * `nonce` ตาม OIDC Core §3.1.2.1 — RECOMMENDED สำหรับ code flow
+ *
+ * `state` ผูก callback กลับเข้าคำขอที่เราเป็นคนเริ่ม (กัน CSRF) แต่ไม่ได้ผูก **id_token**
+ * เข้ากับคำขอนั้น `nonce` เดินทางไปกับ authorization request แล้วกลับมาเป็น claim
+ * ใน id_token จึงเป็นตัวที่บอกว่า "ใบนี้ออกให้คำขอของเราจริง" ไม่ใช่ใบที่ใครหยิบมาจากที่อื่น
+ */
+export function generateNonce(): string {
   return randomBytes(24).toString("base64url");
 }
 
@@ -134,13 +146,40 @@ export async function exchangeCode(code: string): Promise<TokenResponse> {
   return payload as unknown as TokenResponse;
 }
 
-/** token ที่ยืนยันเสร็จแล้วไม่มีประโยชน์กับระบบนี้อีก — ยกเลิกทิ้ง แต่ไม่ให้พัง flow */
-export async function revokeToken(token: string): Promise<void> {
+/**
+ * token ที่ยืนยันเสร็จแล้วไม่มีประโยชน์กับระบบนี้อีก — ยกเลิกทิ้ง แต่ไม่ให้พัง flow
+ *
+ * `token_type_hint` เป็น OPTIONAL ตาม RFC 7009 §2.1 แต่ส่งไปช่วยให้ฝั่ง IdP
+ * ค้นถูกตารางตั้งแต่ครั้งแรก และสเปกบอกว่าห้ามปฏิเสธเพราะ hint ผิด
+ */
+export async function revokeToken(
+  token: string,
+  hint: "access_token" | "refresh_token" = "access_token",
+): Promise<void> {
   try {
-    await postForm("/api/v2/oauth2/revoke/", { token });
+    await postForm("/api/v2/oauth2/revoke/", { token, token_type_hint: hint });
   } catch (err) {
-    console.warn("[thaid] revoke ไม่สำเร็จ (ข้ามไป):", err instanceof Error ? err.message : err);
+    console.warn(
+      `[thaid] revoke ${hint} ไม่สำเร็จ (ข้ามไป):`,
+      err instanceof Error ? err.message : err,
+    );
   }
+}
+
+/**
+ * คืน token ทุกใบที่ ThaiD ออกให้รอบนี้
+ *
+ * RFC 7009 §2.1 บอกว่าการเพิกถอน refresh token *ควร* ทำให้ access token ที่ออกจาก
+ * ใบเดียวกันตายตามไปด้วย แต่ "ควร" ไม่ใช่ "ต้อง" และเราไม่รู้ว่ากรมการปกครองทำแบบไหน
+ * จึงส่งทั้งสองใบ ไม่ใช่ใบเดียวแล้วหวังผลพลอยได้
+ *
+ * ทำขนานกันเพราะไม่มีใครรอผลอยู่ และ error ถูกกลืนใน revokeToken() อยู่แล้ว
+ */
+export async function revokeIssuedTokens(token: TokenResponse): Promise<void> {
+  await Promise.all([
+    revokeToken(token.access_token, "access_token"),
+    ...(token.refresh_token ? [revokeToken(token.refresh_token, "refresh_token")] : []),
+  ]);
 }
 
 // ---------------------------------------------------------------- id_token
@@ -178,7 +217,7 @@ async function publicKeyFor(kid: string | undefined): Promise<KeyObject> {
   throw new ThaidError("unknown_kid", "ไม่พบกุญแจสาธารณะที่ตรงกับลายเซ็นของ id_token");
 }
 
-type IdTokenClaims = Record<string, unknown> & { sub?: string; pid?: string };
+type IdTokenClaims = Record<string, unknown> & { sub?: string; pid?: string; nonce?: string };
 
 export async function verifyIdToken(idToken: string): Promise<IdTokenClaims> {
   const decoded = jwt.decode(idToken, { complete: true });
@@ -235,16 +274,62 @@ export function toIdentity(claims: IdTokenClaims, fallback: Record<string, unkno
 }
 
 /**
- * เรียก ThaiD ครบขั้นตอน: code → token → identity
- * แล้วยกเลิก access token ทิ้ง เพราะไม่ได้ใช้ต่อ
+ * เทียบ claim `nonce` กับค่าที่ส่งไปตอน authorize
+ *
+ * **claim ที่หายไปกับ claim ที่ไม่ตรง คนละเรื่องกัน**
+ *   ไม่ตรง  → ปฏิเสธเสมอ id_token ใบนี้ไม่ได้ออกให้คำขอของเรา
+ *   ไม่มีมา → กรมการปกครองไม่ได้สะท้อน nonce กลับมา ซึ่งเป็นข้อจำกัดฝั่งเขา ไม่ใช่การโจมตี
+ *             ปฏิเสธก็เท่ากับพังการยืนยันตัวตนทั้งระบบเพราะของที่สเปกเรียกว่า RECOMMENDED
+ *             จึงเตือนใน log แล้วไปต่อ จนกว่าจะยืนยันได้ว่าเขาสะท้อนกลับมาจริง
+ *             (ตั้ง THAID_REQUIRE_NONCE=true แล้วจะกลายเป็นบังคับ)
+ *
+ * เทียบแบบคงเวลาไม่จำเป็นที่นี่ — ผู้เทียบไม่ได้ป้อนค่าทีละตัวเพื่อวัดเวลา และค่าที่ถูก
+ * เทียบเป็นค่าสุ่มที่หมดอายุใน 15 นาทีอยู่แล้ว
  */
-export async function resolveIdentity(code: string): Promise<ThaidIdentity> {
+function checkNonce(claims: IdTokenClaims, expected: string | null): void {
+  const received = asString(claims.nonce);
+
+  if (!received) {
+    if (env.thaid.requireNonce) {
+      throw new ThaidError("nonce_missing", "id_token จาก ThaiD ไม่มี claim nonce");
+    }
+    console.warn("[thaid] id_token ไม่มี claim nonce — ThaiD สะท้อน nonce กลับมาหรือไม่?");
+    return;
+  }
+  if (!expected) {
+    // แถวเก่าที่เปิดไว้ก่อน deploy รุ่นนี้ ยังไม่มี nonce เก็บไว้ให้เทียบ
+    console.warn("[thaid] ได้ claim nonce กลับมาแต่คำขอนี้ไม่ได้บันทึก nonce ไว้ — ข้ามการเทียบ");
+    return;
+  }
+  if (received !== expected) {
+    throw new ThaidError("nonce_mismatch", "nonce ใน id_token ไม่ตรงกับคำขอที่เริ่มไว้");
+  }
+}
+
+/**
+ * เรียก ThaiD ครบขั้นตอน: code → token → ตรวจ nonce → identity
+ * แล้วยกเลิก token ทุกใบที่เขาออกให้ เพราะไม่ได้ใช้ต่อ
+ */
+export async function resolveIdentity(
+  code: string,
+  expectedNonce: string | null,
+): Promise<ThaidIdentity> {
   const token = await exchangeCode(code);
   if (!token.id_token) {
     throw new ThaidError("no_id_token", "ThaiD ไม่ได้ส่ง id_token กลับมา (scope openid หายไปหรือไม่?)");
   }
+
+  /**
+   * คำถามที่ยังค้าง: ThaiD ออก refresh_token มาด้วยหรือไม่ — `TokenResponse` ประกาศไว้
+   * เป็น optional ตามสเปก แต่ยังไม่เคยเห็นค่าจริง บันทึกไว้ใน log ตอนยิงจริงจะได้รู้
+   * (ไม่ log ตัว token — แค่ว่ามีหรือไม่มี)
+   */
+  console.info(`[thaid] token response: refresh_token ${token.refresh_token ? "มี" : "ไม่มี"}`);
+
   const claims = await verifyIdToken(token.id_token);
-  const identity = toIdentity(claims, token as unknown as Record<string, unknown>);
-  void revokeToken(token.access_token);
-  return identity;
+  // คืน token ก่อนตรวจ nonce — ใบที่เราปฏิเสธก็ไม่มีเหตุผลให้มีชีวิตต่อฝั่งกรมการปกครอง
+  void revokeIssuedTokens(token);
+
+  checkNonce(claims, expectedNonce);
+  return toIdentity(claims, token as unknown as Record<string, unknown>);
 }

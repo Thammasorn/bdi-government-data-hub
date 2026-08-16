@@ -55,6 +55,7 @@
 | `operation` | `VERIFY_IDENTITY` (เปิดใช้งานบัญชี) · `AUTHENTICATE` (เข้าสู่ระบบ) |
 | `subject_type` / `subject_id` | `USER_ACTIVATION_KEY` + id ของแถว activation_key · `THAID_LOGIN` + UUID สุ่ม |
 | `idempotency_key` | `thaid:<state>` — unique จึงกันการยิง code ซ้ำได้ที่ชั้นฐานข้อมูล |
+| `request_nonce` | `nonce` ที่สุ่มคู่กับ `state` แล้วเอาไปเทียบกับ claim ใน id_token (ข้อ 4.3) |
 | `external_reference` | `sub` จาก id_token (ลง `user_account.external_subject` ตอนสร้างบัญชี) |
 | `status` | `PENDING` → `PROCESSING` (จอง state) → `SUCCEEDED` / `FAILED` |
 
@@ -71,6 +72,7 @@ THAID_API_KEY=                 # ปล่อยว่างได้ ส่ง�
 THAID_REDIRECT_URI=            # ว่าง = ${APP_URL}/auth/callback/thaid
 THAID_SCOPE=                   # ว่าง = openid pid title given_name middle_name family_name name …
 THAID_USE_PID=true             # false = อ่านเลขบัตรจาก claim `sub` แทน `pid` (ดูข้อ 4.2)
+THAID_REQUIRE_NONCE=false      # true = ปฏิเสธ id_token ที่ไม่มี claim nonce (ดูข้อ 4.3)
 ```
 
 `redirect_uri` ต้องตรงตัวอักษรกับที่ลงทะเบียนไว้กับกรมการปกครอง ไม่งั้นได้
@@ -131,6 +133,28 @@ sandbox ที่เจอตั้งแต่ SIT รอบแรก
 ยังควร **ถามกรมการปกครองว่า `sub` เป็นเลขบัตรเสมอหรือไม่** (ข้อ 6) — ตอนนี้ระบบพึ่ง
 พฤติกรรมที่สังเกตเห็น ไม่ใช่สิ่งที่เอกสารรับประกัน แต่ถ้าวันหนึ่งมันเปลี่ยน ผลคือหยุดทำงาน
 พร้อมข้อความที่ชัด ไม่ใช่ยกเลิกคีย์ของผู้ใช้ทิ้ง
+
+### 4.3 `nonce` และ PKCE
+
+ตั้งแต่ 2026-08-16 authorization request มี `nonce` สุ่ม 24 ไบต์เสมอ เก็บคู่กับ `state`
+ใน `integration_operation.request_nonce` แล้วเทียบกับ claim `nonce` ของ id_token ตอน callback
+
+`state` กัน CSRF ได้อยู่แล้วผ่าน `idempotency_key` ที่ unique แต่ไม่ได้ผูก **id_token**
+เข้ากับคำขอนั้น — `nonce` คือชิ้นที่ทำหน้าที่นั้น (OIDC Core §3.1.2.1, RECOMMENDED)
+
+| กรณี | ผล |
+|---|---|
+| `nonce` ไม่ตรง | 403 `nonce_mismatch` · **ไม่เพิกถอน activation key** |
+| `nonce` ไม่มีมาเลย | เตือนใน log แล้วไปต่อ · `THAID_REQUIRE_NONCE=true` ทำให้ 403 `nonce_missing` |
+
+เหตุผลที่ยอมให้ผ่านเมื่อ claim ไม่มา และเหตุผลที่ไม่เพิกถอนคีย์ อยู่ใน
+`docs/09-auth-tokens.md` §7 — สรุปคือเรายังไม่ยืนยันว่ากรมการปกครองสะท้อน `nonce` กลับมา
+และความผิดพลาดฝั่งการตั้งค่าต้องไม่ทำลายลิงก์ของผู้ใช้ (หลักเดียวกับ `cid_unavailable`)
+
+**PKCE (RFC 7636) ยังไม่ได้ทำ** OAuth 2.1 บังคับกับทุก client รวมทั้ง confidential client
+แต่ต้องรู้ก่อนว่ากรมการปกครองรองรับ `code_challenge` / `code_challenge_method=S256` หรือไม่
+ส่งไปโดยที่เขาไม่รองรับ อย่างดีคือถูกเพิกเฉย อย่างร้ายคือ authorize ล้มทั้งหมด — ถามพร้อม
+กับสองเรื่องที่ค้างอยู่แล้วในข้อ 4.1
 
 ## 5. ผล SIT (2026-08-13)
 
@@ -203,6 +227,13 @@ node sit-thaid.mjs
 - [ ] บัญชีที่ seed ไว้ก่อนหน้านี้บางบัญชี (เจ้าหน้าที่ BDI ใน `seed:demo`) ไม่มี `cid`
       จึงเปิดใช้งานผ่าน ThaiD ไม่ได้ — endpoint ตอบ 409 `cid_missing` พร้อมบอกให้ติดต่อเจ้าหน้าที่
       ถ้าจะสาธิตด้วยบัญชีเหล่านั้นต้องเติม `cid` ให้ก่อน (ข้อนี้หายไปเองเมื่อปิดการเทียบ)
+- [ ] **ถามกรมการปกครองว่ารองรับ PKCE หรือไม่** (ข้อ 4.3) — ถามไปพร้อมกับ scope `pid`
+      และ redirect URI ของโดเมนจริง เป็นสามเรื่องที่รอคำตอบจากที่เดียวกัน
+- [ ] **ตรวจตอนยิงจริงว่า id_token มี claim `nonce` กลับมาหรือไม่** ถ้ามี ให้ตั้ง
+      `THAID_REQUIRE_NONCE=true` ทุก deployment — ตอนนี้ระบบยอมให้ผ่านเมื่อไม่มี claim
+- [ ] **ตรวจตอนยิงจริงว่า ThaiD ออก `refresh_token` มาด้วยหรือไม่** `resolveIdentity()`
+      เขียนลง log ไว้แล้วว่ารอบนั้นได้มาหรือไม่ (ไม่ใช่ตัว token) ระบบ revoke ทั้งสองใบ
+      อยู่แล้วไม่ว่าคำตอบจะเป็นอะไร แต่คำตอบนี้ควรอยู่ในเอกสาร
 - [ ] `main` ชี้ `THAID_REDIRECT_URI` ไปที่ `http://localhost:3000/auth/callback/thaid` ตามที่
       ลงทะเบียนไว้ ผู้ใช้ที่เข้าจาก `https://bdi.thammasorn.org` แล้วกดปุ่ม ThaiD จึงถูกส่งกลับ
       มาที่ localhost ของเครื่องตัวเอง = ใช้ไม่ได้ ThaiD บน `main` จึงใช้ได้เฉพาะเบราว์เซอร์

@@ -22,9 +22,10 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   granted us yet, and the SIT run that exercised it against their sandbox
 - `docs/08-database-access.md` — connecting DBeaver (or psql) to a checkout's database:
   which port belongs to which checkout, the schema layout, and what not to edit by hand
-- `docs/09-auth-tokens.md` — every token in the system (session JWT, activation key, OTP,
-  admin token, ThaiD's tokens, OAuth state): where each lives, how it is hashed, when it
-  expires. **There is no refresh token**; §1.4 explains what follows from that
+- `docs/09-auth-tokens.md` — every token in the system (session id, activation key, OTP,
+  admin token, ThaiD's tokens, OAuth `state`, OIDC `nonce`): where each lives, how it is
+  hashed, when it expires. **There is no refresh token and no need for one**; §1.4 explains
+  the session table that replaced the old JWT
 - `docs/10-admin-prefill-organization.md` — organizations an admin creates ahead of time,
   and how their data reaches the user's registration form
 - `docs/bdi-admin-portal.postman_collection.json` — Journey A as a runnable collection,
@@ -149,11 +150,22 @@ Invite-only. There is no self-signup and no admin UI — the spec says so explic
 because the caller is an operator script.
 
 **The session cookie identifies the user and nothing else.** `requireAuth` re-reads roles and
-organisation from the database on every request and overwrites whatever the JWT carried,
-because both change while a session is still valid. Roles now come from a join on
-`iam.user_role_assignment` filtered by `status = 'ACTIVE' AND (effective_until IS NULL OR
-effective_until > now())` — the source moved, the rule did not. Don't reintroduce reads of
-`session.roles` / `session.organizationId` that bypass this, and don't "optimise" it away.
+organisation from the database on every request, because both change while a session is still
+valid. Roles come from a join on `iam.user_role_assignment` filtered by `status = 'ACTIVE' AND
+(effective_until IS NULL OR effective_until > now())`. Don't put roles or organisation back into
+the cookie, and don't "optimise" this read away.
+
+**The cookie holds an opaque random value, not a JWT.** It points at a row in `iam.session`,
+which is what makes revocation possible at all; there is no `JWT_SECRET` any more
+(`jsonwebtoken` stays, for ThaiD's `id_token`). `lib/session.ts` owns the lifecycle. Two
+expiries, both enforced: absolute (`SESSION_TTL_DAYS`, 7 days, not renewable) and idle
+(`SESSION_IDLE_HOURS`, 8 hours, `last_seen_at` moves — written at most once a minute, not per
+request). `issueSession()` revokes whatever session the caller arrived with, so logging in
+always rotates the value. Every revocation writes an `audit_event` whose
+`metadata_json.reason` says which of LOGOUT · LOGOUT_ALL · PASSWORD_CHANGED ·
+ACCOUNT_SUSPENDED · ROTATED · EXPIRED it was. `PASSWORD_CHANGED` has no caller yet — there is
+no change-password endpoint; the helper is written and waiting for one.
+`docs/09-auth-tokens.md` §1.4 is the full account.
 
 Roles are rows in `iam.role`, not an enum. Two codes changed from the old model:
 `BDI_APPROVER` → `BDI_FINAL_APPROVER` and `BDI_SPECIALIST` → `BDI_DATASET_SPECIALIST`; two are
@@ -218,6 +230,14 @@ failures, lands in it for free.
 
 The raw activation key is never sent to ThaiD and never stored: the callback finds its way
 back through `subject_id`, which is the `activation_key` row id.
+
+Every authorization request carries a random `nonce` alongside `state`, stored in
+`integration_operation.request_nonce` and compared against the `id_token` claim. A **mismatch**
+is always rejected; a **missing** claim only warns, because it is not yet confirmed that DOPA
+echoes `nonce` back — `THAID_REQUIRE_NONCE=true` turns that into a rejection once it is. Neither
+case revokes the activation key, for the same reason `cid_unavailable` doesn't. Tokens are
+revoked on the way out with `token_type_hint`, refresh token included when one comes back.
+PKCE is not implemented: it needs an answer from DOPA first.
 
 A CID mismatch is not just a rejection — §2.4 of the card requires the key to be `REVOKED`
 and the attempt logged (`IDENTITY_VERIFICATION_FAILED` with `failure_reason: CID_MISMATCH`),
@@ -321,6 +341,9 @@ Two API base URLs, and they are not interchangeable:
 - A new service added to `docker-compose.yml` is not in `docker-compose.prod.yml` until it is
   put there. Until then it runs its development command on a production deployment.
 - Zod v4: `z.nativeEnum(X, { error: "..." })`. `errorMap` no longer exists.
+- Deploying the session change logs **everybody** out at once: the cookie format changed, so
+  every value issued by the old build is meaningless to the new one. That is expected and
+  cannot be avoided, but it is not something to do on a demo day without warning people.
 - Where `APP_URL` is https (that is `main`), the session cookie is issued `Secure`, so a script
   that logs in over `http://localhost:4000` gets a 200 and then 401 on every later call — the
   browser or client never sends the cookie back. Drive that deployment through

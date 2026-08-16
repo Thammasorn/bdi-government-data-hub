@@ -77,9 +77,9 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-bdi-uploads}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:${FRONTEND_PORT:-3000}}
       APP_URL: ${APP_URL:-http://localhost:3000}
-      JWT_SECRET: ${JWT_SECRET:?ตั้งค่า JWT_SECRET ใน .env ก่อน}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:?ตั้งค่า ADMIN_API_TOKEN ใน .env ก่อน}
       SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-7}
+      SESSION_IDLE_HOURS: ${SESSION_IDLE_HOURS:-8}
       INVITATION_TTL_DAYS: ${INVITATION_TTL_DAYS:-7}
       ACTIVATION_KEY_SECRET: ${ACTIVATION_KEY_SECRET:-}
       ACTIVATION_KEY_TTL_DAYS: ${ACTIVATION_KEY_TTL_DAYS:-7}
@@ -98,6 +98,7 @@ services:
       THAID_REDIRECT_URI: ${THAID_REDIRECT_URI:-}
       THAID_SCOPE: ${THAID_SCOPE:-}
       THAID_USE_PID: ${THAID_USE_PID:-true}
+      THAID_REQUIRE_NONCE: ${THAID_REQUIRE_NONCE:-false}
       COOKIE_SECURE: ${COOKIE_SECURE:-}
     ports:
       # ตรึงไว้ — โดเมนสาธารณะ bdi-api.thammasorn.org ชี้มาที่พอร์ตนี้
@@ -129,7 +130,6 @@ services:
       NODE_ENV: ${NODE_ENV:-development}
       DATABASE_URL: postgresql://${POSTGRES_USER:-bdi}:${POSTGRES_PASSWORD:-bdi_dev_password}@postgres:5432/${POSTGRES_DB:-bdi}?schema=public
       APP_URL: ${APP_URL:-http://localhost:3000}
-      JWT_SECRET: ${JWT_SECRET:?ตั้งค่า JWT_SECRET ใน .env ก่อน}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:?ตั้งค่า ADMIN_API_TOKEN ใน .env ก่อน}
       ACTIVATION_KEY_SECRET: ${ACTIVATION_KEY_SECRET:-}
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}

@@ -1,7 +1,12 @@
 import { Router } from "../lib/async-route.js";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
-import { OtpPurpose, UserAccountStatus, type IntegrationOperation } from "@prisma/client";
+import {
+  OtpPurpose,
+  SessionRevokeReason,
+  UserAccountStatus,
+  type IntegrationOperation,
+} from "@prisma/client";
 
 import { prisma } from "../db.js";
 import { env } from "../env.js";
@@ -10,7 +15,6 @@ import {
   cookieOptions,
   generateOtp,
   hashPassword,
-  signSession,
   verifyPassword,
 } from "../lib/auth.js";
 import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
@@ -23,6 +27,13 @@ import {
 } from "../lib/iam.js";
 import { sendOtpEmail } from "../lib/mail.js";
 import { ROLE_LABELS } from "../lib/roles.js";
+import {
+  activeSessionsFor,
+  createSession,
+  resolveSession,
+  revokeSession,
+  revokeSessionsFor,
+} from "../lib/session.js";
 import { ORGANIZATION_SCOPED_ROLES, type RoleCode } from "../lib/system.js";
 import {
   ThaidError,
@@ -159,13 +170,13 @@ authRouter.post("/thaid/start", async (req, res) => {
     organizationId = key.organizationId;
   }
 
-  const { state } = await startThaidOperation({
+  const { state, nonce } = await startThaidOperation({
     purpose: parsed.data.purpose,
     subjectId,
     organizationId,
   });
 
-  res.json({ authorizeUrl: authorizeUrl(state) });
+  res.json({ authorizeUrl: authorizeUrl(state, nonce) });
 });
 
 const callbackSchema = z.object({
@@ -224,12 +235,29 @@ authRouter.post("/thaid/callback", async (req, res) => {
 
   let identity: ThaidIdentity;
   try {
-    identity = await resolveIdentity(parsed.data.code);
+    // nonce ที่บันทึกไว้ตอน start — เทียบกับ claim ใน id_token ข้างใน resolveIdentity()
+    identity = await resolveIdentity(parsed.data.code, operation.requestNonce);
   } catch (err) {
     const code = err instanceof ThaidError ? err.code : "unexpected";
     const detail = err instanceof Error ? err.message : String(err);
     console.error(`[thaid] ${code}: ${detail}`);
     await failThaidOperation(operation, code, detail);
+
+    /**
+     * nonce ไม่ตรง = id_token ใบนี้ไม่ได้ออกให้คำขอนี้ ปฏิเสธไปเลย
+     *
+     * **ไม่เพิกถอน activation key** ด้วยเหตุผลเดียวกับ `cid_unavailable`: ผู้ใช้ไม่ได้
+     * ทำอะไรผิด สาเหตุอยู่ที่ฝั่งเราหรือฝั่งกรมการปกครอง (หรือมีคนพยายามยัด id_token
+     * ซึ่งก็ยิ่งไม่ควรทำให้ลิงก์ของเหยื่อพัง — นั่นจะกลายเป็นวิธียกเลิกลิงก์ของคนอื่น)
+     */
+    if (code === "nonce_mismatch" || code === "nonce_missing") {
+      res.status(403).json({
+        error: code,
+        message: "ผลการยืนยันจาก ThaiD ไม่ตรงกับคำขอที่เริ่มไว้ กรุณาเริ่มยืนยันตัวตนใหม่อีกครั้ง",
+      });
+      return;
+    }
+
     res.status(502).json({
       error: "thaid_error",
       message: "ติดต่อระบบ ThaiD ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
@@ -260,7 +288,7 @@ authRouter.post("/thaid/callback", async (req, res) => {
   }
 
   if (purpose === "login") {
-    await thaidLogin(res, operation, identity);
+    await thaidLogin(req, res, operation, identity);
     return;
   }
 
@@ -332,6 +360,7 @@ authRouter.post("/thaid/callback", async (req, res) => {
 
 /** เข้าสู่ระบบด้วย ThaiD — จับคู่บัญชีด้วยเลขบัตร ไม่ใช่อีเมล */
 async function thaidLogin(
+  req: import("express").Request,
   res: import("express").Response,
   operation: IntegrationOperation,
   identity: ThaidIdentity,
@@ -384,7 +413,7 @@ async function thaidLogin(
     metadata: { method: "THAID" },
   });
 
-  await issueSession(res, user.id, { purpose: "login", provider: "thaid" });
+  await issueSession(req, res, user.id, { purpose: "login", provider: "thaid" });
 }
 
 // ---------------------------------------------------------------- สร้างบัญชี (§2.5)
@@ -478,7 +507,7 @@ authRouter.post("/activate", async (req, res) => {
     metadata: { method: "THAID", activation_key_id: key.id },
   });
 
-  await issueSession(res, key.userAccountId);
+  await issueSession(req, res, key.userAccountId);
 });
 
 // ---------------------------------------------------------------- เข้า/ออกระบบ
@@ -585,7 +614,7 @@ authRouter.post("/login/verify-otp", async (req, res) => {
     metadata: { method: "PASSWORD_OTP" },
   });
 
-  await issueSession(res, user.id);
+  await issueSession(req, res, user.id);
 });
 
 /**
@@ -611,9 +640,54 @@ authRouter.post("/login/resend-otp", async (req, res) => {
   res.status(202).json({ ok: true });
 });
 
-authRouter.post("/logout", (_req, res) => {
+/**
+ * ออกจากระบบบนอุปกรณ์นี้ — **เพิกถอนแถว session จริง ๆ** ไม่ใช่แค่ล้าง cookie
+ *
+ * ของเดิมล้าง cookie อย่างเดียว สำเนาที่ถูกคัดลอกออกไปก่อนหน้านั้นยังใช้ได้จนครบ 7 วัน
+ * ตอนนี้ค่าใน cookie ใช้ไม่ได้อีกทันทีไม่ว่าจะอยู่ในมือใคร
+ *
+ * ไม่ผ่าน requireAuth: คนที่ถือ cookie ที่หมดอายุแล้วก็ควรล้าง cookie ได้ตามปกติ
+ * ตอบ ok เสมอ ไม่บอกว่า cookie ที่ส่งมาใช้ได้อยู่หรือไม่
+ */
+authRouter.post("/logout", async (req, res) => {
+  const presented = req.cookies?.[SESSION_COOKIE];
+  if (presented) {
+    const { session } = await resolveSession(presented);
+    if (session) await revokeSession(prisma, session.id, SessionRevokeReason.LOGOUT);
+  }
   res.clearCookie(SESSION_COOKIE, { ...cookieOptions(), maxAge: undefined });
   res.json({ ok: true });
+});
+
+/** ออกจากระบบทุกอุปกรณ์ รวมอุปกรณ์ที่กดเองด้วย — ใช้ตอนสงสัยว่า cookie หลุดออกไป */
+authRouter.post("/logout-all", requireAuth, async (req, res) => {
+  const count = await revokeSessionsFor(prisma, {
+    userAccountId: req.session!.sub,
+    reason: SessionRevokeReason.LOGOUT_ALL,
+  });
+  res.clearCookie(SESSION_COOKIE, { ...cookieOptions(), maxAge: undefined });
+  res.json({ ok: true, revoked: count });
+});
+
+/**
+ * session ที่ยังใช้ได้ของบัญชีตัวเอง — ตอบคำถาม "ตอนนี้ใครล็อกอินค้างอยู่บ้าง"
+ *
+ * ยังไม่มีหน้าจอ (การ์ด §8: ทำ API ก่อน) แต่ต้องมี API ให้พิสูจน์และให้สอบสวนได้
+ * ไม่ส่ง `token_hash` ออกไปแม้จะเป็น hash — ไม่มีเหตุผลที่ผู้เรียกต้องรู้
+ */
+authRouter.get("/sessions", requireAuth, async (req, res) => {
+  const sessions = await activeSessionsFor(req.session!.sub);
+  res.json({
+    sessions: sessions.map((s) => ({
+      id: s.id,
+      current: s.id === req.session!.sessionId,
+      issuedAt: s.issuedAt,
+      expiresAt: s.expiresAt,
+      lastSeenAt: s.lastSeenAt,
+      ipAddress: s.ipAddress,
+      userAgent: s.userAgent,
+    })),
+  });
 });
 
 authRouter.get("/me", requireAuth, async (req, res) => {
@@ -642,10 +716,22 @@ authRouter.get("/me", requireAuth, async (req, res) => {
 });
 
 /**
- * ออก session cookie — อ่าน role กับหน่วยงานสดจากฐานข้อมูลเสมอ
- * ตัว cookie เก็บค่าไว้ก็จริง แต่ requireAuth จะอ่านทับใหม่ทุก request อยู่ดี
+ * ออก session ใหม่หนึ่งใบแล้วส่ง id ดิบกลับไปเป็น cookie
+ *
+ * cookie ไม่มีข้อมูลอยู่ในตัวแล้ว — role กับหน่วยงานที่ตอบกลับไปในนี้มีไว้ให้หน้าเว็บ
+ * วาดเมนูรอบแรกเท่านั้น requireAuth อ่านใหม่จากฐานข้อมูลทุก request อยู่ดี
+ *
+ * **หมุนใบเสมอ**: ถ้าผู้เรียกถือ session ใบเก่ามาอยู่แล้ว ใบนั้นถูกเพิกถอนทิ้ง
+ * (`ROTATED`) การเข้าสู่ระบบและการเปิดใช้งานบัญชีคือจุดที่สิทธิ์เปลี่ยนระดับ ปล่อยให้
+ * ค่าเดิมใช้ต่อได้คือ session fixation — คนที่ยัด cookie ให้เหยื่อก่อนล็อกอินจะได้
+ * session ที่ล็อกอินแล้วไปใช้ฟรี ๆ
  */
-async function issueSession(res: import("express").Response, userAccountId: string, extra?: object) {
+async function issueSession(
+  req: import("express").Request,
+  res: import("express").Response,
+  userAccountId: string,
+  extra?: object,
+) {
   const user = await prisma.userAccount.findUniqueOrThrow({ where: { id: userAccountId } });
   const roles = await activeRoleCodes(prisma, userAccountId);
   /**
@@ -667,11 +753,14 @@ async function issueSession(res: import("express").Response, userAccountId: stri
     assignments[0]?.organizationId ??
     null;
 
-  res.cookie(
-    SESSION_COOKIE,
-    signSession({ sub: user.id, email: user.email, roles, organizationId }),
-    cookieOptions(),
-  );
+  const presented = req.cookies?.[SESSION_COOKIE];
+  if (presented) {
+    const { session } = await resolveSession(presented);
+    if (session) await revokeSession(prisma, session.id, SessionRevokeReason.ROTATED);
+  }
+
+  const { sessionId } = await createSession(prisma, userAccountId);
+  res.cookie(SESSION_COOKIE, sessionId, cookieOptions());
   res.json({ user: publicUser(user, roles, organizationId), ...extra });
 }
 

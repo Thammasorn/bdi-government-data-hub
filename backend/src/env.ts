@@ -51,8 +51,17 @@ export const env = {
   databaseUrl: required("DATABASE_URL"),
 
   auth: {
-    jwtSecret: required("JWT_SECRET"),
+    /**
+     * อายุสูงสุดของ session นับจากตอนออก — ต่ออายุไม่ได้ ครบแล้วต้องเข้าสู่ระบบใหม่
+     * (ไม่มี JWT_SECRET แล้ว: session ไม่ใช่ JWT อีกต่อไป สถานะจริงอยู่ในตาราง iam.session)
+     */
     sessionTtlDays: Number(optional("SESSION_TTL_DAYS", "7")),
+    /**
+     * ไม่ได้ใช้งานนานเท่านี้แล้ว session ตาย แม้ยังไม่ถึง absolute expiry
+     * ตัดสินไว้ 2026-08-16: absolute 7 วัน + idle 8 ชั่วโมง — เครื่องที่เปิดค้างข้ามคืน
+     * ต้องเข้าสู่ระบบใหม่ ทั้งสองค่าตั้งผ่าน env ได้เพื่อให้เจ้าของสเปกปรับได้เองภายหลัง
+     */
+    sessionIdleHours: Number(optional("SESSION_IDLE_HOURS", "8")),
     invitationTtlDays: Number(optional("INVITATION_TTL_DAYS", "7")),
     otpTtlMinutes: Number(optional("OTP_TTL_MINUTES", "10")),
     otpMaxAttempts: Number(optional("OTP_MAX_ATTEMPTS", "5")),
@@ -120,6 +129,15 @@ export const env = {
      * เพราะนั่นจะยกเลิกคีย์ของคนที่ไม่ได้ทำอะไรผิด ดู `lib/thaid.ts` toIdentity()
      */
     usePid: optional("THAID_USE_PID", "true") === "true",
+    /**
+     * บังคับให้ id_token ต้องมี claim `nonce` หรือไม่
+     *
+     * ระบบส่ง `nonce` ไปกับ authorization request เสมอ และ **nonce ที่ไม่ตรงถูกปฏิเสธเสมอ**
+     * ไม่ว่าตั้งค่านี้ไว้อย่างไร ตัวแปรนี้ตัดสินเฉพาะกรณี "ไม่มี claim กลับมาเลย" ซึ่งแปลว่า
+     * กรมการปกครองไม่ได้สะท้อน nonce กลับมา — ยังไม่ได้ยืนยันว่าเขาทำหรือไม่ทำ ค่าตั้งต้น
+     * จึงเป็น false (เตือนใน log แล้วไปต่อ) เปิดเป็น true เมื่อเห็นจากการยิงจริงแล้วว่ามีมา
+     */
+    requireNonce: optional("THAID_REQUIRE_NONCE", "false") === "true",
     /** อายุของ state ที่ค้างรอ callback — ยาวพอให้เปิดแอป ThaiD บนมือถือแล้วกลับมา */
     stateTtlMinutes: Number(optional("THAID_STATE_TTL_MINUTES", "15")),
     /** ยืนยันตัวตนแล้วมีเวลาเท่านี้ในการตั้งรหัสผ่านให้จบ ก่อนต้องยืนยันใหม่ */
