@@ -22,6 +22,10 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   granted us yet, and the SIT run that exercised it against their sandbox
 - `docs/08-database-access.md` — connecting DBeaver (or psql) to a checkout's database:
   which port belongs to which checkout, the schema layout, and what not to edit by hand
+- `docs/09-auth-tokens.md` — every token in the system (session JWT, activation key, OTP,
+  admin token, ThaiD's tokens, OAuth state): where each lives, how it is hashed, when it
+  expires. **There is no refresh token**; §1.4 explains what follows from that
+- `docs/bdi-admin-portal.postman_collection.json` — Journey A as a runnable collection
 
 Read `docs/01-user-journey.md` before touching anything in `backend/src/routes/organizations.ts`
 or `backend/src/routes/dataset-requests.ts`.

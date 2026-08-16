@@ -1,0 +1,236 @@
+{
+  "info": {
+    "name": "BDI Government Datahub — Admin Portal API",
+    "_postman_id": "b91d5f2a-7c4e-4a3d-9f61-2ad0c5e18f30",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Journey A — สร้างหน่วยงานและส่งลิงก์เปิดใช้งานบัญชีให้ผู้ใช้ (\"ไม่มี UI แต่ต้องมี api\")\n\nทุก endpoint ในนี้ป้องกันด้วย shared secret `x-admin-token` ไม่ใช่ session — ผู้เรียกคือสคริปต์ฝั่ง admin ไม่ใช่เบราว์เซอร์ ตั้งค่าที่ตัวแปร `adminToken` (ค่าเดียวกับ `ADMIN_API_TOKEN` ใน `.env` ของ checkout)\n\n## ตั้งค่าก่อนใช้\n\n| ตัวแปร | ค่า |\n| --- | --- |\n| `baseUrl` | `http://localhost:4000` สำหรับ checkout `main` · dev slot `NN` ใช้ `http://localhost:41N0` |\n| `adminToken` | `grep ADMIN_API_TOKEN .env` ของ checkout นั้น |\n\n`organizationId` กับ `activationKeyId` ไม่ต้องกรอกเอง — สคริปต์ Tests ของแต่ละ request เก็บให้อัตโนมัติ\n\n## ลำดับการใช้งาน\n\n1. **สร้างหน่วยงาน + เชิญผู้ใช้หน่วยงาน** — ไม่ส่ง `organizationId` มา ระบบสร้างหน่วยงาน (`PENDING_REGISTRATION`) พร้อมคำขอจดทะเบียนฉบับร่างให้เอง แล้วเก็บ id ไว้ในตัวแปร\n2. **เชิญผู้มีอำนาจลงนามเข้าหน่วยงานเดิม** — ใช้ `organizationId` จากข้อ 1\n3. **ดูรายการคำเชิญ** / **ยกเลิกคำเชิญ** ตามต้องการ\n\n## ลิงก์เปิดใช้งานอยู่ที่ไหน\n\nคีย์ดิบ **ไม่ถูกส่งกลับมาใน response** โดยตั้งใจ — มันถูกส่งไปที่อีเมลของผู้ถูกเชิญเท่านั้น และในฐานข้อมูลเก็บเป็น HMAC-SHA-256 (ดู `docs/09-auth-tokens.md` ข้อ 2)\n\nบน checkout ที่ยังไม่ได้ตั้ง SMTP (`SMTP_USER` ว่าง) ระบบจะพิมพ์อีเมลทั้งฉบับลง log แทนการส่งจริง:\n\n```bash\ndocker compose logs backend | grep 'activate?token='\n```\n\nบน checkout ที่ตั้ง SMTP จริง (เช่น `main`) อีเมลจะถูกส่งออกไปจริง — ระวังเวลาทดสอบด้วยอีเมลปลอม\n\n## หมายเหตุที่ทำให้ไม่งง\n\n- **`cid` บังคับทุก role** เพราะ §2.4 ให้เทียบเลขบัตรจาก ThaiD กับเลขที่เจ้าหน้าที่บันทึกไว้ตอนสร้างบัญชี ถ้าให้ผู้ใช้กรอกเองการเทียบก็ไม่พิสูจน์อะไร · ตรวจ checksum ด้วย เลขมั่วจะได้ 400\n- **role ฝั่ง BDI ไม่ต้องส่ง `organizationId`** ระบบผูกกับหน่วยงาน BDI ให้เอง (`activation_key.organization_id` เป็น NOT NULL)\n- **เชิญซ้ำอีเมลที่ยัง `PENDING`** ถือว่าเจ้าหน้าที่แก้ข้อมูลที่กรอกผิด — เขียนทับเลขบัตรเดิมและออกคีย์ใหม่ ส่วนคีย์ใบเก่าของ (บัญชี, หน่วยงาน, role) เดียวกันจะถูก `REVOKED` อัตโนมัติ\n- **เชิญอีเมลที่ `ACTIVE` แล้ว** ตอบ 409 `exists`\n- หน่วยงานจะเป็น `ACTIVE` ก็ต่อเมื่อคำขอจดทะเบียนผ่าน `BDI_FINAL_APPROVAL` (Journey B) การเปิดใช้งานบัญชีไม่แตะสถานะหน่วยงาน"
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      { "key": "key", "value": "x-admin-token", "type": "string" },
+      { "key": "value", "value": "{{adminToken}}", "type": "string" },
+      { "key": "in", "value": "header", "type": "string" }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000",
+      "type": "string",
+      "description": "main = 4000 · dev slot NN = 41N0"
+    },
+    {
+      "key": "adminToken",
+      "value": "dev-admin-token-change-me",
+      "type": "string",
+      "description": "ADMIN_API_TOKEN ใน .env ของ checkout"
+    },
+    {
+      "key": "organizationId",
+      "value": "",
+      "type": "string",
+      "description": "เก็บอัตโนมัติจากคำเชิญใบแรก"
+    },
+    {
+      "key": "activationKeyId",
+      "value": "",
+      "type": "string",
+      "description": "เก็บอัตโนมัติจากคำเชิญใบล่าสุด"
+    }
+  ],
+  "item": [
+    {
+      "name": "0 · Health check (ไม่ต้องใช้ token)",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health/ready",
+          "host": ["{{baseUrl}}"],
+          "path": ["health", "ready"]
+        },
+        "description": "ยิงก่อนเพื่อยืนยันว่า baseUrl ชี้ถูก checkout — ตอบ 200 เมื่อ backend ต่อฐานข้อมูลได้แล้ว"
+      },
+      "response": []
+    },
+    {
+      "name": "1 · สร้างหน่วยงาน + เชิญผู้ใช้หน่วยงาน",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "",
+              "const body = pm.response.json();",
+              "pm.test('ได้ organizationId ของหน่วยงานที่เพิ่งสร้าง', () => {",
+              "    pm.expect(body.organizationId).to.be.a('string').and.not.empty;",
+              "});",
+              "",
+              "pm.collectionVariables.set('organizationId', body.organizationId);",
+              "pm.collectionVariables.set('activationKeyId', body.activationKeyId);",
+              "",
+              "console.log('organizationId =', body.organizationId);",
+              "console.log('activationKeyId =', body.activationKeyId);",
+              "console.log('ลิงก์เปิดใช้งานอยู่ในอีเมล — บน checkout ที่ไม่ได้ตั้ง SMTP ดูที่:');",
+              "console.log(\"  docker compose logs backend | grep 'activate?token='\");"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"somchai@agency.go.th\",\n  \"role\": \"ORGANIZATION_USER\",\n  \"cid\": \"1101700207129\",\n  \"displayName\": \"สมชาย ทดสอบ\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/invitations",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "admin", "invitations"]
+        },
+        "description": "**ไม่ส่ง `organizationId` มา = ให้ระบบสร้างหน่วยงานใหม่ให้**\n\nระบบจะสร้างในหนึ่ง transaction:\n\n1. `organization` สถานะ `PENDING_REGISTRATION` ชื่อชั่วคราว (ผู้ใช้กรอกชื่อจริงเองตอนทำ Journey B)\n2. `organization_registration_request` สถานะ `DRAFT` ผูกกับหน่วยงานนั้น — ผู้ใช้กด \"สร้างหน่วยงาน\" แล้วจะเจอร่างใบนี้ ไม่ได้ใบใหม่\n3. `user_account` สถานะ `PENDING` พร้อม `cid`\n4. `activation_key` สถานะ `ISSUED` อายุ 7 วัน\n5. ส่งอีเมลลิงก์เปิดใช้งาน\n\n### body\n\n| field | บังคับ | หมายเหตุ |\n| --- | --- | --- |\n| `email` | ✅ | อีเมลผู้ถูกเชิญ |\n| `role` | ✅ | `ORGANIZATION_USER` · `ORGANIZATION_APPROVER` · `BDI_OFFICER` · `BDI_DATASET_SPECIALIST` · `BDI_FINAL_APPROVER` · `BDI_LEGAL_OFFICER` · `SYSTEM_ADMINISTRATOR` |\n| `cid` | ✅ | เลขประจำตัวประชาชน 13 หลัก ตรวจ checksum |\n| `organizationId` | — | ใส่เมื่อต้องการเชิญเข้าหน่วยงานที่มีอยู่แล้ว · role ฝั่ง BDI ไม่ต้องใส่ (ผูกกับหน่วยงาน BDI ให้เอง) |\n| `displayName` | — | ค่าตั้งต้นคืออีเมล |\n\n### response 201\n\n```json\n{\n  \"activationKeyId\": \"uuid\",\n  \"userAccountId\": \"uuid\",\n  \"email\": \"somchai@agency.go.th\",\n  \"role\": \"ORGANIZATION_USER\",\n  \"roleLabel\": \"ผู้ดำเนินการของหน่วยงาน\",\n  \"organizationId\": \"uuid\",\n  \"expiresAt\": \"2026-08-23T…Z\"\n}\n```\n\n### ที่พลาดได้\n\n| status | error | สาเหตุ |\n| --- | --- | --- |\n| 400 | `validation` | `cid` ผิด checksum, อีเมลไม่ถูกรูปแบบ, `role` ไม่รู้จัก — ดู `fields` ว่าช่องไหน |\n| 401 | `unauthenticated` | `x-admin-token` ผิดหรือไม่ได้ส่ง |\n| 404 | `not_found` | ส่ง `organizationId` ที่ถูกรูปแบบแต่ไม่มีอยู่จริง |\n| 409 | `exists` | อีเมลนี้มีบัญชี `ACTIVE` อยู่แล้ว |\n\n`organizationId` ต้องเป็น **UUID v4 ที่ถูกต้องตามสเปก** (Zod v4 ตรวจ version/variant bits ด้วย) — เลขอย่าง `11111111-2222-3333-4444-555555555555` ถูกตีกลับเป็น 400 `Invalid UUID` ตั้งแต่ก่อนถึงขั้นค้นหาหน่วยงาน ไม่ใช่ 404"
+      },
+      "response": []
+    },
+    {
+      "name": "2 · เชิญผู้มีอำนาจลงนามเข้าหน่วยงานเดิม",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "",
+              "const body = pm.response.json();",
+              "pm.test('อยู่หน่วยงานเดียวกับใบแรก', () => {",
+              "    pm.expect(body.organizationId).to.eql(pm.collectionVariables.get('organizationId'));",
+              "});",
+              "",
+              "pm.collectionVariables.set('activationKeyId', body.activationKeyId);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"director@agency.go.th\",\n  \"role\": \"ORGANIZATION_APPROVER\",\n  \"cid\": \"3100600123450\",\n  \"organizationId\": \"{{organizationId}}\",\n  \"displayName\": \"ผู้อำนวยการ ทดสอบ\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/invitations",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "admin", "invitations"]
+        },
+        "description": "เชิญคนที่สองเข้าหน่วยงานเดิมด้วย `organizationId` ที่ request ก่อนหน้าเก็บไว้ให้\n\nหนึ่งหน่วยงานมี `ORGANIZATION_USER` ที่ยังใช้งานอยู่ได้หนึ่งคน และ `ORGANIZATION_APPROVER` หนึ่งคน (partial unique index ตามที่ดีไซน์กำหนด) — ข้อจำกัดนี้บังคับตอน **เปิดใช้งานบัญชี** ไม่ใช่ตอนเชิญ เชิญซ้ำจึงผ่านที่ขั้นนี้แต่ไปล้มทีหลัง"
+      },
+      "response": []
+    },
+    {
+      "name": "3 · เชิญเจ้าหน้าที่ BDI (ไม่ต้องมี organizationId)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "pm.collectionVariables.set('activationKeyId', pm.response.json().activationKeyId);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"officer@bdi.or.th\",\n  \"role\": \"BDI_OFFICER\",\n  \"cid\": \"1101700207129\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/invitations",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "admin", "invitations"]
+        },
+        "description": "role ฝั่ง BDI (`BDI_OFFICER`, `BDI_DATASET_SPECIALIST`, `BDI_FINAL_APPROVER`, `BDI_LEGAL_OFFICER`, `SYSTEM_ADMINISTRATOR`) ถูกผูกกับหน่วยงาน BDI ให้อัตโนมัติ ส่ง `organizationId` มาก็ไม่มีผล\n\nBDI เองเป็นแถวหนึ่งใน `organization.organization` เพราะ `activation_key.organization_id` เป็น NOT NULL"
+      },
+      "response": []
+    },
+    {
+      "name": "4 · ดูรายการคำเชิญ",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const { invitations } = pm.response.json();",
+              "pm.test('เป็น array', () => pm.expect(invitations).to.be.an('array'));",
+              "console.table(invitations.map((i) => ({",
+              "    email: i.userAccount.email,",
+              "    role: i.role.code,",
+              "    key: i.status,",
+              "    account: i.userAccount.status,",
+              "    expiresAt: i.expiresAt,",
+              "})));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/invitations",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "admin", "invitations"]
+        },
+        "description": "คืนคำเชิญ 100 ใบล่าสุด เรียงใหม่ไปเก่า ไม่มี pagination\n\nแต่ละใบมี `id` · `status` (`ISSUED` / `USED` / `REVOKED` / `EXPIRED`) · `issuedAt` · `expiresAt` · `usedAt` · `revokedAt` · `userAccount {id,email,status}` · `role {code,nameTh}` · `organization {id,nameTh}`\n\n**ไม่มีคีย์ดิบในผลลัพธ์** ฐานข้อมูลเก็บแค่ HMAC ของมัน"
+      },
+      "response": []
+    },
+    {
+      "name": "5 · ยกเลิกคำเชิญ",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('ok', () => pm.expect(pm.response.json().ok).to.be.true);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"ส่งผิดคน\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/invitations/{{activationKeyId}}/revoke",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "admin", "invitations", "{{activationKeyId}}", "revoke"],
+          "variable": []
+        },
+        "description": "ยกเลิกคำเชิญที่ยัง `ISSUED` อยู่ ลิงก์เดิมใช้ไม่ได้ทันที\n\n`{{activationKeyId}}` มาจากคำเชิญใบล่าสุดที่ยิงไปในคอลเลกชันนี้ แก้เป็น id อื่นได้จากผลลัพธ์ของ request ก่อนหน้า\n\n`reason` ไม่บังคับ (ค่าตั้งต้น \"ยกเลิกโดยผู้ดูแลระบบ\") แต่ควรใส่ เพราะมันถูกเก็บลง `activation_key.revoked_reason` และเป็นสิ่งเดียวที่บอกได้ว่าทำไม\n\nคีย์ที่ `USED` หรือ `REVOKED` ไปแล้วตอบ 404 `not_found` — ยกเลิกซ้ำไม่ได้"
+      },
+      "response": []
+    }
+  ]
+}
