@@ -384,7 +384,11 @@ Two API base URLs, and they are not interchangeable:
   recoverable without the `pid` scope. It is deliberately not wired up yet: OIDC does not
   promise `sub` is anything in particular, and if production issued a pairwise opaque `sub`
   instead, comparing it to `cid` would revoke activation keys for legitimate users. Ask DOPA
-  what `sub` is before relying on it — `docs/07-thaid-integration.md` §4.3.
+  what `sub` is before relying on it — `docs/07-thaid-integration.md` §4.3. Their sandbox
+  does publish `/.well-known/openid-configuration`, and it says
+  `subject_type_supported: ["public"]`, so the pairwise scenario is off the table there;
+  production is still a different system. That document also answers PKCE (not advertised)
+  and refresh tokens (the grant is supported) — §4.4 has the whole reading of it.
 - The two `BDI_OFFICER_REVIEW` rounds look identical to anything reading `task_type`.
   Round one goes to the organization for signature, the re-check after signing goes to
   BDI final approval. Backend and `components/dataset/DetailView.tsx` both decide by

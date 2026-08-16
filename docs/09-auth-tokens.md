@@ -219,7 +219,9 @@ OTP แบบ `REGISTRATION` อีกแล้ว
 
 **ยังไม่เคยเห็น refresh token จริง** — `TokenResponse` ประกาศไว้เป็น optional ตามสเปก
 `resolveIdentity()` จึงเขียนลง log ว่ารอบนี้ได้มาหรือไม่ (แค่ "มี"/"ไม่มี" ไม่ใช่ตัว token)
-เพื่อให้การยิงจริงบน `main` ตอบคำถามนี้ได้
+เพื่อให้การยิงจริงบน `main` ตอบคำถามนี้ได้ — แต่ discovery document ของ sandbox
+ประกาศ `grant_types_supported: ["authorization_code", "refresh_token"]` แล้ว
+(`docs/07-thaid-integration.md` §4.4) การ revoke ใบที่สองจึงไม่ใช่โค้ดที่เขียนเผื่อลม ๆ แล้ง ๆ
 
 สิ่งเดียวที่เหลือไว้คือ `sub` ลงคอลัมน์ `user_account.external_subject` และ
 `integration_operation.external_reference` — เลขบัตรที่ใช้เทียบไม่ถูกเก็บ
@@ -264,9 +266,11 @@ authorization request แล้วต้องกลับมาเป็น cla
 ผู้ใช้ไม่ได้ทำอะไรผิด ความผิดพลาดอยู่ฝั่งการตั้งค่าหรือฝั่ง IdP — และถ้าเป็นการยัด
 id_token มาจริง การทำลายลิงก์ของเหยื่อก็จะกลายเป็นวิธียกเลิกลิงก์ของคนอื่นเสียเอง
 
-**PKCE (RFC 7636) ยังไม่ได้ทำ** — OAuth 2.1 บังคับกับทุก client แต่ต้องรู้ก่อนว่า
-กรมการปกครองรองรับ `code_challenge` หรือไม่ ทำฝ่ายเดียวไม่ได้ ถามพร้อมกับเรื่อง scope `pid`
-และ redirect URI ของโดเมนจริง (`docs/07-thaid-integration.md` §4.3)
+**PKCE (RFC 7636) ยังไม่ได้ทำ** — OAuth 2.1 บังคับกับทุก client แต่ discovery document
+ของ sandbox **ไม่ประกาศ** `code_challenge_methods_supported` ซึ่ง RFC 8414 §2 กำหนดให้เป็น
+ที่ประกาศเรื่องนี้ ส่ง `code_challenge` ไปแล้ว authorize ยังผ่านก็จริง แต่พารามิเตอร์มั่ว ๆ
+ก็ผ่านเหมือนกัน — endpoint เพิกเฉยของที่ไม่รู้จัก ดังนั้น "ส่งไปแล้วไม่พัง" พิสูจน์อะไรไม่ได้
+รายละเอียดการทดลองอยู่ใน `docs/07-thaid-integration.md` §4.4
 
 ## 8. ตัวแปรที่เกี่ยวข้องทั้งหมด
 

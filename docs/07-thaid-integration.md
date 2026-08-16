@@ -134,6 +134,11 @@ sandbox ที่เจอตั้งแต่ SIT รอบแรก
 พฤติกรรมที่สังเกตเห็น ไม่ใช่สิ่งที่เอกสารรับประกัน แต่ถ้าวันหนึ่งมันเปลี่ยน ผลคือหยุดทำงาน
 พร้อมข้อความที่ชัด ไม่ใช่ยกเลิกคีย์ของผู้ใช้ทิ้ง
 
+**อัปเดต 2026-08-16:** discovery document ของ sandbox ประกาศ `subject_type_supported: ["public"]`
+(ข้อ 4.4) ซึ่งแปลว่า `sub` **ไม่ใช่ pairwise** — ความกังวลย่อหน้าบนจึงเบาลงมาก
+ยังไม่ใช่คำตอบสำหรับ production (คนละระบบ) และยังไม่ได้แปลว่า `sub` คือเลขบัตร
+แต่ความเสี่ยงที่น่ากลัวที่สุด (client ต่างกันได้ `sub` ต่างกัน) ถูกตัดออกไปแล้ว
+
 ### 4.3 `nonce` และ PKCE
 
 ตั้งแต่ 2026-08-16 authorization request มี `nonce` สุ่ม 24 ไบต์เสมอ เก็บคู่กับ `state`
@@ -152,9 +157,43 @@ sandbox ที่เจอตั้งแต่ SIT รอบแรก
 และความผิดพลาดฝั่งการตั้งค่าต้องไม่ทำลายลิงก์ของผู้ใช้ (หลักเดียวกับ `cid_unavailable`)
 
 **PKCE (RFC 7636) ยังไม่ได้ทำ** OAuth 2.1 บังคับกับทุก client รวมทั้ง confidential client
-แต่ต้องรู้ก่อนว่ากรมการปกครองรองรับ `code_challenge` / `code_challenge_method=S256` หรือไม่
-ส่งไปโดยที่เขาไม่รองรับ อย่างดีคือถูกเพิกเฉย อย่างร้ายคือ authorize ล้มทั้งหมด — ถามพร้อม
-กับสองเรื่องที่ค้างอยู่แล้วในข้อ 4.1
+แต่ sandbox **ไม่ประกาศว่ารองรับ** — ดูข้อ 4.4
+
+### 4.4 สิ่งที่ discovery document ของ sandbox บอก (ยิงจริง 2026-08-16)
+
+กรมการปกครองเผยแพร่ `/.well-known/openid-configuration` ไว้ ซึ่งตอบคำถามที่ค้างอยู่หลายข้อ
+โดยไม่ต้องรอถามใคร สำเนาเก็บไว้ที่ `sit-evidence/thaid-discovery-20260816/`
+
+```json
+"grant_types_supported": ["authorization_code", "refresh_token"],
+"response_types_supported": ["code"],
+"subject_type_supported": ["public"],
+"scopes_supported": ["openid", "pid", "address", "gender", "birthdate", …],
+"id_token_signing_alg_values_supported": ["ES256"],
+"token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post"]
+```
+
+| คำถาม | สิ่งที่เอกสารนี้บอก |
+|---|---|
+| **PKCE** | **ไม่มีฟิลด์ `code_challenge_methods_supported`** ซึ่ง RFC 8414 §2 กำหนดให้เป็นที่ประกาศว่ารองรับ PKCE → sandbox ไม่ประกาศว่ารองรับ |
+| **`refresh_token`** | `grant_types_supported` มี `refresh_token` → ระบบเขาออก refresh token ได้จริง โค้ดที่ revoke ใบที่สองจึงไม่ใช่โค้ดตาย แต่ยังไม่ยืนยันว่าออกให้ client ของเราใน flow นี้ |
+| **`sub` เป็น pairwise หรือไม่** | `subject_type_supported: ["public"]` → **public ไม่ใช่ pairwise** ซึ่งเป็นความเสี่ยงที่ข้อ 4.3 ของเดิมกังวลไว้ ยังต้องยืนยันกับ production แต่ข้อกังวลนั้นเบาลงมาก |
+| **scope `pid`** | server รองรับ — ที่ขอไม่ได้คือสิทธิ์ของ client โครงการ ไม่ใช่ข้อจำกัดของระบบ |
+| **nonce สะท้อนกลับไหม** | **ไม่ได้บอก** ไม่มี `claims_supported` ต้องดูจาก id_token จริง |
+
+**ที่ทดลองยิงจริงเพิ่ม** (client ของโครงการ จาก `main`, 2026-08-16)
+
+| ส่งอะไรไปที่ authorize | ผล |
+|---|---|
+| `nonce` (แบบที่ระบบส่งอยู่ตอนนี้) | ผ่าน — redirect ไปหน้า QR ตามปกติ ไม่พัง |
+| `code_challenge` + `code_challenge_method=S256` | ผ่าน — แต่ **ไม่ได้แปลว่ารองรับ** |
+| `zzz_probe_param=hello` (พารามิเตอร์มั่ว) | **ผ่านเหมือนกัน** → endpoint เพิกเฉยพารามิเตอร์ที่ไม่รู้จัก |
+| `response_type=nonsense` | 400 `error` + `error_description` → ยืนยันว่าเขา validate ของที่รู้จักจริง |
+
+แถวที่สามคือเหตุผลที่แถวที่สองพิสูจน์อะไรไม่ได้ **ส่ง PKCE ไปแล้วไม่พัง ≠ เขาบังคับใช้**
+การพิสูจน์ว่าเขาบังคับใช้จริงต้องแลก `code` ด้วย `code_verifier` ที่**ผิด**แล้วดูว่าถูกปฏิเสธไหม
+ซึ่งต้องมีคนสแกน ThaiD จริงหนึ่งครั้ง — หรือถามกรมการปกครองตรง ๆ ซึ่งควรถามอยู่ดีเพราะ
+sandbox กับ production เป็นคนละระบบ
 
 ## 5. ผล SIT (2026-08-13)
 
@@ -227,13 +266,15 @@ node sit-thaid.mjs
 - [ ] บัญชีที่ seed ไว้ก่อนหน้านี้บางบัญชี (เจ้าหน้าที่ BDI ใน `seed:demo`) ไม่มี `cid`
       จึงเปิดใช้งานผ่าน ThaiD ไม่ได้ — endpoint ตอบ 409 `cid_missing` พร้อมบอกให้ติดต่อเจ้าหน้าที่
       ถ้าจะสาธิตด้วยบัญชีเหล่านั้นต้องเติม `cid` ให้ก่อน (ข้อนี้หายไปเองเมื่อปิดการเทียบ)
-- [ ] **ถามกรมการปกครองว่ารองรับ PKCE หรือไม่** (ข้อ 4.3) — ถามไปพร้อมกับ scope `pid`
+- [ ] **ถามกรมการปกครองว่ารองรับ PKCE หรือไม่** — discovery document ของ sandbox
+      **ไม่ประกาศ** `code_challenge_methods_supported` (ข้อ 4.4) ซึ่งเป็นคำตอบที่ดีพอจะ
+      ไม่ทำ PKCE ตอนนี้ แต่ยังต้องถามสำหรับ production ถามไปพร้อมกับ scope `pid`
       และ redirect URI ของโดเมนจริง เป็นสามเรื่องที่รอคำตอบจากที่เดียวกัน
 - [ ] **ตรวจตอนยิงจริงว่า id_token มี claim `nonce` กลับมาหรือไม่** ถ้ามี ให้ตั้ง
       `THAID_REQUIRE_NONCE=true` ทุก deployment — ตอนนี้ระบบยอมให้ผ่านเมื่อไม่มี claim
-- [ ] **ตรวจตอนยิงจริงว่า ThaiD ออก `refresh_token` มาด้วยหรือไม่** `resolveIdentity()`
-      เขียนลง log ไว้แล้วว่ารอบนั้นได้มาหรือไม่ (ไม่ใช่ตัว token) ระบบ revoke ทั้งสองใบ
-      อยู่แล้วไม่ว่าคำตอบจะเป็นอะไร แต่คำตอบนี้ควรอยู่ในเอกสาร
+- [ ] **ตรวจตอนยิงจริงว่า ThaiD ออก `refresh_token` มาด้วยหรือไม่** — discovery document
+      บอกว่า server รองรับ grant `refresh_token` (ข้อ 4.4) เหลือแค่ยืนยันว่าออกให้ flow ของเรา
+      `resolveIdentity()` เขียนลง log ไว้แล้วว่ารอบนั้นได้มาหรือไม่ (ไม่ใช่ตัว token)
 - [ ] `main` ชี้ `THAID_REDIRECT_URI` ไปที่ `http://localhost:3000/auth/callback/thaid` ตามที่
       ลงทะเบียนไว้ ผู้ใช้ที่เข้าจาก `https://bdi.thammasorn.org` แล้วกดปุ่ม ThaiD จึงถูกส่งกลับ
       มาที่ localhost ของเครื่องตัวเอง = ใช้ไม่ได้ ThaiD บน `main` จึงใช้ได้เฉพาะเบราว์เซอร์
