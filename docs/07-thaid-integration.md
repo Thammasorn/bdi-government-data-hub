@@ -70,13 +70,14 @@ THAID_CLIENT_SECRET=…
 THAID_API_KEY=                 # ปล่อยว่างได้ ส่งเป็น x-api-key เมื่อมีค่า
 THAID_REDIRECT_URI=            # ว่าง = ${APP_URL}/auth/callback/thaid
 THAID_SCOPE=                   # ว่าง = openid pid title given_name middle_name family_name name …
+THAID_REQUIRE_CID_MATCH=true   # false = ยอมเปิดใช้งานบัญชีทั้งที่ไม่มี pid ให้เทียบ (ดูข้อ 4.2)
 THAID_MOCK=false               # true = ข้าม ThaiD และถือว่าเลขบัตรตรงเสมอ (เครื่อง dev เท่านั้น)
 ```
 
 `redirect_uri` ต้องตรงตัวอักษรกับที่ลงทะเบียนไว้กับกรมการปกครอง ไม่งั้นได้
 `invalid_request — The redirect or callback url mismatch` ตั้งแต่ขั้น authorize
 
-### ข้อจำกัดของ credentials ชุดที่ลงทะเบียนไว้ (ยังไม่ได้แก้ ต้องคุยกับกรมการปกครอง)
+### 4.1 ข้อจำกัดของ credentials ชุดที่ลงทะเบียนไว้ (ยังไม่ได้แก้ ต้องคุยกับกรมการปกครอง)
 
 ทดลองยิงจริงกับ sandbox เมื่อ 2026-08-13 พบว่า client ของโครงการใน `assets/thaid/env_dev.txt`
 
@@ -89,6 +90,47 @@ THAID_MOCK=false               # true = ข้าม ThaiD และถือว
 จึงพัฒนาและทำ SIT ด้วย **client ตัวอย่างของ sandbox** (`assets/thaid/thaid sandbox.postman_environment.json`)
 ซึ่งรับ `redirect_uri` อะไรก็ได้และให้ scope ครบรวม `pid`
 ทั้งสองข้อเป็นเรื่องการลงทะเบียนฝั่งกรมการปกครอง ไม่ใช่เรื่องโค้ด
+
+ยิงซ้ำด้วย client ของโครงการอีกครั้งเมื่อ **2026-08-16** — ยังเหมือนเดิมทุกข้อ:
+
+| scope ที่ขอ | ผลจาก `/api/v2/oauth2/auth/` |
+|---|---|
+| `openid` | 302 ไปหน้า QR ✅ |
+| `openid given_name family_name given_name_en family_name_en` | 302 ไปหน้า QR ✅ |
+| `pid` · `openid pid` · `openid pid name` | 400 `invalid_scope` ❌ |
+
+ยืนยันด้วยว่า `redirect_uri=http://localhost:3000/auth/callback/thaid` ผ่าน ไม่ถูกปฏิเสธ
+
+### 4.2 โหมดที่ไม่เทียบเลขบัตร (`THAID_REQUIRE_CID_MATCH=false`)
+
+ผลของข้อ 4.1 คือ deployment ที่ใช้ client ของโครงการจะได้ `pid_missing` ทุกครั้ง
+เปิดใช้งานบัญชีไม่ได้เลย ตัดสินใจเมื่อ 2026-08-16 ให้มีสวิตช์ปิดการเทียบ เพื่อให้เดโมด้วย
+credentials จริงได้ระหว่างรอกรมการปกครอง
+
+ตั้ง `false` แล้วเปลี่ยนไปดังนี้
+
+| | `true` (ค่าตั้งต้น ตาม §2.4) | `false` |
+|---|---|---|
+| `/thaid/start` กับบัญชีที่ไม่มี `cid` | 409 `cid_missing` | ผ่าน |
+| callback ที่ไม่มี claim `pid` | 502 `pid_missing` | ผ่าน บันทึก `cid_verified: false` |
+| callback ที่มี `pid` แต่ไม่ตรง | 403 + คีย์ `REVOKED` | **เหมือนกัน** |
+| เข้าสู่ระบบด้วย ThaiD | จับคู่บัญชีจาก `cid` | จับคู่จาก `external_subject` (`sub`) |
+
+สองอย่างที่ต้องรู้
+
+1. **การยืนยันตัวตนอ่อนลงจริง ไม่ใช่แค่ในทางเทคนิค** — มันพิสูจน์ว่าผู้ใช้ยืนยันกับ ThaiD ได้
+   แต่ไม่ได้พิสูจน์ว่าเป็นเจ้าของบัตรใบที่เจ้าหน้าที่บันทึกไว้ ใครก็ตามที่ได้ลิงก์เปิดใช้งานไป
+   และมีบัญชี ThaiD ของตัวเอง จะเปิดใช้งานบัญชีนั้นได้ ความปลอดภัยจึงเหลือแค่ "ลิงก์ในอีเมล
+   ถึงมือคนที่ถูกต้อง" เท่ากับระบบก่อนมี ThaiD หน้า `/activate` ถูกแก้ให้พูดตามนี้แล้ว —
+   ไม่บอกผู้ใช้ว่ากำลังเทียบเลขบัตรอยู่ทั้งที่ไม่ได้เทียบ
+2. **เข้าสู่ระบบด้วย ThaiD ได้เฉพาะบัญชีที่เปิดใช้งานผ่าน ThaiD ด้วย client ชุดเดียวกันมาก่อน**
+   เพราะจับคู่จาก `sub` ที่บันทึกไว้ตอนนั้น และ `sub` ผูกกับ client เปลี่ยน client
+   เมื่อไรบัญชีเดิมก็จับคู่ไม่ได้อีก
+
+`external_reference` ของ SIT รอบ 2026-08-13 (client ตัวอย่างของ sandbox) เก็บค่า `1234567890121`
+ไว้ นั่นคือ **`sub` ของ sandbox เท่ากับเลขบัตร 13 หลัก** ถ้า client ของโครงการเป็นแบบเดียวกัน
+ก็เทียบเลขบัตรได้โดยไม่ต้องมี scope `pid` เลย — ยังไม่ได้พิสูจน์ ตรวจได้จาก
+`external_reference` ของการยืนยันครั้งแรกที่สำเร็จด้วย credentials จริง (ดูข้อ 6)
 
 ## 5. ผล SIT (2026-08-13)
 
@@ -128,8 +170,17 @@ node sit-thaid.mjs
 
 ## 6. ยังค้าง
 
-- [ ] ขอ scope `pid` และ redirect URI ของ deployment จริงจากกรมการปกครอง (ดูข้อ 4)
+- [ ] ขอ scope `pid` และ redirect URI ของ deployment จริงจากกรมการปกครอง (ดูข้อ 4.1)
+      **ทั้งสองข้อคือเงื่อนไขเดียวที่ทำให้ปิด `THAID_REQUIRE_CID_MATCH=false` ได้** —
+      ได้มาเมื่อไรให้ลบค่านั้นออกจาก `.env` ของทุก deployment ทันที
+- [ ] ตรวจว่า `sub` ของ client โครงการเป็นเลขบัตร 13 หลักหรือไม่ (ดูท้ายข้อ 4.2):
+      `select external_reference from integration.integration_operation
+      where status='SUCCEEDED' order by completed_at desc limit 1;`
+      ถ้าใช่ เทียบเลขบัตรได้โดยไม่ต้องรอ scope `pid`
 - [ ] บัญชีที่ seed ไว้ก่อนหน้านี้บางบัญชี (เจ้าหน้าที่ BDI ใน `seed:demo`) ไม่มี `cid`
       จึงเปิดใช้งานผ่าน ThaiD ไม่ได้ — endpoint ตอบ 409 `cid_missing` พร้อมบอกให้ติดต่อเจ้าหน้าที่
-      ถ้าจะสาธิตด้วยบัญชีเหล่านั้นต้องเติม `cid` ให้ก่อน
-- [ ] `main` ใช้ `THAID_MOCK` ต่อไปจนกว่า redirect URI ของโดเมนจริงจะลงทะเบียนเสร็จ
+      ถ้าจะสาธิตด้วยบัญชีเหล่านั้นต้องเติม `cid` ให้ก่อน (ข้อนี้หายไปเองเมื่อปิดการเทียบ)
+- [ ] `main` ชี้ `THAID_REDIRECT_URI` ไปที่ `http://localhost:3000/auth/callback/thaid` ตามที่
+      ลงทะเบียนไว้ ผู้ใช้ที่เข้าจาก `https://bdi.thammasorn.org` แล้วกดปุ่ม ThaiD จึงถูกส่งกลับ
+      มาที่ localhost ของเครื่องตัวเอง = ใช้ไม่ได้ ThaiD บน `main` จึงใช้ได้เฉพาะเบราว์เซอร์
+      บนเครื่องนี้ จนกว่า redirect URI ของโดเมนจริงจะลงทะเบียนเสร็จ

@@ -98,6 +98,7 @@ services:
       THAID_API_KEY: ${THAID_API_KEY:-}
       THAID_REDIRECT_URI: ${THAID_REDIRECT_URI:-}
       THAID_SCOPE: ${THAID_SCOPE:-}
+      THAID_REQUIRE_CID_MATCH: ${THAID_REQUIRE_CID_MATCH:-true}
       COOKIE_SECURE: ${COOKIE_SECURE:-}
     ports:
       # ตรึงไว้ — โดเมนสาธารณะ bdi-api.thammasorn.org ชี้มาที่พอร์ตนี้

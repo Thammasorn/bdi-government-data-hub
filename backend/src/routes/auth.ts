@@ -101,6 +101,11 @@ authRouter.get("/invitation", async (req, res) => {
     expiresAt: key.expiresAt,
     /** บัญชีที่ไม่มีเลขบัตรในระบบยืนยันด้วย ThaiD ไม่ได้ — หน้าเว็บต้องบอกให้ชัด */
     cidHint: maskCid(key.userAccount.cid),
+    /**
+     * deployment นี้เทียบเลขบัตรจริงหรือไม่ (THAID_REQUIRE_CID_MATCH)
+     * หน้าเว็บบอกผู้ใช้ว่าจะเกิดอะไรขึ้น จึงต้องพูดตามที่ระบบทำจริง ไม่ใช่ตามที่สเปกเขียน
+     */
+    cidCheck: env.thaid.requireCidMatch,
     identityVerified: Boolean(verification),
   });
 });
@@ -146,7 +151,9 @@ authRouter.post("/thaid/start", async (req, res) => {
       res.status(410).json({ error: reason, message: ACTIVATION_FAILURE_MESSAGES[reason!] });
       return;
     }
-    if (!key.userAccount.cid) {
+    // ไม่มีเลขบัตรบันทึกไว้ = ไม่มีอะไรให้เทียบ ปิดทางตั้งแต่ต้นดีกว่าปล่อยให้ผู้ใช้
+    // เสียเวลาไปยืนยันกับ ThaiD แล้วค่อยล้มตอนกลับมา — เว้นแต่ระบบไม่ได้เทียบอยู่แล้ว
+    if (env.thaid.requireCidMatch && !key.userAccount.cid) {
       res.status(409).json({
         error: "cid_missing",
         message:
@@ -246,7 +253,12 @@ authRouter.post("/thaid/callback", async (req, res) => {
     return;
   }
 
-  if (!identity.pid) {
+  /**
+   * ไม่มี pid = เทียบเลขบัตรไม่ได้ ปกติถือเป็นความล้มเหลว เพราะทั้ง §2.4 ตั้งอยู่บนการเทียบ
+   * ยกเว้น deployment ที่ตั้ง THAID_REQUIRE_CID_MATCH=false ไว้ (client ยังไม่ได้ scope `pid`)
+   * ตรงนั้นเดินต่อโดยผูกบัญชีด้วย `sub` แทน — ดูคำเตือนที่ env.ts
+   */
+  if (!identity.pid && env.thaid.requireCidMatch) {
     await failThaidOperation(operation, "pid_missing", "ThaiD ไม่ได้ส่ง pid มาด้วย (scope pid?)");
     res.status(502).json({
       error: "pid_missing",
@@ -268,7 +280,13 @@ authRouter.post("/thaid/callback", async (req, res) => {
     return;
   }
 
-  if (key.userAccount.cid !== identity.pid) {
+  /**
+   * เทียบเมื่อมีของให้เทียบครบทั้งสองฝั่ง ถ้า `pid` ไม่มาและ deployment ยอมให้ข้าม
+   * (THAID_REQUIRE_CID_MATCH=false) ก็ไม่มีอะไรให้ตัดสิน — ผ่านไปโดยบันทึกไว้ว่าไม่ได้เทียบ
+   * แต่ถ้า `pid` มาแล้วไม่ตรง ยังยกเลิกคีย์เหมือนเดิมไม่ว่าจะตั้งค่าไว้อย่างไร
+   */
+  const cidVerified = Boolean(identity.pid && key.userAccount.cid);
+  if ((env.thaid.requireCidMatch || cidVerified) && key.userAccount.cid !== identity.pid) {
     await revokeActivationKey(prisma, {
       activationKeyId: key.id,
       reason: "เลขประจำตัวประชาชนจาก ThaiD ไม่ตรงกับที่บันทึกไว้",
@@ -307,6 +325,8 @@ authRouter.post("/thaid/callback", async (req, res) => {
       user_account_id: key.userAccountId,
       thaid_subject: identity.subject,
       integration_operation_id: operation.id,
+      /** ผ่านการยืนยันแล้ว แต่ได้เทียบเลขบัตรจริงหรือไม่ — ต่างกันมากตอนย้อนอ่าน log */
+      cid_verified: cidVerified,
     },
   });
 
@@ -324,19 +344,32 @@ authRouter.post("/thaid/callback", async (req, res) => {
   });
 });
 
-/** เข้าสู่ระบบด้วย ThaiD — จับคู่บัญชีด้วยเลขบัตร ไม่ใช่อีเมล */
+/**
+ * เข้าสู่ระบบด้วย ThaiD — จับคู่บัญชีด้วยเลขบัตร ไม่ใช่อีเมล
+ *
+ * เมื่อ client ไม่ได้รับ scope `pid` ไม่มีเลขบัตรให้จับคู่ จึงใช้ `sub` ที่บันทึกไว้เป็น
+ * `external_subject` ตอนเปิดใช้งานบัญชีแทน — หมายความว่าเข้าสู่ระบบด้วย ThaiD ได้เฉพาะ
+ * บัญชีที่เคยเปิดใช้งานผ่าน ThaiD ด้วย client ชุดเดียวกันมาก่อน (sub ผูกกับ client)
+ */
 async function thaidLogin(
   res: import("express").Response,
   operation: IntegrationOperation,
   identity: ThaidIdentity,
 ) {
   const matches = await prisma.userAccount.findMany({
-    where: { cid: identity.pid, status: UserAccountStatus.ACTIVE },
+    where: {
+      status: UserAccountStatus.ACTIVE,
+      ...(identity.pid ? { cid: identity.pid } : { externalSubject: identity.subject }),
+    },
     select: { id: true, email: true, externalSubject: true },
   });
 
   if (matches.length === 0) {
-    await failThaidOperation(operation, "account_not_found", "ไม่มีบัญชีที่ผูกกับเลขบัตรนี้");
+    await failThaidOperation(
+      operation,
+      "account_not_found",
+      identity.pid ? "ไม่มีบัญชีที่ผูกกับเลขบัตรนี้" : "ไม่มีบัญชีที่ผูกกับ ThaiD บัญชีนี้",
+    );
     await logAudit({
       action: AuditAction.LOGIN_FAILED,
       subjectType: AuditSubject.USER_ACCOUNT,
@@ -345,7 +378,9 @@ async function thaidLogin(
     });
     res.status(403).json({
       error: "account_not_found",
-      message: "ไม่พบบัญชีที่ผูกกับเลขประจำตัวประชาชนนี้ กรุณาเปิดใช้งานบัญชีจากลิงก์คำเชิญก่อน",
+      message:
+        (identity.pid ? "ไม่พบบัญชีที่ผูกกับเลขประจำตัวประชาชนนี้ " : "ไม่พบบัญชีที่ผูกกับ ThaiD บัญชีนี้ ") +
+        "กรุณาเปิดใช้งานบัญชีจากลิงก์คำเชิญก่อน",
     });
     return;
   }
@@ -476,10 +511,11 @@ authRouter.post("/activate", async (req, res) => {
     });
   } catch (err) {
     // external_subject ซ้ำ = ThaiD คนเดียวกันเคยเปิดบัญชีอื่นไปแล้ว
+    // (พูดถึง "บัญชี ThaiD" ไม่ใช่ "เลขบัตร" เพราะเมื่อไม่ได้รับ scope pid ระบบไม่เคยเห็นเลขบัตร)
     if (typeof err === "object" && err && (err as { code?: string }).code === "P2002") {
       res.status(409).json({
         error: "identity_in_use",
-        message: "เลขประจำตัวประชาชนนี้ถูกใช้เปิดบัญชีอื่นในระบบแล้ว กรุณาติดต่อเจ้าหน้าที่",
+        message: "บัญชี ThaiD นี้ถูกใช้เปิดใช้งานบัญชีอื่นในระบบแล้ว กรุณาติดต่อเจ้าหน้าที่",
       });
       return;
     }

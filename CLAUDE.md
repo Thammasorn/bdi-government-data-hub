@@ -192,6 +192,17 @@ so a wrong card cannot be retried against the same link.
 for deployments without client credentials only, and must be `false` anywhere real —
 otherwise identity verification is just a button.
 
+`THAID_REQUIRE_CID_MATCH=false` is the weaker, more specific escape hatch: DOPA still gets
+called for real, the id_token is still verified, but an identity that arrives without a `pid`
+claim is accepted instead of rejected, and ThaiD login matches on `external_subject` rather
+than `cid`. It exists because the project's registered client is not granted the `pid` scope,
+so with `true` every activation ends at `pid_missing`. It **does** weaken §2.4 — whoever holds
+the activation link can activate the account with their own ThaiD — so it is off by default,
+warns at boot, records `cid_verified: false` on the audit event, and changes what `/activate`
+tells the user. A `pid` that arrives and *disagrees* still revokes the key either way.
+Turn it off the day the `pid` scope is granted; `docs/07-thaid-integration.md` §4.2 is the
+full comparison.
+
 ### Email
 
 `backend/src/lib/mail.ts`. With `SMTP_USER` unset the mailer prints the body, the invite link
