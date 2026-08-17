@@ -314,6 +314,13 @@ sampled from the `.ai` files in `assets/theme_ci_design/`, not chosen by eye —
 navy `#192768`, coral `#E5775A`. The same values are duplicated as constants in
 `mail.ts` and `pdf.ts` (email clients have no CSS, PDFKit has no CSS); change all three together.
 
+The logo is the real artwork from `assets/theme_ci_design/LOGO/`, not a redrawing.
+`components/brand/Logo.tsx` inlines the SVG paths (navy on `currentColor`, the coral dot on its
+own class, so one file covers every tone); the PDF and email headers use trimmed PNGs in
+`backend/src/assets/brand/` because neither PDFKit nor an email client can render SVG.
+`docs/02-ui-spec.md` §1.6 maps each surface to the source file it came from — regenerate from
+those originals rather than editing path coordinates by hand.
+
 `frontend/lib/dataset-form.ts` is a **deliberate copy** of the code lists and the conditions
 engine in `backend/src/lib/dataset.ts` — the form has to show what a choice forces the moment
 it is made, so it cannot ask the API on every change. The backend re-applies the same rules

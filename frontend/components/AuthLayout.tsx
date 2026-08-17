@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
-import { Logo, LogoMark } from "@/components/brand/Logo";
+import { Logo, LogoLockup } from "@/components/brand/Logo";
 
 /**
  * โครงหน้า auth สองคอลัมน์ — ซ้ายเป็นแบรนด์ ขวาเป็นฟอร์ม (docs/02-ui-spec.md §3.1)
@@ -32,7 +32,7 @@ export function AuthLayout({
           aria-hidden="true"
           className="bg-dot-grid absolute -bottom-24 -left-10 h-80 w-80 text-white opacity-[0.10]"
         />
-        <LogoMark className="relative h-9 w-auto text-white" dotClassName="fill-coral-200" />
+        <LogoLockup className="relative h-8 w-auto text-white" dotClassName="fill-coral-200" />
 
         <div className="relative max-w-md">
           <h2 className="text-[32px] font-semibold leading-tight text-white">
