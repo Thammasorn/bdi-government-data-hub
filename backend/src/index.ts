@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
@@ -42,6 +43,32 @@ app.use((_req, res) => {
   res.status(404).json({ error: "not_found", message: "ไม่พบเส้นทางนี้" });
 });
 
+/**
+ * ข้อผิดพลาดที่ Prisma บอกความหมายมาแล้ว ไม่ควรออกไปเป็น 500
+ *
+ * 500 `internal` แปลว่า "ระบบพัง ไม่รู้ว่าอะไร" — ถ้าเอาไปตอบเคสที่รู้อยู่แล้วว่าเกิดอะไร
+ * (ข้อมูลชนของเดิม · ไม่พบแถวที่อ้าง · ฐานข้อมูลติดต่อไม่ได้) คนเรียกจะไม่มีทางรู้ว่า
+ * ต้องแก้อะไร และ log ฝั่งเราคือที่เดียวที่มีคำตอบ ทุก route ควรดักเคสของตัวเองพร้อม
+ * ข้อความที่บอกวิธีแก้อยู่แล้ว — ตัวนี้เป็นตะแกรงชั้นสุดท้ายกันเคสที่หลุดมา
+ */
+const PRISMA_ERRORS: Record<string, { status: number; error: string; message: string }> = {
+  // unique constraint — เจอบ่อยสุด: อีเมล/เลขบัตร/รหัสหน่วยงานที่มีอยู่แล้ว
+  P2002: { status: 409, error: "conflict", message: "ข้อมูลนี้มีอยู่ในระบบแล้ว" },
+  // foreign key — อ้างถึงแถวที่ไม่มีอยู่ หรือลบแถวที่ยังมีคนอ้างถึง
+  P2003: { status: 409, error: "conflict", message: "ข้อมูลนี้เชื่อมโยงกับรายการอื่นอยู่" },
+  // ค่าที่ยาวเกินความกว้างของคอลัมน์
+  P2000: { status: 400, error: "validation", message: "ข้อมูลที่ส่งมายาวเกินกว่าที่ระบบเก็บได้" },
+  // อ่าน/เขียนแถวที่ไม่มีอยู่
+  P2025: { status: 404, error: "not_found", message: "ไม่พบข้อมูลที่อ้างถึง" },
+  // ค่าที่ไม่ใช่รูปแบบของคอลัมน์ เช่น ข้อความที่ไม่ใช่ UUID
+  P2023: { status: 400, error: "validation", message: "รูปแบบข้อมูลที่ส่งมาไม่ถูกต้อง" },
+  // ต่อฐานข้อมูลไม่ได้ — เป็นเรื่องของ deployment ไม่ใช่ของคำขอ
+  P1001: { status: 503, error: "unavailable", message: "ระบบฐานข้อมูลไม่พร้อมใช้งาน กรุณาลองใหม่อีกครั้ง" },
+  P1002: { status: 503, error: "unavailable", message: "ระบบฐานข้อมูลไม่พร้อมใช้งาน กรุณาลองใหม่อีกครั้ง" },
+  P1008: { status: 503, error: "unavailable", message: "ระบบฐานข้อมูลตอบช้าเกินกำหนด กรุณาลองใหม่อีกครั้ง" },
+  P1017: { status: 503, error: "unavailable", message: "ระบบฐานข้อมูลไม่พร้อมใช้งาน กรุณาลองใหม่อีกครั้ง" },
+};
+
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof MulterError) {
     const message =
@@ -49,6 +76,38 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     res.status(400).json({ error: "upload", message });
     return;
   }
+
+  /**
+   * ต่อฐานข้อมูลไม่ติดมาได้สองคลาส และมันไม่ได้เก็บรหัสไว้ในฟิลด์ชื่อเดียวกัน:
+   * ถ้า pool เคยต่อติดแล้วสายหลุด Prisma โยน `PrismaClientKnownRequestError` code P1001
+   * แต่ถ้าต่อไม่ติดตั้งแต่แรกจะเป็น `PrismaClientInitializationError` ที่เก็บรหัสไว้ใน
+   * `errorCode` — ดักแค่คลาสแรกจึงยังตอบ 500 อยู่ตอนฐานข้อมูลดับทั้งตัว
+   */
+  const prismaCode =
+    err instanceof Prisma.PrismaClientKnownRequestError
+      ? err.code
+      : err instanceof Prisma.PrismaClientInitializationError
+        ? err.errorCode
+        : undefined;
+
+  const known = prismaCode ? PRISMA_ERRORS[prismaCode] : undefined;
+  if (known) {
+    // log ไว้ทุกครั้ง: การหลุดมาถึงตะแกรงนี้แปลว่ามี route ที่ยังไม่ได้ดักเคสของตัวเอง
+    console.error(`[backend] ${prismaCode} not handled by its route:`, (err as Error).message);
+    res.status(known.status).json({ error: known.error, message: known.message });
+    return;
+  }
+
+  // เริ่มต้น client ไม่สำเร็จเลย = ระบบยังไม่พร้อม ไม่ใช่ความผิดของคำขอ ตอบ 503 ไว้ก่อน
+  // แม้จะไม่รู้รหัส เพราะ 500 จะทำให้คนเรียกไปหาสาเหตุผิดที่
+  if (err instanceof Prisma.PrismaClientInitializationError) {
+    console.error("[backend] prisma could not initialise:", err.message);
+    res
+      .status(503)
+      .json({ error: "unavailable", message: "ระบบฐานข้อมูลไม่พร้อมใช้งาน กรุณาลองใหม่อีกครั้ง" });
+    return;
+  }
+
   console.error("[backend] unhandled error:", err);
   res.status(500).json({ error: "internal", message: "เกิดข้อผิดพลาดภายในระบบ" });
 });

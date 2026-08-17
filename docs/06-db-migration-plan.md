@@ -95,6 +95,14 @@ ER-diagram ใน Notion "วางไว้เป็นภาพรวมขอ
 `suspended_by` / `created_by` / `updated_by` เป็น UUID actor ทุกตาราง — ของเดิมมีเฉพาะ
 `createdById` บาง entity เท่านั้น ต้องเพิ่มทั้งชุด
 
+**เพิ่มเมื่อ 2026-08-17 — `cid` เป็น unique** sheet ไม่ได้บอกไว้ แต่ไปเจอว่าฐานข้อมูลของ `main`
+มี `UNIQUE CONSTRAINT` บน `cid` ที่ไม่มี migration ไหนสร้าง (ใครเพิ่มด้วยมือ) ทำให้ `main` ตอบ
+500 จาก P2002 ในเคสที่ checkout อื่นตอบ 201 — ตัดสินว่า **หนึ่งเลขบัตร = หนึ่งบัญชี** ตามที่
+constraint นั้นบังคับไว้ แล้วย้ายกฎเข้ามาอยู่ใน `schema.prisma` + migration
+`20260817153500_user_account_cid_unique` (ลบตัวที่เพิ่มด้วยมือทิ้งก่อนสร้างใหม่ ทุกฐานข้อมูล
+จึงเหมือนกันและไม่มี drift) ค่า `NULL` ยังซ้ำได้ตามปกติของ Postgres จึงไม่กระทบบัญชี BDI
+ที่ยังไม่มีเลขบัตรตาม §5 ข้อ 1
+
 ### 3.2 `iam.role` + `iam.user_role_assignment` ← `User.roles: Role[]`
 
 role กลายเป็นตาราง master พร้อม `is_active` และรหัสเปลี่ยนสองตัว:

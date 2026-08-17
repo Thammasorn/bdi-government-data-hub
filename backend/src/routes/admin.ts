@@ -550,6 +550,25 @@ adminRouter.post("/invitations", async (req, res) => {
     return;
   }
 
+  /**
+   * หนึ่งเลขบัตรประชาชน = หนึ่งบัญชี (`user_account.cid` เป็น unique)
+   *
+   * ถ้าไม่ดักตรงนี้ Prisma จะโยน P2002 ขึ้นมากลางทรานแซกชันแล้วกลายเป็น 500 ทั้งที่
+   * ความหมายจริงคือ "เลขบัตรนี้มีบัญชีอยู่แล้ว" — บอกไปด้วยว่าเป็นบัญชีอีเมลใด เพราะ
+   * คนเรียก endpoint นี้คือเจ้าหน้าที่ที่ถือ admin token และต้องรู้ว่าต้องไปแก้ที่ใบไหน
+   */
+  const sameCid = await prisma.userAccount.findUnique({ where: { cid } });
+  if (sameCid && sameCid.id !== existing?.id) {
+    res.status(409).json({
+      error: "cid_exists",
+      message:
+        `เลขบัตรประชาชนนี้เป็นของบัญชี ${sameCid.email} อยู่แล้ว — หนึ่งเลขบัตรมีได้หนึ่งบัญชี ` +
+        `ถ้าต้องการส่งคำเชิญให้คนเดิมอีกครั้ง ให้เชิญอีเมลนั้นซ้ำ ` +
+        `ระบบจะออกคีย์ใบใหม่และยกเลิกใบเก่าให้ ถ้าครั้งแรกกรอกอีเมลผิด ต้องแก้อีเมลของบัญชีนั้นก่อน`,
+    });
+    return;
+  }
+
   const result = await prisma.$transaction(async (tx) => {
     // เชิญซ้ำบัญชีที่ยัง PENDING ถือว่าเจ้าหน้าที่กำลังแก้ข้อมูลที่กรอกผิด — เขียนทับเลขบัตรเดิม
     const account = existing

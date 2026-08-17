@@ -221,6 +221,18 @@ decisions behind it.
 rests on comparing against a CID recorded when the account was created — a CID the user
 typed themselves would prove nothing.
 
+**One national ID is one account** — `iam.user_account.cid` is `@unique`. The Excel never said
+so; the constraint was found in `main`'s database, added by hand and present in no migration,
+which is why `main` answered 500 (an uncaught P2002) on an invitation whose CID was already
+taken while every fresh checkout answered 201 and made a second account. Settled on
+2026-08-17 in favour of keeping the rule, so `20260817153500_user_account_cid_unique` drops
+the hand-made constraint and recreates it as Prisma's own — every database now agrees. Two
+paths have to say so in words rather than letting the constraint fire: `POST
+/api/admin/invitations` answers 409 `cid_exists` naming the address that holds the number, and
+`ensureApproverAccount()` in `organizations.ts` answers 409 `approver_cid_exists`, because a
+signatory's CID only collides at **officer approval** — several screens and days away from the
+form where it was typed, so the message has to say which account and what to change.
+
 Activation does **not** touch `organization.status`. An organisation goes `ACTIVE` only when
 its registration request clears `BDI_FINAL_APPROVAL` (Journey B). The Notion card §2.5 says
 otherwise; that was raised and settled on 2026-08-13 in favour of Journey B.
@@ -343,6 +355,10 @@ Two API base URLs, and they are not interchangeable:
   frontend can bind each message to its input. Messages say how to fix the problem, not just
   that something is wrong.
 - Status is never communicated by color alone; badges always carry text.
+- **A database condition we can name never answers 500.** `index.ts` maps Prisma's own codes to
+  a status and a Thai message (unique → 409, missing row → 404, unreachable database → 503).
+  Routes still catch their own cases first and say which field collided — the middleware is the
+  last net, and it logs when it catches something, because that means a route is missing a case.
 
 ## Traps that have already cost time
 
@@ -432,6 +448,12 @@ Two API base URLs, and they are not interchangeable:
   collection variables only; an environment carries `baseUrl` and `adminToken` and nothing
   else. The requests that depend on a captured id now refuse to send in a pre-request script
   that names the request to run first, so the next occurrence says what it is.
+- Prisma reports "cannot reach the database" as **two** classes that keep the code in different
+  fields. A pool that was connected and then lost the server raises
+  `PrismaClientKnownRequestError` with `code: "P1001"`; a client that never connected raises
+  `PrismaClientInitializationError`, which carries `errorCode` instead. Handling only the first
+  looks correct — until the database is down at boot, when the API answers 500 again. Both are
+  mapped in `index.ts`, and an initialization failure answers 503 even when it carries no code.
 - The two `BDI_OFFICER_REVIEW` rounds look identical to anything reading `task_type`.
   Round one goes to the organization for signature, the re-check after signing goes to
   BDI final approval. Backend and `components/dataset/DetailView.tsx` both decide by

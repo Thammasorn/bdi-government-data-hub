@@ -1221,6 +1221,25 @@ async function ensureApproverAccount(
 
   const existing = await tx.userAccount.findUnique({ where: { email } });
 
+  /**
+   * `user_account.cid` เป็น unique — หนึ่งเลขบัตรหนึ่งบัญชี
+   *
+   * เกิดได้จริงเมื่อผู้มีอำนาจคนเดียวกันถูกกรอกด้วยอีเมลคนละใบในสองคำขอ หรือกรอก
+   * เลขบัตรผิดไปตรงกับของคนอื่น ถ้าปล่อยให้ create ชน P2002 คนกรอกฟอร์มจะเห็นแค่
+   * ข้อผิดพลาดรวม ๆ ตอนกดนำส่ง โดยไม่รู้ว่าต้องกลับไปแก้ช่องไหน
+   */
+  if (!existing && request.approverCid) {
+    const sameCid = await tx.userAccount.findUnique({ where: { cid: request.approverCid } });
+    if (sameCid) {
+      throw new WorkflowError(
+        "approver_cid_exists",
+        `เลขบัตรประชาชนของผู้มีอำนาจกระทำการแทนเป็นของบัญชี ${sameCid.email} อยู่แล้ว ` +
+          `กรุณาตรวจสอบเลขบัตร หรือแก้อีเมลผู้มีอำนาจให้เป็นอีเมลของบัญชีนั้น`,
+        409,
+      );
+    }
+  }
+
   const account =
     existing ??
     (await tx.userAccount.create({

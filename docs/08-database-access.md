@@ -159,6 +159,12 @@ from audit.audit_event order by occurred_at desc limit 50;
 - **อย่าลบแถว `attachment.attachment` เพื่อลบไฟล์** ไฟล์จริงอยู่ใน MinIO การลบแถวทิ้ง
   ทำให้ object ค้างอยู่โดยไม่มีใครอ้างถึง ระบบออกแบบให้ไฟล์เก่าเป็น `REPLACED` ไม่ใช่ถูกลบ
 - **อย่าแก้ `audit.audit_event`** มันคือบันทึกว่าเกิดอะไรขึ้น ไม่ใช่ข้อมูลที่แก้ได้
+- **อย่าเพิ่ม/ลบ index หรือ constraint ด้วยมือ** — เกิดขึ้นแล้วครั้งหนึ่ง: ฐานข้อมูลของ `main`
+  มี `UNIQUE CONSTRAINT "user_account_unique" (cid)` ที่ไม่มี migration ไหนสร้าง ผลคือ
+  `POST /api/admin/invitations` ตอบ 500 บน `main` ในเคสที่ checkout อื่นตอบ 201 — บั๊กที่
+  ไม่มีทางเจอด้วยการอ่านโค้ด เพราะโค้ดทุกบรรทัดเหมือนกัน (แก้แล้วใน migration
+  `20260817153500_user_account_cid_unique` ซึ่งลบตัวที่เพิ่มด้วยมือแล้วสร้างใหม่ให้ Prisma
+  เป็นเจ้าของ) ถ้าอยากได้ constraint ให้แก้ `schema.prisma` แล้วออก migration
 - **อย่ารัน `docker compose down -v`** ถ้ายังอยากได้ข้อมูลในนั้น `-v` ลบ volume ทิ้งทั้งก้อน
   สร้างข้อมูลใหม่ได้ด้วย `seed:masters` แล้วตามด้วย `seed:demo` (ดู `CLAUDE.md`)
 

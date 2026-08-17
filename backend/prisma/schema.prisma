@@ -81,7 +81,12 @@ model UserAccount {
   /// Citizen Identifier — เลขบัตรประชาชน 13 หลัก
   /// เบี่ยงจากดีไซน์: Excel มาร์ก Required แต่ทำเป็น nullable เพราะเจ้าหน้าที่ BDI
   /// ยังไม่ได้เก็บเลขบัตร บังคับที่ชั้น zod เฉพาะ accountType = ORGANIZATION
-  cid String? @db.VarChar(13)
+  /// เบี่ยงจากดีไซน์: Excel ไม่ได้บอกว่า unique แต่ตัดสินใจเมื่อ 2026-08-17 ว่า
+  /// หนึ่งเลขบัตร = หนึ่งบัญชี — ฐานข้อมูลของ main มี constraint นี้อยู่ก่อนแล้วโดยที่
+  /// ไม่มี migration ไหนสร้าง (ใครไปเพิ่มด้วยมือ) จึงเก็บกฎไว้แล้วทำให้เป็นของ Prisma
+  /// เสียเลย ค่าที่เป็น NULL ยังซ้ำกันได้ตามปกติของ Postgres — บัญชี BDI ที่ไม่มีเลขบัตร
+  /// จึงไม่ชนกัน
+  cid String? @unique @db.VarChar(13)
 
   prefixTh    String? @map("prefix_th") @db.VarChar(64)
   firstnameTh String? @map("firstname_th") @db.VarChar(255)
@@ -130,7 +135,7 @@ model UserAccount {
 
   @@index([status])
   @@index([accountType])
-  @@index([cid])
+  // ไม่ต้องมี @@index([cid]) แยก — unique index บน cid ค้นหาได้อยู่แล้ว
   @@map("user_account")
   @@schema("iam")
 }
