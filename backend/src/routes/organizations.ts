@@ -658,9 +658,16 @@ organizationRouter.get("/:id", async (req, res) => {
     }),
   ]);
 
+  // เหตุผลที่ผู้ตรวจส่งกลับ — หน้าฟอร์มมีกล่องแดงรออ่านช่องนี้อยู่ แต่ไม่เคยมีใครส่งให้
+  // (ปัญหาเดียวกันกับฝั่งชุดข้อมูล) ผู้ใช้ที่ถูกส่งกลับจึงไม่เห็นว่าต้องแก้อะไร
+  const lastReturned = [...tasks].reverse().find((t) => t.result === ReviewResult.RETURNED);
+  const revisionNote =
+    request.status === RequestStatus.RETURNED ? (lastReturned?.resultComment ?? null) : null;
+
   res.json({
     organization: {
       ...(await toApiShape(request)),
+      revisionNote,
       // หน้ารายละเอียดเขียนว่า "ยื่นโดย <ชื่อ>" และใช้ id ตัดสินว่าเป็นเจ้าของคำขอไหม
       // ตกหล่นไปตอนย้ายสคีมา เหลือแต่ createdBy ที่เป็น uuid เปล่า
       createdBy: creator

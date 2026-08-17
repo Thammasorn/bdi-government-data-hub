@@ -459,8 +459,23 @@ datasetRequestRouter.get("/:id", async (req, res) => {
 
   const isOrgSide = !isBdiStaff(session.roles);
 
+  /**
+   * เหตุผลที่ผู้ตรวจส่งกลับ — หน้าฟอร์มมีกล่องแดง "สิ่งที่ต้องแก้ไขตามที่ผู้ตรวจสอบระบุ"
+   * รออ่านช่องนี้อยู่ แต่ไม่มี route ไหนเคยส่งมันออกไป กล่องนั้นจึงไม่เคยขึ้นเลย
+   * ผู้ใช้ที่ถูกส่งกลับมาแก้จึงไม่เห็นว่าให้แก้อะไร ต้องไปอ่านเอาเองจากไทม์ไลน์
+   * ความเห็นที่ตั้งเป็น BDI_INTERNAL ยังถูกซ่อนจากฝั่งหน่วยงานเหมือนในไทม์ไลน์
+   */
+  const lastReturned = [...tasks].reverse().find((t) => t.result === ReviewResult.RETURNED);
+  const revisionNote =
+    request.status === RequestStatus.RETURNED &&
+    lastReturned &&
+    !(isOrgSide && lastReturned.commentVisibility === CommentVisibility.BDI_INTERNAL)
+      ? lastReturned.resultComment
+      : null;
+
   res.json({
     request: toApiShape(request, {
+      revisionNote,
       // หัวข้อหน้ารายละเอียดเขียนว่า "ยื่นโดย <ชื่อ>" — ตกหล่นไปตอนย้ายสคีมา
       createdBy: creator
         ? {
