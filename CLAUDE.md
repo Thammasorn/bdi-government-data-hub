@@ -31,6 +31,12 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
 - `docs/11-metadata-registration-form.md` — the dataset metadata form: which sheet of
   `metadata_mapping.xlsx` decides what, every field and its code list, the conditions table
   (what forces or hides what), and the open questions left in it
+- `docs/12-tester-manual-overview.md` · `13-` (Journey A) · `14-` (Journey B) · `15-` (Journey C)
+  — **the illustrated manuals handed to testers**, in Thai, written for people who have never
+  seen the system. Screenshots live in `docs/images/manual/` and were taken from a real run;
+  each ends with a tick-list of what to try, including the defects that have already been fixed
+  once. `03-demo-walkthrough.md` stays the operator's guide (seeding, ports, deployment) —
+  these four are the user's
 - `docs/bdi-admin-portal.postman_collection.json` — Journey A as a runnable collection,
   with three `*.postman_environment.json` files beside it (dev checkout / main / public).
   The admin token is left empty in the last two on purpose — it is a real secret from `.env`

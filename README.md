@@ -13,6 +13,15 @@
 | [`docs/05-sit-report.md`](docs/05-sit-report.md) | ผล SIT ทั้งสามเส้นทาง (48 กรณี) ข้อบกพร่องและปัญหาการจัดแนวที่แก้แล้ว — ภาพหน้าจอเก็บนอก repo |
 | [`notebooks/journey-a-admin-create-user.ipynb`](notebooks/journey-a-admin-create-user.ipynb) | ยิง API ของ Journey A ทีละขั้นด้วยอีเมลจริง — ใช้แทนหน้าจอที่สเปกไม่ได้ให้ทำ |
 
+**คู่มือสำหรับผู้ทดสอบระบบ** (ภาษาไทย พร้อมภาพหน้าจอจริง เขียนให้คนที่ไม่เคยใช้ระบบมาก่อน)
+
+| เอกสาร | เนื้อหา |
+| --- | --- |
+| [`docs/12-tester-manual-overview.md`](docs/12-tester-manual-overview.md) | ภาพรวม · บัญชีทดสอบ · การเข้าสู่ระบบและ OTP · ปัญหาที่พบบ่อย — **อ่านเล่มนี้ก่อน** |
+| [`docs/13-tester-manual-journey-a.md`](docs/13-tester-manual-journey-a.md) | ผู้ดูแลระบบสร้างหน่วยงานและเชิญผู้ใช้ (มีคำสั่ง `curl`) + การเปิดใช้งานบัญชีด้วย ThaiD |
+| [`docs/14-tester-manual-journey-b.md`](docs/14-tester-manual-journey-b.md) | หน่วยงานลงทะเบียนตัวเองจนได้รับอนุมัติ |
+| [`docs/15-tester-manual-journey-c.md`](docs/15-tester-manual-journey-c.md) | ลงทะเบียนชุดข้อมูลจนได้รับอนุมัติ รวมเส้นทางส่งกลับแก้และไม่อนุมัติ |
+
 ## สิ่งที่ทำงานแล้ว
 
 **Journey A — Admin เชิญผู้ใช้** (สเปกระบุว่าไม่มี UI มีแต่ API)
