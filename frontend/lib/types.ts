@@ -29,7 +29,10 @@ export interface ReviewTaskEvent {
 }
 
 export interface Organization {
+  /** id ของ **คำขอจดทะเบียน** ไม่ใช่ของหน่วยงาน — ทุก path ของ `/api/organizations/:id` ใช้ตัวนี้ */
   id: string;
+  /** id ของ **หน่วยงาน** ตัวที่ตรงกับ `user.organizationId` */
+  organizationId: string;
   status: RequestStatus;
   currentTaskType: ReviewTaskType | null;
   /** รหัสหน่วยงาน — เจ้าหน้าที่กรอกไว้ล่วงหน้า ผู้ใช้ยืนยัน/แก้ไขในฟอร์ม */

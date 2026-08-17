@@ -74,6 +74,41 @@ export const passwordSchema = z
   .min(8, "รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร")
   .refine((v) => /[A-Za-z]/.test(v) && /\d/.test(v), "รหัสผ่านต้องมีทั้งตัวอักษรและตัวเลข");
 
+/**
+ * ตรวจ snapshot ของคำขอ โดยให้ช่องที่ยังไม่ได้กรอก (`null`) มีความหมายเท่ากับ "กรอกค่าว่าง"
+ *
+ * ช่องที่ผู้ใช้ยังไม่ได้กรอกเป็น `null` ในฐานข้อมูล ซึ่ง zod ปฏิเสธด้วยข้อความของ
+ * **ชนิดข้อมูล** — `Invalid input: expected string, received null` — เป็นภาษาอังกฤษ
+ * และไปแทนที่ข้อความ `min(1, "กรุณากรอก…")` ที่เขียนเตรียมไว้ทุกช่อง ผลคือผู้ใช้กด
+ * "ตรวจสอบและสร้าง PDF" บนฟอร์มที่ยังว่าง แล้วเห็นข้อความ zod ภาษาอังกฤษใต้ทุกช่อง
+ * ทั้งที่ข้อความไทยมีอยู่แล้ว (ผิดทั้งข้อกำหนดเรื่องภาษา และไม่ได้บอกว่าต้องแก้อะไร)
+ *
+ * ทำโดยตรวจหนึ่งรอบก่อน แล้วแทนค่าว่างเฉพาะช่องที่ **schema บอกเองว่าต้องการสตริง**
+ * แล้วตรวจใหม่ — ไม่ใช่แทนทุกช่องที่เป็น null: ช่องตัวเลขอย่าง `updateFrequencyInterval`
+ * รับ null ได้อยู่แล้วตามดีไซน์ การยัดสตริงว่างให้มันกลับสร้างข้อความอังกฤษอีกอัน
+ * (`expected number, received string`) ขึ้นมาแทน
+ */
+export function parseRequestSnapshot<Schema extends z.ZodType>(
+  schema: Schema,
+  value: Record<string, unknown>,
+) {
+  const first = schema.safeParse(value);
+  if (first.success) return first;
+
+  const blanks = first.error.issues
+    .filter(
+      (issue) =>
+        issue.code === "invalid_type" &&
+        issue.expected === "string" &&
+        issue.path.length === 1 &&
+        value[String(issue.path[0])] === null,
+    )
+    .map((issue) => String(issue.path[0]));
+  if (blanks.length === 0) return first;
+
+  return schema.safeParse({ ...value, ...Object.fromEntries(blanks.map((k) => [k, ""])) });
+}
+
 /** ข้อความแสดงข้อผิดพลาดแบบ field -> message ให้ frontend ผูกกับช่องกรอกได้ตรง ๆ */
 export function formatZodError(error: z.ZodError): Record<string, string> {
   const fields: Record<string, string> = {};

@@ -76,14 +76,14 @@ import {
 } from "../lib/notify.js";
 import { renderDatasetRegistrationForm } from "../lib/pdf.js";
 import { nextDatasetCode, nextDatasetRequestNumber } from "../lib/request-number.js";
-import { isBdiStaff } from "../lib/roles.js";
+import { isBdiStaff, isSpecialistOnly } from "../lib/roles.js";
 import {
   BDI_ORGANIZATION_ID,
   ROLE_CODES,
   SYSTEM_USER_ID,
   type RoleCode,
 } from "../lib/system.js";
-import { formatZodError, isUuid } from "../lib/validation.js";
+import { formatZodError, isUuid, parseRequestSnapshot } from "../lib/validation.js";
 import {
   WorkflowError,
   activeTask,
@@ -135,8 +135,31 @@ const requestInclude = {
 
 type RequestRow = Prisma.DatasetRegistrationRequestGetPayload<{ include: typeof requestInclude }>;
 
-/** ขอบเขตที่ผู้ใช้แต่ละ role มองเห็น (§4.7) */
-function visibilityFilter(session: Session): Prisma.DatasetRegistrationRequestWhereInput {
+/**
+ * ขอบเขตที่ผู้ใช้แต่ละ role มองเห็น — ตาราง §4.7
+ *
+ * ผู้เชี่ยวชาญข้อมูลเห็น **เฉพาะคำขอที่ถูกมอบหมายให้ตนเอง** ไม่ใช่ทั้งระบบเหมือน BDI
+ * role อื่น เดิม `isBdiStaff` เหมารวมเขาไปด้วย หน้าที่พาดหัวว่า "คำขอที่คุณได้รับมอบหมาย"
+ * จึงแสดงคำขอของทุกหน่วยงาน และเปิดดูรายละเอียดใบไหนก็ได้
+ *
+ * review_task อ้างถึงคำขอแบบ logical (ไม่ใช่ relation ของ Prisma) จึงต้องอ่าน id
+ * ที่เคยถูกมอบหมายออกมาก่อนแล้วค่อยกรอง — รวมงานที่ปิดไปแล้วด้วย เพื่อให้เขายังเปิดดู
+ * สิ่งที่ตัวเองเคยตรวจได้หลังส่งคืนเจ้าหน้าที่
+ */
+async function visibilityFilter(
+  session: Session,
+): Promise<Prisma.DatasetRegistrationRequestWhereInput> {
+  if (isSpecialistOnly(session.roles)) {
+    const assigned = await prisma.reviewTask.findMany({
+      where: {
+        subjectType: SUBJECT,
+        taskType: ReviewTaskType.DATASET_SPECIALIST_REVIEW,
+        assignedUserId: session.sub,
+      },
+      select: { subjectId: true },
+    });
+    return { id: { in: [...new Set(assigned.map((t) => t.subjectId))] } };
+  }
   if (isBdiStaff(session.roles)) return {};
   if (session.organizationId) return { organizationId: session.organizationId };
   return { createdBy: session.sub };
@@ -281,7 +304,7 @@ datasetRequestRouter.get("/", async (req, res) => {
   const session = req.session! as Session;
   const { status, q } = req.query as { status?: string; q?: string };
 
-  const where: Prisma.DatasetRegistrationRequestWhereInput = { ...visibilityFilter(session) };
+  const where: Prisma.DatasetRegistrationRequestWhereInput = { ...(await visibilityFilter(session)) };
 
   const statuses = (status ?? "")
     .split(",")
@@ -316,6 +339,26 @@ datasetRequestRouter.get("/", async (req, res) => {
   });
   const stage = new Map(tasks.map((t) => [t.subjectId, t]));
 
+  // ตารางเขียนว่า "· ผู้เชี่ยวชาญ <ชื่อ>" ต่อท้ายสถานะ จึงต้องมีชื่อ ไม่ใช่แค่ id
+  const specialistIds = [
+    ...new Set(
+      tasks
+        .filter((t) => t.taskType === ReviewTaskType.DATASET_SPECIALIST_REVIEW && t.assignedUserId)
+        .map((t) => t.assignedUserId),
+    ),
+  ];
+  const specialists = new Map(
+    (
+      await prisma.userAccount.findMany({
+        where: { id: { in: specialistIds } },
+        select: { id: true, email: true, firstnameTh: true, lastnameTh: true },
+      })
+    ).map((u) => [
+      u.id,
+      { id: u.id, email: u.email, firstName: u.firstnameTh, lastName: u.lastnameTh },
+    ]),
+  );
+
   // เอกสารที่ระบบสร้าง — หน้าแรกทำปุ่มดาวน์โหลดในรายการได้โดยไม่ต้องเปิดคำขอทีละใบ
   const forms = await prisma.attachment.findMany({
     where: {
@@ -333,9 +376,9 @@ datasetRequestRouter.get("/", async (req, res) => {
       ...toApiShape(r),
       currentTaskType: stage.get(r.id)?.taskType ?? null,
       currentRound: stage.get(r.id)?.roundNumber ?? null,
-      assignedSpecialistId:
+      assignedSpecialist:
         stage.get(r.id)?.taskType === ReviewTaskType.DATASET_SPECIALIST_REVIEW
-          ? (stage.get(r.id)?.assignedUserId ?? null)
+          ? (specialists.get(stage.get(r.id)!.assignedUserId) ?? null)
           : null,
       generatedForm: formByRequest.has(r.id)
         ? { id: formByRequest.get(r.id)!.id, filename: formByRequest.get(r.id)!.originalFileName }
@@ -438,7 +481,9 @@ datasetRequestRouter.post("/", async (req, res) => {
 datasetRequestRouter.get("/:id", async (req, res) => {
   const session = req.session! as Session;
   const request = await prisma.datasetRegistrationRequest.findFirst({
-    where: { id: req.params.id, ...visibilityFilter(session) },
+    // AND ไม่ใช่ spread — ตัวกรองของผู้เชี่ยวชาญเป็น `id: { in: [...] }` ซึ่งถ้ากระจายเข้าไป
+    // จะไปทับ `id` ของ path param แล้วคืนคำขอใบอื่นที่เขามีสิทธิ์เห็นแทนใบที่ขอมา
+    where: { AND: [{ id: req.params.id }, await visibilityFilter(session)] },
     include: requestInclude,
   });
   if (!request) {
@@ -473,9 +518,28 @@ datasetRequestRouter.get("/:id", async (req, res) => {
       ? lastReturned.resultComment
       : null;
 
+  /**
+   * ใครเป็นคนอนุมัติ/ไม่อนุมัติ และไม่อนุมัติเพราะอะไร
+   *
+   * การ์ดสีเขียวและสีแดงบนหัวหน้ารายละเอียดอ่านสามช่องนี้ แต่ไม่มีใครส่งมาให้
+   * ("โดย —" และกล่องเหตุผลที่ว่างเปล่า) — ทั้งสามค่าอยู่ในไทม์ไลน์ที่โหลดมาแล้ว
+   */
+  const decided = [...tasks]
+    .reverse()
+    .find((t) => t.result === ReviewResult.APPROVED || t.result === ReviewResult.REJECTED);
+  const approvedByName =
+    decided?.result === ReviewResult.APPROVED ? (decided.assignedUser?.displayName ?? null) : null;
+  const rejectedByName =
+    decided?.result === ReviewResult.REJECTED ? (decided.assignedUser?.displayName ?? null) : null;
+  const rejectionReason =
+    decided?.result === ReviewResult.REJECTED ? (decided.resultComment ?? null) : null;
+
   res.json({
     request: toApiShape(request, {
       revisionNote,
+      approvedByName,
+      rejectedByName,
+      rejectionReason,
       // หัวข้อหน้ารายละเอียดเขียนว่า "ยื่นโดย <ชื่อ>" — ตกหล่นไปตอนย้ายสคีมา
       createdBy: creator
         ? {
@@ -489,10 +553,23 @@ datasetRequestRouter.get("/:id", async (req, res) => {
       currentTaskType: active?.taskType ?? null,
       currentRound: active?.roundNumber ?? null,
       currentAssignee: active?.assignedUser?.displayName ?? null,
-      assignedSpecialistId:
-        active?.taskType === ReviewTaskType.DATASET_SPECIALIST_REVIEW
-          ? active.assignedUserId
+      /**
+       * คืนเป็น **ก้อน** ไม่ใช่แค่ id — ทุกหน้าจออ่าน `assignedSpecialist.…`
+       * (การ์ด "ผู้เชี่ยวชาญที่ได้รับมอบหมาย" ป้ายปุ่มมอบหมาย/เปลี่ยน และค่าตั้งต้น
+       * ใน modal) เดิมส่งไปแต่ `assignedSpecialistId` ทุกที่จึงเป็น undefined เงียบ ๆ
+       */
+      assignedSpecialist:
+        active?.taskType === ReviewTaskType.DATASET_SPECIALIST_REVIEW && active.assignedUser
+          ? {
+              id: active.assignedUser.id,
+              email: active.assignedUser.email,
+              firstName: active.assignedUser.firstnameTh,
+              lastName: active.assignedUser.lastnameTh,
+            }
           : null,
+      // การ์ดเดียวกันมีบรรทัด "มอบหมายเมื่อ" — เวลาที่มอบหมายคือเวลาที่เปิด task ของด่านนั้น
+      assignedAt:
+        active?.taskType === ReviewTaskType.DATASET_SPECIALIST_REVIEW ? active.assignedAt : null,
       attachments: attachments.map(publicAttachment),
       // timeline มาจาก review_task แทน dataset_request_events เดิม
       // ความเห็นที่ตั้งไว้เป็น BDI_INTERNAL ถูกซ่อนจากฝั่งหน่วยงาน
@@ -639,7 +716,9 @@ datasetRequestRouter.post("/:id/attachments", upload.single("file"), async (req,
 datasetRequestRouter.get("/:id/attachments/:attachmentId", async (req, res) => {
   const session = req.session! as Session;
   const request = await prisma.datasetRegistrationRequest.findFirst({
-    where: { id: req.params.id, ...visibilityFilter(session) },
+    // AND ไม่ใช่ spread — ตัวกรองของผู้เชี่ยวชาญเป็น `id: { in: [...] }` ซึ่งถ้ากระจายเข้าไป
+    // จะไปทับ `id` ของ path param แล้วคืนคำขอใบอื่นที่เขามีสิทธิ์เห็นแทนใบที่ขอมา
+    where: { AND: [{ id: req.params.id }, await visibilityFilter(session)] },
     select: { id: true, requestNumber: true, organizationId: true },
   });
   if (!request) {
@@ -683,7 +762,7 @@ datasetRequestRouter.post("/:id/generate-form", async (req, res) => {
   }
 
   const shape = toApiShape(request);
-  const parsed = datasetSubmitSchema.safeParse(shape);
+  const parsed = parseRequestSnapshot(datasetSubmitSchema, shape);
   if (!parsed.success) {
     res.status(400).json({
       error: "validation",
@@ -783,7 +862,7 @@ datasetRequestRouter.post("/:id/submit", async (req, res) => {
     return;
   }
 
-  const parsed = datasetSubmitSchema.safeParse(toApiShape(request));
+  const parsed = parseRequestSnapshot(datasetSubmitSchema, toApiShape(request));
   if (!parsed.success) {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;
@@ -1123,6 +1202,40 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
       where: { id: request.id },
       include: requestInclude,
     });
+
+    /**
+     * §4.6 ข้อ 3 — อนุมัติแล้ว "ระบบสร้าง PDF ฉบับสมบูรณ์ใหม่ ที่มีเลขที่คำขอ
+     * ผู้ลงนามทุกด่าน และวันที่อนุมัติ"
+     *
+     * `buildForm()` เก็บชื่อผู้ลงนามของหน่วยงานและชื่อผู้อนุมัติ BDI มาให้อยู่แล้ว แต่ถูกเรียก
+     * ที่เดียวคือตอนกด "ตรวจสอบและสร้าง PDF" ซึ่งยังไม่มีใครลงนามเลย ค่าทั้งสองจึงเป็น null
+     * เสมอ เอกสารที่การ์ด "เอกสารฉบับอนุมัติ" ให้ดาวน์โหลดจึงเป็นฉบับก่อนนำส่ง ช่องลายเซ็น
+     * ว่าง และไม่มีวันที่อนุมัติ — สร้างทับอีกครั้งตรงนี้ ฉบับเดิมกลายเป็น REPLACED
+     * ตามกลไกของ storeAttachment (ประวัติยังตรวจย้อนได้)
+     *
+     * ทำนอก transaction โดยตั้งใจ: การเรนเดอร์ PDF และการเขียนลง object storage ไม่ควร
+     * ถือ transaction ของฐานข้อมูลไว้ และถ้าขั้นนี้ล้ม การอนุมัติที่บันทึกไปแล้วต้องไม่ถูกย้อน
+     */
+    if (task.taskType === ReviewTaskType.BDI_FINAL_APPROVAL && result === ReviewResult.APPROVED) {
+      try {
+        const pdf = await renderDatasetRegistrationForm(await buildForm(fresh));
+        await storeAttachment(prisma, {
+          ownerType: OWNER,
+          ownerId: fresh.id,
+          attachmentType: AttachmentType.GENERATED_FORM,
+          file: {
+            buffer: pdf,
+            originalname: `แบบฟอร์มลงทะเบียนชุดข้อมูล-${fresh.requestNumber}-อนุมัติ.pdf`,
+            mimetype: "application/pdf",
+            size: pdf.length,
+          },
+          uploadedBy: session.sub,
+        });
+      } catch (err) {
+        console.error("[dataset] สร้างเอกสารฉบับอนุมัติไม่สำเร็จ", err);
+      }
+    }
+
     res.json({ request: toApiShape(fresh) });
   } catch (err) {
     if (err instanceof WorkflowError) {

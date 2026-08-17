@@ -9,7 +9,7 @@ import { storeThaidProfile, takeActivationToken } from "@/components/auth/Thaid"
 import { useSession, type SessionUser } from "@/components/SessionProvider";
 import { Spinner } from "@/components/ui/Spinner";
 import { api, ApiError } from "@/lib/api";
-import { isBdiStaff } from "@/lib/status";
+import { bdiLandingPath, isBdiStaff } from "@/lib/status";
 
 /**
  * redirect_uri ที่ลงทะเบียนไว้กับกรมการปกครอง
@@ -63,7 +63,7 @@ function ThaidCallback() {
 
         if (result.user) {
           setUser(result.user);
-          router.replace(isBdiStaff(result.user.roles) ? "/admin/organizations" : "/");
+          router.replace(isBdiStaff(result.user.roles) ? bdiLandingPath(result.user.roles) : "/");
           return;
         }
 

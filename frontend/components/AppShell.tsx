@@ -9,7 +9,7 @@ import { Logo } from "@/components/brand/Logo";
 import { NotificationBell } from "@/components/NotificationBell";
 import { useSession } from "@/components/SessionProvider";
 import { api } from "@/lib/api";
-import { ROLE_LABELS, isBdiStaff } from "@/lib/status";
+import { ROLE_LABELS, isBdiStaff, isSpecialistOnly } from "@/lib/status";
 
 /** หน้าที่ไม่ต้องมี header/footer — เต็มจอเพื่อให้โฟกัสกับงานตรงหน้า */
 const BARE_ROUTES = ["/login", "/register"];
@@ -39,11 +39,8 @@ function navItems(roles: string[], organizationId: string | null) {
   const hasOrganization = Boolean(organizationId);
   if (isBdiStaff(roles)) {
     // ผู้เชี่ยวชาญมีบทบาทเฉพาะเส้นทางชุดข้อมูล จึงไม่ต้องเห็นเมนูหน่วยงาน
-    const specialistOnly =
-      roles.includes("BDI_DATASET_SPECIALIST") &&
-      !roles.includes("BDI_OFFICER") &&
-      !roles.includes("BDI_FINAL_APPROVER");
-    if (specialistOnly) return [{ href: "/admin/datasets", label: "ชุดข้อมูลที่ได้รับมอบหมาย" }];
+    // (กติกาเดียวกับ bdiLandingPath ที่ตัดสินว่าเข้าสู่ระบบแล้วไปหน้าไหน)
+    if (isSpecialistOnly(roles)) return [{ href: "/admin/datasets", label: "ชุดข้อมูลที่ได้รับมอบหมาย" }];
 
     const items = [
       { href: "/admin/organizations", label: "หน่วยงาน" },

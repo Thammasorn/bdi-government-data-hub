@@ -696,24 +696,34 @@ authRouter.get("/me", requireAuth, async (req, res) => {
     res.status(401).json({ error: "unauthenticated" });
     return;
   }
-  const organization = req.session!.organizationId
-    ? await prisma.organization.findUnique({
-        where: { id: req.session!.organizationId },
-        select: { id: true, nameTh: true, status: true },
-      })
-    : null;
-
   res.json({
     user: {
       ...publicUser(user, req.session!.roles, req.session!.organizationId),
-      organization: organization && {
-        id: organization.id,
-        name: organization.nameTh,
-        status: organization.status,
-      },
+      organization: await sessionOrganization(req.session!.organizationId),
     },
   });
 });
+
+/**
+ * หน่วยงานในรูปแบบที่หน้าเว็บใช้ — ชื่อหน่วยงานกับสถานะ ไม่ใช่แค่ id
+ *
+ * ทั้ง `/me` และ `issueSession` ต้องคืนก้อนนี้เหมือนกัน: หน้าแรกตัดสินจาก
+ * `user.organization` ว่าจะพาดหัวด้วยชื่อหน่วยงานหรือด้วยข้อความของผู้มีอำนาจกระทำการแทน
+ * ถ้าคำตอบของการล็อกอิน/เปิดใช้งานบัญชีไม่มีก้อนนี้ ผู้ใช้จะเห็นหน้าแรกของอีก role หนึ่ง
+ * จนกว่าจะกดรีเฟรช
+ */
+async function sessionOrganization(organizationId: string | null) {
+  if (!organizationId) return null;
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { id: true, nameTh: true, status: true },
+  });
+  return organization && {
+    id: organization.id,
+    name: organization.nameTh,
+    status: organization.status,
+  };
+}
 
 /**
  * ออก session ใหม่หนึ่งใบแล้วส่ง id ดิบกลับไปเป็น cookie
@@ -761,7 +771,13 @@ async function issueSession(
 
   const { sessionId } = await createSession(prisma, userAccountId);
   res.cookie(SESSION_COOKIE, sessionId, cookieOptions());
-  res.json({ user: publicUser(user, roles, organizationId), ...extra });
+  res.json({
+    user: {
+      ...publicUser(user, roles, organizationId),
+      organization: await sessionOrganization(organizationId),
+    },
+    ...extra,
+  });
 }
 
 function publicUser(

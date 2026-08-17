@@ -12,7 +12,7 @@ import { TextField } from "@/components/ui/Field";
 import { OtpInput } from "@/components/ui/OtpInput";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
-import { isBdiStaff } from "@/lib/status";
+import { bdiLandingPath, isBdiStaff } from "@/lib/status";
 import type { SessionUser } from "@/components/SessionProvider";
 
 /**
@@ -149,7 +149,7 @@ function OtpStep({ email, onBack }: { email: string; onBack: () => void }) {
           code: value,
         });
         setUser(data.user);
-        router.push(isBdiStaff(data.user.roles) ? "/admin/organizations" : "/");
+        router.push(isBdiStaff(data.user.roles) ? bdiLandingPath(data.user.roles) : "/");
       } catch (err) {
         setError(err instanceof ApiError ? err.message : "ยืนยันไม่สำเร็จ");
         setCode("");

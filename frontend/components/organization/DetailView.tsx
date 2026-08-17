@@ -15,6 +15,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
 import { formatThaiDate } from "@/lib/status";
+import { useOrganizationRegistration } from "@/lib/use-organization-registration";
 import { ATTACHMENT_LABELS, fullName, type Organization } from "@/lib/types";
 
 /** ผู้ใช้ปัจจุบันตัดสินใจกับคำขอนี้ได้หรือไม่ ขึ้นกับสถานะ + role */
@@ -48,6 +49,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
   const [note, setNote] = useState("");
   const [noteError, setNoteError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
+  const { start: startRegistration, starting } = useOrganizationRegistration();
 
   const load = () =>
     api
@@ -69,6 +71,28 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
   }, [id]);
 
   if (notFound) {
+    /**
+     * เมนู "หน่วยงานของฉัน" ประกอบ URL จาก id ของหน่วยงาน ซึ่งยังไม่มีคำขอจดทะเบียน
+     * ผูกอยู่เลยถ้าเจ้าหน้าที่เพิ่งสร้างหน่วยงานไว้ให้ — นั่นไม่ใช่ "ไม่พบ" แต่คือ
+     * "ยังไม่ได้เริ่มกรอก" และเป็นจุดเริ่มต้นของเส้นทาง B พอดี
+     */
+    const ownOrganization = !!user?.organizationId && user.organizationId === id;
+    if (ownOrganization) {
+      return (
+        <div className="mx-auto max-w-2xl px-4 py-20 text-center sm:px-6">
+          <h1 className="text-[26px] font-semibold text-navy-800">ยังไม่ได้เริ่มลงทะเบียนหน่วยงาน</h1>
+          <p className="mx-auto mt-3 max-w-md text-[15px] leading-relaxed text-ink-muted">
+            {user?.organization?.name ?? "หน่วยงานของคุณ"} ถูกสร้างไว้ในระบบแล้ว
+            แต่ยังไม่มีแบบฟอร์มลงทะเบียนที่กรอกค้างไว้ กดปุ่มด้านล่างเพื่อเริ่มกรอก
+            ระบบจะเติมข้อมูลที่เจ้าหน้าที่บันทึกไว้ให้เป็นค่าตั้งต้น
+          </p>
+          <Button size="lg" className="mt-8" loading={starting} onClick={startRegistration}>
+            กรอกแบบฟอร์มลงทะเบียนหน่วยงาน
+          </Button>
+        </div>
+      );
+    }
+
     return (
       <div className="mx-auto max-w-2xl px-4 py-20 text-center sm:px-6">
         <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-navy-50">
@@ -106,7 +130,12 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
   const generated = org.attachments.find((a) => a.kind === "GENERATED_FORM");
   const supporting = org.attachments.filter((a) => a.kind !== "GENERATED_FORM");
   const isOwner = org.createdBy?.id === user.id;
-  const isMember = user.roles.includes("ORGANIZATION_USER") && user.organizationId === org.id;
+  // เทียบกับ `org.organizationId` ไม่ใช่ `org.id` — `org.id` คือ id ของคำขอ การ์ด
+  // "ลงทะเบียนชุดข้อมูล" จึงไม่เคยขึ้นให้ผู้ใช้หน่วยงานเห็นเลย
+  const isMember =
+    user.roles.includes("ORGANIZATION_USER") && user.organizationId === org.organizationId;
+  // "ขอให้ปรับปรุง" = review_task ที่ปิดด้วย result = RETURNED (เหมือนฝั่งชุดข้อมูล)
+  const lastRevision = [...org.events].reverse().find((e) => e.result === "RETURNED");
 
   const act = async (action: "approve" | "request_revision") => {
     if (action === "request_revision" && note.trim().length < 10) {
@@ -115,7 +144,13 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
     }
     setBusy(true);
     try {
-      await api.post(`/api/organizations/${id}/review`, { action, note: note.trim() || undefined });
+      // `org.id` ไม่ใช่ `id` — พารามิเตอร์บน URL รับได้ทั้ง id ของคำขอและของหน่วยงาน
+      // (เมนู "หน่วยงานของฉัน" ส่ง id ของหน่วยงานมา) แต่ `/review` รับเฉพาะ id ของคำขอ
+      // ใช้ค่าที่โหลดมาแล้วจึงถูกเสมอ ไม่ว่าจะเข้าหน้านี้มาทางไหน
+      await api.post(`/api/organizations/${org.id}/review`, {
+        action,
+        note: note.trim() || undefined,
+      });
       show({
         tone: "success",
         title: action === "approve" ? "ดำเนินการเรียบร้อย" : "ส่งกลับให้แก้ไขแล้ว",
@@ -157,10 +192,36 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         <StatusBadge status={org.status} currentTaskType={org.currentTaskType} />
       </header>
 
+      {/* ฉบับร่างที่ยังไม่ได้นำส่ง — หน้านี้เคยไม่มีทางกลับเข้าฟอร์มเลย ผู้ใช้ที่ปิดแท็บไป
+          แล้วกดเมนู "หน่วยงานของฉัน" จึงเห็นข้อมูลค้างอยู่โดยไม่มีปุ่มให้ทำต่อ */}
+      {org.status === "DRAFT" && isOwner ? (
+        <Card className="mb-6 border-l-[3px] border-l-coral-500">
+          <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-medium text-navy-800">ฉบับร่าง — ยังไม่ได้นำส่ง</p>
+              <p className="mt-0.5 text-sm text-ink-muted">
+                กรอกให้ครบแล้วกด &ldquo;ตรวจสอบและสร้างแบบฟอร์ม&rdquo; เพื่อนำส่งให้ BDI ตรวจสอบ
+              </p>
+            </div>
+            <Button className="shrink-0" onClick={() => router.push(`/organizations/${org.id}/edit`)}>
+              กรอกข้อมูลต่อ
+            </Button>
+          </div>
+        </Card>
+      ) : null}
+
       {org.status === "RETURNED" && org.revisionNote ? (
         <div className="mb-6 rounded-xl border-l-[3px] border-danger bg-danger-bg p-5">
           <p className="text-[13px] font-semibold text-danger">สิ่งที่ต้องแก้ไข</p>
           <p className="mt-1.5 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-ink">{org.revisionNote}</p>
+          {/* บอกให้ครบว่าแก้เรื่องอะไร **โดยใคร เมื่อไหร่** เหมือนฝั่งชุดข้อมูล
+              — ข้อความล้วนไม่พอเมื่อคำขอถูกส่งกลับหลายรอบจากคนละด่าน */}
+          {lastRevision ? (
+            <p className="mt-2 text-[13px] text-ink-muted">
+              โดย {lastRevision.actor ? lastRevision.actor.name : "ระบบ"} ·{" "}
+              {formatThaiDate(lastRevision.completedAt ?? lastRevision.createdAt)}
+            </p>
+          ) : null}
           {isOwner ? (
             <Button size="sm" className="mt-4" onClick={() => router.push(`/organizations/${org.id}/edit`)}>
               แก้ไขข้อมูล

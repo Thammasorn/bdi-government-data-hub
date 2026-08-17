@@ -63,6 +63,7 @@ import {
 } from "../lib/system.js";
 import {
   emailSchema,
+  parseRequestSnapshot,
   formatZodError,
   isUuid,
   nationalIdSchema,
@@ -460,6 +461,7 @@ organizationRouter.get("/", async (req, res) => {
       submittedAt: true,
       createdAt: true,
       organizationId: true,
+      createdBy: true,
     },
   });
 
@@ -474,23 +476,51 @@ organizationRouter.get("/", async (req, res) => {
   });
   const stageBySubject = new Map(tasks.map((t) => [t.subjectId, t]));
 
+  /**
+   * ชื่อหน่วยงานและชื่อผู้ยื่นในตารางต้องไม่ว่าง
+   *
+   * ทั้งสองคอลัมน์เคยอ่านจาก **snapshot ของคำขอ** อย่างเดียว ซึ่งยังเป็น null ทั้งแถวจนกว่า
+   * ผู้ใช้จะเริ่มกรอกฟอร์ม คำขอฉบับร่างที่ระบบเตรียมไว้ให้ผู้ที่เพิ่งรับคำเชิญจึงขึ้นเป็น
+   * ช่องว่างกับ "—" ในตารางของเจ้าหน้าที่ อ่านไม่ออกว่าเป็นของใคร
+   * จึงถอยไปใช้ชื่อหน่วยงานจริงกับบัญชีผู้สร้างเมื่อ snapshot ยังว่าง
+   */
+  const organizations = new Map(
+    (
+      await prisma.organization.findMany({
+        where: { id: { in: [...new Set(requests.map((r) => r.organizationId))] } },
+        select: { id: true, nameTh: true },
+      })
+    ).map((o) => [o.id, o.nameTh]),
+  );
+  const creators = new Map(
+    (
+      await prisma.userAccount.findMany({
+        where: { id: { in: [...new Set(requests.map((r) => r.createdBy))] } },
+        select: { id: true, email: true, firstnameTh: true, lastnameTh: true },
+      })
+    ).map((u) => [u.id, u]),
+  );
+
   res.json({
-    organizations: requests.map((r) => ({
-      id: r.id,
-      requestNumber: r.requestNumber,
-      name: r.organizationNameTh,
-      status: r.status,
-      currentTaskType: stageBySubject.get(r.id)?.taskType ?? null,
-      currentRound: stageBySubject.get(r.id)?.roundNumber ?? null,
-      submittedAt: r.submittedAt,
-      createdAt: r.createdAt,
-      organizationId: r.organizationId,
-      createdBy: {
-        email: r.userEmail,
-        firstName: r.userFirstnameTh,
-        lastName: r.userLastnameTh,
-      },
-    })),
+    organizations: requests.map((r) => {
+      const creator = creators.get(r.createdBy);
+      return {
+        id: r.id,
+        requestNumber: r.requestNumber,
+        name: r.organizationNameTh ?? organizations.get(r.organizationId) ?? null,
+        status: r.status,
+        currentTaskType: stageBySubject.get(r.id)?.taskType ?? null,
+        currentRound: stageBySubject.get(r.id)?.roundNumber ?? null,
+        submittedAt: r.submittedAt,
+        createdAt: r.createdAt,
+        organizationId: r.organizationId,
+        createdBy: {
+          email: r.userEmail ?? creator?.email ?? "",
+          firstName: r.userFirstnameTh ?? creator?.firstnameTh ?? null,
+          lastName: r.userLastnameTh ?? creator?.lastnameTh ?? null,
+        },
+      };
+    }),
   });
 });
 
@@ -636,12 +666,32 @@ organizationRouter.post("/", async (req, res) => {
 
 // ---------------------------------------------------------------- detail
 
-organizationRouter.get("/:id", async (req, res) => {
-  const session = req.session!;
-  const request = await prisma.organizationRegistrationRequest.findUnique({
-    where: { id: req.params.id },
+/**
+ * `:id` ของ router นี้คือ id ของ **คำขอจดทะเบียน** เสมอ — แต่สิ่งเดียวที่ session ถืออยู่
+ * คือ id ของ **หน่วยงาน** เมนู "หน่วยงานของฉัน" กับลิงก์บนหน้าแรกจึงประกอบ URL จาก id
+ * ของหน่วยงาน และได้ "ไม่พบหน่วยงานนี้" ทุกครั้งที่กด (ผู้ใช้หน่วยงานทุกคน ทุกหน้า)
+ *
+ * หน้ารายละเอียดจึงรับได้ทั้งสอง id: ถ้าไม่ใช่คำขอ ให้ตีความว่าเป็นหน่วยงาน แล้วเปิด
+ * คำขอล่าสุดของหน่วยงานนั้น สิ่งที่ตอบกลับยังเป็นคำขอเสมอ (`id` ในผลลัพธ์คือ id ของคำขอ)
+ * ลิงก์ "แก้ไข"/"ตรวจสอบ" ที่หน้านั้นสร้างต่อจึงชี้ถูกที่อยู่แล้ว และการตรวจสิทธิ์
+ * ยังเป็น `canView` ตัวเดิมบนคำขอที่หาเจอ ไม่ได้เปิดช่องให้ใครเห็นเพิ่ม
+ */
+async function findRequestByRequestOrOrganizationId(id: string) {
+  const byRequest = await prisma.organizationRegistrationRequest.findUnique({
+    where: { id },
     include: { organization: true },
   });
+  if (byRequest) return byRequest;
+  return prisma.organizationRegistrationRequest.findFirst({
+    where: { organizationId: id },
+    include: { organization: true },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+organizationRouter.get("/:id", async (req, res) => {
+  const session = req.session!;
+  const request = await findRequestByRequestOrOrganizationId(req.params.id);
   if (!request || !canView(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
@@ -863,7 +913,7 @@ organizationRouter.post("/:id/generate-form", async (req, res) => {
   }
 
   const shape = await toApiShape(request);
-  const parsed = submitSchema.safeParse(shape);
+  const parsed = parseRequestSnapshot(submitSchema, shape);
   if (!parsed.success) {
     res.status(400).json({
       error: "validation",
@@ -929,7 +979,7 @@ organizationRouter.post("/:id/submit", async (req, res) => {
   }
 
   const shape = await toApiShape(request);
-  const parsed = submitSchema.safeParse(shape);
+  const parsed = parseRequestSnapshot(submitSchema, shape);
   if (!parsed.success) {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;

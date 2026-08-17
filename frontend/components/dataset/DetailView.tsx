@@ -82,16 +82,33 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string,
       return null;
 
     case "DATASET_SPECIALIST_REVIEW":
-      return isSpecialist || roles.includes("BDI_DATASET_SPECIALIST")
-        ? {
-            advanceLabel: null,
-            hint: "คุณได้รับมอบหมายให้ตรวจชุดข้อมูลนี้ บันทึกความเห็นหรือส่งกลับให้แก้ไขได้",
-            canRevise: true,
-            canAssign: false,
-            canComment: true,
-            canReject: false,
-          }
-        : null;
+      if (isSpecialist || roles.includes("BDI_DATASET_SPECIALIST")) {
+        return {
+          advanceLabel: null,
+          hint: "คุณได้รับมอบหมายให้ตรวจชุดข้อมูลนี้ บันทึกความเห็นหรือส่งกลับให้แก้ไขได้",
+          canRevise: true,
+          canAssign: false,
+          canComment: true,
+          canReject: false,
+        };
+      }
+      /**
+       * เจ้าหน้าที่ BDI ที่มอบหมายไป **ถอนการมอบหมายได้** (§4.4 ข้อ 2) และ backend
+       * รองรับอยู่แล้วด้วย `specialistId: null` — แต่การ์ดนี้เคยหายไปทั้งใบเมื่อคำขอ
+       * ย้ายไปด่านผู้เชี่ยวชาญ เจ้าหน้าที่จึงกดถอนไม่ได้เลย และคำขอค้างอยู่ที่
+       * ผู้เชี่ยวชาญจนกว่าเขาจะลงมือ ไม่มีทางออกจากหน้าจอ
+       */
+      if (isOfficer) {
+        return {
+          advanceLabel: null,
+          hint: "คำขอนี้อยู่ระหว่างการพิจารณาของผู้เชี่ยวชาญ ถอนการมอบหมายเพื่อดึงกลับมาตรวจเองได้",
+          canRevise: false,
+          canAssign: true,
+          canComment: false,
+          canReject: false,
+        };
+      }
+      return null;
 
     case "ORGANIZATION_APPROVAL":
       return isOrgApprover
@@ -389,7 +406,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
             <div className="flex shrink-0 flex-wrap gap-3">
               {ability.canAssign ? (
                 <Button variant="ghost" onClick={() => setModal("assign")}>
-                  {request.assignedSpecialist ? "เปลี่ยนผู้เชี่ยวชาญ" : "มอบหมายผู้เชี่ยวชาญ"}
+                  {request.assignedSpecialist ? "เปลี่ยนหรือถอนผู้เชี่ยวชาญ" : "มอบหมายผู้เชี่ยวชาญ"}
                 </Button>
               ) : null}
               {ability.canComment ? (

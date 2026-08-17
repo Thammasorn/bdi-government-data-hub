@@ -97,7 +97,17 @@ const ACTIVE_STATUSES: ReviewTaskStatus[] = [
 export async function activeTask(db: Db, subjectType: SubjectType, subjectId: string) {
   return db.reviewTask.findFirst({
     where: { subjectType, subjectId, status: { in: ACTIVE_STATUSES } },
-    include: { assignedUser: { select: { id: true, displayName: true, email: true } } },
+    include: {
+      assignedUser: {
+        select: {
+          id: true,
+          displayName: true,
+          email: true,
+          firstnameTh: true,
+          lastnameTh: true,
+        },
+      },
+    },
   });
 }
 
@@ -105,7 +115,17 @@ export async function taskHistory(db: Db, subjectType: SubjectType, subjectId: s
   return db.reviewTask.findMany({
     where: { subjectType, subjectId },
     orderBy: { sequenceNumber: "asc" },
-    include: { assignedUser: { select: { id: true, displayName: true, email: true } } },
+    include: {
+      assignedUser: {
+        select: {
+          id: true,
+          displayName: true,
+          email: true,
+          firstnameTh: true,
+          lastnameTh: true,
+        },
+      },
+    },
   });
 }
 

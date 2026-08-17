@@ -12,7 +12,7 @@ import { SelectField, TextField } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
-import { PREFIXES, isBdiStaff } from "@/lib/status";
+import { PREFIXES, bdiLandingPath, isBdiStaff } from "@/lib/status";
 
 /**
  * หน้าจอ Account Activation (§2.3–2.5 ของสเปก ThaiD)
@@ -219,7 +219,7 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
       sessionStorage.removeItem("thaid:profile");
       setUser(data.user);
       show({ tone: "success", title: "เปิดใช้งานบัญชีสำเร็จ" });
-      router.push(isBdiStaff(data.user.roles) ? "/admin/organizations" : "/");
+      router.push(isBdiStaff(data.user.roles) ? bdiLandingPath(data.user.roles) : "/");
     } catch (err) {
       if (err instanceof ApiError) {
         setFields(err.fields);

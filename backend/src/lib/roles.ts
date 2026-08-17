@@ -57,5 +57,18 @@ export const BDI_ROLES: RoleCode[] = [
 
 export const isBdiStaff = (roles: RoleCode[]) => roles.some((r) => BDI_ROLES.includes(r));
 
+/**
+ * ผู้เชี่ยวชาญข้อมูลที่ไม่ได้ถือ role อื่นของ BDI ด้วย
+ *
+ * `docs/01-user-journey.md` §4.7 ให้ role นี้เห็น **เฉพาะคำขอที่ถูกมอบหมายให้ตนเอง**
+ * ต่างจาก BDI role อื่นที่เห็นทั้งระบบ — จึงต้องแยกออกจาก `isBdiStaff` ตรงจุดที่กรอง
+ * (สำเนาเดียวกันอยู่ที่ `isSpecialistOnly` ใน frontend/lib/status.ts ซึ่งใช้ตัดสินเมนู)
+ */
+export const isSpecialistOnly = (roles: RoleCode[]) =>
+  roles.includes(ROLE_CODES.BDI_DATASET_SPECIALIST) &&
+  !roles.includes(ROLE_CODES.BDI_OFFICER) &&
+  !roles.includes(ROLE_CODES.BDI_FINAL_APPROVER) &&
+  !roles.includes(ROLE_CODES.BDI_LEGAL_OFFICER);
+
 export const hasRole = (roles: RoleCode[], ...allowed: RoleCode[]) =>
   roles.some((r) => allowed.includes(r));

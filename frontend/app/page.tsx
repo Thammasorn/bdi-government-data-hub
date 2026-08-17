@@ -11,8 +11,10 @@ import { Button } from "@/components/ui/Button";
 import { Card, DotDecoration, OrganizationStatusBadge } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
-import { api, ApiError } from "@/lib/api";
+import { api } from "@/lib/api";
+import { useOrganizationRegistration } from "@/lib/use-organization-registration";
 import {
+  bdiLandingPath,
   isBdiStaff,
   isPendingDatasetStatus,
   type DatasetRequestStatus,
@@ -23,35 +25,15 @@ import type { DatasetRequestListItem } from "@/lib/types";
 export default function HomePage() {
   const { user, loading } = useSession();
   const router = useRouter();
-  const { show } = useToast();
-  const [creating, setCreating] = useState(false);
+  const { start, starting } = useOrganizationRegistration();
 
   useEffect(() => {
     if (loading) return;
     // ผู้ที่ยังไม่ล็อกอินได้หน้าแนะนำระบบ ไม่ใช่หน้าล็อกอิน — เดิมเด้งไป /login ทันที
     // ทำให้ไม่มีที่อธิบายว่าระบบนี้คืออะไรให้คนที่เพิ่งเข้ามาอ่าน
     if (!user) return;
-    if (isBdiStaff(user.roles)) router.replace("/admin/organizations");
+    if (isBdiStaff(user.roles)) router.replace(bdiLandingPath(user.roles));
   }, [user, loading, router]);
-
-  const createOrganization = async () => {
-    setCreating(true);
-    try {
-      const data = await api.post<{ organization: { id: string } }>("/api/organizations", {});
-      router.push(`/organizations/${data.organization.id}/edit`);
-    } catch (err) {
-      if (err instanceof ApiError && err.code === "exists") {
-        router.push(`/organizations/${err.requestId}/edit`);
-        return;
-      }
-      show({
-        tone: "error",
-        title: "สร้างหน่วยงานไม่สำเร็จ",
-        detail: err instanceof ApiError ? err.message : undefined,
-      });
-      setCreating(false);
-    }
-  };
 
   if (loading) return <Spinner />;
   if (!user) return <LandingPage />;
@@ -62,10 +44,10 @@ export default function HomePage() {
   // ไม่ใช่หน้าชวนสร้างหน่วยงาน
   const isApprover = user.roles.includes("ORGANIZATION_APPROVER");
   if (!user.organizationId && !isApprover) {
-    return <CreateOrganizationPrompt loading={creating} onCreate={createOrganization} />;
+    return <CreateOrganizationPrompt loading={starting} onCreate={start} />;
   }
 
-  return <OrganizationHome isApprover={isApprover} />;
+  return <OrganizationHome isApprover={isApprover} onRegister={start} registering={starting} />;
 }
 
 // ---------------------------------------------------------------- หน้าแรกของผู้ใช้หน่วยงาน
@@ -75,7 +57,15 @@ export default function HomePage() {
  * แบ่งเป็นสอง section — รายการที่รออนุมัติอยู่บนสุดเสมอ ตามด้วยชุดข้อมูลที่เหลือของหน่วยงาน
  * ทุกแถวบอกวันเวลาที่นำเข้ามา วันเวลาที่อัปเดตล่าสุด สถานะ ชื่อชุดข้อมูล และปุ่ม view / download
  */
-function OrganizationHome({ isApprover }: { isApprover: boolean }) {
+function OrganizationHome({
+  isApprover,
+  onRegister,
+  registering,
+}: {
+  isApprover: boolean;
+  onRegister: () => void;
+  registering: boolean;
+}) {
   const { user } = useSession();
   const { show } = useToast();
   const [rows, setRows] = useState<DatasetRequestListItem[] | null>(null);
@@ -99,7 +89,13 @@ function OrganizationHome({ isApprover }: { isApprover: boolean }) {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-      <HomeHeader name={name} organization={organization} />
+      <HomeHeader
+        name={name}
+        organization={organization}
+        // ผู้ลงนามไม่ใช่คนกรอกฟอร์มลงทะเบียน จึงไม่ต้องเห็นปุ่มนี้
+        onRegister={isApprover ? undefined : onRegister}
+        registering={registering}
+      />
 
       {rows === null ? (
         <Spinner className="min-h-[40vh]" />
@@ -160,9 +156,13 @@ function OrganizationHome({ isApprover }: { isApprover: boolean }) {
 function HomeHeader({
   name,
   organization,
+  onRegister,
+  registering,
 }: {
   name: string;
   organization: { id: string; name: string; status: string } | null;
+  onRegister?: () => void;
+  registering?: boolean;
 }) {
   const status = organization?.status as OrganizationStatus | undefined;
 
@@ -197,6 +197,15 @@ function HomeHeader({
               หน่วยงานต้องผ่านการอนุมัติและเปิดใช้งานก่อน จึงจะลงทะเบียนชุดข้อมูลใหม่ได้
               ระหว่างนี้ยังเปิดดูคำขอเดิมได้ตามปกติ
             </p>
+            {/* หน่วยงานที่เจ้าหน้าที่สร้างไว้ล่วงหน้าไม่มีคำขอจดทะเบียนมาด้วย ผู้ใช้จึงต้องมี
+                ปุ่มพาเข้าฟอร์ม — ก่อนหน้านี้ปุ่มนี้อยู่เฉพาะกับผู้ใช้ที่ยังไม่มีหน่วยงาน
+                คนที่ถูกผูกหน่วยงานไว้ให้จึงเริ่มเส้นทาง B จากหน้าจอไม่ได้เลย
+                กดซ้ำได้ปลอดภัย: ถ้ามีคำขออยู่แล้วระบบพากลับเข้าใบเดิม ไม่ได้เปิดใบใหม่ */}
+            {onRegister ? (
+              <Button size="sm" className="mt-4" loading={registering} onClick={onRegister}>
+                กรอกแบบฟอร์มลงทะเบียนหน่วยงาน
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </div>
