@@ -10,6 +10,14 @@ environment: `docs/bdi-dev-checkout` · `bdi-main-local` · `bdi-public` (`.post
 `grep ADMIN_API_TOKEN main/.env` — **ห้ามคอมมิตค่านั้นลงไฟล์ environment**
 ส่วนของ dev checkout ใส่มาให้แล้วเพราะเป็นค่าตัวอย่างเดียวกับใน `.env.example`
 
+**`organizationId` กับ `activationKeyId` ไม่ต้องอยู่ใน environment** — สอง id นี้ script ของ
+แต่ละ request เก็บใส่ *collection variable* ให้เองอยู่แล้ว และ Postman อ่าน `{{organizationId}}`
+จาก environment ก่อน collection ค่าว่างที่ประกาศไว้ใน environment จึงทับ id ที่เพิ่งเก็บมา
+request 1 กับ 2 ส่ง `"organizationId": ""` ออกไปแล้วได้ 400 `validation` (D · E · 5 ก็พังด้วย
+เหตุเดียวกัน) ไฟล์ environment ทั้งสามจึงไม่ประกาศสองตัวนี้อีกแล้วตั้งแต่ 2026-08-17 —
+ใครถือไฟล์ที่ export ไว้ก่อนหน้านั้น ให้ลบสองตัวแปรนั้นออกจาก environment ของตัวเอง
+request ที่ต้องใช้ id เหล่านี้จะฟ้องใน pre-request script ว่าให้ไปยิง request ไหนก่อน
+
 ---
 
 ## 1. ปัญหาที่การ์ดนี้แก้

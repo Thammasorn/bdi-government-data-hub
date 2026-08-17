@@ -415,6 +415,16 @@ Two API base URLs, and they are not interchangeable:
   no longer decodes.
 - `rows()` in `pdf.ts` measured only the value column, so a label that wrapped to two lines had
   the divider drawn through it and the next row on top of it. It takes the taller of the two now.
+- Postman reads `{{var}}` from the environment before the collection, so a name declared in
+  **both** scopes always comes from the environment. All three
+  `docs/*.postman_environment.json` files declared an empty `organizationId` and
+  `activationKeyId` — the two ids the collection's own Tests scripts capture — which shadowed
+  every captured value: `POST /api/admin/invitations` went out with `"organizationId": ""` and
+  answered 400 `validation`, revoke and PATCH answered 404, and `D` quietly listed *all*
+  organizations instead of fetching one and still passed. Ids captured at runtime belong in
+  collection variables only; an environment carries `baseUrl` and `adminToken` and nothing
+  else. The requests that depend on a captured id now refuse to send in a pre-request script
+  that names the request to run first, so the next occurrence says what it is.
 - The two `BDI_OFFICER_REVIEW` rounds look identical to anything reading `task_type`.
   Round one goes to the organization for signature, the re-check after signing goes to
   BDI final approval. Backend and `components/dataset/DetailView.tsx` both decide by

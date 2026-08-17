@@ -3,7 +3,7 @@
     "name": "BDI Government Datahub — Admin Portal API",
     "_postman_id": "b91d5f2a-7c4e-4a3d-9f61-2ad0c5e18f30",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Journey A — create an organization ahead of time and send someone an activation link. The spec says these steps have no UI, so the caller here is an operator script rather than a browser.\n\nEvery request is guarded by the `x-admin-token` shared secret, set once at the collection level from the `adminToken` variable.\n\n## Before you start\n\n**Import an environment too** and pick it from the selector at the top right. Three sit next to this file in `docs/`:\n\n| File | Points at | `adminToken` |\n| --- | --- | --- |\n| `bdi-dev-checkout.postman_environment.json` | `http://localhost:4170` (dev slot 07) | filled in — `dev-admin-token-change-me`, the same placeholder as `.env.example` |\n| `bdi-main-local.postman_environment.json` | `http://localhost:4000` (the `main` checkout) | **empty — fill it in yourself** |\n| `bdi-public.postman_environment.json` | `https://bdi-api.thammasorn.org` | **empty — fill it in yourself** |\n\nThe empty ones are typed *secret* and left blank on purpose: `main` and the public deployment use a real token that lives only in `.env`, which git does not track. A Postman environment is exactly the kind of file that gets exported and passed around, so **do not commit that value back into it**.\n\n```bash\ngrep ADMIN_API_TOKEN /hdd1tb/bdi-project/main/.env\n```\n\n**For a different dev checkout**, change `baseUrl` to `http://localhost:41N0`, where `NN` is that checkout's port slot (slot 01 → 4110, slot 07 → 4170). `grep BACKEND_PORT .env` in the checkout tells you.\n\n`organizationId` and `activationKeyId` fill themselves in — each request's Tests script captures them.\n\n## The order to run them in\n\n1. **A** creates the organization and captures its id.\n2. **1** invites the organization's user, binding the invitation to that id. The activation link now leads the user straight to the organization you prepared.\n3. **2** invites the signing authority into the same organization.\n4. **4** / **5** list and revoke invitations as needed.\n\n**E** edits an organization afterwards — but once the user has opened their registration request, the edit no longer reaches their form, and the response says so.\n\n## Where the activation link is\n\n**The raw key is never returned.** It goes only to the invitee's email, and the database stores an HMAC of it (see `docs/09-auth-tokens.md` §2).\n\nOn a checkout with no SMTP configured (`SMTP_USER` empty) the mailer prints the whole email to stdout instead of sending it:\n\n```bash\ndocker compose logs backend | grep 'activate?token='\n```\n\nOn a checkout with real SMTP — `main` has it — **the email is actually sent**, so be careful inviting made-up addresses.\n\n> Pointing this at `bdi-api.thammasorn.org` means acting on the deployment other people are looking at, and invitations created there send real mail. Try it on a dev checkout first.\n\n## Things that save you a puzzled ten minutes\n\n- **`cid` is required for every role.** §2.4 compares the national ID from ThaiD against the one an officer recorded when the account was created; a number the user typed themselves would prove nothing. The checksum is validated, so an invented number returns 400.\n- **BDI roles need no `organizationId`** — they are attached to the BDI organization automatically, which is a row in `organization.organization` like any other.\n- **Re-inviting an address that is still `PENDING`** is treated as an officer fixing a typo: the national ID is overwritten and a fresh key issued, while the previous key for that (account, organization, role) is revoked.\n- **Inviting an address that is already `ACTIVE`** returns 409.\n- An organization becomes `ACTIVE` only when its registration request clears `BDI_FINAL_APPROVAL` (Journey B). Creating it here, and activating accounts in it, leave it `PENDING_REGISTRATION`."
+    "description": "Journey A — create an organization ahead of time and send someone an activation link. The spec says these steps have no UI, so the caller here is an operator script rather than a browser.\n\nEvery request is guarded by the `x-admin-token` shared secret, set once at the collection level from the `adminToken` variable.\n\n## Before you start\n\n**Import an environment too** and pick it from the selector at the top right. Three sit next to this file in `docs/`:\n\n| File | Points at | `adminToken` |\n| --- | --- | --- |\n| `bdi-dev-checkout.postman_environment.json` | `http://localhost:4170` (dev slot 07) | filled in — `dev-admin-token-change-me`, the same placeholder as `.env.example` |\n| `bdi-main-local.postman_environment.json` | `http://localhost:4000` (the `main` checkout) | **empty — fill it in yourself** |\n| `bdi-public.postman_environment.json` | `https://bdi-api.thammasorn.org` | **empty — fill it in yourself** |\n\nThe empty ones are typed *secret* and left blank on purpose: `main` and the public deployment use a real token that lives only in `.env`, which git does not track. A Postman environment is exactly the kind of file that gets exported and passed around, so **do not commit that value back into it**.\n\n```bash\ngrep ADMIN_API_TOKEN /hdd1tb/bdi-project/main/.env\n```\n\n**For a different dev checkout**, change `baseUrl` to `http://localhost:41N0`, where `NN` is that checkout's port slot (slot 01 → 4110, slot 07 → 4170). `grep BACKEND_PORT .env` in the checkout tells you.\n\n`organizationId` and `activationKeyId` fill themselves in — each request's Tests script captures them as **collection** variables, so **do not declare either of them in an environment.** Postman resolves `{{organizationId}}` from the environment before the collection, and an empty value there wins over the id just captured: the request goes out with `\"organizationId\": \"\"` and the API answers 400 `validation`. The three environments above no longer carry them — an environment exported before 2026-08-17 still does, and needs both variables deleted.\n\n## The order to run them in\n\n1. **A** creates the organization and captures its id.\n2. **1** invites the organization's user, binding the invitation to that id. The activation link now leads the user straight to the organization you prepared.\n3. **2** invites the signing authority into the same organization.\n4. **4** / **5** list and revoke invitations as needed.\n\n**E** edits an organization afterwards — but once the user has opened their registration request, the edit no longer reaches their form, and the response says so.\n\n## Where the activation link is\n\n**The raw key is never returned.** It goes only to the invitee's email, and the database stores an HMAC of it (see `docs/09-auth-tokens.md` §2).\n\nOn a checkout with no SMTP configured (`SMTP_USER` empty) the mailer prints the whole email to stdout instead of sending it:\n\n```bash\ndocker compose logs backend | grep 'activate?token='\n```\n\nOn a checkout with real SMTP — `main` has it — **the email is actually sent**, so be careful inviting made-up addresses.\n\n> Pointing this at `bdi-api.thammasorn.org` means acting on the deployment other people are looking at, and invitations created there send real mail. Try it on a dev checkout first.\n\n## Things that save you a puzzled ten minutes\n\n- **`cid` is required for every role.** §2.4 compares the national ID from ThaiD against the one an officer recorded when the account was created; a number the user typed themselves would prove nothing. The checksum is validated, so an invented number returns 400.\n- **BDI roles need no `organizationId`** — they are attached to the BDI organization automatically, which is a row in `organization.organization` like any other.\n- **Re-inviting an address that is still `PENDING`** is treated as an officer fixing a typo: the national ID is overwritten and a fresh key issued, while the previous key for that (account, organization, role) is revoked.\n- **Inviting an address that is already `ACTIVE`** returns 409.\n- **A request that fails before it is sent** (`organizationId is empty…`) means an id an earlier request was supposed to capture is missing: run **A** first, and check that no environment declares `organizationId` or `activationKeyId` — see *Before you start*.\n- An organization becomes `ACTIVE` only when its registration request clears `BDI_FINAL_APPROVAL` (Journey B). Creating it here, and activating accounts in it, leave it `PENDING_REGISTRATION`."
   },
   "auth": {
     "type": "apikey",
@@ -205,6 +205,22 @@
     },
     {
       "name": "D · Organization detail",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Postman resolves {{organizationId}} from the highest-priority scope it finds it in, and",
+              "// environment outranks collection. An environment that declares organizationId",
+              "// therefore shadows the id the Tests script captured, and the request goes out empty.",
+              "if (!pm.variables.get('organizationId')) {",
+              "    throw new Error('organizationId is empty. Run \"A · Create an organization (full details)\" first — it captures the id. If your environment declares organizationId, delete it there: environment scope outranks the collection variable the script writes.');",
+              "}"
+            ]
+          }
+        }
+      ],
       "request": {
         "method": "GET",
         "header": [],
@@ -227,6 +243,20 @@
     {
       "name": "E · Update an organization",
       "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Postman resolves {{organizationId}} from the highest-priority scope it finds it in, and",
+              "// environment outranks collection. An environment that declares organizationId",
+              "// therefore shadows the id the Tests script captured, and the request goes out empty.",
+              "if (!pm.variables.get('organizationId')) {",
+              "    throw new Error('organizationId is empty. Run \"A · Create an organization (full details)\" first — it captures the id. If your environment declares organizationId, delete it there: environment scope outranks the collection variable the script writes.');",
+              "}"
+            ]
+          }
+        },
         {
           "listen": "test",
           "script": {
@@ -279,6 +309,20 @@
       "name": "1 · Invite a user into that organization",
       "event": [
         {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Postman resolves {{organizationId}} from the highest-priority scope it finds it in, and",
+              "// environment outranks collection. An environment that declares organizationId",
+              "// therefore shadows the id the Tests script captured, and the request goes out empty.",
+              "if (!pm.variables.get('organizationId')) {",
+              "    throw new Error('organizationId is empty. Run \"A · Create an organization (full details)\" first — it captures the id. If your environment declares organizationId, delete it there: environment scope outranks the collection variable the script writes.');",
+              "}"
+            ]
+          }
+        },
+        {
           "listen": "test",
           "script": {
             "type": "text/javascript",
@@ -287,7 +331,7 @@
               "",
               "const body = pm.response.json();",
               "pm.test('bound to the organization from request A', () => {",
-              "    pm.expect(body.organizationId).to.eql(pm.collectionVariables.get('organizationId'));",
+              "    pm.expect(body.organizationId).to.eql(pm.variables.get('organizationId'));",
               "});",
               "",
               "pm.collectionVariables.set('activationKeyId', body.activationKeyId);",
@@ -335,6 +379,20 @@
       "name": "2 · Invite the signing authority into the same organization",
       "event": [
         {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Postman resolves {{organizationId}} from the highest-priority scope it finds it in, and",
+              "// environment outranks collection. An environment that declares organizationId",
+              "// therefore shadows the id the Tests script captured, and the request goes out empty.",
+              "if (!pm.variables.get('organizationId')) {",
+              "    throw new Error('organizationId is empty. Run \"A · Create an organization (full details)\" first — it captures the id. If your environment declares organizationId, delete it there: environment scope outranks the collection variable the script writes.');",
+              "}"
+            ]
+          }
+        },
+        {
           "listen": "test",
           "script": {
             "type": "text/javascript",
@@ -342,7 +400,7 @@
               "pm.test('201 Created', () => pm.response.to.have.status(201));",
               "const body = pm.response.json();",
               "pm.test('same organization as the first invitation', () => {",
-              "    pm.expect(body.organizationId).to.eql(pm.collectionVariables.get('organizationId'));",
+              "    pm.expect(body.organizationId).to.eql(pm.variables.get('organizationId'));",
               "});",
               "pm.collectionVariables.set('activationKeyId', body.activationKeyId);"
             ]
@@ -474,6 +532,20 @@
     {
       "name": "5 · Revoke an invitation",
       "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Postman resolves {{activationKeyId}} from the highest-priority scope it finds it in, and",
+              "// environment outranks collection. An environment that declares activationKeyId",
+              "// therefore shadows the id the Tests script captured, and the request goes out empty.",
+              "if (!pm.variables.get('activationKeyId')) {",
+              "    throw new Error('activationKeyId is empty. Run one of the invitation requests (1–3) first — each captures the id of the key it issued. If your environment declares activationKeyId, delete it there: environment scope outranks the collection variable the script writes.');",
+              "}"
+            ]
+          }
+        },
         {
           "listen": "test",
           "script": {

@@ -26,7 +26,7 @@ import {
   SYSTEM_USER_ID,
   type RoleCode,
 } from "../lib/system.js";
-import { emailSchema, formatZodError, nationalIdSchema } from "../lib/validation.js";
+import { emailSchema, formatZodError, nationalIdSchema, uuidSchema } from "../lib/validation.js";
 import { requireAdminToken } from "../middleware/auth.js";
 
 export const adminRouter = Router();
@@ -63,7 +63,10 @@ const adminOrganizationSchema = z.object({
   phone: z.string().trim().max(32).optional(),
   email: emailSchema.optional(),
   websiteUrl: z.string().trim().max(500).optional(),
-  parentOrganizationId: z.string().uuid().optional(),
+  parentOrganizationId: uuidSchema(
+    "parentOrganizationId ต้องเป็น UUID ของหน่วยงานแม่ — " +
+      "ถ้าไม่มีหน่วยงานแม่ ให้ไม่ส่งฟิลด์นี้เลย (ส่งค่าว่างไม่นับว่าไม่ส่ง)",
+  ).optional(),
 });
 
 /** รูปแบบที่ทุก endpoint ของหมวดนี้ตอบกลับ — ที่อยู่คืนเป็นชื่อ ไม่ใช่รหัส */
@@ -273,7 +276,12 @@ const adminOrganizationPatchSchema = z.object({
   phone: z.string().trim().max(32).nullable().optional(),
   email: emailSchema.nullable().optional(),
   websiteUrl: z.string().trim().max(500).nullable().optional(),
-  parentOrganizationId: z.string().uuid().nullable().optional(),
+  parentOrganizationId: uuidSchema(
+    "parentOrganizationId ต้องเป็น UUID ของหน่วยงานแม่ — " +
+      "ถ้าต้องการล้างหน่วยงานแม่ ให้ส่ง null (ส่งค่าว่างไม่นับว่าล้างค่า)",
+  )
+    .nullable()
+    .optional(),
 });
 
 adminRouter.patch("/organizations/:id", async (req, res) => {
@@ -486,7 +494,10 @@ adminRouter.get("/organizations/:id", async (req, res) => {
 const inviteSchema = z.object({
   email: emailSchema,
   role: z.enum(Object.values(ROLE_CODES) as [RoleCode, ...RoleCode[]], { error: "role ไม่ถูกต้อง" }),
-  organizationId: z.string().uuid().optional(),
+  organizationId: uuidSchema(
+    "organizationId ต้องเป็น UUID ของหน่วยงานที่มีอยู่แล้ว — " +
+      "ถ้าไม่ต้องการผูกกับหน่วยงานใด ให้ไม่ส่งฟิลด์นี้เลย (ส่งค่าว่างไม่นับว่าไม่ส่ง)",
+  ).optional(),
   displayName: z.string().trim().min(1).optional(),
   /**
    * เลขประจำตัวประชาชนของคนที่ถูกเชิญ — บังคับทุก role
