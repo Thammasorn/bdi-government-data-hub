@@ -12,11 +12,14 @@ export function AuthLayout({
   description,
   children,
   footer,
+  back,
 }: {
   title: string;
   description?: string;
   children: ReactNode;
   footer?: ReactNode;
+  /** ทางออกกลับไปหน้าอื่น วางไว้เหนือหัวข้อ — บนจอใหญ่ไม่มีโลโก้ให้กดกลับ */
+  back?: { href: string; label: string };
 }) {
   return (
     <div className="grid min-h-screen lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
@@ -55,6 +58,15 @@ export function AuthLayout({
             <Link href="/" className="mb-9 inline-block lg:hidden">
               <Logo />
             </Link>
+
+            {back ? (
+              <Link
+                href={back.href}
+                className="mb-5 flex w-fit items-center text-sm font-medium text-navy-700 hover:underline"
+              >
+                ← {back.label}
+              </Link>
+            ) : null}
 
             <h1 className="text-[26px] font-semibold text-navy-800">{title}</h1>
             {description ? (

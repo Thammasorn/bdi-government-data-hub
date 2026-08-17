@@ -68,6 +68,7 @@ function CredentialsStep({
     <AuthLayout
       title="เข้าสู่ระบบ"
       description="ใช้อีเมลที่ได้รับคำเชิญจากสถาบันข้อมูลขนาดใหญ่"
+      back={{ href: "/", label: "กลับไปหน้าแรก" }}
       footer={
         <div className="flex flex-col gap-2">
           <p>
