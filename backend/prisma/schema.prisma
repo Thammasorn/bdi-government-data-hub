@@ -271,9 +271,9 @@ model Session {
   /// SHA-256 (hex) ของ session id ที่อยู่ใน cookie — ค่าดิบไม่เคยถูกเขียนลงฐานข้อมูล
   tokenHash String @unique @map("token_hash") @db.VarChar(64)
 
-  issuedAt  DateTime @default(now()) @map("issued_at") @db.Timestamptz(6)
+  issuedAt   DateTime @default(now()) @map("issued_at") @db.Timestamptz(6)
   /// absolute expiry — ต่ออายุไม่ได้ ครบแล้วต้องเข้าสู่ระบบใหม่
-  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  expiresAt  DateTime @map("expires_at") @db.Timestamptz(6)
   /// idle expiry — ขยับทุก request ที่ผ่าน requireAuth
   lastSeenAt DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
 
@@ -370,15 +370,18 @@ model Organization {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   updatedBy String   @map("updated_by") @db.Uuid
 
-  registrationRequests  OrganizationRegistrationRequest[]
-  datasetRequests       DatasetRegistrationRequest[]
-  datasets              Dataset[]
-  activationKeys        ActivationKey[]
-  roleAssignments       UserRoleAssignment[]
-  legalAcceptances      LegalAcceptance[]
-  signatures            SignatureConfirmation[]
-  notifications         Notification[]
-  integrationOperations IntegrationOperation[]
+  registrationRequests        OrganizationRegistrationRequest[]
+  datasetRequests             DatasetRegistrationRequest[]
+  datasets                    Dataset[]
+  /// เจ้าของชุดข้อมูลตามคอลัมน์ owner_org ของสอง sheet metadata
+  ownedDatasetRequestMetadata DatasetRegistrationMetadata[]     @relation("DatasetRegistrationMetadataOwner")
+  ownedDatasetMetadata        DatasetMetadata[]                 @relation("DatasetMetadataOwner")
+  activationKeys              ActivationKey[]
+  roleAssignments             UserRoleAssignment[]
+  legalAcceptances            LegalAcceptance[]
+  signatures                  SignatureConfirmation[]
+  notifications               Notification[]
+  integrationOperations       IntegrationOperation[]
 
   @@index([status])
   @@index([provinceCode])
@@ -805,48 +808,96 @@ model DatasetRegistrationRequest {
 }
 
 /// Snapshot metadata ที่ผู้ใช้ยื่นในคำขอ — sheet `dataset_registration_metadata`
+/// (ฉบับ draft_db_design_downloaded_on_2026-08-16.xlsx — คนละชุดคอลัมน์กับฉบับ 08-11)
 ///
-/// ฟิลด์ที่ระบบเดิมมีแต่ Excel ไม่มี (keywords, dataset_type, estimated_records,
-/// license_type, legal_basis, personal_data_measure, usage_restriction,
-/// delivery_endpoint, technical_contact_name/email, delivery_note, delivery_frequency)
-/// ทั้งหมดมาจาก docs/01-user-journey.md §4.3 ที่มาร์ก [สมมติฐาน] ไว้ตั้งแต่ต้น
-/// → ยึด Excel เก็บลง additional_metadata_json
+/// ทุกคอลัมน์เก็บ **รหัส** ตาม `assets/metadata_registration_form/metadata_mapping.xlsx`
+/// ชีท A4_dataset_metadata ไม่ใช่ enum ของ Postgres: รหัสเหล่านี้เป็นของมาตรฐานบัญชี
+/// ข้อมูลเปิดภาครัฐ (เช่น update_frequency_unit = A/S/Q/M/…) ผูกเป็น enum แล้วเพิ่ม
+/// รหัสใหม่ทีหลังต้อง migrate ทั้งที่ฝั่งมาตรฐานเขาแค่เพิ่มบรรทัดในตารางรหัส
+/// ค่าที่รับได้บังคับที่ zod (`lib/dataset.ts`) แทน
+///
+/// ทุกช่องเป็น nullable เพราะร่างบันทึกได้ทั้งที่ยังกรอกไม่ครบ — ความครบถ้วนบังคับตอน
+/// generate PDF และตอนนำส่ง ไม่ใช่ที่ระดับคอลัมน์
 model DatasetRegistrationMetadata {
   id String @id @default(uuid()) @db.Uuid
 
   datasetRegistrationRequestId String                     @unique @map("dataset_registration_request_id") @db.Uuid
   datasetRegistrationRequest   DatasetRegistrationRequest @relation(fields: [datasetRegistrationRequestId], references: [id], onDelete: Cascade)
 
-  titleTh       String? @map("title_th") @db.VarChar(500)
-  titleEn       String? @map("title_en") @db.VarChar(500)
-  descriptionTh String? @map("description_th")
-  descriptionEn String? @map("description_en")
-  /// Purpose of dataset
-  objective     String?
+  /// 1.1 ประเภทข้อมูล — 1 ระเบียน · 2 ภูมิสารสนเทศ · 3 ข้อมูลรวม (สถิติ) · 9 อื่น ๆ
+  dataType       String? @map("data_type") @db.VarChar(8)
+  /// 1.2 ประเด็น — 01–07 ตาม ร.นร. · 99 อื่น ๆ
+  dataTopic      String? @map("data_topic") @db.VarChar(8)
+  dataTopicOther String? @map("data_topic_other") @db.VarChar(150)
 
-  /// ยัง TO REVIEW ใน Excel จึงเก็บเป็น VARCHAR ไม่ผูก enum
-  datasetCategoryCode String? @map("dataset_category_code") @db.VarChar(64)
-  dataOwnerDepartment String? @map("data_owner_department") @db.VarChar(255)
+  /// 2.1 / 2.2 ชื่อชุดข้อมูลไทย-อังกฤษ — ชีทเรียกว่า title / name
+  title String? @db.VarChar(150)
+  name  String? @db.VarChar(150)
 
-  contactName  String? @map("contact_name") @db.VarChar(255)
-  contactEmail String? @map("contact_email") @db.VarChar(255)
-  contactPhone String? @map("contact_phone") @db.VarChar(32)
+  /// 3 องค์กรเจ้าของชุดข้อมูล — ชีทเขียนว่า fixed เป็นหน่วยงานที่กรอกข้อมูล
+  /// จึงคัดลอกมาจากคำขอ ไม่ใช่ช่องที่ผู้ใช้เลือกเอง
+  ownerOrgId String?       @map("owner_org") @db.Uuid
+  ownerOrg   Organization? @relation("DatasetRegistrationMetadataOwner", fields: [ownerOrgId], references: [id], onDelete: SetNull)
 
-  updateFrequency   String?   @map("update_frequency") @db.VarChar(64)
-  coverageStartDate DateTime? @map("coverage_start_date") @db.Date
-  coverageEndDate   DateTime? @map("coverage_end_date") @db.Date
-  geographicScope   String?   @map("geographic_scope") @db.VarChar(64)
+  /// 4 / 5 ชื่อและอีเมลกอง สำนัก หรือฝ่ายที่รับผิดชอบข้อมูล
+  maintainer      String? @db.VarChar(150)
+  maintainerEmail String? @map("maintainer_email") @db.VarChar(50)
 
-  containsPersonalData  Boolean? @map("contains_personal_data")
-  containsSensitiveData Boolean? @map("contains_sensitive_data")
-  /// Access or disclosure classification
-  accessLevel           String?  @map("access_level") @db.VarChar(64)
+  /// 6 คำสำคัญ คั่นด้วย "," — เก็บเป็นสตริงเดียวตามชีท ไม่ใช่ text[]
+  tagString String? @map("tag_string")
+  /// 7 รายละเอียด
+  notes     String?
+  /// 8 วัตถุประสงค์
+  objective String?
 
-  deliveryMethod String? @map("delivery_method") @db.VarChar(64)
-  /// CSV, JSON, API, DATABASE, etc.
-  dataFormat     String? @map("data_format") @db.VarChar(64)
+  /// 9.1 / 9.2 หน่วยและค่าความถี่ของการปรับปรุงข้อมูลต้นทาง เช่น A + 2 = ทุก 2 ปี
+  updateFrequencyUnit     String? @map("update_frequency_unit") @db.VarChar(8)
+  updateFrequencyInterval Int?    @map("update_frequency_interval")
+  /// 9.3 ความถี่ของการนำส่งข้อมูลเข้าสู่ระบบกลาง — 1–5
+  deliveryFrequency       String? @map("delivery_frequency") @db.VarChar(8)
 
-  /// Optional non-core metadata — ที่พักของ 12 ฟิลด์ที่ Excel ตัดออก
+  /// 10 ความละเอียดเชิงภูมิศาสตร์ — 00–11 · 98 ไม่ทราบ · 99 อื่น ๆ
+  geoCoverage String? @map("geo_coverage") @db.VarChar(8)
+  /// 11 แหล่งที่มาของข้อมูล
+  dataSource  String? @map("data_source")
+
+  /// 12.1 รูปแบบการนำส่งข้อมูล — 1 วางไฟล์ · 2 database sync · 3 batch API · 4 ระบบอื่น
+  dataFormat      String? @map("data_format") @db.VarChar(8)
+  dataFormatOther String? @map("data_format_other") @db.VarChar(150)
+
+  /// 13.1 หมวดหมู่ข้อมูลตามธรรมาภิบาลภาครัฐ — a สาธารณะ · b ใช้ภายใน ·
+  /// c ความลับทางราชการ · d ความมั่นคง (ข้อมูลส่วนบุคคลเป็นคำถามแยก ไม่ใช่หมวดหมู่)
+  dataCategory String? @map("data_category") @db.VarChar(8)
+
+  /// 13.2 ชุดข้อมูลนี้มีข้อมูลส่วนบุคคลหรือไม่ + 13.2.1–13.2.3 ที่ถามต่อเมื่อตอบว่ามี
+  containsPersonalData              Boolean? @map("contains_personal_data")
+  personalDataTypes                 String?  @map("personal_data_types")
+  dataSubjectCategories             String?  @map("data_subject_categories")
+  /// a จนกว่าจะมีคำสั่งยุติการประมวลผล · b ระบุเป็นจำนวนปี/เดือน
+  personalDataProcessingPeriod      String?  @map("personal_data_processing_period") @db.VarChar(8)
+  personalDataProcessingPeriodYear  Int?     @map("personal_data_processing_period_year")
+  personalDataProcessingPeriodMonth Int?     @map("personal_data_processing_period_month")
+
+  /// 13.3 ระดับชั้นข้อมูลตาม พ.ร.บ.ข้อมูลข่าวสาร — 01 เปิดเผย … 05 ลับที่สุด
+  dataClassification String? @map("data_classification") @db.VarChar(8)
+
+  /// 14 สัญญาอนุญาตให้ใช้ข้อมูล — G0 · G2 · G5
+  /// ชีทตั้งชื่อคอลัมน์ว่า license_id แต่ดีไซน์ไม่มีตารางสัญญาอนุญาต ค่าที่เก็บจึงเป็นรหัส
+  /// ไม่ใช่ FK — รายการทั้งหมดอยู่ในชีท "สัญญาอนุญาต" ของ metadata_mapping.xlsx
+  licenseId String? @map("license_id") @db.VarChar(16)
+
+  /// 15–17 สิทธิที่หน่วยงานให้สำนักงานในการเก็บและส่งต่อข้อมูล
+  allowOriginalRawDataRetention      Boolean? @map("allow_original_raw_data_retention")
+  allowOriginalRawDataSharing        Boolean? @map("allow_original_raw_data_sharing")
+  allowTransformedRawDataSharing     Boolean? @map("allow_transformed_raw_data_sharing")
+  allowTransformedRawDataGdxSharing  Boolean? @map("allow_transformed_raw_data_gdx_sharing")
+  allowAggregatedDataSharing         Boolean? @map("allow_aggregated_data_sharing")
+  /// 18 มอบหมายให้ สขญ. แปลงข้อมูลส่วนบุคคลให้ไม่สามารถระบุตัวตนได้ — ถามเฉพาะชุดข้อมูล
+  /// ที่มีข้อมูลส่วนบุคคล จึงเป็น Optional ในดีไซน์ ต่างจาก 15–17
+  authorizePersonalDataAnonymization Boolean? @map("authorize_personal_data_anonymization")
+
+  /// Optional non-core metadata — ที่พักของรายชื่อหน่วยงานปลายทางที่ชีท conditions
+  /// สั่งให้ถามเพิ่มเมื่อเป็นข้อมูลส่วนบุคคลและอนุญาตให้ส่งต่อ (ดีไซน์ไม่มีคอลัมน์ให้)
   additionalMetadataJson Json? @map("additional_metadata_json")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -911,36 +962,59 @@ model Dataset {
 
 /// Metadata ปัจจุบันที่ได้รับการอนุมัติและใช้เผยแพร่หรือส่งต่อ DII — sheet `dataset_metadata`
 /// โครงเหมือน DatasetRegistrationMetadata ทุกคอลัมน์ ต่างที่ผูกกับ dataset
+/// (คำอธิบายรหัสของแต่ละคอลัมน์อยู่ที่ DatasetRegistrationMetadata ที่เดียว)
 model DatasetMetadata {
   id String @id @default(uuid()) @db.Uuid
 
   datasetId String  @unique @map("dataset_id") @db.Uuid
   dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
 
-  titleTh       String? @map("title_th") @db.VarChar(500)
-  titleEn       String? @map("title_en") @db.VarChar(500)
-  descriptionTh String? @map("description_th")
-  descriptionEn String? @map("description_en")
-  objective     String?
+  dataType       String? @map("data_type") @db.VarChar(8)
+  dataTopic      String? @map("data_topic") @db.VarChar(8)
+  dataTopicOther String? @map("data_topic_other") @db.VarChar(150)
 
-  datasetCategoryCode String? @map("dataset_category_code") @db.VarChar(64)
-  dataOwnerDepartment String? @map("data_owner_department") @db.VarChar(255)
+  title String? @db.VarChar(150)
+  name  String? @db.VarChar(150)
 
-  contactName  String? @map("contact_name") @db.VarChar(255)
-  contactEmail String? @map("contact_email") @db.VarChar(255)
-  contactPhone String? @map("contact_phone") @db.VarChar(32)
+  ownerOrgId String?       @map("owner_org") @db.Uuid
+  ownerOrg   Organization? @relation("DatasetMetadataOwner", fields: [ownerOrgId], references: [id], onDelete: SetNull)
 
-  updateFrequency   String?   @map("update_frequency") @db.VarChar(64)
-  coverageStartDate DateTime? @map("coverage_start_date") @db.Date
-  coverageEndDate   DateTime? @map("coverage_end_date") @db.Date
-  geographicScope   String?   @map("geographic_scope") @db.VarChar(64)
+  maintainer      String? @db.VarChar(150)
+  maintainerEmail String? @map("maintainer_email") @db.VarChar(50)
 
-  containsPersonalData  Boolean? @map("contains_personal_data")
-  containsSensitiveData Boolean? @map("contains_sensitive_data")
-  accessLevel           String?  @map("access_level") @db.VarChar(64)
+  tagString String? @map("tag_string")
+  notes     String?
+  objective String?
 
-  deliveryMethod String? @map("delivery_method") @db.VarChar(64)
-  dataFormat     String? @map("data_format") @db.VarChar(64)
+  updateFrequencyUnit     String? @map("update_frequency_unit") @db.VarChar(8)
+  updateFrequencyInterval Int?    @map("update_frequency_interval")
+  deliveryFrequency       String? @map("delivery_frequency") @db.VarChar(8)
+
+  geoCoverage String? @map("geo_coverage") @db.VarChar(8)
+  dataSource  String? @map("data_source")
+
+  dataFormat      String? @map("data_format") @db.VarChar(8)
+  dataFormatOther String? @map("data_format_other") @db.VarChar(150)
+
+  dataCategory String? @map("data_category") @db.VarChar(8)
+
+  containsPersonalData              Boolean? @map("contains_personal_data")
+  personalDataTypes                 String?  @map("personal_data_types")
+  dataSubjectCategories             String?  @map("data_subject_categories")
+  personalDataProcessingPeriod      String?  @map("personal_data_processing_period") @db.VarChar(8)
+  personalDataProcessingPeriodYear  Int?     @map("personal_data_processing_period_year")
+  personalDataProcessingPeriodMonth Int?     @map("personal_data_processing_period_month")
+
+  dataClassification String? @map("data_classification") @db.VarChar(8)
+
+  licenseId String? @map("license_id") @db.VarChar(16)
+
+  allowOriginalRawDataRetention      Boolean? @map("allow_original_raw_data_retention")
+  allowOriginalRawDataSharing        Boolean? @map("allow_original_raw_data_sharing")
+  allowTransformedRawDataSharing     Boolean? @map("allow_transformed_raw_data_sharing")
+  allowTransformedRawDataGdxSharing  Boolean? @map("allow_transformed_raw_data_gdx_sharing")
+  allowAggregatedDataSharing         Boolean? @map("allow_aggregated_data_sharing")
+  authorizePersonalDataAnonymization Boolean? @map("authorize_personal_data_anonymization")
 
   additionalMetadataJson Json? @map("additional_metadata_json")
 

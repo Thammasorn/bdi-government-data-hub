@@ -1,15 +1,20 @@
 import PDFDocument from "pdfkit";
 
 import {
-  CLASSIFICATION_LABELS,
   DATASET_ATTACHMENT_LABELS,
-  DATASET_CATEGORY_LABELS,
-  DATASET_TYPE_LABELS,
+  DATA_CATEGORY_LABELS,
+  DATA_CLASSIFICATION_LABELS,
   DATA_FORMAT_LABELS,
-  DELIVERY_METHOD_LABELS,
-  FREQUENCY_LABELS,
+  DATA_TOPIC_LABELS,
+  DATA_TYPE_LABELS,
+  DELIVERY_FREQUENCY_LABELS,
   GEO_COVERAGE_LABELS,
   LICENSE_LABELS,
+  PERSONAL_DATA_PERIOD_LABELS,
+  formatUpdateFrequency,
+  metadataRules,
+  splitTags,
+  type MetadataValues,
 } from "./dataset.js";
 
 /**
@@ -124,46 +129,20 @@ export function renderOrganizationForm(org: OrganizationFormInput): Promise<Buff
 /**
  * ข้อมูลที่แบบฟอร์มชุดข้อมูลต้องพิมพ์ — structural type เช่นเดียวกับฝั่งหน่วยงาน
  *
- * ประกอบจากคอลัมน์ของ dataset_registration_metadata รวมกับค่าที่อยู่ใน
- * additional_metadata_json (ดู fromMetadataRow() ใน lib/dataset.ts) — PDF ยังต้อง
- * พิมพ์ครบทุกช่องที่ผู้ใช้กรอก ไม่ว่าดีไซน์จะให้คอลัมน์ของตัวเองหรือไม่
+ * ช่องของ metadata ทั้งหมดมาจาก MetadataValues (คอลัมน์ของ dataset_registration_metadata
+ * รวมกับค่าที่อยู่ใน additional_metadata_json) เอกสารฉบับนี้คือสิ่งที่หน่วยงานลงนาม
+ * จึงต้องพิมพ์ครบทุกช่องที่ถามไป ไม่ใช่เฉพาะช่องที่มีคอลัมน์ของตัวเอง
  */
-export interface DatasetFormInput {
+export interface DatasetFormInput extends MetadataValues {
   requestNumber: string;
   organization: { name: string };
   submittedAt: Date | null;
   createdAt: Date | null;
 
-  nameTh: string | null;
-  nameEn: string | null;
-  description: string | null;
-  datasetType: string | null;
-  category: string | null;
-  keywords: string[];
-  updateFrequency: string | null;
-  geoCoverage: string | null;
-  dataStartDate: Date | null;
-  dataEndDate: Date | null;
-  estimatedRecords: number | null;
-  stewardName: string | null;
-  stewardEmail: string | null;
-  stewardPhone: string | null;
-
-  deliveryMethod: string | null;
-  dataFormat: string | null;
-  deliveryFrequency: string | null;
-  deliveryEndpoint: string | null;
-  technicalContactName: string | null;
-  technicalContactEmail: string | null;
-  deliveryNote: string | null;
-
-  dataClassification: string | null;
-  hasPersonalData: boolean | null;
-  personalDataMeasure: string | null;
-  legalBasis: string | null;
-  licenseType: string | null;
-  usageRestriction: string | null;
   legalAcceptedAt: Date | null;
+
+  /** ชื่อผู้ยื่นคำขอ ณ เวลาที่สร้างเอกสาร — ไม่ใช่ชื่อกองที่รับผิดชอบข้อมูล (maintainer) */
+  submitterName: string | null;
 
   /**
    * ผู้ลงนามและผู้อนุมัติ — เดิมเป็นคอลัมน์บน dataset_requests
@@ -203,55 +182,123 @@ export function renderDatasetRegistrationForm(request: DatasetFormInput): Promis
       `วันที่จัดทำ ${thaiDate(new Date(request.submittedAt ?? request.createdAt ?? new Date()))}`,
     ]);
 
-    section(doc, "ส่วนที่ 1", "ข้อมูลชุดข้อมูล");
+    // ช่องที่ชีท conditions สั่งซ่อน จะไม่ถูกพิมพ์ลงเอกสารเลย ไม่ใช่พิมพ์หัวข้อทิ้งว่างไว้ —
+    // เอกสารที่หน่วยงานลงนามไม่ควรมีคำถามที่ระบบไม่ได้ถาม
+    const rules = metadataRules(request);
+    const grant = (value: boolean | null) =>
+      value === null ? "" : value ? "อนุญาต" : "ไม่อนุญาต";
+
+    section(doc, "ส่วนที่ 1", "ประเภทและชื่อชุดข้อมูล");
     rows(doc, [
-      ["ชื่อชุดข้อมูล", request.nameTh],
-      ["ชื่อภาษาอังกฤษ", request.nameEn],
-      ["คำอธิบาย", request.description],
-      ["ประเภทชุดข้อมูล", label(DATASET_TYPE_LABELS, request.datasetType)],
-      ["หมวดหมู่", label(DATASET_CATEGORY_LABELS, request.category)],
-      ["คำสำคัญ", request.keywords.join(" · ")],
-      ["ความถี่ในการปรับปรุงข้อมูล", label(FREQUENCY_LABELS, request.updateFrequency)],
-      ["ขอบเขตเชิงพื้นที่", label(GEO_COVERAGE_LABELS, request.geoCoverage)],
-      ["ช่วงเวลาของข้อมูล", dateRange(request.dataStartDate, request.dataEndDate)],
-      [
-        "จำนวนรายการโดยประมาณ",
-        request.estimatedRecords === null ? "" : request.estimatedRecords.toLocaleString("th-TH"),
-      ],
-      ["ผู้ประสานงานชุดข้อมูล", request.stewardName],
-      ["อีเมลผู้ประสานงาน", request.stewardEmail],
-      ["เบอร์โทรผู้ประสานงาน", request.stewardPhone],
+      ["ประเภทข้อมูล", label(DATA_TYPE_LABELS, request.dataType)],
+      ["ประเด็น", label(DATA_TOPIC_LABELS, request.dataTopic)],
+      ...(rules.dataTopicOther.visible
+        ? ([["ประเด็นอื่น ๆ", request.dataTopicOther]] as Array<[string, string | null]>)
+        : []),
+      ["ชื่อชุดข้อมูล (ภาษาไทย)", request.title],
+      ["ชื่อชุดข้อมูล (ภาษาอังกฤษ)", request.name],
+      ["องค์กร", request.organization.name],
+      ["ชื่อผู้ติดต่อ", request.maintainer],
+      ["อีเมลผู้ติดต่อ", request.maintainerEmail],
+      ["คำสำคัญ", splitTags(request.tagString).join(" · ")],
+      ["รายละเอียด", request.notes],
+      ["วัตถุประสงค์", request.objective],
     ]);
 
-    section(doc, "ส่วนที่ 2", "วิธีการนำส่งข้อมูล");
+    section(doc, "ส่วนที่ 2", "ความถี่ ขอบเขต และรูปแบบการนำส่ง");
     rows(doc, [
-      ["วิธีการนำส่ง", label(DELIVERY_METHOD_LABELS, request.deliveryMethod)],
-      ["รูปแบบข้อมูล", label(DATA_FORMAT_LABELS, request.dataFormat)],
-      ["ความถี่ในการนำส่ง", label(FREQUENCY_LABELS, request.deliveryFrequency)],
-      ["ปลายทาง / endpoint", request.deliveryEndpoint],
-      ["ผู้รับผิดชอบทางเทคนิค", request.technicalContactName],
-      ["อีเมลผู้รับผิดชอบทางเทคนิค", request.technicalContactEmail],
-      ["หมายเหตุการนำส่ง", request.deliveryNote],
+      [
+        "ความถี่ของการปรับปรุงข้อมูลต้นทาง",
+        formatUpdateFrequency(request.updateFrequencyUnit, request.updateFrequencyInterval),
+      ],
+      [
+        "ความถี่ของการนำส่งข้อมูลเข้าสู่ระบบกลาง",
+        label(DELIVERY_FREQUENCY_LABELS, request.deliveryFrequency),
+      ],
+      ["ความละเอียดเชิงภูมิศาสตร์", label(GEO_COVERAGE_LABELS, request.geoCoverage)],
+      ["แหล่งที่มาของข้อมูล", request.dataSource],
+      ["รูปแบบการนำส่งข้อมูล", label(DATA_FORMAT_LABELS, request.dataFormat)],
+      ...(rules.dataFormatOther.visible
+        ? ([["ชื่อระบบเชื่อมโยงข้อมูล", request.dataFormatOther]] as Array<[string, string | null]>)
+        : []),
     ]);
 
-    section(doc, "ส่วนที่ 3", "เงื่อนไขทางกฎหมาย");
+    section(doc, "ส่วนที่ 3", "หมวดหมู่ ระดับชั้น และสัญญาอนุญาต");
     rows(doc, [
-      ["ชั้นความลับของข้อมูล", label(CLASSIFICATION_LABELS, request.dataClassification)],
+      ["หมวดหมู่ข้อมูลตามธรรมาภิบาลภาครัฐ", label(DATA_CATEGORY_LABELS, request.dataCategory)],
       [
-        "มีข้อมูลส่วนบุคคล",
-        request.hasPersonalData === null ? "" : request.hasPersonalData ? "มี" : "ไม่มี",
+        "มีข้อมูลส่วนบุคคลหรือไม่",
+        request.containsPersonalData === null ? "" : request.containsPersonalData ? "มี" : "ไม่มี",
       ],
-      ["มาตรการคุ้มครองข้อมูลส่วนบุคคล", request.personalDataMeasure],
-      ["ฐานอำนาจตามกฎหมาย", request.legalBasis],
-      ["สัญญาอนุญาตให้ใช้ข้อมูล", label(LICENSE_LABELS, request.licenseType)],
-      ["ข้อจำกัดการใช้ข้อมูล", request.usageRestriction],
+      ...((rules.personalDataDetail.visible
+        ? [
+            ["ประเภทของข้อมูลส่วนบุคคล", request.personalDataTypes],
+            ["กลุ่มหรือประเภทของเจ้าของข้อมูลส่วนบุคคล", request.dataSubjectCategories],
+            [
+              "ระยะเวลาประมวลผลข้อมูลส่วนบุคคล",
+              rules.personalDataPeriodAmount.visible
+                ? personalDataPeriod(request)
+                : label(PERSONAL_DATA_PERIOD_LABELS, request.personalDataProcessingPeriod),
+            ],
+          ]
+        : []) as Array<[string, string | null]>),
+      ["ระดับชั้นข้อมูล", label(DATA_CLASSIFICATION_LABELS, request.dataClassification)],
+      ["สัญญาอนุญาตให้ใช้ข้อมูล", label(LICENSE_LABELS, request.licenseId)],
+    ]);
+
+    section(doc, "ส่วนที่ 4", "การจัดเก็บและส่งต่อข้อมูล");
+    rows(doc, [
+      [
+        "จัดเก็บข้อมูลดิบต้นฉบับไว้แม้ถูกแปลงสภาพแล้ว",
+        grant(request.allowOriginalRawDataRetention),
+      ],
+      [
+        "ส่งต่อข้อมูลดิบต้นฉบับให้หน่วยงานของรัฐอื่น",
+        grant(request.allowOriginalRawDataSharing),
+      ],
+      [
+        "ส่งต่อข้อมูลดิบแปลงสภาพไปยังระบบเชื่อมโยงข้อมูลอื่น",
+        grant(request.allowTransformedRawDataSharing),
+      ],
+      ...(rules.transformedRawDataRecipients.visible
+        ? ([
+            ["หน่วยงานปลายทางที่อนุญาต", request.transformedRawDataRecipients],
+          ] as Array<[string, string | null]>)
+        : []),
+      [
+        "ส่งต่อข้อมูลดิบแปลงสภาพไปยังศูนย์แลกเปลี่ยนข้อมูลกลางภาครัฐ (GDX)",
+        grant(request.allowTransformedRawDataGdxSharing),
+      ],
+      ...(rules.transformedRawDataGdxRecipients.visible
+        ? ([
+            ["หน่วยงานที่อนุญาตให้รับข้อมูลผ่าน GDX", request.transformedRawDataGdxRecipients],
+          ] as Array<[string, string | null]>)
+        : []),
+      ["ส่งต่อข้อมูลรวม (aggregated data)", grant(request.allowAggregatedDataSharing)],
+      ...(rules.aggregatedDataRecipients.visible
+        ? ([
+            ["หน่วยงานปลายทางที่อนุญาตให้รับข้อมูลรวม", request.aggregatedDataRecipients],
+          ] as Array<[string, string | null]>)
+        : []),
+      ...(rules.authorizePersonalDataAnonymization.visible
+        ? ([
+            [
+              "มอบหมายให้สำนักงานแปลงข้อมูลส่วนบุคคลให้ไม่สามารถระบุตัวตนได้",
+              request.authorizePersonalDataAnonymization === null
+                ? ""
+                : request.authorizePersonalDataAnonymization
+                  ? "มอบหมาย"
+                  : "ไม่มอบหมาย",
+            ],
+          ] as Array<[string, string | null]>)
+        : []),
       [
         "ยอมรับเงื่อนไขการนำส่งข้อมูล",
         request.legalAcceptedAt ? `ยอมรับเมื่อ ${thaiDate(new Date(request.legalAcceptedAt))}` : "",
       ],
     ]);
 
-    section(doc, "ส่วนที่ 4", "เอกสารแนบ");
+    section(doc, "ส่วนที่ 5", "เอกสารแนบ");
     rows(
       doc,
       request.attachments
@@ -307,7 +354,7 @@ function datasetSignatures(doc: PDFKit.PDFDocument, request: DatasetFormInput) {
     }
   };
 
-  column(PAGE_MARGIN, "ผู้ยื่นคำขอ", request.stewardName ?? "", request.submittedAt);
+  column(PAGE_MARGIN, "ผู้ยื่นคำขอ", request.submitterName ?? "", request.submittedAt);
   column(
     PAGE_MARGIN + colWidth + 40,
     "ผู้มีอำนาจกระทำการแทน",
@@ -345,11 +392,16 @@ function label<T extends string>(map: Record<T, string>, value: T | null): strin
   return value ? (map[value] ?? value) : "";
 }
 
-function dateRange(start: Date | null, end: Date | null): string {
-  if (!start && !end) return "";
-  const s = start ? thaiDate(new Date(start)) : "ไม่ระบุ";
-  const e = end ? thaiDate(new Date(end)) : "ปัจจุบัน";
-  return `${s} – ${e}`;
+/** 13.2.3 ตัวเลือก "ระบุระยะเวลา" — ปีกับเดือนอ่านรวมเป็นประโยคเดียว */
+function personalDataPeriod(request: DatasetFormInput): string {
+  const parts: string[] = [];
+  if (request.personalDataProcessingPeriodYear) {
+    parts.push(`${request.personalDataProcessingPeriodYear.toLocaleString("th-TH")} ปี`);
+  }
+  if (request.personalDataProcessingPeriodMonth) {
+    parts.push(`${request.personalDataProcessingPeriodMonth.toLocaleString("th-TH")} เดือน`);
+  }
+  return parts.length > 0 ? parts.join(" ") : "";
 }
 
 // ------------------------------------------------------------------ ส่วนประกอบ
@@ -412,13 +464,18 @@ function section(doc: PDFKit.PDFDocument, tag: string, label: string) {
 }
 
 function rows(doc: PDFKit.PDFDocument, entries: Array<[string, string | null | undefined]>) {
-  const labelWidth = 150;
+  // PDFKit ตัดบรรทัดภาษาไทยที่ตัวอักษรใดก็ได้ (ไทยไม่มีช่องว่างระหว่างคำ) หัวข้อยาว ๆ
+  // จึงขาดกลางคำ คอลัมน์หัวข้อกว้างขึ้นช่วยให้หัวข้อส่วนใหญ่จบในบรรทัดเดียว
+  const labelWidth = 195;
   for (const [label, value] of entries) {
     ensureSpace(doc, 34);
     const y = doc.y;
     doc.font("body").fontSize(10).fillColor(MUTED).text(label, PAGE_MARGIN + 4, y + 5, {
       width: labelWidth,
     });
+    // หัวข้อยาวกว่าค่าได้ — ถ้าวัดจากค่าอย่างเดียว เส้นคั่นจะลากผ่านบรรทัดที่สองของหัวข้อ
+    // แล้วแถวถัดไปทับกัน (เจอกับ "ความถี่ของการนำส่งข้อมูลเข้าสู่ระบบกลาง")
+    const labelBottom = doc.y;
     doc
       .font("body")
       .fontSize(10.5)
@@ -427,7 +484,7 @@ function rows(doc: PDFKit.PDFDocument, entries: Array<[string, string | null | u
         width: CONTENT_WIDTH - labelWidth - 16,
       });
 
-    const bottom = Math.max(doc.y, y + 22) + 5;
+    const bottom = Math.max(doc.y, labelBottom, y + 22) + 5;
     doc
       .moveTo(PAGE_MARGIN + 4, bottom)
       .lineTo(PAGE_MARGIN + CONTENT_WIDTH - 4, bottom)

@@ -14,18 +14,22 @@ import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import { taskEventLabel, formatThaiDate } from "@/lib/status";
 import {
-  CLASSIFICATION_LABELS,
-  DATASET_CATEGORY_LABELS,
-  taskEventLabel,
-  DATASET_TYPE_LABELS,
+  DATA_CATEGORY_LABELS,
+  DATA_CLASSIFICATION_LABELS,
   DATA_FORMAT_LABELS,
-  DELIVERY_METHOD_LABELS,
-  FREQUENCY_LABELS,
+  DATA_TOPIC_LABELS,
+  DATA_TYPE_LABELS,
+  DELIVERY_FREQUENCY_LABELS,
   GEO_COVERAGE_LABELS,
   LICENSE_LABELS,
-  formatThaiDate,
-} from "@/lib/status";
+  PERSONAL_DATA_PERIOD_LABELS,
+  formRules,
+  formatUpdateFrequency,
+  splitTags,
+  toFormState,
+} from "@/lib/dataset-form";
 import {
   DATASET_ATTACHMENT_LABELS,
   datasetTitle,
@@ -199,6 +203,9 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
   if (!request || !user) return <Spinner />;
 
   const ability = decideAbility(request, user.roles, user.id, user.email);
+  // ชีท conditions ตัดสินว่าช่องไหนถูกถามจริง — หน้ารายละเอียดจึงไม่ขึ้นหัวข้อที่ระบบไม่ได้ถาม
+  // (เช่น รายละเอียดข้อมูลส่วนบุคคล เมื่อชุดข้อมูลตอบว่าไม่มีข้อมูลส่วนบุคคล)
+  const rules = formRules(toFormState(request as unknown as Record<string, unknown>));
   const generated = request.attachments.find((a) => a.kind === "GENERATED_FORM");
   const supporting = request.attachments.filter((a) => a.kind !== "GENERATED_FORM");
   const editable = request.status === "DRAFT" || request.status === "RETURNED";
@@ -410,59 +417,125 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
 
       <div className="flex flex-col gap-6">
         <Card>
-          <CardHeader tag="ส่วนที่ 1" title="ข้อมูลชุดข้อมูล" />
+          <CardHeader tag="ส่วนที่ 1" title="ประเภทและชื่อชุดข้อมูล" />
           <Rows
             rows={[
-              ["ชื่อชุดข้อมูล", request.nameTh],
-              ["ชื่อภาษาอังกฤษ", request.nameEn],
-              ["คำอธิบาย", request.description],
-              ["ประเภทชุดข้อมูล", pick(DATASET_TYPE_LABELS, request.datasetType)],
-              ["หมวดหมู่", pick(DATASET_CATEGORY_LABELS, request.category)],
-              ["คำสำคัญ", request.keywords.join(" · ")],
-              ["ความถี่ในการปรับปรุงข้อมูล", pick(FREQUENCY_LABELS, request.updateFrequency)],
-              ["ขอบเขตเชิงพื้นที่", pick(GEO_COVERAGE_LABELS, request.geoCoverage)],
-              ["ช่วงเวลาของข้อมูล", dateRange(request.dataStartDate, request.dataEndDate)],
+              ["ประเภทข้อมูล", pick(DATA_TYPE_LABELS, request.dataType)],
+              ["ประเด็น", pick(DATA_TOPIC_LABELS, request.dataTopic)],
+              ...(rules.dataTopicOther.visible
+                ? ([["ประเด็นอื่น ๆ", request.dataTopicOther]] as DetailRow[])
+                : []),
+              ["ชื่อชุดข้อมูล (ภาษาไทย)", request.title],
+              ["ชื่อชุดข้อมูล (ภาษาอังกฤษ)", request.name],
+              ["องค์กร", request.organization.name],
+              ["ชื่อผู้ติดต่อ", request.maintainer],
+              ["อีเมลผู้ติดต่อ", request.maintainerEmail],
+              ["คำสำคัญ", splitTags(request.tagString).join(" · ")],
+              ["รายละเอียด", request.notes],
+              ["วัตถุประสงค์", request.objective],
+            ]}
+          />
+        </Card>
+
+        <Card>
+          <CardHeader tag="ส่วนที่ 2" title="ความถี่ ขอบเขต และรูปแบบการนำส่ง" />
+          <Rows
+            rows={[
               [
-                "จำนวนรายการโดยประมาณ",
-                request.estimatedRecords === null
-                  ? null
-                  : request.estimatedRecords.toLocaleString("th-TH"),
+                "ความถี่ของการปรับปรุงข้อมูลต้นทาง",
+                formatUpdateFrequency(request.updateFrequencyUnit, request.updateFrequencyInterval),
               ],
-              ["ผู้ประสานงานชุดข้อมูล", request.stewardName],
-              ["อีเมลผู้ประสานงาน", request.stewardEmail],
-              ["เบอร์โทรผู้ประสานงาน", request.stewardPhone],
+              [
+                "ความถี่ของการนำส่งข้อมูลเข้าสู่ระบบกลาง",
+                pick(DELIVERY_FREQUENCY_LABELS, request.deliveryFrequency),
+              ],
+              ["ความละเอียดเชิงภูมิศาสตร์", pick(GEO_COVERAGE_LABELS, request.geoCoverage)],
+              ["แหล่งที่มาของข้อมูล", request.dataSource],
+              ["รูปแบบการนำส่งข้อมูล", pick(DATA_FORMAT_LABELS, request.dataFormat)],
+              ...(rules.dataFormatOther.visible
+                ? ([["ชื่อระบบเชื่อมโยงข้อมูล", request.dataFormatOther]] as DetailRow[])
+                : []),
             ]}
           />
         </Card>
 
         <Card>
-          <CardHeader tag="ส่วนที่ 2" title="วิธีการนำส่งข้อมูล" />
+          <CardHeader tag="ส่วนที่ 3" title="หมวดหมู่ ระดับชั้น และสัญญาอนุญาต" />
           <Rows
             rows={[
-              ["วิธีการนำส่ง", pick(DELIVERY_METHOD_LABELS, request.deliveryMethod)],
-              ["รูปแบบข้อมูล", pick(DATA_FORMAT_LABELS, request.dataFormat)],
-              ["ความถี่ในการนำส่ง", pick(FREQUENCY_LABELS, request.deliveryFrequency)],
-              ["ปลายทาง / endpoint", request.deliveryEndpoint],
-              ["ผู้รับผิดชอบทางเทคนิค", request.technicalContactName],
-              ["อีเมลผู้รับผิดชอบทางเทคนิค", request.technicalContactEmail],
-              ["หมายเหตุการนำส่ง", request.deliveryNote],
-            ]}
-          />
-        </Card>
-
-        <Card>
-          <CardHeader tag="ส่วนที่ 3" title="เงื่อนไขทางกฎหมาย" />
-          <Rows
-            rows={[
-              ["ชั้นความลับของข้อมูล", pick(CLASSIFICATION_LABELS, request.dataClassification)],
+              ["หมวดหมู่ข้อมูลตามธรรมาภิบาลภาครัฐ", pick(DATA_CATEGORY_LABELS, request.dataCategory)],
               [
                 "มีข้อมูลส่วนบุคคล",
-                request.hasPersonalData === null ? null : request.hasPersonalData ? "มี" : "ไม่มี",
+                request.containsPersonalData === null
+                  ? null
+                  : request.containsPersonalData
+                    ? "มี"
+                    : "ไม่มี",
               ],
-              ["มาตรการคุ้มครองข้อมูลส่วนบุคคล", request.personalDataMeasure],
-              ["ฐานอำนาจตามกฎหมาย", request.legalBasis],
-              ["สัญญาอนุญาตให้ใช้ข้อมูล", pick(LICENSE_LABELS, request.licenseType)],
-              ["ข้อจำกัดการใช้ข้อมูล", request.usageRestriction],
+              ...((rules.personalDataDetail.visible
+                ? [
+                    ["ประเภทของข้อมูลส่วนบุคคล", request.personalDataTypes],
+                    ["กลุ่มหรือประเภทของเจ้าของข้อมูลส่วนบุคคล", request.dataSubjectCategories],
+                    [
+                      "ระยะเวลาประมวลผลข้อมูลส่วนบุคคล",
+                      rules.personalDataPeriodAmount.visible
+                        ? personalDataPeriod(request)
+                        : pick(PERSONAL_DATA_PERIOD_LABELS, request.personalDataProcessingPeriod),
+                    ],
+                  ]
+                : []) as DetailRow[]),
+              ["ระดับชั้นข้อมูล", pick(DATA_CLASSIFICATION_LABELS, request.dataClassification)],
+              ["สัญญาอนุญาตให้ใช้ข้อมูล", pick(LICENSE_LABELS, request.licenseId)],
+            ]}
+          />
+        </Card>
+
+        <Card>
+          <CardHeader tag="ส่วนที่ 4" title="การจัดเก็บและส่งต่อข้อมูล" />
+          <Rows
+            rows={[
+              [
+                "จัดเก็บข้อมูลดิบต้นฉบับไว้แม้ถูกแปลงสภาพแล้ว",
+                grant(request.allowOriginalRawDataRetention),
+              ],
+              [
+                "ส่งต่อข้อมูลดิบต้นฉบับให้หน่วยงานของรัฐอื่น",
+                grant(request.allowOriginalRawDataSharing),
+              ],
+              [
+                "ส่งต่อข้อมูลดิบแปลงสภาพไปยังระบบเชื่อมโยงข้อมูลอื่น",
+                grant(request.allowTransformedRawDataSharing),
+              ],
+              ...(rules.transformedRawDataRecipients.visible
+                ? ([["หน่วยงานปลายทางที่อนุญาต", request.transformedRawDataRecipients]] as DetailRow[])
+                : []),
+              [
+                "ส่งต่อข้อมูลดิบแปลงสภาพไปยัง GDX",
+                grant(request.allowTransformedRawDataGdxSharing),
+              ],
+              ...(rules.transformedRawDataGdxRecipients.visible
+                ? ([
+                    ["หน่วยงานที่อนุญาตให้รับข้อมูลผ่าน GDX", request.transformedRawDataGdxRecipients],
+                  ] as DetailRow[])
+                : []),
+              ["ส่งต่อข้อมูลรวม (aggregated data)", grant(request.allowAggregatedDataSharing)],
+              ...(rules.aggregatedDataRecipients.visible
+                ? ([
+                    ["หน่วยงานปลายทางที่อนุญาตให้รับข้อมูลรวม", request.aggregatedDataRecipients],
+                  ] as DetailRow[])
+                : []),
+              ...(rules.authorizePersonalDataAnonymization.visible
+                ? ([
+                    [
+                      "มอบหมายให้สำนักงานแปลงข้อมูลส่วนบุคคลให้ไม่สามารถระบุตัวตนได้",
+                      request.authorizePersonalDataAnonymization === null
+                        ? null
+                        : request.authorizePersonalDataAnonymization
+                          ? "มอบหมาย"
+                          : "ไม่มอบหมาย",
+                    ],
+                  ] as DetailRow[])
+                : []),
               [
                 "ยอมรับเงื่อนไขการนำส่งข้อมูล",
                 request.legalAcceptedAt ? `ยอมรับเมื่อ ${formatThaiDate(request.legalAcceptedAt)}` : null,
@@ -670,7 +743,9 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
 }
 
 /** ป้ายกับค่าคนละขนาดตัวอักษร ต้องจัดตามเส้นฐาน ไม่งั้นค่าจะดูต่ำกว่าป้ายเล็กน้อยทุกแถว */
-function Rows({ rows }: { rows: Array<[string, string | null | undefined]> }) {
+type DetailRow = [string, string | null | undefined];
+
+function Rows({ rows }: { rows: DetailRow[] }) {
   return (
     <dl className="divide-y divide-line">
       {rows.map(([label, value]) => (
@@ -700,11 +775,16 @@ function pick<T extends Record<string, string>>(map: T, key: string | null): str
   return key ? (map[key as keyof T] ?? key) : null;
 }
 
-function dateRange(start: string | null, end: string | null): string | null {
-  if (!start && !end) return null;
-  const fmt = (v: string) =>
-    new Intl.DateTimeFormat("th-TH", { dateStyle: "medium", timeZone: "Asia/Bangkok" }).format(
-      new Date(v),
-    );
-  return `${start ? fmt(start) : "ไม่ระบุ"} – ${end ? fmt(end) : "ปัจจุบัน"}`;
+/** 13.2.3 ปีกับเดือนอ่านรวมเป็นประโยคเดียว */
+function personalDataPeriod(request: DatasetRequest): string | null {
+  const parts: string[] = [];
+  if (request.personalDataProcessingPeriodYear) {
+    parts.push(`${request.personalDataProcessingPeriodYear.toLocaleString("th-TH")} ปี`);
+  }
+  if (request.personalDataProcessingPeriodMonth) {
+    parts.push(`${request.personalDataProcessingPeriodMonth.toLocaleString("th-TH")} เดือน`);
+  }
+  return parts.length > 0 ? parts.join(" ") : null;
 }
+
+const grant = (value: boolean | null) => (value === null ? null : value ? "อนุญาต" : "ไม่อนุญาต");
