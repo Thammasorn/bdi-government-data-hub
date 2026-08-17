@@ -233,6 +233,18 @@ paths have to say so in words rather than letting the constraint fire: `POST
 signatory's CID only collides at **officer approval** — several screens and days away from the
 form where it was typed, so the message has to say which account and what to change.
 
+Because both `email` and `cid` are unique, a mistyped invitation used to leave both values
+locked to a `PENDING` account for good — `revoke` only kills the key, and the account keeps the
+pair. `DELETE /api/admin/invitations/:id` is the way out: it removes the key, and the account
+too when that account exists only because of this invitation (still `PENDING`, no other key, no
+role, no assigned review task, no signature or legal acceptance), along with the placeholder
+organization and untouched draft an organization-less invitation had created. Anything else and
+it removes the invitation only, saying which of those held the account back. An `ACTIVE`
+account answers 409 — deleting a working account is not "removing an invitation". The
+`INVITATION_DELETED` audit event carries the email, CID and role, because after the delete it
+is the only record that the invitation ever existed. `docs/09-auth-tokens.md` §2.1 has the
+table.
+
 Activation does **not** touch `organization.status`. An organisation goes `ACTIVE` only when
 its registration request clears `BDI_FINAL_APPROVAL` (Journey B). The Notion card §2.5 says
 otherwise; that was raised and settled on 2026-08-13 in favour of Journey B.

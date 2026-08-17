@@ -667,6 +667,158 @@ adminRouter.get("/invitations", async (_req, res) => {
   res.json({ invitations: keys });
 });
 
+/**
+ * ลบคำเชิญทิ้งทั้งใบ — คนละเรื่องกับ `POST /:id/revoke` ที่เก็บใบเดิมไว้เป็นประวัติ
+ *
+ * มีไว้เพราะ `user_account.email` และ `user_account.cid` เป็น unique ทั้งคู่: ถ้าเจ้าหน้าที่
+ * กรอกอีเมลผิดตอนเชิญ บัญชี PENDING ใบนั้นจะยึดทั้งอีเมลและเลขบัตรไว้ การ revoke คีย์
+ * ไม่ได้คืนสองค่านั้นให้ ทางออกเดียวก่อนหน้านี้คือเข้าไปลบในฐานข้อมูลด้วยมือ ซึ่งเป็น
+ * สิ่งที่ `docs/08-database-access.md` ห้ามไว้ — endpoint นี้จึงเป็นทางที่ถูกต้องแทน
+ *
+ *   DELETE /api/admin/invitations/:id
+ *   x-admin-token: <ADMIN_API_TOKEN>
+ *
+ * ลบบัญชีให้เฉพาะเมื่อบัญชีนั้น "เกิดมาเพราะคำเชิญใบนี้และยังไม่ได้ทำอะไรเลย" คือยัง
+ * PENDING · ไม่มีคีย์ใบอื่น · ไม่มี role · ไม่ถูกมอบหมายงานในสายอนุมัติ · ไม่มีลายเซ็น
+ * หรือการยอมรับเอกสาร ถ้าติดข้อใดข้อหนึ่ง จะลบแค่คำเชิญและบอกว่าทำไมบัญชียังอยู่ —
+ * ลบบัญชีที่มีร่องรอยการทำงานแล้วคือลบประวัติของคนอื่นไปด้วย
+ */
+adminRouter.delete("/invitations/:id", async (req, res) => {
+  const parsedId = z.string().uuid().safeParse(req.params.id);
+  if (!parsedId.success) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบคำเชิญที่ระบุ" });
+    return;
+  }
+
+  const key = await prisma.activationKey.findUnique({
+    where: { id: parsedId.data },
+    include: {
+      userAccount: {
+        select: {
+          id: true,
+          email: true,
+          cid: true,
+          status: true,
+          _count: {
+            select: {
+              activationKeys: true,
+              roleAssignments: true,
+              assignedReviewTasks: true,
+              legalAcceptances: true,
+              signatures: true,
+            },
+          },
+        },
+      },
+      role: { select: { code: true } },
+    },
+  });
+  if (!key) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบคำเชิญที่ระบุ" });
+    return;
+  }
+
+  const account = key.userAccount;
+  if (account.status === UserAccountStatus.ACTIVE) {
+    res.status(409).json({
+      error: "activated",
+      message:
+        `บัญชี ${account.email} เปิดใช้งานแล้ว จึงลบคำเชิญของบัญชีนี้ไม่ได้ — ` +
+        `การลบบัญชีที่ใช้งานอยู่ไม่ใช่การลบคำเชิญ ถ้าต้องการปิดการใช้งาน ให้ระงับบัญชีแทน`,
+    });
+    return;
+  }
+
+  const counts = account._count;
+  // คีย์ใบนี้นับอยู่ใน activationKeys ด้วย จึงเทียบกับ 1 ไม่ใช่ 0
+  const keepAccountBecause =
+    counts.activationKeys > 1
+      ? "บัญชีนี้ยังมีคำเชิญใบอื่นอยู่"
+      : counts.roleAssignments > 0
+        ? "บัญชีนี้มีสิทธิ์ (role) ผูกอยู่แล้ว"
+        : counts.assignedReviewTasks > 0
+          ? "บัญชีนี้ถูกมอบหมายงานในสายอนุมัติแล้ว"
+          : counts.legalAcceptances > 0 || counts.signatures > 0
+            ? "บัญชีนี้มีลายเซ็นหรือการยอมรับเอกสารบันทึกไว้แล้ว"
+            : null;
+
+  const removed = await prisma.$transaction(async (tx) => {
+    await tx.activationKey.delete({ where: { id: key.id } });
+    if (keepAccountBecause) return { userAccount: null, organization: null, request: null };
+
+    /**
+     * หน่วยงานเปล่า + ร่างคำขอที่ POST /invitations สร้างไว้ให้คำเชิญที่ไม่ระบุหน่วยงาน
+     *
+     * ถ้าปล่อยไว้ ร่างนั้นจะค้างโดยที่ `created_by` ชี้บัญชีที่ถูกลบไปแล้ว และการเชิญ
+     * คนเดิมใหม่ก็จะสร้างหน่วยงานเปล่าเพิ่มอีกใบ ลบเฉพาะใบที่ยังไม่มีใครแตะ: ชื่อยังเป็น
+     * ชื่อ placeholder · ยังไม่มีคำขออื่นหรือคีย์ใบอื่นผูกอยู่ · ร่างยังเป็น DRAFT
+     * ที่บัญชีนี้เป็นคนสร้าง (บัญชี PENDING ล็อกอินไม่ได้ จึงยังไม่มีทางแนบไฟล์หรือกรอกอะไร)
+     */
+    const organization = await tx.organization.findFirst({
+      where: {
+        id: key.organizationId,
+        nameTh: PLACEHOLDER_ORGANIZATION_NAME,
+        status: OrganizationStatus.PENDING_REGISTRATION,
+        activationKeys: { none: {} },
+        roleAssignments: { none: {} },
+        datasets: { none: {} },
+        datasetRequests: { none: {} },
+        registrationRequests: {
+          every: { status: RequestStatus.DRAFT, submittedAt: null, createdBy: account.id },
+        },
+      },
+      select: { id: true, organizationCode: true, registrationRequests: { select: { id: true, requestNumber: true } } },
+    });
+
+    if (organization) {
+      await tx.organizationRegistrationRequest.deleteMany({
+        where: { organizationId: organization.id },
+      });
+      await tx.organization.delete({ where: { id: organization.id } });
+    }
+
+    await tx.userAccount.delete({ where: { id: account.id } });
+
+    return {
+      userAccount: { id: account.id, email: account.email, cid: account.cid },
+      organization: organization && { id: organization.id, organizationCode: organization.organizationCode },
+      request: organization?.registrationRequests[0] ?? null,
+    };
+  });
+
+  await logAudit({
+    action: AuditAction.INVITATION_DELETED,
+    subjectType: AuditSubject.USER_ACTIVATION_KEY,
+    subjectId: key.id,
+    organizationId: key.organizationId,
+    before: {
+      email: account.email,
+      cid: account.cid,
+      role: key.role.code,
+      keyStatus: key.status,
+    },
+    metadata: {
+      deleted_via: "ADMIN_API",
+      user_account_deleted: removed.userAccount !== null,
+      kept_account_because: keepAccountBecause ?? undefined,
+      placeholder_organization_deleted: removed.organization !== null,
+    },
+  });
+
+  res.json({
+    ok: true,
+    removed: {
+      activationKeyId: key.id,
+      userAccount: removed.userAccount,
+      organization: removed.organization,
+      registrationRequest: removed.request,
+    },
+    message: removed.userAccount
+      ? `ลบคำเชิญและบัญชี ${account.email} แล้ว — อีเมลและเลขบัตรประชาชนนี้ใช้เชิญใหม่ได้`
+      : `ลบคำเชิญแล้ว แต่ยังเก็บบัญชี ${account.email} ไว้: ${keepAccountBecause}`,
+  });
+});
+
 adminRouter.post("/invitations/:id/revoke", async (req, res) => {
   const key = await prisma.activationKey.findUnique({ where: { id: req.params.id } });
   if (!key || key.status !== ActivationKeyStatus.ISSUED) {

@@ -32,6 +32,15 @@ export const AuditAction = {
   ACTIVATION_KEY_REVOKED: "ACTIVATION_KEY_REVOKED",
   ACTIVATION_KEY_EXPIRED: "ACTIVATION_KEY_EXPIRED",
 
+  /**
+   * คำเชิญถูกลบทิ้ง (`DELETE /api/admin/invitations/:id`) — เพิ่มจากรายการใน sheet
+   * ไม่ใช่ ACTIVATION_KEY_REVOKED: revoke ทำให้คีย์ใช้ไม่ได้แต่แถวยังอยู่ให้ตรวจสอบ
+   * ส่วนอันนี้คือแถวนั้นหายไปแล้ว (บางครั้งพร้อมบัญชี PENDING ที่ยึดอีเมลกับเลขบัตรไว้)
+   * จึงเป็นที่เดียวที่ยังเหลือหลักฐานว่าใครถูกเชิญไว้ก่อน — `before` เก็บอีเมล เลขบัตร
+   * และ role ของใบที่ลบไว้ด้วยเหตุนี้
+   */
+  INVITATION_DELETED: "INVITATION_DELETED",
+
   ROLE_ASSIGNED: "ROLE_ASSIGNED",
   ROLE_REVOKED: "ROLE_REVOKED",
 
