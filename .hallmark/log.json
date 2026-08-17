@@ -1,0 +1,16 @@
+[
+  {
+    "date": "2026-08-17",
+    "scope": "page",
+    "target": "frontend/components/landing/LandingPage.tsx",
+    "genre": "editorial",
+    "macrostructure": "Split Studio",
+    "theme": "BDI CI (project palette preserved)",
+    "theme_axes": "mid-light tinted paper / geometric-sans display (Prompt) / warm accent (coral ~35°)",
+    "nav": "N6 Newspaper masthead",
+    "footer": "Ft4 Dense colophon",
+    "archetypes": ["H2 split diptych", "S3 sticky pinned", "F4 step sequence", "F3 tabular spec sheet", "T1 pull quote + marginalia", "C1 outlined chip", "C3 typographic link"],
+    "enrichment": "none",
+    "brief": "D2 government data platform — public landing page, institutional tone, full redesign of the visual structure"
+  }
+]

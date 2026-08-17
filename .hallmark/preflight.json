@@ -1,0 +1,24 @@
+{
+  "scanned": "2026-08-17",
+  "framework": "Next.js 16 (app router) + React 19",
+  "styling": "Tailwind 4 via @tailwindcss/postcss — tokens in frontend/app/globals.css @theme",
+  "fonts": {
+    "display": "Prompt (next/font/local, frontend/app/fonts.ts)",
+    "body": "Sarabun (next/font/local, frontend/app/fonts.ts)",
+    "source": "self-hosted from frontend/public/fonts — no Google Fonts (firewall)"
+  },
+  "palette": {
+    "source": "assets/theme_ci_design/*.ai — sampled, not chosen by eye",
+    "navy": "#192768",
+    "coral": "#E5775A",
+    "note": "duplicated as constants in backend/src/lib/mail.ts and pdf.ts — change all three together"
+  },
+  "motion": "no motion library; reveal-on-scroll was hand-written in the landing page",
+  "spacing": "Tailwind default 4pt scale",
+  "designMd": false,
+  "preserve": ["palette", "fonts", "spacing scale", "Thai copy in components/landing/content.ts", "routes and component ownership"],
+  "introduced": ["macrostructure", "nav/footer archetypes", "type scale tokens", "slop-test gates", "motion discipline"],
+  "deviations": [
+    "no standalone tokens.css — this project keeps tokens in globals.css @theme per CLAUDE.md; an unimported file would be dead code"
+  ]
+}

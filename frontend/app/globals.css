@@ -43,6 +43,28 @@
   --font-display: var(--font-prompt), ui-sans-serif, system-ui, sans-serif;
   --font-sans: var(--font-sarabun), ui-sans-serif, system-ui, sans-serif;
 
+  /* ------------------------------------------------------------------
+     สเกลตัวอักษรของหน้าเนื้อหา — อัตรา 1.25 ห้าขั้น ไม่มากกว่านั้น
+     ก่อนหน้านี้หน้า Landing เขียนขนาดเป็น text-[15px] / text-[28px] ทีละจุด
+     รวมสิบกว่าขนาดในหน้าเดียว ลำดับชั้นจึงมาจากตัวเลขที่พิมพ์ไว้ ไม่ใช่จากระบบ
+     line-height เผื่อสระไทยไว้แล้วในแต่ละขั้น (ตัวเล็กต้องการมากกว่าตัวใหญ่)
+     ------------------------------------------------------------------ */
+  --text-display: clamp(2.25rem, 3.4vw + 1rem, 3.5rem);
+  --text-display--line-height: 1.24;
+  --text-title: clamp(1.5rem, 1.6vw + 0.9rem, 2.125rem);
+  --text-title--line-height: 1.32;
+  --text-lead: 1.125rem;
+  --text-lead--line-height: 1.85;
+  --text-body: 1rem;
+  --text-body--line-height: 1.75;
+  --text-meta: 0.875rem;
+  --text-meta--line-height: 1.6;
+
+  /* เข้า-ออกแบบ exponential ไม่ใช่ ease ของเบราว์เซอร์
+     ตั้งชื่อใหม่แทนการทับ ease-out ของ Tailwind เพราะทั้งแอปใช้ตัวนั้นอยู่ */
+  --ease-entrance: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.7, 0, 0.84, 0);
+
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 16px;
@@ -56,8 +78,20 @@
     border-color: var(--color-line);
   }
 
+  :root {
+    /* ความสูงของแถบนำทางที่ติดขอบบน — ใช้ทั้ง scroll-margin ของหัวข้อ
+       และระยะ dock ของหัวข้อที่ sticky ตามลงไป จะได้ไม่ต้องเดาเป็นตัวเลขสองที่ */
+    --nav-height: 3rem;
+  }
+
   html {
     scroll-behavior: smooth;
+    /* clip ไม่ใช่ hidden — hidden สร้าง scroll container ใหม่แล้ว position: sticky ตาย */
+    overflow-x: clip;
+  }
+
+  body {
+    overflow-x: clip;
   }
 
   body {
@@ -126,44 +160,52 @@
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+
+  /* การเลื่อนแบบ smooth ก็เป็น spatial motion — สารบัญของหน้า Landing กดข้ามหัวข้อทีละอัน
+     ถ้าผู้ใช้ขอลดการเคลื่อนไหว ต้องกระโดดไปเลย ไม่ใช่ไถลไป */
+  html {
+    scroll-behavior: auto;
+  }
 }
 
 @layer utilities {
   /*
-   * เนื้อหาค่อย ๆ ขึ้นมาเมื่อเลื่อนถึง — ใส่ .reveal ไว้ แล้ว JS เติม .is-in ให้เมื่อเข้าจอ
+   * เข้าหน้าครั้งเดียวตอนโหลด ไล่ตามลำดับด้วย --i
    *
-   * ตั้งค่าเริ่มต้นเป็น "มองเห็นแล้ว" ไว้ก่อน แล้วให้ JS เป็นคนซ่อน เพื่อไม่ให้เนื้อหา
-   * หายไปทั้งหน้าถ้า JS ไม่ทำงาน — หน้านี้เป็นหน้าที่คนนอกเข้ามาอ่าน จะพลาดไม่ได้
+   * ของเดิมใส่ .reveal ให้ทุกบล็อกในหน้า Landing แล้วให้ IntersectionObserver
+   * ค่อย ๆ เผยทีละอัน ทั้งหน้าจึงไม่เคยหยุดขยับ — ตอนนี้เหลือแค่ hero ที่เข้าครั้งเดียว
+   * ที่เหลือ "อยู่ตรงนั้น" ตั้งแต่แรก และไม่มี JS มาเกี่ยวข้องกับการมองเห็นเนื้อหา
    */
-  .reveal {
-    opacity: 1;
+  .enter {
+    animation: enter-up 0.42s var(--ease-entrance) both;
+    animation-delay: calc(var(--i, 0) * 70ms);
   }
+}
 
-  .js-reveal .reveal {
+@keyframes enter-up {
+  from {
     opacity: 0;
-    transform: translateY(14px);
-    transition:
-      opacity 0.55s cubic-bezier(0.22, 1, 0.36, 1),
-      transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+    transform: translateY(10px);
   }
-
-  .js-reveal .reveal.is-in {
+  to {
     opacity: 1;
     transform: none;
   }
+}
 
-  @media (prefers-reduced-motion: reduce) {
-    .js-reveal .reveal {
-      opacity: 1;
-      transform: none;
-      transition: none;
-    }
+@media (prefers-reduced-motion: reduce) {
+  .enter {
+    animation: enter-fade 150ms linear both;
+    animation-delay: 0s;
   }
 
-  /* ตารางจุดจาง ๆ ใช้เป็นพื้นหลังของ hero */
-  .bg-dot-grid {
-    background-image: radial-gradient(rgb(255 255 255 / 0.13) 1px, transparent 1px);
-    background-size: 22px 22px;
+  @keyframes enter-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
 }
 
@@ -182,10 +224,6 @@
    *
    * เขียนค่าเดียวตรง ๆ จึงไม่มีอะไรให้พังทั้งใน dev, prod และเบราว์เซอร์ทุกรุ่น
    */
-  .blur-glow {
-    filter: blur(64px);
-  }
-
   .frost-2 {
     -webkit-backdrop-filter: blur(2px);
     backdrop-filter: blur(2px);
