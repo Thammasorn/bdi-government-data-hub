@@ -86,7 +86,27 @@ line-height เนื้อความไทย **1.7** (สูงกว่า�
 - Shadow: บาง ๆ ชั้นเดียว `0 1px 2px rgba(20,26,51,.06), 0 4px 12px rgba(20,26,51,.05)`
   งานราชการควรดูเรียบ ไม่ลอยฟู
 
-### 1.6 Support element
+### 1.6 โลโก้
+
+ไฟล์ต้นฉบับอยู่ที่ `assets/theme_ci_design/LOGO/` — `SVG/` สำหรับงานเว็บ, `1x 2x 3x/` เป็น PNG
+ชื่อไฟล์อ่านได้ตรงตัว: `rec-` คือแบบแนวนอน (เครื่องหมาย + ชื่อสถาบัน), `sqr-` คือเครื่องหมาย
+B) อย่างเดียว, ลงท้าย `-th` / `-th-en` คือชื่อสถาบันภาษาไทย / ไทยคู่อังกฤษ,
+`-white` และ `-for-dark-bg` คือเวอร์ชันสำหรับพื้นเข้ม
+
+ในโค้ดไม่ได้อ้างไฟล์เหล่านี้ตรง ๆ แต่คัด path มาไว้ในที่เดียวต่อช่องทาง:
+
+| ที่ใช้ | มาจาก | รูปแบบ |
+| --- | --- | --- |
+| เว็บ (`frontend/components/brand/Logo.tsx`) | `sqr-logo-normal.svg`, `rec-logo-normal-th.svg` | inline SVG, สีกรมท่าเป็น `currentColor` + จุดคอรัลแยก class |
+| favicon (`frontend/app/icon.svg`, `apple-icon.png`) | `sqr-logo-for-dark-bg.svg` | เครื่องหมายบนพื้นกรมท่า |
+| PDF (`backend/src/assets/brand/bdi-mark.png`) | `3x/sqr-logo-normal@3x.png` | PNG ครอปขอบ — PDFKit ฝัง SVG ไม่ได้ |
+| อีเมล (`backend/src/assets/brand/bdi-logo.png`) | `3x/rec-logo-normal-th@3x.png` | PNG แนบไปกับอีเมลแล้วอ้างด้วย `cid:` |
+
+**viewBox ของ inline SVG ถูกครอปให้พอดีตัวโลโก้** ต้นฉบับเผื่อ clear space ไว้รอบละ ~36 หน่วย
+ถ้าเก็บไว้ `h-7` ที่ผู้เรียกสั่งจะเป็นความสูงของกรอบ ไม่ใช่ของโลโก้ ระยะห่างรอบโลโก้จึงคุมด้วย
+`gap`/`padding` ของ layout แทน
+
+### 1.7 Support element
 
 CI ให้ลาย **dot grid** และ **แคปซูลปลายมน** มาใช้ตกแต่ง นำมาใช้เป็น:
 

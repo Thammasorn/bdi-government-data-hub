@@ -56,6 +56,12 @@ export interface OrganizationFormInput {
 const FONT_DIR = new URL("../assets/fonts/", import.meta.url);
 const font = (file: string) => new URL(file, FONT_DIR).pathname;
 
+/**
+ * เครื่องหมาย B) จาก assets/theme_ci_design/LOGO — PDFKit ฝัง SVG ไม่ได้
+ * จึงใช้ PNG ที่ครอปพื้นที่ว่างรอบโลโก้ออกแล้ว ตำแหน่งใน header จะได้คุมได้จริง
+ */
+const MARK = new URL("../assets/brand/bdi-mark.png", import.meta.url).pathname;
+
 const NAVY = "#192768";
 const CORAL = "#E5775A";
 const TEXT = "#141A33";
@@ -412,14 +418,13 @@ function header(doc: PDFKit.PDFDocument) {
   grad.stop(0, CORAL).stop(1, NAVY);
   doc.rect(PAGE_MARGIN, 34, CONTENT_WIDTH, 3).fill(grad);
 
-  doc.font("heading").fontSize(15).fillColor(NAVY).text("BDI", PAGE_MARGIN, 52, { continued: true });
-  doc.fillColor(CORAL).text(".", { continued: false });
+  doc.image(MARK, PAGE_MARGIN, 50, { height: 22 });
 
   doc
     .font("body")
     .fontSize(9)
     .fillColor(MUTED)
-    .text("สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)", PAGE_MARGIN, 56, {
+    .text("สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)", PAGE_MARGIN, 58, {
       width: CONTENT_WIDTH,
       align: "right",
     });

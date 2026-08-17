@@ -1,6 +1,25 @@
+import { readFileSync } from "node:fs";
+
 import nodemailer, { type Transporter } from "nodemailer";
 
 import { env } from "../env.js";
+
+/**
+ * โลโก้ต้องแนบไปกับอีเมลแต่ละฉบับแล้วอ้างด้วย cid: ไม่ใช่ลิงก์ไปที่เว็บ
+ * เพราะเมลไคลเอนต์ส่วนใหญ่บล็อกรูปจากภายนอกจนกว่าผู้รับจะกดอนุญาต
+ *
+ * อ่านไฟล์ครั้งเดียวตอนโหลดโมดูล ถ้าอ่านไม่ได้ (เช่น build ลืม copy src/assets)
+ * จะถอยไปใช้หัวจดหมายแบบตัวอักษรแทน — ดีกว่าให้อีเมลทั้งระบบส่งไม่ออกเพราะรูปใบเดียว
+ */
+const LOGO_CID = "bdi-logo";
+const logo = ((): Buffer | null => {
+  try {
+    return readFileSync(new URL("../assets/brand/bdi-logo.png", import.meta.url));
+  } catch (err) {
+    console.warn("[mail] อ่านไฟล์โลโก้ไม่ได้ จะใช้หัวจดหมายแบบตัวอักษรแทน", err);
+    return null;
+  }
+})();
 
 const NAVY = "#192768";
 const CORAL = "#E5775A";
@@ -49,9 +68,16 @@ function layout(opts: {
              style="max-width:560px;background:#FFFFFF;border:1px solid ${BORDER};border-radius:16px;overflow:hidden;">
         <tr><td style="height:4px;background:linear-gradient(90deg,${CORAL},${NAVY});font-size:0;line-height:0;">&nbsp;</td></tr>
         <tr><td style="padding:32px 32px 0;">
-          <div style="font:700 20px/1.3 'Helvetica Neue',Arial,sans-serif;color:${NAVY};letter-spacing:-0.01em;">
-            BDI<span style="color:${CORAL};">.</span>
-            <span style="font-weight:600;font-size:14px;color:${MUTED};margin-left:8px;">Government Datahub</span>
+          ${
+            logo
+              ? `<img src="cid:${LOGO_CID}" width="200" height="34" alt="สถาบันข้อมูลขนาดใหญ่"
+                      style="display:block;border:0;outline:none;text-decoration:none;">`
+              : `<div style="font:700 20px/1.3 'Helvetica Neue',Arial,sans-serif;color:${NAVY};letter-spacing:-0.01em;">
+                   BDI<span style="color:${CORAL};">.</span>
+                 </div>`
+          }
+          <div style="margin-top:10px;font:600 14px/1.3 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
+            Government Datahub
           </div>
         </td></tr>
         <tr><td style="padding:24px 32px 0;">
@@ -99,7 +125,15 @@ async function send(to: string, subject: string, html: string): Promise<void> {
     console.log("");
     return;
   }
-  await tx.sendMail({ from: env.smtp.from, to, subject, html });
+  await tx.sendMail({
+    from: env.smtp.from,
+    to,
+    subject,
+    html,
+    attachments: logo
+      ? [{ filename: "bdi-logo.png", content: logo, cid: LOGO_CID, contentType: "image/png" }]
+      : [],
+  });
 }
 
 /**
