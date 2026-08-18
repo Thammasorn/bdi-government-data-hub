@@ -133,7 +133,7 @@ def spacing(paragraph, *, before=0, after=6, line=1.45):
 # ---------------------------------------------------------------- inline markdown
 
 INLINE = re.compile(
-    r"(\*\*.+?\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\)|\*[^*\n]+\*)",
+    r"(\*\*.+?\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\)|<https?://[^>\s]+>|\*[^*\n]+\*)",
     re.S,
 )
 
@@ -189,6 +189,9 @@ def add_inline(paragraph, text, *, size=BODY_PT, color=INK, bold=False, italic=F
                 color=NAVY,
             )
             _set(run._element.get_or_add_rPr(), "w:shd", **{"w:val": "clear", "w:fill": CODEBG})
+        elif part.startswith("<http") and part.endswith(">"):
+            # autolink ของ Markdown — ในเอกสารให้เห็นแค่ที่อยู่ ไม่ต้องมีวงเล็บมุมติดมา
+            style_run(paragraph.add_run(part[1:-1]), size=size, bold=bold, color=NAVY)
         elif part.startswith("[") and "](" in part:
             label, target = part[1:-1].split("](", 1)
             # ลิงก์ข้ามเล่มชี้ไปไฟล์ .md — ในฉบับ .docx ให้เขียนเป็นชื่อเล่มเฉย ๆ
@@ -256,7 +259,9 @@ class Writer:
 
     def quote(self, lines):
         p = self.doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        # กล่องคำเตือนส่วนใหญ่ยาวแค่สองสามบรรทัด พอจัดชิดสองข้างแล้วช่องว่างเดียว
+        # ที่มีในบรรทัดถูกดึงจนเป็นรูโหว่กลางประโยค — เนื้อความปกติยาวพอจึงไม่เป็นแบบนี้
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
         spacing(p, before=6, after=10)
         p.paragraph_format.left_indent = Cm(0.4)
         p.paragraph_format.right_indent = Cm(0.2)
@@ -311,6 +316,7 @@ class Writer:
         apply_grid(t, widths)
         for idx, cells in enumerate([header] + body):
             row = t.add_row()
+            keep_row_together(row)
             if idx == 0:
                 repeat_header(row)
             for ci, cell_text in enumerate(cells[: len(header)]):
@@ -368,6 +374,16 @@ def apply_grid(table, widths_cm):
 def repeat_header(row):
     """ตารางที่ยาวข้ามหน้า ต้องพาหัวตารางไปด้วย ไม่งั้นหน้าถัดไปอ่านไม่รู้เรื่อง"""
     _set(row._tr.get_or_add_trPr(), "w:tblHeader", **{"w:val": "1"})
+
+
+def keep_row_together(row):
+    """
+    ห้ามแบ่งแถวข้ามหน้า
+
+    ค่าตั้งต้นยอมให้แถวเดียวถูกผ่าครึ่ง ผลคือหน้าถัดไปขึ้นต้นด้วยแถวที่มีแต่คำท้าย ๆ
+    ของช่องสุดท้าย ("คุณ" ลอยอยู่ช่องเดียว) อ่านแล้วไม่รู้ว่าเป็นแถวของอะไร
+    """
+    _set(row._tr.get_or_add_trPr(), "w:cantSplit", **{"w:val": "1"})
 
 
 def column_widths(rows):
