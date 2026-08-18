@@ -36,7 +36,9 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   seen the system. Screenshots live in `docs/images/manual/` and were taken from a real run;
   each ends with a tick-list of what to try, including the defects that have already been fixed
   once. `03-demo-walkthrough.md` stays the operator's guide (seeding, ports, deployment) —
-  these four are the user's
+  these four are the user's. `docs/manuals-docx/` holds the same four as A4 .docx with the
+  Sarabun faces from `assets/theme_ci_design/Font/Sarabun.zip` **embedded**, rebuilt by
+  `docs/tools/manual-to-docx.py`; the Markdown stays the source, so never hand-edit the .docx
 - `docs/bdi-admin-portal.postman_collection.json` — Journey A as a runnable collection,
   with three `*.postman_environment.json` files beside it (dev checkout / main / public).
   The admin token is left empty in the last two on purpose — it is a real secret from `.env`

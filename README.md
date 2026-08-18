@@ -22,6 +22,10 @@
 | [`docs/14-tester-manual-journey-b.md`](docs/14-tester-manual-journey-b.md) | หน่วยงานลงทะเบียนตัวเองจนได้รับอนุมัติ |
 | [`docs/15-tester-manual-journey-c.md`](docs/15-tester-manual-journey-c.md) | ลงทะเบียนชุดข้อมูลจนได้รับอนุมัติ รวมเส้นทางส่งกลับแก้และไม่อนุมัติ |
 
+ทั้งสี่เล่มมี **ฉบับ .docx จัดหน้าพร้อมส่ง** อยู่ที่ [`docs/manuals-docx/`](docs/manuals-docx/)
+(A4 · ฟอนต์ Sarabun ฝังมาในไฟล์) ต้นฉบับยังเป็น Markdown — แก้ที่ `.md` แล้วสร้าง `.docx` ใหม่
+ด้วย `docs/tools/manual-to-docx.py`
+
 ## สิ่งที่ทำงานแล้ว
 
 **Journey A — Admin เชิญผู้ใช้** (สเปกระบุว่าไม่มี UI มีแต่ API)
