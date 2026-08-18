@@ -45,7 +45,15 @@ CODEBG = "F5F6FA"
 
 BODY = "Sarabun"
 MONO = "DejaVu Sans Mono"
-BODY_PT = 14
+BODY_PT = 11
+
+# ไล่ขนาดหัวข้อจากเนื้อความขึ้นไปเป็นลำดับ — `##` ใหญ่สุด แล้วลดหลั่นลงมา
+HEADING_PT = {1: 18, 2: 14, 3: 12}
+TABLE_PT = 10
+CAPTION_PT = 9.5
+CODE_PT = 8.5
+CHROME_PT = 9  # หัวกระดาษ/ท้ายกระดาษ
+
 CONTENT_CM = 21.0 - 2.2 - 2.0  # A4 กว้าง 21 ซม. ลบขอบซ้าย/ขวา
 
 BOOKS = [
@@ -203,16 +211,21 @@ def add_inline(paragraph, text, *, size=BODY_PT, color=INK, bold=False, italic=F
 class Writer:
     def __init__(self, doc):
         self.doc = doc
+        # มีอะไรถูกเขียนลงหน้าปัจจุบันแล้วหรือยัง — ใช้ตัดสินว่าหัวข้อระดับบนใบถัดไป
+        # ต้องสั่งขึ้นหน้าใหม่จริงไหม ถ้าหน้ายังว่าง (เพิ่งขึ้นหน้าใหม่จากสารบัญ)
+        # การสั่งซ้ำจะได้หน้าเปล่าคั่นมาหนึ่งหน้า
+        self.dirty = False
 
-    def para(self, text, *, align=WD_ALIGN_PARAGRAPH.LEFT, after=8, size=BODY_PT, color=INK):
+    def para(self, text, *, align=WD_ALIGN_PARAGRAPH.JUSTIFY, after=8, size=BODY_PT, color=INK):
         p = self.doc.add_paragraph()
         p.alignment = align
         spacing(p, after=after)
         add_inline(p, text, size=size, color=color)
+        self.dirty = True
         return p
 
     def heading(self, text, level):
-        sizes = {1: 22, 2: 17, 3: 14.5}
+        sizes = HEADING_PT
         p = self.doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.LEFT
         spacing(p, before=18 if level == 1 else 14, after=6, line=1.25)
@@ -223,6 +236,9 @@ class Writer:
             style_run(run, size=sizes[level], bold=True, color=NAVY)
         if level == 1:
             borders(p, bottom=RULE)
+            if self.dirty:
+                _set(p._p.get_or_add_pPr(), "w:pageBreakBefore", **{"w:val": "1"})
+        self.dirty = True
         return p
 
     def bullet(self, text, *, ordered=False, index=1, indent=0.0, checkbox=False):
@@ -235,17 +251,19 @@ class Writer:
         marker = "☐  " if checkbox else (f"{index}.  " if ordered else "•  ")
         add_text(p, marker, color=CORAL if not checkbox else MUTED, bold=not checkbox)
         add_inline(p, text)
+        self.dirty = True
         return p
 
     def quote(self, lines):
         p = self.doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         spacing(p, before=6, after=10)
         p.paragraph_format.left_indent = Cm(0.4)
         p.paragraph_format.right_indent = Cm(0.2)
         borders(p, left="E5775A")
         shade(p, "FFF7F4")
         add_inline(p, " ".join(lines))
+        self.dirty = True
         return p
 
     def code(self, lines):
@@ -255,12 +273,14 @@ class Writer:
             spacing(p, before=6 if i == 0 else 0, after=6 if i == len(lines) - 1 else 0, line=1.12)
             p.paragraph_format.left_indent = Cm(0.3)
             shade(p, CODEBG)
-            style_run(p.add_run(line or " "), font=MONO, size=9.5, color=INK)
+            style_run(p.add_run(line or " "), font=MONO, size=CODE_PT, color=INK)
+        self.dirty = True
 
     def rule(self):
         p = self.doc.add_paragraph()
         spacing(p, before=4, after=10, line=1.0)
         borders(p, bottom=RULE)
+        self.dirty = True
 
     def image(self, path, caption):
         p = self.doc.add_paragraph()
@@ -278,7 +298,8 @@ class Writer:
             cap = self.doc.add_paragraph()
             cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
             spacing(cap, before=0, after=12, line=1.2)
-            add_inline(cap, caption, size=11.5, color=MUTED, italic=True)
+            add_inline(cap, caption, size=CAPTION_PT, color=MUTED, italic=True)
+        self.dirty = True
 
     def table(self, rows):
         header, body = rows[0], rows[1:]
@@ -302,16 +323,17 @@ class Writer:
                 add_inline(
                     p,
                     cell_text,
-                    size=12.5,
+                    size=TABLE_PT,
                     color=RGBColor(0xFF, 0xFF, 0xFF) if idx == 0 else INK,
                     bold=idx == 0,
                 )
                 if idx == 0:
                     for run in p.runs:
-                        style_run(run, size=12.5, bold=True, color=RGBColor(0xFF, 0xFF, 0xFF))
+                        style_run(run, size=TABLE_PT, bold=True, color=RGBColor(0xFF, 0xFF, 0xFF))
                 shade_cell(cell, "192768" if idx == 0 else (BAND if idx % 2 == 0 else "FFFFFF"))
         after = self.doc.add_paragraph()
         spacing(after, before=0, after=8, line=1.0)
+        self.dirty = True
         return t
 
 
@@ -404,7 +426,11 @@ def render(md_path, writer):
             continue
 
         if stripped in ("---", "***", "___"):
-            writer.rule()
+            # ทุกหัวข้อระดับบนขึ้นหน้าใหม่แล้ว เส้นคั่นที่นำหน้ามันจะกลายเป็น
+            # ขีดลอย ๆ ค้างท้ายหน้าก่อน — ข้ามไป
+            nxt = next((l for l in lines[i + 1 :] if l.strip()), "")
+            if not nxt.startswith("## "):
+                writer.rule()
             i += 1
             continue
 
@@ -492,7 +518,7 @@ def render(md_path, writer):
             p = writer.doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             spacing(p, before=0, after=12)
-            add_inline(p, text, size=11.5, color=MUTED)
+            add_inline(p, text, size=CAPTION_PT, color=MUTED)
         else:
             writer.para(text)
 
@@ -527,13 +553,13 @@ def setup(doc, title, subtitle):
     head = section.header.paragraphs[0]
     head.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     spacing(head, after=0, line=1.0)
-    style_run(head.add_run(f"{title} · {subtitle}"), size=10.5, color=MUTED)
+    style_run(head.add_run(f"{title} · {subtitle}"), size=CHROME_PT, color=MUTED)
     borders(head, bottom=RULE)
 
     foot = section.footer.paragraphs[0]
     foot.alignment = WD_ALIGN_PARAGRAPH.CENTER
     spacing(foot, before=0, after=0, line=1.0)
-    style_run(foot.add_run("สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)  ·  หน้า "), size=10.5, color=MUTED)
+    style_run(foot.add_run("สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)  ·  หน้า "), size=CHROME_PT, color=MUTED)
     fld = OxmlElement("w:fldSimple")
     fld.set(qn("w:instr"), "PAGE")
     run = OxmlElement("w:r")
