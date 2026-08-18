@@ -55,12 +55,18 @@ export function ThaidButton({
   const start = async () => {
     setBusy(true);
     try {
-      const { authorizeUrl } = await api.post<{ authorizeUrl: string }>(
+      const res = await api.post<{ authorizeUrl?: string; bypass?: boolean }>(
         "/api/auth/thaid/start",
         { purpose, ...(token ? { token } : {}) },
       );
       onBeforeRedirect?.();
-      window.location.assign(authorizeUrl);
+      // โหมด SIT: backend ยืนยันตัวตนให้แล้ว รีโหลดหน้าเดิมเพื่อเข้าขั้นตั้งรหัสผ่านต่อ
+      // (หน้า /activate ถาม identityVerified จาก backend ใหม่ทุกครั้งที่โหลด)
+      if (res.bypass) {
+        window.location.reload();
+        return;
+      }
+      window.location.assign(res.authorizeUrl!);
     } catch (err) {
       show({
         tone: "error",

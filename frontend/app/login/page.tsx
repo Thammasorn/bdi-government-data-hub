@@ -44,6 +44,15 @@ function CredentialsStep({
   const [password, setPassword] = useState("");
   const [fields, setFields] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  // โหมด SIT ปิดปุ่ม ThaiD ตรงหน้าล็อกอิน — จับคู่บัญชีด้วยเลขบัตรผ่าน DOPA ไม่ได้
+  // อ่านค่าจาก backend ไม่ใช่ build flag จะได้สลับโหมดโดยไม่ต้อง build frontend ใหม่
+  const [thaidBypass, setThaidBypass] = useState(false);
+  useEffect(() => {
+    api
+      .get<{ thaidBypass: boolean }>("/api/auth/config")
+      .then((c) => setThaidBypass(c.thaidBypass))
+      .catch(() => setThaidBypass(false));
+  }, []);
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -107,16 +116,20 @@ function CredentialsStep({
         </Button>
       </form>
 
-      <div className="my-6 flex items-center gap-3 text-[13px] text-ink-subtle">
-        <span className="h-px flex-1 bg-line" />
-        หรือ
-        <span className="h-px flex-1 bg-line" />
-      </div>
+      {thaidBypass ? null : (
+        <>
+          <div className="my-6 flex items-center gap-3 text-[13px] text-ink-subtle">
+            <span className="h-px flex-1 bg-line" />
+            หรือ
+            <span className="h-px flex-1 bg-line" />
+          </div>
 
-      <ThaidButton purpose="login" variant="secondary" label="เข้าสู่ระบบด้วย ThaiD" />
-      <p className="mt-2.5 text-center text-[13px] text-ink-muted">
-        ใช้ได้กับบัญชีที่เปิดใช้งานด้วย ThaiD แล้ว
-      </p>
+          <ThaidButton purpose="login" variant="secondary" label="เข้าสู่ระบบด้วย ThaiD" />
+          <p className="mt-2.5 text-center text-[13px] text-ink-muted">
+            ใช้ได้กับบัญชีที่เปิดใช้งานด้วย ThaiD แล้ว
+          </p>
+        </>
+      )}
     </AuthLayout>
   );
 }

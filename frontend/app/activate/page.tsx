@@ -45,6 +45,14 @@ function ActivateFlow() {
   const token = useSearchParams().get("token") ?? "";
   const [invitation, setInvitation] = useState<InvitationInfo | null>(null);
   const [invalidReason, setInvalidReason] = useState<string | null>(null);
+  // โหมด SIT: หน้ายืนยันตัวตนจะข้ามการเทียบกับ ThaiD จริง — อ่านค่าจาก backend
+  const [thaidBypass, setThaidBypass] = useState(false);
+  useEffect(() => {
+    api
+      .get<{ thaidBypass: boolean }>("/api/auth/config")
+      .then((c) => setThaidBypass(c.thaidBypass))
+      .catch(() => setThaidBypass(false));
+  }, []);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -66,9 +74,9 @@ function ActivateFlow() {
   if (!invitation) return <Spinner className="min-h-screen" />;
 
   return invitation.identityVerified ? (
-    <AccountCreationStep token={token} invitation={invitation} />
+    <AccountCreationStep token={token} invitation={invitation} thaidBypass={thaidBypass} />
   ) : (
-    <IdentityStep token={token} invitation={invitation} />
+    <IdentityStep token={token} invitation={invitation} thaidBypass={thaidBypass} />
   );
 }
 
@@ -126,45 +134,67 @@ function KeyEntry() {
 
 // ------------------------------------------------------------------ §2.4 ThaiD
 
-function IdentityStep({ token, invitation }: { token: string; invitation: InvitationInfo }) {
+function IdentityStep({
+  token,
+  invitation,
+  thaidBypass,
+}: {
+  token: string;
+  invitation: InvitationInfo;
+  thaidBypass: boolean;
+}) {
   return (
     <AuthLayout
-      title="ยืนยันตัวตนด้วย ThaiD"
+      title={thaidBypass ? "เปิดใช้งานบัญชี" : "ยืนยันตัวตนด้วย ThaiD"}
       description={`เปิดใช้งานบัญชี ${invitation.email} ในสิทธิ์ ${invitation.roleLabel}`}
       footer={
-        <p>
-          ยังไม่มีแอปพลิเคชัน ThaiD? ลงทะเบียนได้ที่แอป ThaiD ของกรมการปกครอง
-          หรือติดต่อเจ้าหน้าที่ BDI ที่เชิญคุณเข้าระบบ
-        </p>
+        thaidBypass ? (
+          <p>มีปัญหาในการเปิดใช้งาน? ติดต่อเจ้าหน้าที่ BDI ที่เชิญคุณเข้าระบบ</p>
+        ) : (
+          <p>
+            ยังไม่มีแอปพลิเคชัน ThaiD? ลงทะเบียนได้ที่แอป ThaiD ของกรมการปกครอง
+            หรือติดต่อเจ้าหน้าที่ BDI ที่เชิญคุณเข้าระบบ
+          </p>
+        )
       }
     >
       <div className="flex flex-col gap-5">
         <div className="rounded-xl border border-line bg-canvas p-5">
-          <p className="text-sm leading-relaxed text-ink-muted">
-            ระบบจะเปรียบเทียบเลขประจำตัวประชาชนที่ได้จาก ThaiD
-            กับเลขที่เจ้าหน้าที่บันทึกไว้ตอนสร้างบัญชีของคุณ
-            {invitation.cidHint ? (
-              <>
-                {" "}
-                (ลงท้ายด้วย{" "}
-                <span className="font-medium tabular-nums text-ink">
-                  {invitation.cidHint.slice(-4)}
-                </span>
-                )
-              </>
-            ) : null}
-          </p>
-          <p className="mt-3 text-[13px] leading-relaxed text-ink-subtle">
-            หากเลขไม่ตรงกัน ลิงก์เปิดใช้งานนี้จะถูกยกเลิกทันทีเพื่อความปลอดภัย
-            และต้องขอลิงก์ใหม่จากเจ้าหน้าที่
-          </p>
+          {thaidBypass ? (
+            <p className="text-sm leading-relaxed text-ink-muted">
+              ขณะนี้ระบบอยู่ใน <span className="font-medium text-ink">โหมดทดสอบ</span>{" "}
+              จึงข้ามการยืนยันตัวตนกับ ThaiD ไปก่อน กดปุ่มด้านล่างเพื่อไปตั้งรหัสผ่านได้เลย
+              (เมื่อกรมการปกครองเปิดให้ใช้ ThaiD บนโดเมนนี้ ขั้นตอนนี้จะกลับมาเป็นการยืนยันตามปกติ)
+            </p>
+          ) : (
+            <>
+              <p className="text-sm leading-relaxed text-ink-muted">
+                ระบบจะเปรียบเทียบเลขประจำตัวประชาชนที่ได้จาก ThaiD
+                กับเลขที่เจ้าหน้าที่บันทึกไว้ตอนสร้างบัญชีของคุณ
+                {invitation.cidHint ? (
+                  <>
+                    {" "}
+                    (ลงท้ายด้วย{" "}
+                    <span className="font-medium tabular-nums text-ink">
+                      {invitation.cidHint.slice(-4)}
+                    </span>
+                    )
+                  </>
+                ) : null}
+              </p>
+              <p className="mt-3 text-[13px] leading-relaxed text-ink-subtle">
+                หากเลขไม่ตรงกัน ลิงก์เปิดใช้งานนี้จะถูกยกเลิกทันทีเพื่อความปลอดภัย
+                และต้องขอลิงก์ใหม่จากเจ้าหน้าที่
+              </p>
+            </>
+          )}
         </div>
 
         <ThaidButton
           purpose="activate"
           token={token}
           onBeforeRedirect={() => storeActivationToken(token)}
-          label="ยืนยันตัวตนด้วย ThaiD"
+          label={thaidBypass ? "ไปตั้งรหัสผ่าน" : "ยืนยันตัวตนด้วย ThaiD"}
         />
       </div>
     </AuthLayout>
@@ -173,7 +203,15 @@ function IdentityStep({ token, invitation }: { token: string; invitation: Invita
 
 // ------------------------------------------------------- §2.5 ตั้งรหัสผ่าน + เปิดใช้งาน
 
-function AccountCreationStep({ token, invitation }: { token: string; invitation: InvitationInfo }) {
+function AccountCreationStep({
+  token,
+  invitation,
+  thaidBypass,
+}: {
+  token: string;
+  invitation: InvitationInfo;
+  thaidBypass: boolean;
+}) {
   const router = useRouter();
   const { setUser } = useSession();
   const { show } = useToast();
@@ -236,11 +274,17 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
   return (
     <AuthLayout
       title="สร้างบัญชีผู้ใช้"
-      description={`ยืนยันตัวตนกับ ThaiD เรียบร้อยแล้ว เหลือเพียงตั้งรหัสผ่านสำหรับ ${invitation.email}`}
+      description={
+        thaidBypass
+          ? `ตั้งรหัสผ่านสำหรับ ${invitation.email} เพื่อเปิดใช้งานบัญชี`
+          : `ยืนยันตัวตนกับ ThaiD เรียบร้อยแล้ว เหลือเพียงตั้งรหัสผ่านสำหรับ ${invitation.email}`
+      }
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>
         <div className="rounded-xl bg-success-bg px-4 py-3 text-[13px] leading-relaxed text-success">
-          ยืนยันตัวตนด้วย ThaiD สำเร็จ — เลขประจำตัวประชาชนตรงกับที่บันทึกไว้ในระบบ
+          {thaidBypass
+            ? "โหมดทดสอบ — ข้ามการยืนยันตัวตนกับ ThaiD แล้ว เหลือเพียงตั้งรหัสผ่าน"
+            : "ยืนยันตัวตนด้วย ThaiD สำเร็จ — เลขประจำตัวประชาชนตรงกับที่บันทึกไว้ในระบบ"}
         </div>
 
         <TextField label="อีเมล" value={invitation.email} readOnly disabled hint="อีเมลนี้มาจากคำเชิญ แก้ไขไม่ได้" />

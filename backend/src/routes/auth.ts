@@ -115,6 +115,18 @@ authRouter.get("/invitation", async (req, res) => {
   });
 });
 
+// ---------------------------------------------------------------- ค่าตั้งค่าสาธารณะ
+
+/**
+ * ค่าที่หน้าเว็บต้องรู้ตั้งแต่ก่อนล็อกอิน — อ่านผ่าน API ไม่ฝังตอน build
+ *
+ * ทำแบบนี้เพื่อให้ปิดโหมด bypass ได้ด้วยการแก้ env แล้วรีสตาร์ต backend อย่างเดียว
+ * ไม่ต้อง build frontend ใหม่ (`NEXT_PUBLIC_*` ฝังตอน build จึงไม่เหมาะ)
+ */
+authRouter.get("/config", (_req, res) => {
+  res.json({ thaidBypass: env.thaid.bypass });
+});
+
 // ---------------------------------------------------------------- ThaiD
 
 const startSchema = z.object({
@@ -135,6 +147,20 @@ authRouter.post("/thaid/start", async (req, res) => {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;
   }
+  // ⚠️ โหมด SIT: ข้ามการยืนยันกับกรมการปกครองไปก่อน (ดู env.thaid.bypass / docs/16)
+  // เข้าสู่ระบบด้วย ThaiD ไม่รองรับในโหมดนี้ — ผู้ทดสอบใช้รหัสผ่าน + OTP แทน
+  if (env.thaid.bypass) {
+    if (parsed.data.purpose !== "activate") {
+      res.status(501).json({
+        error: "bypass_login_unsupported",
+        message: "โหมดทดสอบยังไม่รองรับการเข้าสู่ระบบด้วย ThaiD กรุณาใช้รหัสผ่านและรหัส OTP",
+      });
+      return;
+    }
+    await bypassActivateStart(req, res, parsed.data.token);
+    return;
+  }
+
   if (!thaidConfigured()) {
     res.status(501).json({
       error: "not_configured",
@@ -178,6 +204,64 @@ authRouter.post("/thaid/start", async (req, res) => {
 
   res.json({ authorizeUrl: authorizeUrl(state, nonce) });
 });
+
+/**
+ * ⚠️ โหมด SIT เท่านั้น — บันทึกใบเสร็จ "ยืนยันตัวตนแล้ว" ให้ทันทีโดยไม่ผ่าน DOPA
+ *
+ * เดินตามด่านความปลอดภัยชุดเดียวกับขาจริงทุกข้อ ยกเว้นการเทียบกับกรมการปกครอง:
+ * คีย์ต้องใช้ได้ · บัญชีต้องมีเลขบัตรที่เจ้าหน้าที่บันทึกไว้ · แล้วบันทึก
+ * integration_operation เป็น SUCCEEDED โดยใช้เลขบัตรของบัญชีเองเป็น external subject
+ * ซึ่งเป็นสิ่งที่ callback ของจริงทำเมื่อเลขตรงกัน หน้า /activate จึงเดินต่อได้เหมือนเดิม
+ *
+ * "เชื่อ" ก็คือเชื่อเลขบัตรที่เจ้าหน้าที่กรอกตอนสร้างบัญชี ไม่ใช่ให้ใครก็ได้ผ่าน —
+ * ผู้ที่ถือลิงก์เท่านั้นที่มาถึงตรงนี้ได้ และลิงก์ถูกส่งไปที่อีเมลของผู้ถูกเชิญเท่านั้น
+ */
+async function bypassActivateStart(
+  req: import("express").Request,
+  res: import("express").Response,
+  token: string | undefined,
+) {
+  if (!token) {
+    res.status(400).json({ error: "validation", fields: { token: "ไม่พบ activation key" } });
+    return;
+  }
+  const { key, reason } = await findUsableActivationKey(token);
+  if (!key) {
+    res.status(410).json({ error: reason, message: ACTIVATION_FAILURE_MESSAGES[reason!] });
+    return;
+  }
+  if (!key.userAccount.cid) {
+    res.status(409).json({
+      error: "cid_missing",
+      message:
+        "บัญชีนี้ยังไม่มีเลขประจำตัวประชาชนบันทึกไว้ จึงยืนยันตัวตนไม่ได้ กรุณาติดต่อเจ้าหน้าที่",
+    });
+    return;
+  }
+
+  const { operation } = await startThaidOperation({
+    purpose: "activate",
+    subjectId: key.id,
+    organizationId: key.organizationId,
+  });
+  await succeedThaidOperation(operation, key.userAccount.cid);
+
+  await logAudit({
+    action: AuditAction.IDENTITY_VERIFIED,
+    subjectType: AuditSubject.USER_ACTIVATION_KEY,
+    subjectId: key.id,
+    organizationId: key.organizationId,
+    metadata: {
+      user_account_id: key.userAccountId,
+      integration_operation_id: operation.id,
+      // ทำเครื่องหมายไว้ชัด ๆ ว่าใบนี้มาจากโหมดข้าม ไม่ใช่การยืนยันกับ DOPA จริง
+      cid_source: "bypass",
+    },
+  });
+
+  // frontend เห็น bypass:true แล้วรีโหลดหน้า /activate ให้เข้าขั้นตั้งรหัสผ่านต่อ
+  res.json({ bypass: true });
+}
 
 const callbackSchema = z.object({
   state: z.string().min(1),

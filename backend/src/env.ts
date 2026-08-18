@@ -142,6 +142,20 @@ export const env = {
     stateTtlMinutes: Number(optional("THAID_STATE_TTL_MINUTES", "15")),
     /** ยืนยันตัวตนแล้วมีเวลาเท่านี้ในการตั้งรหัสผ่านให้จบ ก่อนต้องยืนยันใหม่ */
     verificationTtlMinutes: Number(optional("THAID_VERIFICATION_TTL_MINUTES", "30")),
+    /**
+     * ⚠️ โหมดข้ามการยืนยันตัวตนกับกรมการปกครอง — สำหรับ SIT บนโดเมนสาธารณะเท่านั้น
+     *
+     * ทำไมต้องมี: `redirect_uri` ที่ DOPA ลงทะเบียนให้ client ของโครงการยังตรึงไว้ที่
+     * `http://localhost:3000/...` ผู้ทดสอบที่กด ThaiD จาก bdi.thammasorn.org จึงถูกส่งกลับ
+     * ไปที่เครื่องตัวเอง เปิดใช้งานบัญชีจากระยะไกลไม่ได้เลย จนกว่าจะได้ redirect URI ของ
+     * โดเมนจริง โหมดนี้ให้ข้ามขั้น ThaiD ไปก่อน โดย **เชื่อเลขบัตรที่เจ้าหน้าที่บันทึกไว้
+     * ตอนสร้างบัญชีแทนการเทียบกับ DOPA**
+     *
+     * **ค่าตั้งต้นคือปิด** และเปิดได้ทาง env เท่านั้น ไม่มีทางเผลอติดไปกับ build —
+     * `docs/16-thaid-bypass.md` อธิบายวิธีปิดกลับ ทั้งเรื่องนี้อยู่บน branch
+     * `thaid-bypass-for-sit` แยกจาก `main` เพื่อถอนออกได้ด้วยการ checkout กลับ
+     */
+    bypass: optional("THAID_BYPASS", "false") === "true",
   },
 
   minio: {
