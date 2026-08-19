@@ -18,7 +18,8 @@ export default function PreviewPage() {
 
   const [org, setOrg] = useState<Organization | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const { documents } = useLegalDocuments(id);
+  // ผูกกับ id ของคำขอที่โหลดมาแล้ว ไม่ใช่พารามิเตอร์บน URL (รับได้ทั้งสอง id)
+  const { documents, error: documentsError, reload: reloadDocuments } = useLegalDocuments(org?.id ?? null);
 
   useEffect(() => {
     api
@@ -66,7 +67,12 @@ export default function PreviewPage() {
         </p>
       </header>
 
-      <LegalDocumentsCard documents={documents} description={org.name} />
+      <LegalDocumentsCard
+        documents={documents}
+        description={org.name}
+        error={documentsError}
+        onRetry={reloadDocuments}
+      />
 
       <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
         <Button variant="secondary" onClick={() => router.push(`/organizations/${id}/edit`)}>

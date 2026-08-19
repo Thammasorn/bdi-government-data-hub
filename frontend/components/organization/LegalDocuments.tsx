@@ -16,20 +16,24 @@ import type { LegalDocument } from "@/lib/types";
  * `acceptedAt` และไฟล์ A0 ถูกสร้างทับด้วยฉบับที่มีลายมือชื่อ ถ้าไม่โหลดใหม่ ผู้ใช้ที่เพิ่ง
  * กดลงนามจะเห็นหน้าเดิมทุกอย่างและไม่รู้ว่าการลงนามมีผลแล้วหรือยัง
  */
-export function useLegalDocuments(requestId: string) {
+export function useLegalDocuments(requestId: string | null) {
   const [documents, setDocuments] = useState<LegalDocument[] | null>(null);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [round, setRound] = useState(0);
 
   useEffect(() => {
+    if (!requestId) return;
     let alive = true;
+    setError(null);
     api
       .get<{ documents: LegalDocument[] }>(`/api/organizations/${requestId}/legal-documents`)
       .then((d) => {
         if (alive) setDocuments(d.documents);
       })
-      .catch(() => {
-        if (alive) setError(true);
+      .catch((err) => {
+        // ต้องเก็บข้อความไว้ ไม่ใช่แค่ธง — การ์ดเคยแสดง spinner ตลอดไปเมื่อโหลดไม่สำเร็จ
+        // ผู้ใช้จึงนึกว่าระบบกำลังทำงานอยู่ ทั้งที่มันหยุดไปแล้วและไม่มีทางเสร็จ
+        if (alive) setError(err instanceof Error ? err.message : "โหลดเอกสารไม่สำเร็จ");
       });
     return () => {
       alive = false;
@@ -49,13 +53,41 @@ export function LegalDocumentsCard({
   documents,
   description,
   reloadKey = 0,
+  error = null,
+  onRetry,
 }: {
   documents: LegalDocument[] | null;
   description?: string;
   /** เพิ่มค่าเมื่อไฟล์ถูกสร้างใหม่ เพื่อไม่ให้ iframe เสิร์ฟฉบับที่ cache ไว้ */
   reloadKey?: number;
+  /** ข้อความจาก useLegalDocuments เมื่อโหลดไม่สำเร็จ */
+  error?: string | null;
+  onRetry?: () => void;
 }) {
   const [active, setActive] = useState(0);
+
+  // โหลดไม่สำเร็จต้องบอกและให้ลองใหม่ได้ ไม่ใช่หมุนค้างไว้เฉย ๆ
+  if (error) {
+    return (
+      <Card>
+        <CardHeader title="เอกสารข้อตกลง" description={description} />
+        <div className="p-6">
+          <p className="rounded-xl bg-danger-bg p-5 text-sm leading-relaxed text-danger">
+            โหลดเอกสารข้อตกลงไม่สำเร็จ — {error}
+          </p>
+          {onRetry ? (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="mt-4 rounded-full border border-line px-4 py-2 text-[13px] font-medium text-navy-700 transition-colors hover:bg-navy-50"
+            >
+              ลองโหลดอีกครั้ง
+            </button>
+          ) : null}
+        </div>
+      </Card>
+    );
+  }
 
   if (!documents) {
     return (

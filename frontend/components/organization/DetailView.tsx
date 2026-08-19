@@ -68,7 +68,18 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
   const [noteError, setNoteError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const { start: startRegistration, starting } = useOrganizationRegistration();
-  const { documents: legalDocuments, reload: reloadLegalDocuments } = useLegalDocuments(id);
+  /**
+   * ผูกกับ `org.id` ไม่ใช่ `id` บน URL
+   *
+   * พารามิเตอร์บน URL รับได้ทั้ง id ของคำขอและของหน่วยงาน — เมนู "หน่วยงานของฉัน"
+   * ส่ง id ของหน่วยงานมา เหมือนที่ act() เตือนไว้ข้างล่าง ค่าที่โหลดมาแล้วเป็น id ของ
+   * คำขอเสมอ ไม่ว่าจะเข้าหน้านี้มาทางไหน
+   */
+  const {
+    documents: legalDocuments,
+    error: legalDocumentsError,
+    reload: reloadLegalDocuments,
+  } = useLegalDocuments(org?.id ?? null);
   /** ขยับทุกครั้งที่โหลดเอกสารใหม่ — ใช้ทำลาย cache ของ iframe ที่ฝัง PDF ไว้ */
   const [documentRound, setDocumentRound] = useState(0);
 
@@ -199,15 +210,9 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
       ) : null}
 
       <header className="mb-7 mt-4 flex flex-wrap items-start justify-between gap-4">
+        {/* ชื่อผู้ยื่นและอีเมลอยู่ในการ์ด "ผู้กรอกข้อมูล" ด้านล่างอยู่แล้ว บรรทัดนี้พูดซ้ำ */}
         <div className="min-w-0">
           <h1 className="break-words text-[26px] font-semibold text-navy-800">{org.name}</h1>
-          {org.createdBy ? (
-            <p className="mt-1.5 text-[15px] text-ink-muted">
-              ยื่นโดย{" "}
-              {fullName(org.createdBy.prefix, org.createdBy.firstName, org.createdBy.lastName)} ·{" "}
-              {org.createdBy.email}
-            </p>
-          ) : null}
         </div>
         <StatusBadge status={org.status} currentTaskType={org.currentTaskType} />
       </header>
@@ -339,7 +344,12 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         ) : null}
 
         {org.status !== "DRAFT" ? (
-          <LegalDocumentsCard documents={legalDocuments} reloadKey={documentRound} />
+          <LegalDocumentsCard
+            documents={legalDocuments}
+            reloadKey={documentRound}
+            error={legalDocumentsError}
+            onRetry={reloadLegalDocuments}
+          />
         ) : null}
 
         <Card>

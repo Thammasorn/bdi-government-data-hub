@@ -403,11 +403,6 @@ async function pickAssignee(roleCode: RoleCode, organizationId?: string | null):
   return candidates.sort((a, b) => (loadByUser.get(a) ?? 0) - (loadByUser.get(b) ?? 0))[0] ?? null;
 }
 
-/** master ของหน่วยงาน — toApiShape() ต้องการ include organization มาด้วย */
-async function organizationOf(request: { organizationId: string }) {
-  return prisma.organization.findUniqueOrThrow({ where: { id: request.organizationId } });
-}
-
 /** คำนำหน้า ชื่อ นามสกุล ที่ต่อกันแล้ว ข้ามช่องที่ยังว่าง */
 function fullName(prefix?: string | null, first?: string | null, last?: string | null): string {
   return [prefix, first, last].filter(Boolean).join(" ").trim();
@@ -1003,9 +998,16 @@ organizationRouter.post("/:id/generate-form", async (req, res) => {
  */
 organizationRouter.get("/:id/legal-documents", async (req, res) => {
   const session = req.session!;
-  const request = await prisma.organizationRegistrationRequest.findUnique({
-    where: { id: req.params.id },
-  });
+  /**
+   * `:id` รับได้ทั้ง id ของคำขอและของหน่วยงาน เหมือน GET /:id
+   *
+   * เมนู "หน่วยงานของฉัน" ประกอบลิงก์จาก id ของ**หน่วยงาน** (AppShell.tsx) ผู้มีอำนาจ
+   * กระทำการแทนที่เข้าหน้ารายละเอียดจากเมนูนั้นจึงยิงมาที่นี่ด้วย id ของหน่วยงาน
+   * ตอนที่รับแต่ id ของคำขอ เส้นทางนั้นได้ 404 → หน้าจอหมุนค้างตลอดและปุ่ม
+   * "ผ่านการตรวจสอบ" กดไม่ได้ เพราะกล่องลงนามผูกกับรายการเอกสารที่โหลดไม่สำเร็จ
+   * ทำให้ต่างกันระหว่างสอง route ที่อยู่ติดกันคือกับดักที่ผู้เรียกไม่มีทางเดาได้
+   */
+  const request = await findRequestByRequestOrOrganizationId(req.params.id);
   if (!request || !canView(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
@@ -1046,7 +1048,7 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
     (!agreement || (publishedAt !== null && publishedAt !== undefined && agreement.uploadedAt < publishedAt));
 
   if (stale) {
-    const shape = await toApiShape({ ...request, organization: await organizationOf(request) });
+    const shape = await toApiShape(request);
     const rendered = await renderAgreement(prisma, {
       request: { ...shape, submittedAt: request.submittedAt },
       printedByName: fullName(shape.contactPrefix, shape.contactFirstName, shape.contactLastName),
@@ -1084,9 +1086,8 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
 /** ไฟล์ PDF ของผนวกฉบับหนึ่ง — render ไว้แล้วตอน publish ไม่ได้แปลงสดทุกครั้ง */
 organizationRouter.get("/:id/legal-documents/:versionId/file", async (req, res) => {
   const session = req.session!;
-  const request = await prisma.organizationRegistrationRequest.findUnique({
-    where: { id: req.params.id },
-  });
+  // รับได้ทั้งสอง id ด้วยเหตุผลเดียวกับ route ด้านบน
+  const request = await findRequestByRequestOrOrganizationId(req.params.id);
   if (!request || !canView(session, request)) {
     res.status(404).json({ error: "not_found" });
     return;

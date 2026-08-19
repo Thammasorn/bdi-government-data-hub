@@ -20,7 +20,7 @@ import {
   type DatasetRequestStatus,
   type OrganizationStatus,
 } from "@/lib/status";
-import type { DatasetRequestListItem } from "@/lib/types";
+import type { DatasetRequestListItem, OrganizationListItem } from "@/lib/types";
 
 export default function HomePage() {
   const { user, loading } = useSession();
@@ -69,6 +69,7 @@ function OrganizationHome({
   const { user } = useSession();
   const { show } = useToast();
   const [rows, setRows] = useState<DatasetRequestListItem[] | null>(null);
+  const [orgRequests, setOrgRequests] = useState<OrganizationListItem[]>([]);
 
   useEffect(() => {
     // ดึงครั้งเดียวแล้วแบ่ง section ฝั่งหน้าเว็บ — endpoint คืนเฉพาะคำขอที่ผู้ใช้เห็นได้อยู่แล้ว
@@ -80,7 +81,24 @@ function OrganizationHome({
         setRows([]);
         show({ tone: "error", title: "โหลดรายการชุดข้อมูลไม่สำเร็จ" });
       });
+
+    /**
+     * คำขอลงทะเบียนหน่วยงาน — คนละเส้นทางกับชุดข้อมูล และหน้าแรกเคยไม่พูดถึงเลย
+     *
+     * ผู้มีอำนาจกระทำการแทนถูกเชิญเข้ามาเพื่อลงนามในคำขอใบหนึ่งโดยเฉพาะ แต่เข้ามาแล้ว
+     * เจอหน้าแรกที่พูดเรื่องชุดข้อมูลล้วน ๆ ไม่มีทางไปต่อ ต้องเดาว่าต้องกดเมนู
+     * "หน่วยงานของฉัน" เอง
+     */
+    api
+      .get<{ organizations: OrganizationListItem[] }>("/api/organizations")
+      .then((d) => setOrgRequests(d.organizations))
+      .catch(() => setOrgRequests([]));
   }, [show]);
+
+  /** คำขอลงทะเบียนหน่วยงานที่หยุดรอการลงนามของผู้ใช้คนนี้ */
+  const awaitingSignature = isApprover
+    ? orgRequests.find((r) => r.currentTaskType === "ORGANIZATION_APPROVAL")
+    : undefined;
 
   const { pending, others, awaitingMe, counts } = useMemo(() => split(rows ?? []), [rows]);
 
@@ -96,6 +114,25 @@ function OrganizationHome({
         onRegister={isApprover ? undefined : onRegister}
         registering={registering}
       />
+
+      {/* ยกขึ้นก่อนทุกอย่าง รวมถึงก่อน spinner ของรายการชุดข้อมูล — งานที่ค้างรอคนนี้อยู่
+          ต้องเห็นทันทีที่เปิดหน้า ไม่ใช่หลังจากรอรายการอื่นโหลดเสร็จ */}
+      {awaitingSignature ? (
+        <Card className="mb-8 border-l-[3px] border-l-coral-500">
+          <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="font-medium text-navy-800">รอคุณเห็นชอบและลงนามคำขอลงทะเบียนหน่วยงาน</p>
+              <p className="mt-0.5 text-sm leading-relaxed text-ink-muted">
+                {awaitingSignature.name} ผ่านการตรวจสอบจากเจ้าหน้าที่ BDI แล้ว
+                และหยุดรอให้คุณอ่านเอกสารข้อตกลงแล้วลงนามในฐานะผู้มีอำนาจกระทำการแทน
+              </p>
+            </div>
+            <Link href={`/organizations/${awaitingSignature.id}`} className="shrink-0">
+              <Button>อ่านเอกสารและลงนาม</Button>
+            </Link>
+          </div>
+        </Card>
+      ) : null}
 
       {rows === null ? (
         <Spinner className="min-h-[40vh]" />
