@@ -39,6 +39,7 @@ export interface Organization {
   organizationCode: string | null;
   name: string;
   addressLine: string | null;
+  road: string | null;
   province: string | null;
   district: string | null;
   subdistrict: string | null;

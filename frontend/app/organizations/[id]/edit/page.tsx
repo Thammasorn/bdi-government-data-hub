@@ -18,6 +18,7 @@ const EMPTY = {
   organizationCode: "",
   name: "",
   addressLine: "",
+  road: "",
   province: "",
   district: "",
   subdistrict: "",
@@ -47,7 +48,7 @@ const SECTIONS = [
 ];
 
 const SECTION_FIELDS: Record<string, Array<keyof FormState>> = {
-  "section-1": ["organizationCode", "name", "addressLine", "province", "district", "subdistrict", "postalCode", "email"],
+  "section-1": ["organizationCode", "name", "addressLine", "road", "province", "district", "subdistrict", "postalCode", "email"],
   "section-2": [
     "signatoryPrefix",
     "signatoryFirstName",
@@ -289,8 +290,13 @@ export default function EditOrganizationPage() {
               <Wrap name="name">
                 <TextField label="ชื่อหน่วยงาน" required value={form.name} onChange={(e) => set("name", e.target.value)} error={fields.name} placeholder="เช่น สำนักงานปลัดกระทรวงสาธารณสุข" />
               </Wrap>
+              {/* เอกสาร A0 แยกช่อง "ตั้งอยู่เลขที่ ___ ถนน ___" ตามแบบฟอร์มราชการ
+                  ฟอร์มจึงต้องแยกสองช่องด้วย ไม่งั้นช่องถนนในข้อตกลงจะว่างตลอดไป */}
               <Wrap name="addressLine">
-                <TextField label="ที่อยู่ (เลขที่ / อาคาร / ถนน)" required value={form.addressLine} onChange={(e) => set("addressLine", e.target.value)} error={fields.addressLine} />
+                <TextField label="ที่อยู่ (เลขที่ / อาคาร / ซอย)" required value={form.addressLine} onChange={(e) => set("addressLine", e.target.value)} error={fields.addressLine} />
+              </Wrap>
+              <Wrap name="road">
+                <TextField label="ถนน" hint="เว้นว่างได้ถ้าที่อยู่ไม่มีชื่อถนน" value={form.road} onChange={(e) => set("road", e.target.value)} error={fields.road} />
               </Wrap>
               <div className="grid gap-5 sm:grid-cols-3">
                 <Wrap name="province">

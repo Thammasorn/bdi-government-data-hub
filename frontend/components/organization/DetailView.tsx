@@ -278,6 +278,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
             rows={[
               ["ชื่อหน่วยงาน", org.name],
               ["ที่อยู่", org.addressLine],
+              ["ถนน", org.road],
               ["ตำบล/แขวง", org.subdistrict],
               ["อำเภอ/เขต", org.district],
               ["จังหวัด", org.province],

@@ -179,14 +179,17 @@ TEMPLATES = [
 ]
 
 
-# The original marks the unfinished "ระบบ....." blank with a yellow highlight —
-# an author's TODO, not formatting. Left in, the rendered agreement ships with a
-# highlighter stripe through the system's own name.
+# The original marks the unfinished "ระบบ....." blank as an author's TODO — yellow
+# highlight *and* red text. Both are the marking, not formatting: left in, the rendered
+# agreement ships with a highlighter stripe and red lettering through the name of the
+# system itself. Only A0 is touched, and only these two runs carry the marking there
+# (A1–A3 use red for genuine drafting emphasis and are copied through untouched).
 HIGHLIGHT = re.compile(r'<w:highlight w:val="yellow"/>')
+TODO_RED = re.compile(r'<w:color w:val="FF0000"(?: [^>]*)?/>')
 
 
 def rewrite(xml, edits):
-    xml = HIGHLIGHT.sub("", xml)
+    xml = TODO_RED.sub("", HIGHLIGHT.sub("", xml))
     body_at = xml.index("<w:body>")
     head, body = xml[:body_at], xml[body_at:]
     spans = paragraphs(body)

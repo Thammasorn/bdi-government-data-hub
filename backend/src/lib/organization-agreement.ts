@@ -42,6 +42,7 @@ export type AgreementRequest = Pick<
   | "requestNumber"
   | "name"
   | "addressLine"
+  | "road"
   | "province"
   | "district"
   | "subdistrict"

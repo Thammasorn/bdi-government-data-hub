@@ -60,6 +60,7 @@ const adminOrganizationSchema = z.object({
   organizationType: z.string().trim().max(64).optional(),
   /** ที่อยู่รับเป็น "ชื่อ" จังหวัด/อำเภอ/ตำบล เหมือนฟอร์มลงทะเบียน แล้วแปลงเป็นรหัสให้ */
   addressLine: z.string().trim().max(500).optional(),
+  road: z.string().trim().max(255).optional(),
   province: z.string().trim().optional(),
   district: z.string().trim().optional(),
   subdistrict: z.string().trim().optional(),
@@ -82,6 +83,7 @@ async function toAdminOrganizationShape(org: {
   nameEn: string | null;
   status: OrganizationStatus;
   addressLine: string | null;
+  road: string | null;
   provinceCode: string | null;
   districtCode: string | null;
   subDistrictCode: string | null;
@@ -106,6 +108,7 @@ async function toAdminOrganizationShape(org: {
     nameEn: org.nameEn,
     status: org.status,
     addressLine: org.addressLine,
+    road: org.road,
     province: names.province,
     district: names.district,
     subdistrict: names.subdistrict,
@@ -197,6 +200,7 @@ adminRouter.post("/organizations", async (req, res) => {
       nameEn: input.nameEn ?? null,
       status: OrganizationStatus.PENDING_REGISTRATION,
       addressLine: input.addressLine ?? null,
+      road: input.road ?? null,
       provinceCode: codes.provinceCode ?? null,
       districtCode: codes.districtCode ?? null,
       subDistrictCode: codes.subDistrictCode ?? null,
@@ -268,6 +272,7 @@ const adminOrganizationPatchSchema = z.object({
   nameEn: z.string().trim().max(255).nullable().optional(),
   organizationType: z.string().trim().max(64).nullable().optional(),
   addressLine: z.string().trim().max(500).nullable().optional(),
+  road: z.string().trim().max(255).nullable().optional(),
   province: z.string().trim().nullable().optional(),
   district: z.string().trim().nullable().optional(),
   subdistrict: z.string().trim().nullable().optional(),
@@ -396,6 +401,7 @@ adminRouter.patch("/organizations/:id", async (req, res) => {
       ...(input.nameEn !== undefined ? { nameEn: input.nameEn } : {}),
       ...(input.organizationType !== undefined ? { organizationType: input.organizationType } : {}),
       ...(input.addressLine !== undefined ? { addressLine: input.addressLine } : {}),
+      ...(input.road !== undefined ? { road: input.road } : {}),
       ...(touchesAddress
         ? {
             provinceCode: codes.provinceCode,

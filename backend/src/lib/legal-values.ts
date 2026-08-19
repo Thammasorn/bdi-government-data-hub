@@ -48,6 +48,7 @@ export interface AgreementInput {
 
   name: string | null;
   addressLine: string | null;
+  road: string | null;
   province: string | null;
   district: string | null;
   subdistrict: string | null;
@@ -92,12 +93,10 @@ export function agreementValues(input: AgreementInput): TemplateValues {
     "org.name": input.name ?? "",
     "org.addressNo": input.addressLine ?? "",
     /**
-     * ฟอร์มลงทะเบียนเก็บที่อยู่เป็นบรรทัดเดียว (organization.address_line) ไม่มีช่อง
-     * "ถนน" แยก ส่วน template แยกไว้ตามแบบฟอร์มกระดาษ — ปล่อยว่างไว้ตรง ๆ ดีกว่า
-     * ยัดที่อยู่ทั้งบรรทัดซ้ำสองช่อง หรือใส่ "-" ซึ่งอ่านเหมือนไม่มีถนนจริง
-     * (คำถามนี้อยู่บนการ์ด Notion: จะเพิ่มช่องถนนในฟอร์มหรือไม่)
+     * ฟอร์มลงทะเบียนมีช่อง "ถนน" แยกจากที่อยู่ตั้งแต่ 2026-08-19 เพราะ A0 แยกช่องไว้
+     * ตามแบบฟอร์มราชการ ยังว่างได้ตามความจริง — ที่อยู่ราชการหลายแห่งไม่มีชื่อถนน
      */
-    "org.road": "",
+    "org.road": input.road ?? "",
     "org.subdistrict": input.subdistrict ?? "",
     "org.district": input.district ?? "",
     "org.province": input.province ?? "",

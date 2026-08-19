@@ -139,6 +139,7 @@ const draftSchema = z.object({
   nameEn: z.string().trim().max(200).optional(),
   organizationType: z.string().trim().max(64).optional(),
   addressLine: z.string().trim().max(300).optional(),
+  road: z.string().trim().max(255).optional(),
   province: z.string().trim().optional(),
   district: z.string().trim().optional(),
   subdistrict: z.string().trim().optional(),
@@ -170,6 +171,11 @@ const submitSchema = z.object({
   organizationCode: z.string().trim().min(1, "กรุณากรอกรหัสหน่วยงาน").max(64),
   name: z.string().trim().min(3, "ชื่อหน่วยงานต้องมีอย่างน้อย 3 ตัวอักษร").max(200),
   addressLine: z.string().trim().min(1, "กรุณากรอกที่อยู่"),
+  /**
+   * ถนนไม่บังคับ — ที่อยู่ราชการหลายแห่งไม่มีชื่อถนน (ใช้หมู่ที่แทน) บังคับกรอกจะกลายเป็น
+   * การให้ผู้ใช้กรอกข้อมูลที่ไม่มีอยู่จริง ช่อง "ถนน" ในเอกสาร A0 จะว่างไว้ตามความจริง
+   */
+  road: z.string().trim().max(255).optional(),
   province: z.string().trim().min(1, "กรุณาเลือกจังหวัด"),
   district: z.string().trim().min(1, "กรุณาเลือกอำเภอ/เขต"),
   subdistrict: z.string().trim().min(1, "กรุณาเลือกตำบล/แขวง"),
@@ -215,6 +221,7 @@ async function toRequestData(input: z.infer<typeof draftSchema>) {
     organizationNameTh: input.name,
     organizationNameEn: input.nameEn,
     organizationAddressLine: input.addressLine,
+    organizationRoad: input.road,
     organizationProvinceCode: codes.provinceCode,
     organizationDistrictCode: codes.districtCode,
     organizationSubdistrictCode: codes.subDistrictCode,
@@ -255,6 +262,7 @@ function prefillFromOrganization(org: {
   nameTh: string;
   nameEn: string | null;
   addressLine: string | null;
+  road: string | null;
   provinceCode: string | null;
   districtCode: string | null;
   subDistrictCode: string | null;
@@ -270,6 +278,7 @@ function prefillFromOrganization(org: {
     organizationNameTh: org.nameTh === PLACEHOLDER_ORGANIZATION_NAME ? null : org.nameTh,
     organizationNameEn: org.nameEn,
     organizationAddressLine: org.addressLine,
+    organizationRoad: org.road,
     organizationProvinceCode: org.provinceCode,
     organizationDistrictCode: org.districtCode,
     organizationSubdistrictCode: org.subDistrictCode,
@@ -317,6 +326,7 @@ async function toApiShape(request: RequestRow) {
     nameEn: request.organizationNameEn,
     organizationType: request.organizationType,
     addressLine: request.organizationAddressLine,
+    road: request.organizationRoad,
     province: names.province,
     district: names.district,
     subdistrict: names.subdistrict,
@@ -1478,6 +1488,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
             nameTh: request.organizationNameTh ?? request.organization.nameTh,
             nameEn: request.organizationNameEn,
             addressLine: request.organizationAddressLine,
+            road: request.organizationRoad,
             provinceCode: request.organizationProvinceCode,
             districtCode: request.organizationDistrictCode,
             subDistrictCode: request.organizationSubdistrictCode,
