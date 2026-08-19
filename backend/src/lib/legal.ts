@@ -42,6 +42,7 @@ import {
   assertKnownPlaceholders,
   assertReadableDocx,
   docxToPdf,
+  fillTemplate,
 } from "./document-render.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -137,7 +138,17 @@ export async function publishVersion(
 ): Promise<{ versionId: string; versionNumber: number; placeholders: string[] }> {
   assertReadableDocx(params.docx);
   const placeholders = assertKnownPlaceholders(params.docx);
-  const pdf = await docxToPdf(params.docx, params.filename);
+  /**
+   * PDF กลางของเวอร์ชันนี้ — เติมค่าว่างก่อนแปลงถ้าเอกสารมี placeholder
+   *
+   * ถ้าแปลงตรง ๆ ไฟล์กลางจะมีข้อความ `{{org.name}}` โผล่ให้เห็นจริง ๆ เติมค่าว่างแทน
+   * ทำให้ได้ "ฉบับเปล่า" ที่อ่านเหมือนแบบฟอร์มยังไม่กรอก ซึ่งเป็นสิ่งที่ควรเห็นถ้ามีใคร
+   * เปิดไฟล์กลางของเอกสารที่ปกติต้อง render ต่อคำขอ
+   */
+  const pdf = await docxToPdf(
+    placeholders.length > 0 ? fillTemplate(params.docx, {}) : params.docx,
+    params.filename,
+  );
 
   const document = await db.legalDocument.findUnique({
     where: { documentCode: params.documentCode },
