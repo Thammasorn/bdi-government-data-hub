@@ -238,6 +238,22 @@ export async function streamAttachment(
 }
 
 /**
+ * อ่านไฟล์กลับมาเป็น Buffer
+ *
+ * ใช้กับ template .docx ของเอกสารกฎหมาย ซึ่งต้องเอามาเติมค่าแล้วแปลงเป็น PDF —
+ * ไม่ใช่ส่งต่อให้เบราว์เซอร์อย่าง streamAttachment()
+ */
+export async function readAttachment(attachment: {
+  storageBucket: string;
+  storageKey: string;
+}): Promise<Buffer> {
+  const stream = await minio.getObject(attachment.storageBucket, attachment.storageKey);
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks);
+}
+
+/**
  * JSON ที่ frontend ใช้ — fileSizeBytes เป็น BigInt ซึ่ง JSON.stringify โยน error
  * จึงต้องแปลงเป็น number ทุกครั้งที่ส่งออก
  */

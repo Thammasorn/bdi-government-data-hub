@@ -1,3 +1,11 @@
+/**
+ * PDF ที่ระบบวาดเอง — เหลือเฉพาะแบบฟอร์มลงทะเบียนชุดข้อมูล (Journey C)
+ *
+ * แบบฟอร์มขอสร้างหน่วยงานเคยอยู่ในไฟล์นี้ด้วย (renderOrganizationForm) โดยวางเลย์เอาต์
+ * ขึ้นมาเองเพราะสเปกมีแต่ภาพตัวอย่าง ไม่มีไฟล์ template ตอนนี้ได้ไฟล์จริงมาแล้ว เอกสาร
+ * ของเส้นทาง B จึงเป็นเอกสาร A0 ที่ render จาก .docx ของฝ่ายกฎหมาย —
+ * ดู lib/organization-agreement.ts และ lib/document-render.ts
+ */
 import PDFDocument from "pdfkit";
 
 import {
@@ -16,42 +24,6 @@ import {
   splitTags,
   type MetadataValues,
 } from "./dataset.js";
-
-/**
- * รูปข้อมูลที่ PDF ต้องใช้ — ประกาศเป็น structural type ไม่ผูกกับ Prisma model
- *
- * ตั้งแต่แยก organization ออกจาก organization_registration_request แล้ว ข้อมูลที่จะพิมพ์
- * มาจาก snapshot ของคำขอ (approver_* / user_* / *_code) ไม่ใช่จากตาราง organization
- * routes/organizations.ts แปลงให้อยู่ในรูปนี้ด้วย toApiShape() ก่อนเรียก
- */
-export interface OrganizationFormInput {
-  name: string | null;
-  addressLine: string | null;
-  province: string | null;
-  district: string | null;
-  subdistrict: string | null;
-  postalCode: string | null;
-  email: string | null;
-
-  signatoryPrefix: string | null;
-  signatoryFirstName: string | null;
-  signatoryLastName: string | null;
-  signatoryPosition: string | null;
-  signatoryEmail: string | null;
-  signatoryNationalId: string | null;
-  signatoryPhone: string | null;
-
-  contactPrefix: string | null;
-  contactFirstName: string | null;
-  contactLastName: string | null;
-  contactPosition: string | null;
-  contactDepartment: string | null;
-  contactEmail: string | null;
-  contactPhone: string | null;
-
-  submittedAt: Date | null;
-  createdAt: Date | null;
-}
 
 const FONT_DIR = new URL("../assets/fonts/", import.meta.url);
 const font = (file: string) => new URL(file, FONT_DIR).pathname;
@@ -74,61 +46,6 @@ const CONTENT_WIDTH = 595.28 - PAGE_MARGIN * 2; // A4 width in points
 /** locale th-TH คืนปี พ.ศ. มาให้แล้ว ไม่ต้องบวก 543 ซ้ำ */
 const thaiDate = (d: Date) =>
   new Intl.DateTimeFormat("th-TH", { dateStyle: "long", timeZone: "Asia/Bangkok" }).format(d);
-
-/**
- * สร้าง PDF แบบฟอร์มขอสร้างหน่วยงานจากข้อมูลที่ผู้ใช้กรอก
- * สเปกใน Notion มีภาพตัวอย่างแต่ไม่มีไฟล์ template จริง จึงวางเลย์เอาต์ใหม่ให้ตรงกับ CI
- */
-export function renderOrganizationForm(org: OrganizationFormInput): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", margin: PAGE_MARGIN, bufferPages: true });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c: Buffer) => chunks.push(c));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-
-    doc.registerFont("body", font("Sarabun-Regular.ttf"));
-    doc.registerFont("bodyBold", font("Sarabun-SemiBold.ttf"));
-    doc.registerFont("heading", font("Prompt-SemiBold.ttf"));
-
-    header(doc);
-    title(doc, org);
-
-    section(doc, "ส่วนที่ 1", "ข้อมูลหน่วยงาน");
-    rows(doc, [
-      ["ชื่อหน่วยงาน", org.name],
-      ["ที่อยู่", org.addressLine],
-      ["ตำบล/แขวง", org.subdistrict],
-      ["อำเภอ/เขต", org.district],
-      ["จังหวัด", org.province],
-      ["รหัสไปรษณีย์", org.postalCode],
-      ["อีเมลหน่วยงาน", org.email],
-    ]);
-
-    section(doc, "ส่วนที่ 2", "ผู้มีอำนาจกระทำการแทน");
-    rows(doc, [
-      ["ชื่อ-นามสกุล", fullName(org.signatoryPrefix, org.signatoryFirstName, org.signatoryLastName)],
-      ["ตำแหน่ง", org.signatoryPosition],
-      ["เลขบัตรประชาชน", formatNationalId(org.signatoryNationalId)],
-      ["อีเมล", org.signatoryEmail],
-      ["เบอร์โทรศัพท์", org.signatoryPhone],
-    ]);
-
-    section(doc, "ส่วนที่ 3", "ผู้กรอกข้อมูล");
-    rows(doc, [
-      ["ชื่อ-นามสกุล", fullName(org.contactPrefix, org.contactFirstName, org.contactLastName)],
-      ["ตำแหน่ง", org.contactPosition],
-      ["ฝ่าย/กอง/สำนัก", org.contactDepartment],
-      ["อีเมล", org.contactEmail],
-      ["เบอร์โทรศัพท์", org.contactPhone],
-    ]);
-
-    signatureBlock(doc, org);
-    footer(doc);
-
-    doc.end();
-  });
-}
 
 // ------------------------------------------------------------------ ชุดข้อมูล
 
@@ -430,12 +347,6 @@ function header(doc: PDFKit.PDFDocument) {
     });
 }
 
-function title(doc: PDFKit.PDFDocument, org: OrganizationFormInput) {
-  documentTitle(doc, "แบบฟอร์มขอสร้างหน่วยงานในระบบ", [
-    `วันที่จัดทำ ${thaiDate(new Date(org.submittedAt ?? org.createdAt ?? new Date()))}`,
-  ]);
-}
-
 /** หัวเอกสารกลางของทุกแบบฟอร์ม — บรรทัดย่อยใส่ได้หลายบรรทัด */
 function documentTitle(doc: PDFKit.PDFDocument, heading: string, lines: string[]) {
   doc.moveDown(2);
@@ -498,42 +409,6 @@ function rows(doc: PDFKit.PDFDocument, entries: Array<[string, string | null | u
       .stroke();
     doc.y = bottom + 4;
   }
-}
-
-function signatureBlock(doc: PDFKit.PDFDocument, org: OrganizationFormInput) {
-  ensureSpace(doc, 150);
-  doc.y += 24;
-  const y = doc.y;
-  const colWidth = (CONTENT_WIDTH - 40) / 2;
-
-  const column = (x: number, role: string, name: string) => {
-    doc
-      .moveTo(x, y + 52)
-      .lineTo(x + colWidth, y + 52)
-      .lineWidth(0.7)
-      .strokeColor("#9AA0B5")
-      .stroke();
-    doc
-      .font("body")
-      .fontSize(9.5)
-      .fillColor(MUTED)
-      .text(`(${name || "....................................."})`, x, y + 58, {
-        width: colWidth,
-        align: "center",
-      });
-    doc.font("bodyBold").fontSize(9.5).fillColor(TEXT).text(role, x, y + 74, {
-      width: colWidth,
-      align: "center",
-    });
-  };
-
-  column(PAGE_MARGIN, "ผู้กรอกข้อมูล", fullName(org.contactPrefix, org.contactFirstName, org.contactLastName));
-  column(
-    PAGE_MARGIN + colWidth + 40,
-    "ผู้มีอำนาจกระทำการแทน",
-    fullName(org.signatoryPrefix, org.signatoryFirstName, org.signatoryLastName),
-  );
-  doc.y = y + 96;
 }
 
 function footer(doc: PDFKit.PDFDocument) {

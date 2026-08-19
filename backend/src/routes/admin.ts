@@ -1,4 +1,5 @@
 import { Router } from "../lib/async-route.js";
+import multer from "multer";
 import { z } from "zod";
 import {
   ActivationKeyStatus,
@@ -9,6 +10,9 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "../db.js";
+import { uploadedFile } from "../lib/attachment.js";
+import { TEMPLATE_VARIABLES } from "../lib/document-render.js";
+import { publishVersion } from "../lib/legal.js";
 import { lookupZipcode, resolveAddressCodes, resolveAddressNames } from "../lib/address.js";
 import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
 import { issueActivationKey } from "../lib/iam.js";
@@ -56,6 +60,7 @@ const adminOrganizationSchema = z.object({
   organizationType: z.string().trim().max(64).optional(),
   /** ที่อยู่รับเป็น "ชื่อ" จังหวัด/อำเภอ/ตำบล เหมือนฟอร์มลงทะเบียน แล้วแปลงเป็นรหัสให้ */
   addressLine: z.string().trim().max(500).optional(),
+  road: z.string().trim().max(255).optional(),
   province: z.string().trim().optional(),
   district: z.string().trim().optional(),
   subdistrict: z.string().trim().optional(),
@@ -78,6 +83,7 @@ async function toAdminOrganizationShape(org: {
   nameEn: string | null;
   status: OrganizationStatus;
   addressLine: string | null;
+  road: string | null;
   provinceCode: string | null;
   districtCode: string | null;
   subDistrictCode: string | null;
@@ -102,6 +108,7 @@ async function toAdminOrganizationShape(org: {
     nameEn: org.nameEn,
     status: org.status,
     addressLine: org.addressLine,
+    road: org.road,
     province: names.province,
     district: names.district,
     subdistrict: names.subdistrict,
@@ -193,6 +200,7 @@ adminRouter.post("/organizations", async (req, res) => {
       nameEn: input.nameEn ?? null,
       status: OrganizationStatus.PENDING_REGISTRATION,
       addressLine: input.addressLine ?? null,
+      road: input.road ?? null,
       provinceCode: codes.provinceCode ?? null,
       districtCode: codes.districtCode ?? null,
       subDistrictCode: codes.subDistrictCode ?? null,
@@ -264,6 +272,7 @@ const adminOrganizationPatchSchema = z.object({
   nameEn: z.string().trim().max(255).nullable().optional(),
   organizationType: z.string().trim().max(64).nullable().optional(),
   addressLine: z.string().trim().max(500).nullable().optional(),
+  road: z.string().trim().max(255).nullable().optional(),
   province: z.string().trim().nullable().optional(),
   district: z.string().trim().nullable().optional(),
   subdistrict: z.string().trim().nullable().optional(),
@@ -392,6 +401,7 @@ adminRouter.patch("/organizations/:id", async (req, res) => {
       ...(input.nameEn !== undefined ? { nameEn: input.nameEn } : {}),
       ...(input.organizationType !== undefined ? { organizationType: input.organizationType } : {}),
       ...(input.addressLine !== undefined ? { addressLine: input.addressLine } : {}),
+      ...(input.road !== undefined ? { road: input.road } : {}),
       ...(touchesAddress
         ? {
             provinceCode: codes.provinceCode,
@@ -837,3 +847,102 @@ adminRouter.post("/invitations/:id/revoke", async (req, res) => {
   });
   res.json({ ok: true });
 });
+
+// -------------------------------------------------- เอกสารกฎหมาย (template .docx)
+
+/**
+ * เผยแพร่ template เอกสารกฎหมายฉบับใหม่
+ *
+ * นี่คือทางที่ทำให้ "แก้เอกสารได้โดยไม่ต้องแก้โค้ด" เป็นจริง: ฝ่ายกฎหมายแก้ .docx ใน Word
+ * แล้วอัปโหลดเข้ามา ระบบออกเป็น legal_document_version ใหม่ เวอร์ชันเดิมกลายเป็น
+ * SUPERSEDED และคำขอที่ลงนามไว้แล้วยังชี้เวอร์ชันเดิมของมันอยู่ (legal_acceptance)
+ *
+ * ตรวจสองอย่างก่อนรับ และทั้งคู่ตอบ 400 พร้อมบอกว่าต้องแก้อะไร:
+ *   1. ชื่อ placeholder ทุกตัวต้องเป็นตัวที่ระบบต่อค่าให้ได้ (TEMPLATE_VARIABLES)
+ *   2. LibreOffice ต้องแปลงไฟล์นั้นเป็น PDF ได้จริง
+ * ปล่อยไฟล์ที่ไม่ผ่านสองข้อนี้เข้าไป จะไปพังตอนหน่วยงานกดสร้างเอกสาร ซึ่งเป็นคนละคน
+ * คนละวัน และเขาแก้อะไรไม่ได้เลย
+ *
+ * ใช้ x-admin-token เหมือน endpoint อื่นในไฟล์นี้ — ยังไม่มีหน้าจอแอดมินในระบบ
+ */
+const TEMPLATE_MIME = new Set([
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
+
+const templateUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => cb(null, TEMPLATE_MIME.has(file.mimetype)),
+});
+
+adminRouter.get("/legal-documents", async (_req, res) => {
+  const documents = await prisma.legalDocument.findMany({
+    orderBy: [{ applicationScope: "asc" }, { displayOrder: "asc" }],
+    include: { versions: { orderBy: { versionNumber: "desc" } } },
+  });
+
+  res.json({
+    variables: Object.entries(TEMPLATE_VARIABLES).map(([name, description]) => ({
+      name: `{{${name}}}`,
+      description,
+    })),
+    documents: documents.map((doc) => ({
+      code: doc.documentCode,
+      name: doc.nameTh,
+      scope: doc.applicationScope,
+      status: doc.status,
+      displayOrder: doc.displayOrder,
+      versions: doc.versions.map((v) => ({
+        id: v.id,
+        versionNumber: v.versionNumber,
+        status: v.status,
+        contentHash: v.contentHash,
+        publishedAt: v.publishedAt,
+      })),
+    })),
+  });
+});
+
+adminRouter.post(
+  "/legal-documents/:code/versions",
+  templateUpload.single("file"),
+  async (req, res) => {
+    const code = String(req.params.code ?? "").toUpperCase();
+    if (!req.file) {
+      res.status(400).json({
+        error: "validation",
+        message: "กรุณาแนบไฟล์เอกสาร Word (.docx)",
+        fields: { file: "รองรับเฉพาะไฟล์ .docx ขนาดไม่เกิน 20 MB" },
+      });
+      return;
+    }
+
+    const file = uploadedFile(req.file);
+    const published = await publishVersion(prisma, {
+      documentCode: code,
+      docx: file.buffer,
+      filename: file.originalname,
+      actorId: SYSTEM_USER_ID,
+    });
+
+    await logAudit({
+      action: AuditAction.LEGAL_DOCUMENT_PUBLISHED,
+      subjectType: AuditSubject.LEGAL_DOCUMENT,
+      subjectId: published.versionId,
+      after: {
+        documentCode: code,
+        versionNumber: published.versionNumber,
+        filename: file.originalname,
+        placeholders: published.placeholders,
+      },
+    });
+
+    res.status(201).json({
+      documentCode: code,
+      versionId: published.versionId,
+      versionNumber: published.versionNumber,
+      /** placeholder ที่พบในไฟล์ — ให้คนอัปโหลดยืนยันได้ว่าช่องที่ตั้งใจใส่ถูกอ่านเจอครบ */
+      placeholders: published.placeholders,
+    });
+  },
+);

@@ -6,6 +6,7 @@ import { MulterError } from "multer";
 
 import { prisma } from "./db.js";
 import { env } from "./env.js";
+import { DocumentRenderError } from "./lib/document-render.js";
 import { correlationMiddleware } from "./lib/context.js";
 import { adminRouter } from "./routes/admin.js";
 import { addressRouter } from "./routes/address.js";
@@ -74,6 +75,18 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     const message =
       err.code === "LIMIT_FILE_SIZE" ? "ไฟล์มีขนาดเกิน 10 MB" : "อัปโหลดไฟล์ไม่สำเร็จ";
     res.status(400).json({ error: "upload", message });
+    return;
+  }
+
+  /**
+   * เอกสารกฎหมาย: template ผิดรูป ตัวแปลงไม่ตอบ หรือยังไม่มีเอกสารเผยแพร่
+   *
+   * ทุกกรณีมีสาเหตุที่บอกได้เป็นคำพูด และ DocumentRenderError ถือ status มาเองแล้ว
+   * (400 = ไฟล์ที่อัปโหลดผิด · 503 = ตัวแปลงหรือเอกสารต้นแบบยังไม่พร้อม)
+   */
+  if (err instanceof DocumentRenderError) {
+    console.error(`[backend] ${err.code}:`, err.message);
+    res.status(err.status).json({ error: err.code, message: err.message, fields: err.fields });
     return;
   }
 

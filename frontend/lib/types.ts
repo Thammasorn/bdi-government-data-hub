@@ -48,6 +48,7 @@ export interface Organization {
   organizationCode: string | null;
   name: string;
   addressLine: string | null;
+  road: string | null;
   province: string | null;
   district: string | null;
   subdistrict: string | null;
@@ -108,6 +109,24 @@ export const ATTACHMENT_LABELS: Record<Attachment["kind"], string> = {
   POWER_OF_ATTORNEY: "คำสั่งมอบอำนาจ",
   GENERATED_FORM: "แบบฟอร์มที่ระบบสร้าง",
 };
+
+/**
+ * เอกสารกฎหมายหนึ่งฉบับของคำขอ — GET /api/organizations/:id/legal-documents
+ *
+ * `versionId` คือสิ่งที่ต้องส่งกลับตอนลงนาม ไม่ใช่ `code` เพราะหลักฐานต้องบอกว่ายอมรับ
+ * เอกสาร**ฉบับไหน** ถ้าฝ่ายกฎหมายเผยแพร่ฉบับใหม่ระหว่างที่เปิดหน้านี้อยู่ id ที่ส่งกลับ
+ * จะไม่ตรงกับที่เผยแพร่ และ backend จะให้โหลดหน้าใหม่แทนที่จะรับการลงนามนั้นไว้
+ */
+export interface LegalDocument {
+  code: string;
+  name: string;
+  versionId: string;
+  versionNumber: number;
+  /** true = ฉบับที่ระบบเติมข้อมูลของคำขอนี้ลงไป (A0) — ที่เหลือเป็นไฟล์กลางของทุกหน่วยงาน */
+  fromRequest: boolean;
+  fileUrl: string | null;
+  acceptedAt: string | null;
+}
 
 // ------------------------------------------------------------------ ชุดข้อมูล (Journey C)
 

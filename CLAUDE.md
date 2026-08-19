@@ -39,6 +39,9 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   these four are the user's. `docs/manuals-docx/` holds the same four as A4 .docx with the
   Sarabun faces from `assets/theme_ci_design/Font/Sarabun.zip` **embedded**, rebuilt by
   `docs/tools/manual-to-docx.py`; the Markdown stays the source, so never hand-edit the .docx
+- `docs/17-legal-document-rendering.md` — เอกสารข้อตกลง A0–A3: ทำไมต้องเดินทาง
+  `.docx` → LibreOffice → PDF, template อยู่ในฐานข้อมูลไม่ใช่ใน repo, รายชื่อ placeholder
+  ที่ใช้ได้, การลงนามที่ฝังอยู่ใน `POST /:id/review`, และคำถามที่ยังค้าง
 - `docs/bdi-admin-portal.postman_collection.json` — Journey A as a runnable collection,
   with three `*.postman_environment.json` files beside it (dev checkout / main / public).
   The admin token is left empty in the last two on purpose — it is a real secret from `.env`
@@ -65,6 +68,7 @@ docker compose exec backend npm run prisma:studio
 docker compose exec backend npm run seed:masters       # roles, BDI org, legal docs, addresses
 docker compose exec backend npm run seed:demo          # wipes data, rebuilds demo fixtures
 docker compose logs -f delivery-worker                 # outbox email sender
+docker compose logs -f gotenberg                       # .docx -> PDF converter (LibreOffice)
 ```
 
 `seed:masters` must run before `seed:demo` and after any `migrate reset` — the demo seed fails
@@ -304,11 +308,58 @@ be destroyed for our mistake. `docs/07-thaid-integration.md` §4.2 has the full 
 and the OTP to stdout instead of sending — that is the normal way to exercise the flows.
 Templates are table-based with inline styles because Gmail and Outlook strip `<style>`.
 
-### PDF
+### PDF — two engines, and they are not interchangeable
 
-`backend/src/lib/pdf.ts` uses PDFKit with Sarabun/Prompt TTFs copied into
-`backend/src/assets/fonts/`. Thai will not render without embedding a Thai face. `npm run build`
-copies `src/data` and `src/assets` into `dist/` because `tsc` does not.
+**Journey C (แบบฟอร์มลงทะเบียนชุดข้อมูล) is drawn by PDFKit.** `backend/src/lib/pdf.ts` with
+Sarabun/Prompt TTFs copied into `backend/src/assets/fonts/`. Thai will not render without
+embedding a Thai face. `npm run build` copies `src/data` and `src/assets` into `dist/` because
+`tsc` does not.
+
+**Journey B (เอกสารข้อตกลง A0–A3) is rendered from `.docx` templates by LibreOffice**, through
+the `gotenberg` compose service. `renderOrganizationForm()` used to draw an invented
+"แบบฟอร์มขอสร้างหน่วยงานในระบบ" layout here because the spec had a sample image but no template
+file; the real files exist now, so it is gone. Two requirements force this route and neither is
+negotiable: the legal team edits the wording themselves without a deploy, and the layout must be
+the template's own. Drawing text onto a PDF at fixed coordinates fails both — a re-uploaded
+template invalidates every coordinate, and a value longer than its blank cannot reflow.
+`docs/17-legal-document-rendering.md` has the full comparison.
+
+**The template is a row in `legal.legal_document_version`, not a file in the repo.** The `.docx`
+in `backend/src/assets/legal-templates/` only bootstraps version 1 via `seed:masters`; after
+that the live template is whatever was last published through
+`POST /api/admin/legal-documents/:code/versions`. Uploads are rejected (400, nothing written) if
+they use a placeholder name outside `TEMPLATE_VARIABLES` or if LibreOffice cannot convert them —
+the alternative is failing days later on an organisation's screen, where nobody can fix it.
+
+**TH SarabunPSK is installed in the gotenberg image, not carried by the `.docx`.** LibreOffice
+computes line breaks and pagination from the fonts installed on the machine; without the face it
+substitutes another and the whole document shifts, which reads as a broken template.
+`gotenberg/Dockerfile` fails the build if `fc-list` cannot find it.
+
+**Reading is attested, not measured.** The organisation approver ticks
+"ข้าพเจ้าได้อ่านเอกสารฉบับนี้ครบถ้วนแล้ว" per document before `เห็นชอบ` unlocks, and the tick
+is stored (`acceptance_method = CHECKBOX`, the per-document tick time in `accepted_at`, the
+wording in `acceptance_context_json`). Gating on "scrolled to the end" was built and then
+reverted: it requires replacing the browser's PDF viewer with pdf.js, because a page cannot
+read scroll position inside a cross-origin iframe — and pdf.js rendered a blank white page
+here (268,400 opaque pixels, zero non-white; `disableFontFace` did not help). A gate asserting
+"they read it" on top of a renderer that can silently show nothing is worse than no gate.
+`docs/17-legal-document-rendering.md` §6.1 has the full reasoning and the server-side-page-image
+route if it ever has to be measured for real.
+
+**Signing is data, not a drawing.** `POST /:id/review` carries a `signature` payload at
+`ORGANIZATION_APPROVAL` and `BDI_FINAL_APPROVAL`; the record is
+`signature.signature_confirmation` plus one `legal.legal_acceptance` per document version. The
+only thing that reaches the PDF is the signer's name and date as **text** in the blank the
+template already has. There is no signature image and no certificate. A0 is re-rendered after
+each signature, **outside** the transaction (LibreOffice takes seconds, Prisma's transaction
+timeout is 5) — if that render fails the signature still stands, because the evidence is in the
+database and the document can always be rebuilt from it.
+
+`acknowledgedVersionIds` is a list of **version ids**, not `A0`/`A1` codes. That is what closes
+the race where the legal team publishes a new version while an approver has the page open: the
+ids no longer match what is published, and the answer is 400 with "reload and read again" rather
+than a signature on wording the signer never saw.
 
 The page footer is drawn at `y=800`, below the bottom margin. PDFKit treats that as overflow
 and appends a blank page per page unless the bottom margin is zeroed for that one write —
@@ -422,6 +473,15 @@ Two API base URLs, and they are not interchangeable:
   `GET /:id`, and Prisma raised P2023 on a non-UUID. Route files therefore import
   `Router` from `lib/async-route.js`, not from `express` — keep it that way for new
   route files. Both routers also 404 a non-UUID `:id` in `router.param()`.
+- `seed:demo` wipes `attachment.attachment`, but `legal.legal_document_version.attachment_id`
+  is an FK into it and those rows are master data published by `seed:masters`. Deleting the
+  whole table violates `legal_document_version_attachment_id_fkey` and the demo seed dies on
+  its first statement. It now excludes `ownerType = LEGAL_DOCUMENT_VERSION`.
+- The URL of the request's A0 does not change when the file is regenerated — a new attachment
+  id, but the browser is handed the same request-scoped path — so an `<iframe>` serves the PDF
+  it cached and whoever just signed sees a copy without their own name on it. The screen passes
+  a `reloadKey` query parameter to bust it. Same class of problem as the `next/image` cache
+  further down, different cache.
 - The ThaiD sandbox sits behind a WAF that blocks any user agent containing
   `HeadlessChrome` — it answers with an HTML page saying "Web Page Blocked!" instead of
   redirecting, which reads like a broken client. Screenshot runs must override the user

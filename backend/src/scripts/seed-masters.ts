@@ -12,10 +12,14 @@
  *   (รูปทรงเดียวกับ TIS-1099 เพื่อให้เปลี่ยนไปใช้รหัสจริงเป็นแค่การแทนที่ข้อมูล ไม่ต้องแก้สคีมา)
  * **ยังไม่ใช่รหัสราชการจริง** — ดู docs/06-db-migration-plan.md §5 ข้อ 6
  */
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+
 import { PrismaClient } from "@prisma/client";
 import { AccountType, LegalDocumentStatus, OrganizationStatus, UserAccountStatus } from "@prisma/client";
 
 import { listProvinces, listAmphoes, listSubdistricts } from "../lib/address.js";
+import { publishVersion } from "../lib/legal.js";
 import {
   BDI_ORGANIZATION_CODE,
   BDI_ORGANIZATION_ID,
@@ -86,27 +90,33 @@ async function seedRoles() {
 /**
  * เอกสารทางกฎหมาย A0–A4 — sheet `legal_document`
  *
- * สร้างเป็น DRAFT ทั้งหมดโดยตั้งใจ: sheet เขียน TODO ไว้ที่คอลัมน์ name_th/name_en
- * และ document_type ยังมาร์ก TO REVIEW แปลว่ายังไม่มีเนื้อหาจริงให้ผู้ใช้ยอมรับ
- * ตามตารางท้าย sheet `legal_document_version` เอกสารที่ DRAFT จะ "ไม่แสดงและยอมรับไม่ได้"
- * จึงยังไม่บล็อกการยื่นคำขอ
+ * ชื่อของแต่ละฉบับมาจากไฟล์จริงใน assets/document-template ไม่ใช่ชื่อที่เดาไว้ตอนที่
+ * ยังไม่ได้ไฟล์ (ของเดิมเขียน A1 ว่า "เงื่อนไขการเชื่อมโยงและแลกเปลี่ยนข้อมูล"
+ * ทั้งที่ผนวก 1 คือข้อตกลงการประมวลผลข้อมูล DPA)
  *
- * เมื่อได้ไฟล์จริงมา: อัปโหลดเป็น attachment (owner_type = LEGAL_DOCUMENT_VERSION)
- * สร้าง legal_document_version แล้วเปลี่ยนสถานะเอกสารเป็น ACTIVE และ version เป็น PUBLISHED
+ * เวอร์ชัน 1 ถูกเผยแพร่จาก .docx ที่ติดมากับโค้ดใน src/assets/legal-templates/
+ * **นั่นเป็นแค่ฉบับตั้งต้น** ของจริงหลังจากนี้คือเวอร์ชันล่าสุดในฐานข้อมูล ซึ่ง BDI
+ * เปลี่ยนเองได้ผ่าน POST /api/admin/legal-documents/:code/versions โดยไม่ต้องแก้โค้ด
+ *
+ * A4 (แบบนำส่งข้อมูล) เป็นเอกสารของ Journey C จึงยังอยู่สถานะ DRAFT และไม่มีเวอร์ชัน —
+ * การ์ด "Organization Registration PDF legal doc render" กำหนดขอบเขตไว้แค่ A0–A3
  */
-async function seedLegalDocuments() {
-  const documents = [
-    { code: "A0", type: "TERMS_OF_USE", nameTh: "ข้อตกลงการใช้งานระบบ", scope: "ORGANIZATION_REGISTRATION", order: 1, signature: true },
-    { code: "A1", type: "DATA_SHARING_AGREEMENT", nameTh: "เงื่อนไขการเชื่อมโยงและแลกเปลี่ยนข้อมูล", scope: "ORGANIZATION_REGISTRATION", order: 2, signature: true },
-    { code: "A2", type: "SECURITY_POLICY", nameTh: "ข้อกำหนดด้านความมั่นคงปลอดภัย", scope: "ORGANIZATION_REGISTRATION", order: 3, signature: true },
-    { code: "A3", type: "PERSONAL_DATA_PROTECTION_NOTICE", nameTh: "ข้อกำหนดด้านการคุ้มครองข้อมูลส่วนบุคคล", scope: "ORGANIZATION_REGISTRATION", order: 4, signature: true },
-    { code: "A4", type: "ACCEPTABLE_USE_POLICY", nameTh: "ข้อกำหนดการใช้ข้อมูลที่ได้รับ", scope: "DATASET_REGISTRATION", order: 1, signature: true },
-  ];
+const LEGAL_DOCUMENTS = [
+  { code: "A0", type: "DATA_SHARING_AGREEMENT", nameTh: "ข้อตกลงในการบริหารจัดการและการแบ่งปันข้อมูล", scope: "ORGANIZATION_REGISTRATION", order: 1, signature: true, template: "A0.docx" },
+  { code: "A1", type: "DATA_PROCESSING_AGREEMENT", nameTh: "ผนวก 1 ข้อตกลงในการประมวลผลข้อมูล (DPA)", scope: "ORGANIZATION_REGISTRATION", order: 2, signature: true, template: "A1.docx" },
+  { code: "A2", type: "PERSONAL_DATA_PROCESSING_AGREEMENT", nameTh: "ผนวก 2 ข้อตกลงประมวลผลข้อมูลส่วนบุคคล (PDPA)", scope: "ORGANIZATION_REGISTRATION", order: 3, signature: true, template: "A2.docx" },
+  { code: "A3", type: "NON_DISCLOSURE_AGREEMENT", nameTh: "ผนวก 3 ข้อตกลงรักษาความลับ (NDA)", scope: "ORGANIZATION_REGISTRATION", order: 4, signature: true, template: "A3.docx" },
+  { code: "A4", type: "DATA_DELIVERY_FORM", nameTh: "แบบนำส่งข้อมูล", scope: "DATASET_REGISTRATION", order: 1, signature: true, template: null },
+] as const;
 
-  for (const doc of documents) {
+const TEMPLATE_DIR = new URL("../assets/legal-templates/", import.meta.url);
+
+async function seedLegalDocuments() {
+  for (const doc of LEGAL_DOCUMENTS) {
     await prisma.legalDocument.upsert({
       where: { documentCode: doc.code },
-      update: {},
+      // ชื่อและประเภทถูกแก้ให้ตรงไฟล์จริง ฐานข้อมูลที่ seed ไว้ก่อนหน้าจึงต้องตามมาด้วย
+      update: { documentType: doc.type, nameTh: doc.nameTh, displayOrder: doc.order },
       create: {
         documentCode: doc.code,
         documentType: doc.type,
@@ -120,7 +130,40 @@ async function seedLegalDocuments() {
       },
     });
   }
-  console.log(`• legal.legal_document — ${documents.length} ฉบับ (DRAFT, ยังไม่มีเนื้อหาจริง)`);
+  console.log(`• legal.legal_document — ${LEGAL_DOCUMENTS.length} ฉบับ`);
+
+  for (const doc of LEGAL_DOCUMENTS) {
+    if (!doc.template) continue;
+
+    /**
+     * idempotent: ข้ามถ้ามีเวอร์ชันที่เนื้อไฟล์เหมือนกันเผยแพร่อยู่แล้ว
+     *
+     * เทียบด้วย content_hash ไม่ใช่แค่ "มีเวอร์ชันหรือยัง" เพราะถ้า template ที่ติดมา
+     * กับโค้ดถูกแก้แล้ว seed ควรออกเวอร์ชันใหม่ให้ แต่การรันซ้ำ ๆ ต้องไม่งอกเวอร์ชัน
+     * ทุกครั้ง — และต้องไม่ทับเวอร์ชันที่ BDI อัปโหลดเข้ามาเองด้วยของเก่าในโค้ด
+     */
+    const docx = await readFile(new URL(doc.template, TEMPLATE_DIR));
+    const hash = createHash("sha256").update(docx).digest("hex");
+    const existing = await prisma.legalDocumentVersion.findFirst({
+      where: { legalDocument: { documentCode: doc.code } },
+      orderBy: { versionNumber: "desc" },
+    });
+    if (existing) {
+      const label = existing.contentHash === hash ? "เผยแพร่อยู่แล้ว" : "มีเวอร์ชันที่แก้ในระบบแล้ว";
+      console.log(`  ${doc.code} — ข้าม (${label} v${existing.versionNumber})`);
+      continue;
+    }
+
+    const { versionNumber, placeholders } = await publishVersion(prisma, {
+      documentCode: doc.code,
+      docx,
+      filename: doc.template,
+      actorId: SYSTEM_USER_ID,
+    });
+    console.log(
+      `  ${doc.code} — เผยแพร่ v${versionNumber} (${placeholders.length} placeholder)`,
+    );
+  }
 }
 
 async function seedAddresses() {

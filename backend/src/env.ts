@@ -167,6 +167,21 @@ export const env = {
     bucket: optional("MINIO_BUCKET", "bdi-uploads"),
   },
 
+  /**
+   * ตัวแปลง .docx -> PDF (gotenberg ที่ห่อ LibreOffice) — บริการแยกใน compose
+   *
+   * เอกสารกฎหมาย A0–A3 เป็น template .docx ที่ BDI แก้เองได้ เลย์เอาต์จึงต้องมาจาก
+   * LibreOffice ที่จัดหน้าจากไฟล์ต้นฉบับ ไม่ใช่โค้ดที่วาดทับตามพิกัด
+   *
+   * ไม่มี fallback: ถ้าบริการนี้ไม่ขึ้น การสร้างเอกสารจะตอบ 503 พร้อมบอกว่าเพราะอะไร
+   * ดีกว่าปล่อยไฟล์ที่เลย์เอาต์เพี้ยนออกไปให้หน่วยงานลงนาม
+   */
+  gotenberg: {
+    url: optional("GOTENBERG_URL", "http://gotenberg:3000").replace(/\/$/, ""),
+    /** LibreOffice เย็น ๆ ครั้งแรกใช้เวลาหลายวินาที เอกสาร A2 ยาวหกหน้า */
+    timeoutMs: Number(optional("GOTENBERG_TIMEOUT_MS", "60000")),
+  },
+
   smtp: {
     host: optional("SMTP_HOST", "smtp.gmail.com"),
     port: Number(optional("SMTP_PORT", "587")),

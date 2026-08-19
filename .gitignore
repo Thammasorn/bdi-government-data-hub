@@ -47,3 +47,4 @@ coverage/
 
 # docker volumes (if ever bind-mounted locally)
 .docker-data/
+__pycache__/
