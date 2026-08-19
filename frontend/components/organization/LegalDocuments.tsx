@@ -86,33 +86,44 @@ export function LegalDocumentsCard({
   return (
     <Card>
       <CardHeader title="เอกสารข้อตกลง" description={description} />
-      <div className="flex flex-wrap gap-2 border-b border-line px-6 pb-4">
-        {documents.map((doc, index) => (
-          <button
-            key={doc.versionId}
-            type="button"
-            onClick={() => setActive(index)}
-            className={`rounded-full border px-3.5 py-1.5 text-[13px] font-medium transition-colors ${
-              index === active
-                ? "border-navy-700 bg-navy-700 text-white"
-                : "border-line text-navy-700 hover:bg-navy-50"
-            }`}
-          >
-            {doc.code}
-            {doc.acceptedAt ? " ✓" : ""}
-          </button>
-        ))}
+      {/* แถบเลือกเอกสารเป็นแถวของตัวเอง มี padding บนล่างเท่ากัน — เดิมมีแต่ pb
+          ปุ่มจึงไปชิดกับเส้นใต้หัวการ์ดจนดูเหมือนหลุดจากกริด */}
+      <div className="border-b border-line bg-canvas px-6 py-4">
+        <div role="tablist" aria-label="เลือกเอกสารข้อตกลง" className="flex flex-wrap gap-2">
+          {documents.map((doc, index) => (
+            <button
+              key={doc.versionId}
+              type="button"
+              role="tab"
+              aria-selected={index === active}
+              onClick={() => setActive(index)}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-4 py-1.5 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy-700 focus-visible:ring-offset-2 ${
+                index === active
+                  ? "border-navy-700 bg-navy-700 text-white"
+                  : "border-line bg-white text-navy-700 hover:border-navy-300 hover:bg-navy-50"
+              }`}
+            >
+              {doc.code}
+              {doc.acceptedAt ? (
+                <>
+                  <span aria-hidden="true">✓</span>
+                  <span className="sr-only">เห็นชอบแล้ว</span>
+                </>
+              ) : null}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="p-6">
-        <div className="mb-4">
-          <p className="text-[15px] font-medium text-ink">
-            {current.code} · {current.name}
+        {/* ไม่พิมพ์ชื่อเอกสารซ้ำเหนือตัวอ่าน — หัวของ PdfViewer แสดงชื่อเดียวกันอยู่แล้ว
+            และแท็บที่เลือกก็บอกรหัสอยู่ เหลือไว้เฉพาะสิ่งที่ผู้ใช้ทำเอง คือการเห็นชอบ
+            (เลขเวอร์ชันของ template ไม่ได้บอกอะไรกับเขา ระบบบันทึกไว้ในฐานข้อมูลแล้วว่า
+            ลงนามรับเอกสารเวอร์ชันใด) */}
+        {current.acceptedAt ? (
+          <p className="mb-4 text-[13px] text-ink-muted">
+            เห็นชอบเมื่อ {formatThaiDate(current.acceptedAt)}
           </p>
-          <p className="mt-0.5 text-[13px] text-ink-muted">
-            ฉบับที่ {current.versionNumber}
-            {current.acceptedAt ? ` · เห็นชอบเมื่อ ${formatThaiDate(current.acceptedAt)}` : ""}
-          </p>
-        </div>
+        ) : null}
         {current.fileUrl ? (
           <PdfViewer
             /**
@@ -121,7 +132,7 @@ export function LegalDocumentsCard({
              * และผู้ที่เพิ่งลงนามจะเห็นฉบับที่ยังไม่มีลายมือชื่อของตัวเอง
              */
             url={`${api.fileUrl(current.fileUrl)}?v=${reloadKey}`}
-            filename={`${current.code} ${current.name}`}
+            filename={`${current.code} · ${current.name}`}
             title={current.name}
           />
         ) : (
@@ -130,9 +141,6 @@ export function LegalDocumentsCard({
           </p>
         )}
       </div>
-      <p className="px-6 pb-6 text-[13px] text-ink-muted">
-        เอกสาร {documents.map((d) => d.code).join(" · ")} รวม {documents.length} ฉบับ — ทุกฉบับเป็นส่วนหนึ่งของข้อตกลงเดียวกัน
-      </p>
     </Card>
   );
 }

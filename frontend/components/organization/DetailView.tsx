@@ -339,11 +339,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         ) : null}
 
         {org.status !== "DRAFT" ? (
-          <LegalDocumentsCard
-            documents={legalDocuments}
-            reloadKey={documentRound}
-            description="A0 คือข้อตกลงที่เติมข้อมูลของคำขอนี้แล้ว · A1–A3 เป็นผนวกแนบท้ายที่เป็นส่วนหนึ่งของข้อตกลงเดียวกัน"
-          />
+          <LegalDocumentsCard documents={legalDocuments} reloadKey={documentRound} />
         ) : null}
 
         <Card>
