@@ -110,6 +110,13 @@ export async function storeAttachment(
     attachmentType: AttachmentType;
     file: { buffer: Buffer; originalname: string; mimetype: string; size: number };
     uploadedBy: string;
+    /**
+     * เอกสารกฎหมายฉบับไหนที่ไฟล์นี้ถูก render มาจาก
+     *
+     * ทำให้คำขอหนึ่งใบเก็บเอกสารที่ระบบสร้างได้หลายฉบับ — หนึ่งฉบับต่อหนึ่งเวอร์ชันเอกสาร
+     * ไม่ใส่ = ไฟล์ที่ผู้ใช้อัปโหลด หรือเอกสารที่ไม่ได้ผูกกับเวอร์ชันใด
+     */
+    legalDocumentVersionId?: string | null;
   },
 ) {
   const attachmentId = randomUUID();
@@ -133,6 +140,8 @@ export async function storeAttachment(
       ownerType: params.ownerType,
       ownerId: params.ownerId,
       attachmentType: params.attachmentType,
+      // slot เดียวกันต้องรวมเอกสารฉบับเดียวกันด้วย ไม่งั้นการ render A1 จะไปแทนที่ A0
+      legalDocumentVersionId: params.legalDocumentVersionId ?? null,
       status: AttachmentStatus.ACTIVE,
     },
     select: { id: true },
@@ -158,6 +167,7 @@ export async function storeAttachment(
       fileExtension: extension,
       fileSizeBytes: BigInt(params.file.size),
       contentHash: sha256(params.file.buffer),
+      legalDocumentVersionId: params.legalDocumentVersionId ?? null,
       status: AttachmentStatus.ACTIVE,
       // ยังไม่มี virus scanner จริงในระบบ — sheet เองก็เขียนกำกับว่า "น่าจะยังไม่มี"
       // TODO: ต่อ scanner จริงแล้วปล่อยให้ worker เป็นคนเปลี่ยนเป็น CLEAN/REJECTED/QUARANTINED
@@ -178,6 +188,29 @@ export async function activeAttachments(
   return db.attachment.findMany({
     where: { ownerType, ownerId, status: AttachmentStatus.ACTIVE },
     orderBy: { uploadedAt: "asc" },
+  });
+}
+
+/**
+ * เอกสารที่ระบบ render ไว้ให้คำขอนี้ จากเอกสารกฎหมายเวอร์ชันหนึ่ง
+ *
+ * `legalDocumentVersionId: null` ใน where จับเฉพาะไฟล์ที่ไม่ได้ผูกเวอร์ชัน จึงต้องแยกฟังก์ชัน
+ * จาก activeAttachment() ที่ไม่สนใจคอลัมน์นี้ — ไม่งั้น A0 ฉบับเก่า (ก่อนมีคอลัมน์) กับ
+ * ฉบับใหม่จะทับกัน
+ */
+export async function activeRenderedDocument(
+  db: Db,
+  ownerType: AttachmentOwnerType,
+  ownerId: string,
+  legalDocumentVersionId: string,
+) {
+  return db.attachment.findFirst({
+    where: {
+      ownerType,
+      ownerId,
+      legalDocumentVersionId,
+      status: AttachmentStatus.ACTIVE,
+    },
   });
 }
 

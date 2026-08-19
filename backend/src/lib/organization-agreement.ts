@@ -1,5 +1,5 @@
 /**
- * สร้างเอกสาร A0 (ข้อตกลงในการบริหารจัดการและการแบ่งปันข้อมูล) ของคำขอหนึ่งใบ
+ * สร้างเอกสารกฎหมายของคำขอหนึ่งใบ จาก template ที่เผยแพร่อยู่
  *
  * ถูกเรียกสามจุดในเส้นทาง B และทุกจุดใช้ทางเดินเดียวกัน ต่างกันแค่ว่าตอนนั้นมีลายมือชื่อ
  * ของใครแล้ว:
@@ -8,7 +8,11 @@
  *   2. ผู้มีอำนาจกระทำการแทนลงนาม        → มีลายมือชื่อฝ่ายหน่วยงาน
  *   3. ผู้อนุมัติ BDI ลงนาม              → มีทั้งสองฝ่าย พร้อมตราเห็นชอบ
  *
- * แต่ละครั้งเขียนทับ slot GENERATED_FORM ของคำขอ ซึ่ง storeAttachment() จะเปลี่ยนไฟล์เดิม
+ * **ไม่ผูกกับ A0 ฉบับเดียวอีกต่อไป** เอกสารฉบับไหนที่มี placeholder จะถูก render ด้วยข้อมูล
+ * ของคำขอนั้นและเก็บแยกไฟล์กัน (คีย์ด้วย legal_document_version_id) ฉบับที่ไม่มี placeholder
+ * ใช้ไฟล์กลางของเวอร์ชันที่เผยแพร่ร่วมกันทุกหน่วยงาน เพราะผลลัพธ์เหมือนกันหมด
+ *
+ * แต่ละครั้งเขียนทับ slot ของเอกสารฉบับนั้นในคำขอ ซึ่ง storeAttachment() จะเปลี่ยนไฟล์เดิม
  * เป็น REPLACED ไม่ได้ลบ — ฉบับก่อนลงนามจึงยังตรวจย้อนได้ว่าหน่วยงานเห็นอะไรตอนกดนำส่ง
  *
  * **ลายมือชื่อไม่ได้คำนวณสดจากบัญชีผู้ใช้** แต่อ่านจาก signature.signature_confirmation
@@ -16,6 +20,7 @@
  */
 import {
   AttachmentOwnerType,
+  AttachmentStatus,
   AttachmentType,
   ConfirmationType,
   SubjectType,
@@ -97,20 +102,22 @@ export async function agreementVersion(db: Db) {
 }
 
 /**
- * เติมข้อมูลลง A0 แล้วเก็บเป็น GENERATED_FORM ของคำขอ
+ * เติมข้อมูลของคำขอลงในเอกสารฉบับหนึ่ง แล้วเก็บเป็นไฟล์ของคำขอ
+ *
  * คืน attachment ในรูปที่ส่งออก API ได้เลย พร้อม id ของเวอร์ชันที่ใช้ render
  */
-export async function renderAgreement(
+export async function renderLegalDocument(
   db: Db,
   params: {
     request: AgreementRequest;
+    /** เอกสารที่จะ render — ต้องเป็นเวอร์ชันที่เผยแพร่อยู่ */
+    document: { code: string; nameTh: string; versionId: string };
     /** ชื่อคนที่ทำให้เอกสารฉบับนี้ถูกสร้าง — ไปอยู่บรรทัด "พิมพ์จากระบบโดย" */
     printedByName: string | null;
     actorId: string;
   },
 ) {
-  const version = await agreementVersion(db);
-  const docx = await templateDocx(db, version.versionId);
+  const docx = await templateDocx(db, params.document.versionId);
   const signatures = await signaturesOf(db, params.request.id);
   // ข้อมูลสำนักงานมาจากแถว organization ของ BDI เอง ไม่ได้ hardcode ทั้งชุด —
   // ที่ยัง hardcode คือช่องที่ตารางไม่มี (ที่อยู่ ชื่อผู้อำนวยการ) ดู OFFICE_DEFAULTS
@@ -136,20 +143,64 @@ export async function renderAgreement(
     printedAt: now,
   });
 
-  const pdf = await renderTemplateToPdf(docx, values, `${AGREEMENT_CODE}.docx`);
+  const pdf = await renderTemplateToPdf(docx, values, `${params.document.code}.docx`);
+
+  /**
+   * A0 ที่ถูกสร้างก่อนมีคอลัมน์ legal_document_version_id เก็บไว้ที่ slot เดียวกันแต่
+   * เวอร์ชันเป็น NULL ซึ่ง Postgres นับว่าเป็นอีก slot — ถ้าไม่ปลดออกจะมีสองฉบับ ACTIVE
+   * พร้อมกัน และหน้าจอจะหยิบฉบับไหนก็ได้
+   */
+  if (params.document.code === AGREEMENT_CODE) {
+    await db.attachment.updateMany({
+      where: {
+        ownerType: OWNER,
+        ownerId: params.request.id,
+        attachmentType: AttachmentType.GENERATED_FORM,
+        legalDocumentVersionId: null,
+        status: AttachmentStatus.ACTIVE,
+      },
+      data: { status: AttachmentStatus.REPLACED },
+    });
+  }
 
   const attachment = await storeAttachment(db, {
     ownerType: OWNER,
     ownerId: params.request.id,
     attachmentType: AttachmentType.GENERATED_FORM,
+    legalDocumentVersionId: params.document.versionId,
     file: {
       buffer: pdf,
-      originalname: `${AGREEMENT_CODE} ข้อตกลง-${params.request.name ?? "หน่วยงาน"}.pdf`,
+      originalname: `${params.document.code} ${params.document.nameTh}-${params.request.name ?? "หน่วยงาน"}.pdf`,
       mimetype: "application/pdf",
       size: pdf.length,
     },
     uploadedBy: params.actorId,
   });
 
-  return { attachment: publicAttachment(attachment), versionId: version.versionId };
+  return { attachment: publicAttachment(attachment), versionId: params.document.versionId };
+}
+
+/**
+ * render ทุกฉบับที่มี placeholder ของคำขอหนึ่งใบ
+ *
+ * ใช้หลังลงนามทุกครั้ง: ลายมือชื่อที่เพิ่มเข้ามาต้องไปปรากฏในทุกฉบับที่มีช่องลงนาม
+ * ไม่ใช่แค่ A0 — เอกสารฉบับอื่นอาจมี {{approver.signature}} อยู่ด้วย
+ */
+export async function renderPlaceholderDocuments(
+  db: Db,
+  params: { request: AgreementRequest; printedByName: string | null; actorId: string },
+): Promise<string[]> {
+  const documents = await publishedDocuments(db, LEGAL_SCOPES.ORGANIZATION_REGISTRATION);
+  const rendered: string[] = [];
+  for (const doc of documents) {
+    if (!doc.hasPlaceholders) continue;
+    await renderLegalDocument(db, {
+      request: params.request,
+      document: { code: doc.code, nameTh: doc.nameTh, versionId: doc.versionId },
+      printedByName: params.printedByName,
+      actorId: params.actorId,
+    });
+    rendered.push(doc.code);
+  }
+  return rendered;
 }

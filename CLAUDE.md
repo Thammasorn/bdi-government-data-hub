@@ -339,6 +339,17 @@ computes line breaks and pagination from the fonts installed on the machine; wit
 substitutes another and the whole document shifts, which reads as a broken template.
 `gotenberg/Dockerfile` fails the build if `fc-list` cannot find it.
 
+**Every document with placeholders is rendered per request, not just A0.**
+`hasPlaceholders` is read from the stored `.docx`, never from the document code, so adding a
+placeholder to A1 makes it render per request with no code change, and removing it sends it back
+to the shared central PDF. That needed
+`20260819170000_attachment_per_legal_document`: `uq_active_attachment_per_slot` allowed one ACTIVE
+row per `(owner_type, owner_id, attachment_type)`, so a request could hold exactly one generated
+PDF. The index now includes `COALESCE(legal_document_version_id, '000…0')` — the COALESCE matters,
+because plain NULLs are distinct in Postgres and would have quietly let user-uploaded attachments
+have several ACTIVE rows per slot. A0 rows predating the column keep `NULL` and are left alone
+rather than re-rendered, so approved documents do not get a new "พิมพ์จากระบบ" line.
+
 **The variable catalogue is the contract between documents and code.**
 `TEMPLATE_VARIABLES` in `lib/document-render.ts` is the single source for validation, the admin
 API listing and `docs/18-document-template-variables.md`; `lib/legal-values.ts` fills every entry.

@@ -35,6 +35,7 @@ import { isValidAddress, lookupZipcode, resolveAddressCodes, resolveAddressNames
 import {
   activeAttachment,
   activeAttachments,
+  activeRenderedDocument,
   publicAttachment,
   storeAttachment,
   streamAttachment,
@@ -59,7 +60,8 @@ import { NotificationType, bdiApproverIds, bdiOfficerIds, emailsOf, notifyUsers,
 import {
   AGREEMENT_CODE,
   agreementVersion,
-  renderAgreement,
+  renderLegalDocument,
+  renderPlaceholderDocuments,
 } from "../lib/organization-agreement.js";
 import { DocumentRenderError } from "../lib/document-render.js";
 import { LEGAL_SCOPES, publishedDocuments } from "../lib/legal.js";
@@ -974,20 +976,37 @@ organizationRouter.post("/:id/generate-form", async (req, res) => {
   }
 
   /**
-   * เอกสารที่สร้างคือ A0 ฉบับจริงจาก template .docx ของฝ่ายกฎหมาย
+   * สร้างเอกสารจาก template .docx ของฝ่ายกฎหมาย — **ทุกฉบับที่มี placeholder** ไม่ใช่แค่ A0
    *
    * ก่อนหน้านี้ตรงนี้เรียก renderOrganizationForm() ซึ่งวางเลย์เอาต์ "แบบฟอร์มขอสร้าง
    * หน่วยงานในระบบ" ขึ้นมาเอง เพราะตอนนั้นสเปกมีแต่ภาพตัวอย่าง ไม่มีไฟล์ template
    * ตอนนี้มีไฟล์จริงแล้ว เอกสารที่หน่วยงานลงนามจึงต้องเป็นฉบับนั้น ไม่ใช่ฉบับที่เราวาดเอง
    * ข้อมูลผู้กรอก เลขบัตร และเบอร์โทรยังตรวจได้จากหน้ารายละเอียดคำขอ ซึ่งแสดงครบทุกช่อง
    */
-  const { attachment } = await renderAgreement(prisma, {
+  const rendered = await renderPlaceholderDocuments(prisma, {
     request: { ...shape, submittedAt: request.submittedAt },
     printedByName: fullName(shape.contactPrefix, shape.contactFirstName, shape.contactLastName),
     actorId: session.sub,
   });
+  if (rendered.length === 0) {
+    res.status(503).json({
+      error: "no_legal_documents",
+      message: "ยังไม่มีเอกสารข้อตกลงที่เผยแพร่ในระบบ กรุณาแจ้งผู้ดูแลระบบ",
+    });
+    return;
+  }
 
-  res.status(201).json({ attachment });
+  const attachment = await activeAttachment(
+    prisma,
+    AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
+    request.id,
+    AttachmentType.GENERATED_FORM,
+  );
+  res.status(201).json({
+    attachment: attachment ? publicAttachment(attachment) : null,
+    /** รหัสเอกสารที่สร้างให้รอบนี้ — หน้าตรวจสอบก่อนนำส่งใช้ยืนยันว่าครบ */
+    documents: rendered,
+  });
 });
 
 // ------------------------------------------------------- เอกสารกฎหมายของคำขอ
@@ -1006,9 +1025,6 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
    *
    * เมนู "หน่วยงานของฉัน" ประกอบลิงก์จาก id ของ**หน่วยงาน** (AppShell.tsx) ผู้มีอำนาจ
    * กระทำการแทนที่เข้าหน้ารายละเอียดจากเมนูนั้นจึงยิงมาที่นี่ด้วย id ของหน่วยงาน
-   * ตอนที่รับแต่ id ของคำขอ เส้นทางนั้นได้ 404 → หน้าจอหมุนค้างตลอดและปุ่ม
-   * "ผ่านการตรวจสอบ" กดไม่ได้ เพราะกล่องลงนามผูกกับรายการเอกสารที่โหลดไม่สำเร็จ
-   * ทำให้ต่างกันระหว่างสอง route ที่อยู่ติดกันคือกับดักที่ผู้เรียกไม่มีทางเดาได้
    */
   const request = await findRequestByRequestOrOrganizationId(req.params.id);
   if (!request || !canView(session, request)) {
@@ -1017,48 +1033,12 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
   }
 
   const documents = await publishedDocuments(prisma, LEGAL_SCOPES.ORGANIZATION_REGISTRATION);
-  let agreement = await activeAttachment(
-    prisma,
-    AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
-    request.id,
-    AttachmentType.GENERATED_FORM,
-  );
 
-  /**
-   * สร้าง A0 ใหม่ถ้าไฟล์ที่มีเก่ากว่า template ที่เผยแพร่อยู่ (หรือยังไม่มีไฟล์เลย)
-   *
-   * เคสที่ต้องกัน: หน่วยงานกดสร้าง PDF จาก template v1 แล้วนำส่ง ต่อมาฝ่ายกฎหมายเผยแพร่
-   * v2 ผู้มีอำนาจเปิดหน้านี้ขึ้นมา รายการจะบอกว่าเอกสารคือ v2 และตอนกดลงนามระบบจะบันทึก
-   * legal_acceptance เป็น v2 — แต่ไฟล์ที่เขาเพิ่งอ่านยัง render จาก v1 อยู่ กลายเป็นลงนาม
-   * รับข้อความคนละฉบับกับที่อ่าน
-   *
-   * เงื่อนไขนี้เข้าเงื่อนไขได้ไม่บ่อย และวนซ้ำไม่ได้ เพราะหลังสร้างเสร็จ uploadedAt
-   * จะใหม่กว่า publishedAt เสมอ ส่วนคำขอที่ยังไม่ได้นำส่งไม่ต้องสร้างให้ — ผู้กรอกเป็นคน
-   * กดสร้างเองที่หน้าตรวจสอบก่อนนำส่ง และตอนนั้นข้อมูลอาจยังไม่ครบ
-   */
-  const agreementDoc = documents.find((doc) => doc.code === AGREEMENT_CODE);
-  const publishedAt = agreementDoc
-    ? (
-        await prisma.legalDocumentVersion.findUnique({
-          where: { id: agreementDoc.versionId },
-          select: { publishedAt: true },
-        })
-      )?.publishedAt
-    : null;
-  const stale =
-    agreementDoc !== undefined &&
-    request.submittedAt !== null &&
-    (!agreement || (publishedAt !== null && publishedAt !== undefined && agreement.uploadedAt < publishedAt));
-
-  if (stale) {
-    const shape = await toApiShape(request);
-    const rendered = await renderAgreement(prisma, {
-      request: { ...shape, submittedAt: request.submittedAt },
-      printedByName: fullName(shape.contactPrefix, shape.contactFirstName, shape.contactLastName),
-      actorId: session.sub,
-    });
-    agreement = await prisma.attachment.findUniqueOrThrow({ where: { id: rendered.attachment.id } });
-  }
+  const versions = await prisma.legalDocumentVersion.findMany({
+    where: { id: { in: documents.map((d) => d.versionId) } },
+    select: { id: true, publishedAt: true },
+  });
+  const publishedAt = new Map(versions.map((v) => [v.id, v.publishedAt]));
 
   const accepted = await prisma.legalAcceptance.findMany({
     where: { subjectType: SUBJECT, subjectId: request.id },
@@ -1066,47 +1046,154 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
   });
   const acceptedAt = new Map(accepted.map((a) => [a.legalDocumentVersionId, a.acceptedAt]));
 
-  res.json({
-    documents: documents.map((doc) => ({
+  /** ข้อมูลของคำขอ ประกอบเมื่อต้องใช้จริงเท่านั้น — การ render เป็นเรื่องที่ไม่เกิดบ่อย */
+  let shape: Awaited<ReturnType<typeof toApiShape>> | null = null;
+  const requestShape = async () => (shape ??= await toApiShape(request));
+
+  const out: Array<{
+    code: string;
+    name: string;
+    versionId: string;
+    versionNumber: number;
+    fromRequest: boolean;
+    fileUrl: string | null;
+    acceptedAt: Date | null;
+  }> = [];
+
+  for (const doc of documents) {
+    /**
+     * ฉบับที่ไม่มี placeholder ใช้ไฟล์กลางของเวอร์ชันที่เผยแพร่ร่วมกันทุกหน่วยงาน
+     * เพราะ render ออกมาเหมือนกันหมด ไม่มีเหตุให้ทำสำเนาต่อคำขอ
+     */
+    if (!doc.hasPlaceholders) {
+      out.push({
+        code: doc.code,
+        name: doc.nameTh,
+        versionId: doc.versionId,
+        versionNumber: doc.versionNumber,
+        fromRequest: false,
+        fileUrl: `/api/organizations/${request.id}/legal-documents/${doc.versionId}/file`,
+        acceptedAt: acceptedAt.get(doc.versionId) ?? null,
+      });
+      continue;
+    }
+
+    /**
+     * ฉบับที่มี placeholder ต้อง render ด้วยข้อมูลของคำขอนี้ และสร้างใหม่ให้เองถ้าไฟล์ที่มี
+     * เก่ากว่า template ที่เผยแพร่อยู่ (หรือยังไม่มีไฟล์เลย)
+     *
+     * เคสที่ต้องกัน: หน่วยงานกดสร้าง PDF จาก v1 แล้วนำส่ง ต่อมาฝ่ายกฎหมายเผยแพร่ v2
+     * ผู้มีอำนาจเปิดหน้านี้ รายการจะบอกว่าเอกสารคือ v2 และตอนกดลงนามระบบจะบันทึก
+     * legal_acceptance เป็น v2 — แต่ไฟล์ที่เขาเพิ่งอ่านยัง render จาก v1 อยู่
+     *
+     * วนซ้ำไม่ได้ เพราะหลังสร้างเสร็จ uploadedAt จะใหม่กว่า publishedAt เสมอ
+     * คำขอที่ยังไม่ได้นำส่งไม่สร้างให้ — ผู้กรอกเป็นคนกดสร้างเองที่หน้าตรวจสอบก่อนนำส่ง
+     */
+    let rendered = await activeRenderedDocument(
+      prisma,
+      AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
+      request.id,
+      doc.versionId,
+    );
+
+    // A0 ที่สร้างไว้ก่อนมีคอลัมน์ legal_document_version_id — ยอมรับไฟล์เดิมต่อไป
+    // ไม่ต้อง render ใหม่ ไม่งั้นเอกสารที่อนุมัติแล้วจะเปลี่ยนบรรทัด "พิมพ์จากระบบ"
+    if (!rendered && doc.code === AGREEMENT_CODE) {
+      rendered = await prisma.attachment.findFirst({
+        where: {
+          ownerType: AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
+          ownerId: request.id,
+          attachmentType: AttachmentType.GENERATED_FORM,
+          legalDocumentVersionId: null,
+          status: "ACTIVE",
+        },
+      });
+    }
+
+    const published = publishedAt.get(doc.versionId) ?? null;
+    const stale =
+      request.submittedAt !== null &&
+      (!rendered || (published !== null && rendered.uploadedAt < published));
+
+    if (stale) {
+      const data = await requestShape();
+      const result = await renderLegalDocument(prisma, {
+        request: { ...data, submittedAt: request.submittedAt },
+        document: { code: doc.code, nameTh: doc.nameTh, versionId: doc.versionId },
+        printedByName: fullName(data.contactPrefix, data.contactFirstName, data.contactLastName),
+        actorId: session.sub,
+      });
+      rendered = await prisma.attachment.findUniqueOrThrow({ where: { id: result.attachment.id } });
+    }
+
+    out.push({
       code: doc.code,
       name: doc.nameTh,
       versionId: doc.versionId,
       versionNumber: doc.versionNumber,
-      /** true = ฉบับนี้ถูก render จากข้อมูลคำขอ (A0) — ที่เหลือเป็นไฟล์กลาง */
-      fromRequest: doc.code === AGREEMENT_CODE,
-      /** URL ที่ frontend เปิดดูได้ — null เมื่อยังไม่ได้สร้าง A0 */
-      fileUrl:
-        doc.code === AGREEMENT_CODE
-          ? agreement
-            ? `/api/organizations/${request.id}/attachments/${agreement.id}`
-            : null
-          : `/api/organizations/${request.id}/legal-documents/${doc.versionId}/file`,
+      fromRequest: true,
+      fileUrl: rendered
+        ? `/api/organizations/${request.id}/legal-documents/${doc.versionId}/file`
+        : null,
       acceptedAt: acceptedAt.get(doc.versionId) ?? null,
-    })),
-  });
+    });
+  }
+
+  res.json({ documents: out });
 });
 
-/** ไฟล์ PDF ของผนวกฉบับหนึ่ง — render ไว้แล้วตอน publish ไม่ได้แปลงสดทุกครั้ง */
+/**
+ * ไฟล์ PDF ของเอกสารฉบับหนึ่ง
+ *
+ * เส้นทางเดียวสำหรับทุกฉบับ ไม่ว่าจะเป็นไฟล์ที่ render ให้คำขอนี้หรือไฟล์กลางของเวอร์ชัน —
+ * frontend จึงไม่ต้องรู้ว่าฉบับไหนมี placeholder และไม่ต้องมีสองรูปแบบ URL
+ */
 organizationRouter.get("/:id/legal-documents/:versionId/file", async (req, res) => {
   const session = req.session!;
-  // รับได้ทั้งสอง id ด้วยเหตุผลเดียวกับ route ด้านบน
   const request = await findRequestByRequestOrOrganizationId(req.params.id);
   if (!request || !canView(session, request)) {
     res.status(404).json({ error: "not_found" });
     return;
   }
-  if (!isUuid(req.params.versionId)) {
+  const versionId = req.params.versionId;
+  if (!isUuid(versionId)) {
     res.status(404).json({ error: "not_found" });
     return;
   }
 
-  const pdf = await activeAttachment(
+  // ฉบับที่ render ให้คำขอนี้มาก่อนไฟล์กลางเสมอ
+  let file = await activeRenderedDocument(
+    prisma,
+    AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
+    request.id,
+    versionId,
+  );
+
+  // A0 ฉบับเก่าที่ยังไม่มี legal_document_version_id
+  if (!file) {
+    const primary = await agreementVersion(prisma);
+    if (primary.versionId === versionId) {
+      file = await prisma.attachment.findFirst({
+        where: {
+          ownerType: AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
+          ownerId: request.id,
+          attachmentType: AttachmentType.GENERATED_FORM,
+          legalDocumentVersionId: null,
+          status: "ACTIVE",
+        },
+      });
+    }
+  }
+
+  // ไฟล์กลางของเวอร์ชัน — ฉบับที่ไม่มี placeholder ใช้ตัวนี้
+  file ??= await activeAttachment(
     prisma,
     AttachmentOwnerType.LEGAL_DOCUMENT_VERSION,
-    req.params.versionId,
+    versionId,
     AttachmentType.GENERATED_FORM,
   );
-  if (!pdf) {
+
+  if (!file) {
     res.status(404).json({ error: "not_found", message: "ยังไม่มีไฟล์ของเอกสารฉบับนี้" });
     return;
   }
@@ -1114,12 +1201,12 @@ organizationRouter.get("/:id/legal-documents/:versionId/file", async (req, res) 
   await logAudit({
     action: AuditAction.DOCUMENT_DOWNLOADED,
     subjectType: AuditSubject.ATTACHMENT,
-    subjectId: pdf.id,
+    subjectId: file.id,
     organizationId: request.organizationId,
-    after: { filename: pdf.originalFileName, legalDocumentVersionId: req.params.versionId },
+    after: { filename: file.originalFileName, legalDocumentVersionId: versionId },
   });
 
-  await streamAttachment(res, pdf);
+  await streamAttachment(res, file);
 });
 
 // ---------------------------------------------------------------- submit
@@ -1628,7 +1715,8 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
     if (confirmationType && result === ReviewResult.APPROVED) {
       try {
         const shape = await toApiShape(fresh);
-        await renderAgreement(prisma, {
+        // ทุกฉบับที่มี placeholder ไม่ใช่แค่ A0 — ฉบับอื่นอาจมีช่องลงนามของตัวเองด้วย
+        await renderPlaceholderDocuments(prisma, {
           request: { ...shape, submittedAt: fresh.submittedAt },
           printedByName: fullName(shape.contactPrefix, shape.contactFirstName, shape.contactLastName),
           actorId: session.sub,

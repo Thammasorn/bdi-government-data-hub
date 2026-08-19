@@ -714,6 +714,20 @@ model Attachment {
 
   attachmentType AttachmentType @map("attachment_type")
 
+  /// เบี่ยงจากดีไซน์: เพิ่มเพื่อให้คำขอหนึ่งใบเก็บเอกสารที่ระบบสร้างได้หลายฉบับ
+  ///
+  /// เอกสารกฎหมายฉบับไหนก็มี placeholder ได้ ไม่ใช่แค่ A0 ฉบับที่มีต้องถูก render ด้วย
+  /// ข้อมูลของคำขอนั้น ๆ แล้วเก็บแยกกัน แต่ uq_active_attachment_per_slot เดิมยอมให้มี
+  /// ACTIVE ได้แถวเดียวต่อ (owner_type, owner_id, attachment_type) — คำขอจึงเก็บ
+  /// GENERATED_FORM ได้ฉบับเดียว คอลัมน์นี้เข้าไปอยู่ใน index นั้นด้วย ทำให้เก็บได้
+  /// หนึ่งฉบับต่อหนึ่ง legal_document_version โดยไม่ต้องเพิ่มค่า enum ต่อรหัสเอกสาร
+  /// (A5 ในอนาคตจึงใช้ได้เลยโดยไม่ต้องแก้โค้ด)
+  ///
+  /// เป็น logical reference เหมือน owner_id ไม่ได้ผูก FK ไว้
+  /// NULL = ไฟล์ที่ไม่ได้มาจาก template เอกสารกฎหมาย (ไฟล์แนบที่ผู้ใช้อัปโหลด) หรือ
+  /// A0 ที่ถูกสร้างไว้ก่อนมีคอลัมน์นี้
+  legalDocumentVersionId String? @map("legal_document_version_id") @db.Uuid
+
   originalFileName String  @map("original_file_name") @db.VarChar(500)
   storageBucket    String  @map("storage_bucket") @db.VarChar(128)
   storageKey       String  @map("storage_key") @db.VarChar(1024)
@@ -751,6 +765,7 @@ model Attachment {
 
   @@index([ownerType, ownerId, attachmentType])
   @@index([contentHash])
+  @@index([ownerId, legalDocumentVersionId])
   @@map("attachment")
   @@schema("attachment")
 }
