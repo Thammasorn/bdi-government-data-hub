@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 
 import { AuthLayout } from "@/components/AuthLayout";
-import { storeThaidProfile, takeActivationToken } from "@/components/auth/Thaid";
+import { storeThaidProfile, takeActivationToken, takeNextPath } from "@/components/auth/Thaid";
 import { useSession, type SessionUser } from "@/components/SessionProvider";
 import { Spinner } from "@/components/ui/Spinner";
 import { api, ApiError } from "@/lib/api";
@@ -63,7 +63,12 @@ function ThaidCallback() {
 
         if (result.user) {
           setUser(result.user);
-          router.replace(isBdiStaff(result.user.roles) ? bdiLandingPath(result.user.roles) : "/");
+          // ปลายทางที่ฝากไว้ก่อนออกไป ThaiD — ผู้ที่มาจากลิงก์ในอีเมลต้องได้กลับ
+          // ไปหน้าที่ตั้งใจ ไม่ใช่หน้าแรก (เหมือนทางรหัสผ่าน + OTP)
+          const next = takeNextPath();
+          router.replace(
+            next ?? (isBdiStaff(result.user.roles) ? bdiLandingPath(result.user.roles) : "/"),
+          );
           return;
         }
 

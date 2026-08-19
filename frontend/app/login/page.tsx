@@ -12,6 +12,7 @@ import { TextField } from "@/components/ui/Field";
 import { OtpInput } from "@/components/ui/OtpInput";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import { nextFromLocation } from "@/lib/require-auth";
 import { bdiLandingPath, isBdiStaff } from "@/lib/status";
 import type { SessionUser } from "@/components/SessionProvider";
 
@@ -149,7 +150,17 @@ function OtpStep({ email, onBack }: { email: string; onBack: () => void }) {
           code: value,
         });
         setUser(data.user);
-        router.push(isBdiStaff(data.user.roles) ? bdiLandingPath(data.user.roles) : "/");
+        /**
+         * ลิงก์ในอีเมลชี้ตรงเข้าหน้ารายละเอียด ผู้ที่ยังไม่ล็อกอินจึงถูกพามาที่นี่
+         * พร้อม ?next=<หน้านั้น> — พากลับไปให้ถึงที่ ไม่ใช่ทิ้งไว้ที่หน้าแรกแล้ว
+         * ให้ไปหาคำขอเองในตาราง (สเปกบนการ์ดเขียนไว้ตรง ๆ ว่าต้องพาไปเลย)
+         *
+         * อ่านจาก window.location ไม่ใช่ useSearchParams() — หน้านี้เป็น client
+         * component ที่ไม่มี <Suspense> ครอบ และตอนนี้คือหลังกดยืนยัน OTP แล้ว
+         * เบราว์เซอร์พร้อมมานานแล้ว
+         */
+        const next = nextFromLocation();
+        router.push(next ?? (isBdiStaff(data.user.roles) ? bdiLandingPath(data.user.roles) : "/"));
       } catch (err) {
         setError(err instanceof ApiError ? err.message : "ยืนยันไม่สำเร็จ");
         setCode("");

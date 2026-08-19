@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import { nextFromLocation, safeNextPath } from "@/lib/require-auth";
 
 /**
  * ปุ่มเริ่มยืนยันตัวตนกับ ThaiD
@@ -15,6 +16,7 @@ import { api, ApiError } from "@/lib/api";
  */
 const TOKEN_KEY = "thaid:activation-token";
 const PROFILE_KEY = "thaid:profile";
+const NEXT_KEY = "thaid:next";
 
 /**
  * ฝาก activation key ไว้ก่อนออกไป ThaiD
@@ -34,6 +36,25 @@ export function takeActivationToken(): string | null {
 
 export function storeThaidProfile(profile: unknown) {
   sessionStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+}
+
+/**
+ * ฝากปลายทางหลังล็อกอินไว้ก่อนออกไป ThaiD ด้วยเหตุผลเดียวกับ activation key
+ *
+ * ผู้ที่กดลิงก์ในอีเมลตอนยังไม่ล็อกอินจะมาถึงหน้า /login พร้อม ?next=<หน้านั้น>
+ * แต่การล็อกอินด้วย ThaiD พาเบราว์เซอร์ออกนอกเว็บแล้วกลับเข้ามาที่
+ * /auth/callback/thaid ซึ่งเป็นคนละ URL — ค่า next บน query string จึงหายไป
+ * ระหว่างทาง ถ้าไม่ฝากไว้ ผู้ใช้ที่เลือกทางนี้จะไปโผล่หน้าแรกแทนหน้าที่ตั้งใจไป
+ */
+export function storeNextPath(next: string | null) {
+  if (next) sessionStorage.setItem(NEXT_KEY, next);
+  else sessionStorage.removeItem(NEXT_KEY);
+}
+
+export function takeNextPath(): string | null {
+  const value = sessionStorage.getItem(NEXT_KEY);
+  sessionStorage.removeItem(NEXT_KEY);
+  return safeNextPath(value);
 }
 
 export function ThaidButton({
@@ -59,6 +80,7 @@ export function ThaidButton({
         "/api/auth/thaid/start",
         { purpose, ...(token ? { token } : {}) },
       );
+      if (purpose === "login") storeNextPath(nextFromLocation());
       onBeforeRedirect?.();
       window.location.assign(authorizeUrl);
     } catch (err) {

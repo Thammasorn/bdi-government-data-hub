@@ -12,6 +12,7 @@ import { FileUpload, type UploadedFile } from "@/components/ui/FileUpload";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import { useRequireAuth } from "@/lib/require-auth";
 import { PREFIXES } from "@/lib/status";
 
 const EMPTY = {
@@ -75,7 +76,8 @@ const SECTION_FIELDS: Record<string, Array<keyof FormState>> = {
 export default function EditOrganizationPage() {
   const router = useRouter();
   const { id: orgId } = useParams<{ id: string }>();
-  const { user, loading: sessionLoading, refresh } = useSession();
+  const { user, loading: sessionLoading } = useRequireAuth();
+  const { refresh } = useSession();
   const { show } = useToast();
 
   const [form, setForm] = useState<FormState>(EMPTY);
@@ -97,11 +99,7 @@ export default function EditOrganizationPage() {
 
   // ---------- โหลดข้อมูลเดิม ----------
   useEffect(() => {
-    if (sessionLoading) return;
-    if (!user) {
-      router.replace("/login");
-      return;
-    }
+    if (sessionLoading || !user) return;
     api
       .get<{ organization: Record<string, unknown> & { attachments: Array<{ id: string; kind: string; filename: string; sizeBytes: number }> } }>(
         `/api/organizations/${orgId}`,

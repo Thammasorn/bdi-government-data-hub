@@ -4,16 +4,16 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { DatasetRequestTable } from "@/components/dataset/RequestTable";
-import { useSession } from "@/components/SessionProvider";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import { useRequireAuth } from "@/lib/require-auth";
 import { isBdiStaff } from "@/lib/status";
 
 export default function DatasetsPage() {
   const router = useRouter();
-  const { user, loading } = useSession();
+  const { user, loading } = useRequireAuth();
   const { show } = useToast();
 
   const [eligibility, setEligibility] = useState<{ eligible: boolean; reason: string | null } | null>(
@@ -22,11 +22,7 @@ export default function DatasetsPage() {
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    if (loading) return;
-    if (!user) {
-      router.replace("/login");
-      return;
-    }
+    if (loading || !user) return;
     if (isBdiStaff(user.roles)) router.replace("/admin/datasets");
   }, [user, loading, router]);
 

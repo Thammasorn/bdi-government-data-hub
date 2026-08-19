@@ -4,11 +4,11 @@ import clsx from "clsx";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 
-import { useSession } from "@/components/SessionProvider";
 import { Card, StatusBadge } from "@/components/ui/Card";
 import { SkeletonRows, Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api } from "@/lib/api";
+import { useRequireAuth } from "@/lib/require-auth";
 import { REQUEST_STATUS_META, formatThaiDate, isBdiStaff, type RequestStatus } from "@/lib/status";
 import type { OrganizationListItem } from "@/lib/types";
 
@@ -33,7 +33,7 @@ export default function AdminOrganizationsPage() {
 function OrganizationTable() {
   const router = useRouter();
   const params = useSearchParams();
-  const { user, loading: sessionLoading } = useSession();
+  const { user, loading: sessionLoading } = useRequireAuth();
   const { show } = useToast();
 
   const [rows, setRows] = useState<OrganizationListItem[]>([]);
@@ -44,11 +44,7 @@ function OrganizationTable() {
   );
 
   useEffect(() => {
-    if (sessionLoading) return;
-    if (!user) {
-      router.replace("/login");
-      return;
-    }
+    if (sessionLoading || !user) return;
     if (!isBdiStaff(user.roles)) router.replace("/");
   }, [user, sessionLoading, router]);
 

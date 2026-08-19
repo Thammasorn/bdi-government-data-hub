@@ -11,6 +11,7 @@ import { FileUpload, type UploadedFile } from "@/components/ui/FileUpload";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import { useRequireAuth } from "@/lib/require-auth";
 import {
   ASSIGN_LABELS,
   DATA_CATEGORY_LABELS,
@@ -77,6 +78,7 @@ export default function EditDatasetRequestPage() {
   const router = useRouter();
   const { id } = useParams<{ id: string }>();
   const { show } = useToast();
+  const { ready } = useRequireAuth();
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [legalAccepted, setLegalAccepted] = useState(false);
@@ -95,6 +97,9 @@ export default function EditDatasetRequestPage() {
   const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
+    // ยังไม่ล็อกอิน = API ตอบได้แค่ 401 แล้วฟอร์มจะขึ้นมาเปล่า ๆ
+    // useRequireAuth พาไป /login?next=<หน้านี้> ให้แล้ว
+    if (!ready) return;
     api
       .get<{ request: DatasetRequest }>(`/api/dataset-requests/${id}`)
       .then(({ request }) => {
@@ -109,7 +114,7 @@ export default function EditDatasetRequestPage() {
       })
       .catch(() => show({ tone: "error", title: "โหลดข้อมูลไม่สำเร็จ" }))
       .finally(() => setLoading(false));
-  }, [id, show]);
+  }, [id, show, ready]);
 
   /**
    * ทุกการเปลี่ยนค่าเดินผ่าน applyRules() — เลือกหมวดหมู่ "ข้อมูลสาธารณะ" แล้วระดับชั้น
