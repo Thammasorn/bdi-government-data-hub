@@ -11,7 +11,7 @@ import {
 
 import { prisma } from "../db.js";
 import { uploadedFile } from "../lib/attachment.js";
-import { TEMPLATE_VARIABLES } from "../lib/document-render.js";
+import { TEMPLATE_VARIABLES, VARIABLE_GROUPS } from "../lib/document-render.js";
 import { publishVersion } from "../lib/legal.js";
 import { lookupZipcode, resolveAddressCodes, resolveAddressNames } from "../lib/address.js";
 import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
@@ -882,9 +882,17 @@ adminRouter.get("/legal-documents", async (_req, res) => {
   });
 
   res.json({
-    variables: Object.entries(TEMPLATE_VARIABLES).map(([name, description]) => ({
-      name: `{{${name}}}`,
-      description,
+    /** รายชื่อตัวแปรที่ template ใช้ได้ จัดกลุ่มไว้ให้ผู้เขียนเอกสารอ่าน */
+    variableGroups: Object.entries(VARIABLE_GROUPS).map(([group, title]) => ({
+      group,
+      title,
+      variables: Object.entries(TEMPLATE_VARIABLES)
+        .filter(([, spec]) => spec.group === group)
+        .map(([name, spec]) => ({
+          name: `{{${name}}}`,
+          description: spec.description,
+          example: spec.example,
+        })),
     })),
     documents: documents.map((doc) => ({
       code: doc.documentCode,

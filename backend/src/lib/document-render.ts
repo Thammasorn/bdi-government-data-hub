@@ -38,39 +38,111 @@ export class DocumentRenderError extends Error {
   }
 }
 
+/** กลุ่มของตัวแปร ใช้จัดหมวดในเอกสารคู่มือและในผลลัพธ์ของ API */
+export const VARIABLE_GROUPS = {
+  agreement: "วันที่ทำข้อตกลง",
+  request: "คำขอลงทะเบียน",
+  org: "หน่วยงานที่ลงทะเบียน",
+  signatory: "ผู้มีอำนาจกระทำการแทน",
+  contact: "ผู้กรอกข้อมูล",
+  signature: "ลายมือชื่อและตราเห็นชอบ",
+  office: "สำนักงาน (BDI)",
+  system: "ระบบและการพิมพ์เอกสาร",
+} as const;
+
+export type VariableGroup = keyof typeof VARIABLE_GROUPS;
+
+export interface TemplateVariableSpec {
+  group: VariableGroup;
+  description: string;
+  /** ตัวอย่างค่าที่ render ออกมา — ใช้ในคู่มือ ไม่ได้ใช้ตอน render */
+  example: string;
+}
+
 /**
- * ชื่อตัวแปรทั้งหมดที่ template เรียกใช้ได้
+ * ชื่อตัวแปรทั้งหมดที่ template เรียกใช้ได้ — **สัญญาระหว่างเอกสารกับระบบ**
  *
- * นี่คือเส้นแบ่งของ "แก้ได้โดยไม่แก้โค้ด": ผู้ดูแลเอกสารย้าย ลบ หรือใช้ placeholder
- * ตัวไหนซ้ำกี่ที่ก็ได้ แต่การ**เพิ่มชื่อใหม่**ต้องมีคนต่อค่าให้มันในโค้ดก่อน
- * ตอนอัปโหลดจึงตรวจชื่อทั้งหมดแล้วปฏิเสธพร้อมบอกรายชื่อที่ใช้ได้ — ไม่ปล่อยให้ไป
+ * นี่คือเส้นแบ่งของ "แก้ได้โดยไม่ต้องแก้โค้ด": ผู้ดูแลเอกสารย้าย ลบ หรือใช้ placeholder
+ * ตัวไหนซ้ำกี่ที่ก็ได้ และเอกสารฉบับใหม่หยิบตัวไหนไปใช้ก็ได้จากรายการนี้ แต่การ
+ * **เพิ่มชื่อใหม่**ต้องมีคนต่อค่าให้มันใน lib/legal-values.ts ก่อน
+ *
+ * ตอนอัปโหลด template ระบบตรวจชื่อทั้งหมดแล้วปฏิเสธถ้ามีตัวที่ไม่รู้จัก — ไม่ปล่อยให้ไป
  * โป๊ะตอน render ซึ่งเป็นอีกวันและอีกคน
+ *
+ * รายการนี้กว้างกว่าที่เอกสาร A0 ใช้โดยตั้งใจ เพราะเอกสารฉบับต่อไป (ผนวกที่ต้องเติมข้อมูล
+ * หรือแบบฟอร์มอื่นของหน่วยงาน) จะหยิบข้อมูลชุดอื่นไปใช้ได้ทันทีโดยไม่ต้องแก้โค้ด
+ * คู่มือสำหรับผู้เขียนเอกสารอยู่ที่ docs/18-document-template-variables.md
  */
 export const TEMPLATE_VARIABLES = {
-  "agreement.day": "วันที่ทำข้อตกลง (เลขไทย)",
-  "agreement.month": "เดือนที่ทำข้อตกลง (ชื่อเดือนภาษาไทย)",
-  "agreement.year": "ปีที่ทำข้อตกลง (พ.ศ. เลขไทย)",
-  "org.name": "ชื่อหน่วยงาน",
-  "org.addressNo": "ที่อยู่หน่วยงาน (เลขที่และรายละเอียด)",
-  "org.road": "ถนน",
-  "org.subdistrict": "แขวง/ตำบล",
-  "org.district": "เขต/อำเภอ",
-  "org.province": "จังหวัด",
-  "org.postalCode": "รหัสไปรษณีย์",
-  "org.email": "อีเมลหน่วยงาน",
-  "signatory.fullName": "ชื่อผู้มีอำนาจกระทำการแทน (คำนำหน้า ชื่อ นามสกุล)",
-  "signatory.position": "ตำแหน่งผู้มีอำนาจกระทำการแทน",
-  "signatory.nationalId": "เลขบัตรประชาชนผู้มีอำนาจกระทำการแทน",
-  "approver.signature": "ลายมือชื่อฝ่ายหน่วยงาน — ว่างจนกว่าผู้มีอำนาจจะลงนาม",
-  "approver.signedDate": "วันที่ฝ่ายหน่วยงานลงนาม",
-  "bdi.signature": "ลายมือชื่อฝ่ายสำนักงาน — ว่างจนกว่าผู้อนุมัติ BDI จะลงนาม",
-  "bdi.signedDate": "วันที่ฝ่ายสำนักงานลงนาม",
-  "bdi.endorsement": "ตราเห็นชอบของสำนักงาน — ว่างจนกว่าจะอนุมัติขั้นสุดท้าย",
-  "system.name": "ชื่อระบบ",
-  "requestNumber": "เลขที่คำขอ",
-  "printedBy": "ผู้สั่งพิมพ์เอกสารจากระบบ",
-  "printedAt": "วันที่พิมพ์เอกสารจากระบบ",
-} as const;
+  // ── วันที่ทำข้อตกลง ────────────────────────────────────────────
+  "agreement.day": { group: "agreement", description: "วันที่ทำข้อตกลง (เลขไทย)", example: "๑๙" },
+  "agreement.month": { group: "agreement", description: "เดือนที่ทำข้อตกลง (ชื่อเดือนภาษาไทย)", example: "สิงหาคม" },
+  "agreement.year": { group: "agreement", description: "ปีที่ทำข้อตกลง (พ.ศ. เลขไทย)", example: "๒๕๖๙" },
+  "agreement.date": { group: "agreement", description: "วันที่ทำข้อตกลงแบบเต็ม สำหรับเอกสารที่มีช่องเดียว", example: "๑๙ สิงหาคม ๒๕๖๙" },
+
+  // ── คำขอ ─────────────────────────────────────────────────────
+  requestNumber: { group: "request", description: "เลขที่คำขอลงทะเบียนหน่วยงาน", example: "ORG-REG-2026-0009" },
+  "request.submittedDate": { group: "request", description: "วันที่หน่วยงานนำส่งคำขอ — ว่างถ้ายังไม่นำส่ง", example: "๑๘ สิงหาคม ๒๕๖๙" },
+  "request.approvedDate": { group: "request", description: "วันที่คำขอได้รับอนุมัติขั้นสุดท้าย — ว่างถ้ายังไม่อนุมัติ", example: "๑๙ สิงหาคม ๒๕๖๙" },
+
+  // ── หน่วยงานที่ลงทะเบียน ────────────────────────────────────────
+  "org.name": { group: "org", description: "ชื่อหน่วยงาน (ภาษาไทย)", example: "กรมส่งเสริมการปกครองท้องถิ่น" },
+  "org.nameEn": { group: "org", description: "ชื่อหน่วยงาน (ภาษาอังกฤษ) — ว่างถ้าไม่ได้กรอก", example: "Department of Local Administration" },
+  "org.code": { group: "org", description: "รหัสหน่วยงาน", example: "DLA" },
+  "org.type": { group: "org", description: "ประเภทหน่วยงาน — เป็นรหัสภายในระบบ ไม่ใช่คำอ่านภาษาไทย", example: "GOVERNMENT_AGENCY" },
+  "org.addressNo": { group: "org", description: "ที่อยู่หน่วยงาน ส่วนเลขที่/อาคาร/ซอย", example: "578" },
+  "org.road": { group: "org", description: "ถนน — ว่างได้ ที่อยู่ราชการหลายแห่งไม่มีชื่อถนน", example: "ศรีจันทร์" },
+  "org.subdistrict": { group: "org", description: "แขวง/ตำบล", example: "ในเมือง" },
+  "org.district": { group: "org", description: "เขต/อำเภอ", example: "เมืองขอนแก่น" },
+  "org.province": { group: "org", description: "จังหวัด", example: "ขอนแก่น" },
+  "org.postalCode": { group: "org", description: "รหัสไปรษณีย์ (เลขไทย)", example: "๔๐๐๐๐" },
+  "org.address": { group: "org", description: "ที่อยู่หน่วยงานทั้งบรรทัด ประกอบให้แล้ว สำหรับเอกสารที่มีช่องที่อยู่ช่องเดียว", example: "578 ถนนศรีจันทร์ ตำบลในเมือง อำเภอเมืองขอนแก่น จังหวัดขอนแก่น ๔๐๐๐๐" },
+  "org.phone": { group: "org", description: "เบอร์โทรศัพท์หน่วยงาน", example: "๐๔๓๒๓๖๗๘๙" },
+  "org.email": { group: "org", description: "อีเมลหน่วยงาน", example: "saraban@dla.go.th" },
+  "org.website": { group: "org", description: "เว็บไซต์หน่วยงาน — ว่างถ้าไม่ได้กรอก", example: "https://www.dla.go.th" },
+
+  // ── ผู้มีอำนาจกระทำการแทน ───────────────────────────────────────
+  "signatory.fullName": { group: "signatory", description: "ชื่อผู้มีอำนาจกระทำการแทน (คำนำหน้า ชื่อ นามสกุล)", example: "นาย อนุชา พัฒนา" },
+  "signatory.prefix": { group: "signatory", description: "คำนำหน้าชื่อผู้มีอำนาจกระทำการแทน", example: "นาย" },
+  "signatory.firstName": { group: "signatory", description: "ชื่อผู้มีอำนาจกระทำการแทน", example: "อนุชา" },
+  "signatory.lastName": { group: "signatory", description: "นามสกุลผู้มีอำนาจกระทำการแทน", example: "พัฒนา" },
+  "signatory.position": { group: "signatory", description: "ตำแหน่งผู้มีอำนาจกระทำการแทน", example: "ผู้อำนวยการ" },
+  "signatory.department": { group: "signatory", description: "ฝ่าย/กอง/สำนักของผู้มีอำนาจกระทำการแทน — ว่างถ้าไม่ได้กรอก", example: "สำนักบริหารกลาง" },
+  "signatory.email": { group: "signatory", description: "อีเมลผู้มีอำนาจกระทำการแทน", example: "director@dla.go.th" },
+  "signatory.phone": { group: "signatory", description: "เบอร์โทรศัพท์ผู้มีอำนาจกระทำการแทน", example: "๐๘๑๒๓๔๕๖๗๘" },
+  "signatory.nationalId": { group: "signatory", description: "เลขบัตรประชาชนผู้มีอำนาจกระทำการแทน (เลขไทย คั่นด้วยขีด)", example: "๑-๑๐๑๗-๐๐๒๐๗-๐๓-๐" },
+
+  // ── ผู้กรอกข้อมูล ────────────────────────────────────────────
+  "contact.fullName": { group: "contact", description: "ชื่อผู้กรอกข้อมูล (คำนำหน้า ชื่อ นามสกุล)", example: "นางสาว พิมพ์ชนก สังคมดี" },
+  "contact.prefix": { group: "contact", description: "คำนำหน้าชื่อผู้กรอกข้อมูล", example: "นางสาว" },
+  "contact.firstName": { group: "contact", description: "ชื่อผู้กรอกข้อมูล", example: "พิมพ์ชนก" },
+  "contact.lastName": { group: "contact", description: "นามสกุลผู้กรอกข้อมูล", example: "สังคมดี" },
+  "contact.position": { group: "contact", description: "ตำแหน่งผู้กรอกข้อมูล", example: "นักวิเคราะห์นโยบายและแผน" },
+  "contact.department": { group: "contact", description: "ฝ่าย/กอง/สำนักของผู้กรอกข้อมูล", example: "กลุ่มงานข้อมูลสารสนเทศ" },
+  "contact.email": { group: "contact", description: "อีเมลผู้กรอกข้อมูล", example: "user@dla.go.th" },
+  "contact.phone": { group: "contact", description: "เบอร์โทรศัพท์ผู้กรอกข้อมูล", example: "๐๘๒๐๐๐๐๐๐๐" },
+  "contact.nationalId": { group: "contact", description: "เลขบัตรประชาชนผู้กรอกข้อมูล (เลขไทย คั่นด้วยขีด)", example: "๑-๑๐๑๗-๐๐๒๐๗-๐๓-๐" },
+
+  // ── ลายมือชื่อ ──────────────────────────────────────────────
+  "approver.signature": { group: "signature", description: "ลายมือชื่อฝ่ายหน่วยงาน — ว่างจนกว่าผู้มีอำนาจจะลงนาม", example: "นาย อนุชา พัฒนา" },
+  "approver.signedDate": { group: "signature", description: "วันที่ฝ่ายหน่วยงานลงนาม — ว่างจนกว่าจะลงนาม", example: "๑๙ สิงหาคม ๒๕๖๙" },
+  "bdi.signature": { group: "signature", description: "ลายมือชื่อฝ่ายสำนักงาน — ว่างจนกว่าผู้อนุมัติ BDI จะลงนาม", example: "นาง สุดารัตน์ อนุมัติ" },
+  "bdi.signedDate": { group: "signature", description: "วันที่ฝ่ายสำนักงานลงนาม — ว่างจนกว่าจะลงนาม", example: "๑๙ สิงหาคม ๒๕๖๙" },
+  "bdi.endorsement": { group: "signature", description: 'ตราเห็นชอบของสำนักงาน — ว่างจนกว่าจะอนุมัติขั้นสุดท้าย แล้วขึ้นเป็น "เห็นชอบ" พร้อมขึ้นบรรทัดใหม่', example: "เห็นชอบ" },
+
+  // ── สำนักงาน (BDI) ─────────────────────────────────────────
+  "office.name": { group: "office", description: "ชื่อสำนักงาน", example: "สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)" },
+  "office.address": { group: "office", description: "ที่อยู่สำนักงานทั้งบรรทัด", example: "234/432 ซอยลาดพร้าว 12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพมหานคร 10900" },
+  "office.email": { group: "office", description: "อีเมลสำนักงาน — ว่างถ้ายังไม่ได้บันทึกไว้ในระบบ", example: "saraban@bdi.or.th" },
+  "office.phone": { group: "office", description: "เบอร์โทรศัพท์สำนักงาน — ว่างถ้ายังไม่ได้บันทึกไว้ในระบบ", example: "๐๒๑๔๒๑๔๔๔" },
+  "office.directorName": { group: "office", description: "ชื่อผู้อำนวยการสถาบัน — เป็นค่าตั้งไว้ในโค้ด ต้องแก้เมื่อเปลี่ยนผู้อำนวยการ", example: "ศาสตราจารย์ธีรณี อจลากุล" },
+  "office.directorPosition": { group: "office", description: "ตำแหน่งผู้ลงนามฝ่ายสำนักงาน", example: "ผู้อำนวยการสถาบันข้อมูลขนาดใหญ่" },
+
+  // ── ระบบ ────────────────────────────────────────────────────
+  "system.name": { group: "system", description: "ชื่อระบบ", example: "ระบบกลางเพื่อการแบ่งปันข้อมูล (Government Datahub Platform)" },
+  printedBy: { group: "system", description: "ชื่อผู้ที่ทำให้เอกสารฉบับนี้ถูกสร้าง", example: "นางสาว พิมพ์ชนก สังคมดี" },
+  printedAt: { group: "system", description: "วันที่พิมพ์เอกสารจากระบบ", example: "๑๙ สิงหาคม ๒๕๖๙" },
+} as const satisfies Record<string, TemplateVariableSpec>;
 
 export type TemplateVariable = keyof typeof TEMPLATE_VARIABLES;
 export type TemplateValues = Partial<Record<TemplateVariable, string>>;
@@ -99,10 +171,25 @@ export function assertKnownPlaceholders(docx: Buffer): string[] {
   const used = placeholdersIn(docx);
   const unknown = used.filter((name) => !(name in TEMPLATE_VARIABLES));
   if (unknown.length > 0) {
+    /**
+     * ไม่ไล่ชื่อตัวแปรทั้ง 53 ตัวลงในข้อความ — ยาวเกินกว่าจะอ่านบนหน้าจอ
+     * บอกตัวที่ผิด แล้วเสนอตัวที่ชื่อใกล้กันในกลุ่มเดียวกัน ซึ่งมักเป็นตัวที่เขาตั้งใจพิมพ์
+     */
+    const suggestions = unknown
+      .map((name) => {
+        const prefix = name.includes(".") ? `${name.split(".")[0]}.` : "";
+        const near = prefix
+          ? Object.keys(TEMPLATE_VARIABLES).filter((v) => v.startsWith(prefix)).slice(0, 6)
+          : [];
+        return near.length > 0 ? `{{${name}}} (ในกลุ่มนี้มี ${near.map((v) => `{{${v}}}`).join(" ")})` : `{{${name}}}`;
+      })
+      .join(" · ");
+
     throw new DocumentRenderError(
       "unknown_placeholder",
-      `เอกสารอ้างถึงตัวแปรที่ระบบไม่รู้จัก: ${unknown.map((u) => `{{${u}}}`).join(" ")} — ` +
-        `ตัวแปรที่ใช้ได้คือ ${Object.keys(TEMPLATE_VARIABLES).map((v) => `{{${v}}}`).join(" ")}`,
+      `เอกสารอ้างถึงตัวแปรที่ระบบไม่รู้จัก: ${suggestions} — ` +
+        `ดูรายชื่อตัวแปรที่ใช้ได้ทั้งหมดได้จาก GET /api/admin/legal-documents ` +
+        `หรือ docs/18-document-template-variables.md`,
       400,
       { file: `ตัวแปรที่ระบบไม่รู้จัก: ${unknown.join(", ")}` },
     );

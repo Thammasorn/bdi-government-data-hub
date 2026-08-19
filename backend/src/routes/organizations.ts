@@ -339,6 +339,9 @@ async function toApiShape(request: RequestRow) {
     signatoryFirstName: request.approverFirstnameTh,
     signatoryLastName: request.approverLastnameTh,
     signatoryPosition: request.approverPositionTh,
+    // เก็บลงคอลัมน์ตั้งแต่ต้นแต่ไม่เคยส่งกลับออกมา ฟอร์มจึงลืมค่าที่กรอกไว้ทุกครั้งที่โหลด
+    // และ {{signatory.department}} ในเอกสารก็ไม่มีค่าให้เติม
+    signatoryDepartment: request.approverDepartmentTh,
     signatoryEmail: request.approverEmail,
     signatoryNationalId: request.approverCid,
     signatoryPhone: request.approverPhoneNumber,

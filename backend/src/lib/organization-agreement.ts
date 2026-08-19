@@ -27,6 +27,7 @@ import { publicAttachment, storeAttachment } from "./attachment.js";
 import { DocumentRenderError, renderTemplateToPdf } from "./document-render.js";
 import { LEGAL_SCOPES, publishedDocuments, templateDocx } from "./legal.js";
 import { agreementValues, type AgreementInput } from "./legal-values.js";
+import { BDI_ORGANIZATION_ID } from "./system.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -36,24 +37,25 @@ const SUBJECT = SubjectType.ORGANIZATION_REGISTRATION_REQUEST;
 /** รหัสเอกสารที่เป็นตัวข้อตกลงหลัก — ผนวก A1–A3 ไม่มีช่องให้เติมและไม่มีช่องลงนาม */
 export const AGREEMENT_CODE = "A0";
 
-/** ข้อมูลคำขอในรูปที่ toApiShape() คืนมา — เอาเฉพาะช่องที่เอกสารต้องใช้ */
-export type AgreementRequest = Pick<
+/**
+ * ข้อมูลคำขอในรูปที่ toApiShape() คืนมา
+ *
+ * เอาทุกช่องที่ตัวแปรของ template ใช้ได้ (ดู TEMPLATE_VARIABLES) ไม่ใช่เฉพาะที่ A0 ใช้ —
+ * เอกสารฉบับใหม่หยิบช่องอื่นไปใช้ได้ทันทีโดยไม่ต้องแก้ไฟล์นี้
+ */
+export type AgreementRequest = Omit<
   AgreementInput,
-  | "requestNumber"
-  | "name"
-  | "addressLine"
-  | "road"
-  | "province"
-  | "district"
-  | "subdistrict"
-  | "postalCode"
-  | "email"
-  | "signatoryPrefix"
-  | "signatoryFirstName"
-  | "signatoryLastName"
-  | "signatoryPosition"
-  | "signatoryNationalId"
-> & { id: string; submittedAt: Date | null };
+  | "agreementDate"
+  | "approverSignedName"
+  | "approverSignedAt"
+  | "bdiSignedName"
+  | "bdiSignedAt"
+  | "officeName"
+  | "officeEmail"
+  | "officePhone"
+  | "printedByName"
+  | "printedAt"
+> & { id: string };
 
 /**
  * ลายมือชื่อที่มีอยู่แล้วของคำขอนี้ — ชื่อและเวลาตามที่บันทึกไว้ตอนลงนาม
@@ -110,6 +112,12 @@ export async function renderAgreement(
   const version = await agreementVersion(db);
   const docx = await templateDocx(db, version.versionId);
   const signatures = await signaturesOf(db, params.request.id);
+  // ข้อมูลสำนักงานมาจากแถว organization ของ BDI เอง ไม่ได้ hardcode ทั้งชุด —
+  // ที่ยัง hardcode คือช่องที่ตารางไม่มี (ที่อยู่ ชื่อผู้อำนวยการ) ดู OFFICE_DEFAULTS
+  const office = await db.organization.findUnique({
+    where: { id: BDI_ORGANIZATION_ID },
+    select: { nameTh: true, email: true, phone: true },
+  });
   const now = new Date();
 
   const values = agreementValues({
@@ -121,6 +129,9 @@ export async function renderAgreement(
     approverSignedAt: signatures.approver.at,
     bdiSignedName: signatures.bdi.name,
     bdiSignedAt: signatures.bdi.at,
+    officeName: office?.nameTh ?? null,
+    officeEmail: office?.email ?? null,
+    officePhone: office?.phone ?? null,
     printedByName: params.printedByName,
     printedAt: now,
   });

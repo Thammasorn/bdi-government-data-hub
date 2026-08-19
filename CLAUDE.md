@@ -39,6 +39,9 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   these four are the user's. `docs/manuals-docx/` holds the same four as A4 .docx with the
   Sarabun faces from `assets/theme_ci_design/Font/Sarabun.zip` **embedded**, rebuilt by
   `docs/tools/manual-to-docx.py`; the Markdown stays the source, so never hand-edit the .docx
+- `docs/18-document-template-variables.md` — **คู่มือสำหรับผู้เขียนเอกสาร** (ไม่ใช่ผู้เขียนโค้ด):
+  ตัวแปรทั้ง 53 ตัวที่ template ใช้ได้ พร้อมตัวอย่างค่า วิธีพิมพ์ placeholder ให้ไม่พลาด
+  วิธีอัปโหลดเวอร์ชันใหม่ และเส้นแบ่งว่าอะไรแก้เองได้ อะไรต้องให้ทีมพัฒนาทำก่อน
 - `docs/17-legal-document-rendering.md` — เอกสารข้อตกลง A0–A3: ทำไมต้องเดินทาง
   `.docx` → LibreOffice → PDF, template อยู่ในฐานข้อมูลไม่ใช่ใน repo, รายชื่อ placeholder
   ที่ใช้ได้, การลงนามที่ฝังอยู่ใน `POST /:id/review`, และคำถามที่ยังค้าง
@@ -335,6 +338,15 @@ the alternative is failing days later on an organisation's screen, where nobody 
 computes line breaks and pagination from the fonts installed on the machine; without the face it
 substitutes another and the whole document shifts, which reads as a broken template.
 `gotenberg/Dockerfile` fails the build if `fc-list` cannot find it.
+
+**The variable catalogue is the contract between documents and code.**
+`TEMPLATE_VARIABLES` in `lib/document-render.ts` is the single source for validation, the admin
+API listing and `docs/18-document-template-variables.md`; `lib/legal-values.ts` fills every entry.
+It covers 53 variables across organisation, signatory, submitter, request, signature, office and
+system data — deliberately wider than A0 uses, so a new document can pull data it needs without a
+code change. Adding a *name* still needs code, and upload validation rejects unknown names for
+exactly that reason. `office.address` / `office.directorName` are constants (`OFFICE_DEFAULTS`)
+because no column holds them; they need editing when BDI moves or changes director.
 
 **Reading is attested, not measured.** The organisation approver ticks
 "ข้าพเจ้าได้อ่านเอกสารฉบับนี้ครบถ้วนแล้ว" per document before `เห็นชอบ` unlocks, and the tick
