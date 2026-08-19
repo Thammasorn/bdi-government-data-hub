@@ -12,6 +12,17 @@ import { api, ApiError } from "@/lib/api";
 import { useRequireAuth } from "@/lib/require-auth";
 import type { Organization } from "@/lib/types";
 
+/**
+ * สถานะที่ยังแก้ฟอร์มได้ — ตรงกับที่ backend ยอมรับใน PATCH /:id และ POST /:id/submit
+ *
+ * เมื่อนำส่งไปแล้วหน้านี้ต้องไม่เปิดให้แก้อีก เดิมไม่ได้ดูสถานะเลย ผู้ใช้ที่กด back
+ * หรือเปิดลิงก์เดิมค้างไว้จึงกลับเข้ามาแก้ได้ เห็นปุ่มบันทึก แล้วกดไปเจอ error ว่า
+ * "คำขอนี้นำส่งไปแล้ว" — เสียเวลากรอกไปเปล่า ๆ แล้วยังดูเหมือนระบบพัง
+ * หน้ารายละเอียดเป็นฉบับอ่านอย่างเดียวที่มีทั้งข้อมูลและเอกสารข้อตกลงครบอยู่แล้ว
+ * จึงพาไปที่นั่นแทนการทำฟอร์มอ่านอย่างเดียวขึ้นมาอีกชุด
+ */
+const EDITABLE_STATUSES = new Set(["DRAFT", "RETURNED"]);
+
 export default function PreviewPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -29,9 +40,21 @@ export default function PreviewPage() {
     if (!ready) return;
     api
       .get<{ organization: Organization }>(`/api/organizations/${id}`)
-      .then((d) => setOrg(d.organization))
+      .then((d) => {
+        // ปุ่มนำส่งอยู่หน้านี้ — คำขอที่นำส่งแล้วต้องไม่มีทางกดซ้ำได้
+        if (!EDITABLE_STATUSES.has(d.organization.status)) {
+          show({
+            tone: "info",
+            title: "คำขอนี้นำส่งแล้ว",
+            detail: "เปิดหน้ารายละเอียดเพื่อดูสถานะและเอกสารข้อตกลง",
+          });
+          router.replace(`/organizations/${d.organization.id}`);
+          return;
+        }
+        setOrg(d.organization);
+      })
       .catch(() => show({ tone: "error", title: "โหลดข้อมูลไม่สำเร็จ" }));
-  }, [id, show, ready]);
+  }, [id, show, ready, router]);
 
   if (!org) return <Spinner />;
 
