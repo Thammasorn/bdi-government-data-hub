@@ -1236,7 +1236,28 @@ organizationRouter.post("/:id/submit", async (req, res) => {
  * เขายืนยันอะไร ต้องเป็นข้อความจริงที่แสดง ณ เวลานั้น ไม่ใช่ข้อความที่โค้ดเดาย้อนหลัง
  */
 const signatureSchema = z.object({
-  acknowledgedVersionIds: z.array(z.string()).min(1),
+  /**
+   * เอกสารที่ผู้ลงนามยืนยันว่าอ่านแล้ว พร้อมเวลาที่ยืนยันของแต่ละฉบับ
+   *
+   * ส่งเป็น version id ไม่ใช่รหัส A0/A1 เพราะสิ่งที่ต้องบันทึกคือยอมรับ**ฉบับไหน**
+   * และเวลาแยกต่อฉบับ เพราะผู้ลงนามติ๊กยืนยันทีละฉบับตอนอ่าน ไม่ได้ติ๊กรวดเดียวตอนท้าย
+   */
+  acknowledgements: z
+    .array(
+      z.object({
+        versionId: z.string(),
+        attestedAt: z.string().datetime(),
+      }),
+    )
+    .min(1),
+  /**
+   * ข้อความที่ผู้ลงนามติ๊กยืนยันต่อเอกสารแต่ละฉบับ
+   *
+   * เก็บข้อความจริงที่แสดง ณ เวลานั้น ไม่ใช่ให้โค้ดเดาย้อนหลัง — ถ้าวันหนึ่งถ้อยคำนี้
+   * ถูกแก้ หลักฐานเก่าต้องไม่เปลี่ยนความหมายตามไปด้วย ฝ่าย BDI ลงนามรวดเดียวโดยไม่มี
+   * การยืนยันรายฉบับ (การ์ดข้อ 4) จึงไม่มีค่านี้มา
+   */
+  attestationText: z.string().trim().min(1).max(500).optional(),
   confirmationText: z.string().trim().min(1).max(2000),
 });
 
@@ -1346,7 +1367,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
         return;
       }
 
-      const acknowledged = new Set(signature.acknowledgedVersionIds);
+      const acknowledged = new Set(signature.acknowledgements.map((a) => a.versionId));
       const missing = published.filter((doc) => !acknowledged.has(doc.versionId));
       if (missing.length > 0) {
         res.status(400).json({
@@ -1420,6 +1441,9 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
         });
 
         if (confirmationType === ConfirmationType.ORGANIZATION_APPROVAL) {
+          const attestedAt = new Map(
+            signature.acknowledgements.map((a) => [a.versionId, new Date(a.attestedAt)]),
+          );
           await tx.legalAcceptance.createMany({
             data: signedVersionIds.map((versionId) => ({
               legalDocumentVersionId: versionId,
@@ -1429,8 +1453,16 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
               subjectId: request.id,
               reviewTaskId: task.id,
               signatureConfirmationId: confirmation.id,
-              // ผู้ใช้กดปุ่ม "ลงนาม" ไม่ได้ติ๊ก checkbox — sheet แยกสองวิธีนี้ไว้
-              acceptanceMethod: AcceptanceMethod.BUTTON,
+              /**
+               * ติ๊กยืนยันว่าอ่านครบทีละฉบับ ไม่ใช่กดปุ่มเดียวรวบทุกฉบับ —
+               * sheet แยกสองวิธีนี้ไว้ และตอนนี้ตรงกับ CHECKBOX จริง ๆ
+               */
+              acceptanceMethod: AcceptanceMethod.CHECKBOX,
+              // เวลาที่ติ๊กของฉบับนั้น ไม่ใช่เวลาที่กดลงนามตอนท้าย
+              acceptedAt: attestedAt.get(versionId) ?? new Date(),
+              acceptanceContextJson: signature.attestationText
+                ? { attestationText: signature.attestationText }
+                : undefined,
               ipAddress: req.ip ?? null,
               userAgent: req.get("user-agent") ?? null,
               createdBy: session.sub,

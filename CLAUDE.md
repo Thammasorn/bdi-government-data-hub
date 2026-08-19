@@ -336,6 +336,17 @@ computes line breaks and pagination from the fonts installed on the machine; wit
 substitutes another and the whole document shifts, which reads as a broken template.
 `gotenberg/Dockerfile` fails the build if `fc-list` cannot find it.
 
+**Reading is attested, not measured.** The organisation approver ticks
+"ข้าพเจ้าได้อ่านเอกสารฉบับนี้ครบถ้วนแล้ว" per document before `เห็นชอบ` unlocks, and the tick
+is stored (`acceptance_method = CHECKBOX`, the per-document tick time in `accepted_at`, the
+wording in `acceptance_context_json`). Gating on "scrolled to the end" was built and then
+reverted: it requires replacing the browser's PDF viewer with pdf.js, because a page cannot
+read scroll position inside a cross-origin iframe — and pdf.js rendered a blank white page
+here (268,400 opaque pixels, zero non-white; `disableFontFace` did not help). A gate asserting
+"they read it" on top of a renderer that can silently show nothing is worse than no gate.
+`docs/17-legal-document-rendering.md` §6.1 has the full reasoning and the server-side-page-image
+route if it ever has to be measured for real.
+
 **Signing is data, not a drawing.** `POST /:id/review` carries a `signature` payload at
 `ORGANIZATION_APPROVAL` and `BDI_FINAL_APPROVAL`; the record is
 `signature.signature_confirmation` plus one `legal.legal_acceptance` per document version. The
