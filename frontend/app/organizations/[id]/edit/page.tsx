@@ -41,11 +41,32 @@ const EMPTY = {
 };
 type FormState = typeof EMPTY;
 
+/**
+ * สถานะที่ยังแก้ฟอร์มได้ — ตรงกับที่ backend ยอมรับใน PATCH /:id และ POST /:id/submit
+ *
+ * เมื่อนำส่งไปแล้วหน้านี้ต้องไม่เปิดให้แก้อีก เดิมไม่ได้ดูสถานะเลย ผู้ใช้ที่กด back
+ * หรือเปิดลิงก์เดิมค้างไว้จึงกลับเข้ามาแก้ได้ เห็นปุ่มบันทึก แล้วกดไปเจอ error ว่า
+ * "คำขอนี้นำส่งไปแล้ว" — เสียเวลากรอกไปเปล่า ๆ แล้วยังดูเหมือนระบบพัง
+ * หน้ารายละเอียดเป็นฉบับอ่านอย่างเดียวที่มีทั้งข้อมูลและเอกสารข้อตกลงครบอยู่แล้ว
+ * จึงพาไปที่นั่นแทนการทำฟอร์มอ่านอย่างเดียวขึ้นมาอีกชุด
+ */
+const EDITABLE_STATUSES = new Set(["DRAFT", "RETURNED"]);
+
 const SECTIONS = [
   { id: "section-1", tag: "ส่วนที่ 1", title: "ข้อมูลหน่วยงาน" },
   { id: "section-2", tag: "ส่วนที่ 2", title: "ผู้มีอำนาจกระทำการแทน" },
   { id: "section-3", tag: "ส่วนที่ 3", title: "ผู้กรอกข้อมูล" },
 ];
+
+/**
+ * ช่องที่ไม่บังคับกรอก — ไม่นับตอนติ๊ก "กรอกครบแล้ว"
+ *
+ * ต้องตรงกับ `submitSchema` ใน backend/src/routes/organizations.ts ซึ่งเป็นตัวตัดสินจริงว่า
+ * นำส่งได้หรือยัง ตอนเพิ่มช่อง "ถนน" เข้ามาใน SECTION_FIELDS แล้วลืมข้อนี้ ส่วนที่ 1 ก็ไม่เคย
+ * ขึ้นเครื่องหมายถูกเลยจนกว่าจะกรอกถนน ทั้งที่กรอกช่องบังคับครบแล้วและกดนำส่งได้อยู่แล้ว
+ * — เครื่องหมายที่ไม่ตรงกับความจริงทำให้ผู้ใช้ไปหาว่ายังขาดอะไรทั้งที่ไม่ขาด
+ */
+const OPTIONAL_FIELDS: ReadonlySet<keyof FormState> = new Set<keyof FormState>(["road"]);
 
 const SECTION_FIELDS: Record<string, Array<keyof FormState>> = {
   "section-1": ["organizationCode", "name", "addressLine", "road", "province", "district", "subdistrict", "postalCode", "email"],
@@ -108,6 +129,15 @@ export default function EditOrganizationPage() {
         `/api/organizations/${orgId}`,
       )
       .then(({ organization }) => {
+        if (!EDITABLE_STATUSES.has(String(organization.status))) {
+          show({
+            tone: "info",
+            title: "คำขอนี้นำส่งแล้ว จึงแก้ไขไม่ได้",
+            detail: "เปิดหน้ารายละเอียดเพื่อดูข้อมูลที่นำส่งและเอกสารข้อตกลง",
+          });
+          router.replace(`/organizations/${String(organization.id)}`);
+          return;
+        }
         const next = { ...EMPTY };
         for (const key of Object.keys(EMPTY) as Array<keyof FormState>) {
           const value = organization[key];
@@ -172,7 +202,9 @@ export default function EditOrganizationPage() {
   const completion = useMemo(() => {
     const done: Record<string, boolean> = {};
     for (const [id, keys] of Object.entries(SECTION_FIELDS)) {
-      done[id] = keys.every((k) => form[k].trim().length > 0);
+      done[id] = keys
+        .filter((k) => !OPTIONAL_FIELDS.has(k))
+        .every((k) => form[k].trim().length > 0);
     }
     return done;
   }, [form]);
