@@ -10,6 +10,7 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import { useRequireAuth } from "@/lib/require-auth";
 import { DATASET_ATTACHMENT_LABELS, datasetTitle, type DatasetRequest } from "@/lib/types";
 
 export default function DatasetPreviewPage() {
@@ -17,15 +18,19 @@ export default function DatasetPreviewPage() {
   const router = useRouter();
   const { show } = useToast();
 
+  const { ready } = useRequireAuth();
   const [request, setRequest] = useState<DatasetRequest | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
+    // ยังไม่ล็อกอิน = API ตอบได้แค่ 401 และหน้านี้จะหมุนค้างตลอดกาล
+    // useRequireAuth พาไป /login?next=<หน้านี้> ให้แล้ว
+    if (!ready) return;
     api
       .get<{ request: DatasetRequest }>(`/api/dataset-requests/${id}`)
       .then((d) => setRequest(d.request))
       .catch(() => show({ tone: "error", title: "โหลดข้อมูลไม่สำเร็จ" }));
-  }, [id, show]);
+  }, [id, show, ready]);
 
   if (!request) return <Spinner />;
 

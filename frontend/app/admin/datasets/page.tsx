@@ -4,8 +4,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect } from "react";
 
 import { DatasetRequestTable } from "@/components/dataset/RequestTable";
-import { useSession } from "@/components/SessionProvider";
 import { Spinner } from "@/components/ui/Spinner";
+import { useRequireAuth } from "@/lib/require-auth";
 import { isBdiStaff, type DatasetRequestStatus } from "@/lib/status";
 
 export default function AdminDatasetsPage() {
@@ -19,14 +19,10 @@ export default function AdminDatasetsPage() {
 function AdminDatasetList() {
   const router = useRouter();
   const params = useSearchParams();
-  const { user, loading } = useSession();
+  const { user, loading } = useRequireAuth();
 
   useEffect(() => {
-    if (loading) return;
-    if (!user) {
-      router.replace("/login");
-      return;
-    }
+    if (loading || !user) return;
     if (!isBdiStaff(user.roles)) router.replace("/datasets");
   }, [user, loading, router]);
 

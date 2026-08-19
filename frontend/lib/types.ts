@@ -2,7 +2,16 @@ import type { RequestStatus, ReviewTaskType, ReviewResult } from "./status";
 
 export interface Attachment {
   id: string;
-  kind: "APPOINTMENT_ORDER" | "POWER_OF_ATTORNEY" | "GENERATED_FORM";
+  /**
+   * ค่าเดียวกับ enum `AttachmentType` ใน schema.prisma ซึ่งตั้งชื่อตาม Excel
+   * ไม่ใช่ชื่อย่อที่ใช้เรียกช่องบนฟอร์ม — API ส่งค่าใน enum ออกมาตรง ๆ
+   *
+   * เดิมบรรทัดนี้เขียนว่า APPOINTMENT_ORDER ซึ่งไม่มีอยู่จริงบนสาย ผลคือ
+   * ATTACHMENT_LABELS[a.kind] เป็น undefined หน้ารายละเอียดจึงขึ้นแต่ชื่อไฟล์
+   * โดยไม่มีหัวข้อว่าไฟล์นั้นคือเอกสารอะไร และฟอร์มแก้ไขก็หาไฟล์เดิมไม่เจอ
+   * TypeScript จับให้ไม่ได้เพราะไม่มีทางรู้ว่าปลายสายส่งอะไรมา
+   */
+  kind: "AUTHORIZED_REPRESENTATIVE_APPOINTMENT_ORDER" | "POWER_OF_ATTORNEY" | "GENERATED_FORM";
   filename: string;
   mimeType: string;
   sizeBytes: number;
@@ -95,7 +104,7 @@ export const fullName = (
 ): string => [prefix, first, last].filter(Boolean).join(" ") || "—";
 
 export const ATTACHMENT_LABELS: Record<Attachment["kind"], string> = {
-  APPOINTMENT_ORDER: "คำสั่งแต่งตั้งผู้มีอำนาจกระทำการแทน",
+  AUTHORIZED_REPRESENTATIVE_APPOINTMENT_ORDER: "คำสั่งแต่งตั้งผู้มีอำนาจกระทำการแทน",
   POWER_OF_ATTORNEY: "คำสั่งมอบอำนาจ",
   GENERATED_FORM: "แบบฟอร์มที่ระบบสร้าง",
 };

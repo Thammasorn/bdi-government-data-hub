@@ -6,7 +6,6 @@ import { useCallback, useEffect, useState } from "react";
 
 import { PdfViewer } from "@/components/organization/PdfViewer";
 import { Timeline } from "@/components/organization/Timeline";
-import { useSession } from "@/components/SessionProvider";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader, DatasetStatusBadge } from "@/components/ui/Card";
 import { SelectField, TextAreaField } from "@/components/ui/Field";
@@ -14,6 +13,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import { useRequireAuth } from "@/lib/require-auth";
 import { taskEventLabel, formatThaiDate } from "@/lib/status";
 import {
   DATA_CATEGORY_LABELS,
@@ -142,7 +142,7 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string,
 type ModalKind = "advance" | "revise" | "reject" | "comment" | "assign";
 
 export function DatasetDetailView({ id, backHref }: { id: string; backHref?: string }) {
-  const { user } = useSession();
+  const { user, ready } = useRequireAuth();
   const { show } = useToast();
   const router = useRouter();
 
@@ -170,14 +170,19 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
             setNotFound(true);
             return;
           }
+          // 401 = ยังไม่ล็อกอิน หรือ session หมดอายุ — useRequireAuth พาไปหน้า
+          // ล็อกอินอยู่แล้ว ไม่ต้องเตือนซ้ำ
+          if (err instanceof ApiError && err.status === 401) return;
           show({ tone: "error", title: "โหลดข้อมูลไม่สำเร็จ" });
         }),
     [id, show],
   );
 
   useEffect(() => {
+    // รอให้รู้ผลของ session ก่อน ยิงตอนยังไม่ล็อกอินได้แค่ 401
+    if (!ready) return;
     void load();
-  }, [load]);
+  }, [load, ready]);
 
   useEffect(() => {
     if (!user?.roles.includes("BDI_OFFICER")) return;

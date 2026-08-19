@@ -12,7 +12,28 @@ import { FileUpload, type UploadedFile } from "@/components/ui/FileUpload";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import { useRequireAuth } from "@/lib/require-auth";
 import { PREFIXES } from "@/lib/status";
+import type { Attachment } from "@/lib/types";
+
+/**
+ * ชื่อช่องเอกสารบนฟอร์ม → ชนิดไฟล์แนบใน attachment.attachment
+ *
+ * สองชื่อนี้ไม่ตรงกันสำหรับคำสั่งแต่งตั้ง และไม่ควรตรงกัน: ฝั่งซ้ายคือชื่อช่องที่
+ * ข้อความ validation จาก API อ้างถึง (`fields.APPOINTMENT_ORDER`) ส่วนฝั่งขวาคือ
+ * ค่าใน enum AttachmentType ที่สคีมาใช้ตามชื่อใน Excel และเป็นค่าที่ API ส่งกลับ
+ * มาใน `kind`
+ *
+ * เดิมหน้านี้ใช้ชื่อช่องไปค้นในลิสต์ไฟล์แนบตรง ๆ จึงไม่มีวันเจอ — ผู้ใช้ที่ถูก
+ * ส่งคำขอกลับมาแก้เห็นช่องอัปโหลดว่างเปล่าและต้องแนบไฟล์เดิมซ้ำ ทั้งที่ไฟล์
+ * ยังอยู่ครบ
+ */
+const ATTACHMENT_KIND = {
+  APPOINTMENT_ORDER: "AUTHORIZED_REPRESENTATIVE_APPOINTMENT_ORDER",
+  POWER_OF_ATTORNEY: "POWER_OF_ATTORNEY",
+} as const satisfies Record<string, Attachment["kind"]>;
+
+type AttachmentSlot = keyof typeof ATTACHMENT_KIND;
 
 const EMPTY = {
   organizationCode: "",
@@ -75,7 +96,8 @@ const SECTION_FIELDS: Record<string, Array<keyof FormState>> = {
 export default function EditOrganizationPage() {
   const router = useRouter();
   const { id: orgId } = useParams<{ id: string }>();
-  const { user, loading: sessionLoading, refresh } = useSession();
+  const { user, loading: sessionLoading } = useRequireAuth();
+  const { refresh } = useSession();
   const { show } = useToast();
 
   const [form, setForm] = useState<FormState>(EMPTY);
@@ -97,13 +119,9 @@ export default function EditOrganizationPage() {
 
   // ---------- โหลดข้อมูลเดิม ----------
   useEffect(() => {
-    if (sessionLoading) return;
-    if (!user) {
-      router.replace("/login");
-      return;
-    }
+    if (sessionLoading || !user) return;
     api
-      .get<{ organization: Record<string, unknown> & { attachments: Array<{ id: string; kind: string; filename: string; sizeBytes: number }> } }>(
+      .get<{ organization: Record<string, unknown> & { attachments: Array<{ id: string; kind: Attachment["kind"]; filename: string; sizeBytes: number }> } }>(
         `/api/organizations/${orgId}`,
       )
       .then(({ organization }) => {
@@ -114,7 +132,8 @@ export default function EditOrganizationPage() {
         }
         setForm(next);
         setRevisionNote((organization.revisionNote as string | null) ?? null);
-        const find = (kind: string) => organization.attachments.find((a) => a.kind === kind) ?? null;
+        const find = (slot: AttachmentSlot) =>
+          organization.attachments.find((a) => a.kind === ATTACHMENT_KIND[slot]) ?? null;
         setAppointment(find("APPOINTMENT_ORDER"));
         setPowerOfAttorney(find("POWER_OF_ATTORNEY"));
       })
@@ -195,7 +214,7 @@ export default function EditOrganizationPage() {
     }
   };
 
-  const uploadFile = async (kind: "APPOINTMENT_ORDER" | "POWER_OF_ATTORNEY", file: File) => {
+  const uploadFile = async (kind: AttachmentSlot, file: File) => {
     if (!orgId) return;
     if (file.size > 10 * 1024 * 1024) {
       show({ tone: "error", title: "ไฟล์ใหญ่เกินไป", detail: "ขนาดไฟล์ต้องไม่เกิน 10 MB" });
@@ -204,7 +223,9 @@ export default function EditOrganizationPage() {
     setUploadingKind(kind);
     const fd = new FormData();
     fd.append("file", file);
-    fd.append("kind", kind);
+    // ส่งค่าใน enum ไม่ใช่ชื่อช่อง — API รับชื่อย่อได้ด้วยเพื่อความเข้ากันได้ย้อนหลัง
+    // แต่ชื่อที่ตรงกับสคีมาคือค่านี้ และเป็นค่าเดียวกับที่มันส่งกลับมา
+    fd.append("kind", ATTACHMENT_KIND[kind]);
     try {
       const { attachment } = await api.upload<{ attachment: UploadedFile }>(
         `/api/organizations/${orgId}/attachments`,

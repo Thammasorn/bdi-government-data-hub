@@ -6,7 +6,6 @@ import { useEffect, useState } from "react";
 
 import { PdfViewer } from "@/components/organization/PdfViewer";
 import { Timeline } from "@/components/organization/Timeline";
-import { useSession } from "@/components/SessionProvider";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader, StatusBadge } from "@/components/ui/Card";
 import { TextAreaField } from "@/components/ui/Field";
@@ -14,6 +13,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import { useRequireAuth } from "@/lib/require-auth";
 import { formatThaiDate } from "@/lib/status";
 import { useOrganizationRegistration } from "@/lib/use-organization-registration";
 import { ATTACHMENT_LABELS, fullName, type Organization } from "@/lib/types";
@@ -39,7 +39,7 @@ function decideAbility(org: Organization, roles: string[], email: string) {
 }
 
 export function OrganizationDetailView({ id, backHref }: { id: string; backHref?: string }) {
-  const { user } = useSession();
+  const { user, ready } = useRequireAuth();
   const { show } = useToast();
   const router = useRouter();
 
@@ -62,13 +62,18 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
           setNotFound(true);
           return;
         }
+        // 401 = session หมดอายุระหว่างเปิดหน้าค้างไว้ useRequireAuth กำลังพาไป
+        // หน้าล็อกอินอยู่แล้ว เตือนซ้ำจะได้ทั้ง toast แดงและการเด้งหน้าพร้อมกัน
+        if (err instanceof ApiError && err.status === 401) return;
         show({ tone: "error", title: "โหลดข้อมูลไม่สำเร็จ" });
       });
 
   useEffect(() => {
+    // รอให้รู้ผลของ session ก่อน ยิงตอนยังไม่ล็อกอินได้แค่ 401
+    if (!ready) return;
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, ready]);
 
   if (notFound) {
     /**

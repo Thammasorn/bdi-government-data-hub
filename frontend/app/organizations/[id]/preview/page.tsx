@@ -10,6 +10,7 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import { useRequireAuth } from "@/lib/require-auth";
 import type { Organization } from "@/lib/types";
 
 export default function PreviewPage() {
@@ -17,15 +18,19 @@ export default function PreviewPage() {
   const router = useRouter();
   const { show } = useToast();
 
+  const { ready } = useRequireAuth();
   const [org, setOrg] = useState<Organization | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
+    // ยังไม่ล็อกอิน = API ตอบได้แค่ 401 และหน้านี้จะหมุนค้างตลอดกาล
+    // useRequireAuth พาไป /login?next=<หน้านี้> ให้แล้ว
+    if (!ready) return;
     api
       .get<{ organization: Organization }>(`/api/organizations/${id}`)
       .then((d) => setOrg(d.organization))
       .catch(() => show({ tone: "error", title: "โหลดข้อมูลไม่สำเร็จ" }));
-  }, [id, show]);
+  }, [id, show, ready]);
 
   if (!org) return <Spinner />;
 
