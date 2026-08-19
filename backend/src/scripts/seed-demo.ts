@@ -11,6 +11,7 @@
 import {
   AccountType,
   AssignmentSource,
+  AttachmentOwnerType,
   CommentVisibility,
   DatasetStatus,
   IntegrationType,
@@ -197,7 +198,16 @@ async function main() {
   await prisma.datasetRegistrationMetadata.deleteMany();
   await prisma.datasetRegistrationRequest.deleteMany();
   await prisma.organizationRegistrationRequest.deleteMany();
-  await prisma.attachment.deleteMany();
+  /**
+   * ไฟล์แนบทั้งหมด **ยกเว้น** template เอกสารกฎหมาย
+   *
+   * legal_document_version.attachment_id เป็น FK มาที่ตารางนี้ และเวอร์ชันเอกสารเป็น
+   * master data ที่ seed:masters เผยแพร่ไว้ ไม่ใช่ข้อมูลธุรกรรมของเดโม ลบทั้งตาราง
+   * จะชน legal_document_version_attachment_id_fkey และ seed:demo ล้มทั้งสคริปต์
+   */
+  await prisma.attachment.deleteMany({
+    where: { ownerType: { not: AttachmentOwnerType.LEGAL_DOCUMENT_VERSION } },
+  });
   await prisma.activationKey.deleteMany();
   await prisma.otpCode.deleteMany();
   await prisma.userRoleAssignment.deleteMany();

@@ -8,12 +8,15 @@ export function Modal({
   title,
   description,
   children,
+  /** กว้างขึ้นสำหรับ modal ที่ต้องฝังเอกสาร PDF ให้อ่านได้จริง ไม่ใช่แค่ข้อความยืนยัน */
+  size = "md",
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   description?: string;
   children: ReactNode;
+  size?: "md" | "lg";
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -47,7 +50,9 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="animate-in-up relative w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-pop"
+        className={`animate-in-up relative w-full overflow-hidden rounded-2xl bg-white shadow-pop ${
+          size === "lg" ? "max-w-3xl" : "max-w-lg"
+        }`}
       >
         <div className="bg-brand-gradient h-1" />
         <div className="px-6 pt-5">

@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { PdfViewer } from "@/components/organization/PdfViewer";
+import { LegalDocumentsCard, useLegalDocuments } from "@/components/organization/LegalDocuments";
+import { SigningDialog } from "@/components/organization/SigningDialog";
 import { Timeline } from "@/components/organization/Timeline";
 import { useSession } from "@/components/SessionProvider";
 import { Button } from "@/components/ui/Button";
@@ -25,13 +26,30 @@ function decideAbility(org: Organization, roles: string[], email: string) {
       return roles.includes("BDI_OFFICER")
         ? { can: true, approveLabel: "อนุมัติ", hint: "ตรวจสอบข้อมูลและเอกสารก่อนส่งต่อให้ผู้มีอำนาจกระทำการแทน" }
         : { can: false };
+    /**
+     * สองด่านนี้อนุมัติด้วยการลงนามบนเอกสาร ปุ่มจึงเปิด SigningDialog ไม่ใช่ modal ยืนยันสั้น ๆ
+     * `signing` บอกว่าต้องเดินขั้นตอนลงนาม และ `perDocument` บอกว่าต้องขึ้นเอกสารทีละฉบับ
+     * ให้กดเห็นชอบก่อนหรือไม่ — การ์ดข้อ 4 เขียนไว้ว่าฝ่าย BDI "ไม่ต้องมีขึ้น เห็นชอบ ทีละเอกสาร"
+     */
     case "ORGANIZATION_APPROVAL":
       return org.signatoryEmail?.toLowerCase() === email.toLowerCase()
-        ? { can: true, approveLabel: "เห็นชอบ", hint: "โปรดตรวจสอบเอกสารในฐานะผู้มีอำนาจกระทำการแทน" }
+        ? {
+            can: true,
+            approveLabel: "ผ่านการตรวจสอบ",
+            hint: "โปรดตรวจสอบเอกสารในฐานะผู้มีอำนาจกระทำการแทน แล้วลงนามอิเล็กทรอนิกส์",
+            signing: true,
+            perDocument: true,
+          }
         : { can: false };
     case "BDI_FINAL_APPROVAL":
       return roles.includes("BDI_FINAL_APPROVER")
-        ? { can: true, approveLabel: "เห็นชอบและลงนาม", hint: "ขั้นตอนสุดท้าย เมื่อลงนามแล้วหน่วยงานจะเปิดใช้งานทันที" }
+        ? {
+            can: true,
+            approveLabel: "เห็นชอบและลงนาม",
+            hint: "ขั้นตอนสุดท้าย เมื่อลงนามแล้วหน่วยงานจะเปิดใช้งานทันที",
+            signing: true,
+            perDocument: false,
+          }
         : { can: false };
     default:
       return { can: false };
@@ -45,11 +63,14 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
 
   const [org, setOrg] = useState<Organization | null>(null);
   const [notFound, setNotFound] = useState(false);
-  const [modal, setModal] = useState<null | "approve" | "revise">(null);
+  const [modal, setModal] = useState<null | "approve" | "revise" | "sign">(null);
   const [note, setNote] = useState("");
   const [noteError, setNoteError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const { start: startRegistration, starting } = useOrganizationRegistration();
+  const { documents: legalDocuments, reload: reloadLegalDocuments } = useLegalDocuments(id);
+  /** ขยับทุกครั้งที่โหลดเอกสารใหม่ — ใช้ทำลาย cache ของ iframe ที่ฝัง PDF ไว้ */
+  const [documentRound, setDocumentRound] = useState(0);
 
   const load = () =>
     api
@@ -127,7 +148,6 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
   if (!org || !user) return <Spinner />;
 
   const ability = decideAbility(org, user.roles, user.email);
-  const generated = org.attachments.find((a) => a.kind === "GENERATED_FORM");
   const supporting = org.attachments.filter((a) => a.kind !== "GENERATED_FORM");
   const isOwner = org.createdBy?.id === user.id;
   // เทียบกับ `org.organizationId` ไม่ใช่ `org.id` — `org.id` คือ id ของคำขอ การ์ด
@@ -241,7 +261,9 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
               <Button variant="secondary" onClick={() => setModal("revise")}>
                 ต้องปรับปรุง
               </Button>
-              <Button onClick={() => setModal("approve")}>{ability.approveLabel}</Button>
+              <Button onClick={() => setModal(ability.signing ? "sign" : "approve")}>
+                {ability.approveLabel}
+              </Button>
             </div>
           </div>
         </Card>
@@ -315,17 +337,12 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
           </Card>
         ) : null}
 
-        {generated ? (
-          <Card>
-            <CardHeader title="แบบฟอร์มที่ระบบสร้าง" description="เอกสารที่ใช้ประกอบการพิจารณา" />
-            <div className="p-6">
-              <PdfViewer
-                url={api.fileUrl(`/api/organizations/${org.id}/attachments/${generated.id}`)}
-                filename={generated.filename}
-                title="แบบฟอร์มสร้างหน่วยงาน"
-              />
-            </div>
-          </Card>
+        {org.status !== "DRAFT" ? (
+          <LegalDocumentsCard
+            documents={legalDocuments}
+            reloadKey={documentRound}
+            description="A0 คือข้อตกลงที่เติมข้อมูลของคำขอนี้แล้ว · A1–A3 เป็นผนวกแนบท้ายที่เป็นส่วนหนึ่งของข้อตกลงเดียวกัน"
+          />
         ) : null}
 
         <Card>
@@ -333,6 +350,28 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
           <Timeline events={org.events} />
         </Card>
       </div>
+
+      {legalDocuments && legalDocuments.length > 0 ? (
+        <SigningDialog
+          open={modal === "sign"}
+          onClose={() => setModal(null)}
+          onSigned={() => {
+            setModal(null);
+            show({
+              tone: "success",
+              title: "ลงนามเรียบร้อย",
+              detail: "ระบบประทับลายมือชื่อของคุณลงในเอกสารและแจ้งผู้เกี่ยวข้องแล้ว",
+            });
+            setDocumentRound((r) => r + 1);
+            reloadLegalDocuments();
+            void load();
+          }}
+          requestId={org.id}
+          documents={legalDocuments}
+          perDocument={ability.perDocument ?? false}
+          signLabel={ability.approveLabel ?? "ลงนาม"}
+        />
+      ) : null}
 
       <Modal
         open={modal === "revise"}
