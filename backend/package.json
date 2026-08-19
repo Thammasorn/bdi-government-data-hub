@@ -27,12 +27,14 @@
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
+    "docxtemplater": "^3.69.3",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.3",
     "minio": "^8.0.3",
     "multer": "^2.2.0",
     "nodemailer": "^9.0.3",
     "pdfkit": "^0.19.1",
+    "pizzip": "^3.2.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -55,6 +55,28 @@ services:
       echo 'bucket ready: '\"$$MINIO_BUCKET\"
       "
 
+  # ตัวแปลง .docx -> PDF ของเอกสารกฎหมาย A0–A3
+  #
+  # เอกสารเหล่านี้เป็น template .docx ที่ BDI แก้เองได้ผ่านหน้าแอดมิน เลย์เอาต์จึงต้อง
+  # มาจาก LibreOffice ที่จัดหน้าจากไฟล์ต้นฉบับ ไม่ใช่จากโค้ดที่วาดทับตามพิกัด — พิกัด
+  # จะใช้ไม่ได้ทันทีที่มีคนอัปโหลด template ใหม่ และค่าที่ยาวกว่าช่องว่างจะล้น
+  #
+  # image ต่อยอดจาก gotenberg/gotenberg:8-libreoffice เพื่อฝังฟอนต์ TH SarabunPSK
+  # ดูเหตุผลใน gotenberg/Dockerfile — ไม่มีฟอนต์คือเลย์เอาต์เพี้ยนทั้งฉบับ
+  gotenberg:
+    build:
+      context: ./gotenberg
+    restart: unless-stopped
+    # ไม่ผูกพอร์ตออกโฮสต์: เรียกจาก backend ผ่าน compose network เท่านั้น
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   backend:
     build:
       context: ./backend
@@ -65,9 +87,12 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      gotenberg:
+        condition: service_healthy
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       PORT: 4000
+      GOTENBERG_URL: ${GOTENBERG_URL:-http://gotenberg:3000}
       DATABASE_URL: postgresql://${POSTGRES_USER:-bdi}:${POSTGRES_PASSWORD:-bdi_dev_password}@postgres:5432/${POSTGRES_DB:-bdi}?schema=public
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000

@@ -20,7 +20,7 @@ import {
   type DatasetRequestStatus,
   type OrganizationStatus,
 } from "@/lib/status";
-import type { DatasetRequestListItem } from "@/lib/types";
+import type { DatasetRequestListItem, OrganizationListItem } from "@/lib/types";
 
 export default function HomePage() {
   const { user, loading } = useSession();
@@ -69,6 +69,7 @@ function OrganizationHome({
   const { user } = useSession();
   const { show } = useToast();
   const [rows, setRows] = useState<DatasetRequestListItem[] | null>(null);
+  const [orgRequests, setOrgRequests] = useState<OrganizationListItem[]>([]);
 
   useEffect(() => {
     // ดึงครั้งเดียวแล้วแบ่ง section ฝั่งหน้าเว็บ — endpoint คืนเฉพาะคำขอที่ผู้ใช้เห็นได้อยู่แล้ว
@@ -80,12 +81,38 @@ function OrganizationHome({
         setRows([]);
         show({ tone: "error", title: "โหลดรายการชุดข้อมูลไม่สำเร็จ" });
       });
+
+    /**
+     * คำขอลงทะเบียนหน่วยงาน — คนละเส้นทางกับชุดข้อมูล และหน้าแรกเคยไม่พูดถึงเลย
+     *
+     * ผู้มีอำนาจกระทำการแทนถูกเชิญเข้ามาเพื่อลงนามในคำขอใบหนึ่งโดยเฉพาะ แต่เข้ามาแล้ว
+     * เจอหน้าแรกที่พูดเรื่องชุดข้อมูลล้วน ๆ ไม่มีทางไปต่อ ต้องเดาว่าต้องกดเมนู
+     * "หน่วยงานของฉัน" เอง
+     */
+    api
+      .get<{ organizations: OrganizationListItem[] }>("/api/organizations")
+      .then((d) => setOrgRequests(d.organizations))
+      .catch(() => setOrgRequests([]));
   }, [show]);
+
+  /** คำขอลงทะเบียนหน่วยงานที่หยุดรอการลงนามของผู้ใช้คนนี้ */
+  const awaitingSignature = isApprover
+    ? orgRequests.find((r) => r.currentTaskType === "ORGANIZATION_APPROVAL")
+    : undefined;
 
   const { pending, others, awaitingMe, counts } = useMemo(() => split(rows ?? []), [rows]);
 
   const name = user?.firstName?.trim() || user?.email || "";
   const organization = user?.organization ?? null;
+
+  /**
+   * ระหว่างที่หน่วยงานยังลงทะเบียนไม่เสร็จ ครึ่งล่างของหน้าเป็นช่องว่างทั้งหมด —
+   * ตัวเลขศูนย์สี่ช่องกับสองรายการที่ไม่มีแถวเลย รวมหกกล่องที่ไม่ได้บอกอะไร
+   * และดันสิ่งเดียวที่กดได้จริงให้จมอยู่กลางหน้า ยังลงทะเบียนชุดข้อมูลไม่ได้อยู่แล้ว
+   * จนกว่าหน่วยงานจะเปิดใช้งาน จึงยุบเหลือประโยคเดียว
+   */
+  const organizationActive = organization?.status === "ACTIVE";
+  const datasetHalfIsEmpty = !organizationActive && rows !== null && rows.length === 0;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
@@ -95,10 +122,37 @@ function OrganizationHome({
         // ผู้ลงนามไม่ใช่คนกรอกฟอร์มลงทะเบียน จึงไม่ต้องเห็นปุ่มนี้
         onRegister={isApprover ? undefined : onRegister}
         registering={registering}
+        /* การ์ดลงนามด้านล่างบอกเรื่องเดียวกันแต่ตรงกว่าและมีปุ่มให้กด กล่องเตือน
+           "หน่วยงานยังไม่เปิดใช้งาน" จึงกลายเป็นการพูดซ้ำครั้งที่สาม ต่อจาก badge */
+        hideInactiveNotice={Boolean(awaitingSignature)}
       />
+
+      {/* ยกขึ้นก่อนทุกอย่าง รวมถึงก่อน spinner ของรายการชุดข้อมูล — งานที่ค้างรอคนนี้อยู่
+          ต้องเห็นทันทีที่เปิดหน้า ไม่ใช่หลังจากรอรายการอื่นโหลดเสร็จ */}
+      {awaitingSignature ? (
+        <Card className="mb-8 border-l-[3px] border-l-coral-500">
+          <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
+            {/* ไม่ต้องเอ่ยชื่อหน่วยงานซ้ำ — เป็นหัวเรื่องของหน้านี้อยู่แล้ว */}
+            <div className="min-w-0">
+              <p className="font-medium text-navy-800">รอคุณเห็นชอบและลงนามคำขอลงทะเบียนหน่วยงาน</p>
+              <p className="mt-0.5 text-sm leading-relaxed text-ink-muted">
+                คำขอผ่านการตรวจสอบจากเจ้าหน้าที่ BDI แล้ว และหยุดรอให้คุณอ่านเอกสารข้อตกลง
+                แล้วลงนามในฐานะผู้มีอำนาจกระทำการแทน
+              </p>
+            </div>
+            <Link href={`/organizations/${awaitingSignature.id}`} className="shrink-0">
+              <Button>อ่านเอกสารและลงนาม</Button>
+            </Link>
+          </div>
+        </Card>
+      ) : null}
 
       {rows === null ? (
         <Spinner className="min-h-[40vh]" />
+      ) : datasetHalfIsEmpty ? (
+        <p className="rounded-2xl bg-white p-6 text-[15px] leading-relaxed text-ink-muted shadow-card ring-1 ring-line">
+          ยังไม่มีชุดข้อมูลของหน่วยงาน — ลงทะเบียนชุดข้อมูลได้เมื่อหน่วยงานผ่านการอนุมัติและเปิดใช้งานแล้ว
+        </p>
       ) : (
         <>
           <StatTiles counts={counts} total={rows.length} />
@@ -158,11 +212,14 @@ function HomeHeader({
   organization,
   onRegister,
   registering,
+  hideInactiveNotice = false,
 }: {
   name: string;
   organization: { id: string; name: string; status: string } | null;
   onRegister?: () => void;
   registering?: boolean;
+  /** ซ่อนกล่อง "หน่วยงานยังไม่เปิดใช้งาน" เมื่อมีการ์ดอื่นบอกเรื่องเดียวกันไปแล้ว */
+  hideInactiveNotice?: boolean;
 }) {
   const status = organization?.status as OrganizationStatus | undefined;
 
@@ -190,7 +247,7 @@ function HomeHeader({
           </p>
         )}
 
-        {status && status !== "ACTIVE" ? (
+        {status && status !== "ACTIVE" && !hideInactiveNotice ? (
           <div className="mt-5 rounded-xl border-l-[3px] border-warning bg-warning-bg p-5">
             <p className="text-[13px] font-semibold text-warning">หน่วยงานยังไม่เปิดใช้งาน</p>
             <p className="mt-1.5 text-[15px] leading-relaxed text-ink">

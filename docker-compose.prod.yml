@@ -43,3 +43,9 @@ services:
       NODE_ENV: production
     command: ["node", "dist/workers/delivery.js"]
     volumes: !reset []
+
+  # gotenberg ไม่มีอะไรต่างระหว่าง dev กับ production — image เดียวกัน ไม่ bind-mount
+  # source ไม่มี dev command ให้ทับ เขียนไว้ที่นี่เพราะบริการที่ไม่ปรากฏใน
+  # ไฟล์นี้เลยคือสิ่งที่ทำให้เคยรันคำสั่ง dev อยู่บน production โดยไม่มีใครเห็น
+  gotenberg:
+    restart: unless-stopped

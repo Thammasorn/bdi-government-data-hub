@@ -40,6 +40,11 @@ import {
   streamAttachment,
   uploadedFile,
 } from "../lib/attachment.js";
+import {
+  AcceptanceMethod,
+  ConfirmationType,
+  LegalDocumentVersionStatus,
+} from "@prisma/client";
 import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
 import { assignRole, issueActivationKey } from "../lib/iam.js";
 import {
@@ -51,9 +56,15 @@ import {
   sendSubmittedToOfficers,
 } from "../lib/mail.js";
 import { NotificationType, bdiApproverIds, bdiOfficerIds, emailsOf, notifyUsers, organizationMemberIds } from "../lib/notify.js";
-import { renderOrganizationForm } from "../lib/pdf.js";
+import {
+  AGREEMENT_CODE,
+  agreementVersion,
+  renderAgreement,
+} from "../lib/organization-agreement.js";
+import { DocumentRenderError } from "../lib/document-render.js";
+import { LEGAL_SCOPES, publishedDocuments } from "../lib/legal.js";
 import { nextOrganizationCode, nextOrganizationRequestNumber } from "../lib/request-number.js";
-import { ROLE_LABELS, isBdiStaff } from "../lib/roles.js";
+import { REVIEW_TASK_TYPE_LABELS, ROLE_LABELS, isBdiStaff } from "../lib/roles.js";
 import {
   PLACEHOLDER_ORGANIZATION_NAME,
   BDI_ORGANIZATION_ID,
@@ -128,6 +139,7 @@ const draftSchema = z.object({
   nameEn: z.string().trim().max(200).optional(),
   organizationType: z.string().trim().max(64).optional(),
   addressLine: z.string().trim().max(300).optional(),
+  road: z.string().trim().max(255).optional(),
   province: z.string().trim().optional(),
   district: z.string().trim().optional(),
   subdistrict: z.string().trim().optional(),
@@ -159,6 +171,11 @@ const submitSchema = z.object({
   organizationCode: z.string().trim().min(1, "กรุณากรอกรหัสหน่วยงาน").max(64),
   name: z.string().trim().min(3, "ชื่อหน่วยงานต้องมีอย่างน้อย 3 ตัวอักษร").max(200),
   addressLine: z.string().trim().min(1, "กรุณากรอกที่อยู่"),
+  /**
+   * ถนนไม่บังคับ — ที่อยู่ราชการหลายแห่งไม่มีชื่อถนน (ใช้หมู่ที่แทน) บังคับกรอกจะกลายเป็น
+   * การให้ผู้ใช้กรอกข้อมูลที่ไม่มีอยู่จริง ช่อง "ถนน" ในเอกสาร A0 จะว่างไว้ตามความจริง
+   */
+  road: z.string().trim().max(255).optional(),
   province: z.string().trim().min(1, "กรุณาเลือกจังหวัด"),
   district: z.string().trim().min(1, "กรุณาเลือกอำเภอ/เขต"),
   subdistrict: z.string().trim().min(1, "กรุณาเลือกตำบล/แขวง"),
@@ -204,6 +221,7 @@ async function toRequestData(input: z.infer<typeof draftSchema>) {
     organizationNameTh: input.name,
     organizationNameEn: input.nameEn,
     organizationAddressLine: input.addressLine,
+    organizationRoad: input.road,
     organizationProvinceCode: codes.provinceCode,
     organizationDistrictCode: codes.districtCode,
     organizationSubdistrictCode: codes.subDistrictCode,
@@ -244,6 +262,7 @@ function prefillFromOrganization(org: {
   nameTh: string;
   nameEn: string | null;
   addressLine: string | null;
+  road: string | null;
   provinceCode: string | null;
   districtCode: string | null;
   subDistrictCode: string | null;
@@ -259,6 +278,7 @@ function prefillFromOrganization(org: {
     organizationNameTh: org.nameTh === PLACEHOLDER_ORGANIZATION_NAME ? null : org.nameTh,
     organizationNameEn: org.nameEn,
     organizationAddressLine: org.addressLine,
+    organizationRoad: org.road,
     organizationProvinceCode: org.provinceCode,
     organizationDistrictCode: org.districtCode,
     organizationSubdistrictCode: org.subDistrictCode,
@@ -306,6 +326,7 @@ async function toApiShape(request: RequestRow) {
     nameEn: request.organizationNameEn,
     organizationType: request.organizationType,
     addressLine: request.organizationAddressLine,
+    road: request.organizationRoad,
     province: names.province,
     district: names.district,
     subdistrict: names.subdistrict,
@@ -380,6 +401,11 @@ async function pickAssignee(roleCode: RoleCode, organizationId?: string | null):
 
   const loadByUser = new Map(loads.map((l) => [l.assignedUserId, l._count._all]));
   return candidates.sort((a, b) => (loadByUser.get(a) ?? 0) - (loadByUser.get(b) ?? 0))[0] ?? null;
+}
+
+/** คำนำหน้า ชื่อ นามสกุล ที่ต่อกันแล้ว ข้ามช่องที่ยังว่าง */
+function fullName(prefix?: string | null, first?: string | null, last?: string | null): string {
+  return [prefix, first, last].filter(Boolean).join(" ").trim();
 }
 
 /** ผู้ใช้เห็นคำขอนี้ได้ไหม */
@@ -944,21 +970,153 @@ organizationRouter.post("/:id/generate-form", async (req, res) => {
     return;
   }
 
-  const pdf = await renderOrganizationForm(shape);
-  const attachment = await storeAttachment(prisma, {
-    ownerType: AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
-    ownerId: request.id,
-    attachmentType: AttachmentType.GENERATED_FORM,
-    file: {
-      buffer: pdf,
-      originalname: `แบบฟอร์มสร้างหน่วยงาน-${shape.name}.pdf`,
-      mimetype: "application/pdf",
-      size: pdf.length,
-    },
-    uploadedBy: session.sub,
+  /**
+   * เอกสารที่สร้างคือ A0 ฉบับจริงจาก template .docx ของฝ่ายกฎหมาย
+   *
+   * ก่อนหน้านี้ตรงนี้เรียก renderOrganizationForm() ซึ่งวางเลย์เอาต์ "แบบฟอร์มขอสร้าง
+   * หน่วยงานในระบบ" ขึ้นมาเอง เพราะตอนนั้นสเปกมีแต่ภาพตัวอย่าง ไม่มีไฟล์ template
+   * ตอนนี้มีไฟล์จริงแล้ว เอกสารที่หน่วยงานลงนามจึงต้องเป็นฉบับนั้น ไม่ใช่ฉบับที่เราวาดเอง
+   * ข้อมูลผู้กรอก เลขบัตร และเบอร์โทรยังตรวจได้จากหน้ารายละเอียดคำขอ ซึ่งแสดงครบทุกช่อง
+   */
+  const { attachment } = await renderAgreement(prisma, {
+    request: { ...shape, submittedAt: request.submittedAt },
+    printedByName: fullName(shape.contactPrefix, shape.contactFirstName, shape.contactLastName),
+    actorId: session.sub,
   });
 
-  res.status(201).json({ attachment: publicAttachment(attachment) });
+  res.status(201).json({ attachment });
+});
+
+// ------------------------------------------------------- เอกสารกฎหมายของคำขอ
+
+/**
+ * เอกสารทั้งชุดที่ผู้อนุมัติต้องอ่าน — A0 ที่ render จากคำขอนี้ ตามด้วยผนวก A1–A3
+ *
+ * A0 เป็นไฟล์ของคำขอ (มีชื่อหน่วยงานและลายมือชื่ออยู่ในนั้น) ส่วนผนวกเป็นไฟล์กลางของ
+ * เวอร์ชันที่เผยแพร่อยู่ ไม่ได้ copy ต่อคำขอ — เพราะไม่มีช่องให้เติมเลยแม้ช่องเดียว
+ * สิ่งที่ผูกผนวกเข้ากับคำขอคือ legal.legal_acceptance ซึ่งชี้ไปที่ version id
+ */
+organizationRouter.get("/:id/legal-documents", async (req, res) => {
+  const session = req.session!;
+  /**
+   * `:id` รับได้ทั้ง id ของคำขอและของหน่วยงาน เหมือน GET /:id
+   *
+   * เมนู "หน่วยงานของฉัน" ประกอบลิงก์จาก id ของ**หน่วยงาน** (AppShell.tsx) ผู้มีอำนาจ
+   * กระทำการแทนที่เข้าหน้ารายละเอียดจากเมนูนั้นจึงยิงมาที่นี่ด้วย id ของหน่วยงาน
+   * ตอนที่รับแต่ id ของคำขอ เส้นทางนั้นได้ 404 → หน้าจอหมุนค้างตลอดและปุ่ม
+   * "ผ่านการตรวจสอบ" กดไม่ได้ เพราะกล่องลงนามผูกกับรายการเอกสารที่โหลดไม่สำเร็จ
+   * ทำให้ต่างกันระหว่างสอง route ที่อยู่ติดกันคือกับดักที่ผู้เรียกไม่มีทางเดาได้
+   */
+  const request = await findRequestByRequestOrOrganizationId(req.params.id);
+  if (!request || !canView(session, request)) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
+    return;
+  }
+
+  const documents = await publishedDocuments(prisma, LEGAL_SCOPES.ORGANIZATION_REGISTRATION);
+  let agreement = await activeAttachment(
+    prisma,
+    AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
+    request.id,
+    AttachmentType.GENERATED_FORM,
+  );
+
+  /**
+   * สร้าง A0 ใหม่ถ้าไฟล์ที่มีเก่ากว่า template ที่เผยแพร่อยู่ (หรือยังไม่มีไฟล์เลย)
+   *
+   * เคสที่ต้องกัน: หน่วยงานกดสร้าง PDF จาก template v1 แล้วนำส่ง ต่อมาฝ่ายกฎหมายเผยแพร่
+   * v2 ผู้มีอำนาจเปิดหน้านี้ขึ้นมา รายการจะบอกว่าเอกสารคือ v2 และตอนกดลงนามระบบจะบันทึก
+   * legal_acceptance เป็น v2 — แต่ไฟล์ที่เขาเพิ่งอ่านยัง render จาก v1 อยู่ กลายเป็นลงนาม
+   * รับข้อความคนละฉบับกับที่อ่าน
+   *
+   * เงื่อนไขนี้เข้าเงื่อนไขได้ไม่บ่อย และวนซ้ำไม่ได้ เพราะหลังสร้างเสร็จ uploadedAt
+   * จะใหม่กว่า publishedAt เสมอ ส่วนคำขอที่ยังไม่ได้นำส่งไม่ต้องสร้างให้ — ผู้กรอกเป็นคน
+   * กดสร้างเองที่หน้าตรวจสอบก่อนนำส่ง และตอนนั้นข้อมูลอาจยังไม่ครบ
+   */
+  const agreementDoc = documents.find((doc) => doc.code === AGREEMENT_CODE);
+  const publishedAt = agreementDoc
+    ? (
+        await prisma.legalDocumentVersion.findUnique({
+          where: { id: agreementDoc.versionId },
+          select: { publishedAt: true },
+        })
+      )?.publishedAt
+    : null;
+  const stale =
+    agreementDoc !== undefined &&
+    request.submittedAt !== null &&
+    (!agreement || (publishedAt !== null && publishedAt !== undefined && agreement.uploadedAt < publishedAt));
+
+  if (stale) {
+    const shape = await toApiShape(request);
+    const rendered = await renderAgreement(prisma, {
+      request: { ...shape, submittedAt: request.submittedAt },
+      printedByName: fullName(shape.contactPrefix, shape.contactFirstName, shape.contactLastName),
+      actorId: session.sub,
+    });
+    agreement = await prisma.attachment.findUniqueOrThrow({ where: { id: rendered.attachment.id } });
+  }
+
+  const accepted = await prisma.legalAcceptance.findMany({
+    where: { subjectType: SUBJECT, subjectId: request.id },
+    select: { legalDocumentVersionId: true, acceptedAt: true },
+  });
+  const acceptedAt = new Map(accepted.map((a) => [a.legalDocumentVersionId, a.acceptedAt]));
+
+  res.json({
+    documents: documents.map((doc) => ({
+      code: doc.code,
+      name: doc.nameTh,
+      versionId: doc.versionId,
+      versionNumber: doc.versionNumber,
+      /** true = ฉบับนี้ถูก render จากข้อมูลคำขอ (A0) — ที่เหลือเป็นไฟล์กลาง */
+      fromRequest: doc.code === AGREEMENT_CODE,
+      /** URL ที่ frontend เปิดดูได้ — null เมื่อยังไม่ได้สร้าง A0 */
+      fileUrl:
+        doc.code === AGREEMENT_CODE
+          ? agreement
+            ? `/api/organizations/${request.id}/attachments/${agreement.id}`
+            : null
+          : `/api/organizations/${request.id}/legal-documents/${doc.versionId}/file`,
+      acceptedAt: acceptedAt.get(doc.versionId) ?? null,
+    })),
+  });
+});
+
+/** ไฟล์ PDF ของผนวกฉบับหนึ่ง — render ไว้แล้วตอน publish ไม่ได้แปลงสดทุกครั้ง */
+organizationRouter.get("/:id/legal-documents/:versionId/file", async (req, res) => {
+  const session = req.session!;
+  // รับได้ทั้งสอง id ด้วยเหตุผลเดียวกับ route ด้านบน
+  const request = await findRequestByRequestOrOrganizationId(req.params.id);
+  if (!request || !canView(session, request)) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  if (!isUuid(req.params.versionId)) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+
+  const pdf = await activeAttachment(
+    prisma,
+    AttachmentOwnerType.LEGAL_DOCUMENT_VERSION,
+    req.params.versionId,
+    AttachmentType.GENERATED_FORM,
+  );
+  if (!pdf) {
+    res.status(404).json({ error: "not_found", message: "ยังไม่มีไฟล์ของเอกสารฉบับนี้" });
+    return;
+  }
+
+  await logAudit({
+    action: AuditAction.DOCUMENT_DOWNLOADED,
+    subjectType: AuditSubject.ATTACHMENT,
+    subjectId: pdf.id,
+    organizationId: request.organizationId,
+    after: { filename: pdf.originalFileName, legalDocumentVersionId: req.params.versionId },
+  });
+
+  await streamAttachment(res, pdf);
 });
 
 // ---------------------------------------------------------------- submit
@@ -1065,10 +1223,55 @@ organizationRouter.post("/:id/submit", async (req, res) => {
 
 // ---------------------------------------------------------------- review
 
+/**
+ * การลงนามอิเล็กทรอนิกส์ที่แนบมากับการอนุมัติ
+ *
+ * `acknowledgedVersionIds` คือเอกสารที่ผู้ลงนามกด "เห็นชอบ" ทีละฉบับก่อนถึงหน้าลงนาม
+ * (ขั้นตอนที่ 3 ของการ์ด) ส่งเป็น version id ไม่ใช่รหัส A0/A1 เพราะสิ่งที่ต้องบันทึกว่า
+ * ยอมรับคือ "ฉบับไหน" ถ้าฝ่ายกฎหมายอัปโหลดเวอร์ชันใหม่ระหว่างที่ผู้อนุมัติเปิดหน้าอยู่
+ * รายการที่ส่งกลับมาจะไม่ตรงกับที่เผยแพร่ และต้องให้อ่านใหม่ ไม่ใช่ผ่านไปเงียบ ๆ
+ *
+ * `confirmationText` คือข้อความที่ผู้ใช้เห็นตอนกดลงนาม เก็บลง
+ * signature_confirmation.confirmation_text ตามที่ sheet กำหนด — หลักฐานว่า
+ * เขายืนยันอะไร ต้องเป็นข้อความจริงที่แสดง ณ เวลานั้น ไม่ใช่ข้อความที่โค้ดเดาย้อนหลัง
+ */
+const signatureSchema = z.object({
+  /**
+   * เอกสารที่ผู้ลงนามยืนยันว่าอ่านแล้ว พร้อมเวลาที่ยืนยันของแต่ละฉบับ
+   *
+   * ส่งเป็น version id ไม่ใช่รหัส A0/A1 เพราะสิ่งที่ต้องบันทึกคือยอมรับ**ฉบับไหน**
+   * และเวลาแยกต่อฉบับ เพราะผู้ลงนามติ๊กยืนยันทีละฉบับตอนอ่าน ไม่ได้ติ๊กรวดเดียวตอนท้าย
+   */
+  acknowledgements: z
+    .array(
+      z.object({
+        versionId: z.string(),
+        attestedAt: z.string().datetime(),
+      }),
+    )
+    .min(1),
+  /**
+   * ข้อความที่ผู้ลงนามติ๊กยืนยันต่อเอกสารแต่ละฉบับ
+   *
+   * เก็บข้อความจริงที่แสดง ณ เวลานั้น ไม่ใช่ให้โค้ดเดาย้อนหลัง — ถ้าวันหนึ่งถ้อยคำนี้
+   * ถูกแก้ หลักฐานเก่าต้องไม่เปลี่ยนความหมายตามไปด้วย ฝ่าย BDI ลงนามรวดเดียวโดยไม่มี
+   * การยืนยันรายฉบับ (การ์ดข้อ 4) จึงไม่มีค่านี้มา
+   */
+  attestationText: z.string().trim().min(1).max(500).optional(),
+  confirmationText: z.string().trim().min(1).max(2000),
+});
+
 const reviewSchema = z.object({
   action: z.enum(["approve", "request_revision", "reject"]),
   note: z.string().trim().optional(),
+  signature: signatureSchema.optional(),
 });
+
+/** ด่านที่การอนุมัติคือการลงนามบนเอกสาร จึงต้องมี signature มาด้วย */
+const SIGNING_TASKS: Record<string, ConfirmationType> = {
+  [ReviewTaskType.ORGANIZATION_APPROVAL]: ConfirmationType.ORGANIZATION_APPROVAL,
+  [ReviewTaskType.BDI_FINAL_APPROVAL]: ConfirmationType.BDI_FINAL_APPROVAL,
+};
 
 /**
  * จุดตัดสินใจเดียวสำหรับทุกด่าน — ใครทำได้ขึ้นกับ **active review_task** ไม่ใช่ status
@@ -1084,7 +1287,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
       res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
       return;
     }
-    const { action, note } = parsed.data;
+    const { action, note, signature } = parsed.data;
 
     if (action !== "approve" && (note?.length ?? 0) < 10) {
       res.status(400).json({
@@ -1119,11 +1322,45 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
       [ReviewTaskType.DATASET_SPECIALIST_REVIEW]: [ROLE_CODES.BDI_DATASET_SPECIALIST],
       [ReviewTaskType.ORGANIZATION_REVISION]: [ROLE_CODES.ORGANIZATION_USER],
     };
-    const isApproverByEmail =
-      task.taskType === ReviewTaskType.ORGANIZATION_APPROVAL &&
-      request.approverEmail?.toLowerCase() === session.email.toLowerCase();
+    /** ผู้ใช้คนนี้ปิดด่านชนิดนี้ของคำขอนี้ได้ไหม */
+    const canAction = (taskType: ReviewTaskType) =>
+      session.roles.some((r) => allowedRoles[taskType].includes(r)) ||
+      (taskType === ReviewTaskType.ORGANIZATION_APPROVAL &&
+        request.approverEmail?.toLowerCase() === session.email.toLowerCase());
 
-    if (!session.roles.some((r) => allowedRoles[task.taskType].includes(r)) && !isApproverByEmail) {
+    if (!canAction(task.taskType)) {
+      /**
+       * "ไม่มีสิทธิ์" กับ "คำขอเดินไปแล้ว" ไม่ใช่เรื่องเดียวกัน และเดิมตอบเหมือนกันหมด
+       *
+       * เคสที่เกิดจริงบ่อยกว่า: ผู้มีอำนาจกระทำการแทนเปิดหน้าไว้ ระหว่างนั้นคำขอถูกปิดด่าน
+       * ของเขาไปแล้ว (คนอื่นทำ หรือเขาเองทำจากอีกแท็บ) พอกดลงนาม active task กลายเป็น
+       * ด่านของ BDI ซึ่งเขาแตะไม่ได้ ระบบเลยตอบว่า "คุณไม่มีสิทธิ์ดำเนินการขั้นตอนนี้"
+       * ทั้งที่เขามีสิทธิ์เต็มที่ในด่านของตัวเอง — ข้อความนั้นส่งเขาไปหาปัญหาเรื่องสิทธิ์
+       * ที่ไม่มีอยู่จริง แทนที่จะบอกว่าหน้าจอที่ถืออยู่เป็นข้อมูลเก่า
+       *
+       * แยกโดยถามว่า "ด่านที่เขาทำได้ของคำขอนี้ ปิดไปแล้วหรือยัง" ถ้าปิดแล้ว = เดินไปแล้ว
+       */
+      const ownStage = await prisma.reviewTask.findFirst({
+        where: {
+          subjectType: SUBJECT,
+          subjectId: request.id,
+          status: ReviewTaskStatus.COMPLETED,
+          taskType: { in: Object.values(ReviewTaskType).filter(canAction) },
+        },
+        orderBy: { completedAt: "desc" },
+      });
+
+      if (ownStage) {
+        res.status(409).json({
+          error: "stage_completed",
+          message:
+            `ขั้นตอนของคุณในคำขอนี้ดำเนินการเรียบร้อยแล้ว ` +
+            `ตอนนี้คำขออยู่ที่ขั้น "${REVIEW_TASK_TYPE_LABELS[task.taskType]}" — ` +
+            `หน้าจอที่เปิดอยู่เป็นข้อมูลก่อนหน้านั้น กรุณาโหลดหน้าใหม่`,
+        });
+        return;
+      }
+
       res.status(403).json({ error: "forbidden", message: "คุณไม่มีสิทธิ์ดำเนินการขั้นตอนนี้" });
       return;
     }
@@ -1137,6 +1374,48 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
           ? ReviewResult.REJECTED
           : ReviewResult.RETURNED;
 
+    /**
+     * สองด่านสุดท้ายอนุมัติด้วยการลงนามบนเอกสาร ไม่ใช่กดปุ่มผ่านเฉย ๆ
+     *
+     * ตรวจให้จบก่อนเปิด transaction: ถ้ารายการเอกสารที่ผู้ใช้กดเห็นชอบไม่ครบหรือไม่ตรงกับ
+     * ที่เผยแพร่อยู่ ต้องให้กลับไปอ่านใหม่ ไม่ใช่ปิด task ไปแล้วค่อยพบว่าหลักฐานไม่ครบ
+     */
+    const confirmationType = SIGNING_TASKS[task.taskType];
+    let signedVersionIds: string[] = [];
+
+    if (confirmationType && result === ReviewResult.APPROVED) {
+      if (!signature) {
+        res.status(400).json({
+          error: "signature_required",
+          message: "ขั้นตอนนี้ต้องลงนามบนเอกสารข้อตกลง กรุณาอ่านเอกสารให้ครบทุกฉบับแล้วกดลงนาม",
+        });
+        return;
+      }
+
+      const published = await publishedDocuments(prisma, LEGAL_SCOPES.ORGANIZATION_REGISTRATION);
+      if (published.length === 0) {
+        res.status(503).json({
+          error: "no_legal_documents",
+          message: "ยังไม่มีเอกสารข้อตกลงที่เผยแพร่ในระบบ กรุณาแจ้งผู้ดูแลระบบ",
+        });
+        return;
+      }
+
+      const acknowledged = new Set(signature.acknowledgements.map((a) => a.versionId));
+      const missing = published.filter((doc) => !acknowledged.has(doc.versionId));
+      if (missing.length > 0) {
+        res.status(400).json({
+          error: "documents_not_acknowledged",
+          message:
+            `ยังมีเอกสารที่ยังไม่ได้เห็นชอบ: ${missing.map((d) => d.code).join(" ")} — ` +
+            "เอกสารอาจถูกปรับปรุงเป็นฉบับใหม่ระหว่างที่เปิดหน้านี้อยู่ กรุณาโหลดหน้าใหม่แล้วอ่านอีกครั้ง",
+        });
+        return;
+      }
+
+      signedVersionIds = published.map((doc) => doc.versionId);
+    }
+
     const outcome = await prisma.$transaction(async (tx) => {
       await startTask(tx, task.id, session.sub);
       await completeTask(tx, {
@@ -1146,6 +1425,85 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
         commentVisibility: "ORGANIZATION",
         actorId: session.sub,
       });
+
+      /**
+       * หลักฐานการลงนาม เขียนใน transaction เดียวกับการปิด task
+       *
+       * ชื่อผู้ลงนามถูก snapshot ลง confirmation_payload_json ด้วย ไม่ได้พึ่ง displayName
+       * ของบัญชีตอนอ่าน — เอกสารที่ลงนามแล้วต้องไม่เปลี่ยนชื่อตามเมื่อผู้ใช้แก้โปรไฟล์
+       *
+       * legal_acceptance เขียนเฉพาะฝ่ายหน่วยงาน: ตารางนี้คือ "ใครยอมรับเอกสารฉบับใด"
+       * ซึ่งคือหน่วยงานผู้ลงทะเบียน การลงนามของ BDI เป็นการเห็นชอบของสำนักงาน
+       * ไม่ใช่การยอมรับเงื่อนไข จึงมีแต่ signature_confirmation
+       */
+      if (confirmationType && signature && result === ReviewResult.APPROVED) {
+        /**
+         * ชื่อที่ปรากฏบนเอกสาร
+         *
+         * session ถือแค่ id กับอีเมล (ตั้งใจให้เบา) จึงต้องอ่านชื่อจากฐานข้อมูล
+         * ฝ่ายหน่วยงานใช้ชื่อจาก snapshot ของคำขอก่อนชื่อบนบัญชี เพราะชื่อในคำขอคือชื่อที่
+         * หน่วยงานกรอกว่าเป็นผู้มีอำนาจกระทำการแทน และเป็นชื่อที่ปรากฏในย่อหน้าคู่สัญญา
+         * ข้างบนของเอกสารฉบับเดียวกัน — สองที่ต้องเป็นชื่อเดียวกัน
+         */
+        const account = await tx.userAccount.findUnique({
+          where: { id: session.sub },
+          select: { displayName: true, prefixTh: true, firstnameTh: true, lastnameTh: true },
+        });
+        const signedName =
+          (confirmationType === ConfirmationType.ORGANIZATION_APPROVAL
+            ? fullName(request.approverPrefixTh, request.approverFirstnameTh, request.approverLastnameTh)
+            : fullName(account?.prefixTh, account?.firstnameTh, account?.lastnameTh)) ||
+          account?.displayName ||
+          session.email;
+        const confirmation = await tx.signatureConfirmation.create({
+          data: {
+            reviewTaskId: task.id,
+            subjectType: SUBJECT,
+            subjectId: request.id,
+            userAccountId: session.sub,
+            organizationId: request.organizationId,
+            confirmationType,
+            confirmationText: signature.confirmationText,
+            confirmationPayloadJson: {
+              signedName,
+              documentVersionIds: signedVersionIds,
+            },
+            ipAddress: req.ip ?? null,
+            userAgent: req.get("user-agent") ?? null,
+            createdBy: session.sub,
+          },
+        });
+
+        if (confirmationType === ConfirmationType.ORGANIZATION_APPROVAL) {
+          const attestedAt = new Map(
+            signature.acknowledgements.map((a) => [a.versionId, new Date(a.attestedAt)]),
+          );
+          await tx.legalAcceptance.createMany({
+            data: signedVersionIds.map((versionId) => ({
+              legalDocumentVersionId: versionId,
+              userAccountId: session.sub,
+              organizationId: request.organizationId,
+              subjectType: SUBJECT,
+              subjectId: request.id,
+              reviewTaskId: task.id,
+              signatureConfirmationId: confirmation.id,
+              /**
+               * ติ๊กยืนยันว่าอ่านครบทีละฉบับ ไม่ใช่กดปุ่มเดียวรวบทุกฉบับ —
+               * sheet แยกสองวิธีนี้ไว้ และตอนนี้ตรงกับ CHECKBOX จริง ๆ
+               */
+              acceptanceMethod: AcceptanceMethod.CHECKBOX,
+              // เวลาที่ติ๊กของฉบับนั้น ไม่ใช่เวลาที่กดลงนามตอนท้าย
+              acceptedAt: attestedAt.get(versionId) ?? new Date(),
+              acceptanceContextJson: signature.attestationText
+                ? { attestationText: signature.attestationText }
+                : undefined,
+              ipAddress: req.ip ?? null,
+              userAgent: req.get("user-agent") ?? null,
+              createdBy: session.sub,
+            })),
+          });
+        }
+      }
 
       if (result === ReviewResult.PASSED && task.taskType === ReviewTaskType.BDI_OFFICER_REVIEW) {
         const approverId = await ensureApproverAccount(tx, request);
@@ -1197,6 +1555,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
             nameTh: request.organizationNameTh ?? request.organization.nameTh,
             nameEn: request.organizationNameEn,
             addressLine: request.organizationAddressLine,
+            road: request.organizationRoad,
             provinceCode: request.organizationProvinceCode,
             districtCode: request.organizationDistrictCode,
             subDistrictCode: request.organizationSubdistrictCode,
@@ -1234,14 +1593,55 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
       after: { taskType: task.taskType, result, note },
     });
 
+    if (confirmationType && result === ReviewResult.APPROVED) {
+      await logAudit({
+        action: AuditAction.DOCUMENT_SIGNED,
+        subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
+        subjectId: request.id,
+        organizationId: request.organizationId,
+        after: { confirmationType, documentVersionIds: signedVersionIds },
+      });
+    }
+
     await dispatchReviewNotifications(request, task.taskType, result, note);
 
     const fresh = await prisma.organizationRegistrationRequest.findUniqueOrThrow({
       where: { id: request.id },
       include: { organization: true },
     });
-    res.json({ organization: await toApiShape(fresh) });
+
+    /**
+     * ลงนามแล้ว — สร้าง A0 ทับด้วยฉบับที่มีลายมือชื่อ (และตราเห็นชอบเมื่อเป็นด่านสุดท้าย)
+     *
+     * ทำนอก transaction โดยตั้งใจ ตามแบบเดียวกับ dataset-requests.ts: การเรนเดอร์เอกสาร
+     * ต้องคุยกับ LibreOffice และเขียนลง object storage ซึ่งใช้เวลาเป็นวินาที ไม่ควรถือ
+     * transaction ของฐานข้อมูลไว้ (ค่า timeout ปกติของ Prisma คือ 5 วินาที) และถ้าขั้นนี้ล้ม
+     * การลงนามที่บันทึกไปแล้วต้องไม่ถูกย้อน — หลักฐานอยู่ใน signature_confirmation
+     * เรียบร้อยแล้ว เอกสารสร้างซ้ำได้จากหลักฐานนั้นเสมอ
+     *
+     * ฉบับก่อนหน้ากลายเป็น REPLACED ไม่ได้ถูกลบ จึงยังตรวจย้อนได้ว่าผู้ลงนามเห็นอะไร
+     */
+    let agreementRendered = true;
+    if (confirmationType && result === ReviewResult.APPROVED) {
+      try {
+        const shape = await toApiShape(fresh);
+        await renderAgreement(prisma, {
+          request: { ...shape, submittedAt: fresh.submittedAt },
+          printedByName: fullName(shape.contactPrefix, shape.contactFirstName, shape.contactLastName),
+          actorId: session.sub,
+        });
+      } catch (err) {
+        agreementRendered = false;
+        console.error("[organizations] สร้างเอกสารข้อตกลงฉบับลงนามไม่สำเร็จ", err);
+      }
+    }
+
+    res.json({ organization: await toApiShape(fresh), agreementRendered });
   } catch (err) {
+    if (err instanceof DocumentRenderError) {
+      res.status(err.status).json({ error: err.code, message: err.message, fields: err.fields });
+      return;
+    }
     if (err instanceof WorkflowError) {
       res.status(err.status).json({ error: err.code, message: err.message });
       return;

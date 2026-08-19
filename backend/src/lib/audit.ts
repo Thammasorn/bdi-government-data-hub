@@ -79,6 +79,17 @@ export const AuditAction = {
 
   DATA_EXPORTED: "DATA_EXPORTED",
   DOCUMENT_DOWNLOADED: "DOCUMENT_DOWNLOADED",
+
+  /**
+   * เผยแพร่ template เอกสารกฎหมายฉบับใหม่ — เพิ่มจากรายการตัวอย่างใน sheet
+   *
+   * เนื้อความของเอกสารที่หน่วยงานลงนามเปลี่ยนได้โดยไม่ต้อง deploy จึงต้องมีร่องรอยว่า
+   * ใครเปลี่ยนเป็นเวอร์ชันไหนเมื่อไร ไม่มี action เดิมอันไหนตรงความหมายนี้
+   */
+  LEGAL_DOCUMENT_PUBLISHED: "LEGAL_DOCUMENT_PUBLISHED",
+
+  /** ลงนามอิเล็กทรอนิกส์บนเอกสารข้อตกลง (signature.signature_confirmation) */
+  DOCUMENT_SIGNED: "DOCUMENT_SIGNED",
 } as const;
 
 export type AuditActionCode = (typeof AuditAction)[keyof typeof AuditAction];
