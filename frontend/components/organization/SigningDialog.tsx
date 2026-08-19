@@ -5,7 +5,7 @@ import { useState } from "react";
 import { PdfViewer } from "@/components/organization/PdfViewer";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import type { LegalDocument } from "@/lib/types";
 
 /**
@@ -47,6 +47,7 @@ export function SigningDialog({
   open,
   onClose,
   onSigned,
+  onStale,
   requestId,
   documents,
   perDocument,
@@ -55,6 +56,8 @@ export function SigningDialog({
   open: boolean;
   onClose: () => void;
   onSigned: () => void;
+  /** คำขอเดินผ่านด่านนี้ไปแล้ว — หน้าจอที่ถืออยู่เป็นข้อมูลเก่า ต้องโหลดใหม่ */
+  onStale: (message: string) => void;
   requestId: string;
   documents: LegalDocument[];
   perDocument: boolean;
@@ -102,6 +105,13 @@ export function SigningDialog({
       reset();
       onSigned();
     } catch (err) {
+      // คำขอถูกปิดด่านไปแล้วระหว่างที่หน้านี้เปิดอยู่ — ปิดกล่องแล้วให้หน้าโหลดสถานะจริง
+      // ค้างกล่องไว้กับข้อความ error จะทำให้เขากดลงนามซ้ำไปเรื่อย ๆ กับด่านที่ปิดแล้ว
+      if (err instanceof ApiError && err.code === "stage_completed") {
+        reset();
+        onStale(err.message);
+        return;
+      }
       setError(err instanceof Error ? err.message : "ลงนามไม่สำเร็จ");
     } finally {
       setBusy(false);

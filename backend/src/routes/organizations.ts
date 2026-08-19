@@ -64,7 +64,7 @@ import {
 import { DocumentRenderError } from "../lib/document-render.js";
 import { LEGAL_SCOPES, publishedDocuments } from "../lib/legal.js";
 import { nextOrganizationCode, nextOrganizationRequestNumber } from "../lib/request-number.js";
-import { ROLE_LABELS, isBdiStaff } from "../lib/roles.js";
+import { REVIEW_TASK_TYPE_LABELS, ROLE_LABELS, isBdiStaff } from "../lib/roles.js";
 import {
   PLACEHOLDER_ORGANIZATION_NAME,
   BDI_ORGANIZATION_ID,
@@ -1322,11 +1322,45 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
       [ReviewTaskType.DATASET_SPECIALIST_REVIEW]: [ROLE_CODES.BDI_DATASET_SPECIALIST],
       [ReviewTaskType.ORGANIZATION_REVISION]: [ROLE_CODES.ORGANIZATION_USER],
     };
-    const isApproverByEmail =
-      task.taskType === ReviewTaskType.ORGANIZATION_APPROVAL &&
-      request.approverEmail?.toLowerCase() === session.email.toLowerCase();
+    /** ผู้ใช้คนนี้ปิดด่านชนิดนี้ของคำขอนี้ได้ไหม */
+    const canAction = (taskType: ReviewTaskType) =>
+      session.roles.some((r) => allowedRoles[taskType].includes(r)) ||
+      (taskType === ReviewTaskType.ORGANIZATION_APPROVAL &&
+        request.approverEmail?.toLowerCase() === session.email.toLowerCase());
 
-    if (!session.roles.some((r) => allowedRoles[task.taskType].includes(r)) && !isApproverByEmail) {
+    if (!canAction(task.taskType)) {
+      /**
+       * "ไม่มีสิทธิ์" กับ "คำขอเดินไปแล้ว" ไม่ใช่เรื่องเดียวกัน และเดิมตอบเหมือนกันหมด
+       *
+       * เคสที่เกิดจริงบ่อยกว่า: ผู้มีอำนาจกระทำการแทนเปิดหน้าไว้ ระหว่างนั้นคำขอถูกปิดด่าน
+       * ของเขาไปแล้ว (คนอื่นทำ หรือเขาเองทำจากอีกแท็บ) พอกดลงนาม active task กลายเป็น
+       * ด่านของ BDI ซึ่งเขาแตะไม่ได้ ระบบเลยตอบว่า "คุณไม่มีสิทธิ์ดำเนินการขั้นตอนนี้"
+       * ทั้งที่เขามีสิทธิ์เต็มที่ในด่านของตัวเอง — ข้อความนั้นส่งเขาไปหาปัญหาเรื่องสิทธิ์
+       * ที่ไม่มีอยู่จริง แทนที่จะบอกว่าหน้าจอที่ถืออยู่เป็นข้อมูลเก่า
+       *
+       * แยกโดยถามว่า "ด่านที่เขาทำได้ของคำขอนี้ ปิดไปแล้วหรือยัง" ถ้าปิดแล้ว = เดินไปแล้ว
+       */
+      const ownStage = await prisma.reviewTask.findFirst({
+        where: {
+          subjectType: SUBJECT,
+          subjectId: request.id,
+          status: ReviewTaskStatus.COMPLETED,
+          taskType: { in: Object.values(ReviewTaskType).filter(canAction) },
+        },
+        orderBy: { completedAt: "desc" },
+      });
+
+      if (ownStage) {
+        res.status(409).json({
+          error: "stage_completed",
+          message:
+            `ขั้นตอนของคุณในคำขอนี้ดำเนินการเรียบร้อยแล้ว ` +
+            `ตอนนี้คำขออยู่ที่ขั้น "${REVIEW_TASK_TYPE_LABELS[task.taskType]}" — ` +
+            `หน้าจอที่เปิดอยู่เป็นข้อมูลก่อนหน้านั้น กรุณาโหลดหน้าใหม่`,
+        });
+        return;
+      }
+
       res.status(403).json({ error: "forbidden", message: "คุณไม่มีสิทธิ์ดำเนินการขั้นตอนนี้" });
       return;
     }

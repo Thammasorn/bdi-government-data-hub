@@ -373,6 +373,12 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
             reloadLegalDocuments();
             void load();
           }}
+          onStale={(message) => {
+            setModal(null);
+            show({ tone: "error", title: "คำขอเดินไปขั้นถัดไปแล้ว", detail: message });
+            reloadLegalDocuments();
+            void load();
+          }}
           requestId={org.id}
           documents={legalDocuments}
           perDocument={ability.perDocument ?? false}
