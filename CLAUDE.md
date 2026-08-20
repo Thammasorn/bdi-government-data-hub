@@ -321,8 +321,11 @@ mirror each other file for file — `lib/organization-agreement.ts` / `lib/datas
 
 **A4 has tick boxes, which is what makes Journey C different.** It is a paper form with option
 lists, so the template carries `{{tick.<field>.<code>}}` before each option and the renderer
-prints ☑ on the option matching the request and ☐ on the rest — every option still prints, so the
-reader sees what was not chosen. Tick names are generated from the code lists in `lib/dataset.ts`
+prints ✔ on the option matching the request and ☐ on the rest — every option still prints, so the
+reader sees what was not chosen. Neither mark exists in TH SarabunPSK, so both come from the
+converter's fallback — which is why `gotenberg/` rejects the colour-emoji font (see
+`docs/17` §2); without that the tick renders as a colour bitmap two and a half times the line
+height. Tick names are generated from the code lists in `lib/dataset.ts`
 (`TICK_FIELDS`), never hand-listed, so adding a code list value makes a new tick usable with no
 change here. A document may omit ticks for codes it has no line for.
 
