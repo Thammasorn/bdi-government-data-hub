@@ -1539,10 +1539,13 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
           where: { id: session.sub },
           select: { displayName: true, prefixTh: true, firstnameTh: true, lastnameTh: true },
         });
+        const isOrgSide = confirmationType === ConfirmationType.ORGANIZATION_APPROVAL;
+        const signedFirst = isOrgSide ? request.approverFirstnameTh : (account?.firstnameTh ?? null);
+        const signedLast = isOrgSide ? request.approverLastnameTh : (account?.lastnameTh ?? null);
         const signedName =
-          (confirmationType === ConfirmationType.ORGANIZATION_APPROVAL
-            ? fullName(request.approverPrefixTh, request.approverFirstnameTh, request.approverLastnameTh)
-            : fullName(account?.prefixTh, account?.firstnameTh, account?.lastnameTh)) ||
+          (isOrgSide
+            ? fullName(request.approverPrefixTh, signedFirst, signedLast)
+            : fullName(account?.prefixTh, signedFirst, signedLast)) ||
           account?.displayName ||
           session.email;
         const confirmation = await tx.signatureConfirmation.create({
@@ -1556,6 +1559,13 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
             confirmationText: signature.confirmationText,
             confirmationPayloadJson: {
               signedName,
+              /**
+               * เก็บชื่อกับนามสกุลแยกด้วย เพราะเอกสารบางฉบับมีช่อง "ชื่อ" กับ "นามสกุล"
+               * แยกกัน ({{bdi.firstName}} / {{bdi.lastName}}) แยกจากชื่อเต็มย้อนหลัง
+               * ทำได้แค่เดาจากช่องว่าง จึงเก็บตอนที่ยังรู้แน่ดีกว่า
+               */
+              signedFirstName: signedFirst,
+              signedLastName: signedLast,
               documentVersionIds: signedVersionIds,
             },
             ipAddress: req.ip ?? null,
