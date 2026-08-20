@@ -1,8 +1,7 @@
 /**
  * เติมข้อมูลลง template .docx แล้วแปลงเป็น PDF
  *
- * ทำไมต้องเดินทาง .docx -> LibreOffice -> PDF ทั้งที่ระบบมี PDFKit อยู่แล้ว
- * (lib/pdf.ts วาดแบบฟอร์มชุดข้อมูลเอง):
+ * ทำไมต้องเดินทาง .docx -> LibreOffice -> PDF แทนการวาดเอกสารเองด้วยโค้ด:
  *
  * 1. **เอกสารกฎหมายต้องแก้ได้โดยไม่แก้โค้ด** A0–A3 เป็นเอกสารที่ฝ่ายกฎหมาย BDI เป็น
  *    เจ้าของ ไม่ใช่ทีมพัฒนา เขาแก้ใน Word แล้วอัปโหลดเวอร์ชันใหม่เข้าระบบ ถ้าเนื้อความ
@@ -20,6 +19,18 @@
 import Docxtemplater from "docxtemplater";
 import PizZip from "pizzip";
 
+import {
+  DATA_CATEGORY_LABELS,
+  DATA_CLASSIFICATION_LABELS,
+  DATA_FORMAT_LABELS,
+  DATA_TOPIC_LABELS,
+  DATA_TYPE_LABELS,
+  DELIVERY_FREQUENCY_LABELS,
+  GEO_COVERAGE_LABELS,
+  LICENSE_LABELS,
+  PERSONAL_DATA_PERIOD_LABELS,
+  UPDATE_FREQUENCY_UNIT_LABELS,
+} from "./dataset.js";
 import { env } from "../env.js";
 
 /** `{{ }}` ไม่ใช่ `{ }` ของ docxtemplater — วงเล็บเดี่ยวชนกับข้อความในเอกสารกฎหมายเอง */
@@ -41,6 +52,8 @@ export class DocumentRenderError extends Error {
 /** กลุ่มของตัวแปร ใช้จัดหมวดในเอกสารคู่มือและในผลลัพธ์ของ API */
 export const VARIABLE_GROUPS = {
   agreement: "วันที่ทำข้อตกลง",
+  dataset: "ชุดข้อมูลที่ขอลงทะเบียน",
+  tick: "ช่องติ๊กตามตัวเลือกในแบบฟอร์ม",
   request: "คำขอลงทะเบียน",
   org: "หน่วยงานที่ลงทะเบียน",
   signatory: "ผู้มีอำนาจกระทำการแทน",
@@ -52,8 +65,19 @@ export const VARIABLE_GROUPS = {
 
 export type VariableGroup = keyof typeof VARIABLE_GROUPS;
 
+/**
+ * flow ที่ตัวแปรนี้มีค่าให้เติม
+ *
+ * เอกสารของเส้นทางลงทะเบียนหน่วยงานกับของเส้นทางลงทะเบียนชุดข้อมูลดึงข้อมูลคนละชุด
+ * `{{signatory.position}}` ไม่มีความหมายในแบบนำส่งข้อมูล และ `{{dataset.title}}` ไม่มี
+ * ความหมายในข้อตกลง — ตรวจตอนอัปโหลดตาม scope ของเอกสาร จะได้รู้ตั้งแต่ตอนนั้น
+ * ไม่ใช่ไปเจอช่องว่างเปล่าในเอกสารที่หน่วยงานลงนามแล้ว
+ */
+export type VariableScope = "both" | "organization" | "dataset";
+
 export interface TemplateVariableSpec {
   group: VariableGroup;
+  scope?: VariableScope;
   description: string;
   /** ตัวอย่างค่าที่ render ออกมา — ใช้ในคู่มือ ไม่ได้ใช้ตอน render */
   example: string;
@@ -75,10 +99,10 @@ export interface TemplateVariableSpec {
  */
 export const TEMPLATE_VARIABLES = {
   // ── วันที่ทำข้อตกลง ────────────────────────────────────────────
-  "agreement.day": { group: "agreement", description: "วันที่ทำข้อตกลง (เลขไทย)", example: "๑๙" },
-  "agreement.month": { group: "agreement", description: "เดือนที่ทำข้อตกลง (ชื่อเดือนภาษาไทย)", example: "สิงหาคม" },
-  "agreement.year": { group: "agreement", description: "ปีที่ทำข้อตกลง (พ.ศ. เลขไทย)", example: "๒๕๖๙" },
-  "agreement.date": { group: "agreement", description: "วันที่ทำข้อตกลงแบบเต็ม สำหรับเอกสารที่มีช่องเดียว", example: "๑๙ สิงหาคม ๒๕๖๙" },
+  "agreement.day": { scope: "organization", group: "agreement", description: "วันที่ทำข้อตกลง (เลขไทย)", example: "๑๙" },
+  "agreement.month": { scope: "organization", group: "agreement", description: "เดือนที่ทำข้อตกลง (ชื่อเดือนภาษาไทย)", example: "สิงหาคม" },
+  "agreement.year": { scope: "organization", group: "agreement", description: "ปีที่ทำข้อตกลง (พ.ศ. เลขไทย)", example: "๒๕๖๙" },
+  "agreement.date": { scope: "organization", group: "agreement", description: "วันที่ทำข้อตกลงแบบเต็ม สำหรับเอกสารที่มีช่องเดียว", example: "๑๙ สิงหาคม ๒๕๖๙" },
 
   // ── คำขอ ─────────────────────────────────────────────────────
   requestNumber: { group: "request", description: "เลขที่คำขอลงทะเบียนหน่วยงาน", example: "ORG-REG-2026-0009" },
@@ -102,15 +126,15 @@ export const TEMPLATE_VARIABLES = {
   "org.website": { group: "org", description: "เว็บไซต์หน่วยงาน — ว่างถ้าไม่ได้กรอก", example: "https://www.dla.go.th" },
 
   // ── ผู้มีอำนาจกระทำการแทน ───────────────────────────────────────
-  "signatory.fullName": { group: "signatory", description: "ชื่อผู้มีอำนาจกระทำการแทน (คำนำหน้า ชื่อ นามสกุล)", example: "นาย อนุชา พัฒนา" },
-  "signatory.prefix": { group: "signatory", description: "คำนำหน้าชื่อผู้มีอำนาจกระทำการแทน", example: "นาย" },
-  "signatory.firstName": { group: "signatory", description: "ชื่อผู้มีอำนาจกระทำการแทน", example: "อนุชา" },
-  "signatory.lastName": { group: "signatory", description: "นามสกุลผู้มีอำนาจกระทำการแทน", example: "พัฒนา" },
-  "signatory.position": { group: "signatory", description: "ตำแหน่งผู้มีอำนาจกระทำการแทน", example: "ผู้อำนวยการ" },
-  "signatory.department": { group: "signatory", description: "ฝ่าย/กอง/สำนักของผู้มีอำนาจกระทำการแทน — ว่างถ้าไม่ได้กรอก", example: "สำนักบริหารกลาง" },
-  "signatory.email": { group: "signatory", description: "อีเมลผู้มีอำนาจกระทำการแทน", example: "director@dla.go.th" },
-  "signatory.phone": { group: "signatory", description: "เบอร์โทรศัพท์ผู้มีอำนาจกระทำการแทน", example: "๐๘๑๒๓๔๕๖๗๘" },
-  "signatory.nationalId": { group: "signatory", description: "เลขบัตรประชาชนผู้มีอำนาจกระทำการแทน (เลขไทย คั่นด้วยขีด)", example: "๑-๑๐๑๗-๐๐๒๐๗-๐๓-๐" },
+  "signatory.fullName": { scope: "organization", group: "signatory", description: "ชื่อผู้มีอำนาจกระทำการแทน (คำนำหน้า ชื่อ นามสกุล)", example: "นาย อนุชา พัฒนา" },
+  "signatory.prefix": { scope: "organization", group: "signatory", description: "คำนำหน้าชื่อผู้มีอำนาจกระทำการแทน", example: "นาย" },
+  "signatory.firstName": { scope: "organization", group: "signatory", description: "ชื่อผู้มีอำนาจกระทำการแทน", example: "อนุชา" },
+  "signatory.lastName": { scope: "organization", group: "signatory", description: "นามสกุลผู้มีอำนาจกระทำการแทน", example: "พัฒนา" },
+  "signatory.position": { scope: "organization", group: "signatory", description: "ตำแหน่งผู้มีอำนาจกระทำการแทน", example: "ผู้อำนวยการ" },
+  "signatory.department": { scope: "organization", group: "signatory", description: "ฝ่าย/กอง/สำนักของผู้มีอำนาจกระทำการแทน — ว่างถ้าไม่ได้กรอก", example: "สำนักบริหารกลาง" },
+  "signatory.email": { scope: "organization", group: "signatory", description: "อีเมลผู้มีอำนาจกระทำการแทน", example: "director@dla.go.th" },
+  "signatory.phone": { scope: "organization", group: "signatory", description: "เบอร์โทรศัพท์ผู้มีอำนาจกระทำการแทน", example: "๐๘๑๒๓๔๕๖๗๘" },
+  "signatory.nationalId": { scope: "organization", group: "signatory", description: "เลขบัตรประชาชนผู้มีอำนาจกระทำการแทน (เลขไทย คั่นด้วยขีด)", example: "๑-๑๐๑๗-๐๐๒๐๗-๐๓-๐" },
 
   // ── ผู้กรอกข้อมูล ────────────────────────────────────────────
   "contact.fullName": { group: "contact", description: "ชื่อผู้กรอกข้อมูล (คำนำหน้า ชื่อ นามสกุล)", example: "นางสาว พิมพ์ชนก สังคมดี" },
@@ -122,6 +146,24 @@ export const TEMPLATE_VARIABLES = {
   "contact.email": { group: "contact", description: "อีเมลผู้กรอกข้อมูล", example: "user@dla.go.th" },
   "contact.phone": { group: "contact", description: "เบอร์โทรศัพท์ผู้กรอกข้อมูล", example: "๐๘๒๐๐๐๐๐๐๐" },
   "contact.nationalId": { group: "contact", description: "เลขบัตรประชาชนผู้กรอกข้อมูล (เลขไทย คั่นด้วยขีด)", example: "๑-๑๐๑๗-๐๐๒๐๗-๐๓-๐" },
+
+  // ── ชุดข้อมูลที่ขอลงทะเบียน (เส้นทาง C) ──
+  "dataset.title": { scope: "dataset", group: "dataset", description: "ชื่อชุดข้อมูล (ภาษาไทย)", example: "ปริมาณน้ำฝนรายวัน" },
+  "dataset.nameEn": { scope: "dataset", group: "dataset", description: "ชื่อชุดข้อมูล (ภาษาอังกฤษ)", example: "Daily Rainfall" },
+  "dataset.maintainer": { scope: "dataset", group: "dataset", description: "ชื่อผู้ติดต่อของชุดข้อมูล", example: "กลุ่มงานข้อมูลสารสนเทศ" },
+  "dataset.maintainerEmail": { scope: "dataset", group: "dataset", description: "อีเมลผู้ติดต่อของชุดข้อมูล", example: "data@dla.go.th" },
+  "dataset.tags": { scope: "dataset", group: "dataset", description: "คำสำคัญหรือคำค้น คั่นด้วยจุดกลาง", example: "น้ำฝน · อุทกภัย" },
+  "dataset.notes": { scope: "dataset", group: "dataset", description: "รายละเอียดชุดข้อมูล", example: "ข้อมูลปริมาณน้ำฝนรายวันจากสถานีตรวจวัด" },
+  "dataset.objective": { scope: "dataset", group: "dataset", description: "วัตถุประสงค์ของการนำส่งข้อมูล", example: "เพื่อการวิเคราะห์และเตือนภัย" },
+  "dataset.dataSource": { scope: "dataset", group: "dataset", description: "แหล่งที่มาของข้อมูล", example: "สถานีตรวจวัดของกรม" },
+  "dataset.dataTopicOther": { scope: "dataset", group: "dataset", description: "ประเด็นอื่น ๆ ที่ระบุเอง — ว่างถ้าไม่ได้เลือก \"อื่น ๆ\"", example: "การเกษตร" },
+  "dataset.dataFormatOther": { scope: "dataset", group: "dataset", description: "ชื่อระบบเชื่อมโยงข้อมูลอื่น — ว่างถ้าไม่ได้เลือกข้อนั้น", example: "GDX" },
+  "dataset.updateFrequencyInterval": { scope: "dataset", group: "dataset", description: "ค่าความถี่ของการปรับปรุงข้อมูลต้นทาง (เลขไทย)", example: "๑" },
+  "dataset.personalDataTypes": { scope: "dataset", group: "dataset", description: "ประเภทของข้อมูลส่วนบุคคล — ว่างถ้าไม่มีข้อมูลส่วนบุคคล", example: "ชื่อ-นามสกุล, เลขบัตรประชาชน" },
+  "dataset.dataSubjectCategories": { scope: "dataset", group: "dataset", description: "กลุ่มหรือประเภทของเจ้าของข้อมูลส่วนบุคคล", example: "ประชาชนผู้ขอรับบริการ" },
+  "dataset.personalDataPeriodYear": { scope: "dataset", group: "dataset", description: "ระยะเวลาประมวลผลข้อมูลส่วนบุคคล จำนวนปี (เลขไทย)", example: "๕" },
+  "dataset.personalDataPeriodMonth": { scope: "dataset", group: "dataset", description: "ระยะเวลาประมวลผลข้อมูลส่วนบุคคล จำนวนเดือน (เลขไทย)", example: "๖" },
+  "dataset.requestNumber": { scope: "dataset", group: "dataset", description: "เลขที่คำขอลงทะเบียนชุดข้อมูล", example: "DS-REG-2026-0004" },
 
   // ── ลายมือชื่อ ──────────────────────────────────────────────
   "approver.signature": { group: "signature", description: "ลายมือชื่อฝ่ายหน่วยงาน — ว่างจนกว่าผู้มีอำนาจจะลงนาม", example: "นาย อนุชา พัฒนา" },
@@ -147,6 +189,49 @@ export const TEMPLATE_VARIABLES = {
   printedDateTime: { group: "system", description: "วันที่และเวลาที่พิมพ์เอกสารจากระบบ (เวลาไทย)", example: "๑๙ สิงหาคม ๒๕๖๙ ๑๕:๒๗" },
 } as const satisfies Record<string, TemplateVariableSpec>;
 
+/**
+ * ช่องติ๊กเป็น "ตระกูล" ไม่ใช่ชื่อเดี่ยว — `{{tick.<ฟิลด์>.<รหัส>}}`
+ *
+ * ไม่ไล่เขียนทีละชื่อลง TEMPLATE_VARIABLES เพราะมีเกือบร้อยช่อง และจะกลายเป็นสำเนาที่สอง
+ * ของ code list ใน lib/dataset.ts ที่ต้องคอยแก้ให้ตรงกัน — สร้างจาก code list ตรง ๆ
+ * เพิ่มตัวเลือกใหม่ในนั้นแล้วช่องติ๊กใหม่ใช้ได้ทันทีโดยไม่ต้องแตะไฟล์นี้
+ *
+ * ฟิลด์ที่เป็น boolean ใช้รหัส `true` / `false`
+ */
+export const TICK_FIELDS: Record<string, readonly string[]> = {
+  dataType: Object.keys(DATA_TYPE_LABELS),
+  dataTopic: Object.keys(DATA_TOPIC_LABELS),
+  updateFrequencyUnit: Object.keys(UPDATE_FREQUENCY_UNIT_LABELS),
+  deliveryFrequency: Object.keys(DELIVERY_FREQUENCY_LABELS),
+  geoCoverage: Object.keys(GEO_COVERAGE_LABELS),
+  dataFormat: Object.keys(DATA_FORMAT_LABELS),
+  dataCategory: Object.keys(DATA_CATEGORY_LABELS),
+  dataClassification: Object.keys(DATA_CLASSIFICATION_LABELS),
+  personalDataProcessingPeriod: Object.keys(PERSONAL_DATA_PERIOD_LABELS),
+  licenseId: Object.keys(LICENSE_LABELS),
+  containsPersonalData: ["true", "false"],
+  allowOriginalRawDataRetention: ["true", "false"],
+  allowOriginalRawDataSharing: ["true", "false"],
+  allowTransformedRawDataSharing: ["true", "false"],
+  allowTransformedRawDataGdxSharing: ["true", "false"],
+  allowAggregatedDataSharing: ["true", "false"],
+  authorizePersonalDataAnonymization: ["true", "false"],
+};
+
+/** ชื่อช่องติ๊กที่ใช้ได้ทั้งหมด เช่น `tick.dataType.1` */
+export const TICK_VARIABLES: ReadonlySet<string> = new Set(
+  Object.entries(TICK_FIELDS).flatMap(([field, codes]) => codes.map((c) => `tick.${field}.${c}`)),
+);
+
+/** ตัวแปรนี้ใช้ได้กับ flow นี้ไหม */
+export function variableAllowed(name: string, scope: VariableScope): boolean {
+  if (TICK_VARIABLES.has(name)) return scope === "dataset" || scope === "both";
+  const spec = (TEMPLATE_VARIABLES as Record<string, TemplateVariableSpec | undefined>)[name];
+  if (!spec) return false;
+  const declared = spec.scope ?? "both";
+  return declared === "both" || scope === "both" || declared === scope;
+}
+
 export type TemplateVariable = keyof typeof TEMPLATE_VARIABLES;
 export type TemplateValues = Partial<Record<TemplateVariable, string>>;
 
@@ -170,9 +255,9 @@ export function placeholdersIn(docx: Buffer): string[] {
  * ปฏิเสธ template ที่เรียกตัวแปรซึ่งไม่มีใครต่อค่าให้
  * โยน DocumentRenderError ที่ status 400 เพราะเป็นความผิดของไฟล์ที่อัปโหลดมา
  */
-export function assertKnownPlaceholders(docx: Buffer): string[] {
+export function assertKnownPlaceholders(docx: Buffer, scope: VariableScope = "both"): string[] {
   const used = placeholdersIn(docx);
-  const unknown = used.filter((name) => !(name in TEMPLATE_VARIABLES));
+  const unknown = used.filter((name) => !variableAllowed(name, scope));
   if (unknown.length > 0) {
     /**
      * ไม่ไล่ชื่อตัวแปรทั้ง 53 ตัวลงในข้อความ — ยาวเกินกว่าจะอ่านบนหน้าจอ

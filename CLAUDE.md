@@ -311,12 +311,36 @@ be destroyed for our mistake. `docs/07-thaid-integration.md` §4.2 has the full 
 and the OTP to stdout instead of sending — that is the normal way to exercise the flows.
 Templates are table-based with inline styles because Gmail and Outlook strip `<style>`.
 
-### PDF — two engines, and they are not interchangeable
+### PDF — every document comes from a .docx template
 
-**Journey C (แบบฟอร์มลงทะเบียนชุดข้อมูล) is drawn by PDFKit.** `backend/src/lib/pdf.ts` with
-Sarabun/Prompt TTFs copied into `backend/src/assets/fonts/`. Thai will not render without
-embedding a Thai face. `npm run build` copies `src/data` and `src/assets` into `dist/` because
-`tsc` does not.
+**Nothing in the system draws a PDF in code any more.** `lib/pdf.ts` and the `pdfkit`
+dependency are gone: Journey B's agreement (A0–A3) and Journey C's dataset form (A4) both come
+from `.docx` templates rendered by LibreOffice through the `gotenberg` service. The two journeys
+mirror each other file for file — `lib/organization-agreement.ts` / `lib/dataset-document.ts`,
+`lib/legal-values.ts` / `lib/dataset-values.ts`.
+
+**A4 has tick boxes, which is what makes Journey C different.** It is a paper form with option
+lists, so the template carries `{{tick.<field>.<code>}}` before each option and the renderer
+prints ☑ on the option matching the request and ☐ on the rest — every option still prints, so the
+reader sees what was not chosen. Tick names are generated from the code lists in `lib/dataset.ts`
+(`TICK_FIELDS`), never hand-listed, so adding a code list value makes a new tick usable with no
+change here. A document may omit ticks for codes it has no line for.
+
+**Variables are scoped per journey.** `agreement.*` / `signatory.*` only mean something in the
+organisation agreement; `dataset.*` / `tick.*` only in the dataset form. Upload validation checks
+against the document's `application_scope`, so putting one in the wrong document is refused at
+upload rather than rendering as a blank in a signed form.
+
+**A4 has no signature block** — the legal team's draft ends with a note. Decided 2026-08-20 not
+to invent one, so the dataset form's signatures live only in `signature_confirmation` /
+`legal_acceptance`. The signature variables still resolve, so adding a block to the template
+later needs no code. Journey C signs at `ORGANIZATION_APPROVAL` and `BDI_FINAL_APPROVAL` only —
+the specialist review and the officer re-check read the document but do not sign.
+
+#### Details that have already cost time
+
+`npm run build` copies `src/data` and `src/assets` into `dist/` because `tsc` does not — that is
+how the `.docx` templates reach the production image.
 
 **Journey B (เอกสารข้อตกลง A0–A3) is rendered from `.docx` templates by LibreOffice**, through
 the `gotenberg` compose service. `renderOrganizationForm()` used to draw an invented

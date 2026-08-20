@@ -98,15 +98,16 @@ async function seedRoles() {
  * **นั่นเป็นแค่ฉบับตั้งต้น** ของจริงหลังจากนี้คือเวอร์ชันล่าสุดในฐานข้อมูล ซึ่ง BDI
  * เปลี่ยนเองได้ผ่าน POST /api/admin/legal-documents/:code/versions โดยไม่ต้องแก้โค้ด
  *
- * A4 (แบบนำส่งข้อมูล) เป็นเอกสารของ Journey C จึงยังอยู่สถานะ DRAFT และไม่มีเวอร์ชัน —
- * การ์ด "Organization Registration PDF legal doc render" กำหนดขอบเขตไว้แค่ A0–A3
+ * A4 (แบบนำส่งข้อมูล) เป็นเอกสารของ Journey C — เผยแพร่ตั้งแต่การ์ด
+ * "Dataset Registration PDF render" ซึ่งทำให้เส้นทางนั้น render เอกสารจาก template
+ * เหมือนเส้นทาง B ตัวมันมีช่องติ๊กตามตัวเลือกในแบบฟอร์ม (ดู docs/19)
  */
 const LEGAL_DOCUMENTS = [
   { code: "A0", type: "DATA_SHARING_AGREEMENT", nameTh: "ข้อตกลงในการบริหารจัดการและการแบ่งปันข้อมูล", scope: "ORGANIZATION_REGISTRATION", order: 1, signature: true, template: "A0.docx" },
   { code: "A1", type: "DATA_PROCESSING_AGREEMENT", nameTh: "ผนวก 1 ข้อตกลงในการประมวลผลข้อมูล (DPA)", scope: "ORGANIZATION_REGISTRATION", order: 2, signature: true, template: "A1.docx" },
   { code: "A2", type: "PERSONAL_DATA_PROCESSING_AGREEMENT", nameTh: "ผนวก 2 ข้อตกลงประมวลผลข้อมูลส่วนบุคคล (PDPA)", scope: "ORGANIZATION_REGISTRATION", order: 3, signature: true, template: "A2.docx" },
   { code: "A3", type: "NON_DISCLOSURE_AGREEMENT", nameTh: "ผนวก 3 ข้อตกลงรักษาความลับ (NDA)", scope: "ORGANIZATION_REGISTRATION", order: 4, signature: true, template: "A3.docx" },
-  { code: "A4", type: "DATA_DELIVERY_FORM", nameTh: "แบบนำส่งข้อมูล", scope: "DATASET_REGISTRATION", order: 1, signature: true, template: null },
+  { code: "A4", type: "DATA_DELIVERY_FORM", nameTh: "แบบนำส่งข้อมูล", scope: "DATASET_REGISTRATION", order: 1, signature: true, template: "A4.docx" },
 ] as const;
 
 const TEMPLATE_DIR = new URL("../assets/legal-templates/", import.meta.url);
