@@ -16,7 +16,11 @@ import type { LegalDocument } from "@/lib/types";
  * `acceptedAt` และไฟล์ A0 ถูกสร้างทับด้วยฉบับที่มีลายมือชื่อ ถ้าไม่โหลดใหม่ ผู้ใช้ที่เพิ่ง
  * กดลงนามจะเห็นหน้าเดิมทุกอย่างและไม่รู้ว่าการลงนามมีผลแล้วหรือยัง
  */
-export function useLegalDocuments(requestId: string | null) {
+export function useLegalDocuments(
+  requestId: string | null,
+  /** ชุด endpoint ที่จะถาม — ทั้งสองเส้นทางมีเอกสารของตัวเองที่รูปแบบเหมือนกัน */
+  base: "organizations" | "dataset-requests" = "organizations",
+) {
   const [documents, setDocuments] = useState<LegalDocument[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [round, setRound] = useState(0);
@@ -26,7 +30,7 @@ export function useLegalDocuments(requestId: string | null) {
     let alive = true;
     setError(null);
     api
-      .get<{ documents: LegalDocument[] }>(`/api/organizations/${requestId}/legal-documents`)
+      .get<{ documents: LegalDocument[] }>(`/api/${base}/${requestId}/legal-documents`)
       .then((d) => {
         if (alive) setDocuments(d.documents);
       })
@@ -38,7 +42,7 @@ export function useLegalDocuments(requestId: string | null) {
     return () => {
       alive = false;
     };
-  }, [requestId, round]);
+  }, [requestId, base, round]);
 
   return { documents, error, reload: () => setRound((r) => r + 1) };
 }

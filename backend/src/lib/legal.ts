@@ -43,6 +43,7 @@ import {
   assertReadableDocx,
   docxToPdf,
   fillTemplate,
+  type VariableScope,
 } from "./document-render.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -56,6 +57,11 @@ export const LEGAL_SCOPES = {
 } as const;
 
 export type LegalScope = (typeof LEGAL_SCOPES)[keyof typeof LEGAL_SCOPES];
+
+/** application_scope ของเอกสาร -> scope ที่ใช้ตรวจชื่อตัวแปร */
+export function variableScopeOf(scope: string): VariableScope {
+  return scope === LEGAL_SCOPES.DATASET_REGISTRATION ? "dataset" : "organization";
+}
 
 export interface PublishedDocument {
   code: string;
@@ -103,7 +109,7 @@ export async function publishedDocuments(
       versionNumber: version.versionNumber,
       pdfAttachmentId: pdf?.id ?? null,
       hasPlaceholders: source
-        ? assertKnownPlaceholders(await readAttachment(source)).length > 0
+        ? assertKnownPlaceholders(await readAttachment(source), variableScopeOf(scope)).length > 0
         : false,
     });
   }
@@ -137,18 +143,6 @@ export async function publishVersion(
   params: { documentCode: string; docx: Buffer; filename: string; actorId: string },
 ): Promise<{ versionId: string; versionNumber: number; placeholders: string[] }> {
   assertReadableDocx(params.docx);
-  const placeholders = assertKnownPlaceholders(params.docx);
-  /**
-   * PDF กลางของเวอร์ชันนี้ — เติมค่าว่างก่อนแปลงถ้าเอกสารมี placeholder
-   *
-   * ถ้าแปลงตรง ๆ ไฟล์กลางจะมีข้อความ `{{org.name}}` โผล่ให้เห็นจริง ๆ เติมค่าว่างแทน
-   * ทำให้ได้ "ฉบับเปล่า" ที่อ่านเหมือนแบบฟอร์มยังไม่กรอก ซึ่งเป็นสิ่งที่ควรเห็นถ้ามีใคร
-   * เปิดไฟล์กลางของเอกสารที่ปกติต้อง render ต่อคำขอ
-   */
-  const pdf = await docxToPdf(
-    placeholders.length > 0 ? fillTemplate(params.docx, {}) : params.docx,
-    params.filename,
-  );
 
   const document = await db.legalDocument.findUnique({
     where: { documentCode: params.documentCode },
@@ -160,6 +154,23 @@ export async function publishVersion(
       404,
     );
   }
+
+  // ตรวจชื่อตัวแปรตาม flow ของเอกสาร — `{{dataset.title}}` ในข้อตกลงหน่วยงานไม่มีค่าให้เติม
+  const placeholders = assertKnownPlaceholders(
+    params.docx,
+    variableScopeOf(document.applicationScope),
+  );
+  /**
+   * PDF กลางของเวอร์ชันนี้ — เติมค่าว่างก่อนแปลงถ้าเอกสารมี placeholder
+   *
+   * ถ้าแปลงตรง ๆ ไฟล์กลางจะมีข้อความ `{{org.name}}` โผล่ให้เห็นจริง ๆ เติมค่าว่างแทน
+   * ทำให้ได้ "ฉบับเปล่า" ที่อ่านเหมือนแบบฟอร์มยังไม่กรอก ซึ่งเป็นสิ่งที่ควรเห็นถ้ามีใคร
+   * เปิดไฟล์กลางของเอกสารที่ปกติต้อง render ต่อคำขอ
+   */
+  const pdf = await docxToPdf(
+    placeholders.length > 0 ? fillTemplate(params.docx, {}) : params.docx,
+    params.filename,
+  );
 
   const latest = await db.legalDocumentVersion.findFirst({
     where: { legalDocumentId: document.id },
