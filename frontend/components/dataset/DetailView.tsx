@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
-import { PdfViewer } from "@/components/organization/PdfViewer";
+import { DatasetSigningDialog } from "@/components/dataset/DatasetSigningDialog";
+import { LegalDocumentsCard, useLegalDocuments } from "@/components/organization/LegalDocuments";
 import { Timeline } from "@/components/organization/Timeline";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader, DatasetStatusBadge } from "@/components/ui/Card";
@@ -113,8 +114,10 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string,
     case "ORGANIZATION_APPROVAL":
       return isOrgApprover
         ? {
-            advanceLabel: "เห็นชอบและลงนาม",
-            hint: "ตรวจแบบฟอร์มและเอกสารในฐานะผู้มีอำนาจกระทำการแทน",
+            advanceLabel: "เห็นชอบ",
+            hint: "ตรวจแบบนำส่งข้อมูลในฐานะผู้มีอำนาจกระทำการแทน แล้วยืนยันส่งเอกสาร",
+            /** ด่านนี้ยืนยันเอกสาร จึงเปิดกล่องยืนยันแทน modal ยืนยันสั้น ๆ */
+            signing: true,
             canRevise: true,
             canAssign: false,
             canComment: false,
@@ -127,6 +130,7 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string,
         ? {
             advanceLabel: "อนุมัติ",
             hint: "ขั้นตอนสุดท้าย เมื่ออนุมัติแล้วระบบจะออกเอกสารฉบับสมบูรณ์ให้ดาวน์โหลด",
+            signing: true,
             canRevise: true,
             canAssign: false,
             canComment: false,
@@ -139,7 +143,7 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string,
   }
 }
 
-type ModalKind = "advance" | "revise" | "reject" | "comment" | "assign";
+type ModalKind = "advance" | "revise" | "reject" | "comment" | "assign" | "sign";
 
 export function DatasetDetailView({ id, backHref }: { id: string; backHref?: string }) {
   const { user, ready } = useRequireAuth();
@@ -150,6 +154,13 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
   const [notFound, setNotFound] = useState(false);
   const [specialists, setSpecialists] = useState<SpecialistOption[]>([]);
   const [modal, setModal] = useState<ModalKind | null>(null);
+  /** เอกสารของคำขอนี้ — ผูกกับ id ที่โหลดมาแล้ว ไม่ใช่พารามิเตอร์บน URL */
+  const {
+    documents: legalDocuments,
+    error: legalDocumentsError,
+    reload: reloadLegalDocuments,
+  } = useLegalDocuments(request?.id ?? null, "dataset-requests");
+  const [documentRound, setDocumentRound] = useState(0);
   const [note, setNote] = useState("");
   const [noteError, setNoteError] = useState<string | undefined>();
   const [specialistId, setSpecialistId] = useState("");
@@ -228,7 +239,6 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
   // ชีท conditions ตัดสินว่าช่องไหนถูกถามจริง — หน้ารายละเอียดจึงไม่ขึ้นหัวข้อที่ระบบไม่ได้ถาม
   // (เช่น รายละเอียดข้อมูลส่วนบุคคล เมื่อชุดข้อมูลตอบว่าไม่มีข้อมูลส่วนบุคคล)
   const rules = formRules(toFormState(request as unknown as Record<string, unknown>));
-  const generated = request.attachments.find((a) => a.kind === "GENERATED_FORM");
   const supporting = request.attachments.filter((a) => a.kind !== "GENERATED_FORM");
   const editable = request.status === "DRAFT" || request.status === "RETURNED";
   const mayEdit =
@@ -430,7 +440,9 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
                 </Button>
               ) : null}
               {ability.advanceLabel ? (
-                <Button onClick={() => setModal("advance")}>{ability.advanceLabel}</Button>
+                <Button onClick={() => setModal(ability.signing ? "sign" : "advance")}>
+                  {ability.advanceLabel}
+                </Button>
               ) : null}
             </div>
           </div>
@@ -590,20 +602,13 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
           </Card>
         ) : null}
 
-        {generated ? (
-          <Card>
-            <CardHeader
-              title={request.status === "APPROVED" ? "เอกสารฉบับอนุมัติ" : "แบบฟอร์มที่ระบบสร้าง"}
-              description="เอกสาร A4 ดาวน์โหลดได้"
-            />
-            <div className="p-6">
-              <PdfViewer
-                url={api.fileUrl(`/api/dataset-requests/${request.id}/attachments/${generated.id}`)}
-                filename={generated.filename}
-                title="แบบฟอร์มลงทะเบียนชุดข้อมูล"
-              />
-            </div>
-          </Card>
+        {request.status !== "DRAFT" ? (
+          <LegalDocumentsCard
+            documents={legalDocuments}
+            reloadKey={documentRound}
+            error={legalDocumentsError}
+            onRetry={reloadLegalDocuments}
+          />
         ) : null}
 
         {request.assignedSpecialist ? (
@@ -741,6 +746,34 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
           </Button>
         </div>
       </Modal>
+
+      {legalDocuments && legalDocuments.length > 0 ? (
+        <DatasetSigningDialog
+          open={modal === "sign"}
+          onClose={closeModal}
+          onSigned={() => {
+            closeModal();
+            show({
+              tone: "success",
+              title: "ยืนยันเรียบร้อย",
+              detail: "ระบบบันทึกการยืนยันของคุณและแจ้งผู้เกี่ยวข้องแล้ว",
+            });
+            setDocumentRound((r) => r + 1);
+            reloadLegalDocuments();
+            void load();
+          }}
+          onStale={(message) => {
+            closeModal();
+            show({ tone: "error", title: "คำขอเดินไปขั้นถัดไปแล้ว", detail: message });
+            reloadLegalDocuments();
+            void load();
+          }}
+          requestId={request.id}
+          documents={legalDocuments}
+          title={ability?.advanceLabel ?? "ยืนยัน"}
+          action="approve"
+        />
+      ) : null}
 
       <Modal
         open={modal === "advance"}
