@@ -54,6 +54,8 @@ export type AgreementRequest = Omit<
   | "approverSignedName"
   | "approverSignedAt"
   | "bdiSignedName"
+  | "bdiSignedFirstName"
+  | "bdiSignedLastName"
   | "bdiSignedAt"
   | "officeName"
   | "officeEmail"
@@ -75,10 +77,26 @@ async function signaturesOf(db: Db, requestId: string) {
 
   const pick = (type: ConfirmationType) => {
     const row = rows.filter((r) => r.confirmationType === type).at(-1);
-    if (!row) return { name: null, at: null };
-    const payload = row.confirmationPayloadJson as { signedName?: string } | null;
+    if (!row) return { name: null, firstName: null, lastName: null, at: null };
+    const payload = row.confirmationPayloadJson as {
+      signedName?: string;
+      signedFirstName?: string;
+      signedLastName?: string;
+    } | null;
     // ชื่อที่ snapshot ไว้ใน payload มาก่อน displayName ปัจจุบันของบัญชี
-    return { name: payload?.signedName ?? row.userAccount.displayName, at: row.confirmedAt };
+    const name = payload?.signedName ?? row.userAccount.displayName;
+    /**
+     * แถวที่ลงนามก่อนจะเริ่มเก็บชื่อ-นามสกุลแยกกัน มีแต่ชื่อเต็ม — แยกจากช่องว่าง
+     * แบบดีที่สุดที่ทำได้ (ชื่อเต็มคือ "คำนำหน้า ชื่อ นามสกุล") ไม่ใช่ไปอ่านจากบัญชีสด
+     * เพราะเอกสารที่ลงนามแล้วต้องไม่เปลี่ยนตามเมื่อผู้ใช้แก้โปรไฟล์
+     */
+    const parts = (name ?? "").trim().split(/\s+/).filter(Boolean);
+    return {
+      name,
+      firstName: payload?.signedFirstName ?? (parts.length >= 2 ? parts.at(-2)! : null),
+      lastName: payload?.signedLastName ?? (parts.length >= 2 ? parts.at(-1)! : null),
+      at: row.confirmedAt,
+    };
   };
 
   return {
@@ -135,6 +153,8 @@ export async function renderLegalDocument(
     approverSignedName: signatures.approver.name,
     approverSignedAt: signatures.approver.at,
     bdiSignedName: signatures.bdi.name,
+    bdiSignedFirstName: signatures.bdi.firstName,
+    bdiSignedLastName: signatures.bdi.lastName,
     bdiSignedAt: signatures.bdi.at,
     officeName: office?.nameTh ?? null,
     officeEmail: office?.email ?? null,

@@ -36,6 +36,17 @@ function bangkokParts(date: Date) {
   return { day: get("day"), month: get("month"), year: get("year") };
 }
 
+/** เช่น "๑๙ สิงหาคม ๒๕๖๙ ๑๕:๒๗" — วันที่พร้อมเวลาไทย สำหรับบรรทัดที่พิมพ์จากระบบ */
+export function thaiLongDateTime(date: Date): string {
+  const time = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Bangkok",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+  return `${thaiLongDate(date)} ${thaiNumerals(time)}`;
+}
+
 /** เช่น "๑๙ สิงหาคม ๒๕๖๙" — รูปแบบวันที่ในเอกสารราชการ */
 export function thaiLongDate(date: Date): string {
   const { day, month, year } = bangkokParts(date);
@@ -94,6 +105,8 @@ export interface AgreementInput {
 
   /** ลงนามฝ่ายสำนักงาน (BDI) พร้อมตราเห็นชอบ */
   bdiSignedName: string | null;
+  bdiSignedFirstName: string | null;
+  bdiSignedLastName: string | null;
   bdiSignedAt: Date | null;
 
   /** ข้อมูลสำนักงานจากตาราง organization ของ BDI — ว่างได้ถ้ายังไม่ได้บันทึก */
@@ -194,6 +207,8 @@ export function agreementValues(input: AgreementInput): TemplateValues {
     "approver.signedDate": date(input.approverSignedAt),
     "bdi.signature": input.bdiSignedName ?? "",
     "bdi.signedDate": date(input.bdiSignedAt),
+    "bdi.firstName": input.bdiSignedFirstName ?? "",
+    "bdi.lastName": input.bdiSignedLastName ?? "",
     // \n กลายเป็นการขึ้นบรรทัดจริงใน Word (docxtemplater ตั้ง linebreaks: true)
     // ตราจึงอยู่บรรทัดเหนือบรรทัดลงนามในช่องเดียวกันของตาราง
     "bdi.endorsement": input.bdiSignedAt ? `${ENDORSEMENT_TEXT}\n` : "",
@@ -210,6 +225,7 @@ export function agreementValues(input: AgreementInput): TemplateValues {
     "system.name": SYSTEM_NAME,
     printedBy: input.printedByName ?? "",
     printedAt: thaiLongDate(input.printedAt),
+    printedDateTime: thaiLongDateTime(input.printedAt),
   };
 }
 

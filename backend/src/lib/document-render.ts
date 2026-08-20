@@ -128,6 +128,8 @@ export const TEMPLATE_VARIABLES = {
   "approver.signedDate": { group: "signature", description: "วันที่ฝ่ายหน่วยงานลงนาม — ว่างจนกว่าจะลงนาม", example: "๑๙ สิงหาคม ๒๕๖๙" },
   "bdi.signature": { group: "signature", description: "ลายมือชื่อฝ่ายสำนักงาน — ว่างจนกว่าผู้อนุมัติ BDI จะลงนาม", example: "นาง สุดารัตน์ อนุมัติ" },
   "bdi.signedDate": { group: "signature", description: "วันที่ฝ่ายสำนักงานลงนาม — ว่างจนกว่าจะลงนาม", example: "๑๙ สิงหาคม ๒๕๖๙" },
+  "bdi.firstName": { group: "signature", description: "ชื่อผู้ลงนามฝ่ายสำนักงาน (ไม่รวมคำนำหน้าและนามสกุล)", example: "สุดารัตน์" },
+  "bdi.lastName": { group: "signature", description: "นามสกุลผู้ลงนามฝ่ายสำนักงาน", example: "อนุมัติ" },
   "bdi.endorsement": { group: "signature", description: 'ตราเห็นชอบของสำนักงาน — ว่างจนกว่าจะอนุมัติขั้นสุดท้าย แล้วขึ้นเป็น "เห็นชอบ" พร้อมขึ้นบรรทัดใหม่', example: "เห็นชอบ" },
 
   // ── สำนักงาน (BDI) ─────────────────────────────────────────
@@ -142,6 +144,7 @@ export const TEMPLATE_VARIABLES = {
   "system.name": { group: "system", description: "ชื่อระบบ", example: "ระบบกลางเพื่อการแบ่งปันข้อมูล (Government Datahub Platform)" },
   printedBy: { group: "system", description: "ชื่อผู้ที่ทำให้เอกสารฉบับนี้ถูกสร้าง", example: "นางสาว พิมพ์ชนก สังคมดี" },
   printedAt: { group: "system", description: "วันที่พิมพ์เอกสารจากระบบ", example: "๑๙ สิงหาคม ๒๕๖๙" },
+  printedDateTime: { group: "system", description: "วันที่และเวลาที่พิมพ์เอกสารจากระบบ (เวลาไทย)", example: "๑๙ สิงหาคม ๒๕๖๙ ๑๕:๒๗" },
 } as const satisfies Record<string, TemplateVariableSpec>;
 
 export type TemplateVariable = keyof typeof TEMPLATE_VARIABLES;
