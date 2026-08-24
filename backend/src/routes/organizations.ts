@@ -47,7 +47,7 @@ import {
   LegalDocumentVersionStatus,
 } from "@prisma/client";
 import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
-import { assignRole, issueActivationKey } from "../lib/iam.js";
+import { assignRole, issueActivationKey, type RevokedAssignment } from "../lib/iam.js";
 import {
   sendActivated,
   sendFinalApprovalRequest,
@@ -56,7 +56,15 @@ import {
   sendSignatoryRequest,
   sendSubmittedToOfficers,
 } from "../lib/mail.js";
-import { NotificationType, bdiApproverIds, bdiOfficerIds, emailsOf, notifyUsers, organizationMemberIds } from "../lib/notify.js";
+import {
+  NotificationType,
+  announceRoleReplacement,
+  bdiApproverIds,
+  bdiOfficerIds,
+  emailsOf,
+  notifyUsers,
+  organizationMemberIds,
+} from "../lib/notify.js";
 import {
   AGREEMENT_CODE,
   agreementVersion,
@@ -646,6 +654,9 @@ organizationRouter.post("/", async (req, res) => {
     return;
   }
 
+  /** คนที่เสีย role ไปเพราะ assignRole ด้านล่าง — ประกาศหลัง transaction commit */
+  let replacedHolders: RevokedAssignment[] = [];
+
   const created = await prisma.$transaction(async (tx) => {
     // หน่วยงานถูกสร้างพร้อมคำขอ แต่ยังเป็น PENDING_REGISTRATION จนกว่าจะอนุมัติครบ
     const organization = await tx.organization.create({
@@ -674,15 +685,19 @@ organizationRouter.post("/", async (req, res) => {
     });
 
     // ผู้สร้างกลายเป็น ORGANIZATION_USER ของหน่วยงานนี้
-    await assignRole(tx, {
+    const { replaced } = await assignRole(tx, {
       userAccountId: session.sub,
       roleCode: ROLE_CODES.ORGANIZATION_USER,
       organizationId: organization.id,
       actorId: session.sub,
     });
+    replacedHolders = replaced;
 
     return request;
   });
+
+  // หลัง commit เสมอ — audit กับอีเมลเขียนผ่าน prisma ตัวหลัก ไม่ใช่ tx ข้างบน
+  await announceRoleReplacement(replacedHolders);
 
   await logAudit({
     action: AuditAction.ORGANIZATION_CREATED,
@@ -1506,6 +1521,9 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
       signedVersionIds = published.map((doc) => doc.versionId);
     }
 
+    /** ผู้ถือ role เดิมที่เสียสิทธิ์ตอนผูกผู้มีอำนาจ — ประกาศหลัง commit */
+    let replacedHolders: RevokedAssignment[] = [];
+
     const outcome = await prisma.$transaction(async (tx) => {
       await startTask(tx, task.id, session.sub);
       await completeTask(tx, {
@@ -1606,12 +1624,13 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
       }
 
       if (result === ReviewResult.PASSED && task.taskType === ReviewTaskType.BDI_OFFICER_REVIEW) {
-        const approverId = await ensureApproverAccount(tx, request);
+        const approver = await ensureApproverAccount(tx, request);
+        replacedHolders = approver.replaced;
         await openTask(tx, {
           subjectType: SUBJECT,
           subjectId: request.id,
           taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
-          assignedUserId: approverId,
+          assignedUserId: approver.id,
           assignedRole: ROLE_CODES.ORGANIZATION_APPROVER,
           assignedById: session.sub,
           actorId: session.sub,
@@ -1703,6 +1722,8 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
       });
     }
 
+    await announceRoleReplacement(replacedHolders);
+
     await dispatchReviewNotifications(request, task.taskType, result, note);
 
     const fresh = await prisma.organizationRegistrationRequest.findUniqueOrThrow({
@@ -1759,7 +1780,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
 async function ensureApproverAccount(
   tx: Prisma.TransactionClient,
   request: RequestRow,
-): Promise<string> {
+): Promise<{ id: string; replaced: RevokedAssignment[] }> {
   const email = request.approverEmail;
   if (!email) {
     throw new WorkflowError("no_approver", "คำขอนี้ยังไม่ได้ระบุอีเมลผู้มีอำนาจกระทำการแทน");
@@ -1811,14 +1832,17 @@ async function ensureApproverAccount(
       },
     }));
 
+  let replaced: RevokedAssignment[] = [];
+
   if (account.status === UserAccountStatus.ACTIVE) {
-    // มีบัญชีอยู่แล้ว — ผูก role ผู้มีอำนาจให้กับหน่วยงานนี้
-    await assignRole(tx, {
+    // มีบัญชีอยู่แล้ว — ผูก role ผู้มีอำนาจให้กับหน่วยงานนี้ ผู้ถือคนเดิม (ถ้ามี) เสียสิทธิ์
+    // ตรงนี้ ผู้เรียกต้องแจ้งเขาหลัง transaction commit
+    ({ replaced } = await assignRole(tx, {
       userAccountId: account.id,
       roleCode: ROLE_CODES.ORGANIZATION_APPROVER,
       organizationId: request.organizationId,
       actorId: SYSTEM_USER_ID,
-    });
+    }));
   } else {
     // ยังไม่มีบัญชีใช้งานได้ — ออก activation key ให้ไปสมัคร
     const { key } = await issueActivationKey(tx, {
@@ -1830,7 +1854,7 @@ async function ensureApproverAccount(
     void sendInvitationEmail(email, key, ROLE_LABELS[ROLE_CODES.ORGANIZATION_APPROVER]);
   }
 
-  return account.id;
+  return { id: account.id, replaced };
 }
 
 async function dispatchReviewNotifications(

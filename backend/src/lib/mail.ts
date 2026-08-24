@@ -269,6 +269,43 @@ export async function sendActivated(to: string[], orgName: string, orgId: string
   );
 }
 
+/**
+ * แจ้งคนที่ถูกถอดออกจากหน่วยงานเพราะมีคนมารับ role แทน
+ *
+ * ไม่มีปุ่มพาไปไหน — คนรับอีเมลนี้ไม่มีหน่วยงานให้เปิดแล้ว และปุ่ม "สร้างหน่วยงาน"
+ * คือสิ่งที่ทำให้เกิดหน่วยงานซ้ำมาแล้ว ทางไปต่อที่ถูกคือติดต่อผู้ดูแลระบบ
+ */
+export async function sendRoleRemoved(
+  to: string,
+  info: { organizationName: string; roleLabel: string; successorName: string | null; removedAt: Date | null },
+) {
+  const when = info.removedAt
+    ? new Intl.DateTimeFormat("th-TH", { dateStyle: "long", timeStyle: "short" }).format(info.removedAt)
+    : null;
+  // ชื่อหน่วยงานและชื่อคนมาจากฐานข้อมูล ผู้ใช้พิมพ์เองได้ จึง escape ก่อนวางลง HTML เสมอ
+  const organizationName = escapeHtml(info.organizationName);
+  const roleLabel = escapeHtml(info.roleLabel);
+  const successor = escapeHtml(info.successorName ?? "เจ้าหน้าที่คนใหม่");
+
+  await send(
+    to,
+    `บัญชีของคุณถูกถอดออกจาก ${info.organizationName}`,
+    layout({
+      title: "บัญชีของคุณถูกถอดออกจากหน่วยงาน",
+      intro:
+        `ผู้ดูแลระบบได้มอบหน้าที่ <strong style="color:${TEXT};">${roleLabel}</strong> ของ ` +
+        `<strong style="color:${TEXT};">${organizationName}</strong> ให้ ${successor} แทนคุณ` +
+        (when ? ` เมื่อ ${when}` : "") +
+        ` บัญชีของคุณจึงไม่ได้สังกัดหน่วยงานใดในระบบขณะนี้`,
+      body:
+        `<p style="margin:0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">` +
+        `ข้อมูลและคำขอทั้งหมดของ ${organizationName} ยังอยู่ครบ เพียงแต่คุณเปิดดูไม่ได้` +
+        `จนกว่าจะได้รับสิทธิ์คืน</p>`,
+      footnote: "หากคิดว่าไม่ถูกต้อง โปรดติดต่อผู้ดูแลระบบ BDI เพื่อขอสิทธิ์ในหน่วยงานเดิมคืน",
+    }),
+  );
+}
+
 // ------------------------------------------------------------------ Journey C — ชุดข้อมูล
 
 /** ส่งฉบับเดียวกันให้หลายคน — ตัดอีเมลซ้ำออกก่อนเสมอ */
