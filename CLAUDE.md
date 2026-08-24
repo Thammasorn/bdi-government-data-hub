@@ -210,6 +210,18 @@ many officers per role is normal there. The trade-off is that concurrent writes 
 a database-level net; `assignRole` runs inside the activation transaction, which covers the
 paths that exist.
 
+The rule is enforced by **revoking the previous holder**, not by refusing the new one — so
+inviting a second officer into an organisation silently ejects the first. Until 2026-08-24 that
+was invisible: no audit event, no email, and the home page read the resulting
+`organizationId === null` as "has no organisation yet" and offered to create one, which is how
+four empty "หน่วยงานใหม่" organisations appeared on `main`. `revokeRoleAssignments()` now returns
+the rows it revoked and `announceRoleReplacement()` (in `lib/notify.ts`) writes the `ROLE_REVOKED`
+audit event and notifies the person — **always after the transaction commits**, because both write
+through the main `prisma` client rather than the `tx` that reassigned the role. `/api/auth/me`
+carries `removedFromOrganization` so the home page can say what happened instead of inviting a
+duplicate registration. The rule itself is unchanged and still contradicts
+`docs/01-user-journey.md` §1.
+
 `Invitation` is replaced by `iam.activation_key`, following the lifecycle in that sheet: create
 the `user_account` as `PENDING` first, then issue a key for (account, organisation, role).
 The key is hashed with **HMAC-SHA-256** (`ACTIVATION_KEY_SECRET`), not bare SHA-256, so a

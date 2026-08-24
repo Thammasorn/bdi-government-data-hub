@@ -27,7 +27,9 @@ import {
   revokeActivationKey,
   ROLE_REPLACED_REASON,
   usableActivationKeyById,
+  type RevokedAssignment,
 } from "../lib/iam.js";
+import { announceRoleReplacement } from "../lib/notify.js";
 import { sendOtpEmail } from "../lib/mail.js";
 import { ROLE_LABELS } from "../lib/roles.js";
 import {
@@ -490,6 +492,12 @@ authRouter.post("/activate", async (req, res) => {
     return;
   }
 
+  /**
+   * assignment ของคนที่ถูกแทนที่ตอนมอบ role ให้บัญชีนี้ — ประกาศหลัง transaction commit
+   * เท่านั้น audit และอีเมลเขียนผ่าน prisma ตัวหลัก ไม่ใช่ tx จะเรียกจากในนั้นไม่ได้
+   */
+  let replaced: RevokedAssignment[] = [];
+
   try {
     await prisma.$transaction(async (tx) => {
       await tx.userAccount.update({
@@ -505,12 +513,14 @@ authRouter.post("/activate", async (req, res) => {
           updatedBy: key.userAccountId,
         },
       });
-      await completeActivation(tx, {
+      const activation = await completeActivation(tx, {
         activationKeyId: key.id,
         userAccountId: key.userAccountId,
         roleCode: key.role.code as RoleCode,
         organizationId: key.organizationId,
       });
+      // ประกาศหลัง commit — เก็บไว้ก่อน ดู announceRoleReplacement()
+      replaced = activation.replaced;
     });
   } catch (err) {
     // external_subject ซ้ำ = ThaiD คนเดียวกันเคยเปิดบัญชีอื่นไปแล้ว
@@ -533,6 +543,8 @@ authRouter.post("/activate", async (req, res) => {
     organizationId: key.organizationId,
     metadata: { method: "THAID", activation_key_id: key.id },
   });
+
+  await announceRoleReplacement(replaced);
 
   await issueSession(req, res, key.userAccountId);
 });

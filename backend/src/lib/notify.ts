@@ -23,8 +23,10 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "../db.js";
+import { AuditAction, AuditSubject, logAudit } from "./audit.js";
 import { correlationId } from "./context.js";
-import { activeAssignmentWhere } from "./iam.js";
+import { activeAssignmentWhere, type RevokedAssignment } from "./iam.js";
+import { ROLE_LABELS } from "./roles.js";
 import { ROLE_CODES, type RoleCode } from "./system.js";
 
 /** notification type code ตามตัวอย่างในภาพของ sheet `notification` */
@@ -107,6 +109,68 @@ export async function notifyUsers(userIds: Array<string | null | undefined>, inp
       }
     }
   });
+}
+
+/**
+ * ประกาศว่ามีคนถูกถอดออกจากหน่วยงานเพราะมีคนมารับ role แทน — audit + แจ้งเจ้าตัว
+ *
+ * `assignRole()` บังคับกติกา "หนึ่งหน่วยงานมี ORGANIZATION_USER / ORGANIZATION_APPROVER
+ * ที่ ACTIVE ได้อย่างละคน" ด้วยการเพิกถอนคนเดิม เดิมทีการเพิกถอนนั้นเขียนแค่
+ * `revocation_reason` ลงแถวเดียว ไม่มี audit_event และไม่มีใครบอกเจ้าตัว — คนที่ถูกถอด
+ * รู้ตัวอีกทีตอนล็อกอินแล้วหน่วยงานหายไป (เกิดจริงบน main 2026-08-24)
+ *
+ * **ต้องเรียกหลัง transaction commit แล้วเท่านั้น** ทั้ง logAudit และ notifyUsers เขียน
+ * ผ่าน prisma ตัวหลัก ไม่ใช่ tx ที่มอบ role ให้คนใหม่ เรียกจากในนั้นแล้ว rollback จะเหลือ
+ * audit event กับอีเมลของเหตุการณ์ที่ไม่เคยเกิดขึ้น
+ *
+ * subject ของ notification คือ **แถว assignment ที่ถูกเพิกถอน** ไม่ใช่หน่วยงาน เพราะ
+ * worker ต้องประกอบอีเมลจากมันตอนส่ง (workers/render.ts) และมันคือที่เดียวที่มีทั้ง
+ * หน่วยงาน role และเวลาที่ถูกถอดครบในแถวเดียว
+ */
+export async function announceRoleReplacement(replaced: RevokedAssignment[]): Promise<void> {
+  for (const assignment of replaced) {
+    const row = await prisma.userRoleAssignment.findUnique({
+      where: { id: assignment.id },
+      select: {
+        id: true,
+        userAccountId: true,
+        organizationId: true,
+        revokedAt: true,
+        revokedBy: true,
+        organization: { select: { nameTh: true } },
+        role: { select: { code: true } },
+      },
+    });
+    if (!row) continue;
+
+    const roleLabel = ROLE_LABELS[row.role.code as RoleCode] ?? row.role.code;
+    const organizationName = row.organization?.nameTh ?? "หน่วยงานเดิมของคุณ";
+
+    await logAudit({
+      action: AuditAction.ROLE_REVOKED,
+      subjectType: AuditSubject.USER_ROLE_ASSIGNMENT,
+      subjectId: row.id,
+      organizationId: row.organizationId,
+      metadata: {
+        reason: "REPLACED_BY_NEW_HOLDER",
+        role_code: row.role.code,
+        // เก็บ id ของคนที่ถูกถอดไว้ด้วย — subject คือแถว assignment ไม่ใช่ตัวบุคคล
+        revoked_user_account_id: row.userAccountId,
+      },
+    });
+
+    await notifyUsers([row.userAccountId], {
+      type: NotificationType.ROLE_ASSIGNMENT_CHANGED,
+      title: "บัญชีของคุณถูกถอดออกจากหน่วยงาน",
+      message:
+        `ผู้ดูแลระบบได้มอบหน้าที่ ${roleLabel} ของ ${organizationName} ให้เจ้าหน้าที่คนใหม่แทน ` +
+        `บัญชีของคุณจึงไม่ได้สังกัดหน่วยงานใดในระบบขณะนี้ ` +
+        `หากคิดว่าไม่ถูกต้อง โปรดติดต่อผู้ดูแลระบบ BDI เพื่อขอสิทธิ์ในหน่วยงานเดิมคืน`,
+      subjectType: AuditSubject.USER_ROLE_ASSIGNMENT,
+      subjectId: row.id,
+      organizationId: row.organizationId,
+    });
+  }
 }
 
 /** id ของผู้ใช้ที่ ACTIVE และถือ role ที่กำหนดอยู่จริง ณ ตอนนี้ */
