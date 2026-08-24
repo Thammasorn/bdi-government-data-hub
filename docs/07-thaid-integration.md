@@ -70,7 +70,7 @@ THAID_CLIENT_ID=…
 THAID_CLIENT_SECRET=…
 THAID_API_KEY=                 # ปล่อยว่างได้ ส่งเป็น x-api-key เมื่อมีค่า
 THAID_REDIRECT_URI=            # ว่าง = ${APP_URL}/auth/callback/thaid
-THAID_SCOPE=                   # ว่าง = openid pid title given_name middle_name family_name name …
+THAID_SCOPE=                   # ว่าง = openid pid given_name family_name given_name_en family_name_en
 THAID_USE_PID=true             # false = อ่านเลขบัตรจาก claim `sub` แทน `pid` (ดูข้อ 4.2)
 THAID_REQUIRE_NONCE=false      # true = ปฏิเสธ id_token ที่ไม่มี claim nonce (ดูข้อ 4.3)
 ```
@@ -101,6 +101,20 @@ THAID_REQUIRE_NONCE=false      # true = ปฏิเสธ id_token ที่ไ
 | `pid` · `openid pid` · `openid pid name` | 400 `invalid_scope` ❌ |
 
 ยืนยันด้วยว่า `redirect_uri=http://localhost:3000/auth/callback/thaid` ผ่าน ไม่ถูกปฏิเสธ
+
+**ค่าตั้งต้นของ `THAID_SCOPE` เปลี่ยนเมื่อ 2026-08-24** เป็น
+`openid pid given_name family_name given_name_en family_name_en` ตามการ์ด Enhance
+(เดิมขอกว้างกว่านี้ มี `title` `middle_name` `name` `name_en` ด้วย)
+
+> ⚠️ ค่าตั้งต้นนี้ **มี `pid` อยู่** ตามตารางข้างบน client ของโครงการยังตอบ 400
+> `invalid_scope` ให้ทุก scope ที่มี `pid` — ถ้ากรมการปกครองยังไม่ได้อนุมัติให้ตอน deploy
+> ปุ่ม ThaiD จะพังตั้งแต่ขั้น authorize **ทางแก้คือตั้ง env ทับ ไม่ใช่แก้โค้ด**:
+> `THAID_SCOPE=openid given_name family_name given_name_en family_name_en` คู่กับ
+> `THAID_USE_PID=false` (อ่านเลขบัตรจาก `sub` ดูข้อ 4.2) — ซึ่งเป็นค่าที่ SIT ใช้อยู่
+>
+> ผลข้างเคียงของค่าตั้งต้นใหม่: **ไม่มี claim `title`** ฟอร์มสร้างบัญชีจึงเติมชื่อกับ
+> นามสกุลจากบัตรให้ ส่วนคำนำหน้าผู้ใช้เลือกเอง (`toIdentity()` ยังอ่าน `title` `name`
+> `name_en` อยู่ ถ้าวันหนึ่งกรมการปกครองส่งมาให้เองก็ได้ค่าเพิ่มมาโดยไม่ต้องแก้โค้ด)
 
 ### 4.2 เลขบัตรมาจาก claim ไหน (`THAID_USE_PID`)
 

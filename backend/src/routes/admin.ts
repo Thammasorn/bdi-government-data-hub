@@ -951,6 +951,19 @@ adminRouter.post(
       versionNumber: published.versionNumber,
       /** placeholder ที่พบในไฟล์ — ให้คนอัปโหลดยืนยันได้ว่าช่องที่ตั้งใจใส่ถูกอ่านเจอครบ */
       placeholders: published.placeholders,
+      /**
+       * ชื่อชุดเก่าที่ไฟล์นี้ยังใช้อยู่ — ยังเติมค่าให้ตามปกติ แต่ควรแก้เป็นชื่อใหม่
+       * ในเวอร์ชันถัดไป (ดู docs/18-document-template-variables.md)
+       */
+      deprecatedPlaceholders: published.deprecatedPlaceholders,
+      ...(published.deprecatedPlaceholders.length > 0
+        ? {
+            warning:
+              `เอกสารนี้ยังใช้ชื่อ placeholder ชุดเดิม ${published.deprecatedPlaceholders.length} ตัว ` +
+              `(${published.deprecatedPlaceholders.join(", ")}) — ระบบยังเติมค่าให้ได้ ` +
+              `แต่กรุณาเปลี่ยนเป็นชื่อใหม่ในเวอร์ชันถัดไป`,
+          }
+        : {}),
     });
   },
 );

@@ -33,9 +33,16 @@ export interface ThaidIdentity {
   pid: string | null;
   /** sub ของ id_token — ลงคอลัมน์ user_account.external_subject */
   subject: string;
+  /**
+   * คำนำหน้า — มาจาก claim `title` ซึ่ง **ไม่ได้อยู่ใน scope ที่ขอ** จึงเป็น null
+   * ตามปกติ เก็บไว้อ่านเผื่อกรมการปกครองส่งมาให้เอง
+   */
   titleTh: string | null;
   givenNameTh: string | null;
   familyNameTh: string | null;
+  givenNameEn: string | null;
+  familyNameEn: string | null;
+  /** ชื่อเต็ม — claim `name` / `name_en` ไม่ได้อยู่ใน scope ที่ขอเช่นกัน */
   nameTh: string | null;
   nameEn: string | null;
 }
@@ -268,6 +275,8 @@ export function toIdentity(claims: IdTokenClaims, fallback: Record<string, unkno
     titleTh: pick("title"),
     givenNameTh: pick("given_name"),
     familyNameTh: pick("family_name"),
+    givenNameEn: pick("given_name_en"),
+    familyNameEn: pick("family_name_en"),
     nameTh: pick("name"),
     nameEn: pick("name_en"),
   };

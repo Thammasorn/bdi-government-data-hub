@@ -4,7 +4,8 @@
 
     python3 docs/tools/manual-to-docx.py
 
-อ่านจาก docs/1[2-5]-tester-manual-*.md แล้วเขียนออกเป็น docs/manuals-docx/*.docx
+อ่านจาก docs/1[2-5]-tester-manual-*.md กับ docs/18-document-template-variables.md
+แล้วเขียนออกเป็น docs/manuals-docx/*.docx
 
 ทำไมต้องเขียนเอง: เครื่องนี้ไม่มี pandoc และต่อให้มี ก็ยังต้องตั้งค่าฟอนต์ฝั่ง
 complex script (w:cs / w:szCs) เองอยู่ดี — ถ้าไม่ตั้ง Word จะเรนเดอร์ภาษาไทย
@@ -56,11 +57,25 @@ CHROME_PT = 9  # หัวกระดาษ/ท้ายกระดาษ
 
 CONTENT_CM = 21.0 - 2.2 - 2.0  # A4 กว้าง 21 ซม. ลบขอบซ้าย/ขวา
 
+TESTER = "คู่มือสำหรับผู้ทดสอบระบบ · ไม่ต้องมีพื้นฐานทางเทคนิค"
+
+# (ไฟล์ Markdown, ชื่อบนปก, คำโปรย, บรรทัดบอกว่าเขียนให้ใคร, วันที่ปรับปรุง)
+# วันที่เป็นของเนื้อหา ไม่ใช่ของวันที่รันสคริปต์ — สร้างไฟล์ใหม่โดยไม่ได้แก้เนื้อหา
+# ไม่ควรทำให้ปกบอกว่าคู่มือถูกปรับปรุง
 BOOKS = [
-    ("12-tester-manual-overview.md", "คู่มือผู้ทดสอบระบบ", "ภาพรวมและการเข้าใช้งาน"),
-    ("13-tester-manual-journey-a.md", "เล่ม A", "ผู้ดูแลระบบสร้างหน่วยงานและส่งคำเชิญ"),
-    ("14-tester-manual-journey-b.md", "เล่ม B", "หน่วยงานลงทะเบียนตัวเองจนได้รับอนุมัติ"),
-    ("15-tester-manual-journey-c.md", "เล่ม C", "ลงทะเบียนชุดข้อมูลจนได้รับอนุมัติ"),
+    ("12-tester-manual-overview.md", "คู่มือผู้ทดสอบระบบ", "ภาพรวมและการเข้าใช้งาน", TESTER, "18 สิงหาคม 2569"),
+    ("13-tester-manual-journey-a.md", "เล่ม A", "ผู้ดูแลระบบสร้างหน่วยงานและส่งคำเชิญ", TESTER, "18 สิงหาคม 2569"),
+    ("14-tester-manual-journey-b.md", "เล่ม B", "หน่วยงานลงทะเบียนตัวเองจนได้รับอนุมัติ", TESTER, "18 สิงหาคม 2569"),
+    ("15-tester-manual-journey-c.md", "เล่ม C", "ลงทะเบียนชุดข้อมูลจนได้รับอนุมัติ", TESTER, "18 สิงหาคม 2569"),
+    # ไม่ใช่คู่มือผู้ทดสอบ แต่เป็นคู่มือของผู้เขียนเอกสารต้นแบบ — เขาทำงานใน Word อยู่แล้ว
+    # จึงต้องมีฉบับ .docx ให้เปิดคู่กันไปกับ template ที่กำลังแก้ (การ์ด Enhance ข้อ 2)
+    (
+        "18-document-template-variables.md",
+        "ตัวแปรในเอกสารต้นแบบ",
+        "รายการ placeholder ที่ใช้ได้ทั้งหมด",
+        "คู่มือสำหรับผู้เขียนเอกสารต้นแบบ · ไม่ต้องเขียนโค้ด",
+        "24 สิงหาคม 2569",
+    ),
 ]
 
 # ---------------------------------------------------------------- ตัวช่วยระดับ XML
@@ -583,7 +598,7 @@ def setup(doc, title, subtitle):
     foot._p.append(fld)
 
 
-def cover(doc, title, subtitle, source_name):
+def cover(doc, title, subtitle, source_name, audience, updated):
     for _ in range(5):
         spacing(doc.add_paragraph(), after=0, line=1.0)
     if LOGO.exists():
@@ -610,13 +625,11 @@ def cover(doc, title, subtitle, source_name):
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     spacing(p, after=0, line=1.5)
-    style_run(
-        p.add_run("คู่มือสำหรับผู้ทดสอบระบบ · ไม่ต้องมีพื้นฐานทางเทคนิค"), size=13, color=MUTED
-    )
+    style_run(p.add_run(audience), size=13, color=MUTED)
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     spacing(p, after=0, line=1.5)
-    style_run(p.add_run("ปรับปรุงล่าสุด 18 สิงหาคม 2569"), size=13, color=MUTED)
+    style_run(p.add_run(f"ปรับปรุงล่าสุด {updated}"), size=13, color=MUTED)
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     spacing(p, after=0, line=1.5)
@@ -762,11 +775,11 @@ def embed_fonts(docx_path, ttf_dir):
 # ---------------------------------------------------------------- main
 
 
-def build(md_name, title, subtitle, ttf_dir):
+def build(md_name, title, subtitle, audience, updated, ttf_dir):
     md_path = DOCS / md_name
     doc = Document()
     setup(doc, title, subtitle)
-    cover(doc, title, subtitle, md_name)
+    cover(doc, title, subtitle, md_name, audience, updated)
     toc(doc, md_path)
     render(md_path, Writer(doc))
 
@@ -783,8 +796,8 @@ def main():
         print(f"เช่น  unzip -d /tmp/sarabun {FONT_ZIP}", file=sys.stderr)
         return 1
     OUT.mkdir(parents=True, exist_ok=True)
-    for md_name, title, subtitle in BOOKS:
-        out = build(md_name, title, subtitle, ttf_dir)
+    for md_name, title, subtitle, audience, updated in BOOKS:
+        out = build(md_name, title, subtitle, audience, updated, ttf_dir)
         print(f"  {out.relative_to(ROOT)}  ({out.stat().st_size / 1024 / 1024:.1f} MB)")
     return 0
 

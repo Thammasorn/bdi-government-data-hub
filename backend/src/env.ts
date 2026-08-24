@@ -107,9 +107,18 @@ export const env = {
     /** บาง environment ของ BORA ต้องแนบ api key มาด้วย ปล่อยว่างได้ถ้าไม่ต้อง */
     apiKey: optional("THAID_API_KEY", ""),
     redirectUri: optional("THAID_REDIRECT_URI", `${APP_URL}/auth/callback/thaid`),
+    /**
+     * scope ที่ขอจากกรมการปกครอง — ตั้งไว้เท่าที่ระบบใช้จริง
+     *
+     * เดิมขอกว้างกว่านี้ (`title` `middle_name` `name` `name_en` ด้วย) แต่รายการที่
+     * ตกลงกันไว้ตามการ์ด Enhance คือหกตัวนี้ ผลที่ตามมาคือ **ไม่ได้ claim `title`**
+     * ฟอร์มสร้างบัญชีจึงเติมชื่อกับนามสกุลให้ ส่วนคำนำหน้าผู้ใช้เลือกเอง
+     * (`toIdentity()` ยังอ่าน claim เหล่านั้นอยู่ ถ้าวันหนึ่งกรมการปกครองส่งมาให้
+     * โดยไม่ต้องขอ ก็ได้ค่าเพิ่มมาฟรี ไม่ต้องแก้โค้ด)
+     */
     scope: optional(
       "THAID_SCOPE",
-      "openid pid title given_name middle_name family_name name given_name_en family_name_en name_en",
+      "openid pid given_name family_name given_name_en family_name_en",
     ),
     /**
      * เลขบัตรที่เอาไปเทียบกับ `user_account.cid` มาจาก claim ไหนของ id_token

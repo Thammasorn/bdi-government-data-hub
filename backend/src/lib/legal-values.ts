@@ -173,53 +173,53 @@ export function agreementValues(input: AgreementInput): TemplateValues {
     "org.website": input.websiteUrl ?? "",
 
     // ── ผู้มีอำนาจกระทำการแทน ──
-    "signatory.fullName": fullName(
+    "org_approver.fullName": fullName(
       input.signatoryPrefix,
       input.signatoryFirstName,
       input.signatoryLastName,
     ),
-    "signatory.prefix": input.signatoryPrefix ?? "",
-    "signatory.firstName": input.signatoryFirstName ?? "",
-    "signatory.lastName": input.signatoryLastName ?? "",
-    "signatory.position": input.signatoryPosition ?? "",
-    "signatory.department": input.signatoryDepartment ?? "",
-    "signatory.email": input.signatoryEmail ?? "",
-    "signatory.phone": thaiNumerals(input.signatoryPhone ?? ""),
-    "signatory.nationalId": thaiNumerals(formatNationalId(input.signatoryNationalId)),
+    "org_approver.prefix": input.signatoryPrefix ?? "",
+    "org_approver.firstName": input.signatoryFirstName ?? "",
+    "org_approver.lastName": input.signatoryLastName ?? "",
+    "org_approver.position": input.signatoryPosition ?? "",
+    "org_approver.department": input.signatoryDepartment ?? "",
+    "org_approver.email": input.signatoryEmail ?? "",
+    "org_approver.phone": thaiNumerals(input.signatoryPhone ?? ""),
+    "org_approver.nationalId": thaiNumerals(formatNationalId(input.signatoryNationalId)),
 
     // ── ผู้กรอกข้อมูล ──
-    "contact.fullName": fullName(
+    "org_officer.fullName": fullName(
       input.contactPrefix,
       input.contactFirstName,
       input.contactLastName,
     ),
-    "contact.prefix": input.contactPrefix ?? "",
-    "contact.firstName": input.contactFirstName ?? "",
-    "contact.lastName": input.contactLastName ?? "",
-    "contact.position": input.contactPosition ?? "",
-    "contact.department": input.contactDepartment ?? "",
-    "contact.email": input.contactEmail ?? "",
-    "contact.phone": thaiNumerals(input.contactPhone ?? ""),
-    "contact.nationalId": thaiNumerals(formatNationalId(input.contactNationalId)),
+    "org_officer.prefix": input.contactPrefix ?? "",
+    "org_officer.firstName": input.contactFirstName ?? "",
+    "org_officer.lastName": input.contactLastName ?? "",
+    "org_officer.position": input.contactPosition ?? "",
+    "org_officer.department": input.contactDepartment ?? "",
+    "org_officer.email": input.contactEmail ?? "",
+    "org_officer.phone": thaiNumerals(input.contactPhone ?? ""),
+    "org_officer.nationalId": thaiNumerals(formatNationalId(input.contactNationalId)),
 
     // ── ลายมือชื่อ ──
-    "approver.signature": input.approverSignedName ?? "",
-    "approver.signedDate": date(input.approverSignedAt),
-    "bdi.signature": input.bdiSignedName ?? "",
-    "bdi.signedDate": date(input.bdiSignedAt),
-    "bdi.firstName": input.bdiSignedFirstName ?? "",
-    "bdi.lastName": input.bdiSignedLastName ?? "",
+    "org_approver.signature": input.approverSignedName ?? "",
+    "org_approver.signedDate": date(input.approverSignedAt),
+    "bdi_approver.signature": input.bdiSignedName ?? "",
+    "bdi_approver.signedDate": date(input.bdiSignedAt),
+    "bdi_approver.firstName": input.bdiSignedFirstName ?? "",
+    "bdi_approver.lastName": input.bdiSignedLastName ?? "",
     // \n กลายเป็นการขึ้นบรรทัดจริงใน Word (docxtemplater ตั้ง linebreaks: true)
     // ตราจึงอยู่บรรทัดเหนือบรรทัดลงนามในช่องเดียวกันของตาราง
-    "bdi.endorsement": input.bdiSignedAt ? `${ENDORSEMENT_TEXT}\n` : "",
+    "bdi_approver.endorsement": input.bdiSignedAt ? `${ENDORSEMENT_TEXT}\n` : "",
 
     // ── สำนักงาน ──
-    "office.name": input.officeName || OFFICE_DEFAULTS.name,
-    "office.address": OFFICE_DEFAULTS.address,
-    "office.email": input.officeEmail ?? "",
-    "office.phone": thaiNumerals(input.officePhone ?? ""),
-    "office.directorName": OFFICE_DEFAULTS.directorName,
-    "office.directorPosition": OFFICE_DEFAULTS.directorPosition,
+    "bdi.name": input.officeName || OFFICE_DEFAULTS.name,
+    "bdi.address": OFFICE_DEFAULTS.address,
+    "bdi.email": input.officeEmail ?? "",
+    "bdi.phone": thaiNumerals(input.officePhone ?? ""),
+    "bdi.directorName": OFFICE_DEFAULTS.directorName,
+    "bdi.directorPosition": OFFICE_DEFAULTS.directorPosition,
 
     // ── ระบบ ──
     "system.name": SYSTEM_NAME,

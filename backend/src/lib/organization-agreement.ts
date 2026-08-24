@@ -204,7 +204,7 @@ export async function renderLegalDocument(
  * render ทุกฉบับที่มี placeholder ของคำขอหนึ่งใบ
  *
  * ใช้หลังลงนามทุกครั้ง: ลายมือชื่อที่เพิ่มเข้ามาต้องไปปรากฏในทุกฉบับที่มีช่องลงนาม
- * ไม่ใช่แค่ A0 — เอกสารฉบับอื่นอาจมี {{approver.signature}} อยู่ด้วย
+ * ไม่ใช่แค่ A0 — เอกสารฉบับอื่นอาจมี {{org_approver.signature}} อยู่ด้วย
  */
 export async function renderPlaceholderDocuments(
   db: Db,
