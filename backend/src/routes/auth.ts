@@ -365,11 +365,18 @@ authRouter.post("/thaid/callback", async (req, res) => {
     purpose: "activate",
     verified: true,
     email: key.userAccount.email,
-    /** เอาไว้เติมฟอร์มขั้นสร้างบัญชีให้ตรงกับบัตร ผู้ใช้ยังแก้ได้ */
+    /**
+     * เอาไว้เติมฟอร์มขั้นสร้างบัญชีให้ตรงกับบัตร ผู้ใช้ยังแก้ได้
+     *
+     * `prefix` / `fullName` มาจาก claim `title` / `name` ซึ่งไม่ได้อยู่ใน scope ที่ขอ
+     * จึงเป็น null ตามปกติ — ปล่อยไว้เผื่อกรมการปกครองส่งมาให้เอง
+     */
     profile: {
       prefix: identity.titleTh,
       firstName: identity.givenNameTh,
       lastName: identity.familyNameTh,
+      firstNameEn: identity.givenNameEn,
+      lastNameEn: identity.familyNameEn,
       fullName: identity.nameTh,
     },
   });

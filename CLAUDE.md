@@ -303,6 +303,15 @@ credentials answers 501 `not_configured` at `POST /api/auth/thaid/start` rather 
 the user through. A previous `THAID_MOCK` did the latter and was removed — a switch that
 turns identity verification into a button is not something to leave lying in a repo.
 
+`THAID_SCOPE` defaults to `openid pid given_name family_name given_name_en family_name_en`
+(set 2026-08-24 from the Enhance card; it used to also ask for `title` `middle_name` `name`
+`name_en`). Two consequences. **It contains `pid`, which this project's own client is still
+refused** — a deployment using those credentials must override the env, not the code:
+`THAID_SCOPE=openid given_name family_name given_name_en family_name_en` with
+`THAID_USE_PID=false`. And **there is no `title` claim any more**, so the activation form fills
+first and last name from the card and leaves the prefix for the user to choose; `toIdentity()`
+still reads `title` / `name` / `name_en` in case DOPA sends them unasked.
+
 `THAID_USE_PID` chooses **which claim the CID is read from** — `pid` (the manual's answer,
 needs the `pid` scope) or `sub`. It is not a switch that disables the check: the comparison
 against `user_account.cid` runs either way, and a mismatch revokes the key either way. It
