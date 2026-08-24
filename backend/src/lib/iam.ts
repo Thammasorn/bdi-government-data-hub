@@ -37,6 +37,15 @@ export async function roleIdByCode(db: Db, code: RoleCode): Promise<string> {
   return role.id;
 }
 
+/**
+ * เหตุผลที่เขียนลง `revocation_reason` เมื่อคนใหม่มารับ role เดิมแทน
+ *
+ * เป็นค่าคงที่ไม่ใช่ literal ลอย ๆ เพราะหน้าเว็บต้องอ่านมันกลับ: คนที่ถูกถอดออกด้วย
+ * เหตุผลนี้คือคนเดียวที่ควรได้คำอธิบายว่า "หน่วยงานหายไปไหน" ไม่ใช่คนที่ยังไม่เคยมี
+ * หน่วยงานเลย — `removedFromOrganization()` ใน routes/auth.ts เทียบกับค่านี้
+ */
+export const ROLE_REPLACED_REASON = "มีผู้รับผิดชอบคนใหม่แทน";
+
 /** เงื่อนไข "assignment ใช้งานได้" ตามที่ sheet `user_role_assignment` เขียนไว้ */
 export function activeAssignmentWhere() {
   return {
@@ -109,7 +118,7 @@ export async function assignRole(
       organizationId,
       roleId,
       actorId,
-      reason: "มีผู้รับผิดชอบคนใหม่แทน",
+      reason: ROLE_REPLACED_REASON,
       exceptUserAccountId: userAccountId,
     });
   }

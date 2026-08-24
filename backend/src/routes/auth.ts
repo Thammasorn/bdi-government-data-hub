@@ -3,6 +3,7 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import {
   OtpPurpose,
+  RoleAssignmentStatus,
   SessionRevokeReason,
   UserAccountStatus,
   type IntegrationOperation,
@@ -19,10 +20,12 @@ import {
 } from "../lib/auth.js";
 import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
 import {
+  activeAssignmentWhere,
   activeRoleCodes,
   completeActivation,
   findUsableActivationKey,
   revokeActivationKey,
+  ROLE_REPLACED_REASON,
   usableActivationKeyById,
 } from "../lib/iam.js";
 import { sendOtpEmail } from "../lib/mail.js";
@@ -724,6 +727,10 @@ authRouter.get("/me", requireAuth, async (req, res) => {
     user: {
       ...publicUser(user, req.session!.roles, req.session!.organizationId),
       organization: await sessionOrganization(req.session!.organizationId),
+      removedFromOrganization: await removedFromOrganization(
+        req.session!.sub,
+        req.session!.organizationId,
+      ),
     },
   });
 });
@@ -746,6 +753,66 @@ async function sessionOrganization(organizationId: string | null) {
     id: organization.id,
     name: organization.nameTh,
     status: organization.status,
+  };
+}
+
+/**
+ * ผู้ใช้ที่ "หายไปจากหน่วยงาน" เพราะมีคนมารับหน้าที่แทน — ไม่ใช่ผู้ใช้ที่ยังไม่เคยมีหน่วยงาน
+ *
+ * `assignRole()` บังคับกติกา "หนึ่งหน่วยงานมี ORGANIZATION_USER / ORGANIZATION_APPROVER
+ * ที่ ACTIVE ได้อย่างละคน" ด้วยการ **เพิกถอนคนเดิม** ไม่ใช่ปฏิเสธคนใหม่ คนเดิมจึงเสีย
+ * หน่วยงานไปกลางคันโดยไม่มีใครบอก แล้วหน้าแรกก็อ่านว่า `organizationId` เป็น null เท่ากับ
+ * "ยังไม่มีหน่วยงาน" และเชิญให้ไปสร้างใบใหม่ — ซึ่งสร้างหน่วยงานซ้ำขึ้นมาจริง ๆ
+ * (เจอบน main เมื่อ 2026-08-24: บัญชีที่ถูกแทนที่ไปเปิด "หน่วยงานใหม่" ทับของเดิมที่
+ * อนุมัติไปแล้ว ทั้งที่ noti "หน่วยงานได้รับอนุมัติแล้ว" ยังค้างอยู่ในกระดิ่ง)
+ *
+ * ตอบกลับไปให้หน้าเว็บแยกสองกรณีนี้ออกจากกันได้ ยังไม่มีการแจ้งเตือนทางอีเมลตอนถูกถอด
+ * และ `revokeRoleAssignments()` ก็ยังไม่เขียน audit_event — ทั้งสองอย่างยังค้างอยู่
+ */
+async function removedFromOrganization(userAccountId: string, organizationId: string | null) {
+  // ยังสังกัดหน่วยงานอยู่ (หรือย้ายไปที่ใหม่แล้ว) ก็ไม่มีอะไรต้องอธิบาย
+  if (organizationId) return null;
+
+  const removal = await prisma.userRoleAssignment.findFirst({
+    where: {
+      userAccountId,
+      status: RoleAssignmentStatus.REVOKED,
+      revocationReason: ROLE_REPLACED_REASON,
+      organizationId: { not: null },
+      role: { code: { in: [...ORGANIZATION_SCOPED_ROLES] } },
+    },
+    orderBy: { revokedAt: "desc" },
+    select: {
+      revokedAt: true,
+      organizationId: true,
+      roleId: true,
+      organization: { select: { nameTh: true } },
+      role: { select: { code: true } },
+    },
+  });
+  if (!removal) return null;
+
+  /**
+   * ใครมารับหน้าที่แทน — อ่านจากคนที่ถือ role เดียวกันในหน่วยงานนั้น **อยู่ตอนนี้**
+   * ไม่ใช่จาก `revoked_by` ซึ่งเป็นแค่ actor ของ transaction นั้น และไม่ได้แปลว่าเป็น
+   * คนที่มาแทนเสมอไป ถ้าหาไม่เจอก็ปล่อยเป็น null — ข้อความยังอ่านรู้เรื่องโดยไม่มีชื่อ
+   */
+  const successor = await prisma.userRoleAssignment.findFirst({
+    where: {
+      organizationId: removal.organizationId,
+      roleId: removal.roleId,
+      ...activeAssignmentWhere(),
+    },
+    orderBy: { effectiveFrom: "desc" },
+    select: { userAccount: { select: { displayName: true } } },
+  });
+
+  return {
+    organizationName: removal.organization?.nameTh ?? null,
+    role: removal.role.code,
+    roleLabel: ROLE_LABELS[removal.role.code as RoleCode] ?? removal.role.code,
+    removedAt: removal.revokedAt,
+    replacedBy: successor?.userAccount.displayName ?? null,
   };
 }
 
@@ -799,6 +866,7 @@ async function issueSession(
     user: {
       ...publicUser(user, roles, organizationId),
       organization: await sessionOrganization(organizationId),
+      removedFromOrganization: await removedFromOrganization(userAccountId, organizationId),
     },
     ...extra,
   });

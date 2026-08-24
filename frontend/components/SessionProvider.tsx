@@ -14,6 +14,18 @@ export interface SessionUser {
   roles: Role[];
   organizationId: string | null;
   organization?: { id: string; name: string; status: string } | null;
+  /**
+   * มีค่าเมื่อผู้ใช้ **เคย** สังกัดหน่วยงาน แล้วถูกถอดออกเพราะมีคนมารับหน้าที่แทน
+   * ต่างจาก `organizationId === null` เฉย ๆ ซึ่งแปลว่ายังไม่เคยมีหน่วยงานเลย —
+   * สองกรณีนี้ต้องบอกผู้ใช้คนละเรื่องกัน ฝั่ง API คือ removedFromOrganization()
+   */
+  removedFromOrganization?: {
+    organizationName: string | null;
+    role: string;
+    roleLabel: string;
+    removedAt: string | null;
+    replacedBy: string | null;
+  } | null;
 }
 
 interface SessionValue {
