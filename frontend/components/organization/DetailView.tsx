@@ -170,6 +170,20 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
   // "ลงทะเบียนชุดข้อมูล" จึงไม่เคยขึ้นให้ผู้ใช้หน่วยงานเห็นเลย
   const isMember =
     user.roles.includes("ORGANIZATION_USER") && user.organizationId === org.organizationId;
+  /**
+   * การ์ด "ลงทะเบียนชุดข้อมูล" ขึ้นเฉพาะเมื่อหน่วยงานเปิดใช้งานแล้ว
+   *
+   * ระหว่างที่คำขอยังเดินเส้นทาง B อยู่ การ์ดกดไม่ได้อยู่แล้ว และเหตุผลที่มันบอก
+   * ("หน่วยงานของคุณต้องผ่านการอนุมัติและเปิดใช้งานก่อน…") คือเรื่องเดียวกับที่ badge
+   * สถานะและการ์ด "ฉบับร่าง — ยังไม่ได้นำส่ง" ด้านบนบอกไปแล้ว — เป็นการพูดซ้ำครั้งที่สาม
+   * ที่ดันงานจริงของผู้ใช้ให้จมลงไป หน้าแรกยุบครึ่งล่างทิ้งด้วยเหตุผลเดียวกัน (app/page.tsx)
+   *
+   * เทียบกับสถานะของ **หน่วยงาน** ไม่ใช่ของคำขอ เพราะหน่วยงานเปิดใช้งานตอนผ่าน
+   * BDI_FINAL_APPROVAL ซึ่งเป็นเส้นเดียวกับที่ backend ใช้ตัดสิน eligibility
+   * พอ ACTIVE แล้วการ์ดขึ้นเสมอ รวมถึงตอนที่ยังติดเงื่อนไขอื่น เช่นหน่วยงานยังไม่มี
+   * ผู้มีอำนาจกระทำการแทนที่เปิดใช้งานบัญชี — เงื่อนไขนั้นมองไม่เห็นจากหน้านี้ จึงต้องบอก
+   */
+  const organizationActive = user.organization?.status === "ACTIVE";
   // "ขอให้ปรับปรุง" = review_task ที่ปิดด้วย result = RETURNED (เหมือนฝั่งชุดข้อมูล)
   const lastRevision = [...org.events].reverse().find((e) => e.result === "RETURNED");
 
@@ -279,7 +293,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         </Card>
       ) : null}
 
-      {isMember ? <DatasetEntryCard /> : null}
+      {isMember && organizationActive ? <DatasetEntryCard /> : null}
 
       <div className="flex flex-col gap-6">
         <Card>
@@ -443,6 +457,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
 /**
  * ทางเข้าเส้นทางชุดข้อมูล (docs/01-user-journey.md §4.1)
  * ปุ่มยังอยู่แม้กดไม่ได้ พร้อมบอกว่าติดอะไร — ซ่อนปุ่มแล้วผู้ใช้จะไม่รู้ว่าต้องทำอะไรต่อ
+ * ผู้เรียกขึ้นการ์ดนี้เฉพาะตอนหน่วยงาน ACTIVE แล้ว ดูเหตุผลที่ `organizationActive`
  */
 function DatasetEntryCard() {
   const router = useRouter();
