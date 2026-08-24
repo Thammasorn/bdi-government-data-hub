@@ -44,7 +44,7 @@ import {
   type RoleCode,
 } from "../lib/system.js";
 import { nextDatasetCode } from "../lib/request-number.js";
-import { ensureBucket } from "../storage.js";
+import { ensureContainer } from "../storage.js";
 
 const prisma = new PrismaClient();
 
@@ -182,7 +182,7 @@ async function openTaskRow(params: {
 // ------------------------------------------------------------------ main
 
 async function main() {
-  await ensureBucket();
+  await ensureContainer();
 
   console.log("ล้างข้อมูลธุรกรรมเดิม…");
   await prisma.auditEvent.deleteMany();

@@ -153,13 +153,30 @@ export const env = {
     verificationTtlMinutes: Number(optional("THAID_VERIFICATION_TTL_MINUTES", "30")),
   },
 
-  minio: {
-    endPoint: optional("MINIO_ENDPOINT", "minio"),
-    port: Number(optional("MINIO_PORT", "9000")),
-    useSSL: optional("MINIO_USE_SSL", "false") === "true",
-    accessKey: required("MINIO_ROOT_USER"),
-    secretKey: required("MINIO_ROOT_PASSWORD"),
-    bucket: optional("MINIO_BUCKET", "bdi-uploads"),
+  /**
+   * Azure Blob Storage — ที่เก็บไฟล์แนบทั้งหมด (แทน MinIO เดิม ตามการ์ด "Migrate to Azure")
+   *
+   * ต่อได้สองทาง และต้องมีอย่างน้อยหนึ่งทาง ไม่งั้น backend ไม่ยอมบูต:
+   *
+   *   AZURE_STORAGE_CONNECTION_STRING — connection string เต็ม ๆ ใช้ได้ทั้งกับ
+   *     storage account จริงและกับ Azurite (emulator ที่รันใน compose ตอน dev)
+   *     ทางนี้ถือ account key ไว้ในมือ จึงเหมาะกับเครื่อง dev มากกว่า production
+   *
+   *   AZURE_STORAGE_ACCOUNT_URL — เช่น https://bdidatahub.blob.core.windows.net
+   *     ไม่มีความลับใน env เลย ตัวตนมาจาก DefaultAzureCredential ซึ่งบน Azure
+   *     คือ managed identity ของ Container App/VM ที่รันอยู่ นี่คือทางที่ควรใช้จริง
+   *     ตอนขึ้น production เพราะไม่ต้องหมุน key และเพิกถอนสิทธิ์ได้จาก Azure เอง
+   *
+   * ตั้งมาทั้งคู่ = connection string ชนะ (ตั้งใจให้ทับได้เวลาไล่ปัญหาในเครื่อง)
+   *
+   * ชื่อ container ต้องเป็นตัวพิมพ์เล็ก ตัวเลข และขีดกลาง ยาว 3–63 ตัวอักษร ตามกติกาของ
+   * Azure — ไม่เหมือน bucket ของ MinIO ที่ปล่อยผ่านมากกว่านี้ ค่าเดิม `bdi-uploads`
+   * ผ่านกติกาใหม่พอดี คอลัมน์ attachment.storage_bucket ที่เก็บชื่อไว้จึงไม่ต้อง backfill
+   */
+  azure: {
+    connectionString: optional("AZURE_STORAGE_CONNECTION_STRING", ""),
+    accountUrl: optional("AZURE_STORAGE_ACCOUNT_URL", "").replace(/\/$/, ""),
+    container: optional("AZURE_STORAGE_CONTAINER", "bdi-uploads"),
   },
 
   /**
@@ -188,3 +205,19 @@ export const env = {
     enabled: Boolean(optional("SMTP_USER", "")),
   },
 } as const;
+
+/**
+ * ต้องมีทางต่อ Azure Blob Storage อย่างน้อยหนึ่งทาง
+ *
+ * เช็คที่นี่เพื่อให้ล้มตั้งแต่บูตพร้อมข้อความที่บอกได้ว่าต้องตั้งตัวแปรอะไร — ดีกว่าปล่อย
+ * ให้บูตผ่านแล้วไปล้มตอนมีคนอัปโหลดไฟล์แรก ด้วย stack trace จากข้างใน SDK ที่อ่านไม่ออก
+ * (ตัวแปรเดิม MINIO_ROOT_USER/MINIO_ROOT_PASSWORD ก็บังคับด้วย required() แบบเดียวกัน
+ * ทุก process ที่ import env.ts จึงต้องได้ค่านี้ รวมถึง delivery-worker ที่ไม่ได้แตะไฟล์เลย)
+ */
+if (!env.azure.connectionString && !env.azure.accountUrl) {
+  throw new Error(
+    "Missing Azure Blob Storage configuration: set AZURE_STORAGE_CONNECTION_STRING " +
+      "(account key, or the Azurite emulator in compose) or AZURE_STORAGE_ACCOUNT_URL " +
+      "(managed identity via DefaultAzureCredential)",
+  );
+}

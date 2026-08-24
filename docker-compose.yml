@@ -20,40 +20,50 @@ services:
       timeout: 5s
       retries: 10
 
-  minio:
-    image: minio/minio:latest
+  # Azurite — emulator ของ Azure Storage ที่ไมโครซอฟท์ทำเอง แทน MinIO เดิม
+  #
+  # โครงการย้ายไป Azure Blob Storage แต่เครื่อง dev ทุกเครื่องต้องรันได้โดยไม่ต้องมี
+  # subscription ของ Azure และไม่ต้องแชร์ storage account กันระหว่าง checkout —
+  # Azurite พูด REST API ตัวเดียวกัน `@azure/storage-blob` จึงคุยกับมันได้โดยไม่ต้องมี
+  # โค้ดสาขาไหนแยกไว้เลย ที่ production ตั้ง AZURE_STORAGE_ACCOUNT_URL ชี้ storage account
+  # จริงแทน แล้วบริการนี้ก็ไม่ถูกใช้
+  #
+  # เปิดเฉพาะ blob (10000) ไม่เปิด queue/table เพราะระบบไม่ได้ใช้
+  #
+  # **ไม่เปิด `--loose`** โดยตั้งใจ — โหมดนั้นผ่อนการตรวจ header ให้หลวมกว่า Azure จริง
+  # ซึ่งจะทำให้บั๊กที่ควรเจอในเครื่องไปโผล่บน production แทน และนั่นทำลายเหตุผลทั้งหมด
+  # ของการใช้ emulator ที่เจ้าของ API ทำเอง
+  #
+  # **แต่ต้องเปิด `--skipApiVersionCheck`** เพราะ `@azure/storage-blob` v12 ส่ง
+  # `x-ms-version: 2026-06-06` ขณะที่ Azurite ตัวล่าสุดรู้จักถึงแค่ 2025-11-05 และตอบ
+  # `The API version 2026-06-06 is not supported by Azurite` กลับมาทุกคำสั่ง — บูตขึ้นแต่
+  # /health/ready แดงและอัปโหลดไม่ได้เลย (เจอตอนรันจริงบน branch นี้) เป็นการไล่ตามเวอร์ชัน
+  # ของ emulator ไม่ใช่ความต่างของพฤติกรรม: ธงนี้ข้ามแค่ด่านตรวจเลขเวอร์ชัน แล้ว Azurite
+  # ก็ให้บริการด้วย API รุ่นที่มันมี ซึ่งครอบคลุมทุกอย่างที่ระบบนี้เรียก (create/exists/
+  # upload/download) เอาออกได้เมื่อ Azurite ตามทัน SDK
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
     restart: unless-stopped
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    command: azurite-blob --blobHost 0.0.0.0 --blobPort 10000 --location /data --skipApiVersionCheck
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "${AZURITE_BLOB_PORT:-10000}:10000"
     volumes:
-      - minio-data:/data
+      - azurite-data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      # image ไม่มี curl/wget — ใช้ node ที่ติดมากับ image เอง
+      # Azurite ตอบ 400 ให้ GET เปล่า ๆ ที่ราก ซึ่งก็พอบอกได้แล้วว่ามันรับ TCP และตอบ HTTP
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:10000/').then(()=>process.exit(0)).catch(()=>process.exit(1))"
       interval: 5s
       timeout: 5s
       retries: 10
 
-  # One-shot: creates the app bucket, then exits.
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      MINIO_BUCKET: ${MINIO_BUCKET:-bdi-uploads}
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" &&
-      mc mb --ignore-existing local/\"$$MINIO_BUCKET\" &&
-      echo 'bucket ready: '\"$$MINIO_BUCKET\"
-      "
+  # ไม่มีบริการ init สำหรับสร้าง container แล้ว — ต่างจาก minio-init เดิม
+  # backend เรียก ensureContainer() ตอนบูตอยู่แล้ว (src/index.ts) และ Azurite ไม่มี
+  # CLI แบบ `mc` ติดมาใน image ให้เรียกใช้ การมีบริการเพิ่มอีกตัวจึงได้แต่ความซ้ำซ้อน
 
   # ตัวแปลง .docx -> PDF ของเอกสารกฎหมาย A0–A3
   #
@@ -85,7 +95,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      minio:
+      azurite:
         condition: service_healthy
       gotenberg:
         condition: service_healthy
@@ -94,12 +104,13 @@ services:
       PORT: 4000
       GOTENBERG_URL: ${GOTENBERG_URL:-http://gotenberg:3000}
       DATABASE_URL: postgresql://${POSTGRES_USER:-bdi}:${POSTGRES_PASSWORD:-bdi_dev_password}@postgres:5432/${POSTGRES_DB:-bdi}?schema=public
-      MINIO_ENDPOINT: minio
-      MINIO_PORT: 9000
-      MINIO_USE_SSL: "false"
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      MINIO_BUCKET: ${MINIO_BUCKET:-bdi-uploads}
+      # ค่าตั้งต้นคือ connection string ของ Azurite ตามที่เอกสารของ Azure ประกาศไว้
+      # (account name/key ชุดนี้เป็นค่าคงที่สาธารณะของ emulator ไม่ใช่ความลับ) — ตั้ง
+      # AZURE_STORAGE_CONNECTION_STRING หรือ AZURE_STORAGE_ACCOUNT_URL ใน .env เพื่อชี้ไป
+      # storage account จริง
+      AZURE_STORAGE_CONNECTION_STRING: ${AZURE_STORAGE_CONNECTION_STRING:-DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;}
+      AZURE_STORAGE_ACCOUNT_URL: ${AZURE_STORAGE_ACCOUNT_URL:-}
+      AZURE_STORAGE_CONTAINER: ${AZURE_STORAGE_CONTAINER:-bdi-uploads}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:${FRONTEND_PORT:-3000}}
       APP_URL: ${APP_URL:-http://localhost:3000}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:?ตั้งค่า ADMIN_API_TOKEN ใน .env ก่อน}
@@ -157,8 +168,11 @@ services:
       APP_URL: ${APP_URL:-http://localhost:3000}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:?ตั้งค่า ADMIN_API_TOKEN ใน .env ก่อน}
       ACTIVATION_KEY_SECRET: ${ACTIVATION_KEY_SECRET:-}
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      # worker ไม่ได้แตะไฟล์เลย แต่ env.ts บังคับว่าต้องมีทางต่อ storage อย่างน้อยหนึ่งทาง
+      # จึงต้องส่งมาด้วย ไม่งั้น process ตายตั้งแต่ import (ของเดิมส่ง MINIO_ROOT_USER ด้วยเหตุผลเดียวกัน)
+      AZURE_STORAGE_CONNECTION_STRING: ${AZURE_STORAGE_CONNECTION_STRING:-DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;}
+      AZURE_STORAGE_ACCOUNT_URL: ${AZURE_STORAGE_ACCOUNT_URL:-}
+      AZURE_STORAGE_CONTAINER: ${AZURE_STORAGE_CONTAINER:-bdi-uploads}
       SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_SECURE: ${SMTP_SECURE:-false}
@@ -197,7 +211,7 @@ services:
 
 volumes:
   postgres-data:
-  minio-data:
+  azurite-data:
   backend-node-modules:
   frontend-node-modules:
   frontend-next-cache:

@@ -15,7 +15,7 @@ import { datasetRequestRouter } from "./routes/dataset-requests.js";
 import { healthRouter } from "./routes/health.js";
 import { notificationRouter } from "./routes/notifications.js";
 import { organizationRouter } from "./routes/organizations.js";
-import { ensureBucket } from "./storage.js";
+import { ensureContainer } from "./storage.js";
 
 const app = express();
 
@@ -126,10 +126,10 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 async function main() {
-  // Best-effort: don't block startup if MinIO is briefly unavailable —
+  // Best-effort: don't block startup if Azure Blob Storage is briefly unavailable —
   // /health/ready will report it.
-  await ensureBucket().catch((err) => {
-    console.warn(`[startup] could not ensure bucket: ${err.message}`);
+  await ensureContainer().catch((err) => {
+    console.warn(`[startup] could not ensure container: ${err.message}`);
   });
 
   const server = app.listen(env.port, () => {

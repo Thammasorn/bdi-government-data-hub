@@ -2,7 +2,7 @@
  * เอกสารกฎหมาย A0–A4 — ตัว template อยู่ในฐานข้อมูล ไม่ได้อยู่ในโค้ด
  *
  * `legal.legal_document` มีแถว A0–A4 อยู่แล้วจาก seed:masters ส่วนไฟล์จริงของแต่ละ
- * เวอร์ชันเก็บเป็น `legal.legal_document_version` -> `attachment.attachment` ใน MinIO
+ * เวอร์ชันเก็บเป็น `legal.legal_document_version` -> `attachment.attachment` ใน Azure Blob Storage
  * ตามที่ sheet ออกแบบไว้ (comment ใน seed-masters.ts เขียนขั้นตอนนี้ไว้ตรง ๆ ว่า
  * "เมื่อได้ไฟล์จริงมา: อัปโหลดเป็น attachment ... แล้วเปลี่ยนสถานะเป็น ACTIVE/PUBLISHED")
  *
@@ -199,7 +199,7 @@ export async function publishVersion(
 
   // id ของเวอร์ชันถูกกำหนดล่วงหน้า เพราะ storage key ของไฟล์มี owner_id อยู่ใน path
   // ถ้าเก็บไฟล์ก่อนแล้วค่อยย้าย owner ทีหลัง แถวจะบอกว่าเป็นของเวอร์ชันนี้
-  // แต่ path ใน MinIO ยังชี้ owner เดิมอยู่ตลอดไป
+  // แต่ path ใน object storage ยังชี้ owner เดิมอยู่ตลอดไป
   const versionId = randomUUID();
   const now = new Date();
 
