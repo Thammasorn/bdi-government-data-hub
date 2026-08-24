@@ -38,6 +38,7 @@ import {
   storeAttachment,
 } from "./attachment.js";
 import {
+  DEPRECATED_PLACEHOLDERS,
   DocumentRenderError,
   assertKnownPlaceholders,
   assertReadableDocx,
@@ -141,7 +142,12 @@ export async function templateDocx(db: Db, versionId: string): Promise<Buffer> {
 export async function publishVersion(
   db: Db,
   params: { documentCode: string; docx: Buffer; filename: string; actorId: string },
-): Promise<{ versionId: string; versionNumber: number; placeholders: string[] }> {
+): Promise<{
+  versionId: string;
+  versionNumber: number;
+  placeholders: string[];
+  deprecatedPlaceholders: string[];
+}> {
   assertReadableDocx(params.docx);
 
   const document = await db.legalDocument.findUnique({
@@ -160,6 +166,11 @@ export async function publishVersion(
     params.docx,
     variableScopeOf(document.applicationScope),
   );
+  /**
+   * ชื่อชุดเก่ายังเติมค่าให้ได้ จึงไม่ปฏิเสธไฟล์ — แต่ต้องบอกคนอัปโหลด ไม่งั้นเอกสารฉบับใหม่
+   * จะถูกเขียนด้วยชื่อที่กำลังจะถูกเลิกใช้ต่อไปเรื่อย ๆ โดยไม่มีใครทัก
+   */
+  const deprecated = placeholders.filter((name) => name in DEPRECATED_PLACEHOLDERS);
   /**
    * PDF กลางของเวอร์ชันนี้ — เติมค่าว่างก่อนแปลงถ้าเอกสารมี placeholder
    *
@@ -240,5 +251,5 @@ export async function publishVersion(
     });
   }
 
-  return { versionId, versionNumber, placeholders };
+  return { versionId, versionNumber, placeholders, deprecatedPlaceholders: deprecated };
 }

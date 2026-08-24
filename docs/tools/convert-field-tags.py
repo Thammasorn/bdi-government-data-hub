@@ -31,20 +31,20 @@ TAG_MAP = {
     "organization.sub_district": "org.subdistrict",
     "organization.district": "org.district",
     "organization.province": "org.province",
-    "org_approver.firstname_th": "signatory.firstName",
-    "org_approver.lastname_th": "signatory.lastName",
-    "org_approver.position_th": "signatory.position",
-    "bdi_approver.firstname_th": "bdi.firstName",
-    "bdi_approver.lastname_th": "bdi.lastName",
-    "user.firstname_th": "contact.firstName",
-    "user.lastname_th": "contact.lastName",
+    "org_approver.firstname_th": "org_approver.firstName",
+    "org_approver.lastname_th": "org_approver.lastName",
+    "org_approver.position_th": "org_approver.position",
+    "bdi_approver.firstname_th": "bdi_approver.firstName",
+    "bdi_approver.lastname_th": "bdi_approver.lastName",
+    "user.firstname_th": "org_officer.firstName",
+    "user.lastname_th": "org_officer.lastName",
     "download_datetime": "printedDateTime",
 }
 
 # `signature_confirmation.confirmed_at` ปรากฏสองที่ และเป็นวันที่ลงนามของ**คนละฝ่าย**
 # ช่องซ้ายคือสำนักงาน ช่องขวาคือหน่วยงาน จึงแปลงตามลำดับที่พบ ไม่ใช่ค่าเดียวกันทั้งสองที่
 ORDERED_TAGS = {
-    "signature_confirmation.confirmed_at": ["bdi.signedDate", "approver.signedDate"],
+    "signature_confirmation.confirmed_at": ["bdi_approver.signedDate", "org_approver.signedDate"],
 }
 
 # Word ผ่าข้อความเป็นหลายชิ้นภายในไฟล์ (rsid, ตัวตรวจคำสะกด) แท็กหนึ่งอันจึงถูกแบ่งเป็น
@@ -63,12 +63,12 @@ GAP_FILLS = [
     # ต้นฉบับวาง <org_approver.firstname_th><org_approver.lastname_th> ติดกันไม่มีช่องว่าง
     # ค่าที่เติมจะกลายเป็น "ธนิทลุพ" ติดกันเป็นคำเดียว
     (
-        "{{signatory.firstName}}{{signatory.lastName}}",
-        "{{signatory.firstName}} {{signatory.lastName}}",
+        "{{org_approver.firstName}}{{org_approver.lastName}}",
+        "{{org_approver.firstName}} {{org_approver.lastName}}",
     ),
     # ตราเห็นชอบของสำนักงาน วางไว้บรรทัดเหนือบรรทัดลงนามในช่องของสำนักงาน
-    # ({{bdi.endorsement}} คืนค่าที่ลงท้ายด้วยการขึ้นบรรทัดใหม่ และว่างจนกว่าจะอนุมัติ)
-    ("ลงนาม  {{bdi.firstName}}", "{{bdi.endorsement}}ลงนาม  {{bdi.firstName}}"),
+    # ({{bdi_approver.endorsement}} คืนค่าที่ลงท้ายด้วยการขึ้นบรรทัดใหม่ และว่างจนกว่าจะอนุมัติ)
+    ("ลงนาม  {{bdi_approver.firstName}}", "{{bdi_approver.endorsement}}ลงนาม  {{bdi_approver.firstName}}"),
 ]
 
 TEXT_NODE = re.compile(r"(<w:t(?: [^>]*)?>)(.*?)(</w:t>)", re.S)
@@ -99,6 +99,9 @@ def convert(xml: str) -> tuple[str, dict[str, int], list[str]]:
     edits: list[tuple[int, int, str]] = []  # (node index, ตำแหน่งเริ่มในข้อความของ node, ...)
 
     replacements: dict[int, str] = {}  # node index -> ข้อความใหม่
+
+    # เลือกปลายทางตามลำดับที่อ่านเจอ (ORDERED_TAGS อาศัยลำดับซ้าย-ขวา) ...
+    resolved: list[tuple[re.Match[str], str]] = []
     for m in TAG.finditer(joined):
         name = m.group(1)
         if name in ORDERED_TAGS:
@@ -112,7 +115,11 @@ def convert(xml: str) -> tuple[str, dict[str, int], list[str]]:
             unknown.append(name)
             continue
         counts[target] = counts.get(target, 0) + 1
+        resolved.append((m, target))
 
+    # ... แต่ **เขียนกลับจากขวาไปซ้าย** ตำแหน่งของ match คิดจากข้อความก่อนแก้ ถ้าแก้
+    # ตัวซ้ายก่อน ความยาวที่เปลี่ยนไปจะทำให้ตัวขวาที่อยู่ใน <w:t> ชิ้นเดียวกันถูกตัดผิดที่
+    for m, target in reversed(resolved):
         touched = [sp for sp in spans if sp[1] > m.start() and sp[0] < m.end()]
         for k, (n_start, n_end, idx) in enumerate(touched):
             text = replacements.get(idx, nodes[idx][2])
