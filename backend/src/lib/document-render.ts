@@ -56,10 +56,10 @@ export const VARIABLE_GROUPS = {
   tick: "ช่องติ๊กตามตัวเลือกในแบบฟอร์ม",
   request: "คำขอลงทะเบียน",
   org: "หน่วยงานที่ลงทะเบียน",
-  signatory: "ผู้มีอำนาจกระทำการแทน",
-  contact: "ผู้กรอกข้อมูล",
+  org_approver: "ผู้มีอำนาจกระทำการแทนของหน่วยงาน",
+  org_officer: "ผู้กรอกข้อมูลของหน่วยงาน",
   signature: "ลายมือชื่อและตราเห็นชอบ",
-  office: "สำนักงาน (BDI)",
+  bdi: "สำนักงาน (BDI)",
   system: "ระบบและการพิมพ์เอกสาร",
 } as const;
 
@@ -69,7 +69,7 @@ export type VariableGroup = keyof typeof VARIABLE_GROUPS;
  * flow ที่ตัวแปรนี้มีค่าให้เติม
  *
  * เอกสารของเส้นทางลงทะเบียนหน่วยงานกับของเส้นทางลงทะเบียนชุดข้อมูลดึงข้อมูลคนละชุด
- * `{{signatory.position}}` ไม่มีความหมายในแบบนำส่งข้อมูล และ `{{dataset.title}}` ไม่มี
+ * `{{org_approver.position}}` ไม่มีความหมายในแบบนำส่งข้อมูล และ `{{dataset.title}}` ไม่มี
  * ความหมายในข้อตกลง — ตรวจตอนอัปโหลดตาม scope ของเอกสาร จะได้รู้ตั้งแต่ตอนนั้น
  * ไม่ใช่ไปเจอช่องว่างเปล่าในเอกสารที่หน่วยงานลงนามแล้ว
  */
@@ -126,26 +126,26 @@ export const TEMPLATE_VARIABLES = {
   "org.website": { group: "org", description: "เว็บไซต์หน่วยงาน — ว่างถ้าไม่ได้กรอก", example: "https://www.dla.go.th" },
 
   // ── ผู้มีอำนาจกระทำการแทน ───────────────────────────────────────
-  "signatory.fullName": { scope: "organization", group: "signatory", description: "ชื่อผู้มีอำนาจกระทำการแทน (คำนำหน้า ชื่อ นามสกุล)", example: "นาย อนุชา พัฒนา" },
-  "signatory.prefix": { scope: "organization", group: "signatory", description: "คำนำหน้าชื่อผู้มีอำนาจกระทำการแทน", example: "นาย" },
-  "signatory.firstName": { scope: "organization", group: "signatory", description: "ชื่อผู้มีอำนาจกระทำการแทน", example: "อนุชา" },
-  "signatory.lastName": { scope: "organization", group: "signatory", description: "นามสกุลผู้มีอำนาจกระทำการแทน", example: "พัฒนา" },
-  "signatory.position": { scope: "organization", group: "signatory", description: "ตำแหน่งผู้มีอำนาจกระทำการแทน", example: "ผู้อำนวยการ" },
-  "signatory.department": { scope: "organization", group: "signatory", description: "ฝ่าย/กอง/สำนักของผู้มีอำนาจกระทำการแทน — ว่างถ้าไม่ได้กรอก", example: "สำนักบริหารกลาง" },
-  "signatory.email": { scope: "organization", group: "signatory", description: "อีเมลผู้มีอำนาจกระทำการแทน", example: "director@dla.go.th" },
-  "signatory.phone": { scope: "organization", group: "signatory", description: "เบอร์โทรศัพท์ผู้มีอำนาจกระทำการแทน", example: "๐๘๑๒๓๔๕๖๗๘" },
-  "signatory.nationalId": { scope: "organization", group: "signatory", description: "เลขบัตรประชาชนผู้มีอำนาจกระทำการแทน (เลขไทย คั่นด้วยขีด)", example: "๑-๑๐๑๗-๐๐๒๐๗-๐๓-๐" },
+  "org_approver.fullName": { scope: "organization", group: "org_approver", description: "ชื่อผู้มีอำนาจกระทำการแทน (คำนำหน้า ชื่อ นามสกุล)", example: "นาย อนุชา พัฒนา" },
+  "org_approver.prefix": { scope: "organization", group: "org_approver", description: "คำนำหน้าชื่อผู้มีอำนาจกระทำการแทน", example: "นาย" },
+  "org_approver.firstName": { scope: "organization", group: "org_approver", description: "ชื่อผู้มีอำนาจกระทำการแทน", example: "อนุชา" },
+  "org_approver.lastName": { scope: "organization", group: "org_approver", description: "นามสกุลผู้มีอำนาจกระทำการแทน", example: "พัฒนา" },
+  "org_approver.position": { scope: "organization", group: "org_approver", description: "ตำแหน่งผู้มีอำนาจกระทำการแทน", example: "ผู้อำนวยการ" },
+  "org_approver.department": { scope: "organization", group: "org_approver", description: "ฝ่าย/กอง/สำนักของผู้มีอำนาจกระทำการแทน — ว่างถ้าไม่ได้กรอก", example: "สำนักบริหารกลาง" },
+  "org_approver.email": { scope: "organization", group: "org_approver", description: "อีเมลผู้มีอำนาจกระทำการแทน", example: "director@dla.go.th" },
+  "org_approver.phone": { scope: "organization", group: "org_approver", description: "เบอร์โทรศัพท์ผู้มีอำนาจกระทำการแทน", example: "๐๘๑๒๓๔๕๖๗๘" },
+  "org_approver.nationalId": { scope: "organization", group: "org_approver", description: "เลขบัตรประชาชนผู้มีอำนาจกระทำการแทน (เลขไทย คั่นด้วยขีด)", example: "๑-๑๐๑๗-๐๐๒๐๗-๐๓-๐" },
 
   // ── ผู้กรอกข้อมูล ────────────────────────────────────────────
-  "contact.fullName": { group: "contact", description: "ชื่อผู้กรอกข้อมูล (คำนำหน้า ชื่อ นามสกุล)", example: "นางสาว พิมพ์ชนก สังคมดี" },
-  "contact.prefix": { group: "contact", description: "คำนำหน้าชื่อผู้กรอกข้อมูล", example: "นางสาว" },
-  "contact.firstName": { group: "contact", description: "ชื่อผู้กรอกข้อมูล", example: "พิมพ์ชนก" },
-  "contact.lastName": { group: "contact", description: "นามสกุลผู้กรอกข้อมูล", example: "สังคมดี" },
-  "contact.position": { group: "contact", description: "ตำแหน่งผู้กรอกข้อมูล", example: "นักวิเคราะห์นโยบายและแผน" },
-  "contact.department": { group: "contact", description: "ฝ่าย/กอง/สำนักของผู้กรอกข้อมูล", example: "กลุ่มงานข้อมูลสารสนเทศ" },
-  "contact.email": { group: "contact", description: "อีเมลผู้กรอกข้อมูล", example: "user@dla.go.th" },
-  "contact.phone": { group: "contact", description: "เบอร์โทรศัพท์ผู้กรอกข้อมูล", example: "๐๘๒๐๐๐๐๐๐๐" },
-  "contact.nationalId": { group: "contact", description: "เลขบัตรประชาชนผู้กรอกข้อมูล (เลขไทย คั่นด้วยขีด)", example: "๑-๑๐๑๗-๐๐๒๐๗-๐๓-๐" },
+  "org_officer.fullName": { group: "org_officer", description: "ชื่อผู้กรอกข้อมูล (คำนำหน้า ชื่อ นามสกุล)", example: "นางสาว พิมพ์ชนก สังคมดี" },
+  "org_officer.prefix": { group: "org_officer", description: "คำนำหน้าชื่อผู้กรอกข้อมูล", example: "นางสาว" },
+  "org_officer.firstName": { group: "org_officer", description: "ชื่อผู้กรอกข้อมูล", example: "พิมพ์ชนก" },
+  "org_officer.lastName": { group: "org_officer", description: "นามสกุลผู้กรอกข้อมูล", example: "สังคมดี" },
+  "org_officer.position": { group: "org_officer", description: "ตำแหน่งผู้กรอกข้อมูล", example: "นักวิเคราะห์นโยบายและแผน" },
+  "org_officer.department": { group: "org_officer", description: "ฝ่าย/กอง/สำนักของผู้กรอกข้อมูล", example: "กลุ่มงานข้อมูลสารสนเทศ" },
+  "org_officer.email": { group: "org_officer", description: "อีเมลผู้กรอกข้อมูล", example: "user@dla.go.th" },
+  "org_officer.phone": { group: "org_officer", description: "เบอร์โทรศัพท์ผู้กรอกข้อมูล", example: "๐๘๒๐๐๐๐๐๐๐" },
+  "org_officer.nationalId": { group: "org_officer", description: "เลขบัตรประชาชนผู้กรอกข้อมูล (เลขไทย คั่นด้วยขีด)", example: "๑-๑๐๑๗-๐๐๒๐๗-๐๓-๐" },
 
   // ── ชุดข้อมูลที่ขอลงทะเบียน (เส้นทาง C) ──
   "dataset.title": { scope: "dataset", group: "dataset", description: "ชื่อชุดข้อมูล (ภาษาไทย)", example: "ปริมาณน้ำฝนรายวัน" },
@@ -166,21 +166,21 @@ export const TEMPLATE_VARIABLES = {
   "dataset.requestNumber": { scope: "dataset", group: "dataset", description: "เลขที่คำขอลงทะเบียนชุดข้อมูล", example: "DS-REG-2026-0004" },
 
   // ── ลายมือชื่อ ──────────────────────────────────────────────
-  "approver.signature": { group: "signature", description: "ลายมือชื่อฝ่ายหน่วยงาน — ว่างจนกว่าผู้มีอำนาจจะลงนาม", example: "นาย อนุชา พัฒนา" },
-  "approver.signedDate": { group: "signature", description: "วันที่ฝ่ายหน่วยงานลงนาม — ว่างจนกว่าจะลงนาม", example: "๑๙ สิงหาคม ๒๕๖๙" },
-  "bdi.signature": { group: "signature", description: "ลายมือชื่อฝ่ายสำนักงาน — ว่างจนกว่าผู้อนุมัติ BDI จะลงนาม", example: "นาง สุดารัตน์ อนุมัติ" },
-  "bdi.signedDate": { group: "signature", description: "วันที่ฝ่ายสำนักงานลงนาม — ว่างจนกว่าจะลงนาม", example: "๑๙ สิงหาคม ๒๕๖๙" },
-  "bdi.firstName": { group: "signature", description: "ชื่อผู้ลงนามฝ่ายสำนักงาน (ไม่รวมคำนำหน้าและนามสกุล)", example: "สุดารัตน์" },
-  "bdi.lastName": { group: "signature", description: "นามสกุลผู้ลงนามฝ่ายสำนักงาน", example: "อนุมัติ" },
-  "bdi.endorsement": { group: "signature", description: 'ตราเห็นชอบของสำนักงาน — ว่างจนกว่าจะอนุมัติขั้นสุดท้าย แล้วขึ้นเป็น "เห็นชอบ" พร้อมขึ้นบรรทัดใหม่', example: "เห็นชอบ" },
+  "org_approver.signature": { group: "signature", description: "ลายมือชื่อฝ่ายหน่วยงาน — ว่างจนกว่าผู้มีอำนาจจะลงนาม", example: "นาย อนุชา พัฒนา" },
+  "org_approver.signedDate": { group: "signature", description: "วันที่ฝ่ายหน่วยงานลงนาม — ว่างจนกว่าจะลงนาม", example: "๑๙ สิงหาคม ๒๕๖๙" },
+  "bdi_approver.signature": { group: "signature", description: "ลายมือชื่อฝ่ายสำนักงาน — ว่างจนกว่าผู้อนุมัติ BDI จะลงนาม", example: "นาง สุดารัตน์ อนุมัติ" },
+  "bdi_approver.signedDate": { group: "signature", description: "วันที่ฝ่ายสำนักงานลงนาม — ว่างจนกว่าจะลงนาม", example: "๑๙ สิงหาคม ๒๕๖๙" },
+  "bdi_approver.firstName": { group: "signature", description: "ชื่อผู้ลงนามฝ่ายสำนักงาน (ไม่รวมคำนำหน้าและนามสกุล)", example: "สุดารัตน์" },
+  "bdi_approver.lastName": { group: "signature", description: "นามสกุลผู้ลงนามฝ่ายสำนักงาน", example: "อนุมัติ" },
+  "bdi_approver.endorsement": { group: "signature", description: 'ตราเห็นชอบของสำนักงาน — ว่างจนกว่าจะอนุมัติขั้นสุดท้าย แล้วขึ้นเป็น "เห็นชอบ" พร้อมขึ้นบรรทัดใหม่', example: "เห็นชอบ" },
 
   // ── สำนักงาน (BDI) ─────────────────────────────────────────
-  "office.name": { group: "office", description: "ชื่อสำนักงาน", example: "สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)" },
-  "office.address": { group: "office", description: "ที่อยู่สำนักงานทั้งบรรทัด", example: "234/432 ซอยลาดพร้าว 12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพมหานคร 10900" },
-  "office.email": { group: "office", description: "อีเมลสำนักงาน — ว่างถ้ายังไม่ได้บันทึกไว้ในระบบ", example: "saraban@bdi.or.th" },
-  "office.phone": { group: "office", description: "เบอร์โทรศัพท์สำนักงาน — ว่างถ้ายังไม่ได้บันทึกไว้ในระบบ", example: "๐๒๑๔๒๑๔๔๔" },
-  "office.directorName": { group: "office", description: "ชื่อผู้อำนวยการสถาบัน — เป็นค่าตั้งไว้ในโค้ด ต้องแก้เมื่อเปลี่ยนผู้อำนวยการ", example: "ศาสตราจารย์ธีรณี อจลากุล" },
-  "office.directorPosition": { group: "office", description: "ตำแหน่งผู้ลงนามฝ่ายสำนักงาน", example: "ผู้อำนวยการสถาบันข้อมูลขนาดใหญ่" },
+  "bdi.name": { group: "bdi", description: "ชื่อสำนักงาน", example: "สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)" },
+  "bdi.address": { group: "bdi", description: "ที่อยู่สำนักงานทั้งบรรทัด", example: "234/432 ซอยลาดพร้าว 12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพมหานคร 10900" },
+  "bdi.email": { group: "bdi", description: "อีเมลสำนักงาน — ว่างถ้ายังไม่ได้บันทึกไว้ในระบบ", example: "saraban@bdi.or.th" },
+  "bdi.phone": { group: "bdi", description: "เบอร์โทรศัพท์สำนักงาน — ว่างถ้ายังไม่ได้บันทึกไว้ในระบบ", example: "๐๒๑๔๒๑๔๔๔" },
+  "bdi.directorName": { group: "bdi", description: "ชื่อผู้อำนวยการสถาบัน — เป็นค่าตั้งไว้ในโค้ด ต้องแก้เมื่อเปลี่ยนผู้อำนวยการ", example: "ศาสตราจารย์ธีรณี อจลากุล" },
+  "bdi.directorPosition": { group: "bdi", description: "ตำแหน่งผู้ลงนามฝ่ายสำนักงาน", example: "ผู้อำนวยการสถาบันข้อมูลขนาดใหญ่" },
 
   // ── ระบบ ────────────────────────────────────────────────────
   "system.name": { group: "system", description: "ชื่อระบบ", example: "ระบบกลางเพื่อการแบ่งปันข้อมูล (Government Datahub Platform)" },
@@ -188,6 +188,62 @@ export const TEMPLATE_VARIABLES = {
   printedAt: { group: "system", description: "วันที่พิมพ์เอกสารจากระบบ", example: "๑๙ สิงหาคม ๒๕๖๙" },
   printedDateTime: { group: "system", description: "วันที่และเวลาที่พิมพ์เอกสารจากระบบ (เวลาไทย)", example: "๑๙ สิงหาคม ๒๕๖๙ ๑๕:๒๗" },
 } as const satisfies Record<string, TemplateVariableSpec>;
+
+/**
+ * ชื่อเดิมของ placeholder ที่ยังเติมค่าให้ได้ — **ชื่อที่ถูกต้องอยู่ใน TEMPLATE_VARIABLES**
+ *
+ * ชื่อชุดเดิมบอกไม่ตรงกับบทบาทในระบบ (`signatory` กับ `approver` เป็นคนเดียวกัน ส่วน
+ * `bdi` เป็นได้ทั้งผู้ลงนามและตัวสำนักงาน) จึงเปลี่ยนเป็น `org_approver` · `org_officer` ·
+ * `bdi_approver` · `bdi` เมื่อ 2026-08-24
+ *
+ * **ลบตารางนี้ทิ้งไม่ได้ทันที** — template ที่ใช้งานจริงเป็นแถวใน
+ * `legal.legal_document_version` ไม่ใช่ไฟล์ใน repo เอกสารที่ฝ่ายกฎหมายอัปโหลดไว้ก่อน
+ * วันนั้นยังใช้ชื่อเดิม ถ้าตัดชื่อเดิมออกพร้อมกับการ deploy เอกสารเหล่านั้นจะ render
+ * เป็นช่องว่างเปล่าโดยไม่มีใครรู้ตัว จนกว่าจะมีคนเปิด PDF ที่ลงนามไปแล้วดู
+ *
+ * ชื่อเดิมจึงยังเติมค่าให้ตอน render และยังผ่านการตรวจตอนอัปโหลด แต่ไม่ปรากฏในคู่มือ
+ * และในผลลัพธ์ของ API อีกแล้ว — ปิดทางไม่ให้เอกสารฉบับใหม่หยิบไปใช้ ตารางนี้จะว่างลง
+ * เองเมื่อทุก template ถูกอัปโหลดใหม่ด้วยชื่อใหม่ แล้วค่อยลบทั้งก้อน
+ */
+export const DEPRECATED_PLACEHOLDERS: Readonly<Record<string, TemplateVariable>> = {
+  "signatory.fullName": "org_approver.fullName",
+  "signatory.prefix": "org_approver.prefix",
+  "signatory.firstName": "org_approver.firstName",
+  "signatory.lastName": "org_approver.lastName",
+  "signatory.position": "org_approver.position",
+  "signatory.department": "org_approver.department",
+  "signatory.email": "org_approver.email",
+  "signatory.phone": "org_approver.phone",
+  "signatory.nationalId": "org_approver.nationalId",
+
+  "contact.fullName": "org_officer.fullName",
+  "contact.prefix": "org_officer.prefix",
+  "contact.firstName": "org_officer.firstName",
+  "contact.lastName": "org_officer.lastName",
+  "contact.position": "org_officer.position",
+  "contact.department": "org_officer.department",
+  "contact.email": "org_officer.email",
+  "contact.phone": "org_officer.phone",
+  "contact.nationalId": "org_officer.nationalId",
+
+  "approver.signature": "org_approver.signature",
+  "approver.signedDate": "org_approver.signedDate",
+
+  // `bdi.` ชุดลายมือชื่อกลายเป็น `bdi_approver.` — ระวังว่าชื่อใหม่ของสำนักงานก็ขึ้นต้น
+  // ด้วย `bdi.` เหมือนกัน แต่คนละชื่อกัน จึงไม่ทับกัน
+  "bdi.signature": "bdi_approver.signature",
+  "bdi.signedDate": "bdi_approver.signedDate",
+  "bdi.firstName": "bdi_approver.firstName",
+  "bdi.lastName": "bdi_approver.lastName",
+  "bdi.endorsement": "bdi_approver.endorsement",
+
+  "office.name": "bdi.name",
+  "office.address": "bdi.address",
+  "office.email": "bdi.email",
+  "office.phone": "bdi.phone",
+  "office.directorName": "bdi.directorName",
+  "office.directorPosition": "bdi.directorPosition",
+};
 
 /**
  * ช่องติ๊กเป็น "ตระกูล" ไม่ใช่ชื่อเดี่ยว — `{{tick.<ฟิลด์>.<รหัส>}}`
@@ -223,13 +279,30 @@ export const TICK_VARIABLES: ReadonlySet<string> = new Set(
   Object.entries(TICK_FIELDS).flatMap(([field, codes]) => codes.map((c) => `tick.${field}.${c}`)),
 );
 
-/** ตัวแปรนี้ใช้ได้กับ flow นี้ไหม */
+/**
+ * ชื่อที่ถูกต้องของ placeholder ตัวนี้ — คืนชื่อเดิมถ้ามันเป็นชื่อปัจจุบันอยู่แล้ว
+ * แปลงให้เมื่อเป็นชื่อชุดเก่า และคืน null เมื่อไม่รู้จักเลย
+ */
+export function canonicalPlaceholder(name: string): string | null {
+  if (TICK_VARIABLES.has(name)) return name;
+  if (name in TEMPLATE_VARIABLES) return name;
+  return DEPRECATED_PLACEHOLDERS[name] ?? null;
+}
+
+/** ตัวแปรนี้ใช้ได้กับ flow นี้ไหม — ชื่อชุดเก่าถือว่าใช้ได้เท่ากับชื่อใหม่ของมัน */
 export function variableAllowed(name: string, scope: VariableScope): boolean {
-  if (TICK_VARIABLES.has(name)) return scope === "dataset" || scope === "both";
-  const spec = (TEMPLATE_VARIABLES as Record<string, TemplateVariableSpec | undefined>)[name];
+  const canonical = canonicalPlaceholder(name);
+  if (!canonical) return false;
+  if (TICK_VARIABLES.has(canonical)) return scope === "dataset" || scope === "both";
+  const spec = (TEMPLATE_VARIABLES as Record<string, TemplateVariableSpec | undefined>)[canonical];
   if (!spec) return false;
   const declared = spec.scope ?? "both";
   return declared === "both" || scope === "both" || declared === scope;
+}
+
+/** ชื่อชุดเก่าที่เอกสารฉบับนี้ยังใช้อยู่ — ใช้เตือนคนอัปโหลด ไม่ใช่เหตุให้ปฏิเสธไฟล์ */
+export function deprecatedPlaceholdersIn(docx: Buffer): string[] {
+  return placeholdersIn(docx).filter((name) => name in DEPRECATED_PLACEHOLDERS);
 }
 
 export type TemplateVariable = keyof typeof TEMPLATE_VARIABLES;
@@ -304,6 +377,22 @@ function openDocx(docx: Buffer): PizZip {
 }
 
 /**
+ * ค่าชุดเดียวกัน แต่ใส่ชื่อชุดเก่าเพิ่มเข้าไปด้วย
+ *
+ * ตัวสร้างค่า (lib/legal-values.ts, lib/dataset-values.ts) รู้จักแต่ชื่อปัจจุบัน — ที่นี่
+ * เป็นที่เดียวที่รู้เรื่องชื่อเดิม เอกสารเก่าจึงยังเติมค่าได้โดยไม่ต้องมีตารางชื่อสองชุด
+ * กระจายอยู่ในไฟล์ที่ต่อค่า
+ */
+function withDeprecatedNames(values: TemplateValues): Record<string, string> {
+  const out: Record<string, string> = { ...(values as Record<string, string>) };
+  for (const [old, current] of Object.entries(DEPRECATED_PLACEHOLDERS)) {
+    const value = (values as Record<string, string | undefined>)[current];
+    if (value !== undefined) out[old] = value;
+  }
+  return out;
+}
+
+/**
  * เติมค่าลง placeholder แล้วคืน .docx ที่เติมแล้ว
  *
  * ค่าที่ไม่ได้ส่งมาจะกลายเป็นค่าว่าง ไม่ใช่ข้อความ "undefined" — ตั้งใจ เพราะเอกสาร
@@ -311,6 +400,7 @@ function openDocx(docx: Buffer): PizZip {
  */
 export function fillTemplate(docx: Buffer, values: TemplateValues): Buffer {
   const zip = openDocx(docx);
+  const filled = withDeprecatedNames(values);
   let doc: Docxtemplater;
   try {
     doc = new Docxtemplater(zip, {
@@ -321,7 +411,7 @@ export function fillTemplate(docx: Buffer, values: TemplateValues): Buffer {
       paragraphLoop: true,
       nullGetter: () => "",
     });
-    doc.render(values as Record<string, string>);
+    doc.render(filled);
   } catch (err) {
     // docxtemplater รวมทุกปัญหาของ template ไว้ใน error เดียว (แท็กไม่ปิด ซ้อนกันผิด)
     // ข้อความของมันเป็นภาษาอังกฤษเชิงเทคนิค แต่คนที่เห็นคือคนอัปโหลดเอกสาร

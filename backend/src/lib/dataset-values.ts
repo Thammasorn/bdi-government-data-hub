@@ -102,13 +102,13 @@ export function datasetDocumentValues(input: DatasetDocumentInput): Record<strin
     // A4 ที่ฝ่ายกฎหมายร่างมาไม่มีช่องลงนาม (ตัดสินไว้ 2026-08-20 ว่าไม่เพิ่มให้)
     // ค่าพวกนี้จึงยังไม่มี template ไหนใช้ แต่สร้างไว้เพื่อให้เพิ่มช่องลงนามในเอกสาร
     // ได้ทันทีโดยไม่ต้องแก้โค้ด — หลักฐานการลงนามอยู่ในฐานข้อมูลอยู่แล้ว
-    "approver.signature": input.approverSignedName ?? "",
-    "approver.signedDate": date(input.approverSignedAt),
-    "bdi.signature": input.bdiSignedName ?? "",
-    "bdi.firstName": input.bdiSignedFirstName ?? "",
-    "bdi.lastName": input.bdiSignedLastName ?? "",
-    "bdi.signedDate": date(input.bdiSignedAt),
-    "bdi.endorsement": input.bdiSignedAt ? "เห็นชอบ\n" : "",
+    "org_approver.signature": input.approverSignedName ?? "",
+    "org_approver.signedDate": date(input.approverSignedAt),
+    "bdi_approver.signature": input.bdiSignedName ?? "",
+    "bdi_approver.firstName": input.bdiSignedFirstName ?? "",
+    "bdi_approver.lastName": input.bdiSignedLastName ?? "",
+    "bdi_approver.signedDate": date(input.bdiSignedAt),
+    "bdi_approver.endorsement": input.bdiSignedAt ? "เห็นชอบ\n" : "",
 
     // ── ระบบ ──
     "system.name": "ระบบกลางเพื่อการแบ่งปันข้อมูล (Government Datahub Platform)",

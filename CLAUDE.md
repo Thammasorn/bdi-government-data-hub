@@ -42,6 +42,8 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
 - `docs/18-document-template-variables.md` — **คู่มือสำหรับผู้เขียนเอกสาร** (ไม่ใช่ผู้เขียนโค้ด):
   ตัวแปรทั้ง 53 ตัวที่ template ใช้ได้ พร้อมตัวอย่างค่า วิธีพิมพ์ placeholder ให้ไม่พลาด
   วิธีอัปโหลดเวอร์ชันใหม่ และเส้นแบ่งว่าอะไรแก้เองได้ อะไรต้องให้ทีมพัฒนาทำก่อน
+  §3.1 คือตารางชื่อเดิม→ชื่อใหม่ของการเปลี่ยนชื่อเมื่อ 2026-08-24 — มีฉบับ .docx อยู่ที่
+  `docs/manuals-docx/18-document-template-variables.docx` สร้างจากตัวเดียวกับคู่มือผู้ทดสอบ
 - `docs/17-legal-document-rendering.md` — เอกสารข้อตกลง A0–A3: ทำไมต้องเดินทาง
   `.docx` → LibreOffice → PDF, template อยู่ในฐานข้อมูลไม่ใช่ใน repo, รายชื่อ placeholder
   ที่ใช้ได้, การลงนามที่ฝังอยู่ใน `POST /:id/review`, และคำถามที่ยังค้าง
@@ -348,10 +350,21 @@ height. Tick names are generated from the code lists in `lib/dataset.ts`
 (`TICK_FIELDS`), never hand-listed, so adding a code list value makes a new tick usable with no
 change here. A document may omit ticks for codes it has no line for.
 
-**Variables are scoped per journey.** `agreement.*` / `signatory.*` only mean something in the
+**Variables are scoped per journey.** `agreement.*` / `org_approver.*` only mean something in the
 organisation agreement; `dataset.*` / `tick.*` only in the dataset form. Upload validation checks
 against the document's `application_scope`, so putting one in the wrong document is refused at
 upload rather than rendering as a blank in a signed form.
+
+**The placeholder namespaces were renamed on 2026-08-24** — `signatory.` and `approver.` were
+the same person and are now both `org_approver.`; `contact.` is `org_officer.`; the signature
+half of `bdi.` is `bdi_approver.` and `office.` took over the bare `bdi.` prefix. The old names
+still resolve, because **the live template is a database row, not the repo file**: cutting them
+loose on a deploy would silently blank every `.docx` the legal team published before that date.
+`DEPRECATED_PLACEHOLDERS` in `lib/document-render.ts` is the whole of that compatibility —
+`fillTemplate()` copies each canonical value onto its old name, so `legal-values.ts` /
+`dataset-values.ts` only ever know the current names. Upload still accepts old names but returns
+`deprecatedPlaceholders` and a `warning` naming them. Delete the table once every published
+template has been re-uploaded; `docs/tools/rename-placeholders.py` does the .docx side.
 
 **A4 has no signature block** — the legal team's draft ends with a note. Decided 2026-08-20 not
 to invent one, so the dataset form's signatures live only in `signature_confirmation` /
@@ -399,10 +412,10 @@ rather than re-rendered, so approved documents do not get a new "พิมพ์
 **The variable catalogue is the contract between documents and code.**
 `TEMPLATE_VARIABLES` in `lib/document-render.ts` is the single source for validation, the admin
 API listing and `docs/18-document-template-variables.md`; `lib/legal-values.ts` fills every entry.
-It covers 53 variables across organisation, signatory, submitter, request, signature, office and
+It covers 53 variables across organisation, org approver, org officer, request, signature, BDI and
 system data — deliberately wider than A0 uses, so a new document can pull data it needs without a
 code change. Adding a *name* still needs code, and upload validation rejects unknown names for
-exactly that reason. `office.address` / `office.directorName` are constants (`OFFICE_DEFAULTS`)
+exactly that reason. `bdi.address` / `bdi.directorName` are constants (`OFFICE_DEFAULTS`)
 because no column holds them; they need editing when BDI moves or changes director.
 
 **Reading is attested, not measured.** The organisation approver ticks
