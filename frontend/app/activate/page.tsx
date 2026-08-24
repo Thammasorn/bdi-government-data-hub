@@ -31,6 +31,13 @@ interface InvitationInfo {
   expiresAt: string;
   cidHint: string | null;
   identityVerified: boolean;
+  /** ข้อมูลที่ถูกกรอกไว้ให้บัญชีนี้แล้ว — ผู้มีอำนาจได้มาจากฟอร์มลงทะเบียนหน่วยงาน */
+  profile: {
+    prefix: string | null;
+    firstName: string | null;
+    lastName: string | null;
+    phone: string | null;
+  };
 }
 
 export default function ActivatePage() {
@@ -178,11 +185,20 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
   const { setUser } = useSession();
   const { show } = useToast();
 
+  /**
+   * ตั้งต้นด้วยสิ่งที่ระบบรู้อยู่แล้ว ไม่ใช่ฟอร์มเปล่า
+   *
+   * ผู้มีอำนาจกระทำการแทนถูกเจ้าหน้าที่ของหน่วยงานกรอกชื่อ นามสกุล และเบอร์โทรไว้แล้ว
+   * ตั้งแต่ตอนลงทะเบียนหน่วยงาน — ให้เขาพิมพ์ซ้ำคือให้โอกาสพิมพ์ไม่ตรงกับที่ลงทะเบียนไว้
+   * เติมให้เป็นค่าตั้งต้น แก้ได้ทุกช่อง
+   */
   const [form, setForm] = useState({
-    prefix: "",
-    firstName: "",
-    lastName: "",
-    phone: "",
+    // คำนำหน้าเป็น dropdown ที่มีตัวเลือกจำกัด ค่าที่ไม่อยู่ในรายการ (เช่น "นายแพทย์"
+    // ที่มาจากข้อมูลนำเข้า) จะทำให้ช่องแสดงเป็นว่างแล้วส่งค่าว่างไปโดยที่คนกรอกไม่ทันเห็น
+    prefix: PREFIXES.includes(invitation.profile.prefix ?? "") ? invitation.profile.prefix! : "",
+    firstName: invitation.profile.firstName ?? "",
+    lastName: invitation.profile.lastName ?? "",
+    phone: invitation.profile.phone ?? "",
     password: "",
   });
   const [fields, setFields] = useState<Record<string, string>>({});
@@ -191,6 +207,10 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
   /**
    * ชื่อจาก ThaiD ที่หน้า callback ฝากไว้ ใช้เติมฟอร์มให้ตรงกับบัตร
    * ไม่มีก็ไม่เป็นไร — ผู้ใช้กรอกเองได้ และฝั่ง server ไม่ได้เชื่อค่านี้อยู่แล้ว
+   *
+   * **ทับค่าที่มาจากคำเชิญ** สำหรับชื่อ นามสกุล และคำนำหน้า — บัตรประชาชนมีน้ำหนักกว่า
+   * สิ่งที่เพื่อนร่วมงานพิมพ์ให้ ส่วนเบอร์โทรไม่มีใน ThaiD จึงเหลือค่าจากคำเชิญไว้อย่างเดิม
+   * ค่าที่ ThaiD ไม่ได้ส่งมา (คำนำหน้าอยู่นอก scope ที่ขอ) ก็ไม่ล้างของเดิมทิ้ง
    */
   useEffect(() => {
     const raw = sessionStorage.getItem("thaid:profile");

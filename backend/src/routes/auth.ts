@@ -112,6 +112,23 @@ authRouter.get("/invitation", async (req, res) => {
     /** บัญชีที่ไม่มีเลขบัตรในระบบยืนยันด้วย ThaiD ไม่ได้ — หน้าเว็บต้องบอกให้ชัด */
     cidHint: maskCid(key.userAccount.cid),
     identityVerified: Boolean(verification),
+    /**
+     * ข้อมูลที่มีคนกรอกไว้ให้เจ้าของบัญชีนี้แล้ว — เอาไปเติมฟอร์มสร้างบัญชี
+     *
+     * ผู้มีอำนาจกระทำการแทนไม่ได้เป็นคนกรอกเรื่องตัวเองไว้ก่อน — เจ้าหน้าที่ของหน่วยงาน
+     * กรอกชื่อ นามสกุล และเบอร์โทรของเขาไว้ตั้งแต่ตอนลงทะเบียนหน่วยงาน แล้ว
+     * `ensureApproverAccount()` เขียนลง user_account ตอนสร้างบัญชี PENDING ให้
+     * ถ้าไม่ส่งกลับไป เขาจะเจอฟอร์มเปล่าและต้องพิมพ์สิ่งที่ระบบรู้อยู่แล้วซ้ำอีกรอบ
+     *
+     * ปลอดภัยที่จะเปิดโดยไม่ต้องล็อกอิน เพราะความลับคือตัว token ในลิงก์ และค่าเหล่านี้
+     * เป็นข้อมูลของเจ้าของลิงก์เอง — เลขบัตรยังปิดไว้เหมือนเดิม (cidHint)
+     */
+    profile: {
+      prefix: key.userAccount.prefixTh,
+      firstName: key.userAccount.firstnameTh,
+      lastName: key.userAccount.lastnameTh,
+      phone: key.userAccount.phoneNumber,
+    },
   });
 });
 

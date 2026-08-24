@@ -260,6 +260,16 @@ account answers 409 — deleting a working account is not "removing an invitatio
 is the only record that the invitation ever existed. `docs/09-auth-tokens.md` §2.1 has the
 table.
 
+**The activation form starts from what is already known, not blank.** `GET /api/auth/invitation`
+returns a `profile` (prefix, first name, last name, phone) read off the `iam.user_account` row the
+invitation points at. It matters most for the organisation approver: the officer typed that
+person's name and telephone into the registration form days earlier, and `ensureApproverAccount()`
+wrote them onto the PENDING account — making them retype it invited a mismatch with the
+registration they are about to sign. ThaiD's claims then overwrite the name fields (the card
+outranks a colleague's typing) while the phone, which ThaiD never sends, survives. The prefix is
+only seeded when it is one of the form's `PREFIXES`; imported values like `นายแพทย์` are not, and
+a `<select>` holding a value that is not an option submits empty without showing anyone.
+
 Activation does **not** touch `organization.status`. An organisation goes `ACTIVE` only when
 its registration request clears `BDI_FINAL_APPROVAL` (Journey B). The Notion card §2.5 says
 otherwise; that was raised and settled on 2026-08-13 in favour of Journey B.
