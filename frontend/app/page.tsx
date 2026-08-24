@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { DatasetSection } from "@/components/home/DatasetSection";
 import { LandingPage } from "@/components/landing/LandingPage";
-import { useSession } from "@/components/SessionProvider";
+import { useSession, type SessionUser } from "@/components/SessionProvider";
 import { Button } from "@/components/ui/Button";
 import { Card, DotDecoration, OrganizationStatusBadge } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
@@ -15,6 +15,7 @@ import { api } from "@/lib/api";
 import { useOrganizationRegistration } from "@/lib/use-organization-registration";
 import {
   bdiLandingPath,
+  formatThaiDate,
   isBdiStaff,
   isPendingDatasetStatus,
   type DatasetRequestStatus,
@@ -44,7 +45,17 @@ export default function HomePage() {
   // ไม่ใช่หน้าชวนสร้างหน่วยงาน
   const isApprover = user.roles.includes("ORGANIZATION_APPROVER");
   if (!user.organizationId && !isApprover) {
-    return <CreateOrganizationPrompt loading={starting} onCreate={start} />;
+    /* "ยังไม่เคยมีหน่วยงาน" กับ "เคยมีแล้วถูกถอดออก" มาถึงตรงนี้เหมือนกันทุกประการ
+       — organizationId เป็น null ทั้งคู่ — แต่ต้องบอกคนละเรื่องกัน */
+    return user.removedFromOrganization ? (
+      <RemovedFromOrganizationNotice
+        removal={user.removedFromOrganization}
+        loading={starting}
+        onCreate={start}
+      />
+    ) : (
+      <CreateOrganizationPrompt loading={starting} onCreate={start} />
+    );
   }
 
   return <OrganizationHome isApprover={isApprover} onRegister={start} registering={starting} />;
@@ -292,6 +303,103 @@ function StatTiles({
           <p className={`mt-1 text-[28px] font-semibold leading-tight ${t.className}`}>{t.value}</p>
         </Card>
       ))}
+    </div>
+  );
+}
+
+/**
+ * ผู้ใช้ที่ถูกถอดออกจากหน่วยงานเพราะมีคนมารับหน้าที่แทน
+ *
+ * หน้านี้เคยพูดกับทุกคนที่ `organizationId` เป็น null ด้วยประโยคเดียวกันว่า
+ * "ยังไม่มีหน่วยงานในระบบ" ซึ่งกับคนที่เพิ่งถูกถอดออกนั้นผิดสองชั้น: หน่วยงานของเขามีอยู่
+ * (บางรายอนุมัติไปแล้วด้วย) และสิ่งที่เขาต้องทำไม่ใช่การสร้างใบใหม่ แต่คือทวงสิทธิ์คืน
+ * ปุ่มสร้างหน่วยงานยังอยู่ เพราะบางคนย้ายไปรับผิดชอบหน่วยงานอื่นจริง ๆ แต่ต้องเขียนให้
+ * ชัดว่ามันสร้าง **หน่วยงานใหม่คนละแห่ง** ไม่ได้พากลับเข้าของเดิม
+ */
+function RemovedFromOrganizationNotice({
+  removal,
+  loading,
+  onCreate,
+}: {
+  removal: NonNullable<SessionUser["removedFromOrganization"]>;
+  loading: boolean;
+  onCreate: () => void;
+}) {
+  const organizationName = removal.organizationName ?? "หน่วยงานเดิมของคุณ";
+  const successor = removal.replacedBy ?? "เจ้าหน้าที่คนใหม่";
+  /**
+   * ประกอบประโยคเองทั้งชิ้น ไม่ปล่อยให้ JSX ขึ้นบรรทัดใหม่คั่นกลาง — ภาษาไทยไม่เว้นวรรค
+   * ระหว่างคำ ช่องว่างที่ JSX แถมมาตอนจัดบรรทัดจึงไปโผล่กลางคำบนหน้าจอ
+   */
+  const removedAtText = removal.removedAt ? ` เมื่อ ${formatThaiDate(removal.removedAt)}` : "";
+  /**
+   * ผู้มีอำนาจกระทำการแทนไม่ใช่คนกรอกฟอร์มลงทะเบียนหน่วยงาน — เขาถูกเชิญเข้ามาเพื่อลงนาม
+   * เท่านั้น (HomeHeader ซ่อนปุ่มเดียวกันนี้จากเขาด้วยเหตุผลนี้) role ของเขาอ่านจาก
+   * `removal.role` ไม่ใช่ `user.roles` เพราะสิทธิ์ถูกเพิกถอนไปแล้ว roles จึงว่าง
+   */
+  const mayRegister = removal.role !== "ORGANIZATION_APPROVER";
+
+  return (
+    <div className="relative mx-auto flex min-h-[calc(100vh-8.5rem)] max-w-2xl items-center justify-center px-4 py-16">
+      <DotDecoration className="right-0 top-4 h-52 w-52 text-navy-500" />
+      <DotDecoration className="bottom-4 left-0 h-40 w-40 text-coral-500" />
+
+      <div className="relative w-full text-center">
+        <div className="mx-auto grid h-24 w-24 place-items-center rounded-full bg-warning-bg">
+          <svg
+            viewBox="0 0 48 48"
+            className="h-11 w-11 text-warning"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            aria-hidden="true"
+          >
+            <path d="M24 3 3 43h42L24 3Z" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M24 17v11" strokeLinecap="round" />
+            <circle cx="24" cy="35" r="1.8" fill="currentColor" stroke="none" />
+          </svg>
+        </div>
+
+        <h1 className="mt-7 text-[28px] font-semibold text-navy-800 sm:text-[30px]">
+          บัญชีของคุณถูกถอดออกจากหน่วยงานแล้ว
+        </h1>
+
+        <div className="mt-6 rounded-xl border-l-[3px] border-warning bg-warning-bg p-5 text-left">
+          <p className="text-[15px] leading-relaxed text-ink">
+            {`ผู้ดูแลระบบได้มอบหน้าที่ \u201C${removal.roleLabel}\u201D ของ `}
+            <span className="font-medium">{organizationName}</span>
+            {` ให้ ${successor} แทนคุณ${removedAtText} \u2014 บัญชีของคุณจึงไม่ได้สังกัดหน่วยงานใดในระบบขณะนี้`}
+          </p>
+          {/* บอกให้ครบว่าของเดิมไม่ได้หายไปไหน ไม่งั้นจะอ่านเหมือนงานที่ทำมาถูกลบทิ้ง
+              และบอกทางไปต่อ ไม่ใช่แค่บอกว่าเกิดอะไรขึ้น */}
+          <p className="mt-2 text-[15px] leading-relaxed text-ink">
+            {"ข้อมูลและคำขอทั้งหมดของ "}
+            <span className="font-medium">{organizationName}</span>
+            {" ยังอยู่ครบ เพียงแต่คุณเปิดดูไม่ได้จนกว่าจะได้รับสิทธิ์คืน หากคิดว่าไม่ถูกต้อง โปรดติดต่อผู้ดูแลระบบ BDI เพื่อขอสิทธิ์ในหน่วยงานเดิมคืน"}
+          </p>
+        </div>
+
+        {mayRegister ? (
+          <>
+            <p className="mx-auto mt-8 max-w-lg text-[15px] leading-relaxed text-ink-muted">
+              {"หากคุณย้ายไปรับผิดชอบหน่วยงานอื่น เริ่มลงทะเบียนหน่วยงานนั้นได้จากปุ่มด้านล่าง \u2014 ปุ่มนี้สร้าง"}
+              <span className="font-medium">หน่วยงานใหม่คนละแห่ง</span>
+              {" ไม่ได้พาคุณกลับเข้า "}
+              <span className="font-medium">{organizationName}</span>
+            </p>
+
+            <Button
+              size="lg"
+              variant="secondary"
+              className="mt-6"
+              loading={loading}
+              onClick={onCreate}
+            >
+              สร้างหน่วยงานใหม่
+            </Button>
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }

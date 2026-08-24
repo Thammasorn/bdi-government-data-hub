@@ -13,7 +13,7 @@
  * activation key ไม่เดินทางผ่านคิวนี้ — routes/admin.ts กับ routes/organizations.ts
  * ส่งอีเมลคำเชิญเองทันทีเพราะ raw key มีอยู่แค่ในหน่วยความจำ ณ ตอนสร้าง
  */
-import { PrismaClient, ReviewTaskType, SubjectType } from "@prisma/client";
+import { PrismaClient, ReviewTaskType, RoleAssignmentStatus, SubjectType } from "@prisma/client";
 
 import {
   sendActivated,
@@ -27,8 +27,11 @@ import {
   sendDatasetRevisionRequested,
   sendDatasetSubmitted,
   sendRaw,
+  sendRoleRemoved,
 } from "../lib/mail.js";
 import { NotificationType } from "../lib/notify.js";
+import { ROLE_LABELS } from "../lib/roles.js";
+import { type RoleCode } from "../lib/system.js";
 
 export interface DeliverableNotification {
   notificationType: string;
@@ -110,6 +113,48 @@ export async function renderAndSend(
         default:
           break;
       }
+    }
+  }
+
+  /**
+   * ถูกถอดออกจากหน่วยงานเพราะมีคนมารับ role แทน
+   *
+   * subject คือแถว `user_role_assignment` ที่ถูกเพิกถอน ไม่ใช่หน่วยงาน — มันเป็นที่เดียว
+   * ที่มีทั้งหน่วยงาน role และเวลาที่ถูกถอดครบในแถวเดียว ชื่อคนที่มารับหน้าที่แทนอ่าน
+   * **ตอนส่ง** จากคนที่ถือ role เดียวกันในหน่วยงานนั้นอยู่ ณ ตอนนั้น ไม่ได้ฝากมากับคิว
+   */
+  if (n.subjectType === "USER_ROLE_ASSIGNMENT" && n.subjectId) {
+    const assignment = await prisma.userRoleAssignment.findUnique({
+      where: { id: n.subjectId },
+      select: {
+        roleId: true,
+        organizationId: true,
+        revokedAt: true,
+        organization: { select: { nameTh: true } },
+        role: { select: { code: true } },
+      },
+    });
+    if (assignment && n.notificationType === NotificationType.ROLE_ASSIGNMENT_CHANGED) {
+      const successor = assignment.organizationId
+        ? await prisma.userRoleAssignment.findFirst({
+            where: {
+              organizationId: assignment.organizationId,
+              roleId: assignment.roleId,
+              status: RoleAssignmentStatus.ACTIVE,
+              OR: [{ effectiveUntil: null }, { effectiveUntil: { gt: new Date() } }],
+            },
+            orderBy: { effectiveFrom: "desc" },
+            select: { userAccount: { select: { displayName: true } } },
+          })
+        : null;
+
+      await sendRoleRemoved(destination, {
+        organizationName: assignment.organization?.nameTh ?? "หน่วยงานเดิมของคุณ",
+        roleLabel: ROLE_LABELS[assignment.role.code as RoleCode] ?? assignment.role.code,
+        successorName: successor?.userAccount.displayName ?? null,
+        removedAt: assignment.revokedAt,
+      });
+      return;
     }
   }
 
