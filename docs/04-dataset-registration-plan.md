@@ -80,7 +80,7 @@ docker compose exec backend npm run prisma:migrate -- --name dataset_registratio
 | `GET` | `/api/dataset-requests/:id` | ผู้ที่เห็นได้ | รายละเอียด + attachments + events |
 | `PATCH` | `/api/dataset-requests/:id` | `ORG_USER` ในหน่วยงาน | บันทึกร่าง (เฉพาะ `DRAFT` / `NEEDS_REVISION`) |
 | `POST` | `/api/dataset-requests/:id/attachments` | `ORG_USER` ในหน่วยงาน | อัปโหลด data dictionary / example data |
-| `GET` | `/api/dataset-requests/:id/attachments/:attachmentId` | ผู้ที่เห็นได้ | สตรีมไฟล์จาก MinIO |
+| `GET` | `/api/dataset-requests/:id/attachments/:attachmentId` | ผู้ที่เห็นได้ | สตรีมไฟล์จาก Azure Blob Storage |
 | `POST` | `/api/dataset-requests/:id/generate-form` | `ORG_USER` ในหน่วยงาน | validate ครบชุด แล้วสร้าง PDF |
 | `POST` | `/api/dataset-requests/:id/submit` | `ORG_USER` ในหน่วยงาน | นำส่ง → `PENDING_OFFICER_REVIEW` |
 | `POST` | `/api/dataset-requests/:id/review` | ตามสถานะปัจจุบัน | **จุดตัดสินใจเดียวของทุกด่าน** |

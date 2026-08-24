@@ -555,9 +555,21 @@ docker compose exec postgres psql -U bdi -d bdi     # เปิด psql
 
 ### ดูไฟล์ที่อัปโหลด
 
-เปิด MinIO console — `main` อยู่ที่ <http://localhost:9001>
-ล็อกอินด้วยค่าใน `.env` (`MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`)
-ไฟล์อยู่ใน bucket `bdi-uploads` ใต้ `organizations/<id>/` และ `dataset-requests/<id>/`
+ไฟล์อยู่ใน Azure Blob Storage — ตอน dev คือบริการ `azurite` ใน compose (blob endpoint ของ
+`main` อยู่ที่ <http://localhost:9000/devstoreaccount1>) **ไม่มีหน้าคอนโซลให้เปิดแบบ MinIO เดิม**
+ดูของข้างในด้วย [Azure Storage Explorer](https://azure.microsoft.com/products/storage/storage-explorer)
+หรือ Azure CLI:
+
+```bash
+# emulator ในเครื่อง — UseDevelopmentStorage=true คือชื่อย่อของ connection string ของ Azurite
+az storage blob list -c bdi-uploads --connection-string 'UseDevelopmentStorage=true' -o table
+
+# storage account จริง
+az storage blob list -c bdi-uploads --account-name <account> --auth-mode login -o table
+```
+
+ไฟล์อยู่ใน container `bdi-uploads` ใต้ `{dev|prod}/<owner_type>/<owner_id>/…` ตาม
+`buildStorageKey()` ใน `backend/src/lib/attachment.ts`
 
 ---
 

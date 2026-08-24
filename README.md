@@ -49,7 +49,7 @@ BDI Officer ตรวจซ้ำ → BDI Approver อนุมัติ/ไม�
 | Service    | Stack                          | Port(s)      |
 | ---------- | ------------------------------ | ------------ |
 | `postgres` | Postgres 16                    | 5432         |
-| `minio`    | MinIO object storage           | 9000 / 9001  |
+| `azurite`  | Azure Blob Storage (emulator ตอน dev) | 9000  |
 | `backend`  | Node.js · Express · TypeScript · Prisma · PDFKit | 4000 |
 | `frontend` | Next.js 16 · React 19 · TypeScript · Tailwind 4 | 3000 |
 
@@ -68,7 +68,10 @@ Then:
 - Frontend — <http://localhost:3000> (renders live service health)
 - Backend — <http://localhost:4000>
 - Readiness probe — <http://localhost:4000/health/ready>
-- MinIO console — <http://localhost:9001> (`minioadmin` / `minioadmin`)
+- Object storage — Azurite blob endpoint at <http://localhost:9000/devstoreaccount1>.
+  There is no web console; browse it with Azure Storage Explorer or the `az storage blob`
+  CLI, pointing either at `AZURE_STORAGE_CONNECTION_STRING` from `.env` or at the emulator
+  shortcut `--connection-string UseDevelopmentStorage=true`.
 
 Source is bind-mounted, so both the backend (`tsx watch`) and the frontend
 (`next dev`) hot-reload on save.
@@ -114,7 +117,7 @@ touches anyone else's database or bucket.
 │       ├── index.ts            # express app + graceful shutdown
 │       ├── env.ts              # env parsing, fails fast on boot
 │       ├── db.ts               # PrismaClient + pingDatabase()
-│       ├── storage.ts          # MinIO client + ensureBucket()/pingStorage()
+│       ├── storage.ts          # Azure Blob client + ensureContainer()/pingStorage()
 │       └── routes/health.ts    # /health/live, /health/ready
 └── frontend/
     ├── Dockerfile              # deps → dev → build → runner (standalone)
@@ -124,7 +127,7 @@ touches anyone else's database or bucket.
 ## Health endpoints
 
 - `GET /health/live` — liveness, touches no dependencies.
-- `GET /health/ready` — checks Postgres (`SELECT 1`) and MinIO (bucket exists).
+- `GET /health/ready` — checks Postgres (`SELECT 1`) and Azure Blob Storage (container exists).
   Returns `200` when both are up, `503` otherwise, with per-check detail.
 
 ## เชิญผู้ใช้คนแรก
@@ -167,9 +170,17 @@ docker compose exec backend npm run prisma:migrate -- --name <ชื่อ>
 
 ## Object storage
 
-The `minio-init` one-shot service creates the `$MINIO_BUCKET` bucket on startup;
-the backend also calls `ensureBucket()` at boot so it works outside Compose.
-Use the exported `minio` client and `BUCKET` from `src/storage.ts`.
+Attachments live in **Azure Blob Storage**. `src/storage.ts` wraps the SDK and is the only
+file that imports it — everything else goes through `putObject()` / `getObjectStream()` /
+`getObjectBuffer()` and the `CONTAINER` constant. The backend calls `ensureContainer()` at
+boot, so there is no init service to run first (S3's *bucket* and *object* are Azure's
+**container** and **blob**; the `storage_bucket` / `storage_key` columns keep their Excel
+names and now hold the container and blob names).
+
+Locally, Compose runs **Azurite**, Microsoft's own Azure Storage emulator, and points the
+backend at it — no Azure subscription needed. To use a real storage account, set
+`AZURE_STORAGE_ACCOUNT_URL` (managed identity via `DefaultAzureCredential`, the right choice
+in production) or `AZURE_STORAGE_CONNECTION_STRING` in `.env`; see the comments there.
 
 ## Common commands
 
@@ -178,11 +189,11 @@ docker compose up --build          # start everything
 docker compose logs -f backend     # tail one service
 docker compose exec backend sh     # shell into the backend
 docker compose down                # stop
-docker compose down -v             # stop and wipe volumes (DB + buckets)
+docker compose down -v             # stop and wipe volumes (DB + blob container)
 ```
 
 Running a service directly on the host works too — `cd backend && npm install &&
-npm run dev` — as long as `DATABASE_URL` and the `MINIO_*` vars point at
+npm run dev` — as long as `DATABASE_URL` and `AZURE_STORAGE_CONNECTION_STRING` point at
 `localhost` rather than the Compose hostnames.
 
 ## Production images

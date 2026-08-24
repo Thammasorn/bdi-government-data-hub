@@ -47,6 +47,10 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
 - `docs/17-legal-document-rendering.md` — เอกสารข้อตกลง A0–A3: ทำไมต้องเดินทาง
   `.docx` → LibreOffice → PDF, template อยู่ในฐานข้อมูลไม่ใช่ใน repo, รายชื่อ placeholder
   ที่ใช้ได้, การลงนามที่ฝังอยู่ใน `POST /:id/review`, และคำถามที่ยังค้าง
+- `docs/19-azure-blob-storage.md` — ไฟล์แนบย้ายจาก MinIO ไป **Azure Blob Storage** (2026-08-24):
+  สองทางที่ตั้งค่าได้และทางไหนใช้เมื่อไร, Azurite ที่แทน MinIO ในเครื่อง dev, สิ่งที่หายไป
+  (หน้าคอนโซล, บริการ init), พอร์ตกับ `new-dev.sh` ที่ยังต้องแก้ตอน merge, และไฟล์เก่าที่
+  **ยังไม่ได้ย้าย**
 - `docs/bdi-admin-portal.postman_collection.json` — Journey A as a runnable collection,
   with three `*.postman_environment.json` files beside it (dev checkout / main / public).
   The admin token is left empty in the last two on purpose — it is a real secret from `.env`
@@ -478,6 +482,16 @@ One polymorphic `attachment.attachment` table replaces the two per-domain tables
 `owner_type` + `owner_id` (a logical reference, not an FK). Storage keys follow the Excel's
 convention — `{env}/{owner_type}/{owner_id}/{attachment_type}/{attachment_id}/document.{ext}`.
 
+**The bytes live in Azure Blob Storage** (MinIO until 2026-08-24). `src/storage.ts` is the only
+file that imports `@azure/storage-blob`; everything else uses `putObject()` /
+`getObjectStream()` / `getObjectBuffer()` / `CONTAINER` — keep it that way, that wrapper is why
+the migration touched five lines outside it. S3's *bucket* and *object* are Azure's **container**
+and **blob**, but `storage_bucket` / `storage_key` keep their Excel names and their old values,
+so there was no migration and no backfill. Reads always use the row's own `storage_bucket`,
+never `CONTAINER`. Config is `AZURE_STORAGE_ACCOUNT_URL` (managed identity — the production
+answer) or `AZURE_STORAGE_CONNECTION_STRING`; compose runs **Azurite**, Microsoft's emulator, so
+no checkout needs an Azure subscription. `docs/19-azure-blob-storage.md` has the whole of it.
+
 **Uploading a replacement no longer deletes the old object.** The previous row becomes
 `REPLACED` and the new one points back via `replaced_attachment_id`, so history is auditable.
 A partial unique index allows one `ACTIVE` attachment per slot. `content_hash` (SHA-256) is
@@ -527,6 +541,11 @@ Two API base URLs, and they are not interchangeable:
 
 ## Traps that have already cost time
 
+- Azurite has to be started with `--skipApiVersionCheck`. `@azure/storage-blob` v12 sends
+  `x-ms-version: 2026-06-06` and the emulator's latest image knows only up to 2025-11-05, so
+  without the flag **every** storage call answers "The API version … is not supported by
+  Azurite" — the backend still boots, `/health/ready` just goes amber and no file can be
+  uploaded. Drop the flag once Azurite catches up.
 - `optional()` in `backend/src/env.ts` treats an empty string as unset. Compose emits `FOO=`
   for every `${FOO:-}`, and `??` would let that empty value override the default.
 - The frontend `build` stage sets `NODE_ENV=production`. Without it, prerendering
