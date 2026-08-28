@@ -127,14 +127,17 @@ for (const name of ["id", "attachmentId"]) {
 const SUBJECT = SubjectType.ORGANIZATION_REGISTRATION_REQUEST;
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
-const ALLOWED_MIME = new Set(["application/pdf", "image/jpeg", "image/jpg"]);
+const ALLOWED_MIME = new Set(["application/pdf"]);
 
+/**
+ * ไม่ใช้ fileFilter ตรวจชนิดไฟล์ — มันทิ้งไฟล์เงียบ ๆ แล้ว req.file เป็น undefined
+ *
+ * ผลคือคนที่แนบไฟล์ผิดชนิดกับคนที่ลืมแนบไฟล์ได้ข้อความเดียวกัน แยกไม่ออกว่าพลาดตรงไหน
+ * จึงตรวจใน handler แทน แบบเดียวกับ dataset-requests.ts
+ */
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_UPLOAD_BYTES },
-  fileFilter: (_req, file, cb) => {
-    cb(null, ALLOWED_MIME.has(file.mimetype));
-  },
 });
 
 // ---------------------------------------------------------------- schemas
@@ -999,9 +1002,13 @@ organizationRouter.post("/:id/attachments", upload.single("file"), async (req, r
     return;
   }
   if (!req.file) {
+    res.status(400).json({ error: "validation", message: "กรุณาเลือกไฟล์" });
+    return;
+  }
+  if (!ALLOWED_MIME.has(req.file.mimetype)) {
     res.status(400).json({
       error: "validation",
-      message: "รองรับเฉพาะไฟล์ PDF หรือ JPG ขนาดไม่เกิน 10 MB",
+      message: "รองรับเฉพาะไฟล์ PDF ขนาดไม่เกิน 10 MB",
     });
     return;
   }
