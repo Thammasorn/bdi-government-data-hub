@@ -21,8 +21,8 @@ export function FileUpload({
   uploading,
   onSelect,
   onRemove,
-  accept = "application/pdf,image/jpeg",
-  supportText = "รองรับ PDF หรือ JPG ขนาดไม่เกิน 10 MB",
+  accept = "application/pdf",
+  supportText = "รองรับ PDF ขนาดไม่เกิน 10 MB",
 }: {
   label: string;
   hint?: string;
