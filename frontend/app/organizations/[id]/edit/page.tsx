@@ -323,6 +323,11 @@ export default function EditOrganizationPage() {
       show({ tone: "error", title: "ไฟล์ใหญ่เกินไป", detail: "ขนาดไฟล์ต้องไม่เกิน 10 MB" });
       return;
     }
+    // accept ของ <input> ไม่คุมเส้นทางลากมาวาง — ต้องตรวจเองก่อนยิงขึ้น API
+    if (file.type !== "application/pdf") {
+      show({ tone: "error", title: "ชนิดไฟล์ไม่รองรับ", detail: "แนบได้เฉพาะไฟล์ PDF" });
+      return;
+    }
     setUploadingKind(kind);
     const fd = new FormData();
     fd.append("file", file);
