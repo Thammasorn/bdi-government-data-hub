@@ -67,10 +67,12 @@ import {
   sendDatasetSubmitted,
   sendDatasetPendingBdiApproval,
   sendDatasetPendingOrgApprover,
+  sendDatasetPendingFinalCheck,
   sendDatasetSpecialistAssigned,
 } from "../lib/mail.js";
 import {
   NotificationType,
+  announceProgress,
   bdiApproverIds,
   bdiOfficerIds,
   emailsOf,
@@ -86,6 +88,7 @@ import {
 import { DocumentRenderError } from "../lib/document-render.js";
 import { LEGAL_SCOPES, publishedDocuments } from "../lib/legal.js";
 import { nextDatasetCode, nextDatasetRequestNumber } from "../lib/request-number.js";
+import { buildJourneyProgress, summariseMany } from "../lib/journey-steps.js";
 import { isBdiStaff, isSpecialistOnly } from "../lib/roles.js";
 import {
   BDI_ORGANIZATION_ID,
@@ -339,20 +342,34 @@ datasetRequestRouter.get("/", async (req, res) => {
     include: requestInclude,
   });
 
+  /**
+   * ประวัติทั้งหมด ไม่ใช่เฉพาะแถวที่ยัง active — คอลัมน์ความคืบหน้าต้องรู้ว่าผ่านมาแล้วกี่ด่าน
+   * และการแยก "ตรวจเบื้องต้น" กับ "ตรวจซ้ำ" อ่านไม่ได้จากแถวที่ค้างอยู่แถวเดียว
+   */
   const tasks = await prisma.reviewTask.findMany({
-    where: {
-      subjectType: SUBJECT,
-      subjectId: { in: requests.map((r) => r.id) },
-      status: { in: [ReviewTaskStatus.PENDING, ReviewTaskStatus.IN_PROGRESS] },
+    where: { subjectType: SUBJECT, subjectId: { in: requests.map((r) => r.id) } },
+    select: {
+      id: true,
+      subjectId: true,
+      taskType: true,
+      sequenceNumber: true,
+      roundNumber: true,
+      status: true,
+      result: true,
+      completedAt: true,
+      assignedUserId: true,
     },
-    select: { subjectId: true, taskType: true, roundNumber: true, assignedUserId: true },
   });
-  const stage = new Map(tasks.map((t) => [t.subjectId, t]));
+  const activeTasks = tasks.filter(
+    (t) => t.status === ReviewTaskStatus.PENDING || t.status === ReviewTaskStatus.IN_PROGRESS,
+  );
+  const stage = new Map(activeTasks.map((t) => [t.subjectId, t]));
+  const progressBySubject = summariseMany({ subjectType: SUBJECT, requests, tasks });
 
   // ตารางเขียนว่า "· ผู้เชี่ยวชาญ <ชื่อ>" ต่อท้ายสถานะ จึงต้องมีชื่อ ไม่ใช่แค่ id
   const specialistIds = [
     ...new Set(
-      tasks
+      activeTasks
         .filter((t) => t.taskType === ReviewTaskType.DATASET_SPECIALIST_REVIEW && t.assignedUserId)
         .map((t) => t.assignedUserId),
     ),
@@ -386,6 +403,7 @@ datasetRequestRouter.get("/", async (req, res) => {
       ...toApiShape(r),
       currentTaskType: stage.get(r.id)?.taskType ?? null,
       currentRound: stage.get(r.id)?.roundNumber ?? null,
+      progress: progressBySubject.get(r.id) ?? null,
       assignedSpecialist:
         stage.get(r.id)?.taskType === ReviewTaskType.DATASET_SPECIALIST_REVIEW
           ? (specialists.get(stage.get(r.id)!.assignedUserId) ?? null)
@@ -563,6 +581,13 @@ datasetRequestRouter.get("/:id", async (req, res) => {
       currentTaskType: active?.taskType ?? null,
       currentRound: active?.roundNumber ?? null,
       currentAssignee: active?.assignedUser?.displayName ?? null,
+      // เส้นทางทั้งเส้น ไม่ใช่แค่ด่านที่ค้างอยู่ — ดู lib/journey-steps.ts
+      progress: buildJourneyProgress({
+        subjectType: SUBJECT,
+        status: request.status,
+        tasks,
+        active,
+      }),
       /**
        * คืนเป็น **ก้อน** ไม่ใช่แค่ id — ทุกหน้าจออ่าน `assignedSpecialist.…`
        * (การ์ด "ผู้เชี่ยวชาญที่ได้รับมอบหมาย" ป้ายปุ่มมอบหมาย/เปลี่ยน และค่าตั้งต้น
@@ -1658,6 +1683,19 @@ async function dispatchDatasetNotifications(
     id: request.id,
   };
 
+  /**
+   * ฝั่งหน่วยงานได้ยินทุกครั้งที่คำขอขยับ ไม่ใช่แค่ตอนถูกส่งกลับหรืออนุมัติจบ
+   * announceProgress() เงียบเองเมื่อไม่มีด่านใหม่เปิดขึ้น จึงเรียกก่อนแล้วปล่อยให้
+   * การแจ้ง "คนต่อไปที่ต้องทำ" ด้านล่างทำงานตามเดิม — คนละกลุ่มผู้รับ ไม่ทับกัน
+   */
+  const progress = await announceProgress({
+    subjectType: SUBJECT,
+    subjectId: request.id,
+    organizationId: request.organizationId,
+    createdBy: request.createdBy,
+    subjectLabel: `${info.datasetName} — ${request.requestNumber}`,
+  });
+
   if (result === ReviewResult.RETURNED) {
     await notifyUsers([...members.users, request.createdBy], {
       type: NotificationType.REQUEST_RETURNED,
@@ -1709,6 +1747,33 @@ async function dispatchDatasetNotifications(
         subjectId: request.id,
         organizationId: request.organizationId,
       });
+    }
+    return;
+  }
+
+  /**
+   * หน่วยงานลงนามแล้ว → ด่านตรวจซ้ำเปิดขึ้น แต่ไม่มีใครบอกเจ้าหน้าที่ BDI
+   *
+   * `docs/01-user-journey.md` §4.5 ข้อ 3 กับอีเมลฉบับที่ 12 ในตาราง §4.8 กำหนดไว้ว่า
+   * ต้องแจ้ง BDI Officer ทุกคน และ `sendDatasetPendingFinalCheck()` ก็เขียนรออยู่ตั้งแต่ต้น
+   * แต่ dispatcher ไม่เคยมีสาขาของ ORGANIZATION_APPROVAL เลย งานที่ค้างอยู่จึงเงียบสนิท
+   * จนกว่าจะมีคนเปิดตารางไปเจอเอง
+   */
+  if (taskType === ReviewTaskType.ORGANIZATION_APPROVAL && result === ReviewResult.APPROVED) {
+    const officers = await bdiOfficerIds();
+    await notifyUsers(officers, {
+      type: NotificationType.REQUEST_SUBMITTED,
+      title: `คำขอ ${request.requestNumber} รอตรวจสอบขั้นสุดท้าย`,
+      message: info.datasetName,
+      subjectType: SUBJECT,
+      subjectId: request.id,
+      organizationId: request.organizationId,
+      // อีเมลของด่านนี้ต้องบอกชื่อผู้ลงนาม ซึ่ง template กลางของ worker ไม่รู้จัก
+      email: false,
+    });
+    const emails = await emailsOf(officers);
+    if (emails.length > 0) {
+      await sendDatasetPendingFinalCheck(emails, { ...info, signedBy: actorName }, progress);
     }
     return;
   }

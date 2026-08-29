@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { DatasetSection } from "@/components/home/DatasetSection";
 import { LandingPage } from "@/components/landing/LandingPage";
+import { ApprovalStepsCompact } from "@/components/review/ApprovalSteps";
 import { useSession, type SessionUser } from "@/components/SessionProvider";
 import { Button } from "@/components/ui/Button";
 import { Card, DotDecoration, OrganizationStatusBadge } from "@/components/ui/Card";
@@ -168,6 +169,13 @@ function OrganizationHome({
                 คำขอผ่านการตรวจสอบจากเจ้าหน้าที่ BDI แล้ว และหยุดรอให้คุณอ่านเอกสารข้อตกลง
                 แล้วลงนามในฐานะผู้มีอำนาจกระทำการแทน
               </p>
+              {/* บอกด้วยว่านี่คือขั้นที่เท่าไรและหลังจากนี้เหลืออะไร — ผู้ลงนามส่วนใหญ่
+                  เห็นคำขอครั้งเดียวตรงนี้ และไม่รู้ว่ากดแล้วเรื่องจะไปต่อที่ใคร */}
+              {awaitingSignature.progress ? (
+                <div className="mt-2">
+                  <ApprovalStepsCompact progress={awaitingSignature.progress} />
+                </div>
+              ) : null}
             </div>
             <Link href={`/organizations/${awaitingSignature.id}`} className="shrink-0">
               <Button>อ่านเอกสารและลงนาม</Button>
@@ -198,6 +206,13 @@ function OrganizationHome({
                   <p className="mt-0.5 text-sm text-ink-muted">
                     คำขอเหล่านี้ผ่านการตรวจสอบเบื้องต้นจาก BDI แล้ว และหยุดรอความเห็นชอบของคุณ
                   </p>
+                  {/* ใบเดียวเท่านั้นที่บอกความคืบหน้าตรงนี้ได้ตรง ๆ หลายใบอาจอยู่คนละขั้น
+                      และรายการด้านล่างบอกทีละแถวอยู่แล้ว */}
+                  {awaitingMe.length === 1 && awaitingMe[0].progress ? (
+                    <div className="mt-2">
+                      <ApprovalStepsCompact progress={awaitingMe[0].progress} />
+                    </div>
+                  ) : null}
                 </div>
                 <Link href={`/datasets/${awaitingMe[0].id}`} className="shrink-0">
                   <Button>เริ่มพิจารณา</Button>
