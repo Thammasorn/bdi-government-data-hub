@@ -14,10 +14,20 @@ const CONTROL = [
   "placeholder:text-ink-subtle",
   "transition-[border-color,box-shadow] duration-150",
   "disabled:bg-navy-50/60 disabled:text-ink-muted",
-  // ช่องอ่านอย่างเดียวหน้าตาต้องบอกเองว่าแก้ไม่ได้ แต่ยังโฟกัสและคัดลอกค่าออกไปได้
-  // (`disabled` ทำอย่างหลังไม่ได้ — รหัสหน่วยงานเป็นค่าที่ผู้ใช้ต้องคัดลอกไปอ้างอิงจริง)
-  "read-only:bg-navy-50/60 read-only:text-ink-muted read-only:focus:border-line read-only:focus:shadow-none",
 ].join(" ");
+
+/**
+ * ช่องอ่านอย่างเดียวหน้าตาต้องบอกเองว่าแก้ไม่ได้ แต่ยังโฟกัสและคัดลอกค่าออกไปได้
+ * (`disabled` ทำอย่างหลังไม่ได้ — รหัสหน่วยงานเป็นค่าที่ผู้ใช้ต้องคัดลอกไปอ้างอิงจริง)
+ *
+ * ใส่เฉพาะ input/textarea เท่านั้น ห้ามย้ายกลับไปรวมใน CONTROL: ตามสเปก HTML มีแต่
+ * input ที่แก้ไขได้ textarea และ contenteditable ที่เป็น `:read-write` — `<select>`
+ * เข้าเงื่อนไข `:read-only` เสมอแม้จะเลือกค่าได้ตามปกติ พอรวมไว้ใน CONTROL ทำให้
+ * dropdown ทุกตัวในระบบพื้นเทาและตัวอักษรจางเท่ากับช่องที่ถูกล็อก ผู้ใช้จึงอ่านว่า
+ * ห้ามเปลี่ยน และช่องที่ disabled จริง (อำเภอก่อนเลือกจังหวัด) ก็แยกไม่ออกจากช่องที่ใช้ได้
+ */
+const READ_ONLY =
+  "read-only:bg-navy-50/60 read-only:text-ink-muted read-only:focus:border-line read-only:focus:shadow-none";
 
 /**
  * สีขอบตามสถานะของช่อง — ผิดเป็นแดง ถูกแล้วเป็นเขียว ยังไม่แตะเป็นสีปกติ
@@ -105,7 +115,7 @@ export function TextField({
             {...rest}
             id={id}
             aria-invalid={error ? true : undefined}
-            className={clsx(CONTROL, stateRing(Boolean(error), showValid), "h-11", showValid && "pr-10")}
+            className={clsx(CONTROL, READ_ONLY, stateRing(Boolean(error), showValid), "h-11", showValid && "pr-10")}
           />
           {showValid ? <ValidMark /> : null}
         </div>
@@ -177,6 +187,7 @@ export function TextAreaField({
           aria-invalid={error ? true : undefined}
           className={clsx(
             CONTROL,
+            READ_ONLY,
             stateRing(Boolean(error), Boolean(valid) && !error),
             "min-h-28 py-2.5 leading-relaxed",
           )}
