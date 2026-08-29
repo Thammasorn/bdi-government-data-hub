@@ -375,7 +375,8 @@ datasetRequestRouter.get("/", async (req, res) => {
   // แท็บ "ที่ต้องดำเนินการ" — ด่านที่ตำแหน่งของผู้เรียกเป็นคนทำ
   if (scope === "mine") {
     const mine = await stageWhere(prisma, SUBJECT, myStageTokens(session.roles));
-    if (mine) and.push(mine);
+    // ไม่มีด่านเป็นของตัวเองเลย (เช่น ผู้ดูแลระบบ) = คิวว่าง ไม่ใช่ "ไม่กรอง"
+    and.push(mine ?? { id: { in: [] } });
   }
 
   const where: Prisma.DatasetRegistrationRequestWhereInput = { AND: and };

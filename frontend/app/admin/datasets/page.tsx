@@ -1,12 +1,12 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Suspense, useEffect } from "react";
 
 import { DatasetRequestTable } from "@/components/dataset/RequestTable";
 import { Spinner } from "@/components/ui/Spinner";
 import { useRequireAuth } from "@/lib/require-auth";
-import { isBdiStaff, type DatasetRequestStatus } from "@/lib/status";
+import { isBdiStaff } from "@/lib/status";
 
 export default function AdminDatasetsPage() {
   return (
@@ -18,7 +18,6 @@ export default function AdminDatasetsPage() {
 
 function AdminDatasetList() {
   const router = useRouter();
-  const params = useSearchParams();
   const { user, loading } = useRequireAuth();
 
   useEffect(() => {
@@ -47,9 +46,6 @@ function AdminDatasetList() {
       <DatasetRequestTable
         basePath="/admin/datasets"
         showOrganization
-        initialStatuses={
-          (params.get("status")?.split(",").filter(Boolean) as DatasetRequestStatus[]) ?? []
-        }
         emptyHint={
           isSpecialistOnly
             ? "เมื่อเจ้าหน้าที่ BDI มอบหมายคำขอให้คุณ รายการจะแสดงที่นี่"
