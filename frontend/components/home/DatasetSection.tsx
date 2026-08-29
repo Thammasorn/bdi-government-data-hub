@@ -4,6 +4,7 @@ import clsx from "clsx";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { ApprovalStepsCompact } from "@/components/review/ApprovalSteps";
 import { Card, DatasetStatusBadge } from "@/components/ui/Card";
 import { api } from "@/lib/api";
 import { datasetPendingOwner, formatThaiDate, isPendingDatasetStatus } from "@/lib/status";
@@ -96,7 +97,12 @@ function DatasetRow({ row }: { row: DatasetRequestListItem }) {
 
       <div className="min-w-0">
         <DatasetStatusBadge status={row.status} currentTaskType={row.currentTaskType} />
-        {owner ? (
+        {row.progress ? (
+          // แทนที่ประโยค "รอใคร" เดิม — บอกทั้งว่าอยู่ขั้นไหนจากกี่ขั้นและขั้นต่อไปคืออะไร
+          <div className="mt-1.5">
+            <ApprovalStepsCompact progress={row.progress} />
+          </div>
+        ) : owner ? (
           // ปล่อยให้ตัดบรรทัดได้ ข้อความบอกด่านยาวกว่าความกว้างคอลัมน์ ตัดท้ายทิ้งแล้วอ่านไม่รู้เรื่อง
           <span className="mt-1 block text-[12.5px] leading-snug text-ink-muted">{owner}</span>
         ) : null}

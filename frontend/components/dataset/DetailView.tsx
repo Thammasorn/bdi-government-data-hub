@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { DatasetSigningDialog } from "@/components/dataset/DatasetSigningDialog";
 import { LegalDocumentsCard, useLegalDocuments } from "@/components/organization/LegalDocuments";
 import { Timeline } from "@/components/organization/Timeline";
+import { ApprovalSteps } from "@/components/review/ApprovalSteps";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader, DatasetStatusBadge } from "@/components/ui/Card";
 import { SelectField, TextAreaField } from "@/components/ui/Field";
@@ -630,6 +631,14 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
             />
           </Card>
         ) : null}
+
+        <Card>
+          <CardHeader
+            title="ขั้นตอนการอนุมัติ"
+            description="เส้นทางทั้งหมดของคำขอนี้ — ผ่านมาแล้วกี่ขั้น เหลืออีกกี่ขั้น และแต่ละขั้นเป็นหน้าที่ของใคร"
+          />
+          <ApprovalSteps progress={request.progress} />
+        </Card>
 
         <Card>
           <CardHeader

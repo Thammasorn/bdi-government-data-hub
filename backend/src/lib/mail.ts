@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import nodemailer, { type Transporter } from "nodemailer";
 
 import { env } from "../env.js";
+import type { JourneyProgress } from "./journey-steps.js";
 
 /**
  * โลโก้ต้องแนบไปกับอีเมลแต่ละฉบับแล้วอ้างด้วย cid: ไม่ใช่ลิงก์ไปที่เว็บ
@@ -55,10 +56,12 @@ function layout(opts: {
   title: string;
   intro: string;
   body?: string;
+  /** บล็อกขั้นตอนจาก stepsBlock() — วางใต้ body และเหนือปุ่มเสมอ */
+  steps?: string;
   button?: Button;
   footnote?: string;
 }): string {
-  const { title, intro, body = "", button, footnote } = opts;
+  const { title, intro, body = "", steps = "", button, footnote } = opts;
   return `<!doctype html>
 <html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
 <body style="margin:0;padding:0;background:#F6F7FB;">
@@ -85,6 +88,7 @@ function layout(opts: {
           <p style="margin:0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">${intro}</p>
         </td></tr>
         ${body ? `<tr><td style="padding:20px 32px 0;">${body}</td></tr>` : ""}
+        ${steps ? `<tr><td style="padding:20px 32px 0;">${steps}</td></tr>` : ""}
         ${
           button
             ? `<tr><td style="padding:28px 32px 0;">
@@ -137,6 +141,61 @@ async function send(to: string, subject: string, html: string): Promise<void> {
 }
 
 /**
+ * บล็อก "ขั้นตอนทั้งหมด" ท้ายอีเมล
+ *
+ * ผู้รับอีเมลส่วนใหญ่ไม่ได้เปิดหน้าจอตาม จึงต้องเห็นตรงนี้ว่าคำขอมีทั้งหมดกี่ขั้น
+ * อยู่ขั้นไหน และหลังจากนี้ใครทำอะไร — ข้อมูลชุดเดียวกับ stepper บนหน้าจอ
+ *
+ * เป็นตารางกับ inline style ล้วน: Gmail และ Outlook ตัด `<style>` ทิ้ง และรองรับ
+ * flex/grid ไม่ได้ เครื่องหมายใช้ตัวอักษรธรรมดา ไม่ใช่อิโมจิ เพราะไคลเอนต์บางตัว
+ * เรนเดอร์อิโมจิเป็นบิตแมปสีที่สูงกว่าบรรทัด
+ */
+export function stepsBlock(progress: JourneyProgress | null | undefined): string {
+  if (!progress || progress.steps.length === 0) return "";
+
+  const heading = progress.currentOrder
+    ? `ขั้นที่ ${progress.currentOrder} จาก ${progress.totalSteps}`
+    : `กระบวนการนี้มีทั้งหมด ${progress.totalSteps} ขั้นตอน`;
+
+  const rows = progress.steps
+    .map((step) => {
+      const mark =
+        step.state === "DONE"
+          ? { glyph: "&#10003;", color: "#1B7F5A" }
+          : step.state === "REJECTED"
+            ? { glyph: "&#10007;", color: "#B3261E" }
+            : step.state === "CURRENT"
+              ? { glyph: "&#9654;", color: CORAL }
+              : { glyph: "&#9675;", color: MUTED };
+      const emphasis = step.state === "CURRENT" ? 600 : 400;
+      const color = step.state === "UPCOMING" ? MUTED : TEXT;
+      const number = step.order ? `${step.order}. ` : "";
+      const suffix = step.optional ? " (เมื่อเจ้าหน้าที่มอบหมาย)" : "";
+
+      return `<tr>
+        <td width="24" valign="top" style="padding:6px 0;font:600 14px/1.6 'Helvetica Neue',Arial,sans-serif;color:${mark.color};">${mark.glyph}</td>
+        <td valign="top" style="padding:6px 0;font:${emphasis} 14px/1.6 'Helvetica Neue',Arial,sans-serif;color:${color};">
+          ${number}${escapeHtml(step.label)}${suffix}
+          <div style="font:400 12px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">โดย${escapeHtml(step.roleLabel)}</div>
+        </td>
+      </tr>`;
+    })
+    .join("");
+
+  const next = progress.nextStep
+    ? `<div style="margin-top:12px;font:400 13px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
+         ขั้นต่อไป: <span style="color:${TEXT};">${escapeHtml(progress.nextStep.label)}</span>
+       </div>`
+    : "";
+
+  return `<div style="border:1px solid ${BORDER};border-radius:12px;padding:16px;">
+    <div style="font:600 13px/1 'Helvetica Neue',Arial,sans-serif;color:${NAVY};margin-bottom:12px;">${heading}</div>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">${rows}</table>
+    ${next}
+  </div>`;
+}
+
+/**
  * ส่งอีเมลจากแถวใน notification outbox
  *
  * delivery worker เรียกตัวนี้ — มันมีแค่ title กับ message ของ notification
@@ -181,7 +240,13 @@ export async function sendOtpEmail(to: string, code: string) {
   );
 }
 
-export async function sendSubmittedToOfficers(to: string[], orgName: string, submitter: string, orgId: string) {
+export async function sendSubmittedToOfficers(
+  to: string[],
+  orgName: string,
+  submitter: string,
+  orgId: string,
+  progress?: JourneyProgress | null,
+) {
   if (to.length === 0) return;
   await Promise.all(
     to.map((addr) =>
@@ -191,6 +256,7 @@ export async function sendSubmittedToOfficers(to: string[], orgName: string, sub
         layout({
           title: "มีคำขอสร้างหน่วยงานรอตรวจสอบ",
           intro: `<strong style="color:${TEXT};">${orgName}</strong> ยื่นคำขอเข้ามาในระบบ โดย ${submitter}`,
+          steps: stepsBlock(progress),
           button: { label: "เปิดดูคำขอ", url: `${env.appUrl}/admin/organizations/${orgId}` },
         }),
       ),
@@ -198,7 +264,13 @@ export async function sendSubmittedToOfficers(to: string[], orgName: string, sub
   );
 }
 
-export async function sendRevisionRequested(to: string, orgName: string, note: string, orgId: string) {
+export async function sendRevisionRequested(
+  to: string,
+  orgName: string,
+  note: string,
+  orgId: string,
+  progress?: JourneyProgress | null,
+) {
   await send(
     to,
     `ต้องปรับปรุงข้อมูลหน่วยงาน: ${orgName}`,
@@ -209,12 +281,19 @@ export async function sendRevisionRequested(to: string, orgName: string, note: s
                <div style="font:600 13px/1 'Helvetica Neue',Arial,sans-serif;color:#B3261E;margin-bottom:8px;">สิ่งที่ต้องแก้ไข</div>
                <div style="font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};white-space:pre-wrap;">${escapeHtml(note)}</div>
              </div>`,
+      steps: stepsBlock(progress),
       button: { label: "แก้ไขข้อมูล", url: `${env.appUrl}/organizations/${orgId}` },
     }),
   );
 }
 
-export async function sendSignatoryRequest(to: string, orgName: string, orgId: string, registerToken?: string) {
+export async function sendSignatoryRequest(
+  to: string,
+  orgName: string,
+  orgId: string,
+  registerToken?: string,
+  progress?: JourneyProgress | null,
+) {
   const url = registerToken
     ? `${env.appUrl}/register?token=${registerToken}`
     : `${env.appUrl}/organizations/${orgId}`;
@@ -229,12 +308,18 @@ export async function sendSignatoryRequest(to: string, orgName: string, orgId: s
              คุณยังไม่มีบัญชีในระบบ กรุณาลงทะเบียนเพื่อตรวจสอบเอกสารและให้ความเห็นชอบ
            </p>`
         : "",
+      steps: stepsBlock(progress),
       button: { label: registerToken ? "ลงทะเบียนและตรวจสอบ" : "ตรวจสอบเอกสาร", url },
     }),
   );
 }
 
-export async function sendFinalApprovalRequest(to: string[], orgName: string, orgId: string) {
+export async function sendFinalApprovalRequest(
+  to: string[],
+  orgName: string,
+  orgId: string,
+  progress?: JourneyProgress | null,
+) {
   if (to.length === 0) return;
   await Promise.all(
     to.map((addr) =>
@@ -244,6 +329,7 @@ export async function sendFinalApprovalRequest(to: string[], orgName: string, or
         layout({
           title: "มีคำขอรอการลงนาม",
           intro: `ผู้มีอำนาจกระทำการแทนของ <strong style="color:${TEXT};">${orgName}</strong> ให้ความเห็นชอบแล้ว`,
+          steps: stepsBlock(progress),
           button: { label: "ตรวจสอบและลงนาม", url: `${env.appUrl}/admin/organizations/${orgId}` },
         }),
       ),
@@ -251,7 +337,12 @@ export async function sendFinalApprovalRequest(to: string[], orgName: string, or
   );
 }
 
-export async function sendActivated(to: string[], orgName: string, orgId: string) {
+export async function sendActivated(
+  to: string[],
+  orgName: string,
+  orgId: string,
+  progress?: JourneyProgress | null,
+) {
   const unique = [...new Set(to.filter(Boolean))];
   if (unique.length === 0) return;
   await Promise.all(
@@ -262,6 +353,7 @@ export async function sendActivated(to: string[], orgName: string, orgId: string
         layout({
           title: "หน่วยงานของคุณเปิดใช้งานแล้ว",
           intro: `<strong style="color:${TEXT};">${orgName}</strong> ผ่านการอนุมัติครบทุกขั้นตอนและพร้อมใช้งานบนแพลตฟอร์มแล้ว`,
+          steps: stepsBlock(progress),
           button: { label: "เข้าสู่ระบบ", url: `${env.appUrl}/organizations/${orgId}` },
         }),
       ),
@@ -337,6 +429,7 @@ function datasetSummary(rows: Array<[string, string]>): string {
 export async function sendDatasetSubmitted(
   to: string[],
   info: { requestNumber: string; datasetName: string; organizationName: string; submitter: string; id: string },
+  progress?: JourneyProgress | null,
 ) {
   await sendMany(
     to,
@@ -349,6 +442,7 @@ export async function sendDatasetSubmitted(
         ["ชื่อชุดข้อมูล", info.datasetName],
         ["ผู้นำส่ง", info.submitter],
       ]),
+      steps: stepsBlock(progress),
       button: { label: "เปิดดูคำขอ", url: bdiLink(info.id) },
     }),
   );
@@ -357,6 +451,7 @@ export async function sendDatasetSubmitted(
 export async function sendDatasetRevisionRequested(
   to: string[],
   info: { requestNumber: string; datasetName: string; note: string; byName: string; at: Date; id: string },
+  progress?: JourneyProgress | null,
 ) {
   const when = new Intl.DateTimeFormat("th-TH", {
     dateStyle: "medium",
@@ -378,6 +473,7 @@ export async function sendDatasetRevisionRequested(
                  โดย ${escapeHtml(info.byName)} · ${when}
                </div>
              </div>`,
+      steps: stepsBlock(progress),
       button: { label: "แก้ไขคำขอ", url: orgLink(info.id) },
     }),
   );
@@ -386,6 +482,7 @@ export async function sendDatasetRevisionRequested(
 export async function sendDatasetSpecialistAssigned(
   to: string,
   info: { requestNumber: string; datasetName: string; organizationName: string; id: string },
+  progress?: JourneyProgress | null,
 ) {
   await sendMany(
     [to],
@@ -398,6 +495,7 @@ export async function sendDatasetSpecialistAssigned(
         ["ชื่อชุดข้อมูล", info.datasetName],
         ["หน่วยงาน", info.organizationName],
       ]),
+      steps: stepsBlock(progress),
       button: { label: "เปิดดูคำขอ", url: bdiLink(info.id) },
     }),
   );
@@ -406,6 +504,7 @@ export async function sendDatasetSpecialistAssigned(
 export async function sendDatasetPendingOrgApprover(
   to: string[],
   info: { requestNumber: string; datasetName: string; organizationName: string; id: string },
+  progress?: JourneyProgress | null,
 ) {
   await sendMany(
     to,
@@ -417,6 +516,7 @@ export async function sendDatasetPendingOrgApprover(
         ["เลขที่คำขอ", info.requestNumber],
         ["ชื่อชุดข้อมูล", info.datasetName],
       ]),
+      steps: stepsBlock(progress),
       button: { label: "ตรวจสอบและลงนาม", url: orgLink(info.id) },
     }),
   );
@@ -425,6 +525,7 @@ export async function sendDatasetPendingOrgApprover(
 export async function sendDatasetPendingFinalCheck(
   to: string[],
   info: { requestNumber: string; datasetName: string; organizationName: string; signedBy: string; id: string },
+  progress?: JourneyProgress | null,
 ) {
   await sendMany(
     to,
@@ -437,6 +538,7 @@ export async function sendDatasetPendingFinalCheck(
         ["ชื่อชุดข้อมูล", info.datasetName],
         ["ผู้ลงนาม", info.signedBy],
       ]),
+      steps: stepsBlock(progress),
       button: { label: "ตรวจสอบขั้นสุดท้าย", url: bdiLink(info.id) },
     }),
   );
@@ -445,6 +547,7 @@ export async function sendDatasetPendingFinalCheck(
 export async function sendDatasetPendingBdiApproval(
   to: string[],
   info: { requestNumber: string; datasetName: string; organizationName: string; id: string },
+  progress?: JourneyProgress | null,
 ) {
   await sendMany(
     to,
@@ -457,6 +560,7 @@ export async function sendDatasetPendingBdiApproval(
         ["ชื่อชุดข้อมูล", info.datasetName],
         ["หน่วยงาน", info.organizationName],
       ]),
+      steps: stepsBlock(progress),
       button: { label: "ตรวจสอบและอนุมัติ", url: bdiLink(info.id) },
     }),
   );
@@ -465,6 +569,7 @@ export async function sendDatasetPendingBdiApproval(
 export async function sendDatasetApproved(
   to: string[],
   info: { requestNumber: string; datasetName: string; organizationName: string; id: string },
+  progress?: JourneyProgress | null,
 ) {
   await sendMany(
     to,
@@ -476,6 +581,7 @@ export async function sendDatasetApproved(
         ["เลขที่คำขอ", info.requestNumber],
         ["หน่วยงาน", info.organizationName],
       ]),
+      steps: stepsBlock(progress),
       button: { label: "เปิดดูและดาวน์โหลดเอกสาร", url: orgLink(info.id) },
     }),
   );
@@ -484,6 +590,7 @@ export async function sendDatasetApproved(
 export async function sendDatasetRejected(
   to: string[],
   info: { requestNumber: string; datasetName: string; reason: string; id: string },
+  progress?: JourneyProgress | null,
 ) {
   await sendMany(
     to,
@@ -495,8 +602,34 @@ export async function sendDatasetRejected(
                <div style="font:600 13px/1 'Helvetica Neue',Arial,sans-serif;color:#B3261E;margin-bottom:8px;">เหตุผล</div>
                <div style="font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};white-space:pre-wrap;">${escapeHtml(info.reason)}</div>
              </div>`,
+      steps: stepsBlock(progress),
       button: { label: "เปิดดูรายละเอียด", url: orgLink(info.id) },
       footnote: "หากต้องการยื่นใหม่ กรุณาสร้างคำขอฉบับใหม่และแก้ไขตามเหตุผลข้างต้น",
+    }),
+  );
+}
+
+/**
+ * "คำขอเดินหน้าไปอีกขั้น" — ฉบับที่ฝั่งหน่วยงานได้รับทุกครั้งที่คำขอผ่านด่านหนึ่ง
+ *
+ * ไม่มีปุ่มพาไปทำอะไร เพราะคนอ่านไม่ได้ต้องทำอะไร มีแค่ลิงก์ไปดูคำขอ — เจตนาคือ
+ * ตอบคำถาม "เรื่องของเราไปถึงไหนแล้ว" ซึ่งเดิมไม่มีอีเมลฉบับไหนตอบเลย
+ */
+export async function sendRequestProgressed(
+  to: string,
+  /** `path` คือ path ภายในแอปจาก linkFor() — โดเมนต่อให้ที่นี่ เพราะ appUrl เปลี่ยนได้ */
+  info: { title: string; message: string; path: string },
+  progress?: JourneyProgress | null,
+): Promise<void> {
+  await send(
+    to,
+    info.title,
+    layout({
+      title: info.title,
+      intro: escapeHtml(info.message),
+      steps: stepsBlock(progress),
+      button: { label: "เปิดดูคำขอ", url: `${env.appUrl}${info.path}` },
+      footnote: "อีเมลฉบับนี้แจ้งความคืบหน้าเท่านั้น ยังไม่มีสิ่งที่คุณต้องดำเนินการ",
     }),
   );
 }

@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { LegalDocumentsCard, useLegalDocuments } from "@/components/organization/LegalDocuments";
 import { SigningDialog } from "@/components/organization/SigningDialog";
 import { Timeline } from "@/components/organization/Timeline";
+import { ApprovalSteps } from "@/components/review/ApprovalSteps";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader, StatusBadge } from "@/components/ui/Card";
 import { TextAreaField } from "@/components/ui/Field";
@@ -370,6 +371,14 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
             onRetry={reloadLegalDocuments}
           />
         ) : null}
+
+        <Card>
+          <CardHeader
+            title="ขั้นตอนการอนุมัติ"
+            description="เส้นทางทั้งหมดของคำขอนี้ — ผ่านมาแล้วกี่ขั้น เหลืออีกกี่ขั้น และแต่ละขั้นเป็นหน้าที่ของใคร"
+          />
+          <ApprovalSteps progress={org.progress} />
+        </Card>
 
         <Card>
           <CardHeader title="ประวัติการดำเนินการ" description={`ยื่นเมื่อ ${formatThaiDate(org.submittedAt ?? org.createdAt)}`} />

@@ -58,6 +58,7 @@ import {
 } from "../lib/mail.js";
 import {
   NotificationType,
+  announceProgress,
   announceRoleReplacement,
   bdiApproverIds,
   bdiOfficerIds,
@@ -74,6 +75,7 @@ import {
 import { DocumentRenderError } from "../lib/document-render.js";
 import { LEGAL_SCOPES, publishedDocuments } from "../lib/legal.js";
 import { nextOrganizationCode, nextOrganizationRequestNumber } from "../lib/request-number.js";
+import { buildJourneyProgress, summariseMany } from "../lib/journey-steps.js";
 import { REVIEW_TASK_TYPE_LABELS, ROLE_LABELS, isBdiStaff } from "../lib/roles.js";
 import {
   PLACEHOLDER_ORGANIZATION_NAME,
@@ -585,16 +587,34 @@ organizationRouter.get("/", async (req, res) => {
     },
   });
 
-  // ด่านที่แต่ละคำขอค้างอยู่ — badge บนหน้าจอใช้ค่านี้แทน PENDING_* ที่หายไปจาก status
+  /**
+   * ด่านที่แต่ละคำขอค้างอยู่ — badge บนหน้าจอใช้ค่านี้แทน PENDING_* ที่หายไปจาก status
+   *
+   * ดึงประวัติทั้งหมด ไม่ใช่เฉพาะแถวที่ยัง active เพราะคอลัมน์ความคืบหน้าต้องรู้ว่าผ่านมาแล้ว
+   * กี่ด่าน แถวที่ active ก็คัดออกมาจากชุดเดียวกันนี้ ไม่ต้องยิง query เพิ่ม
+   */
   const tasks = await prisma.reviewTask.findMany({
-    where: {
-      subjectType: SUBJECT,
-      subjectId: { in: requests.map((r) => r.id) },
-      status: { in: [ReviewTaskStatus.PENDING, ReviewTaskStatus.IN_PROGRESS] },
+    where: { subjectType: SUBJECT, subjectId: { in: requests.map((r) => r.id) } },
+    select: {
+      id: true,
+      subjectId: true,
+      taskType: true,
+      sequenceNumber: true,
+      roundNumber: true,
+      status: true,
+      result: true,
+      completedAt: true,
     },
-    select: { subjectId: true, taskType: true, roundNumber: true },
   });
-  const stageBySubject = new Map(tasks.map((t) => [t.subjectId, t]));
+  const stageBySubject = new Map(
+    tasks
+      .filter(
+        (t) =>
+          t.status === ReviewTaskStatus.PENDING || t.status === ReviewTaskStatus.IN_PROGRESS,
+      )
+      .map((t) => [t.subjectId, t]),
+  );
+  const progressBySubject = summariseMany({ subjectType: SUBJECT, requests, tasks });
 
   /**
    * ชื่อหน่วยงานและชื่อผู้ยื่นในตารางต้องไม่ว่าง
@@ -631,6 +651,7 @@ organizationRouter.get("/", async (req, res) => {
         status: r.status,
         currentTaskType: stageBySubject.get(r.id)?.taskType ?? null,
         currentRound: stageBySubject.get(r.id)?.roundNumber ?? null,
+        progress: progressBySubject.get(r.id) ?? null,
         submittedAt: r.submittedAt,
         createdAt: r.createdAt,
         organizationId: r.organizationId,
@@ -873,6 +894,14 @@ organizationRouter.get("/:id", async (req, res) => {
       currentTaskType: active?.taskType ?? null,
       currentRound: active?.roundNumber ?? null,
       currentAssignee: active?.assignedUser?.displayName ?? null,
+      // เส้นทางทั้งเส้น ไม่ใช่แค่ด่านที่ค้างอยู่ — หน้าจอต้องบอกได้ว่ามีกี่ขั้น
+      // ตอนนี้ขั้นไหน และขั้นต่อไปเป็นหน้าที่ของบทบาทใด
+      progress: buildJourneyProgress({
+        subjectType: SUBJECT,
+        status: request.status,
+        tasks,
+        active,
+      }),
       attachments: attachments.map(publicAttachment),
       // timeline มาจาก review_task แทน organization_events เดิม
       events: tasks.map((t) => ({
@@ -1970,6 +1999,19 @@ async function dispatchReviewNotifications(
   const name = request.organizationNameTh ?? request.organization.nameTh;
   const members = await organizationMemberIds(request.organizationId);
 
+  /**
+   * ฝั่งหน่วยงานได้ยินทุกครั้งที่คำขอขยับ ไม่ใช่แค่ตอนถูกส่งกลับหรืออนุมัติจบ
+   * announceProgress() เงียบเองเมื่อไม่มีด่านใหม่เปิดขึ้น จึงเรียกก่อนแล้วปล่อยให้
+   * การแจ้ง "คนต่อไปที่ต้องทำ" ด้านล่างทำงานตามเดิม — คนละกลุ่มผู้รับ ไม่ทับกัน
+   */
+  const progress = await announceProgress({
+    subjectType: SUBJECT,
+    subjectId: request.id,
+    organizationId: request.organizationId,
+    createdBy: request.createdBy,
+    subjectLabel: `${name} — ${request.requestNumber}`,
+  });
+
   if (result === ReviewResult.RETURNED) {
     await notifyUsers([...members.users, request.createdBy], {
       type: NotificationType.REQUEST_RETURNED,
@@ -1995,7 +2037,7 @@ async function dispatchReviewNotifications(
   }
 
   if (taskType === ReviewTaskType.BDI_OFFICER_REVIEW && request.approverEmail) {
-    await sendSignatoryRequest(request.approverEmail, name, request.id);
+    await sendSignatoryRequest(request.approverEmail, name, request.id, undefined, progress);
     return;
   }
 

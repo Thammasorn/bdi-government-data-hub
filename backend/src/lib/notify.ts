@@ -18,12 +18,16 @@ import {
   DeliveryChannel,
   DeliveryStatus,
   NotificationStatus,
+  ReviewTaskStatus,
+  ReviewTaskType,
   RoleAssignmentStatus,
+  SubjectType,
   UserAccountStatus,
 } from "@prisma/client";
 
 import { prisma } from "../db.js";
 import { AuditAction, AuditSubject, logAudit } from "./audit.js";
+import { buildJourneyProgress, type JourneyProgress } from "./journey-steps.js";
 import { correlationId } from "./context.js";
 import { activeAssignmentWhere, type RevokedAssignment } from "./iam.js";
 import { ROLE_LABELS } from "./roles.js";
@@ -37,6 +41,14 @@ export const NotificationType = {
   REQUEST_SUBMITTED: "REQUEST_SUBMITTED",
   REQUEST_RETURNED: "REQUEST_RETURNED",
   REQUEST_APPROVED: "REQUEST_APPROVED",
+  /**
+   * คำขอเดินหน้าไปอีกด่านหนึ่ง
+   *
+   * ไม่ได้อยู่ในรายการชนิดตัวอย่างของ sheet `notification` แต่ต้องมี — เดิมทุกด่านที่ผ่าน
+   * แจ้งแต่ "คนต่อไปที่ต้องทำ" ผู้ยื่นคำขอจึงเงียบไปทั้งกระบวนการ แล้วได้ยินข่าวอีกที
+   * ตอนถูกส่งกลับหรืออนุมัติจบ ซึ่งอ่านเหมือนคำขอหายไปหลายวัน
+   */
+  REQUEST_PROGRESSED: "REQUEST_PROGRESSED",
   REQUEST_REJECTED: "REQUEST_REJECTED",
   SPECIALIST_ASSIGNED: "SPECIALIST_ASSIGNED",
   SLA_REMINDER: "SLA_REMINDER",
@@ -247,6 +259,101 @@ export async function requestStakeholderIds(request: {
       ...(request.assignedUserIds ?? []),
     ]),
   ];
+}
+
+/**
+ * แจ้งฝั่งหน่วยงานว่าคำขอเดินไปถึงด่านไหนแล้ว
+ *
+ * เรียก **หลัง transaction commit** เพราะอ่านสถานะที่เพิ่งเปลี่ยนจาก prisma ตัวหลัก
+ * ไม่ใช่จาก tx ที่ทำ transition
+ *
+ * ผู้มีอำนาจลงนามถูกตัดออกเมื่อด่านใหม่คือด่านของเขาเอง — เขาได้อีเมล "รอคุณลงนาม"
+ * ฉบับตรงกว่านั้นอยู่แล้ว การส่งซ้ำสองฉบับเรื่องเดียวกันในนาทีเดียวกันทำให้ฉบับที่มีปุ่ม
+ * ให้กดกลายเป็นฉบับที่ถูกมองข้าม
+ */
+export async function announceProgress(params: {
+  subjectType: SubjectType;
+  subjectId: string;
+  organizationId: string;
+  createdBy: string;
+  /** ชื่อที่ผู้รับใช้เรียกคำขอนี้ เช่นชื่อหน่วยงานหรือชื่อชุดข้อมูล + เลขที่คำขอ */
+  subjectLabel: string;
+}): Promise<JourneyProgress | null> {
+  const [request, tasks, active] = await Promise.all([
+    params.subjectType === SubjectType.ORGANIZATION_REGISTRATION_REQUEST
+      ? prisma.organizationRegistrationRequest.findUnique({
+          where: { id: params.subjectId },
+          select: { status: true },
+        })
+      : prisma.datasetRegistrationRequest.findUnique({
+          where: { id: params.subjectId },
+          select: { status: true },
+        }),
+    prisma.reviewTask.findMany({
+      where: { subjectType: params.subjectType, subjectId: params.subjectId },
+      orderBy: { sequenceNumber: "asc" },
+      select: {
+        id: true,
+        taskType: true,
+        sequenceNumber: true,
+        roundNumber: true,
+        status: true,
+        result: true,
+        completedAt: true,
+      },
+    }),
+    prisma.reviewTask.findFirst({
+      where: {
+        subjectType: params.subjectType,
+        subjectId: params.subjectId,
+        status: { in: [ReviewTaskStatus.PENDING, ReviewTaskStatus.IN_PROGRESS] },
+      },
+      select: {
+        id: true,
+        taskType: true,
+        sequenceNumber: true,
+        roundNumber: true,
+        status: true,
+        result: true,
+        completedAt: true,
+      },
+    }),
+  ]);
+  if (!request) return null;
+
+  const progress = buildJourneyProgress({
+    subjectType: params.subjectType,
+    status: request.status,
+    tasks,
+    active,
+  });
+
+  // ไม่มีด่านใหม่เปิดขึ้น = ไม่ได้เดินหน้าไปไหน (จบแล้ว ถูกส่งกลับ หรือไม่อนุมัติ)
+  // สามกรณีนั้นมี notification ของตัวเองอยู่แล้ว
+  const step = progress.currentStep;
+  if (!step || !step.order) return progress;
+
+  const members = await organizationMemberIds(params.organizationId);
+  const recipients = [
+    ...members.users,
+    params.createdBy,
+    ...(step.taskType === ReviewTaskType.ORGANIZATION_APPROVAL ? [] : members.approvers),
+  ];
+
+  await notifyUsers(recipients, {
+    type: NotificationType.REQUEST_PROGRESSED,
+    title: "คำขอของคุณเดินหน้าไปอีกขั้น",
+    message:
+      `${params.subjectLabel} — ขณะนี้อยู่ขั้นที่ ${step.order} จาก ${progress.totalSteps}: ` +
+      `${step.waitingLabel}` +
+      (progress.nextStep ? ` · ขั้นต่อไป: ${progress.nextStep.label}` : ""),
+    subjectType: params.subjectType,
+    subjectId: params.subjectId,
+    organizationId: params.organizationId,
+  });
+
+  // ผู้เรียกใช้ต่อกับอีเมลที่ส่งตรง (ไม่ผ่านคิว) เพื่อไม่ต้องคำนวณเส้นทางซ้ำ
+  return progress;
 }
 
 /** อีเมลของผู้ใช้ตาม id — ใช้ส่งเมลให้ชุดเดียวกับที่แจ้งเตือนในระบบ */

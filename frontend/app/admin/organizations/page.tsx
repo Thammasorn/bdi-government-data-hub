@@ -4,6 +4,7 @@ import clsx from "clsx";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 
+import { ApprovalStepsCompact } from "@/components/review/ApprovalSteps";
 import { Card, StatusBadge } from "@/components/ui/Card";
 import { SkeletonRows, Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
@@ -148,10 +149,11 @@ function OrganizationTable() {
           <>
             {/* คอลัมน์สถานะต้องกว้างคงที่ ไม่ใช่ auto — หัวตารางกับแถวเป็นคนละ grid
                 ถ้าใช้ auto ความกว้างจะคิดจากเนื้อหาของแต่ละอันแยกกัน แล้วคอลัมน์จะเหลื่อม */}
-            <div className="hidden grid-cols-[minmax(0,2fr)_minmax(0,1.6fr)_12rem_9rem] gap-4 border-b border-line px-6 py-3 text-[12px] font-semibold uppercase tracking-wide text-ink-subtle md:grid">
+            <div className="hidden grid-cols-[minmax(0,1.7fr)_minmax(0,1.3fr)_12rem_13rem_8rem] gap-4 border-b border-line px-6 py-3 text-[12px] font-semibold uppercase tracking-wide text-ink-subtle md:grid">
               <span>ชื่อหน่วยงาน</span>
               <span>ผู้สร้าง</span>
               <span>สถานะ</span>
+              <span>ความคืบหน้า</span>
               <span className="text-right">วันที่ยื่น</span>
             </div>
             <ul className="divide-y divide-line">
@@ -160,7 +162,7 @@ function OrganizationTable() {
                   <button
                     type="button"
                     onClick={() => router.push(`/admin/organizations/${row.id}`)}
-                    className="grid w-full grid-cols-1 items-center gap-2 px-6 py-4 text-left transition-colors hover:bg-navy-50/60 md:grid-cols-[minmax(0,2fr)_minmax(0,1.6fr)_12rem_9rem] md:gap-4"
+                    className="grid w-full grid-cols-1 items-center gap-2 px-6 py-4 text-left transition-colors hover:bg-navy-50/60 md:grid-cols-[minmax(0,1.7fr)_minmax(0,1.3fr)_12rem_13rem_8rem] md:gap-4"
                   >
                     <span className="truncate font-medium text-ink">{row.name}</span>
                     <span className="min-w-0">
@@ -170,7 +172,11 @@ function OrganizationTable() {
                       <span className="block truncate text-[13px] text-ink-muted">{row.createdBy.email}</span>
                     </span>
                     <span className="justify-self-start">
-                      <StatusBadge status={row.status} />
+                      {/* ส่ง currentTaskType ไปด้วย ไม่งั้นแถวขึ้นแค่ "นำส่งแล้ว" ทั้งที่ข้อมูลด่านมาถึงแล้ว */}
+                      <StatusBadge status={row.status} currentTaskType={row.currentTaskType} />
+                    </span>
+                    <span className="min-w-0">
+                      <ApprovalStepsCompact progress={row.progress} />
                     </span>
                     <span className="text-[13px] text-ink-muted md:text-right">
                       {row.submittedAt ? formatThaiDate(row.submittedAt).split(" ").slice(0, 3).join(" ") : "—"}
