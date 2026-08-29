@@ -88,6 +88,8 @@ import {
   formatZodError,
   isUuid,
   nationalIdSchema,
+  normaliseThaiPhone,
+  organizationNameSchema,
   phoneSchema,
 } from "../lib/validation.js";
 import {
@@ -136,6 +138,17 @@ const upload = multer({
 // ---------------------------------------------------------------- schemas
 
 /**
+ * ความยาวสูงสุดของช่องที่อยู่
+ *
+ * เดิม schema จำกัดไว้ 300 ตัวอักษรทั้งที่คอลัมน์รับได้ 500 — ที่อยู่ราชการเต็มรูปแบบ
+ * (ชื่ออาคาร ชั้น เลขห้อง ซอย แขวง พร้อมวงเล็บอธิบายทางเข้า) ชนเพดานนั้นได้จริง และ
+ * เพดานฝั่ง schema ทำให้ผู้ใช้เจอ error ทั้งที่คอลัมน์ยังว่างอยู่อีกมาก ตอนนี้ทั้ง
+ * schema และคอลัมน์เป็น 2000 เท่ากัน (migration 20260829120000_widen_address_line)
+ * ค่านี้ถูกคัดลอกไว้ที่ frontend/lib/organization-form.ts ด้วย — แก้พร้อมกันเสมอ
+ */
+const MAX_ADDRESS_LINE = 2000;
+
+/**
  * ตอนบันทึกร่างยอมให้ว่างได้ ตอนนำส่งต้องครบ — จึงแยกเป็นสองชุด
  *
  * ชื่อฟิลด์ฝั่ง API ยังเป็นชุดเดิม (name / signatory* / contact*) เพื่อไม่ให้ frontend
@@ -143,12 +156,18 @@ const upload = multer({
  * approver_* / user_*) เกิดที่ toRequestData() ข้างล่าง
  */
 const draftSchema = z.object({
-  /** รหัสหน่วยงาน — admin กรอกไว้ล่วงหน้า ผู้ใช้แค่ตรวจและแก้ถ้าไม่ถูก */
+  /**
+   * รหัสหน่วยงาน — **อ่านอย่างเดียว** รับมาเพื่อเทียบว่าตรงกับของเดิมเท่านั้น
+   *
+   * ค่านี้ไม่ได้ถูกแปลงลง snapshot ที่ toRequestData() อีกแล้ว ฟอร์มจึงเขียนทับไม่ได้
+   * แม้จะส่งมา — ดู assertOrganizationCodeUnchanged() ว่าทำไมถึงตอบ 400 แทนที่จะ
+   * เงียบ ๆ เมื่อค่าที่ส่งมาไม่ตรงกับของเดิม
+   */
   organizationCode: z.string().trim().max(64).optional(),
   name: z.string().trim().max(200).optional(),
   nameEn: z.string().trim().max(200).optional(),
   organizationType: z.string().trim().max(64).optional(),
-  addressLine: z.string().trim().max(300).optional(),
+  addressLine: z.string().trim().max(MAX_ADDRESS_LINE).optional(),
   road: z.string().trim().max(255).optional(),
   province: z.string().trim().optional(),
   district: z.string().trim().optional(),
@@ -177,10 +196,15 @@ const draftSchema = z.object({
   contactNationalId: z.string().trim().optional(),
 });
 
-const submitSchema = z.object({
+const submitSchema = z
+  .object({
   organizationCode: z.string().trim().min(1, "กรุณากรอกรหัสหน่วยงาน").max(64),
-  name: z.string().trim().min(3, "ชื่อหน่วยงานต้องมีอย่างน้อย 3 ตัวอักษร").max(200),
-  addressLine: z.string().trim().min(1, "กรุณากรอกที่อยู่"),
+  name: organizationNameSchema,
+  addressLine: z
+    .string()
+    .trim()
+    .min(1, "กรุณากรอกที่อยู่")
+    .max(MAX_ADDRESS_LINE, `ที่อยู่ต้องไม่เกิน ${MAX_ADDRESS_LINE} ตัวอักษร`),
   /**
    * ถนนไม่บังคับ — ที่อยู่ราชการหลายแห่งไม่มีชื่อถนน (ใช้หมู่ที่แทน) บังคับกรอกจะกลายเป็น
    * การให้ผู้ใช้กรอกข้อมูลที่ไม่มีอยู่จริง ช่อง "ถนน" ในเอกสาร A0 จะว่างไว้ตามความจริง
@@ -207,7 +231,27 @@ const submitSchema = z.object({
   contactDepartment: z.string().trim().min(1, "กรุณากรอกฝ่าย/กอง/สำนัก"),
   contactEmail: emailSchema,
   contactPhone: phoneSchema,
-});
+  })
+  /**
+   * อีเมลหน่วยงานต้องไม่ใช่อีเมลของผู้มีอำนาจกระทำการแทน
+   *
+   * สองช่องนี้ทำคนละหน้าที่กัน และระบบใช้ต่างกันจริง ๆ — อีเมลผู้มีอำนาจกระทำการแทน
+   * คือที่อยู่ที่ระบบ **ออกคำเชิญให้เข้ามาลงนาม** (ensureApproverAccount() เปิดบัญชี
+   * ให้ที่อยู่นั้น) ส่วนอีเมลหน่วยงานเป็นช่องทางติดต่อกลางของหน่วยงาน กรอกซ้ำกันแล้ว
+   * หน่วยงานจะเหลือช่องทางติดต่อเดียวที่ผูกกับตัวบุคคล พอคนนั้นย้ายงานก็ติดต่อ
+   * หน่วยงานไม่ได้อีกเลย และอีเมลกลางของหน่วยงานซึ่งมักมีคนดูแลหลายคนจะกลายเป็น
+   * ที่รับลิงก์เปิดใช้งานบัญชีส่วนบุคคล
+   */
+  .superRefine((value, ctx) => {
+    if (value.email && value.email === value.signatoryEmail) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["email"],
+        message:
+          "อีเมลหน่วยงานต้องไม่ใช่อีเมลเดียวกับผู้มีอำนาจกระทำการแทน กรุณากรอกอีเมลกลางของหน่วยงาน",
+      });
+    }
+  });
 
 type RequestRow = Prisma.OrganizationRegistrationRequestGetPayload<{
   include: { organization: true };
@@ -225,8 +269,21 @@ async function toRequestData(input: z.infer<typeof draftSchema>) {
       ? (lookupZipcode(input.province, input.district, input.subdistrict) ?? undefined)
       : undefined);
 
+  /**
+   * เก็บเบอร์ในรูปตัวเลขล้วนเสมอ ไม่ว่าผู้ใช้จะพิมพ์ขีดหรือ +66 มา
+   *
+   * เบอร์เดียวกันที่เก็บคนละรูปทำให้ค้นไม่เจอและพิมพ์ลงเอกสาร A0 ไม่เหมือนกันสองใบ
+   * ค่าที่อ่านเป็นเบอร์ไม่ได้เลยปล่อยผ่านตามเดิม เพื่อให้ตอนนำส่ง phoneSchema เป็นคน
+   * บอกว่าผิดตรงไหน แทนที่จะกลายเป็นค่าว่างเงียบ ๆ ระหว่างบันทึกร่าง
+   */
+  const phone = (value?: string) => (value ? (normaliseThaiPhone(value) ?? value) : value);
+
   return {
-    organizationCode: input.organizationCode,
+    /**
+     * ไม่มี organizationCode ที่นี่โดยตั้งใจ — รหัสหน่วยงานแก้ผ่านฟอร์มไม่ได้
+     * ค่าที่ถูกต้องมาจากแถว organization เท่านั้น (prefillFromOrganization ตอนเปิดคำขอ
+     * หรือ nextOrganizationCode ตอนสร้างหน่วยงานใหม่)
+     */
     organizationType: input.organizationType,
     organizationNameTh: input.name,
     organizationNameEn: input.nameEn,
@@ -236,7 +293,7 @@ async function toRequestData(input: z.infer<typeof draftSchema>) {
     organizationDistrictCode: codes.districtCode,
     organizationSubdistrictCode: codes.subDistrictCode,
     organizationPostalCode: postalCode,
-    organizationPhone: input.phone,
+    organizationPhone: phone(input.phone),
     organizationEmail: input.email,
     organizationWebsite: input.websiteUrl,
 
@@ -246,7 +303,7 @@ async function toRequestData(input: z.infer<typeof draftSchema>) {
     approverPositionTh: input.signatoryPosition,
     approverEmail: input.signatoryEmail,
     approverCid: input.signatoryNationalId,
-    approverPhoneNumber: input.signatoryPhone,
+    approverPhoneNumber: phone(input.signatoryPhone),
     approverDepartmentTh: input.signatoryDepartment,
 
     userPrefixTh: input.contactPrefix,
@@ -255,7 +312,7 @@ async function toRequestData(input: z.infer<typeof draftSchema>) {
     userPositionTh: input.contactPosition,
     userDepartmentTh: input.contactDepartment,
     userEmail: input.contactEmail,
-    userPhoneNumber: input.contactPhone,
+    userPhoneNumber: phone(input.contactPhone),
     userCid: input.contactNationalId,
   };
 }
@@ -310,6 +367,30 @@ function providedOnly<T extends object>(value: T): Partial<T> {
   return Object.fromEntries(
     Object.entries(value).filter(([, v]) => v !== undefined && v !== null),
   ) as Partial<T>;
+}
+
+/**
+ * รหัสหน่วยงานเป็นของระบบ ไม่ใช่ของผู้กรอก — คืนข้อความผิดพลาดถ้าฟอร์มพยายามเปลี่ยน
+ *
+ * เดิมช่อง "รหัสหน่วยงาน" บนฟอร์มแก้ได้ และค่าที่แก้ไหลลง snapshot ตรง ๆ ผลคือ
+ * เจ้าหน้าที่หน่วยงานเปลี่ยนรหัสของหน่วยงานตัวเองเป็นอะไรก็ได้ ทั้งที่รหัสนี้เป็น
+ * `@unique` ระดับตาราง เป็นสิ่งที่ `POST /api/admin/organizations` กำหนดไว้ล่วงหน้า
+ * หรือ `nextOrganizationCode()` ออกให้ตามลำดับ และเป็นค่าที่เอกสาร A0 กับระบบอื่น
+ * ใช้อ้างถึงหน่วยงานนี้ การให้ผู้ถูกตรวจสอบตั้งรหัสอ้างอิงของตัวเองได้ยังเปิดทางให้
+ * ไปชนรหัสของหน่วยงานอื่น ซึ่งเดิมไปโผล่เป็น error ตอนอนุมัติขั้นสุดท้าย — คนละคน
+ * คนละวันกับคนที่พิมพ์ผิด
+ *
+ * ตอบ 400 พร้อมบอกว่าทำไม แทนที่จะรับค่าแล้วทิ้งเงียบ ๆ เพราะแท็บที่เปิดค้างไว้ก่อน
+ * การเปลี่ยนแปลงนี้ยังส่งช่องนั้นมาได้ และผู้ใช้ที่ตั้งใจแก้ต้องรู้ว่าค่าที่เขาพิมพ์
+ * ไม่ได้ถูกบันทึก ค่าที่ส่งมา **ตรงกับของเดิม** ผ่านได้ตามปกติ ฟอร์มจึงยังส่งทั้งชุดได้
+ */
+function organizationCodeEdit(
+  input: { organizationCode?: string },
+  current: string | null | undefined,
+): string | null {
+  if (!input.organizationCode) return null;
+  if (current && input.organizationCode === current) return null;
+  return "รหัสหน่วยงานแก้ไขไม่ได้ — ระบบกำหนดให้อัตโนมัติ หากไม่ถูกต้องกรุณาแจ้งเจ้าหน้าที่ BDI";
 }
 
 /**
@@ -617,6 +698,12 @@ organizationRouter.post("/", async (req, res) => {
       return;
     }
 
+    const codeEdit = organizationCodeEdit(parsed.data, organization.organizationCode);
+    if (codeEdit) {
+      res.status(400).json({ error: "validation", fields: { organizationCode: codeEdit } });
+      return;
+    }
+
     const account = await prisma.userAccount.findUnique({ where: { id: session.sub } });
     const prefilled = await prisma.organizationRegistrationRequest.create({
       data: {
@@ -651,6 +738,14 @@ organizationRouter.post("/", async (req, res) => {
     });
 
     res.status(201).json({ organization: await toApiShape(prefilled) });
+    return;
+  }
+
+  // หน่วยงานใหม่ยังไม่มีรหัส — รหัสจะออกโดย nextOrganizationCode() ข้างล่าง
+  // ค่าที่ส่งมากับ body จึงเป็นการตั้งรหัสเอง ซึ่งไม่ใช่สิ่งที่ฟอร์มทำได้
+  const newCodeEdit = organizationCodeEdit(parsed.data, null);
+  if (newCodeEdit) {
+    res.status(400).json({ error: "validation", fields: { organizationCode: newCodeEdit } });
     return;
   }
 
@@ -820,6 +915,15 @@ organizationRouter.patch("/:id", async (req, res) => {
   const parsed = draftSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+    return;
+  }
+
+  const codeEdit = organizationCodeEdit(
+    parsed.data,
+    request.organizationCode ?? request.organization.organizationCode,
+  );
+  if (codeEdit) {
+    res.status(400).json({ error: "validation", fields: { organizationCode: codeEdit } });
     return;
   }
 

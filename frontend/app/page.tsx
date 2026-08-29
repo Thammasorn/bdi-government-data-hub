@@ -80,7 +80,8 @@ function OrganizationHome({
   const { user } = useSession();
   const { show } = useToast();
   const [rows, setRows] = useState<DatasetRequestListItem[] | null>(null);
-  const [orgRequests, setOrgRequests] = useState<OrganizationListItem[]>([]);
+  /** `null` = ยังไม่รู้ผล — ต่างจาก `[]` ที่แปลว่ารู้แล้วว่าไม่มีคำขอเลย */
+  const [orgRequests, setOrgRequests] = useState<OrganizationListItem[] | null>(null);
 
   useEffect(() => {
     // ดึงครั้งเดียวแล้วแบ่ง section ฝั่งหน้าเว็บ — endpoint คืนเฉพาะคำขอที่ผู้ใช้เห็นได้อยู่แล้ว
@@ -108,8 +109,23 @@ function OrganizationHome({
 
   /** คำขอลงทะเบียนหน่วยงานที่หยุดรอการลงนามของผู้ใช้คนนี้ */
   const awaitingSignature = isApprover
-    ? orgRequests.find((r) => r.currentTaskType === "ORGANIZATION_APPROVAL")
+    ? orgRequests?.find((r) => r.currentTaskType === "ORGANIZATION_APPROVAL")
     : undefined;
+
+  /**
+   * ยื่นคำขอไปแล้ว = ไม่ต้องมีปุ่ม "กรอกแบบฟอร์มลงทะเบียนหน่วยงาน" อีก
+   *
+   * หน่วยงานหนึ่งมีคำขอที่ยังไม่จบได้ใบเดียว (`POST /api/organizations` ตอบ 409 `exists`
+   * แล้วพากลับเข้าใบเดิม) แต่หน้าแรกยังโชว์ปุ่มค้างไว้ตลอดเวลาที่หน่วยงานยังไม่ ACTIVE
+   * ซึ่งอ่านได้ว่ายื่นได้อีกใบ — ผู้ใช้ที่ยื่นไปแล้วและยังไม่มีใครตอบกลับจะกดปุ่มนี้ซ้ำ
+   * โดยเข้าใจว่าครั้งก่อนไม่สำเร็จ
+   *
+   * ฉบับร่างและใบที่ถูกส่งกลับมาแก้ยังเห็นปุ่มอยู่ เพราะทั้งสองกรณีปุ่มพา "เข้าไปกรอกต่อ"
+   * ไม่ใช่ "ยื่นใบใหม่" ส่วนใบที่ถูกปฏิเสธหรือยกเลิกก็ยังเห็น เพราะ API ยอมให้เริ่มใหม่จริง
+   */
+  const registrationInReview = orgRequests?.some(
+    (r) => r.status === "SUBMITTED" || r.status === "UNDER_REVIEW",
+  );
 
   const { pending, others, awaitingMe, counts } = useMemo(() => split(rows ?? []), [rows]);
 
@@ -130,8 +146,10 @@ function OrganizationHome({
       <HomeHeader
         name={name}
         organization={organization}
-        // ผู้ลงนามไม่ใช่คนกรอกฟอร์มลงทะเบียน จึงไม่ต้องเห็นปุ่มนี้
-        onRegister={isApprover ? undefined : onRegister}
+        /* ผู้ลงนามไม่ใช่คนกรอกฟอร์มลงทะเบียน จึงไม่ต้องเห็นปุ่มนี้ และคนที่ยื่นไปแล้ว
+           ก็ไม่ต้องเห็น — `undefined` ระหว่างที่ยังโหลดรายการคำขอไม่เสร็จด้วย ไม่งั้น
+           ปุ่มจะโผล่มาแวบหนึ่งแล้วหายไปเมื่อรู้ว่ามีคำขอค้างอยู่ */
+        onRegister={isApprover || registrationInReview !== false ? undefined : onRegister}
         registering={registering}
         /* การ์ดลงนามด้านล่างบอกเรื่องเดียวกันแต่ตรงกว่าและมีปุ่มให้กด กล่องเตือน
            "หน่วยงานยังไม่เปิดใช้งาน" จึงกลายเป็นการพูดซ้ำครั้งที่สาม ต่อจาก badge */

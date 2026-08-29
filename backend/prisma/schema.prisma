@@ -353,7 +353,9 @@ model Organization {
 
   status OrganizationStatus @default(PENDING_REGISTRATION)
 
-  addressLine     String? @map("address_line") @db.VarChar(500)
+  /// เบี่ยงจากดีไซน์: กว้าง 2000 ไม่ใช่ 500
+  /// ที่อยู่ราชการเต็มรูป (ชื่ออาคาร ชั้น เลขห้อง ซอย พร้อมวงเล็บอธิบายทางเข้า) ชน 500 ได้จริง
+  addressLine     String? @map("address_line") @db.VarChar(2000)
   /// เบี่ยงจากดีไซน์: Excel มีแต่ address_line บรรทัดเดียว
   /// เอกสาร A0 แยกช่อง "ตั้งอยู่เลขที่ ___ ถนน ___" ตามแบบฟอร์มราชการ ถ้าเก็บรวมบรรทัดเดียว
   /// ช่องถนนในข้อตกลงจะว่างตลอดไป — ที่อยู่ไทยหลายแห่งไม่มีชื่อถนนจริง จึงยัง nullable
@@ -585,7 +587,8 @@ model OrganizationRegistrationRequest {
   organizationType            String? @map("organization_type") @db.VarChar(64)
   organizationNameTh          String? @map("organization_name_th") @db.VarChar(255)
   organizationNameEn          String? @map("organization_name_en") @db.VarChar(255)
-  organizationAddressLine     String? @map("organization_address_line") @db.VarChar(500)
+  /// เบี่ยงจากดีไซน์: กว้าง 2000 — คู่กับ organization.address_line ดูเหตุผลที่ตารางนั้น
+  organizationAddressLine     String? @map("organization_address_line") @db.VarChar(2000)
   /// เบี่ยงจากดีไซน์: คู่กับ organization.road — ดูเหตุผลที่ตารางนั้น
   organizationRoad            String? @map("organization_road") @db.VarChar(255)
   organizationSubdistrictCode String? @map("organization_subdistrict_code") @db.VarChar(16)
