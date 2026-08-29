@@ -504,6 +504,20 @@ it is made, so it cannot ask the API on every change. The backend re-applies the
 before every write (`normaliseMetadata`), so a stale copy is a UI bug, never a data bug.
 Change both files together, like the CI colors.
 
+`frontend/lib/organization-form.ts` is the same arrangement for Journey B's registration form,
+mirroring `submitSchema` in `backend/src/routes/organizations.ts` and the shared validators in
+`backend/src/lib/validation.ts`. It exists because the form colours each input the moment it is
+typed in — red with the reason, green with a tick — which a round trip per keystroke cannot do.
+The backend is still the decider; the copy only decides what the screen says.
+
+**The organization code is not a form field.** `organization_code` is `@unique`, comes from the
+admin (`POST /api/admin/organizations`) or `nextOrganizationCode()`, and is what A0 uses to name
+the organization — so the registration form shows it `readOnly` and `toRequestData()` does not
+map it into the snapshot at all. `POST /api/organizations` and `PATCH /api/organizations/:id`
+answer 400 when a body carries a *different* code (an equal one passes, so a stale tab still
+saves). Fixing a wrong code is `PATCH /api/admin/organizations/:id`, an admin route.
+`docs/10-admin-prefill-organization.md` §4.1 has the reasoning.
+
 Fonts are self-hosted via `next/font/local` from `frontend/public/fonts/` — no Google Fonts,
 so it works behind a firewall.
 
