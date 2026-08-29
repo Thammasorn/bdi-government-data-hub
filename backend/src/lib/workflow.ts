@@ -78,6 +78,20 @@ export const TASK_TYPE_ROLES: Record<ReviewTaskType, RoleCode[]> = {
   [ReviewTaskType.ORGANIZATION_REVISION]: ["ORGANIZATION_USER"],
 };
 
+/**
+ * ด่านที่แต่ละ role เป็นคนทำ — **คำนวณจาก TASK_TYPE_ROLES ไม่ได้เขียนซ้ำ**
+ *
+ * หน้ารายการต้องตอบว่า "ใบไหนค้างอยู่ที่ตำแหน่งของฉัน" ซึ่งเป็นคำถามกลับด้านของ
+ * "ด่านนี้ใครทำได้" ที่ตารางข้างบนตอบอยู่ ถ้าเขียนแยกกันสองที่ วันที่เพิ่มด่านใหม่
+ * ตารางหนึ่งจะรู้และอีกตารางไม่รู้ แล้วหน้าจอจะบอกคนผิดว่าไม่มีงาน
+ */
+export const ROLE_TASK_TYPES: Record<string, ReviewTaskType[]> = Object.entries(
+  TASK_TYPE_ROLES,
+).reduce<Record<string, ReviewTaskType[]>>((acc, [taskType, roles]) => {
+  for (const role of roles) (acc[role] ??= []).push(taskType as ReviewTaskType);
+  return acc;
+}, {});
+
 export class WorkflowError extends Error {
   constructor(
     readonly code: string,
@@ -88,7 +102,8 @@ export class WorkflowError extends Error {
   }
 }
 
-const ACTIVE_STATUSES: ReviewTaskStatus[] = [
+/** สถานะของ task ที่ถือว่ายัง "ค้างอยู่" — lib/queue.ts ใช้ชุดเดียวกันนี้ */
+export const ACTIVE_STATUSES: ReviewTaskStatus[] = [
   ReviewTaskStatus.PENDING,
   ReviewTaskStatus.IN_PROGRESS,
 ];
