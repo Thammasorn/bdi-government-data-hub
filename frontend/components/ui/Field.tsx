@@ -14,12 +14,41 @@ const CONTROL = [
   "placeholder:text-ink-subtle",
   "transition-[border-color,box-shadow] duration-150",
   "disabled:bg-navy-50/60 disabled:text-ink-muted",
+  // ช่องอ่านอย่างเดียวหน้าตาต้องบอกเองว่าแก้ไม่ได้ แต่ยังโฟกัสและคัดลอกค่าออกไปได้
+  // (`disabled` ทำอย่างหลังไม่ได้ — รหัสหน่วยงานเป็นค่าที่ผู้ใช้ต้องคัดลอกไปอ้างอิงจริง)
+  "read-only:bg-navy-50/60 read-only:text-ink-muted read-only:focus:border-line read-only:focus:shadow-none",
 ].join(" ");
 
-const stateRing = (invalid?: boolean) =>
-  invalid
-    ? "border-danger focus:border-danger focus:shadow-[0_0_0_3px_var(--color-danger-bg)]"
-    : "border-line focus:border-navy-500 focus:shadow-[0_0_0_3px_var(--color-navy-100)]";
+/**
+ * สีขอบตามสถานะของช่อง — ผิดเป็นแดง ถูกแล้วเป็นเขียว ยังไม่แตะเป็นสีปกติ
+ *
+ * ขอบเขียวขึ้นเฉพาะช่องที่ผู้ใช้กรอกเองและผ่านการตรวจแล้ว ไม่ใช่ทุกช่องที่ไม่มี error —
+ * ไม่งั้นฟอร์มเปล่าจะเขียวทั้งหน้าตั้งแต่ยังไม่ได้กรอกอะไร ซึ่งอ่านได้ว่า "เรียบร้อยแล้ว"
+ *
+ * สีไม่ใช่สัญญาณเดียว (docs/02-ui-spec.md): ช่องที่ผิดมีข้อความบอกวิธีแก้อยู่ใต้ช่องเสมอ
+ * และช่องที่ผ่านมีเครื่องหมายถูกกำกับ คนที่แยกสีไม่ออกจึงยังอ่านสถานะได้
+ */
+const stateRing = (invalid?: boolean, valid?: boolean) => {
+  if (invalid) return "border-danger focus:border-danger focus:shadow-[0_0_0_3px_var(--color-danger-bg)]";
+  if (valid) return "border-success focus:border-success focus:shadow-[0_0_0_3px_var(--color-success-bg)]";
+  return "border-line focus:border-navy-500 focus:shadow-[0_0_0_3px_var(--color-navy-100)]";
+};
+
+/** เครื่องหมายถูกท้ายช่องที่กรอกผ่านแล้ว — คู่กับขอบเขียว ไม่ใช่แทนกัน */
+function ValidMark() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-success"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      aria-hidden="true"
+    >
+      <path d="m3 8.5 3.2 3.2L13 5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
 interface FieldShellProps {
   label: string;
@@ -29,6 +58,9 @@ interface FieldShellProps {
   children: (id: string) => ReactNode;
   className?: string;
 }
+
+/** ช่องที่ตรวจแล้วผ่าน — ขอบเขียวและเครื่องหมายถูก ใช้คู่กับ `error` ไม่ใช่แทนกัน */
+type Validatable = { valid?: boolean };
 
 export function Field({ label, error, hint, required, children, className }: FieldShellProps) {
   const id = useId();
@@ -59,18 +91,24 @@ export function TextField({
   error,
   hint,
   required,
+  valid,
   className,
   ...rest
-}: InputHTMLAttributes<HTMLInputElement> & { label: string; error?: string; hint?: string }) {
+}: InputHTMLAttributes<HTMLInputElement> &
+  Validatable & { label: string; error?: string; hint?: string }) {
+  const showValid = Boolean(valid) && !error;
   return (
     <Field label={label} error={error} hint={hint} required={required} className={className}>
       {(id) => (
-        <input
-          {...rest}
-          id={id}
-          aria-invalid={error ? true : undefined}
-          className={clsx(CONTROL, stateRing(Boolean(error)), "h-11")}
-        />
+        <div className="relative">
+          <input
+            {...rest}
+            id={id}
+            aria-invalid={error ? true : undefined}
+            className={clsx(CONTROL, stateRing(Boolean(error), showValid), "h-11", showValid && "pr-10")}
+          />
+          {showValid ? <ValidMark /> : null}
+        </div>
       )}
     </Field>
   );
@@ -81,10 +119,12 @@ export function SelectField({
   error,
   hint,
   required,
+  valid,
   className,
   children,
   ...rest
-}: SelectHTMLAttributes<HTMLSelectElement> & { label: string; error?: string; hint?: string }) {
+}: SelectHTMLAttributes<HTMLSelectElement> &
+  Validatable & { label: string; error?: string; hint?: string }) {
   return (
     <Field label={label} error={error} hint={hint} required={required} className={className}>
       {(id) => (
@@ -93,7 +133,12 @@ export function SelectField({
             {...rest}
             id={id}
             aria-invalid={error ? true : undefined}
-            className={clsx(CONTROL, stateRing(Boolean(error)), "h-11 appearance-none pr-10")}
+            className={clsx(
+              CONTROL,
+              // ลูกศรของ select กินที่ขวาอยู่แล้ว จึงไม่เติมเครื่องหมายถูกซ้อนเข้าไปอีก
+              stateRing(Boolean(error), Boolean(valid) && !error),
+              "h-11 appearance-none pr-10",
+            )}
           >
             {children}
           </select>
@@ -118,9 +163,11 @@ export function TextAreaField({
   error,
   hint,
   required,
+  valid,
   className,
   ...rest
-}: TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string; error?: string; hint?: string }) {
+}: TextareaHTMLAttributes<HTMLTextAreaElement> &
+  Validatable & { label: string; error?: string; hint?: string }) {
   return (
     <Field label={label} error={error} hint={hint} required={required} className={className}>
       {(id) => (
@@ -128,7 +175,11 @@ export function TextAreaField({
           {...rest}
           id={id}
           aria-invalid={error ? true : undefined}
-          className={clsx(CONTROL, stateRing(Boolean(error)), "min-h-28 py-2.5 leading-relaxed")}
+          className={clsx(
+            CONTROL,
+            stateRing(Boolean(error), Boolean(valid) && !error),
+            "min-h-28 py-2.5 leading-relaxed",
+          )}
         />
       )}
     </Field>
