@@ -147,6 +147,23 @@ Journey C: the same plus an optional `DATASET_SPECIALIST_REVIEW`, and a second
 "re-check" share one `task_type`; they are told apart by whether an `ORGANIZATION_APPROVAL` has
 already completed, not by `round_number` (rounds also increment on every return).
 
+**`lib/journey-steps.ts` is the only place that declares those sequences as data.** Everything
+that shows a user "how many steps, which one now, who is next" reads it — the stepper on both
+detail pages, the progress column in both tables, the home cards, the steps block in every
+journey email, and the `REQUEST_PROGRESSED` notification text. It is a pure function over the
+rows `taskHistory()` / `activeTask()` already fetch, so no screen pays an extra query for it.
+**Change it in the same commit as `nextStageAfter()` in `dataset-requests.ts` or the if-chain in
+`organizations.ts`** — otherwise the screen promises a route the backend does not walk. It
+resolves the two officer slots with the same `ORGANIZATION_APPROVAL`-completed predicate the
+routes use, which is what makes a request returned *after* signing come back to the re-check
+step rather than to step one. A plain `task_type` order array cannot express that. `CONFIRMED`
+counts as a passing result there, not just `PASSED`/`APPROVED`: `recordComment()` closes the
+specialist task with it and opens the next stage immediately.
+
+A `RETURNED` request has no current step, because `ORGANIZATION_REVISION` is never opened as a
+task. The progress object reports `phase: "WAITING_REVISION"` and the screens say so in words;
+don't "fix" this by opening that task type.
+
 ### Audit log, notifications and the outbox
 
 `audit.audit_event` replaces `ActivityLog`. It is never shown on screen. `correlation_id` and
@@ -165,6 +182,21 @@ they are sent inline because the raw key only exists in memory at that moment.
 
 Notifications need not be real time, so the bell fetches on page load and on navigation — there
 is no polling loop, no websocket. Don't add one without a requirement.
+
+**Two audiences per transition, and they must not overlap.** The dispatchers tell the *next*
+actor what to do (`REQUEST_SUBMITTED` and friends) and `announceProgress()` in `lib/notify.ts`
+tells the *organisation side* that the request moved (`REQUEST_PROGRESSED`). Before that
+existed, the submitter heard nothing between submitting and being returned or approved, which
+read as the request having vanished. `announceProgress()` drops the org approver from its
+recipients when the new stage is theirs — they already get the direct "รอคุณลงนาม" mail, and two
+messages about the same event in the same minute bury the one with the button. It returns the
+`JourneyProgress` it computed so callers can hand it to emails they send inline instead of
+recomputing.
+
+`docs/01-user-journey.md` §4.5 item 4 requires BDI officers to be told when the organisation
+signs a dataset request; `sendDatasetPendingFinalCheck()` had been written for it but the
+dispatcher had no `ORGANIZATION_APPROVAL` branch at all, so that stage opened in silence until
+2026-08-29.
 
 ### Auth
 

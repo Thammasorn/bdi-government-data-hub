@@ -13,7 +13,14 @@
  * activation key ไม่เดินทางผ่านคิวนี้ — routes/admin.ts กับ routes/organizations.ts
  * ส่งอีเมลคำเชิญเองทันทีเพราะ raw key มีอยู่แค่ในหน่วยความจำ ณ ตอนสร้าง
  */
-import { PrismaClient, ReviewTaskType, RoleAssignmentStatus, SubjectType } from "@prisma/client";
+import {
+  PrismaClient,
+  RequestStatus,
+  ReviewTaskStatus,
+  ReviewTaskType,
+  RoleAssignmentStatus,
+  SubjectType,
+} from "@prisma/client";
 
 import {
   sendActivated,
@@ -27,9 +34,11 @@ import {
   sendDatasetRevisionRequested,
   sendDatasetSubmitted,
   sendRaw,
+  sendRequestProgressed,
   sendRoleRemoved,
 } from "../lib/mail.js";
-import { NotificationType } from "../lib/notify.js";
+import { buildJourneyProgress, type JourneyProgress } from "../lib/journey-steps.js";
+import { NotificationType, linkFor } from "../lib/notify.js";
 import { ROLE_LABELS } from "../lib/roles.js";
 import { type RoleCode } from "../lib/system.js";
 
@@ -39,6 +48,46 @@ export interface DeliverableNotification {
   message: string;
   subjectType: string | null;
   subjectId: string | null;
+}
+
+/**
+ * เส้นทางการอนุมัติของคำขอ ณ เวลาที่ส่งอีเมล
+ *
+ * อ่านสด ๆ ตอนส่ง ไม่ได้ฝากมากับคิว — ด้วยเหตุผลเดียวกับที่ทั้งไฟล์นี้มีอยู่: อีเมลที่ค้าง
+ * ในคิวข้ามคืนควรบอกสถานะที่เป็นจริงตอนถึงมือผู้รับ ไม่ใช่ตอนที่เหตุการณ์เกิด
+ */
+const TASK_FIELDS = {
+  id: true,
+  taskType: true,
+  sequenceNumber: true,
+  roundNumber: true,
+  status: true,
+  result: true,
+  completedAt: true,
+} as const;
+
+async function journeyProgress(
+  prisma: PrismaClient,
+  subjectType: SubjectType,
+  subjectId: string,
+  status: RequestStatus,
+): Promise<JourneyProgress> {
+  const [tasks, active] = await Promise.all([
+    prisma.reviewTask.findMany({
+      where: { subjectType, subjectId },
+      orderBy: { sequenceNumber: "asc" },
+      select: TASK_FIELDS,
+    }),
+    prisma.reviewTask.findFirst({
+      where: {
+        subjectType,
+        subjectId,
+        status: { in: [ReviewTaskStatus.PENDING, ReviewTaskStatus.IN_PROGRESS] },
+      },
+      select: TASK_FIELDS,
+    }),
+  ]);
+  return buildJourneyProgress({ subjectType, status, tasks, active });
 }
 
 /** ข้อมูลที่ template ของ Journey C ต้องใช้ */
@@ -56,6 +105,7 @@ async function datasetInfo(prisma: PrismaClient, subjectId: string) {
     datasetName: request.metadata?.title || request.proposedTitle || `คำขอ ${request.requestNumber}`,
     organizationName: request.organization.nameTh,
     id: request.id,
+    status: request.status,
   };
 }
 
@@ -73,6 +123,12 @@ export async function renderAndSend(
   if (n.subjectType === SubjectType.DATASET_REGISTRATION_REQUEST && n.subjectId) {
     const info = await datasetInfo(prisma, n.subjectId);
     if (info) {
+      const progress = await journeyProgress(
+        prisma,
+        SubjectType.DATASET_REGISTRATION_REQUEST,
+        n.subjectId,
+        info.status,
+      );
       switch (n.notificationType) {
         case NotificationType.REQUEST_SUBMITTED: {
           // ชนิดเดียวกันถูกใช้ทั้งตอนนำส่งและตอนส่งต่อระหว่างด่าน
@@ -86,29 +142,39 @@ export async function renderAndSend(
             select: { taskType: true },
           });
           if (active?.taskType === ReviewTaskType.ORGANIZATION_APPROVAL) {
-            await sendDatasetPendingOrgApprover(to, info);
+            await sendDatasetPendingOrgApprover(to, info, progress);
             return;
           }
           if (active?.taskType === ReviewTaskType.BDI_FINAL_APPROVAL) {
-            await sendDatasetPendingBdiApproval(to, info);
+            await sendDatasetPendingBdiApproval(to, info, progress);
             return;
           }
-          await sendDatasetSubmitted(to, { ...info, submitter: "ผู้ใช้จากหน่วยงาน" });
+          await sendDatasetSubmitted(to, { ...info, submitter: "ผู้ใช้จากหน่วยงาน" }, progress);
           return;
         }
         case NotificationType.REQUEST_RETURNED:
-          await sendDatasetRevisionRequested(to, {
-            ...info,
-            note: n.message,
-            byName: "ผู้ตรวจสอบ",
-            at: new Date(),
-          });
+          await sendDatasetRevisionRequested(
+            to,
+            { ...info, note: n.message, byName: "ผู้ตรวจสอบ", at: new Date() },
+            progress,
+          );
           return;
         case NotificationType.REQUEST_REJECTED:
-          await sendDatasetRejected(to, { ...info, reason: n.message });
+          await sendDatasetRejected(to, { ...info, reason: n.message }, progress);
           return;
         case NotificationType.REQUEST_APPROVED:
-          await sendDatasetApproved(to, info);
+          await sendDatasetApproved(to, info, progress);
+          return;
+        case NotificationType.REQUEST_PROGRESSED:
+          await sendRequestProgressed(
+            destination,
+            {
+              title: n.title,
+              message: n.message,
+              path: linkFor(n.subjectType, n.subjectId) ?? "/",
+            },
+            progress,
+          );
           return;
         default:
           break;
@@ -163,6 +229,7 @@ export async function renderAndSend(
       where: { id: n.subjectId },
       select: {
         id: true,
+        status: true,
         organizationNameTh: true,
         userFirstnameTh: true,
         userLastnameTh: true,
@@ -171,6 +238,12 @@ export async function renderAndSend(
     });
     if (request) {
       const orgName = request.organizationNameTh ?? request.organization.nameTh;
+      const progress = await journeyProgress(
+        prisma,
+        SubjectType.ORGANIZATION_REGISTRATION_REQUEST,
+        n.subjectId,
+        request.status,
+      );
       switch (n.notificationType) {
         case NotificationType.REQUEST_SUBMITTED: {
           const active = await prisma.reviewTask.findFirst({
@@ -182,7 +255,7 @@ export async function renderAndSend(
             select: { taskType: true },
           });
           if (active?.taskType === ReviewTaskType.BDI_FINAL_APPROVAL) {
-            await sendFinalApprovalRequest(to, orgName, request.id);
+            await sendFinalApprovalRequest(to, orgName, request.id, progress);
             return;
           }
           await sendSubmittedToOfficers(
@@ -190,14 +263,26 @@ export async function renderAndSend(
             orgName,
             [request.userFirstnameTh, request.userLastnameTh].filter(Boolean).join(" ") || "ผู้ใช้จากหน่วยงาน",
             request.id,
+            progress,
           );
           return;
         }
         case NotificationType.REQUEST_RETURNED:
-          await sendRevisionRequested(destination, orgName, n.message, request.id);
+          await sendRevisionRequested(destination, orgName, n.message, request.id, progress);
           return;
         case NotificationType.REQUEST_APPROVED:
-          await sendActivated(to, orgName, request.id);
+          await sendActivated(to, orgName, request.id, progress);
+          return;
+        case NotificationType.REQUEST_PROGRESSED:
+          await sendRequestProgressed(
+            destination,
+            {
+              title: n.title,
+              message: n.message,
+              path: linkFor(n.subjectType, n.subjectId) ?? "/",
+            },
+            progress,
+          );
           return;
         default:
           break;

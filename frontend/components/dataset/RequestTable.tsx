@@ -4,6 +4,7 @@ import clsx from "clsx";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
+import { ApprovalStepsCompact } from "@/components/review/ApprovalSteps";
 import { Card, DatasetStatusBadge } from "@/components/ui/Card";
 import { SkeletonRows } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
@@ -77,8 +78,8 @@ export function DatasetRequestTable({
   // คอลัมน์สถานะกว้างคงที่ ไม่ใช้ auto เพราะหัวตารางกับแถวเป็นคนละ grid
   // ถ้าใช้ auto ต่างฝ่ายต่างคิดความกว้างจากเนื้อหาตัวเอง คอลัมน์จะไม่ตรงกัน
   const columns = showOrganization
-    ? "md:grid-cols-[minmax(0,1.8fr)_minmax(0,1.3fr)_14rem_9rem]"
-    : "md:grid-cols-[minmax(0,2.4fr)_14rem_9rem]";
+    ? "md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_12rem_13rem_8rem]"
+    : "md:grid-cols-[minmax(0,2fr)_12rem_13rem_8rem]";
 
   return (
     <>
@@ -159,6 +160,7 @@ export function DatasetRequestTable({
               <span>ชุดข้อมูล</span>
               {showOrganization ? <span>หน่วยงาน</span> : null}
               <span>สถานะ</span>
+              <span>ความคืบหน้า</span>
               <span className="text-right">วันที่นำส่ง</span>
             </div>
             <ul className="divide-y divide-line">
@@ -185,7 +187,11 @@ export function DatasetRequestTable({
                       <span className="min-w-0 truncate text-sm text-ink">{row.organization.name}</span>
                     ) : null}
                     <span className="justify-self-start">
-                      <DatasetStatusBadge status={row.status} />
+                      {/* ส่ง currentTaskType ไปด้วย ไม่งั้นแถวขึ้นแค่ "นำส่งแล้ว" ทั้งที่ข้อมูลด่านมาถึงแล้ว */}
+                      <DatasetStatusBadge status={row.status} currentTaskType={row.currentTaskType} />
+                    </span>
+                    <span className="min-w-0">
+                      <ApprovalStepsCompact progress={row.progress} />
                     </span>
                     <span className="text-[13px] text-ink-muted md:text-right">
                       {row.submittedAt

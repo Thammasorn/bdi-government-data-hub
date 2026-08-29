@@ -37,6 +37,57 @@ export interface ReviewTaskEvent {
   createdAt: string;
 }
 
+/**
+ * เส้นทางการอนุมัติทั้งเส้น — คำนวณที่ backend (`backend/src/lib/journey-steps.ts`)
+ *
+ * ลอจิกลำดับด่าน **ไม่ถูกคัดลอกมาไว้ฝั่งนี้** ต่างจาก `lib/dataset-form.ts` และ
+ * `lib/organization-form.ts` ที่จงใจ copy เพราะฟอร์มต้องตอบสนองทันทีที่ผู้ใช้พิมพ์
+ * ตัวแสดงขั้นตอนไม่มีข้อบังคับนั้น จึงมีแต่ข้อเสียถ้าสำเนาหลุด sync กับ state machine
+ */
+export type StepState = "DONE" | "CURRENT" | "UPCOMING" | "REJECTED";
+
+export type JourneyPhase =
+  | "DRAFT"
+  | "IN_PROGRESS"
+  | "WAITING_REVISION"
+  | "APPROVED"
+  | "REJECTED"
+  | "CANCELLED";
+
+export interface JourneyStep {
+  key: string;
+  taskType: ReviewTaskType;
+  /** เลขที่แสดง; null สำหรับขั้นไม่บังคับ ซึ่งไม่ถูกนับใน totalSteps */
+  order: number | null;
+  optional: boolean;
+  label: string;
+  waitingLabel: string;
+  roleCode: string;
+  roleLabel: string;
+  state: StepState;
+  result: ReviewResult | null;
+  completedAt: string | null;
+  roundNumber: number | null;
+}
+
+export interface JourneyProgress {
+  steps: JourneyStep[];
+  totalSteps: number;
+  currentOrder: number | null;
+  currentStep: JourneyStep | null;
+  nextStep: JourneyStep | null;
+  phase: JourneyPhase;
+}
+
+/** ฉบับย่อสำหรับตารางและการ์ด — หน้ารายการไม่ได้รับรายการขั้นทั้งชุด */
+export interface JourneyProgressSummary {
+  totalSteps: number;
+  currentOrder: number | null;
+  currentLabel: string | null;
+  nextLabel: string | null;
+  phase: JourneyPhase;
+}
+
 export interface Organization {
   /** id ของ **คำขอจดทะเบียน** ไม่ใช่ของหน่วยงาน — ทุก path ของ `/api/organizations/:id` ใช้ตัวนี้ */
   id: string;
@@ -86,6 +137,7 @@ export interface Organization {
   } | null;
   attachments: Attachment[];
   events: ReviewTaskEvent[];
+  progress: JourneyProgress;
 }
 
 export interface OrganizationListItem {
@@ -93,6 +145,7 @@ export interface OrganizationListItem {
   name: string;
   status: RequestStatus;
   currentTaskType: ReviewTaskType | null;
+  progress: JourneyProgressSummary | null;
   submittedAt: string | null;
   createdAt: string;
   createdBy: { firstName: string | null; lastName: string | null; email: string };
@@ -218,6 +271,7 @@ export interface DatasetRequest {
   } | null;
   attachments: DatasetAttachment[];
   events: ReviewTaskEvent[];
+  progress: JourneyProgress;
 }
 
 export interface DatasetRequestListItem {
@@ -227,6 +281,7 @@ export interface DatasetRequestListItem {
   title: string | null;
   status: RequestStatus;
   currentTaskType: ReviewTaskType | null;
+  progress: JourneyProgressSummary | null;
   submittedAt: string | null;
   createdAt: string;
   /** เวลาที่แถวนี้ถูกแก้ล่าสุด — หน้าแรกแสดงคู่กับวันที่นำข้อมูลเข้ามา */
