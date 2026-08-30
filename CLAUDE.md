@@ -226,14 +226,27 @@ Filtering is single-select and the diagram is a `radiogroup`, so it carries a "�
 member that is checked when nothing else is — a radiogroup with nothing checked is a
 screen-reader dead end. The default selection is the **tab**, not a token: `scope=mine` already
 means "the union of my gates", it is decided synchronously from roles, and nothing has to wait
-on `/summary` to avoid a visible flip. Clicking a gate that is not yours switches to the ทั้งหมด
-tab, because `stage` and `scope` AND on the server and the alternative is a guaranteed-empty
-table with nothing explaining it.
+on `/summary` to avoid a visible flip.
 
-Every status badge prefers `progress.currentLabel` over `TASK_TYPE_META`, keeping the latter for
-colour. Without that, a dataset request at the re-check reads "รอเจ้าหน้าที่ BDI ตรวจสอบ" in the
-row while the node it was filtered by says "ตรวจซ้ำ" — the same drift the gate vocabulary exists
-to remove.
+**The tab sits above the diagram and controls it.** On ที่ต้องดำเนินการ only the reader's own
+gates are pressable and the rest are `disabled`, with a line saying why; on ทั้งหมด every gate
+is. That replaced an earlier rule where pressing someone else's gate silently switched tabs —
+`stage` and `scope` AND on the server, so the press had to go somewhere, and a greyed box that
+explains itself beats a tab that moves under you. Returning to your own tab drops a selection
+that is no longer reachable, or the reader is left holding a filter they cannot clear.
+
+Every status badge shows the same **short** name as the node (`progress.currentShortLabel`) with
+the long `waitingLabel` on hover, keeping `TASK_TYPE_META` for colour. The short name is what
+stops the badge — `whitespace-nowrap` in a 12rem column — from painting over the progress
+column beside it, and without the node's own wording a dataset request at the re-check reads
+"รอเจ้าหน้าที่ BDI ตรวจสอบ" in the row while the node it was filtered by says "ตรวจซ้ำ".
+
+The connectors are CSS, not SVG, and they stay anchored without measuring anything only because
+every node shares a `min-h-[4.5rem]`: a row's centre is then always `2.25rem` from its edge.
+Two routes are deliberately not straight — the resubmit line runs in the 2rem column gutter
+rather than down the middle of the `ฉบับร่าง` column, and a gate whose column also carries the
+optional specialist leaves through the gutter on its right. Both would otherwise draw a line
+straight through a box. `assets/status_filtering_ui/mock-to.png` is the drawing this matches.
 
 Counts live in `GET /summary` rather than in the list response because their scope is the one
 that must **not** move when a node is pressed or a page turned — visibility plus the search box,
