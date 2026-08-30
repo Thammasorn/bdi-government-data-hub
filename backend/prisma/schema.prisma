@@ -510,7 +510,8 @@ model ReviewTask {
   /// ลำดับของ action ภายในคำขอ
   sequenceNumber Int            @map("sequence_number")
   /// รอบการดำเนินการของ task_type เดียวกัน เริ่มต้นที่ 1
-  /// ด่าน "BDI Officer ตรวจซ้ำ" เดิม = BDI_OFFICER_REVIEW round 2 + result CONFIRMED
+  /// เพิ่มขึ้นเมื่อคำขอถูกส่งกลับให้แก้ไข และเมื่อมอบหมาย/ถอนผู้เชี่ยวชาญ — ไม่ได้แปลว่า
+  /// เป็นคนละด่าน (ด่านตรวจซ้ำที่เคยใช้ round 2 ถูกยกเลิกเมื่อ 2026-08-30)
   roundNumber    Int            @default(1) @map("round_number")
 
   assignedUserId String      @map("assigned_user_id") @db.Uuid

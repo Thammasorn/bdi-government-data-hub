@@ -10,10 +10,12 @@
  *
  * ลำดับด่านใน review.review_task:
  *   BDI_OFFICER_REVIEW → [DATASET_SPECIALIST_REVIEW] → BDI_OFFICER_REVIEW
- *   → ORGANIZATION_APPROVAL → BDI_OFFICER_REVIEW (ตรวจซ้ำ) → BDI_FINAL_APPROVAL
+ *   → ORGANIZATION_APPROVAL → BDI_FINAL_APPROVAL
  *
- * ด่าน "ตรวจซ้ำ" ไม่มี task_type ของตัวเองในดีไซน์ — ใช้ BDI_OFFICER_REVIEW รอบถัดไป
- * แล้วดูจากประวัติว่า ORGANIZATION_APPROVAL ผ่านไปแล้วหรือยัง (nextStageAfter())
+ * ด่าน "ตรวจซ้ำ" ของเจ้าหน้าที่ BDI ที่เคยคั่นระหว่างการลงนามกับการอนุมัติถูกยกเลิกเมื่อ
+ * 2026-08-30 — ลงนามแล้วส่งให้ผู้อนุมัติ BDI ทันที ด่านเจ้าหน้าที่จึงมีรอบเดียวเหมือน
+ * เส้นทางหน่วยงาน (BDI_OFFICER_REVIEW ยังเปิดซ้ำได้จากการมอบหมายผู้เชี่ยวชาญและการส่งกลับ
+ * แต่มันคือด่านเดิม ไม่ใช่ด่านที่สอง)
  */
 import { Router } from "../lib/async-route.js";
 import multer from "multer";
@@ -67,7 +69,7 @@ import {
   sendDatasetSubmitted,
   sendDatasetPendingBdiApproval,
   sendDatasetPendingOrgApprover,
-  sendDatasetPendingFinalCheck,
+  sendDatasetSignedPendingApproval,
   sendDatasetSpecialistAssigned,
 } from "../lib/mail.js";
 import {
@@ -394,8 +396,8 @@ datasetRequestRouter.get("/", async (req, res) => {
   ]);
 
   /**
-   * ประวัติทั้งหมด ไม่ใช่เฉพาะแถวที่ยัง active — คอลัมน์ความคืบหน้าต้องรู้ว่าผ่านมาแล้วกี่ด่าน
-   * และการแยก "ตรวจเบื้องต้น" กับ "ตรวจซ้ำ" อ่านไม่ได้จากแถวที่ค้างอยู่แถวเดียว
+   * ประวัติทั้งหมด ไม่ใช่เฉพาะแถวที่ยัง active — คอลัมน์ความคืบหน้าต้องบอกได้ว่าแต่ละขั้น
+   * ผ่านไปแล้วหรือยัง ซึ่งอ่านจากแถวที่ค้างอยู่แถวเดียวไม่ได้
    *
    * คิวรีนี้กับอีกสองอันข้างล่างคีย์ด้วย id ของหน้าปัจจุบัน จึงเล็กลงตาม pageSize เอง
    */
@@ -1326,8 +1328,8 @@ const reviewSchema = z.object({
 /**
  * ด่านที่การอนุมัติคือการลงนามบนเอกสาร
  *
- * ด่านผู้เชี่ยวชาญข้อมูลและด่านตรวจซ้ำของเจ้าหน้าที่ BDI ไม่อยู่ในนี้โดยตั้งใจ —
- * ทั้งสองอ่านเอกสารได้แต่ไม่ลงนาม ตามที่การ์ดกำหนด (ตัดสินไว้ 2026-08-20)
+ * ด่านผู้เชี่ยวชาญข้อมูลไม่อยู่ในนี้โดยตั้งใจ — อ่านเอกสารได้แต่ไม่ลงนาม
+ * ตามที่การ์ดกำหนด (ตัดสินไว้ 2026-08-20)
  */
 const SIGNING_TASKS: Partial<Record<ReviewTaskType, ConfirmationType>> = {
   [ReviewTaskType.ORGANIZATION_APPROVAL]: ConfirmationType.ORGANIZATION_APPROVAL,
@@ -1612,9 +1614,9 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
 /**
  * ด่านถัดไปหลังปิด task หนึ่ง
  *
- * BDI_OFFICER_REVIEW มีสองความหมายในเส้นทางนี้ ("ตรวจเบื้องต้น" กับ "ตรวจซ้ำ")
- * แยกจากกันด้วยว่ามี ORGANIZATION_APPROVAL ที่ปิดแล้วหรือยัง ไม่ใช่ด้วย round_number
- * เพราะรอบเพิ่มขึ้นทุกครั้งที่ส่งกลับให้แก้ไขหรือมอบหมายผู้เชี่ยวชาญด้วย
+ * ลำดับเป็นเส้นตรงตั้งแต่ด่านตรวจซ้ำถูกยกเลิก — ไม่ต้องอ่านประวัติเพื่อตัดสินอะไรอีก
+ * ผลที่ตามมาซึ่งตั้งใจให้เป็นแบบนี้: ใบที่ถูกส่งกลับ **หลัง** หน่วยงานลงนามไปแล้ว เมื่อ
+ * นำส่งใหม่จะเดินผ่านการลงนามอีกครั้ง เพราะเนื้อหาที่ผู้มีอำนาจลงนามไว้ไม่ใช่ฉบับนี้แล้ว
  */
 async function nextStageAfter(
   tx: Prisma.TransactionClient,
@@ -1622,15 +1624,6 @@ async function nextStageAfter(
   completed: ReviewTaskType,
   actorId: string,
 ) {
-  const orgApproved = await tx.reviewTask.count({
-    where: {
-      subjectType: SUBJECT,
-      subjectId: request.id,
-      taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
-      result: ReviewResult.APPROVED,
-    },
-  });
-
   const open = async (taskType: ReviewTaskType, roleCode: RoleCode, orgScope?: string | null) => {
     // ไม่ระบุ orgScope = ด่านฝั่ง BDI ซึ่งอยู่ในหน่วยงาน BDI
     const assignee = await pickAssignee(roleCode, orgScope ?? BDI_ORGANIZATION_ID);
@@ -1659,20 +1652,16 @@ async function nextStageAfter(
       return;
 
     case ReviewTaskType.BDI_OFFICER_REVIEW:
-      if (orgApproved === 0) {
-        await open(
-          ReviewTaskType.ORGANIZATION_APPROVAL,
-          ROLE_CODES.ORGANIZATION_APPROVER,
-          request.organizationId,
-        );
-      } else {
-        // §4.5 ข้อ 4 — ตรวจซ้ำผ่านแล้ว ส่งให้ผู้อนุมัติ BDI
-        await open(ReviewTaskType.BDI_FINAL_APPROVAL, ROLE_CODES.BDI_FINAL_APPROVER);
-      }
+      await open(
+        ReviewTaskType.ORGANIZATION_APPROVAL,
+        ROLE_CODES.ORGANIZATION_APPROVER,
+        request.organizationId,
+      );
       return;
 
     case ReviewTaskType.ORGANIZATION_APPROVAL:
-      await open(ReviewTaskType.BDI_OFFICER_REVIEW, ROLE_CODES.BDI_OFFICER);
+      // §4.5 — ลงนามแล้วส่งให้ผู้อนุมัติ BDI ทันที ไม่มีด่านตรวจซ้ำคั่นอีกต่อไป
+      await open(ReviewTaskType.BDI_FINAL_APPROVAL, ROLE_CODES.BDI_FINAL_APPROVER);
       return;
 
     case ReviewTaskType.BDI_FINAL_APPROVAL:
@@ -1814,59 +1803,38 @@ async function dispatchDatasetNotifications(
   }
 
   if (taskType === ReviewTaskType.BDI_OFFICER_REVIEW) {
-    const orgApproved = await prisma.reviewTask.count({
-      where: {
-        subjectType: SUBJECT,
-        subjectId: request.id,
-        taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
-        result: ReviewResult.APPROVED,
-      },
-    });
-    if (orgApproved === 0) {
-      await notifyUsers(members.approvers, {
-        type: NotificationType.REQUEST_SUBMITTED,
-        title: `คำขอ ${request.requestNumber} รอคุณลงนาม`,
-        message: info.datasetName,
-        subjectType: SUBJECT,
-        subjectId: request.id,
-        organizationId: request.organizationId,
-      });
-    } else {
-      await notifyUsers(await bdiApproverIds(), {
-        type: NotificationType.REQUEST_SUBMITTED,
-        title: `คำขอ ${request.requestNumber} รออนุมัติขั้นสุดท้าย`,
-        message: info.datasetName,
-        subjectType: SUBJECT,
-        subjectId: request.id,
-        organizationId: request.organizationId,
-      });
-    }
-    return;
-  }
-
-  /**
-   * หน่วยงานลงนามแล้ว → ด่านตรวจซ้ำเปิดขึ้น แต่ไม่มีใครบอกเจ้าหน้าที่ BDI
-   *
-   * `docs/01-user-journey.md` §4.5 ข้อ 3 กับอีเมลฉบับที่ 12 ในตาราง §4.8 กำหนดไว้ว่า
-   * ต้องแจ้ง BDI Officer ทุกคน และ `sendDatasetPendingFinalCheck()` ก็เขียนรออยู่ตั้งแต่ต้น
-   * แต่ dispatcher ไม่เคยมีสาขาของ ORGANIZATION_APPROVAL เลย งานที่ค้างอยู่จึงเงียบสนิท
-   * จนกว่าจะมีคนเปิดตารางไปเจอเอง
-   */
-  if (taskType === ReviewTaskType.ORGANIZATION_APPROVAL && result === ReviewResult.APPROVED) {
-    const officers = await bdiOfficerIds();
-    await notifyUsers(officers, {
+    await notifyUsers(members.approvers, {
       type: NotificationType.REQUEST_SUBMITTED,
-      title: `คำขอ ${request.requestNumber} รอตรวจสอบขั้นสุดท้าย`,
+      title: `คำขอ ${request.requestNumber} รอคุณลงนาม`,
       message: info.datasetName,
       subjectType: SUBJECT,
       subjectId: request.id,
       organizationId: request.organizationId,
-      // อีเมลของด่านนี้ต้องบอกชื่อผู้ลงนาม ซึ่ง template กลางของ worker ไม่รู้จัก
+    });
+    return;
+  }
+
+  /**
+   * หน่วยงานลงนามแล้ว → ด่านอนุมัติของ BDI เปิดขึ้นทันที
+   *
+   * ผู้รับคือ **ผู้อนุมัติ BDI** ไม่ใช่เจ้าหน้าที่ — เดิมด่านนี้ส่งต่อไปให้เจ้าหน้าที่ตรวจซ้ำ
+   * ก่อน ซึ่งถูกยกเลิกไปแล้ว อีเมลจึงถูกส่งอินไลน์เหมือนเดิมเพราะเป็นฉบับเดียวที่บอก
+   * **ชื่อผู้ลงนาม** ได้ ซึ่ง template กลางของ worker ไม่รู้จัก
+   */
+  if (taskType === ReviewTaskType.ORGANIZATION_APPROVAL && result === ReviewResult.APPROVED) {
+    const approvers = await bdiApproverIds();
+    await notifyUsers(approvers, {
+      type: NotificationType.REQUEST_SUBMITTED,
+      title: `คำขอ ${request.requestNumber} รออนุมัติขั้นสุดท้าย`,
+      message: info.datasetName,
+      subjectType: SUBJECT,
+      subjectId: request.id,
+      organizationId: request.organizationId,
       email: false,
     });
-    const emails = await emailsOf(officers);
+    const emails = await emailsOf(approvers);
     if (emails.length > 0) {
-      await sendDatasetPendingFinalCheck(emails, { ...info, signedBy: actorName }, progress);
+      await sendDatasetSignedPendingApproval(emails, { ...info, signedBy: actorName }, progress);
     }
     return;
   }

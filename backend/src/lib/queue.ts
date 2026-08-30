@@ -6,10 +6,9 @@
  * รอบก่อนตัวกรองย้ายจาก `status` มาเป็น `task_type` เพราะ `SUBMITTED` แปลว่า "มีด่าน
  * ค้างอยู่และยังไม่มีใครกดเปิด" ไม่ว่าด่านไหน เม็ดเดียวจึงกวาดสามด่านมารวมกัน
  *
- * `task_type` ยังกวาดไม่พอ: `BDI_OFFICER_REVIEW` เป็น **สองด่านคนละด่าน** ในเส้นทาง
- * ชุดข้อมูล — ตรวจเบื้องต้น กับ ตรวจซ้ำหลังหน่วยงานลงนาม โทเคนจึงเลื่อนอีกขั้นไปเป็น
- * `StepKey` ของ `journey-steps.ts` ซึ่งแยกสองช่องนั้นไว้อยู่แล้ว บวกปลายทางที่ไม่มี
- * task (`DRAFT` · `RETURNED` · `APPROVED` · `REJECTED` · `CANCELLED`)
+ * โทเคนจึงเลื่อนอีกขั้นไปเป็น `StepKey` ของ `journey-steps.ts` ซึ่งเป็นช่องของเส้นทาง
+ * บวกปลายทางที่ไม่มี task (`DRAFT` · `RETURNED` · `APPROVED` · `REJECTED` · `CANCELLED`)
+ * — เม็ดหนึ่งจึงหมายถึงที่เดียวเสมอ ไม่ว่าเส้นทางไหน
  *
  * ผลพลอยได้คือหนึ่งโทเคน = หนึ่งโหนดบนแผนภาพเส้นทางพอดี
  *
@@ -28,14 +27,12 @@ import {
   Prisma,
   PrismaClient,
   RequestStatus,
-  ReviewResult,
   ReviewTaskType,
   SubjectType,
 } from "@prisma/client";
 
 import {
   currentSlotOf,
-  hasRecheckStep,
   journeyGraph,
   journeyNodeKeys,
   journeyUnit,
@@ -66,17 +63,28 @@ const isTerminalKey = (t: string): t is TerminalKey =>
   (TERMINAL_KEYS as readonly string[]).includes(t);
 
 /**
- * โทเคนที่ API ยอมรับ = คำศัพท์ปัจจุบัน + คำศัพท์เก่าอีกสองรุ่น
+ * โทเคนที่ API ยอมรับ = คำศัพท์ปัจจุบัน + คำศัพท์เก่าอีกสามรุ่น
  *
  * รุ่นที่หนึ่ง `?status=SUBMITTED,UNDER_REVIEW` — จากตอนที่ยังกรองด้วยสถานะ
  * รุ่นที่สอง `?stage=BDI_OFFICER_REVIEW` — เม็ดกรองด่านรุ่นแรก ซึ่ง **หน้าแรกยังยิงอยู่
  * วันนี้** และมีทั้งใน bookmark และ Postman collection
+ * รุ่นที่สาม `?stage=OFFICER_INITIAL` / `OFFICER_RECHECK` — ชื่อช่องสมัยที่เส้นทางชุดข้อมูล
+ * ยังแยกด่านเจ้าหน้าที่เป็นสองรอบ (ยกเลิกเมื่อ 2026-08-30)
  *
- * ทั้งสองรุ่นถูกแปลตอน `resolveTokens()` ไม่ใช่ตอน parse เพราะการแปลขึ้นกับ subjectType:
- * `BDI_OFFICER_REVIEW` เป็นหนึ่งช่องในเส้นทางหน่วยงาน แต่เป็นสองช่องในเส้นทางชุดข้อมูล
+ * ทั้งสามรุ่นถูกแปลตอน `resolveTokens()` ไม่ใช่ตอน parse เพราะการแปลขึ้นกับ subjectType
+ *
+ * **ต้องรับต่อไป ไม่ใช่ปล่อยให้ตกไป** — `parseFilterTokens()` ทิ้งโทเคนที่ไม่รู้จักแบบเงียบ ๆ
+ * โดยตั้งใจ ลิงก์เก่าที่หลุดจากรายชื่อนี้จึงคืน "รายการทั้งหมดที่ไม่ถูกกรอง" ไม่ใช่ error
+ * ซึ่งอ่านไม่ออกว่าผิด
  */
 type LegacyToken = "SUBMITTED" | "UNDER_REVIEW" | ReviewTaskType;
-export type FilterToken = JourneyNodeKey | LegacyToken;
+export type FilterToken = JourneyNodeKey | LegacyToken | keyof typeof LEGACY_NODE_KEYS;
+
+/** ชื่อช่องที่เลิกใช้แล้ว → ช่องที่รับความหมายนั้นต่อ */
+const LEGACY_NODE_KEYS = {
+  OFFICER_INITIAL: "OFFICER_REVIEW",
+  OFFICER_RECHECK: "OFFICER_REVIEW",
+} as const satisfies Record<string, StepKey>;
 
 const ACCEPTED: string[] = [
   ...new Set([
@@ -85,6 +93,7 @@ const ACCEPTED: string[] = [
     ...TERMINAL_KEYS,
     "SUBMITTED",
     "UNDER_REVIEW",
+    ...Object.keys(LEGACY_NODE_KEYS),
     ...Object.values(ReviewTaskType),
   ]),
 ];
@@ -101,9 +110,12 @@ export function parseFilterTokens(raw?: string | string[]): FilterToken[] {
 /**
  * โทเคนที่รับมา → ช่องของเส้นทางนี้ + สถานะที่กรองตรง ๆ ได้
  *
- * `BDI_OFFICER_REVIEW` จากลิงก์เก่าแปลว่า "ค้างอยู่ที่ด่านตรวจของเจ้าหน้าที่" ซึ่งใน
- * เส้นทางชุดข้อมูลคือสองช่อง — แปลเป็น **ทั้งสอง** ไม่ใช่เลือกข้าง ความหมายเดิมเป็น
- * union อยู่แล้ว
+ * โทเคนที่เป็น `task_type` แปลเป็นทุกช่องของเส้นทางนี้ที่ใช้ task_type นั้น — วันนี้เหลือ
+ * ช่องเดียวเสมอ แต่รูปแบบ union ยังถูกต้องอยู่ ไม่ต้องรื้อ
+ *
+ * ชื่อช่องที่เลิกใช้แล้วถูกแปลก่อนทุกอย่าง และมีความหมายเดียวกับ `?stage=BDI_OFFICER_REVIEW`
+ * คือ "ค้างอยู่ที่ด่านตรวจของเจ้าหน้าที่" จึงแปลได้ทั้งสองเส้นทาง ถ้าเส้นทางนั้นไม่มีช่อง
+ * ปลายทาง โทเคนจะถูกทิ้ง ไม่ตกไปเป็นสถานะที่ไม่มีอยู่จริง
  */
 export function resolveTokens(
   subjectType: SubjectType,
@@ -114,12 +126,15 @@ export function resolveTokens(
   const statuses = new Set<RequestStatus>();
 
   for (const token of tokens) {
-    const step = plan.find((s) => s.key === token);
+    const legacy: StepKey | undefined = LEGACY_NODE_KEYS[token as keyof typeof LEGACY_NODE_KEYS];
+    const key: string = legacy ?? token;
+    const step = plan.find((s) => s.key === key);
     if (step) {
       nodes.add(step.key);
-    } else if (Object.values(ReviewTaskType).includes(token as ReviewTaskType)) {
-      for (const s of plan.filter((s) => s.taskType === token)) nodes.add(s.key);
-    } else {
+    } else if (Object.values(ReviewTaskType).includes(key as ReviewTaskType)) {
+      for (const s of plan.filter((s) => s.taskType === key)) nodes.add(s.key);
+    } else if (!legacy) {
+      // ชื่อช่องที่เลิกใช้แล้วและช่องปลายทางไม่มีในเส้นทางนี้ — ทิ้ง ไม่ใช่ตีเป็นสถานะ
       statuses.add(token as RequestStatus);
     }
   }
@@ -133,8 +148,6 @@ export function resolveTokens(
  * ถือ role ตรงกับด่านกดปิดด่านได้ (`assigned_user_id` เป็นแค่การกระจายโหลดแบบ
  * round-robin) กรองด้วย assignedUserId จะซ่อนงานที่เขาทำได้จริง
  *
- * เจ้าหน้าที่ BDI จึงเป็นเจ้าของ **สองช่อง** ในเส้นทางชุดข้อมูล และผลรวมของสองช่องนั้น
- * เท่ากับจำนวน `BDI_OFFICER_REVIEW` ก้อนเดียวของเดิมพอดี
  */
 export function myNodeKeys(subjectType: SubjectType, roles: RoleCode[]): JourneyNodeKey[] {
   const plan = planFor(subjectType);
@@ -157,35 +170,6 @@ export function myNodeKeys(subjectType: SubjectType, roles: RoleCode[]): Journey
 }
 
 /**
- * ใบไหนที่หน่วยงานลงนามผ่านไปแล้ว — ตัวชี้ขาดระหว่างด่านตรวจเบื้องต้นกับด่านตรวจซ้ำ
- *
- * ถามเฉพาะใบที่ค้างอยู่ที่ด่านเจ้าหน้าที่ ด่านอื่นไม่ได้ใช้คำตอบนี้ และเส้นทางที่ไม่มี
- * ด่านตรวจซ้ำก็ไม่ต้องถามเลย — คิวรีนี้จึงไม่เกิดขึ้นบนเส้นทางหน่วยงาน
- */
-async function signedSubjects(
-  db: Db,
-  subjectType: SubjectType,
-  active: { subjectId: string; taskType: ReviewTaskType }[],
-): Promise<Set<string>> {
-  if (!hasRecheckStep(subjectType)) return new Set();
-  const officer = active
-    .filter((r) => r.taskType === ReviewTaskType.BDI_OFFICER_REVIEW)
-    .map((r) => r.subjectId);
-  if (officer.length === 0) return new Set();
-
-  const rows = await db.reviewTask.findMany({
-    where: {
-      subjectType,
-      subjectId: { in: officer },
-      taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
-      result: ReviewResult.APPROVED,
-    },
-    select: { subjectId: true },
-  });
-  return new Set(rows.map((r) => r.subjectId));
-}
-
-/**
  * id ของคำขอที่ค้างอยู่ที่ช่องเหล่านี้
  *
  * review_task ผูกกับคำขอแบบ logical (subject_type + subject_id ไม่ใช่ relation ของ
@@ -195,7 +179,7 @@ async function signedSubjects(
  * ไม่ใช่จำนวนคำขอทั้งหมด
  *
  * **ถ้าวันหนึ่งคืนเกินราว 20,000 id** ค่อยย้ายไป raw EXISTS sub-select — ตรงนั้นคือจุด
- * ที่ค่าขนส่ง array แพงกว่าการ join การแยกสองช่องไม่ได้ขยับเพดานนี้
+ * ที่ค่าขนส่ง array แพงกว่าการ join
  */
 export async function requestIdsAtStage(
   db: Db,
@@ -217,18 +201,13 @@ export async function requestIdsAtStage(
     where: { subjectType, status: { in: ACTIVE_STATUSES }, taskType: { in: taskTypes } },
     select: { subjectId: true, taskType: true },
   });
-  const signed = await signedSubjects(db, subjectType, active);
   const want = new Set<StepKey>(nodes);
 
   return [
     ...new Set(
       active
         .filter((r) => {
-          const key = currentSlotOf({
-            subjectType,
-            taskType: r.taskType,
-            orgApproved: signed.has(r.subjectId) ? 1 : 0,
-          });
+          const key = currentSlotOf({ subjectType, taskType: r.taskType });
           return key !== null && want.has(key);
         })
         .map((r) => r.subjectId),
@@ -246,8 +225,7 @@ type NodeClause = {
  *
  * คืน null เมื่อไม่มีโทเคนเลย ผู้เรียกจึงไม่ push อะไรเข้า AND — **ห้ามข้าม clause
  * เมื่อ id list ว่าง** เพราะ `{ id: { in: [] } }` แปลว่า "ไม่มีอะไรตรง" ซึ่งถูก
- * ส่วนการข้ามแปลว่า "ไม่กรอง" ซึ่งโชว์ทุกอย่าง (มีสองจุดที่เผลอ return ก่อนได้ตอนนี้:
- * ที่นี่ และใน signedSubjects)
+ * ส่วนการข้ามแปลว่า "ไม่กรอง" ซึ่งโชว์ทุกอย่าง
  */
 export async function nodeWhere(
   db: Db,
@@ -318,16 +296,11 @@ export async function journeySummary(params: {
       },
       select: { subjectId: true, taskType: true },
     });
-    const signed = await signedSubjects(params.db, params.subjectType, active);
 
     // นับทีละแถวได้เพราะหนึ่งคำขอมี active task ได้ไม่เกินหนึ่ง (partial unique index)
     // ถ้าวันหนึ่ง index นั้นหาย ตัวเลขจะเกิน total ซึ่งเห็นทันที ไม่ใช่ผิดเงียบ
     for (const row of active) {
-      const key = currentSlotOf({
-        subjectType: params.subjectType,
-        taskType: row.taskType,
-        orgApproved: signed.has(row.subjectId) ? 1 : 0,
-      });
+      const key = currentSlotOf({ subjectType: params.subjectType, taskType: row.taskType });
       if (key) counts.set(key, (counts.get(key) ?? 0) + 1);
     }
   }

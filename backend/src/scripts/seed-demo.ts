@@ -596,13 +596,6 @@ async function main() {
     result?: ReviewResult;
     daysAgo: number;
     specialist?: boolean;
-    /**
-     * ค้างที่ BDI_OFFICER_REVIEW **รอบสอง** คือด่านตรวจซ้ำหลังผู้มีอำนาจลงนามแล้ว
-     *
-     * ด่านตรวจรอบแรกกับด่านตรวจซ้ำใช้ task_type เดียวกัน ต่างกันตรงที่มี
-     * ORGANIZATION_APPROVAL ปิดไปแล้วหรือยัง — ธงนี้บอกให้ seed เดินไปทางนั้น
-     */
-    recheck?: boolean;
     /** ทับค่า metadata ตั้งต้น เพื่อให้ตัวอย่างครอบคลุมหลายกิ่งของชีท conditions */
     metadata?: Partial<MetadataValues>;
   }
@@ -701,8 +694,7 @@ async function main() {
     },
     {
       title: "ทะเบียนโครงการวิจัยที่ได้รับทุนภาครัฐ",
-      stage: ReviewTaskType.BDI_OFFICER_REVIEW,
-      recheck: true,
+      stage: ReviewTaskType.BDI_FINAL_APPROVAL,
       daysAgo: 22,
     },
   ];
@@ -767,7 +759,7 @@ async function main() {
         comment: "กรุณาระบุฐานอำนาจตามกฎหมายและแนบตัวอย่างข้อมูลเพิ่มเติม",
         at: t(2),
       });
-    } else if (spec.stage === ReviewTaskType.BDI_OFFICER_REVIEW && !spec.recheck) {
+    } else if (spec.stage === ReviewTaskType.BDI_OFFICER_REVIEW) {
       await openTaskRow({
         subjectType: DS_SUBJECT,
         subjectId: request.id,
@@ -836,32 +828,6 @@ async function main() {
             createdBy: nso.approverId,
           },
         });
-
-        // ตรวจซ้ำโดย officer — BDI_OFFICER_REVIEW รอบที่สอง
-        if (spec.recheck) {
-          await openTaskRow({
-            subjectType: DS_SUBJECT,
-            subjectId: request.id,
-            taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
-            sequenceNumber: seq++,
-            roundNumber: 2,
-            assignedUserId: officer.id,
-            assignedRole: ROLE_CODES.BDI_OFFICER,
-            at: t(4),
-          });
-        } else if (spec.stage === ReviewTaskType.BDI_FINAL_APPROVAL || spec.result) {
-          await closedTask({
-            subjectType: DS_SUBJECT,
-            subjectId: request.id,
-            taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
-            sequenceNumber: seq++,
-            roundNumber: 2,
-            assignedUserId: officer.id,
-            assignedRole: ROLE_CODES.BDI_OFFICER,
-            result: ReviewResult.CONFIRMED,
-            at: t(4),
-          });
-        }
 
         if (spec.stage === ReviewTaskType.BDI_FINAL_APPROVAL) {
           await openTaskRow({
