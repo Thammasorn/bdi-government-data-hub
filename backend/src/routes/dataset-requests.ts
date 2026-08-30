@@ -99,12 +99,12 @@ import {
 import { formatZodError, isUuid, parseRequestSnapshot } from "../lib/validation.js";
 import {
   listOrderBy,
-  myStageTokens,
+  myNodeKeys,
   parseFilterTokens,
   parsePaging,
   parseSort,
-  stageCounts,
-  stageWhere,
+  journeySummary,
+  nodeWhere,
 } from "../lib/queue.js";
 import {
   TASK_TYPE_ROLES,
@@ -369,12 +369,12 @@ datasetRequestRouter.get("/", async (req, res) => {
    * กดเม็ดกรองใหม่ก็ไม่ได้ผลลัพธ์ศูนย์แถวจากเงื่อนไขที่ขัดกันเอง
    */
   const tokens = [...parseFilterTokens(status), ...parseFilterTokens(stage)];
-  const stageClause = await stageWhere(prisma, SUBJECT, [...new Set(tokens)]);
+  const stageClause = await nodeWhere(prisma, SUBJECT, [...new Set(tokens)]);
   if (stageClause) and.push(stageClause);
 
   // แท็บ "ที่ต้องดำเนินการ" — ด่านที่ตำแหน่งของผู้เรียกเป็นคนทำ
   if (scope === "mine") {
-    const mine = await stageWhere(prisma, SUBJECT, myStageTokens(session.roles));
+    const mine = await nodeWhere(prisma, SUBJECT, myNodeKeys(SUBJECT, session.roles));
     // ไม่มีด่านเป็นของตัวเองเลย (เช่น ผู้ดูแลระบบ) = คิวว่าง ไม่ใช่ "ไม่กรอง"
     and.push(mine ?? { id: { in: [] } });
   }
@@ -489,7 +489,7 @@ datasetRequestRouter.get("/summary", async (req, res) => {
     AND: await baseFilters(session, q),
   };
 
-  const counts = await stageCounts({
+  const counts = await journeySummary({
     db: prisma,
     subjectType: SUBJECT,
     roles: session.roles,
