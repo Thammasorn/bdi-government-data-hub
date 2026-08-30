@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 import { ApprovalStepsCompact } from "@/components/review/ApprovalSteps";
 import { Card, DatasetStatusBadge } from "@/components/ui/Card";
 import { api } from "@/lib/api";
-import { datasetPendingOwner, formatThaiDate, isPendingDatasetStatus } from "@/lib/status";
+import { datasetPendingOwner, daysSince, formatThaiDate, isPendingDatasetStatus } from "@/lib/status";
 import { datasetTitle, type DatasetRequestListItem } from "@/lib/types";
 
 /**
@@ -164,6 +164,3 @@ function DatasetRow({ row }: { row: DatasetRequestListItem }) {
 }
 
 /** จำนวนวันเต็มนับจากเวลาที่ให้มาถึงตอนนี้ */
-function daysSince(iso: string): number {
-  return Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
-}

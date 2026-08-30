@@ -5,9 +5,10 @@ import { useRouter } from "next/navigation";
 import { ListSearch } from "@/components/list/ListSearch";
 import { JourneyFlow } from "@/components/list/JourneyFlow";
 import { Pagination } from "@/components/list/Pagination";
+import { RowDetailCard, useRowDetail } from "@/components/list/RowDetailCard";
 import { QueueTabs } from "@/components/list/QueueTabs";
 import { SortSelect } from "@/components/list/SortSelect";
-import { ApprovalStepsCompact } from "@/components/review/ApprovalSteps";
+import { StepDots } from "@/components/review/ApprovalSteps";
 import { useSession } from "@/components/SessionProvider";
 import { Card, StatusBadge } from "@/components/ui/Card";
 import { SkeletonRows } from "@/components/ui/Spinner";
@@ -24,6 +25,7 @@ import { useRequestList } from "@/lib/use-request-list";
 export function OrganizationRequestTable({ basePath }: { basePath: string }) {
   const router = useRouter();
   const { user } = useSession();
+  const { detail, setDetail } = useRowDetail();
   const list = useRequestList<OrganizationListItem>({
     endpoint: "/api/organizations",
     itemsKey: "organizations",
@@ -76,11 +78,10 @@ export function OrganizationRequestTable({ basePath }: { basePath: string }) {
           <>
             {/* คอลัมน์สถานะต้องกว้างคงที่ ไม่ใช่ auto — หัวตารางกับแถวเป็นคนละ grid
                 ถ้าใช้ auto ความกว้างจะคิดจากเนื้อหาของแต่ละอันแยกกัน แล้วคอลัมน์จะเหลื่อม */}
-            <div className="hidden grid-cols-[minmax(0,1.7fr)_minmax(0,1.3fr)_12rem_13rem_8rem] gap-4 border-b border-line px-6 py-3 text-[12px] font-semibold uppercase tracking-wide text-ink-subtle md:grid">
+            <div className="hidden grid-cols-[minmax(0,1.7fr)_minmax(0,1.3fr)_16rem_8rem] gap-4 border-b border-line px-6 py-3 text-[12px] font-semibold uppercase tracking-wide text-ink-subtle md:grid">
               <span>ชื่อหน่วยงาน</span>
               <span>ผู้สร้าง</span>
               <span>สถานะ</span>
-              <span>ความคืบหน้า</span>
               <span className="text-right">วันที่ยื่น</span>
             </div>
             <ul className="divide-y divide-line">
@@ -89,7 +90,18 @@ export function OrganizationRequestTable({ basePath }: { basePath: string }) {
                   <button
                     type="button"
                     onClick={() => router.push(`${basePath}/${row.id}`)}
-                    className="grid w-full grid-cols-1 items-center gap-2 px-6 py-4 text-left transition-colors hover:bg-navy-50/60 md:grid-cols-[minmax(0,1.7fr)_minmax(0,1.3fr)_12rem_13rem_8rem] md:gap-4"
+                    onFocus={(e) =>
+                      setDetail({
+                        rect: e.currentTarget.getBoundingClientRect(),
+                        status: row.status,
+                        currentTaskType: row.currentTaskType,
+                        progress: row.progress,
+                        submittedAt: row.submittedAt,
+                        updatedAt: row.updatedAt,
+                      })
+                    }
+                    onBlur={() => setDetail(null)}
+                    className="grid w-full grid-cols-1 items-center gap-2 px-6 py-4 text-left transition-colors hover:bg-navy-50/60 md:grid-cols-[minmax(0,1.7fr)_minmax(0,1.3fr)_16rem_8rem] md:gap-4"
                   >
                     <span className="truncate font-medium text-ink">{row.name}</span>
                     <span className="min-w-0">
@@ -98,18 +110,46 @@ export function OrganizationRequestTable({ basePath }: { basePath: string }) {
                       </span>
                       <span className="block truncate text-[13px] text-ink-muted">{row.createdBy.email}</span>
                     </span>
-                    <span className="min-w-0 justify-self-start">
-                      {/* ส่ง currentTaskType ไปด้วย ไม่งั้นแถวขึ้นแค่ "นำส่งแล้ว" ทั้งที่ข้อมูลด่านมาถึงแล้ว */}
+                    <span
+                      className="flex min-w-0 flex-col items-start gap-1.5 justify-self-start"
+                      onMouseEnter={(e) =>
+                        setDetail({
+                          rect: e.currentTarget.getBoundingClientRect(),
+                          status: row.status,
+                          currentTaskType: row.currentTaskType,
+                          progress: row.progress,
+                          submittedAt: row.submittedAt,
+                          updatedAt: row.updatedAt,
+                        })
+                      }
+                      onMouseLeave={() => setDetail(null)}
+                    >
+                      {/* ส่ง currentTaskType ไปด้วย ไม่งั้นแถวขึ้นแค่ "นำส่งแล้ว" ทั้งที่ข้อมูลด่านมาถึงแล้ว
+                          ไม่ส่ง waitingLabel แล้ว — ชื่อเต็มอยู่ในกล่องที่ขึ้นตอนชี้เมาส์
+                          ถ้าส่ง badge จะตั้ง title แล้ว tooltip ช้า ๆ ของเบราว์เซอร์จะขึ้นซ้อนกล่องนั้น */}
                       <StatusBadge
                         status={row.status}
                         currentTaskType={row.currentTaskType}
                         shortLabel={row.progress?.currentShortLabel}
-                        waitingLabel={row.progress?.currentLabel}
                         className="max-w-full"
                       />
-                    </span>
-                    <span className="min-w-0">
-                      <ApprovalStepsCompact progress={row.progress} />
+                      {row.progress?.currentOrder ? (
+                        <span className="flex items-center gap-2">
+                          <span className="text-[12px] text-ink-muted">
+                            ขั้นที่ {row.progress.currentOrder} จาก {row.progress.totalSteps}
+                          </span>
+                          <StepDots
+                            total={row.progress.totalSteps}
+                            current={row.progress.currentOrder}
+                          />
+                        </span>
+                      ) : null}
+                      {/* กล่อง hover เป็น aria-hidden — ข้อความเต็มสำหรับ screen reader อยู่ตรงนี้ที่เดียว */}
+                      <span className="sr-only">
+                        {[row.progress?.currentLabel, row.progress?.nextLabel && `ขั้นต่อไป: ${row.progress.nextLabel}`]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
                     </span>
                     <span className="text-[13px] text-ink-muted md:text-right">
                       {row.submittedAt ? formatThaiDate(row.submittedAt).split(" ").slice(0, 3).join(" ") : "—"}
@@ -121,6 +161,8 @@ export function OrganizationRequestTable({ basePath }: { basePath: string }) {
           </>
         )}
       </Card>
+
+      <RowDetailCard detail={detail} />
 
       <Pagination
         info={list.pageInfo}
