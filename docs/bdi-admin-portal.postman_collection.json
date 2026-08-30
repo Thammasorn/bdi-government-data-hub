@@ -3,7 +3,7 @@
     "name": "BDI Government Datahub — Admin Portal API",
     "_postman_id": "b91d5f2a-7c4e-4a3d-9f61-2ad0c5e18f30",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Journey A — create an organization ahead of time and send someone an activation link. The spec says these steps have no UI, so the caller here is an operator script rather than a browser.\n\nEvery request is guarded by the `x-admin-token` shared secret, set once at the collection level from the `adminToken` variable.\n\n## Before you start\n\n**This collection fires at `https://bdi-api.thammasorn.org` by default** (the public deployment). Set `adminToken` before you run anything — it is a real secret that lives only in `.env`, so it ships blank:\n\n```bash\ngrep ADMIN_API_TOKEN /hdd1tb/bdi-project/main/.env\n```\n\nPaste it into the collection's `adminToken` variable (Collections → this collection → Variables → *Current value*), or select an environment that carries it (below).\n\n**To point somewhere else, import an environment too** and pick it from the selector at the top right. Three sit next to this file in `docs/`:\n\n| File | Points at | `adminToken` |\n| --- | --- | --- |\n| `bdi-dev-checkout.postman_environment.json` | `http://localhost:4170` (dev slot 07) | filled in — `dev-admin-token-change-me`, the same placeholder as `.env.example` |\n| `bdi-main-local.postman_environment.json` | `http://localhost:4000` (the `main` checkout) | **empty — fill it in yourself** |\n| `bdi-public.postman_environment.json` | `https://bdi-api.thammasorn.org` | **empty — fill it in yourself** |\n\nThe empty ones are typed *secret* and left blank on purpose: `main` and the public deployment use a real token that lives only in `.env`, which git does not track. A Postman environment is exactly the kind of file that gets exported and passed around, so **do not commit that value back into it**.\n\n```bash\ngrep ADMIN_API_TOKEN /hdd1tb/bdi-project/main/.env\n```\n\n**For a different dev checkout**, change `baseUrl` to `http://localhost:41N0`, where `NN` is that checkout's port slot (slot 01 → 4110, slot 07 → 4170). `grep BACKEND_PORT .env` in the checkout tells you.\n\n**If a request refuses to send with \"organizationId ยังว่างอยู่\"**, nothing reached the API — that is this collection's own pre-request guard. Either no organization has been created in this run yet, or you are on a copy of the collection from before 2026-08-30 where **B** created the organization without capturing its id (re-import to fix), or your environment declares `organizationId` and is shadowing the captured value.\n\n`organizationId` and `activationKeyId` fill themselves in — each request's Tests script captures them as **collection** variables, so **do not declare either of them in an environment.** Postman resolves `{{organizationId}}` from the environment before the collection, and an empty value there wins over the id just captured: the request goes out with `\"organizationId\": \"\"` and the API answers 400 `validation`. The three environments above no longer carry them — an environment exported before 2026-08-17 still does, and needs both variables deleted.\n\n## The order to run them in\n\n1. **A** creates the organization and captures its id.\n2. **1** invites the organization's user, binding the invitation to that id. The activation link now leads the user straight to the organization you prepared.\n3. **2** invites the signing authority into the same organization.\n4. **4** / **5** list and revoke invitations as needed.\n5. **6** deletes an invitation outright — the only way to free an email or a national ID that a mistyped invitation is holding, since both are unique per account.\n\n**E** edits an organization afterwards — but once the user has opened their registration request, the edit no longer reaches their form, and the response says so.\n\n## Where the activation link is\n\n**The raw key is never returned.** It goes only to the invitee's email, and the database stores an HMAC of it (see `docs/09-auth-tokens.md` §2).\n\nOn a checkout with no SMTP configured (`SMTP_USER` empty) the mailer prints the whole email to stdout instead of sending it:\n\n```bash\ndocker compose logs backend | grep 'activate?token='\n```\n\nOn a checkout with real SMTP — `main` has it — **the email is actually sent**, so be careful inviting made-up addresses.\n\n> Pointing this at `bdi-api.thammasorn.org` means acting on the deployment other people are looking at, and invitations created there send real mail. Try it on a dev checkout first.\n\n## Things that save you a puzzled ten minutes\n\n- **`cid` is required for every role.** §2.4 compares the national ID from ThaiD against the one an officer recorded when the account was created; a number the user typed themselves would prove nothing. The checksum is validated, so an invented number returns 400, and it is **unique per account** — one national ID is one person is one account, so a number that already belongs to someone returns 409 `cid_exists` naming the address that holds it. That is why requests 1 and 3 carry different numbers even though the same person could plausibly hold both roles.\n- **`organizationId` is now required** for `ORGANIZATION_USER` and `ORGANIZATION_APPROVER` — a missing one is a 400, not an auto-created placeholder organization. Run **A** or **B** first.\n- **BDI roles need no `organizationId`** — they are attached to the BDI organization automatically, which is a row in `organization.organization` like any other.\n- **There is no re-invite.** An email or national ID that already has an account returns 409 and nothing is overwritten; the response hands back the existing `activationKeyId`. To send a fresh link to the same person, use **4.1 Resend**. To fix wrong data, use **6 Remove** (which frees both the email and the national ID) and invite again. Find the invitation with **4 List**, which now filters by `email`, `cid`, `status` and paginates.\n- **Inviting an address that is already `ACTIVE`** returns 409.\n- **A request that fails before it is sent** (`organizationId is empty…`) means an id an earlier request was supposed to capture is missing: run **A** first, and check that no environment declares `organizationId` or `activationKeyId` — see *Before you start*.\n- An organization becomes `ACTIVE` only when its registration request clears `BDI_FINAL_APPROVAL` (Journey B). Creating it here, and activating accounts in it, leave it `PENDING_REGISTRATION`.\n\n## Managing accounts that are already activated\n\nRequests **U1–U14** cover `/api/admin/users`. The split between them and the invitation requests above is the account's status, not the kind of work: a `PENDING` invitation is deleted and reissued, an activated account is never deleted at all — the database refuses it, because `legal_acceptance`, `signature_confirmation` and `review_task.assigned_user_id` are all `ON DELETE RESTRICT`. Deactivating is what \"delete\" means here, and it keeps the row, the email and the national ID.\n\nA national ID identifies a person and is never released. An email identifies a mailbox, which really can change hands, so **U9** releases that one alone. Someone who comes back is reactivated (**U8**), never recreated — a second row for the same human would split their signatures across two accounts.\n\nEvery command that takes something away from a person requires a `reason`; it is written to the audit trail and shown to them."
+    "description": "Journey A — create an organization ahead of time and send someone an activation link. The spec says these steps have no UI, so the caller here is an operator script rather than a browser.\n\nEvery request is guarded by the `x-admin-token` shared secret, set once at the collection level from the `adminToken` variable.\n\n## Before you start\n\n**This collection fires at `https://bdi-api.thammasorn.org` by default** (the public deployment). Set `adminToken` before you run anything — it is a real secret that lives only in `.env`, so it ships blank:\n\n```bash\ngrep ADMIN_API_TOKEN /hdd1tb/bdi-project/main/.env\n```\n\nPaste it into the collection's `adminToken` variable (Collections → this collection → Variables → *Current value*), or select an environment that carries it (below).\n\n**To point somewhere else, import an environment too** and pick it from the selector at the top right. Three sit next to this file in `docs/`:\n\n| File | Points at | `adminToken` |\n| --- | --- | --- |\n| `bdi-dev-checkout.postman_environment.json` | `http://localhost:4170` (dev slot 07) | filled in — `dev-admin-token-change-me`, the same placeholder as `.env.example` |\n| `bdi-main-local.postman_environment.json` | `http://localhost:4000` (the `main` checkout) | **empty — fill it in yourself** |\n| `bdi-public.postman_environment.json` | `https://bdi-api.thammasorn.org` | **empty — fill it in yourself** |\n\nThe empty ones are typed *secret* and left blank on purpose: `main` and the public deployment use a real token that lives only in `.env`, which git does not track. A Postman environment is exactly the kind of file that gets exported and passed around, so **do not commit that value back into it**.\n\n```bash\ngrep ADMIN_API_TOKEN /hdd1tb/bdi-project/main/.env\n```\n\n**For a different dev checkout**, change `baseUrl` to `http://localhost:41N0`, where `NN` is that checkout's port slot (slot 01 → 4110, slot 07 → 4170). `grep BACKEND_PORT .env` in the checkout tells you.\n\n**This is an operator's console, not a test suite.** Every request stands on its own: paste real values into the body and send it. Nothing checks that you ran the requests in order, and nothing blocks a request before it goes out. The `{{organizationId}}` / `{{activationKeyId}}` / `{{userAccountId}}` variables are a convenience — requests that create something save the new id so the next request can reuse it if you want, and you are free to ignore them and type the id yourself.\n\nIf a variable does come out empty when you meant to use one, check the eye icon at the top right: an environment that declares the same name outranks the collection variable the scripts write, so delete it there.\n\n`organizationId` and `activationKeyId` fill themselves in — each request's Tests script captures them as **collection** variables, so **do not declare either of them in an environment.** Postman resolves `{{organizationId}}` from the environment before the collection, and an empty value there wins over the id just captured: the request goes out with `\"organizationId\": \"\"` and the API answers 400 `validation`. The three environments above no longer carry them — an environment exported before 2026-08-17 still does, and needs both variables deleted.\n\n## Nothing has to be run in order\n\nRequests are grouped so the list reads top to bottom, but each one stands alone. Fill in the body with the values\nyou actually mean and send it — no request checks that an earlier one ran, and none of them refuse to send.\n\n1. **A** / **B** create an organization and save its id.\n2. **1** / **2** invite people into an organization, either with `{{organizationId}}` or with an id you paste in.\n3. **4** finds an invitation; **4.1** re-sends its link; **5** revokes it; **6** deletes it outright, which is the\n   only way to free an email or a national ID that a mistyped invitation is holding.\n4. **U1–U14** manage accounts that are already activated; **L1** makes a legal document optional.\n\n**E** edits an organization afterwards — but once the user has opened their registration request, the edit no longer\nreaches their form, and the response says so.\n\n## The order they are listed in\n\n1. **A** creates the organization and captures its id.\n2. **1** invites the organization's user, binding the invitation to that id. The activation link now leads the user straight to the organization you prepared.\n3. **2** invites the signing authority into the same organization.\n4. **4** / **5** list and revoke invitations as needed.\n5. **6** deletes an invitation outright — the only way to free an email or a national ID that a mistyped invitation is holding, since both are unique per account.\n\n**E** edits an organization afterwards — but once the user has opened their registration request, the edit no longer reaches their form, and the response says so.\n\n## Where the activation link is\n\n**The raw key is never returned.** It goes only to the invitee's email, and the database stores an HMAC of it (see `docs/09-auth-tokens.md` §2).\n\nOn a checkout with no SMTP configured (`SMTP_USER` empty) the mailer prints the whole email to stdout instead of sending it:\n\n```bash\ndocker compose logs backend | grep 'activate?token='\n```\n\nOn a checkout with real SMTP — `main` has it — **the email is actually sent**, so be careful inviting made-up addresses.\n\n> Pointing this at `bdi-api.thammasorn.org` means acting on the deployment other people are looking at, and invitations created there send real mail. Try it on a dev checkout first.\n\n## Things that save you a puzzled ten minutes\n\n- **`cid` is required for every role.** §2.4 compares the national ID from ThaiD against the one an officer recorded when the account was created; a number the user typed themselves would prove nothing. The checksum is validated, so an invented number returns 400, and it is **unique per account** — one national ID is one person is one account, so a number that already belongs to someone returns 409 `cid_exists` naming the address that holds it. That is why requests 1 and 3 carry different numbers even though the same person could plausibly hold both roles.\n- **`organizationId` is now required** for `ORGANIZATION_USER` and `ORGANIZATION_APPROVER` — a missing one is a 400, not an auto-created placeholder organization. Run **A** or **B** first.\n- **BDI roles need no `organizationId`** — they are attached to the BDI organization automatically, which is a row in `organization.organization` like any other.\n- **There is no re-invite.** An email or national ID that already has an account returns 409 and nothing is overwritten; the response hands back the existing `activationKeyId`. To send a fresh link to the same person, use **4.1 Resend**. To fix wrong data, use **6 Remove** (which frees both the email and the national ID) and invite again. Find the invitation with **4 List**, which now filters by `email`, `cid`, `status` and paginates.\n- **Inviting an address that is already `ACTIVE`** returns 409.\n- **A request that fails before it is sent** (`organizationId is empty…`) means an id an earlier request was supposed to capture is missing: run **A** first, and check that no environment declares `organizationId` or `activationKeyId` — see *Before you start*.\n- An organization becomes `ACTIVE` only when its registration request clears `BDI_FINAL_APPROVAL` (Journey B). Creating it here, and activating accounts in it, leave it `PENDING_REGISTRATION`.\n\n## Managing accounts that are already activated\n\nRequests **U1–U14** cover `/api/admin/users`. The split between them and the invitation requests above is the account's status, not the kind of work: a `PENDING` invitation is deleted and reissued, an activated account is never deleted at all — the database refuses it, because `legal_acceptance`, `signature_confirmation` and `review_task.assigned_user_id` are all `ON DELETE RESTRICT`. Deactivating is what \"delete\" means here, and it keeps the row, the email and the national ID.\n\nA national ID identifies a person and is never released. An email identifies a mailbox, which really can change hands, so **U9** releases that one alone. Someone who comes back is reactivated (**U8**), never recreated — a second row for the same human would split their signatures across two accounts.\n\nEvery command that takes something away from a person requires a `reason`; it is written to the audit trail and shown to them."
   },
   "auth": {
     "type": "apikey",
@@ -82,11 +82,19 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('201 Created', () => pm.response.to.have.status(201));",
-              "const org = pm.response.json().organization;",
-              "pm.test('starts as PENDING_REGISTRATION', () => pm.expect(org.status).to.eql('PENDING_REGISTRATION'));",
-              "pm.collectionVariables.set('organizationId', org.id);",
-              "console.log('organizationId =', org.id, '| code =', org.organizationCode);"
+              "try {",
+              "    // เก็บ id ไว้ให้ request ถัดไปหยิบไปใช้ต่อได้ ถ้าอยากใช้ — ไม่ได้บังคับว่าต้องรันตามลำดับ",
+              "    // วางค่าลง body ตรง ๆ เองก็ได้ ไม่มีอะไรมาขวาง",
+              "    if (pm.response.code < 300) {",
+              "        const v = pm.response.json().organization.id;",
+              "        pm.collectionVariables.set('organizationId', v);",
+              "        console.log('organizationId =', v);",
+              "    }",
+              "    console.log('code =', pm.response.json().organization.organizationCode);",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (เช่น 409 หรือ 404) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 300));",
+              "}"
             ]
           }
         }
@@ -162,16 +170,19 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('201 Created', () => pm.response.to.have.status(201));",
-              "const org = pm.response.json().organization;",
-              "",
-              "/*",
-              " * เก็บ id ไว้เหมือน request A — ไม่งั้นหน่วยงานที่เพิ่งสร้างด้วย request นี้จะใช้เชิญคนไม่ได้",
-              " * เพราะ {{organizationId}} ยังว่างอยู่ แล้ว pre-request ของ request 1 จะโยน error ออกมา",
-              " * ทั้งที่หน่วยงานถูกสร้างสำเร็จไปแล้วจริง ๆ",
-              " */",
-              "pm.collectionVariables.set('organizationId', org.id);",
-              "console.log('organizationId =', org.id, '| code =', org.organizationCode);"
+              "try {",
+              "    // เก็บ id ไว้ให้ request ถัดไปหยิบไปใช้ต่อได้ ถ้าอยากใช้ — ไม่ได้บังคับว่าต้องรันตามลำดับ",
+              "    // วางค่าลง body ตรง ๆ เองก็ได้ ไม่มีอะไรมาขวาง",
+              "    if (pm.response.code < 300) {",
+              "        const v = pm.response.json().organization.id;",
+              "        pm.collectionVariables.set('organizationId', v);",
+              "        console.log('organizationId =', v);",
+              "    }",
+              "    console.log('code =', pm.response.json().organization.organizationCode);",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (เช่น 409 หรือ 404) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 300));",
+              "}"
             ]
           }
         }
@@ -185,9 +196,13 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('200 OK', () => pm.response.to.have.status(200));",
-              "const list = pm.response.json().organizations;",
-              "console.table(list.slice(0, 20).map((o) => ({ code: o.organizationCode, name: o.nameTh, status: o.status, province: o.province })));"
+              "try {",
+              "    const list = pm.response.json().organizations;",
+              "    console.table(list.slice(0, 20).map((o) => ({ code: o.organizationCode, name: o.nameTh, status: o.status, province: o.province })));",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (เช่น 409 หรือ 404) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 300));",
+              "}"
             ]
           }
         }
@@ -225,32 +240,6 @@
     },
     {
       "name": "D · Organization detail",
-      "event": [
-        {
-          "listen": "prerequest",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "// Postman อ่าน {{organizationId}} จาก scope ที่เจอก่อน และ environment มาก่อน collection",
-              "// เสมอ — environment ที่ประกาศตัวแปรนี้ไว้จึงบังคีย์ที่ Tests script เพิ่งเก็บมา",
-              "// แล้ว request จะถูกส่งออกไปด้วยค่าว่าง",
-              "if (!pm.variables.get('organizationId')) {",
-              "    throw new Error(",
-              "        'organizationId ยังว่างอยู่ — สาเหตุที่พบบ่อยสามอย่าง: ' +",
-              "        '(1) ยังไม่ได้สร้างหน่วยงาน ให้รัน A หรือ B ก่อน ทั้งสองอันเก็บ id ให้เอง · ' +",
-              "        '(2) ใช้ collection ฉบับก่อน 2026-08-30 ซึ่ง B ยังไม่เก็บ id ให้ ' +",
-              "        'ให้ import collection ใหม่ หรือรัน A แทน · ' +",
-              "        '(3) environment ของคุณประกาศ organizationId ไว้ ให้ลบตัวแปรนั้นออกจาก environment ' +",
-              "        'เพราะ environment มีลำดับเหนือกว่าค่าที่ script เก็บไว้ที่ระดับ collection · ' +",
-              "        'ถ้าอยากใช้หน่วยงานที่มีอยู่แล้ว ให้รัน C เพื่อดูรายการ แล้ววาง id ลงในตัวแปร ' +",
-              "        'organizationId ของ collection เอง (C ไม่ได้เก็บ id ให้อัตโนมัติ โดยตั้งใจ ' +",
-              "        'เพราะการหยิบใบแรกในรายการมาใช้เงียบ ๆ ทำให้เชิญคนผิดหน่วยงานได้)'",
-              "    );",
-              "}"
-            ]
-          }
-        }
-      ],
       "request": {
         "method": "GET",
         "header": [],
@@ -274,39 +263,18 @@
       "name": "E · Update an organization",
       "event": [
         {
-          "listen": "prerequest",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "// Postman อ่าน {{organizationId}} จาก scope ที่เจอก่อน และ environment มาก่อน collection",
-              "// เสมอ — environment ที่ประกาศตัวแปรนี้ไว้จึงบังคีย์ที่ Tests script เพิ่งเก็บมา",
-              "// แล้ว request จะถูกส่งออกไปด้วยค่าว่าง",
-              "if (!pm.variables.get('organizationId')) {",
-              "    throw new Error(",
-              "        'organizationId ยังว่างอยู่ — สาเหตุที่พบบ่อยสามอย่าง: ' +",
-              "        '(1) ยังไม่ได้สร้างหน่วยงาน ให้รัน A หรือ B ก่อน ทั้งสองอันเก็บ id ให้เอง · ' +",
-              "        '(2) ใช้ collection ฉบับก่อน 2026-08-30 ซึ่ง B ยังไม่เก็บ id ให้ ' +",
-              "        'ให้ import collection ใหม่ หรือรัน A แทน · ' +",
-              "        '(3) environment ของคุณประกาศ organizationId ไว้ ให้ลบตัวแปรนั้นออกจาก environment ' +",
-              "        'เพราะ environment มีลำดับเหนือกว่าค่าที่ script เก็บไว้ที่ระดับ collection · ' +",
-              "        'ถ้าอยากใช้หน่วยงานที่มีอยู่แล้ว ให้รัน C เพื่อดูรายการ แล้ววาง id ลงในตัวแปร ' +",
-              "        'organizationId ของ collection เอง (C ไม่ได้เก็บ id ให้อัตโนมัติ โดยตั้งใจ ' +",
-              "        'เพราะการหยิบใบแรกในรายการมาใช้เงียบ ๆ ทำให้เชิญคนผิดหน่วยงานได้)'",
-              "    );",
-              "}"
-            ]
-          }
-        },
-        {
           "listen": "test",
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('200 OK', () => pm.response.to.have.status(200));",
-              "const body = pm.response.json();",
-              "if (body.warning) {",
-              "    console.warn('⚠ ' + body.warning.message);",
-              "    console.warn('open request:', body.warning.request.requestNumber, body.warning.request.status);",
+              "try {",
+              "    const body = pm.response.json();",
+              "    if (body.warning) {",
+              "        console.warn('⚠ ' + body.warning.message);",
+              "        console.warn('open request:', body.warning.request.requestNumber, body.warning.request.status);",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (เช่น 409 หรือ 404) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 300));",
               "}"
             ]
           }
@@ -349,46 +317,24 @@
       "name": "1 · Invite a user into that organization",
       "event": [
         {
-          "listen": "prerequest",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "// Postman อ่าน {{organizationId}} จาก scope ที่เจอก่อน และ environment มาก่อน collection",
-              "// เสมอ — environment ที่ประกาศตัวแปรนี้ไว้จึงบังคีย์ที่ Tests script เพิ่งเก็บมา",
-              "// แล้ว request จะถูกส่งออกไปด้วยค่าว่าง",
-              "if (!pm.variables.get('organizationId')) {",
-              "    throw new Error(",
-              "        'organizationId ยังว่างอยู่ — สาเหตุที่พบบ่อยสามอย่าง: ' +",
-              "        '(1) ยังไม่ได้สร้างหน่วยงาน ให้รัน A หรือ B ก่อน ทั้งสองอันเก็บ id ให้เอง · ' +",
-              "        '(2) ใช้ collection ฉบับก่อน 2026-08-30 ซึ่ง B ยังไม่เก็บ id ให้ ' +",
-              "        'ให้ import collection ใหม่ หรือรัน A แทน · ' +",
-              "        '(3) environment ของคุณประกาศ organizationId ไว้ ให้ลบตัวแปรนั้นออกจาก environment ' +",
-              "        'เพราะ environment มีลำดับเหนือกว่าค่าที่ script เก็บไว้ที่ระดับ collection · ' +",
-              "        'ถ้าอยากใช้หน่วยงานที่มีอยู่แล้ว ให้รัน C เพื่อดูรายการ แล้ววาง id ลงในตัวแปร ' +",
-              "        'organizationId ของ collection เอง (C ไม่ได้เก็บ id ให้อัตโนมัติ โดยตั้งใจ ' +",
-              "        'เพราะการหยิบใบแรกในรายการมาใช้เงียบ ๆ ทำให้เชิญคนผิดหน่วยงานได้)'",
-              "    );",
-              "}"
-            ]
-          }
-        },
-        {
           "listen": "test",
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('201 Created', () => pm.response.to.have.status(201));",
-              "",
-              "const body = pm.response.json();",
-              "pm.test('bound to the organization from request A', () => {",
-              "    pm.expect(body.organizationId).to.eql(pm.variables.get('organizationId'));",
-              "});",
-              "",
-              "pm.collectionVariables.set('activationKeyId', body.activationKeyId);",
-              "",
-              "console.log('activationKeyId =', body.activationKeyId);",
-              "console.log('The activation link is in the invitee\\'s email. With no SMTP configured, find it with:');",
-              "console.log(\"  docker compose logs backend | grep 'activate?token='\");"
+              "try {",
+              "    // เก็บ id ไว้ให้ request ถัดไปหยิบไปใช้ต่อได้ ถ้าอยากใช้ — ไม่ได้บังคับว่าต้องรันตามลำดับ",
+              "    // วางค่าลง body ตรง ๆ เองก็ได้ ไม่มีอะไรมาขวาง",
+              "    if (pm.response.code < 300) {",
+              "        const v = pm.response.json().activationKeyId;",
+              "        pm.collectionVariables.set('activationKeyId', v);",
+              "        console.log('activationKeyId =', v);",
+              "    }",
+              "    console.log('ลิงก์เปิดใช้งานอยู่ในอีเมลของผู้ถูกเชิญเท่านั้น — บน checkout ที่ไม่ได้ตั้ง SMTP หาได้ด้วย:');",
+              "    console.log(\"  docker compose logs backend | grep 'activate?token='\");",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (เช่น 409 หรือ 404) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 300));",
+              "}"
             ]
           }
         }
@@ -429,40 +375,24 @@
       "name": "2 · Invite the signing authority into the same organization",
       "event": [
         {
-          "listen": "prerequest",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "// Postman อ่าน {{organizationId}} จาก scope ที่เจอก่อน และ environment มาก่อน collection",
-              "// เสมอ — environment ที่ประกาศตัวแปรนี้ไว้จึงบังคีย์ที่ Tests script เพิ่งเก็บมา",
-              "// แล้ว request จะถูกส่งออกไปด้วยค่าว่าง",
-              "if (!pm.variables.get('organizationId')) {",
-              "    throw new Error(",
-              "        'organizationId ยังว่างอยู่ — สาเหตุที่พบบ่อยสามอย่าง: ' +",
-              "        '(1) ยังไม่ได้สร้างหน่วยงาน ให้รัน A หรือ B ก่อน ทั้งสองอันเก็บ id ให้เอง · ' +",
-              "        '(2) ใช้ collection ฉบับก่อน 2026-08-30 ซึ่ง B ยังไม่เก็บ id ให้ ' +",
-              "        'ให้ import collection ใหม่ หรือรัน A แทน · ' +",
-              "        '(3) environment ของคุณประกาศ organizationId ไว้ ให้ลบตัวแปรนั้นออกจาก environment ' +",
-              "        'เพราะ environment มีลำดับเหนือกว่าค่าที่ script เก็บไว้ที่ระดับ collection · ' +",
-              "        'ถ้าอยากใช้หน่วยงานที่มีอยู่แล้ว ให้รัน C เพื่อดูรายการ แล้ววาง id ลงในตัวแปร ' +",
-              "        'organizationId ของ collection เอง (C ไม่ได้เก็บ id ให้อัตโนมัติ โดยตั้งใจ ' +",
-              "        'เพราะการหยิบใบแรกในรายการมาใช้เงียบ ๆ ทำให้เชิญคนผิดหน่วยงานได้)'",
-              "    );",
-              "}"
-            ]
-          }
-        },
-        {
           "listen": "test",
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('201 Created', () => pm.response.to.have.status(201));",
-              "const body = pm.response.json();",
-              "pm.test('same organization as the first invitation', () => {",
-              "    pm.expect(body.organizationId).to.eql(pm.variables.get('organizationId'));",
-              "});",
-              "pm.collectionVariables.set('activationKeyId', body.activationKeyId);"
+              "try {",
+              "    // เก็บ id ไว้ให้ request ถัดไปหยิบไปใช้ต่อได้ ถ้าอยากใช้ — ไม่ได้บังคับว่าต้องรันตามลำดับ",
+              "    // วางค่าลง body ตรง ๆ เองก็ได้ ไม่มีอะไรมาขวาง",
+              "    if (pm.response.code < 300) {",
+              "        const v = pm.response.json().activationKeyId;",
+              "        pm.collectionVariables.set('activationKeyId', v);",
+              "        console.log('activationKeyId =', v);",
+              "    }",
+              "    console.log('ลิงก์เปิดใช้งานอยู่ในอีเมลของผู้ถูกเชิญเท่านั้น — บน checkout ที่ไม่ได้ตั้ง SMTP หาได้ด้วย:');",
+              "    console.log(\"  docker compose logs backend | grep 'activate?token='\");",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (เช่น 409 หรือ 404) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 300));",
+              "}"
             ]
           }
         }
@@ -507,12 +437,20 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('201 Created', () => pm.response.to.have.status(201));",
-              "const body = pm.response.json();",
-              "pm.test('attached to the BDI organization', () => {",
-              "    pm.expect(body.organizationId).to.eql('00000000-0000-0000-0000-0000000000b0');",
-              "});",
-              "pm.collectionVariables.set('activationKeyId', body.activationKeyId);"
+              "try {",
+              "    // เก็บ id ไว้ให้ request ถัดไปหยิบไปใช้ต่อได้ ถ้าอยากใช้ — ไม่ได้บังคับว่าต้องรันตามลำดับ",
+              "    // วางค่าลง body ตรง ๆ เองก็ได้ ไม่มีอะไรมาขวาง",
+              "    if (pm.response.code < 300) {",
+              "        const v = pm.response.json().activationKeyId;",
+              "        pm.collectionVariables.set('activationKeyId', v);",
+              "        console.log('activationKeyId =', v);",
+              "    }",
+              "    console.log('ลิงก์เปิดใช้งานอยู่ในอีเมลของผู้ถูกเชิญเท่านั้น — บน checkout ที่ไม่ได้ตั้ง SMTP หาได้ด้วย:');",
+              "    console.log(\"  docker compose logs backend | grep 'activate?token='\");",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (เช่น 409 หรือ 404) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 300));",
+              "}"
             ]
           }
         }
@@ -557,16 +495,19 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('200 OK', () => pm.response.to.have.status(200));",
-              "const { invitations } = pm.response.json();",
-              "pm.test('is an array', () => pm.expect(invitations).to.be.an('array'));",
-              "console.table(invitations.map((i) => ({",
-              "    email: i.userAccount.email,",
-              "    role: i.role.code,",
-              "    key: i.status,",
-              "    account: i.userAccount.status,",
-              "    expiresAt: i.expiresAt,",
-              "})));"
+              "try {",
+              "    const { invitations } = pm.response.json();",
+              "    console.table(invitations.map((i) => ({",
+              "        email: i.userAccount.email,",
+              "        role: i.role.code,",
+              "        key: i.status,",
+              "        account: i.userAccount.status,",
+              "        expiresAt: i.expiresAt,",
+              "    })));",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (เช่น 409 หรือ 404) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 300));",
+              "}"
             ]
           }
         }
@@ -625,12 +566,20 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('201 created', () => pm.response.to.have.status(201));",
-              "const b = pm.response.json();",
-              "pm.test('a new key replaced the old one', () => {",
-              "  pm.expect(b.activationKeyId).to.not.eql(b.replacedActivationKeyId);",
-              "});",
-              "pm.collectionVariables.set('activationKeyId', b.activationKeyId);"
+              "try {",
+              "    // เก็บ id ไว้ให้ request ถัดไปหยิบไปใช้ต่อได้ ถ้าอยากใช้ — ไม่ได้บังคับว่าต้องรันตามลำดับ",
+              "    // วางค่าลง body ตรง ๆ เองก็ได้ ไม่มีอะไรมาขวาง",
+              "    if (pm.response.code < 300) {",
+              "        const v = pm.response.json().activationKeyId;",
+              "        pm.collectionVariables.set('activationKeyId', v);",
+              "        console.log('activationKeyId =', v);",
+              "    }",
+              "    console.log('ลิงก์เปิดใช้งานอยู่ในอีเมลของผู้ถูกเชิญเท่านั้น — บน checkout ที่ไม่ได้ตั้ง SMTP หาได้ด้วย:');",
+              "    console.log(\"  docker compose logs backend | grep 'activate?token='\");",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (เช่น 409 หรือ 404) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 300));",
+              "}"
             ]
           }
         }
@@ -657,32 +606,6 @@
     },
     {
       "name": "5 · Revoke an invitation",
-      "event": [
-        {
-          "listen": "prerequest",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "// Postman resolves {{activationKeyId}} from the highest-priority scope it finds it in, and",
-              "// environment outranks collection. An environment that declares activationKeyId",
-              "// therefore shadows the id the Tests script captured, and the request goes out empty.",
-              "if (!pm.variables.get('activationKeyId')) {",
-              "    throw new Error('activationKeyId is empty. Run one of the invitation requests (1–3) first — each captures the id of the key it issued. If your environment declares activationKeyId, delete it there: environment scope outranks the collection variable the script writes.');",
-              "}"
-            ]
-          }
-        },
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('200 OK', () => pm.response.to.have.status(200));",
-              "pm.test('ok', () => pm.expect(pm.response.json().ok).to.be.true);"
-            ]
-          }
-        }
-      ],
       "request": {
         "method": "POST",
         "header": [
@@ -721,35 +644,22 @@
       "name": "6 · Remove an invitation (frees the email and the CID)",
       "event": [
         {
-          "listen": "prerequest",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "// Postman resolves {{activationKeyId}} from the highest-priority scope it finds it in, and",
-              "// environment outranks collection. An environment that declares activationKeyId",
-              "// therefore shadows the id the Tests script captured, and the request goes out empty.",
-              "if (!pm.variables.get('activationKeyId')) {",
-              "    throw new Error('activationKeyId is empty. Run one of the invitation requests (1–3) first — each captures the id of the key it issued. If your environment declares activationKeyId, delete it there: environment scope outranks the collection variable the script writes.');",
-              "}"
-            ]
-          }
-        },
-        {
           "listen": "test",
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('200 OK', () => pm.response.to.have.status(200));",
-              "const body = pm.response.json();",
-              "pm.test('ok', () => pm.expect(body.ok).to.be.true);",
-              "console.log(body.message);",
-              "if (body.removed.userAccount) {",
-              "    console.log('freed:', body.removed.userAccount.email, '·', body.removed.userAccount.cid);",
-              "} else {",
-              "    console.warn('the account is still there — the message says which of its rows kept it');",
-              "}",
-              "if (body.removed.organization) {",
-              "    console.log('placeholder organization removed:', body.removed.organization.organizationCode);",
+              "try {",
+              "    const body = pm.response.json();",
+              "    console.log(body.message);",
+              "    if (body.removed.userAccount) {",
+              "        console.log('freed:', body.removed.userAccount.email, '·', body.removed.userAccount.cid);",
+              "    } else {",
+              "        console.warn('the account is still there — the message says which of its rows kept it');",
+              "    if (body.removed.organization) {",
+              "        console.log('placeholder organization removed:', body.removed.organization.organizationCode);",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (เช่น 409 หรือ 404) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 300));",
               "}"
             ]
           }
@@ -826,9 +736,18 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('200', () => pm.response.to.have.status(200));",
-              "const u = pm.response.json().users[0];",
-              "if (u) pm.collectionVariables.set('userAccountId', u.id);"
+              "try {",
+              "    // เก็บ id ไว้ให้ request ถัดไปหยิบไปใช้ต่อได้ ถ้าอยากใช้ — ไม่ได้บังคับว่าต้องรันตามลำดับ",
+              "    // วางค่าลง body ตรง ๆ เองก็ได้ ไม่มีอะไรมาขวาง",
+              "    if (pm.response.code < 300) {",
+              "        const v = (pm.response.json().users || [])[0]?.id;",
+              "        pm.collectionVariables.set('userAccountId', v);",
+              "        console.log('userAccountId =', v);",
+              "    }",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (เช่น 409 หรือ 404) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 300));",
+              "}"
             ]
           }
         }
