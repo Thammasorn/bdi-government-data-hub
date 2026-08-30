@@ -78,6 +78,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
    */
   const {
     documents: legalDocuments,
+    notApplicable: skippedDocuments,
     error: legalDocumentsError,
     reload: reloadLegalDocuments,
   } = useLegalDocuments(org?.id ?? null);
@@ -370,6 +371,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         {org.status !== "DRAFT" ? (
           <LegalDocumentsCard
             documents={legalDocuments}
+            notApplicable={skippedDocuments}
             reloadKey={documentRound}
             error={legalDocumentsError}
             onRetry={reloadLegalDocuments}

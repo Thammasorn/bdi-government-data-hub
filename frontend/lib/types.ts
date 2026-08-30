@@ -193,6 +193,16 @@ export interface LegalDocument {
   isRequired: boolean;
 }
 
+/**
+ * ฉบับที่ผู้มีอำนาจของหน่วยงานกด "ไม่เกี่ยวข้อง" ไปแล้ว
+ *
+ * ไม่อยู่ใน `documents` อีกต่อไป — เหลือไว้เพื่อบอกว่ามันหายไปไหน ไม่ใช่ให้หายไปเฉย ๆ
+ */
+export interface SkippedLegalDocument {
+  code: string;
+  name: string;
+}
+
 // ------------------------------------------------------------------ ชุดข้อมูล (Journey C)
 
 export interface DatasetAttachment {

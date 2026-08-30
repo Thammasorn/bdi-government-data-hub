@@ -79,7 +79,7 @@ import {
   renderPlaceholderDocuments,
 } from "../lib/organization-agreement.js";
 import { DocumentRenderError } from "../lib/document-render.js";
-import { LEGAL_SCOPES, publishedDocuments } from "../lib/legal.js";
+import { LEGAL_SCOPES, requestDocuments } from "../lib/legal.js";
 import { nextOrganizationCode, nextOrganizationRequestNumber } from "../lib/request-number.js";
 import { buildJourneyProgress, summariseMany } from "../lib/journey-steps.js";
 import { REVIEW_TASK_TYPE_LABELS, ROLE_LABELS, isBdiStaff } from "../lib/roles.js";
@@ -1341,7 +1341,16 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
     return;
   }
 
-  const documents = await publishedDocuments(prisma, LEGAL_SCOPES.ORGANIZATION_REGISTRATION);
+  /**
+   * ฉบับที่หน่วยงานกด "ไม่เกี่ยวข้อง" ไม่อยู่ใน `documents` — ด่านตรวจตอนลงนามตัดมันออก
+   * อยู่แล้ว รายการที่แสดงจึงต้องตัดเหมือนกัน ไม่งั้นผู้อนุมัติ BDI จะอ่านเอกสารที่ไม่มีใคร
+   * ฝั่งหน่วยงานยอมรับ แล้วนึกว่าตัวเองลงนามรับรองมันไปด้วย
+   */
+  const { documents, notApplicable } = await requestDocuments(
+    prisma,
+    LEGAL_SCOPES.ORGANIZATION_REGISTRATION,
+    { subjectType: SUBJECT, subjectId: request.id },
+  );
 
   const versions = await prisma.legalDocumentVersion.findMany({
     where: { id: { in: documents.map((d) => d.versionId) } },
@@ -1452,7 +1461,14 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
     });
   }
 
-  res.json({ documents: out });
+  res.json({
+    documents: out,
+    /**
+     * บอกว่าหายไปไหน ไม่ใช่หายไปเฉย ๆ — ทั้งฝั่งหน่วยงานและฝั่ง BDI ควรเห็นว่าหน่วยงาน
+     * ระบุฉบับไหนว่าไม่เกี่ยวข้อง แค่ไม่ต้องเอามาให้อ่านและลงนามอีก
+     */
+    notApplicable: notApplicable.map((doc) => ({ code: doc.code, name: doc.nameTh })),
+  });
 });
 
 /**
@@ -1818,8 +1834,19 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
         return;
       }
 
-      const published = await publishedDocuments(prisma, LEGAL_SCOPES.ORGANIZATION_REGISTRATION);
-      if (published.length === 0) {
+      /**
+       * ชุดเดียวกับที่หน้าจอเพิ่งแสดงให้เขาอ่าน — ฉบับที่ฝั่งหน่วยงานเคยกด "ไม่เกี่ยวข้อง"
+       * ไม่ถูกถามซ้ำที่ด่านของ BDI เพราะ BDI ต้องเห็นชอบเฉพาะชุดที่หน่วยงานยอมรับจริง
+       *
+       * ตอนที่ผู้มีอำนาจของหน่วยงานเป็นคนกดเอง task ใบนี้ยังเป็น PENDING อยู่ `requestDocuments`
+       * จึงคืนทั้งชุดมาให้เขาเลือกใหม่ ไม่ได้ยึดการกดข้ามของรอบก่อนไว้
+       */
+      const { documents: expected, notApplicable: alreadySkipped } = await requestDocuments(
+        prisma,
+        LEGAL_SCOPES.ORGANIZATION_REGISTRATION,
+        { subjectType: SUBJECT, subjectId: request.id },
+      );
+      if (expected.length + alreadySkipped.length === 0) {
         res.status(503).json({
           error: "no_legal_documents",
           message: "ยังไม่มีเอกสารข้อตกลงที่เผยแพร่ในระบบ กรุณาแจ้งผู้ดูแลระบบ",
@@ -1829,23 +1856,6 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
 
       const acknowledged = new Set(signature.acknowledgements.map((a) => a.versionId));
       const skipped = new Set(signature.notApplicable.map((d) => d.versionId));
-
-      /**
-       * ฉบับที่ฝั่งหน่วยงานเคยกด "ไม่เกี่ยวข้อง" ไปแล้ว ไม่ต้องถามฝ่าย BDI อีก
-       *
-       * ด่านของ BDI ต้องเห็นชอบเฉพาะชุดที่หน่วยงานยอมรับจริง — ถ้ายังถามครบทุกฉบับ
-       * ที่เผยแพร่อยู่ เอกสารที่ถูกข้ามไปแล้วจะกลับมาโผล่ที่ด่านหลัง ทั้งที่ไม่มีใคร
-       * ฝั่งหน่วยงานยอมรับมัน
-       */
-      let expected = published;
-      if (confirmationType === ConfirmationType.BDI_FINAL_APPROVAL) {
-        const accepted = await prisma.legalAcceptance.findMany({
-          where: { subjectType: SUBJECT, subjectId: request.id },
-          select: { legalDocumentVersionId: true },
-        });
-        const acceptedIds = new Set(accepted.map((a) => a.legalDocumentVersionId));
-        if (acceptedIds.size > 0) expected = published.filter((d) => acceptedIds.has(d.versionId));
-      }
 
       /**
        * ข้ามได้เฉพาะฉบับที่ไม่บังคับ — ฉบับบังคับที่ถูกส่งมาใน `notApplicable`
