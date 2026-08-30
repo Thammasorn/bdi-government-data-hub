@@ -7,11 +7,10 @@
  * `nextStageAfter()` ใน routes/dataset-requests.ts และ if-chain ใน routes/organizations.ts**
  * ไม่งั้นหน้าจอจะสัญญาเส้นทางที่ backend ไม่ได้เดิน
  *
- * กับดักที่ไฟล์นี้มีอยู่เพื่อกันโดยเฉพาะ: `BDI_OFFICER_REVIEW` เป็นสองด่านคนละด่านใน
- * Journey C ("ตรวจเบื้องต้น" กับ "ตรวจซ้ำหลังหน่วยงานลงนาม") อาเรย์ลำดับ task_type
- * แบบตรงไปตรงมาจึงใช้ไม่ได้ ต้องแยกด้วยว่ามี ORGANIZATION_APPROVAL ที่ APPROVED แล้ว
- * หรือยัง — **ไม่ใช่ด้วย round_number** เพราะรอบเพิ่มทุกครั้งที่ส่งกลับให้แก้ไขและทุกครั้ง
- * ที่มอบหมาย/ถอนผู้เชี่ยวชาญ (กติกาเดียวกับ nextStageAfter() ทุกประการ)
+ * จนถึง 2026-08-30 Journey C มีด่านเจ้าหน้าที่ BDI สองด่าน (ตรวจเบื้องต้น กับ "ตรวจซ้ำ"
+ * หลังหน่วยงานลงนาม) ซึ่งใช้ task_type เดียวกันและต้องแยกด้วยประวัติ ด่านตรวจซ้ำถูกยกเลิก
+ * ไปแล้ว — ลงนามเสร็จแล้วส่งให้ผู้อนุมัติ BDI ทันที หนึ่ง task_type จึงเป็นหนึ่งช่องพอดี
+ * ทั้งสองเส้นทาง และไฟล์นี้ไม่ต้องอ่านประวัติเพื่อตอบว่า task หนึ่งตกช่องไหนอีกต่อไป
  *
  * ฟังก์ชันนี้ไม่ query เอง — รับแถวที่ route ดึงมาอยู่แล้วจาก taskHistory() และ activeTask()
  * ใน lib/workflow.ts เพื่อไม่ให้หน้าจอหนึ่งหน้ายิงคำถามเดิมซ้ำ
@@ -89,10 +88,8 @@ export interface JourneyProgress {
 
 export type StepKey =
   | "OFFICER_REVIEW"
-  | "OFFICER_INITIAL"
   | "SPECIALIST_REVIEW"
   | "ORGANIZATION_APPROVAL"
-  | "OFFICER_RECHECK"
   | "FINAL_APPROVAL";
 
 export interface StepPlan {
@@ -150,17 +147,17 @@ const ORGANIZATION_PLAN: StepPlan[] = [
  * Journey C — `docs/01-user-journey.md` §4
  * ตรงกับ nextStageAfter() ใน dataset-requests.ts
  *
- * สเปกเรียกเส้นทางนี้ว่า "สามด่าน + Final Check คั่นระหว่างด่าน 2 กับ 3" หน้าจอนับ 1–4
- * เรียงตรง ๆ จึงตรงกับสเปกแต่เลขไม่ตรงกัน — ดู §4 ของเอกสารที่แก้ไว้แล้ว
+ * สามด่านเท่ากับเส้นทางหน่วยงาน ต่างกันแค่ทางแยกผู้เชี่ยวชาญที่ไม่บังคับ — ด่านตรวจซ้ำของ
+ * เจ้าหน้าที่ BDI ที่เคยคั่นระหว่างการลงนามกับการอนุมัติถูกยกเลิกเมื่อ 2026-08-30
  */
 const DATASET_PLAN: StepPlan[] = [
   {
-    key: "OFFICER_INITIAL",
+    key: "OFFICER_REVIEW",
     taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
     optional: false,
-    label: "เจ้าหน้าที่ BDI ตรวจสอบเบื้องต้น",
-    shortLabel: "รอ BDI ตรวจเบื้องต้น",
-    waitingLabel: "รอเจ้าหน้าที่ BDI ตรวจสอบเบื้องต้น",
+    label: "เจ้าหน้าที่ BDI ตรวจสอบเอกสาร",
+    shortLabel: "รอ BDI ตรวจสอบ",
+    waitingLabel: "รอเจ้าหน้าที่ BDI ตรวจสอบเอกสาร",
     roleCode: ROLE_CODES.BDI_OFFICER,
   },
   {
@@ -180,15 +177,6 @@ const DATASET_PLAN: StepPlan[] = [
     shortLabel: "รอหน่วยงานลงนาม",
     waitingLabel: "รอผู้มีอำนาจของหน่วยงานลงนามเห็นชอบ",
     roleCode: ROLE_CODES.ORGANIZATION_APPROVER,
-  },
-  {
-    key: "OFFICER_RECHECK",
-    taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
-    optional: false,
-    label: "เจ้าหน้าที่ BDI ตรวจซ้ำหลังลงนาม",
-    shortLabel: "รอ BDI ตรวจซ้ำ",
-    waitingLabel: "รอเจ้าหน้าที่ BDI ตรวจซ้ำหลังลงนาม",
-    roleCode: ROLE_CODES.BDI_OFFICER,
   },
   {
     key: "FINAL_APPROVAL",
@@ -217,26 +205,6 @@ export const journeyUnit = (subjectType: SubjectType): string =>
   subjectType === SubjectType.ORGANIZATION_REGISTRATION_REQUEST ? "หน่วยงาน" : "ชุดข้อมูล";
 
 /**
- * เงื่อนไขที่ชี้ขาดว่า `BDI_OFFICER_REVIEW` ที่ค้างอยู่คือ **ด่านตรวจเบื้องต้น** หรือ
- * **ด่านตรวจซ้ำ** — คำขอที่ผู้มีอำนาจของหน่วยงานลงนามผ่านไปแล้วคือด่านตรวจซ้ำ
- *
- * เป็นเงื่อนไขเดียวกับที่ slotOf() ใช้ (`orgApprovedBefore === 0`) เขียนไว้ตรงนี้ในรูปที่
- * ยกไปเป็น `where` ของ Prisma ได้ตรง ๆ เพื่อให้หน้ารายการนับสองช่องแยกกันได้โดยไม่ต้อง
- * เดินทุกแถวของทุกคำขอ
- *
- * **ห้ามใช้ `round_number` แทน** — round เพิ่มทุกครั้งที่คำขอถูกส่งกลับด้วย ใบที่ถูกส่งกลับ
- * ตั้งแต่ยังไม่ได้ลงนามจึงมี round 2 ทั้งที่ยังอยู่ด่านตรวจเบื้องต้น
- */
-export const ORGANIZATION_SIGNED_OFF = {
-  taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
-  result: ReviewResult.APPROVED,
-} as const;
-
-/** เส้นทางนี้แยกด่านเจ้าหน้าที่ BDI เป็นสองรอบไหม — มีเฉพาะเส้นทางชุดข้อมูล */
-export const hasRecheckStep = (subjectType: SubjectType): boolean =>
-  planFor(subjectType).some((s) => s.key === "OFFICER_RECHECK");
-
-/**
  * ผลที่ถือว่า "ผ่านด่านนี้ไปแล้ว"
  *
  * PASSED สำหรับด่านตรวจ, APPROVED สำหรับด่านอนุมัติ และ **CONFIRMED ก็นับด้วย** —
@@ -260,60 +228,35 @@ const ACTIVE_TASK_STATUSES: ReviewTaskStatus[] = [
 /**
  * task หนึ่งแถวตกช่องไหนในเส้นทาง
  *
- * `orgApprovedBefore` คือจำนวน ORGANIZATION_APPROVAL ที่ APPROVED **ก่อนหน้า** แถวนี้
- * ซึ่งเป็นตัวเดียวกับที่ nextStageAfter() นับ ณ ตอนตัดสินว่าจะเปิดด่านอะไรต่อ
+ * หนึ่ง task_type คือหนึ่งช่องตั้งแต่ด่านตรวจซ้ำถูกยกเลิก — `ORGANIZATION_REVISION` เป็น
+ * ข้อยกเว้นเดียว เพราะไม่เคยถูกเปิดเป็น task จึงไม่มีช่องของตัวเองในเส้นทาง
  */
-export function slotOf(
-  taskType: ReviewTaskType,
-  orgApprovedBefore: number,
-  plan: StepPlan[],
-): StepKey | null {
+export function slotOf(taskType: ReviewTaskType, plan: StepPlan[]): StepKey | null {
   if (taskType === ReviewTaskType.ORGANIZATION_REVISION) return null;
-
-  // เส้นทางที่มีด่านตรวจซ้ำเท่านั้นที่ต้องแยกสองความหมายของ BDI_OFFICER_REVIEW
-  if (
-    taskType === ReviewTaskType.BDI_OFFICER_REVIEW &&
-    plan.some((s) => s.key === "OFFICER_RECHECK")
-  ) {
-    return orgApprovedBefore === 0 ? "OFFICER_INITIAL" : "OFFICER_RECHECK";
-  }
-
   return plan.find((s) => s.taskType === taskType)?.key ?? null;
 }
 
 /**
- * แถวล่าสุดของแต่ละช่อง พร้อมจำนวน ORGANIZATION_APPROVAL ที่ผ่านแล้วทั้งหมด
+ * แถวล่าสุดของแต่ละช่อง
  *
- * เดินตาม sequenceNumber เพราะ orgApproved ต้องนับตามลำดับเวลาจริง ไม่ใช่ตามลำดับที่ query คืนมา
- * แถว CANCELLED / REASSIGNED ยังเดินผ่าน (เพื่อไม่ให้นับ orgApproved ผิด) แต่ไม่ถูกเก็บเป็น
- * แถวล่าสุดของช่อง เพราะไม่ได้ให้ผลอะไร — การถอนมอบหมายผู้เชี่ยวชาญจึงไม่ทำให้ขั้นนั้นดูเหมือนจบ
+ * เดินตาม sequenceNumber เพื่อให้ "ล่าสุด" หมายถึงล่าสุดจริง ไม่ใช่ลำดับที่ query คืนมา
+ * แถว CANCELLED / REASSIGNED ไม่ถูกเก็บเป็นแถวล่าสุดของช่อง เพราะไม่ได้ให้ผลอะไร —
+ * การถอนมอบหมายผู้เชี่ยวชาญจึงไม่ทำให้ขั้นนั้นดูเหมือนจบ
  */
 function latestBySlot(tasks: JourneyTaskRow[], plan: StepPlan[]) {
   const latest = new Map<StepKey, JourneyTaskRow>();
   const slotOfTaskId = new Map<string, StepKey>();
-  let orgApproved = 0;
 
   for (const task of [...tasks].sort((a, b) => a.sequenceNumber - b.sequenceNumber)) {
-    const slot = slotOf(task.taskType, orgApproved, plan);
-    if (slot) {
-      slotOfTaskId.set(task.id, slot);
-      if (
-        task.status === ReviewTaskStatus.COMPLETED ||
-        ACTIVE_TASK_STATUSES.includes(task.status)
-      ) {
-        latest.set(slot, task);
-      }
-    }
-
-    if (
-      task.taskType === ReviewTaskType.ORGANIZATION_APPROVAL &&
-      task.result === ReviewResult.APPROVED
-    ) {
-      orgApproved += 1;
+    const slot = slotOf(task.taskType, plan);
+    if (!slot) continue;
+    slotOfTaskId.set(task.id, slot);
+    if (task.status === ReviewTaskStatus.COMPLETED || ACTIVE_TASK_STATUSES.includes(task.status)) {
+      latest.set(slot, task);
     }
   }
 
-  return { latest, slotOfTaskId, orgApproved };
+  return { latest, slotOfTaskId };
 }
 
 function phaseFor(status: RequestStatus): JourneyPhase {
@@ -348,7 +291,7 @@ export function buildJourneyProgress(params: {
   active: JourneyTaskRow | null;
 }): JourneyProgress {
   const plan = planFor(params.subjectType);
-  const { latest, slotOfTaskId, orgApproved } = latestBySlot(params.tasks, plan);
+  const { latest, slotOfTaskId } = latestBySlot(params.tasks, plan);
   const activeSlot = params.active ? (slotOfTaskId.get(params.active.id) ?? null) : null;
 
   let order = 0;
@@ -394,7 +337,7 @@ export function buildJourneyProgress(params: {
     totalSteps: order,
     currentOrder: currentStep?.order ?? null,
     currentStep,
-    nextStep: nextStepFor({ steps, currentStep, phase, orgApproved, byKey }),
+    nextStep: nextStepFor({ steps, currentStep, phase, byKey }),
     phase,
   };
 }
@@ -406,39 +349,28 @@ export function buildJourneyProgress(params: {
  * ที่เจ้าหน้าที่เลือก ไม่ใช่ปลายทางที่รับประกันได้)
  *
  * ร่างหรือถูกส่งกลับ → ปลายทางคือด่านที่ `POST /:id/submit` จะเปิด ซึ่ง **เปิด
- * `BDI_OFFICER_REVIEW` เสมอ** ไม่ว่าจะถูกส่งกลับจากด่านไหน ช่องของมันจึงถูกเลือกด้วย
- * กติกา orgApproved เดียวกับตอนอ่านประวัติ — คำขอที่หน่วยงานลงนามไปแล้วกลับไปที่
- * "ตรวจซ้ำ" ไม่ใช่ "ตรวจเบื้องต้น" การไล่หา "ขั้นแรกที่ยังไม่ DONE" ตอบผิดตรงจุดนี้
+ * `BDI_OFFICER_REVIEW` เสมอ** ไม่ว่าจะถูกส่งกลับจากด่านไหน — รวมถึงใบที่หน่วยงานลงนาม
+ * ไปแล้ว ซึ่งจะต้องเดินผ่านการลงนามอีกครั้งเพราะเนื้อหาที่ลงนามไว้เปลี่ยนไปแล้ว
  */
 function nextStepFor(params: {
   steps: JourneyStep[];
   currentStep: JourneyStep | null;
   phase: JourneyPhase;
-  orgApproved: number;
   byKey: (key: StepKey) => JourneyStep | null;
 }): JourneyStep | null {
   if (params.phase === "APPROVED" || params.phase === "REJECTED" || params.phase === "CANCELLED") {
     return null;
   }
 
-  const officerSlot = () => {
-    const hasRecheck = params.steps.some((s) => s.key === "OFFICER_RECHECK");
-    if (!hasRecheck) return params.byKey("OFFICER_REVIEW");
-    return params.orgApproved === 0
-      ? params.byKey("OFFICER_INITIAL")
-      : params.byKey("OFFICER_RECHECK");
-  };
-
   // ผู้เชี่ยวชาญพิจารณาเสร็จแล้วคืนให้เจ้าหน้าที่ตัดสินใจเสมอ ไม่ได้เดินต่อไปด่านถัดไปเอง
-  // — และเจ้าหน้าที่คนนั้นอาจเป็นด่านตรวจซ้ำถ้าถูกมอบหมายหลังหน่วยงานลงนามแล้ว
-  if (params.currentStep?.key === "SPECIALIST_REVIEW") return officerSlot();
+  if (params.currentStep?.key === "SPECIALIST_REVIEW") return params.byKey("OFFICER_REVIEW");
 
   if (params.currentStep) {
     const from = params.steps.indexOf(params.currentStep);
     return params.steps.slice(from + 1).find((s) => !s.optional) ?? null;
   }
 
-  return officerSlot();
+  return params.byKey("OFFICER_REVIEW");
 }
 
 /** ย่อให้พอสำหรับตารางและการ์ด — หน้ารายการไม่ต้องแบกรายการขั้นทั้งชุด */
@@ -446,18 +378,17 @@ export interface JourneyProgressSummary {
   totalSteps: number;
   currentOrder: number | null;
   /**
-   * ช่องที่คำขอค้างอยู่ — **คีย์เดียวกับโหนดในแผนภาพ** ไม่ใช่ task_type ที่กำกวม
+   * ช่องที่คำขอค้างอยู่ — **คีย์เดียวกับโหนดในแผนภาพ** ไม่ใช่ task_type
    *
-   * badge ของแถวเคยอ่านจาก TASK_TYPE_META ซึ่งไม่รู้จักรอบ ใบที่ค้างด่านตรวจซ้ำจึงขึ้นว่า
-   * "รอเจ้าหน้าที่ BDI ตรวจสอบ" เหมือนใบที่ยังอยู่ด่านแรกเป๊ะ พอแผนภาพมีโหนด "รอ BDI
-   * ตรวจซ้ำ" แล้วกดเข้าไปเจอ badge คนละคำ ก็คือความไม่ตรงกันแบบเดียวกับที่เพิ่งกำจัดไป
+   * badge ของแถวกับกล่องในแผนภาพต้องเรียกสิ่งเดียวกันด้วยคำเดียวกัน คีย์นี้คือสิ่งที่
+   * ผูกทั้งสองเข้าด้วยกัน — TASK_TYPE_META เหลือหน้าที่แค่เลือกสี
    */
   currentKey: StepKey | null;
   currentLabel: string | null;
   /**
    * ชื่อสั้นของช่องปัจจุบัน — badge ในแถวใช้ตัวนี้ ส่วนชื่อเต็มไปอยู่ใน hover
    *
-   * badge ที่ใส่ชื่อเต็ม ("รอเจ้าหน้าที่ BDI ตรวจซ้ำหลังลงนาม") ล้นคอลัมน์ 12rem แล้วไป
+   * badge ที่ใส่ชื่อเต็ม ("รอเจ้าหน้าที่ BDI ตรวจสอบเอกสาร") ล้นคอลัมน์ 12rem แล้วไป
    * ทับคอลัมน์ความคืบหน้า และคำก็ไม่ตรงกับกล่องในแผนภาพที่ผู้ใช้กดเข้ามาด้วย
    */
   currentShortLabel: string | null;
@@ -588,20 +519,11 @@ const toneOf = (taskType: ReviewTaskType): NodeTone =>
 export const journeyNodeKeys = (subjectType: SubjectType): StepKey[] =>
   planFor(subjectType).map((s) => s.key);
 
-/**
- * ช่องที่ task ที่ยัง active หนึ่งแถวตกอยู่
- *
- * `orgApproved` คือจำนวน ORGANIZATION_APPROVAL ที่ APPROVED **ทั้งใบ** ซึ่งสำหรับแถวที่
- * ยัง active เท่ากับ "ก่อนหน้าแถวนี้" เสมอ เพราะ openTask() ให้ sequenceNumber =
- * totalTasks + 1 แถวที่ active จึงมี sequence สูงสุดของใบนั้นตลอด — หน้ารายการจึงถามได้
- * ด้วย boolean ต่อคำขอหนึ่งตัว ไม่ต้องเดินประวัติทั้งใบเหมือน latestBySlot()
- */
+/** ช่องที่ task ที่ยัง active หนึ่งแถวตกอยู่ — หน้ารายการใช้ตัวนี้ ไม่ต้องเดินประวัติทั้งใบ */
 export const currentSlotOf = (params: {
   subjectType: SubjectType;
   taskType: ReviewTaskType;
-  orgApproved: number;
-}): StepKey | null =>
-  slotOf(params.taskType, params.orgApproved, planFor(params.subjectType));
+}): StepKey | null => slotOf(params.taskType, planFor(params.subjectType));
 
 /**
  * รูปร่างของเส้นทางทั้งเส้น — โหนดกับเส้นเชื่อม
@@ -679,9 +601,8 @@ export function journeyGraph(subjectType: SubjectType): {
   nodes.push(terminal("CANCELLED", "closed"));
 
   /**
-   * แก้แล้วนำส่งใหม่กลับเข้าด่านตรวจของเจ้าหน้าที่เสมอ — แต่ **ช่องไหน** ขึ้นกับว่า
-   * หน่วยงานลงนามไปแล้วหรือยัง (กติกาเดียวกับ slotOf) เส้นทางชุดข้อมูลจึงมีลูกศรกลับ
-   * สองเส้น ไม่ใช่เส้นเดียว และนั่นคือความจริงของระบบ ไม่ใช่ความกำกวมของแผนภาพ
+   * แก้แล้วนำส่งใหม่กลับเข้าด่านตรวจของเจ้าหน้าที่เสมอ ไม่ว่าจะถูกส่งกลับจากด่านไหน —
+   * ใบที่หน่วยงานลงนามไปแล้วก็เดินผ่านการลงนามใหม่อีกรอบ เพราะเนื้อหาที่ลงนามไว้เปลี่ยนไปแล้ว
    */
   for (const step of plan) {
     if (step.taskType === SUBMIT_OPENS) {

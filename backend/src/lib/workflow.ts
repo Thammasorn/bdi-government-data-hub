@@ -9,8 +9,8 @@
  * ความสัมพันธ์ระหว่างสองอย่างนี้กำหนดไว้ในภาพ "ความสัมพันธ์กับ review_task"
  * ใน sheet `org_registration_request` และ implement ที่ requestStatusFor() ท้ายไฟล์
  *
- * ด่าน "BDI Officer ตรวจซ้ำ" ของเดิม (PENDING_OFFICER_FINAL_CHECK) ไม่มี task_type
- * ของตัวเองในดีไซน์ — ใช้ BDI_OFFICER_REVIEW ที่ round_number = 2 แทน
+ * `PENDING_OFFICER_FINAL_CHECK` ของแบบเดิมไม่มีที่ลงในแบบใหม่เลย — ด่านตรวจซ้ำของ
+ * เจ้าหน้าที่ BDI ถูกยกเลิกเมื่อ 2026-08-30 หน่วยงานลงนามแล้วไปที่ BDI_FINAL_APPROVAL ตรง ๆ
  */
 import {
   AssignmentSource,
