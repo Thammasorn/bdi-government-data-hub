@@ -26,6 +26,7 @@ import {
 
 import { ROLE_LABELS } from "./roles.js";
 import { ROLE_CODES, type RoleCode } from "./system.js";
+import { ALLOWED_RESULTS } from "./workflow.js";
 
 /** แถวที่ฟังก์ชันนี้อ่าน — เป็น subset ของ review_task ที่ taskHistory()/activeTask() คืนมา */
 export interface JourneyTaskRow {
@@ -92,11 +93,19 @@ export type StepKey =
   | "OFFICER_RECHECK"
   | "FINAL_APPROVAL";
 
-interface StepPlan {
+export interface StepPlan {
   key: StepKey;
   taskType: ReviewTaskType;
   optional: boolean;
   label: string;
+  /**
+   * คำบนโหนดของแผนภาพเส้นทาง — สั้นพอจะอยู่ในกล่องเล็ก ๆ ได้
+   *
+   * `label` กับ `waitingLabel` เขียนไว้ให้อ่านเป็นประโยคในไทม์ไลน์และในอีเมล ยาวเกินกล่อง
+   * แต่ต้องมาจากตารางเดียวกัน ไม่ใช่ตารางคำใบที่สองฝั่งหน้าเว็บ — โหนดกับ badge เรียกสิ่ง
+   * เดียวกันคนละชื่อคือบั๊กที่เพิ่งกำจัดไปรอบก่อน
+   */
+  shortLabel: string;
   waitingLabel: string;
   roleCode: RoleCode;
 }
@@ -111,6 +120,7 @@ const ORGANIZATION_PLAN: StepPlan[] = [
     taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
     optional: false,
     label: "เจ้าหน้าที่ BDI ตรวจสอบเอกสาร",
+    shortLabel: "รอ BDI ตรวจสอบ",
     waitingLabel: "รอเจ้าหน้าที่ BDI ตรวจสอบเอกสาร",
     roleCode: ROLE_CODES.BDI_OFFICER,
   },
@@ -119,6 +129,7 @@ const ORGANIZATION_PLAN: StepPlan[] = [
     taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
     optional: false,
     label: "ผู้มีอำนาจของหน่วยงานลงนามเห็นชอบ",
+    shortLabel: "รอหน่วยงานลงนาม",
     waitingLabel: "รอผู้มีอำนาจของหน่วยงานลงนามเห็นชอบ",
     roleCode: ROLE_CODES.ORGANIZATION_APPROVER,
   },
@@ -127,6 +138,7 @@ const ORGANIZATION_PLAN: StepPlan[] = [
     taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
     optional: false,
     label: "BDI อนุมัติขั้นสุดท้าย",
+    shortLabel: "รอ BDI อนุมัติ",
     waitingLabel: "รอ BDI อนุมัติขั้นสุดท้าย",
     roleCode: ROLE_CODES.BDI_FINAL_APPROVER,
   },
@@ -145,6 +157,7 @@ const DATASET_PLAN: StepPlan[] = [
     taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
     optional: false,
     label: "เจ้าหน้าที่ BDI ตรวจสอบเบื้องต้น",
+    shortLabel: "รอ BDI ตรวจเบื้องต้น",
     waitingLabel: "รอเจ้าหน้าที่ BDI ตรวจสอบเบื้องต้น",
     roleCode: ROLE_CODES.BDI_OFFICER,
   },
@@ -153,6 +166,7 @@ const DATASET_PLAN: StepPlan[] = [
     taskType: ReviewTaskType.DATASET_SPECIALIST_REVIEW,
     optional: true,
     label: "ผู้เชี่ยวชาญด้านข้อมูลพิจารณา",
+    shortLabel: "รอผู้เชี่ยวชาญ",
     waitingLabel: "รอผู้เชี่ยวชาญด้านข้อมูลพิจารณา",
     roleCode: ROLE_CODES.BDI_DATASET_SPECIALIST,
   },
@@ -161,6 +175,7 @@ const DATASET_PLAN: StepPlan[] = [
     taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
     optional: false,
     label: "ผู้มีอำนาจของหน่วยงานลงนามเห็นชอบ",
+    shortLabel: "รอหน่วยงานลงนาม",
     waitingLabel: "รอผู้มีอำนาจของหน่วยงานลงนามเห็นชอบ",
     roleCode: ROLE_CODES.ORGANIZATION_APPROVER,
   },
@@ -169,6 +184,7 @@ const DATASET_PLAN: StepPlan[] = [
     taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
     optional: false,
     label: "เจ้าหน้าที่ BDI ตรวจซ้ำหลังลงนาม",
+    shortLabel: "รอ BDI ตรวจซ้ำ",
     waitingLabel: "รอเจ้าหน้าที่ BDI ตรวจซ้ำหลังลงนาม",
     roleCode: ROLE_CODES.BDI_OFFICER,
   },
@@ -177,16 +193,37 @@ const DATASET_PLAN: StepPlan[] = [
     taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
     optional: false,
     label: "BDI อนุมัติขั้นสุดท้าย",
+    shortLabel: "รอ BDI อนุมัติ",
     waitingLabel: "รอ BDI อนุมัติขั้นสุดท้าย",
     roleCode: ROLE_CODES.BDI_FINAL_APPROVER,
   },
 ];
 
-function planFor(subjectType: SubjectType): StepPlan[] {
+export function planFor(subjectType: SubjectType): StepPlan[] {
   return subjectType === SubjectType.ORGANIZATION_REGISTRATION_REQUEST
     ? ORGANIZATION_PLAN
     : DATASET_PLAN;
 }
+
+/**
+ * เงื่อนไขที่ชี้ขาดว่า `BDI_OFFICER_REVIEW` ที่ค้างอยู่คือ **ด่านตรวจเบื้องต้น** หรือ
+ * **ด่านตรวจซ้ำ** — คำขอที่ผู้มีอำนาจของหน่วยงานลงนามผ่านไปแล้วคือด่านตรวจซ้ำ
+ *
+ * เป็นเงื่อนไขเดียวกับที่ slotOf() ใช้ (`orgApprovedBefore === 0`) เขียนไว้ตรงนี้ในรูปที่
+ * ยกไปเป็น `where` ของ Prisma ได้ตรง ๆ เพื่อให้หน้ารายการนับสองช่องแยกกันได้โดยไม่ต้อง
+ * เดินทุกแถวของทุกคำขอ
+ *
+ * **ห้ามใช้ `round_number` แทน** — round เพิ่มทุกครั้งที่คำขอถูกส่งกลับด้วย ใบที่ถูกส่งกลับ
+ * ตั้งแต่ยังไม่ได้ลงนามจึงมี round 2 ทั้งที่ยังอยู่ด่านตรวจเบื้องต้น
+ */
+export const ORGANIZATION_SIGNED_OFF = {
+  taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
+  result: ReviewResult.APPROVED,
+} as const;
+
+/** เส้นทางนี้แยกด่านเจ้าหน้าที่ BDI เป็นสองรอบไหม — มีเฉพาะเส้นทางชุดข้อมูล */
+export const hasRecheckStep = (subjectType: SubjectType): boolean =>
+  planFor(subjectType).some((s) => s.key === "OFFICER_RECHECK");
 
 /**
  * ผลที่ถือว่า "ผ่านด่านนี้ไปแล้ว"
@@ -215,7 +252,7 @@ const ACTIVE_TASK_STATUSES: ReviewTaskStatus[] = [
  * `orgApprovedBefore` คือจำนวน ORGANIZATION_APPROVAL ที่ APPROVED **ก่อนหน้า** แถวนี้
  * ซึ่งเป็นตัวเดียวกับที่ nextStageAfter() นับ ณ ตอนตัดสินว่าจะเปิดด่านอะไรต่อ
  */
-function slotOf(
+export function slotOf(
   taskType: ReviewTaskType,
   orgApprovedBefore: number,
   plan: StepPlan[],
@@ -396,6 +433,14 @@ function nextStepFor(params: {
 export interface JourneyProgressSummary {
   totalSteps: number;
   currentOrder: number | null;
+  /**
+   * ช่องที่คำขอค้างอยู่ — **คีย์เดียวกับโหนดในแผนภาพ** ไม่ใช่ task_type ที่กำกวม
+   *
+   * badge ของแถวเคยอ่านจาก TASK_TYPE_META ซึ่งไม่รู้จักรอบ ใบที่ค้างด่านตรวจซ้ำจึงขึ้นว่า
+   * "รอเจ้าหน้าที่ BDI ตรวจสอบ" เหมือนใบที่ยังอยู่ด่านแรกเป๊ะ พอแผนภาพมีโหนด "รอ BDI
+   * ตรวจซ้ำ" แล้วกดเข้าไปเจอ badge คนละคำ ก็คือความไม่ตรงกันแบบเดียวกับที่เพิ่งกำจัดไป
+   */
+  currentKey: StepKey | null;
   currentLabel: string | null;
   nextLabel: string | null;
   phase: JourneyPhase;
@@ -405,6 +450,7 @@ export function summariseProgress(progress: JourneyProgress): JourneyProgressSum
   return {
     totalSteps: progress.totalSteps,
     currentOrder: progress.currentOrder,
+    currentKey: (progress.currentStep?.key as StepKey | undefined) ?? null,
     currentLabel: progress.currentStep?.waitingLabel ?? null,
     nextLabel: progress.nextStep?.label ?? null,
     phase: progress.phase,
@@ -447,4 +493,181 @@ export function summariseMany(params: {
       ];
     }),
   );
+}
+
+
+// ────────────────────────────────────────────────────── แผนภาพของเส้นทาง
+
+/**
+ * โหนดหนึ่งโหนดในแผนภาพ = หนึ่งช่องของเส้นทาง หรือหนึ่งปลายทางที่ไม่มีด่านค้าง
+ *
+ * `StepKey` ตอบเฉพาะช่องที่มี task ส่วนฉบับร่างกับปลายทางไม่มี task เลย จึงต้องมาจาก
+ * `RequestStatus` — ปนกันสองชนิดโดยตั้งใจ เหมือนที่ badge ของแถวก็เลือกระหว่างสองชนิดนี้
+ */
+export type JourneyNodeKey = StepKey | TerminalKey;
+
+export type TerminalKey = "DRAFT" | "RETURNED" | "APPROVED" | "REJECTED" | "CANCELLED";
+
+/** ช่องของแผนภาพที่โหนดไปอยู่ — หน้าเว็บวาดจากค่านี้อย่างเดียว ไม่รู้จัก journey ไหนเลย */
+export type NodeLane = "main" | "branch" | "revision" | "closed";
+
+/** สีของโหนด ส่งเป็นชื่อโทน ไม่ใช่คลาส — Tailwind สแกน static คลาสต้องเป็นสตริงเต็มฝั่งหน้าเว็บ */
+export type NodeTone = "neutral" | "review" | "approval" | "success" | "danger";
+
+export interface JourneyNodeShape {
+  key: JourneyNodeKey;
+  lane: NodeLane;
+  /** โหนดที่ทางแยกนี้ห้อยอยู่ — มีเฉพาะ lane "branch" */
+  anchor: JourneyNodeKey | null;
+  /** เลขขั้นที่ผู้ใช้เห็น — ทางแยกและปลายทางไม่มีเลข */
+  order: number | null;
+  optional: boolean;
+  terminal: boolean;
+  label: string;
+  short: string;
+  waitingLabel: string | null;
+  roleCode: RoleCode | null;
+  roleLabel: string | null;
+  tone: NodeTone;
+}
+
+export type EdgeKind = "chain" | "branch" | "return" | "resubmit";
+
+export interface JourneyEdge {
+  from: JourneyNodeKey;
+  to: JourneyNodeKey;
+  kind: EdgeKind;
+}
+
+/**
+ * ปลายทางที่ไม่มี task — คำต้องตรงกับ badge ที่แถวเดียวกันแสดง
+ *
+ * **อย่าใช้ `REQUEST_STATUS_LABELS` ใน roles.ts แทน** ตารางนั้นเขียนไว้สำหรับอีเมล
+ * (`RETURNED` = "ส่งกลับให้แก้ไข") ส่วน badge บนจอเขียน "รอการแก้ไข" ถ้าหยิบผิดตาราง
+ * โหนดกับ badge ของแถวเดียวกันจะเรียกสิ่งเดียวกันคนละชื่อ ซึ่งเป็นบั๊กที่เพิ่งกำจัดไป
+ * ตารางนี้ต้องเดินคู่กับ REQUEST_STATUS_META ใน frontend/lib/status.ts
+ */
+const TERMINAL_NODES: Record<TerminalKey, { label: string; short: string; tone: NodeTone }> = {
+  DRAFT: { label: "ฉบับร่าง", short: "ฉบับร่าง", tone: "neutral" },
+  RETURNED: { label: "รอการแก้ไข", short: "รอการแก้ไข", tone: "danger" },
+  APPROVED: { label: "อนุมัติแล้ว", short: "อนุมัติแล้ว", tone: "success" },
+  REJECTED: { label: "ไม่อนุมัติ", short: "ไม่อนุมัติ", tone: "danger" },
+  CANCELLED: { label: "ยกเลิกแล้ว", short: "ยกเลิกแล้ว", tone: "neutral" },
+};
+
+/** ด่านที่ `POST /:id/submit` เปิดเสมอ — ทั้งสอง route ตรงกัน */
+const SUBMIT_OPENS = ReviewTaskType.BDI_OFFICER_REVIEW;
+
+const toneOf = (taskType: ReviewTaskType): NodeTone =>
+  taskType === ReviewTaskType.BDI_FINAL_APPROVAL ||
+  taskType === ReviewTaskType.ORGANIZATION_APPROVAL
+    ? "approval"
+    : "review";
+
+/** คีย์ของช่องทั้งหมดในเส้นทางนี้ ตามลำดับที่คำขอเดินผ่าน */
+export const journeyNodeKeys = (subjectType: SubjectType): StepKey[] =>
+  planFor(subjectType).map((s) => s.key);
+
+/**
+ * ช่องที่ task ที่ยัง active หนึ่งแถวตกอยู่
+ *
+ * `orgApproved` คือจำนวน ORGANIZATION_APPROVAL ที่ APPROVED **ทั้งใบ** ซึ่งสำหรับแถวที่
+ * ยัง active เท่ากับ "ก่อนหน้าแถวนี้" เสมอ เพราะ openTask() ให้ sequenceNumber =
+ * totalTasks + 1 แถวที่ active จึงมี sequence สูงสุดของใบนั้นตลอด — หน้ารายการจึงถามได้
+ * ด้วย boolean ต่อคำขอหนึ่งตัว ไม่ต้องเดินประวัติทั้งใบเหมือน latestBySlot()
+ */
+export const currentSlotOf = (params: {
+  subjectType: SubjectType;
+  taskType: ReviewTaskType;
+  orgApproved: number;
+}): StepKey | null =>
+  slotOf(params.taskType, params.orgApproved, planFor(params.subjectType));
+
+/**
+ * รูปร่างของเส้นทางทั้งเส้น — โหนดกับเส้นเชื่อม
+ *
+ * **ทุกเส้นถูก derive ไม่ได้เขียนมือ** โดยเฉพาะเส้น "ส่งกลับให้แก้ไข" ที่อ่านจาก
+ * ALLOWED_RESULTS ของแต่ละด่าน แผนภาพจึงเป็นภาพของ state machine จริง ไม่ใช่ภาพของ
+ * ความทรงจำว่า state machine เป็นอย่างไร วันที่ด่านไหนเลิกส่งกลับได้ เส้นก็หายเอง
+ *
+ * ไม่มีเส้นไหนวิ่งเข้า REJECTED / CANCELLED ทั้งที่สี่ด่านปฏิเสธได้ — สี่เส้นตัดกันจะทำ
+ * ภาพอ่านไม่ออกเพื่อบอกสิ่งที่ไม่มีใครใช้กรอง สองโหนดนั้นจึงวางแยกไว้ท้ายแถวล่าง
+ */
+export function journeyGraph(subjectType: SubjectType): {
+  nodes: JourneyNodeShape[];
+  edges: JourneyEdge[];
+} {
+  const plan = planFor(subjectType);
+  const nodes: JourneyNodeShape[] = [];
+  const edges: JourneyEdge[] = [];
+
+  const terminal = (key: TerminalKey, lane: NodeLane, roleCode: RoleCode | null = null) => ({
+    key,
+    lane,
+    anchor: null,
+    order: null,
+    optional: false,
+    terminal: key !== "RETURNED",
+    label: TERMINAL_NODES[key].label,
+    short: TERMINAL_NODES[key].short,
+    waitingLabel: null,
+    roleCode,
+    roleLabel: roleCode ? ROLE_LABELS[roleCode] : null,
+    tone: TERMINAL_NODES[key].tone,
+  });
+
+  nodes.push(terminal("DRAFT", "main"));
+
+  let order = 0;
+  let previousMandatory: JourneyNodeKey = "DRAFT";
+  for (const step of plan) {
+    nodes.push({
+      key: step.key,
+      lane: step.optional ? "branch" : "main",
+      anchor: step.optional ? previousMandatory : null,
+      order: step.optional ? null : ++order,
+      optional: step.optional,
+      terminal: false,
+      label: step.label,
+      short: step.shortLabel,
+      waitingLabel: step.waitingLabel,
+      roleCode: step.roleCode,
+      roleLabel: ROLE_LABELS[step.roleCode],
+      tone: toneOf(step.taskType),
+    });
+
+    if (step.optional) {
+      // ทางแยกออกไปแล้วกลับเข้าด่านเดิมเสมอ — ผู้เชี่ยวชาญให้ความเห็น ไม่ได้ตัดสินใจแทน
+      edges.push({ from: previousMandatory, to: step.key, kind: "branch" });
+      edges.push({ from: step.key, to: previousMandatory, kind: "branch" });
+    } else {
+      edges.push({ from: previousMandatory, to: step.key, kind: "chain" });
+      previousMandatory = step.key;
+    }
+
+    // ด่านนี้ส่งกลับให้แก้ไขได้ไหม — ถามตารางผลลัพธ์ ไม่ใช่เดาจากชนิดของด่าน
+    if (ALLOWED_RESULTS[step.taskType].includes(ReviewResult.RETURNED)) {
+      edges.push({ from: step.key, to: "RETURNED", kind: "return" });
+    }
+  }
+
+  nodes.push(terminal("APPROVED", "main"));
+  edges.push({ from: previousMandatory, to: "APPROVED", kind: "chain" });
+
+  nodes.push(terminal("RETURNED", "revision", ROLE_CODES.ORGANIZATION_USER));
+  nodes.push(terminal("REJECTED", "closed"));
+  nodes.push(terminal("CANCELLED", "closed"));
+
+  /**
+   * แก้แล้วนำส่งใหม่กลับเข้าด่านตรวจของเจ้าหน้าที่เสมอ — แต่ **ช่องไหน** ขึ้นกับว่า
+   * หน่วยงานลงนามไปแล้วหรือยัง (กติกาเดียวกับ slotOf) เส้นทางชุดข้อมูลจึงมีลูกศรกลับ
+   * สองเส้น ไม่ใช่เส้นเดียว และนั่นคือความจริงของระบบ ไม่ใช่ความกำกวมของแผนภาพ
+   */
+  for (const step of plan) {
+    if (step.taskType === SUBMIT_OPENS) {
+      edges.push({ from: "RETURNED", to: step.key, kind: "resubmit" });
+    }
+  }
+
+  return { nodes, edges };
 }

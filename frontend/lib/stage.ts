@@ -1,71 +1,74 @@
 /**
- * คำศัพท์ "ด่าน" ของหน้ารายการ — ป้ายบนเม็ดกรองต้องเป็นคำเดียวกับ badge ในแถว
+ * รูปร่างของเส้นทางอนุมัติที่ `/summary` ส่งมา — โหนด เส้นเชื่อม และตัวเลข
  *
- * เม็ดกรองเคยกรองด้วย `status` ซึ่งกรองผิดระดับ: `SUBMITTED` แปลว่า "มีด่านค้างอยู่
- * และยังไม่มีใครกดเปิด" ไม่ว่าด่านนั้นจะเป็นด่านไหน เม็ดเดียวจึงกวาดงานของคนละคน
- * มารวมกันแล้วเขียนป้ายเดียวกันว่า "นำส่งแล้ว"
+ * ไฟล์นี้ **ไม่รู้จักเส้นทางไหนเลย** และต้องเป็นแบบนั้นต่อไป: ลำดับด่านประกาศไว้ที่
+ * `backend/src/lib/journey-steps.ts` ที่เดียว (กติกาเดียวกับที่ ApprovalSteps.tsx และ
+ * lib/types.ts เขียนไว้) และคำตอบว่า "ช่องไหนเป็นของฉัน" ก็มาจาก server เช่นกัน —
+ * map role→ช่อง ฝั่งหน้าเว็บจะเดาผิดแล้วโชว์ **แถวผิด** ไม่ใช่แค่ป้ายผิด
  *
- * โทเคนที่นี่ = ป้ายหนึ่งแบบที่ stageMeta() วาดได้ ผู้ใช้จึงกรองด้วยคำที่เขาเห็น
- *
- * **ไม่มีสำเนาของ map role→ด่าน ที่นี่โดยตั้งใจ** — `/summary` ส่ง `myStages` มาให้
- * ธรรมเนียม "สำเนาโดยตั้งใจ" ของ lib/dataset-form.ts มีไว้สำหรับสิ่งที่หน้าจอต้องรู้
- * *ก่อน* เครือข่ายตอบ ซึ่งแท็บที่รอตัวเลขอยู่แล้วไม่ใช่ ถ้าสองฝั่งเดินคนละทาง
- * หน้าจอจะบอกคนผิดว่าไม่มีงาน ซึ่งเป็นความผิดพลาดที่เงียบที่สุดของงานนี้
+ * สิ่งเดียวที่ไฟล์นี้เป็นเจ้าของคือ **สี** ซึ่งเป็นเรื่องการนำเสนอ ไม่ใช่ข้อมูล จึงไม่ควร
+ * เดินทางมากับ API — server ส่งชื่อโทนมา ที่นี่แปลเป็นคลาส (Tailwind สแกน static
+ * คลาสจึงต้องเป็นสตริงเต็มในไฟล์นี้)
  */
-import {
-  REQUEST_STATUS_META,
-  TASK_TYPE_META,
-  type RequestStatus,
-  type ReviewTaskType,
-} from "@/lib/status";
 
-export type StageToken =
-  | Exclude<ReviewTaskType, "ORGANIZATION_REVISION">
-  | Exclude<RequestStatus, "SUBMITTED" | "UNDER_REVIEW">;
+/** ช่องของแผนภาพที่โหนดไปอยู่ */
+export type NodeLane = "main" | "branch" | "revision" | "closed";
+
+export type NodeTone = "neutral" | "review" | "approval" | "success" | "danger";
+
+export type EdgeKind = "chain" | "branch" | "return" | "resubmit";
 
 /**
- * ป้ายยาวใช้กับ badge อยู่แล้ว — เม็ดกรองกับการ์ดสรุปต้องการฉบับสั้น
- * แต่ทั้งสองแบบต้องมาจากตารางเดียวกัน ไม่ใช่พิมพ์ใหม่
+ * คีย์ของโหนดเป็น string ธรรมดาโดยตั้งใจ — union ที่แคบกว่านี้ต้องรู้จัก StepKey
+ * ซึ่งแปลว่าต้องรู้ลำดับด่าน ห้าปลายทางที่หน้าเว็บเป็นเจ้าของจริง ๆ ยังพิมพ์แล้วเดาได้
  */
-export const STAGE_META: Record<StageToken, { label: string; short: string; className: string }> = {
-  BDI_OFFICER_REVIEW: { ...TASK_TYPE_META.BDI_OFFICER_REVIEW, short: "รอ BDI ตรวจสอบ" },
-  DATASET_SPECIALIST_REVIEW: {
-    ...TASK_TYPE_META.DATASET_SPECIALIST_REVIEW,
-    short: "รอผู้เชี่ยวชาญ",
-  },
-  ORGANIZATION_APPROVAL: {
-    ...TASK_TYPE_META.ORGANIZATION_APPROVAL,
-    short: "รอหน่วยงานลงนาม",
-  },
-  BDI_FINAL_APPROVAL: { ...TASK_TYPE_META.BDI_FINAL_APPROVAL, short: "รอ BDI อนุมัติ" },
-  DRAFT: { ...REQUEST_STATUS_META.DRAFT, short: "ฉบับร่าง" },
-  RETURNED: { ...REQUEST_STATUS_META.RETURNED, short: "รอการแก้ไข" },
-  APPROVED: { ...REQUEST_STATUS_META.APPROVED, short: "อนุมัติแล้ว" },
-  REJECTED: { ...REQUEST_STATUS_META.REJECTED, short: "ไม่อนุมัติ" },
-  CANCELLED: { ...REQUEST_STATUS_META.CANCELLED, short: "ยกเลิกแล้ว" },
-};
+export type TerminalKey = "DRAFT" | "RETURNED" | "APPROVED" | "REJECTED" | "CANCELLED";
+export type NodeKey = TerminalKey | (string & {});
 
-/** ประโยคบนการ์ดสรุป — พูดกับเจ้าของงานตรง ๆ ไม่ใช่บรรยายสถานะ */
-export const MY_STAGE_HEADLINE: Record<StageToken, string> = {
-  BDI_OFFICER_REVIEW: "รอคุณตรวจสอบ",
-  DATASET_SPECIALIST_REVIEW: "รอคุณให้ความเห็น",
-  ORGANIZATION_APPROVAL: "รอคุณลงนาม",
-  BDI_FINAL_APPROVAL: "รอคุณอนุมัติ",
-  DRAFT: "ฉบับร่างที่ยังไม่ได้นำส่ง",
-  RETURNED: "รอคุณแก้ไขและนำส่งใหม่",
-  APPROVED: "อนุมัติแล้ว",
-  REJECTED: "ไม่อนุมัติ",
-  CANCELLED: "ยกเลิกแล้ว",
-};
+export interface JourneyNode {
+  key: NodeKey;
+  lane: NodeLane;
+  /** โหนดที่ทางแยกนี้ห้อยอยู่ — มีเฉพาะ lane "branch" */
+  anchor: NodeKey | null;
+  order: number | null;
+  optional: boolean;
+  terminal: boolean;
+  label: string;
+  short: string;
+  waitingLabel: string | null;
+  roleCode: string | null;
+  roleLabel: string | null;
+  tone: NodeTone;
+  count: number;
+  /** ช่องนี้เป็นงานของตำแหน่งผู้ใช้คนนี้ */
+  mine: boolean;
+}
+
+export interface JourneyEdge {
+  from: NodeKey;
+  to: NodeKey;
+  kind: EdgeKind;
+}
 
 /** GET /api/{organizations,dataset-requests}/summary */
 export interface ListSummary {
   total: number;
-  /** ลำดับของคีย์คือลำดับที่เม็ดกรองควรเรียง — เส้นทางหน่วยงานไม่มีด่านผู้เชี่ยวชาญ */
-  stages: Partial<Record<StageToken, number>>;
-  myStages: StageToken[];
   mine: number;
+  nodes: JourneyNode[];
+  edges: JourneyEdge[];
 }
+
+/** สีของชิปตัวเลขบนโหนด — คู่เดียวกับที่ badge ในแถวใช้ โหนดกับแถวจึงสีเดียวกันด้วย */
+export const NODE_TONE_CLASS: Record<NodeTone, string> = {
+  neutral: "bg-navy-50 text-ink-muted",
+  review: "bg-warning-bg text-warning",
+  approval: "bg-navy-100 text-navy-600",
+  success: "bg-success-bg text-success",
+  danger: "bg-danger-bg text-danger",
+};
+
+export const nodeCount = (summary: ListSummary | null, key: NodeKey): number =>
+  summary?.nodes.find((n) => n.key === key)?.count ?? 0;
 
 export interface PageInfo {
   page: number;
@@ -82,13 +85,12 @@ export const SORT_LABELS: Record<SortOrder, string> = {
 };
 
 /**
- * ผู้ใช้คนนี้มีด่านเป็นของตัวเองไหม — ใช้ตัดสิน **แค่ว่าจะเปิดแท็บไหนก่อน** ตอนที่
+ * ผู้ใช้คนนี้มีช่องเป็นของตัวเองไหม — ใช้ตัดสิน **แค่ว่าจะเปิดแท็บไหนก่อน** ตอนที่
  * ยังไม่มีคำตอบจาก `/summary`
  *
- * คำตอบจริงคือ `myStages` ที่ server ส่งมา (คำนวณจาก TASK_TYPE_ROLES ที่เดียว)
- * ที่นี่จึงเก็บแค่รายชื่อ role ที่ *ไม่มี* ด่านเลย ซึ่งสั้นและเปลี่ยนแทบไม่ได้ ถ้าเดาผิด
- * ผลคือแท็บเปิดผิดอันหนึ่งครั้ง ไม่ใช่ข้อมูลผิด — จงใจแลกไว้แบบนี้ เพราะทางเลือกอื่น
- * คือให้แท็บสลับเองหลังโหลดเสร็จ ซึ่งเห็นกระพริบทุกครั้งที่เข้าหน้า
+ * คำตอบจริงคือธง `mine` บนแต่ละโหนด ที่นี่จึงเก็บแค่รายชื่อ role ที่ *ไม่มี* ช่องเลย
+ * ซึ่งสั้นและเปลี่ยนแทบไม่ได้ ถ้าเดาผิดผลคือแท็บเปิดผิดอันหนึ่งครั้ง ไม่ใช่ข้อมูลผิด —
+ * จงใจแลกไว้แบบนี้ เพราะทางเลือกอื่นคือให้แท็บสลับเองหลังโหลดเสร็จ ซึ่งเห็นกระพริบ
  */
 const ROLES_WITHOUT_QUEUE = ["SYSTEM_ADMINISTRATOR", "BDI_LEGAL_OFFICER"];
 

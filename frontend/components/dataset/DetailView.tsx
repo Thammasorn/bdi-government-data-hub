@@ -355,7 +355,11 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
             ) : null}
           </p>
         </div>
-        <DatasetStatusBadge status={request.status} currentTaskType={request.currentTaskType} />
+        <DatasetStatusBadge
+          status={request.status}
+          currentTaskType={request.currentTaskType}
+          waitingLabel={request.progress?.currentStep?.waitingLabel}
+        />
       </header>
 
       {request.status === "RETURNED" && request.revisionNote ? (
