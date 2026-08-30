@@ -460,10 +460,20 @@ authRouter.post("/thaid/callback", async (req, res) => {
      * `prefix` / `fullName` มาจาก claim `title` / `name` ซึ่งไม่ได้อยู่ใน scope ที่ขอ
      * จึงเป็น null ตามปกติ — ปล่อยไว้เผื่อกรมการปกครองส่งมาให้เอง
      */
+    /**
+     * ThaiD มาก่อน แล้วตกมาที่ชื่อที่เจ้าหน้าที่กรอกไว้ตอนเชิญ
+     *
+     * `given_name` / `family_name` อยู่ใน scope ที่กรมการปกครองอนุมัติแล้ว เคสปกติจึงได้
+     * ชื่อจากบัตรมาเติมให้ ส่วนที่ตกมาใช้ค่าจากคำเชิญคือเคสที่ ThaiD ไม่ได้ทำงาน:
+     * โหมด bypass (SIT ใช้อยู่) · ยังไม่ได้ตั้งค่า ThaiD · หรือ DOPA ส่ง claim มาเป็นค่าว่าง
+     *
+     * คำนำหน้าตกมาที่ค่าจากคำเชิญแทบทุกครั้ง เพราะ claim `title` ไม่ได้อยู่ใน scope
+     * ที่ได้รับ (`docs/07` §4.1) — ช่องนี้จึงเป็นช่องที่ค่าจากคำเชิญมีประโยชน์ที่สุด
+     */
     profile: {
-      prefix: identity.titleTh,
-      firstName: identity.givenNameTh,
-      lastName: identity.familyNameTh,
+      prefix: identity.titleTh ?? key.userAccount.prefixTh,
+      firstName: identity.givenNameTh ?? key.userAccount.firstnameTh,
+      lastName: identity.familyNameTh ?? key.userAccount.lastnameTh,
       firstNameEn: identity.givenNameEn,
       lastNameEn: identity.familyNameEn,
       fullName: identity.nameTh,

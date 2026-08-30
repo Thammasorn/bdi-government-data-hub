@@ -507,7 +507,28 @@ const inviteSchema = z
     organizationId: uuidSchema(
       "organizationId ต้องเป็น UUID ของหน่วยงานที่มีอยู่แล้ว (ส่งค่าว่างไม่นับว่าไม่ส่ง)",
     ).optional(),
-    displayName: z.string().trim().min(1).optional(),
+    /**
+     * ชื่อจริงของผู้ถูกเชิญ — บังคับทุก role
+     *
+     * เดิมรับเป็น `displayName` ช่องเดียวและไม่บังคับ ซึ่งมีปัญหาสามชั้น: ค่าที่กรอกมา
+     * ถูกทับทิ้งตอนเจ้าตัวเปิดใช้งาน (`auth.ts` เขียนทั้งสี่ช่องพร้อมกัน) · ข้อมูลที่หน่วยงาน
+     * ส่งมาแล้วไม่ได้ถูกใช้เลย ผู้ถูกเชิญต้องพิมพ์ชื่อตัวเองซ้ำอีกรอบ · และเอกสาร A0–A3
+     * เลือกชื่อจาก `firstnameTh`/`lastnameTh` ก่อน `displayName` เสมอ ถ้าสองช่องนั้นว่าง
+     * ชื่อบนเอกสารจะตกมาที่ `displayName` ซึ่งอาจเป็นอีเมล
+     *
+     * บังคับทุก role รวมเจ้าหน้าที่ BDI เพราะทุกคนมีโอกาสไปปรากฏบนเอกสารที่ลงนาม
+     */
+    prefixTh: z.string().trim().min(1).max(64).optional(),
+    firstnameTh: z
+      .string({ error: "กรุณากรอกชื่อ (ภาษาไทย) — บังคับทุก role" })
+      .trim()
+      .min(1, "กรุณากรอกชื่อ (ภาษาไทย)")
+      .max(255),
+    lastnameTh: z
+      .string({ error: "กรุณากรอกนามสกุล (ภาษาไทย) — บังคับทุก role" })
+      .trim()
+      .min(1, "กรุณากรอกนามสกุล (ภาษาไทย)")
+      .max(255),
     /**
      * เลขประจำตัวประชาชนของคนที่ถูกเชิญ — บังคับทุก role
      *
@@ -559,7 +580,7 @@ adminRouter.post("/invitations", async (req, res) => {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;
   }
-  const { email, role, displayName, cid } = parsed.data;
+  const { email, role, prefixTh, firstnameTh, lastnameTh, cid } = parsed.data;
 
   const isOrgScoped = ORGANIZATION_SCOPED_ROLES.includes(role);
   // activation_key.organization_id เป็น NOT NULL — เจ้าหน้าที่ BDI ผูกกับหน่วยงาน BDI เอง
@@ -640,7 +661,14 @@ adminRouter.post("/invitations", async (req, res) => {
       data: {
         email,
         cid,
-        displayName: displayName ?? email,
+        prefixTh,
+        firstnameTh,
+        lastnameTh,
+        /**
+         * ประกอบจากสามช่องบน ไม่ได้รับมาตรง ๆ — จะได้ไม่มีทางที่ชื่อที่แสดงกับชื่อจริง
+         * ในฐานข้อมูลพูดคนละเรื่องกัน และหน้ารายการคำเชิญอ่านออกตั้งแต่ก่อนเปิดใช้งาน
+         */
+        displayName: `${prefixTh ?? ""}${firstnameTh} ${lastnameTh}`,
         accountType: isOrgScoped ? AccountType.ORGANIZATION : AccountType.BDI,
         status: UserAccountStatus.PENDING,
         createdBy: SYSTEM_USER_ID,
@@ -669,7 +697,7 @@ adminRouter.post("/invitations", async (req, res) => {
     subjectType: AuditSubject.USER_ACTIVATION_KEY,
     subjectId: result.record.id,
     organizationId,
-    after: { email, cid, role, userAccountId: result.account.id },
+    after: { email, cid, role, name: result.account.displayName, userAccountId: result.account.id },
     metadata: { issued_via: "ADMIN_API", reason: "INVITATION" },
   });
 

@@ -54,7 +54,8 @@ POST /api/admin/invitations
 x-admin-token: <ADMIN_API_TOKEN>
 Content-Type: application/json
 
-{ "email": "somchai@moph.go.th", "role": "ORGANIZATION_USER", "cid": "1234567890121" }
+{ "email": "somchai@moph.go.th", "role": "ORGANIZATION_USER", "organizationId": "...",
+  "prefixTh": "นาย", "firstnameTh": "สมชาย", "lastnameTh": "ใจดี", "cid": "1234567890121" }
 ```
 
 - `role` เลือกได้: `BDI_OFFICER` · `BDI_FINAL_APPROVER` · `BDI_DATASET_SPECIALIST` ·
@@ -65,6 +66,12 @@ Content-Type: application/json
   `POST /api/admin/organizations` ก่อน (บังคับแค่ `organizationCode` กับ `nameTh`)
   แล้วค่อยเชิญด้วย id ที่ได้ — เดิมระบบสร้างหน่วยงานเปล่าให้เอง ซึ่งสร้างใบใหม่ทุกครั้ง
   ที่เชิญและทำให้เหลือลิงก์เปิดใช้งานที่ใช้ได้พร้อมกันสองใบ
+- `firstnameTh` · `lastnameTh` **บังคับทุก role** — ชื่อจริงตามเอกสารที่หน่วยงานส่งมา
+  ไม่ใช่ชื่อที่แสดง เพราะเอกสาร A0–A3 เลือกชื่อจากสองช่องนี้ก่อน `display_name` เสมอ
+  ระบบประกอบ `display_name` จากทั้งสามช่องให้เอง จึงไม่รับ `displayName` มาตรง ๆ อีกแล้ว
+- `prefixTh` ไม่บังคับ แต่ควรใส่ — ThaiD **ไม่ส่งคำนำหน้ามาให้** (claim `title` อยู่นอก
+  scope ที่กรมการปกครองอนุมัติ ดู `docs/07` §4.1) ค่าที่กรอกที่นี่จึงเป็นตัวเดียวที่ไปเติม
+  ช่องคำนำหน้าในฟอร์มเปิดใช้งานของผู้ถูกเชิญ
 - `cid` **บังคับทุก role** — เป็นเลขที่ ThaiD จะถูกนำมาเทียบด้วยตอนเปิดใช้งานบัญชี
   (ดู `docs/07-thaid-integration.md` §1) ตรวจ checksum เลขบัตร 13 หลักที่ชั้น zod
 - **ไม่มีการเชิญซ้ำ** — อีเมลหรือ `cid` ที่มีบัญชีอยู่แล้ว (สถานะใดก็ตาม) ตอบ `409` เสมอ
@@ -133,6 +140,20 @@ Content-Type: application/json
 เกณฑ์แก้และนำส่งคำขอจดทะเบียนคือ "เป็นผู้ดำเนินการที่ใช้งานอยู่ของหน่วยงานเจ้าของคำขอ"
 ไม่ใช่ `created_by` อีกแล้ว ถ้ายังผูกกับคนสร้าง คำขอที่ถูกดันกลับเป็นร่างจะแก้ได้โดย
 คนที่ย้ายออกไปแล้วเท่านั้น ส่วนคนที่ยังอยู่จะได้ 404
+
+#### ชื่อที่เติมให้ตอนเปิดใช้งาน มาจากไหนก่อน
+
+```
+prefix    = ThaiD title       ?? ค่าจากคำเชิญ     (title อยู่นอก scope — ตกมาที่คำเชิญเสมอ)
+firstName = ThaiD given_name  ?? ค่าจากคำเชิญ
+lastName  = ThaiD family_name ?? ค่าจากคำเชิญ
+```
+
+`given_name` / `family_name` อยู่ใน scope ที่ได้รับแล้ว เคสปกติจึงเติมจากบัตร ส่วนค่าจาก
+คำเชิญได้ใช้จริงเมื่อ ThaiD ไม่ได้ทำงาน — โหมด `THAID_BYPASS=true` (ที่ SIT ใช้อยู่) ·
+ยังไม่ได้ตั้งค่า ThaiD · หรือกรมการปกครองส่ง claim มาเป็นค่าว่าง
+
+ทุกช่องยังแก้ได้เอง — เป็นค่าตั้งต้น ไม่ใช่การล็อก
 
 ### A.2 การสมัครและ 2FA
 
