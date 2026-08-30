@@ -56,14 +56,6 @@ export function DatasetRequestTable({
 
   return (
     <>
-      <JourneyFlow
-        summary={list.summary}
-        selected={list.stage}
-        onSelect={list.selectStage}
-        loading={list.loading}
-        highlightMine={list.tab === "mine" && list.stage === null}
-      />
-
       {showQueue ? (
         <QueueTabs
           tab={list.tab}
@@ -73,7 +65,20 @@ export function DatasetRequestTable({
         />
       ) : null}
 
-      <div className={clsx("mb-5 flex flex-col gap-4", showQueue ? "mt-5" : "")}>
+      <JourneyFlow
+        summary={list.summary}
+        selected={list.stage}
+        onSelect={list.selectStage}
+        loading={list.loading}
+        highlightMine={list.tab === "mine" && list.stage === null}
+        lockedTo={
+          list.tab === "mine"
+            ? (list.summary?.nodes.filter((n) => n.mine).map((n) => n.key) ?? [])
+            : null
+        }
+      />
+
+      <div className="mb-5 flex flex-col gap-4">
         {/* ค้นหา การเรียง และปุ่มของหน้า อยู่บรรทัดเดียวกัน — เม็ดกรองย้ายขึ้นไปเป็น
             แผนภาพแล้ว เหลือบรรทัดเปล่าที่มีตัวเรียงลอยอยู่ขวาสุดอ่านแล้วเหมือนของตกหล่น */}
         <ListSearch
@@ -131,12 +136,14 @@ export function DatasetRequestTable({
                     {showOrganization ? (
                       <span className="min-w-0 truncate text-sm text-ink">{row.organization.name}</span>
                     ) : null}
-                    <span className="justify-self-start">
+                    <span className="min-w-0 justify-self-start">
                       {/* ส่ง currentTaskType ไปด้วย ไม่งั้นแถวขึ้นแค่ "นำส่งแล้ว" ทั้งที่ข้อมูลด่านมาถึงแล้ว */}
                       <DatasetStatusBadge
                         status={row.status}
                         currentTaskType={row.currentTaskType}
+                        shortLabel={row.progress?.currentShortLabel}
                         waitingLabel={row.progress?.currentLabel}
+                        className="max-w-full"
                       />
                     </span>
                     <span className="min-w-0">
@@ -155,7 +162,12 @@ export function DatasetRequestTable({
         )}
       </Card>
 
-      <Pagination info={list.pageInfo} onPage={list.goToPage} />
+      <Pagination
+        info={list.pageInfo}
+        onPage={list.goToPage}
+        pageSize={list.pageSize}
+        onPageSize={list.setPageSize}
+      />
     </>
   );
 }

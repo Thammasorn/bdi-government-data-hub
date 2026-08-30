@@ -61,6 +61,7 @@ export interface JourneyStep {
   order: number | null;
   optional: boolean;
   label: string;
+  shortLabel: string;
   waitingLabel: string;
   roleCode: string;
   roleLabel: string;
@@ -85,6 +86,8 @@ export interface JourneyProgressSummary {
   currentOrder: number | null;
   /** ช่องที่คำขอค้างอยู่ — คีย์เดียวกับโหนดในแผนภาพ badge อ่านคำจาก currentLabel คู่กัน */
   currentKey: string | null;
+  /** ชื่อสั้นของช่องปัจจุบัน — badge ใช้ตัวนี้ ชื่อเต็มไปอยู่ใน hover */
+  currentShortLabel: string | null;
   currentLabel: string | null;
   nextLabel: string | null;
   phase: JourneyPhase;

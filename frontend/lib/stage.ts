@@ -54,17 +54,24 @@ export interface JourneyEdge {
 export interface ListSummary {
   total: number;
   mine: number;
+  /** คำนามที่ใช้นับของในเส้นทางนี้ — "หน่วยงาน" หรือ "ชุดข้อมูล" มาจาก server */
+  unit: string;
   nodes: JourneyNode[];
   edges: JourneyEdge[];
 }
 
-/** สีของชิปตัวเลขบนโหนด — คู่เดียวกับที่ badge ในแถวใช้ โหนดกับแถวจึงสีเดียวกันด้วย */
-export const NODE_TONE_CLASS: Record<NodeTone, string> = {
-  neutral: "bg-navy-50 text-ink-muted",
-  review: "bg-warning-bg text-warning",
-  approval: "bg-navy-100 text-navy-600",
-  success: "bg-success-bg text-success",
-  danger: "bg-danger-bg text-danger",
+/**
+ * สีของจุดนำหน้าชื่อขั้นตอน — สำนวนเดียวกับจุดใน badge ของแถว
+ *
+ * กล่องเน้นชื่อขั้นตอนเป็นหลัก ตัวเลขจึงไม่ได้เป็นชิปสีอีกแล้ว เหลือจุดเล็ก ๆ ไว้ให้กวาดตา
+ * แล้วยังแยก "อนุมัติแล้ว" ออกจาก "ไม่อนุมัติ" ได้โดยไม่ต้องอ่าน
+ */
+export const NODE_TONE_DOT: Record<NodeTone, string> = {
+  neutral: "bg-navy-300",
+  review: "bg-warning",
+  approval: "bg-navy-500",
+  success: "bg-success",
+  danger: "bg-danger",
 };
 
 export const nodeCount = (summary: ListSummary | null, key: NodeKey): number =>

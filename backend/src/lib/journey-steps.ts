@@ -64,6 +64,8 @@ export interface JourneyStep {
   optional: boolean;
   /** ชื่อกลาง ๆ ใช้ได้ทั้งกับขั้นที่ผ่านไปแล้วและขั้นที่ยังไม่ถึง */
   label: string;
+  /** ชื่อสั้นที่กล่องในแผนภาพและ badge ในแถวใช้ร่วมกัน — ดู StepPlan.shortLabel */
+  shortLabel: string;
   /** สำนวน "รอ…" ใช้ตอนขั้นนี้เป็นขั้นปัจจุบัน */
   waitingLabel: string;
   /** บทบาทที่รับผิดชอบ — ไม่เปิดเผยชื่อผู้ตรวจ */
@@ -204,6 +206,15 @@ export function planFor(subjectType: SubjectType): StepPlan[] {
     ? ORGANIZATION_PLAN
     : DATASET_PLAN;
 }
+
+/**
+ * คำนามที่ใช้นับของในเส้นทางนี้ — "จำนวน: 20 หน่วยงาน" / "จำนวน: 20 ชุดข้อมูล"
+ *
+ * อยู่ตรงนี้เพราะ `planFor()` เป็นที่เดียวที่รู้ว่า subject ไหนเป็นเส้นทางไหน ถ้าไปเขียน
+ * ฝั่งหน้าเว็บก็จะเป็นตารางคำใบที่สองที่ต้องคอยไล่ให้ตรงกัน
+ */
+export const journeyUnit = (subjectType: SubjectType): string =>
+  subjectType === SubjectType.ORGANIZATION_REGISTRATION_REQUEST ? "หน่วยงาน" : "ชุดข้อมูล";
 
 /**
  * เงื่อนไขที่ชี้ขาดว่า `BDI_OFFICER_REVIEW` ที่ค้างอยู่คือ **ด่านตรวจเบื้องต้น** หรือ
@@ -362,6 +373,7 @@ export function buildJourneyProgress(params: {
       order: step.optional ? null : ++order,
       optional: step.optional,
       label: step.label,
+      shortLabel: step.shortLabel,
       waitingLabel: step.waitingLabel,
       roleCode: step.roleCode,
       roleLabel: ROLE_LABELS[step.roleCode],
@@ -442,6 +454,13 @@ export interface JourneyProgressSummary {
    */
   currentKey: StepKey | null;
   currentLabel: string | null;
+  /**
+   * ชื่อสั้นของช่องปัจจุบัน — badge ในแถวใช้ตัวนี้ ส่วนชื่อเต็มไปอยู่ใน hover
+   *
+   * badge ที่ใส่ชื่อเต็ม ("รอเจ้าหน้าที่ BDI ตรวจซ้ำหลังลงนาม") ล้นคอลัมน์ 12rem แล้วไป
+   * ทับคอลัมน์ความคืบหน้า และคำก็ไม่ตรงกับกล่องในแผนภาพที่ผู้ใช้กดเข้ามาด้วย
+   */
+  currentShortLabel: string | null;
   nextLabel: string | null;
   phase: JourneyPhase;
 }
@@ -452,6 +471,7 @@ export function summariseProgress(progress: JourneyProgress): JourneyProgressSum
     currentOrder: progress.currentOrder,
     currentKey: (progress.currentStep?.key as StepKey | undefined) ?? null,
     currentLabel: progress.currentStep?.waitingLabel ?? null,
+    currentShortLabel: progress.currentStep?.shortLabel ?? null,
     nextLabel: progress.nextStep?.label ?? null,
     phase: progress.phase,
   };
