@@ -179,6 +179,39 @@ export function ApprovalSteps({ progress }: { progress: JourneyProgress }) {
 }
 
 /**
+ * จุดบอกขั้น — หนึ่งจุดต่อหนึ่งขั้นบังคับ
+ *
+ * เป็นของประดับล้วน ตัวเลข "ขั้นที่ N จาก M" ที่อยู่ข้าง ๆ คือข้อมูลจริง — ไม่สื่อความหมาย
+ * ด้วยสีอย่างเดียว (กติกาใน docs/02-ui-spec.md) ตารางกับกล่องรายละเอียดใช้ตัวเดียวกัน
+ * จะได้ไม่มีสองที่ที่ระบายสีขั้นคนละแบบ
+ */
+export function StepDots({
+  total,
+  current,
+  size = "sm",
+}: {
+  total: number;
+  current: number | null;
+  size?: "sm" | "md";
+}) {
+  if (!current) return null;
+  return (
+    <span aria-hidden="true" className="flex items-center gap-1">
+      {Array.from({ length: total }, (_, i) => (
+        <span
+          key={i}
+          className={clsx(
+            "rounded-full",
+            size === "md" ? "h-2 w-2" : "h-1.5 w-1.5",
+            i + 1 < current ? "bg-success" : i + 1 === current ? "bg-coral-500" : "bg-navy-100",
+          )}
+        />
+      ))}
+    </span>
+  );
+}
+
+/**
  * บรรทัดเดียวสำหรับตารางและการ์ด
  *
  * รับได้ทั้งฉบับย่อจากหน้ารายการและฉบับเต็มจากหน้ารายละเอียด — สองหน้าจอนี้ต้องพูดตรงกัน
@@ -237,22 +270,7 @@ export function ApprovalStepsCompact({
       <span className="text-[13px] font-medium text-ink">
         ขั้นที่ {progress.currentOrder} จาก {progress.totalSteps}
       </span>
-      {/* จุดเป็นของประดับ ตัวเลขข้างบนคือข้อมูลจริง — ไม่สื่อความหมายด้วยสีอย่างเดียว */}
-      <span aria-hidden="true" className="flex items-center gap-1">
-        {Array.from({ length: progress.totalSteps }, (_, i) => (
-          <span
-            key={i}
-            className={clsx(
-              "h-1.5 w-1.5 rounded-full",
-              i + 1 < progress.currentOrder!
-                ? "bg-success"
-                : i + 1 === progress.currentOrder
-                  ? "bg-coral-500"
-                  : "bg-navy-100",
-            )}
-          />
-        ))}
-      </span>
+      <StepDots total={progress.totalSteps} current={progress.currentOrder} />
       {detail ? <span className="sr-only">{detail}</span> : null}
     </div>
   );
