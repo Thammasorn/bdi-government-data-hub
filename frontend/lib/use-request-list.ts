@@ -3,32 +3,30 @@
 /**
  * สถานะทั้งหมดของหน้ารายการหนึ่งหน้า — ตารางหน่วยงานกับตารางชุดข้อมูลใช้ตัวเดียวกัน
  *
- * เดิมสองตารางถือ state ของตัวเองด้วยโค้ดที่เหมือนกันเกือบบรรทัดต่อบรรทัด การเติม
- * pagination + การเรียง + แท็บ ลงไปทั้งสองที่จะได้สำเนาที่ยาวขึ้นสองเท่า ส่วนที่
+ * เดิมสองตารางถือ state ของตัวเองด้วยโค้ดที่เหมือนกันเกือบบรรทัดต่อบรรทัด ส่วนที่
  * *ต่างกันจริง* คือคอลัมน์และ JSX ของแถว ซึ่งยกออกมารวมกันไม่ได้อยู่แล้ว เพราะ
  * Tailwind สแกนคลาสแบบ static — คลาส grid ต้องเขียนเป็นสตริงเต็มในไฟล์ของตัวเอง
  */
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useToast } from "@/components/ui/Toast";
 import { api } from "@/lib/api";
-import type { ListSummary, PageInfo, SortOrder, StageToken } from "@/lib/stage";
+import type { ListSummary, NodeKey, PageInfo, SortOrder } from "@/lib/stage";
 
 export type QueueTab = "mine" | "all";
 
-interface Options<T> {
+interface Options {
   /** เช่น "/api/organizations" — ตัวสรุปคือ path เดียวกันต่อท้าย /summary */
   endpoint: string;
   /** คีย์ของ array ในคำตอบ: "organizations" หรือ "requests" */
   itemsKey: string;
-  /** ผู้ใช้มีด่านเป็นของตัวเองไหม — ตัดสินจาก role ที่รู้อยู่แล้ว ไม่ใช่จากตัวเลขที่ต้องรอโหลด
-   *  ถ้ารอ summary.mine > 0 แท็บจะกระพริบสลับหลังโหลดเสร็จ ซึ่งเห็นได้ชัดทุกครั้ง */
+  /** ผู้ใช้มีขั้นตอนเป็นของตัวเองไหม — ตัดสินจาก role ที่รู้อยู่แล้ว ไม่ใช่จากตัวเลขที่ต้องรอโหลด
+   *  ถ้ารอ /summary แท็บจะกระพริบสลับหลังโหลดเสร็จ ซึ่งเห็นได้ชัดทุกครั้ง */
   hasQueue: boolean;
-  initial?: T[];
 }
 
-export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options<T>) {
+export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
   const router = useRouter();
   const params = useSearchParams();
   const { show } = useToast();
@@ -39,22 +37,36 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options<T>) 
   const [loading, setLoading] = useState(true);
 
   /**
-   * ลิงก์เก่าใช้ `?status=SUBMITTED,UNDER_REVIEW` ซึ่งเป็นคำศัพท์ที่หน้าจอเลิกใช้แล้ว
-   * แต่ API ยังรับอยู่ จึงส่งต่อไปให้ตามเดิม **จนกว่าผู้ใช้จะแตะเม็ดกรองเอง** แล้วค่อยทิ้ง
-   * ถ้าถือไว้ตลอด คนที่มาจากลิงก์เก่าแล้วกดเม็ดกรองใหม่จะได้ผลลัพธ์ที่กว้างกว่าที่กด
+   * ลิงก์เก่ามีสองรุ่น — `?status=SUBMITTED,UNDER_REVIEW` จากตอนที่ยังกรองด้วยสถานะ และ
+   * `?stage=A,B` จากตอนที่เม็ดกรองยังเลือกได้หลายอัน ตอนนี้เลือกได้ทีละอันแล้ว จึงไม่มี
+   * สถานะบนแผนภาพที่ตรงกับ "A หรือ B" — ส่งสตริงเดิมต่อไปให้ API ตามเดิม (API ยังรับ
+   * comma list) โดยไม่ติ๊กโหนดไหน แล้วทิ้งทันทีที่ผู้ใช้แตะแผนภาพ ถ้าถือไว้ต่อ ผลลัพธ์
+   * จะกว้างกว่าโหนดที่เขากด
    */
-  const [legacyStatus, setLegacyStatus] = useState<string | null>(() => params.get("status"));
+  const [legacyFilter, setLegacyFilter] = useState<{ key: string; value: string } | null>(() => {
+    const stage = params.get("stage");
+    if (stage?.includes(",")) return { key: "stage", value: stage };
+    const status = params.get("status");
+    return status ? { key: "status", value: status } : null;
+  });
+
+  const [stage, setStageState] = useState<NodeKey | null>(() => {
+    const s = params.get("stage");
+    return s && !s.includes(",") ? s : null;
+  });
 
   const [tab, setTabState] = useState<QueueTab>(() => {
     const explicit = params.get("tab");
     if (explicit === "all" || explicit === "mine") return explicit;
-    // ลิงก์เก่าเจาะจงชุดสถานะมาแล้ว เปิดในแท็บ "ทั้งหมด" ไม่งั้นสองเงื่อนไขตัดกันจนว่าง
-    if (params.get("status")) return "all";
+    /**
+     * ลิงก์ที่เจาะจงตัวกรองมาแล้วเปิดที่แท็บ "ทั้งหมด" — `stage` กับ `scope` AND กันฝั่ง
+     * server ถ้าเปิดที่แท็บของตัวเองด้วย คนที่รับลิงก์จะเจอตารางว่างจากเงื่อนไขสองชั้น
+     * ที่เขาไม่ได้เลือกเอง
+     */
+    if (params.get("stage") || params.get("status")) return "all";
     return hasQueue ? "mine" : "all";
   });
-  const [stages, setStages] = useState<StageToken[]>(
-    () => (params.get("stage")?.split(",").filter(Boolean) as StageToken[]) ?? [],
-  );
+
   const [sort, setSortState] = useState<SortOrder>(() =>
     params.get("sort") === "date_asc" ? "date_asc" : "date_desc",
   );
@@ -63,8 +75,8 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options<T>) 
 
   /**
    * การเปลี่ยนหน้าและการสลับแท็บเป็น "การเดินทาง" ที่ผู้ใช้อยากกด back กลับมาได้
-   * ส่วนการพิมพ์ค้นหาและการกดเม็ดกรองไม่ใช่ — ถ้าเก็บทุกคีย์สโตรกลง history
-   * ปุ่ม back จะต้องกดย้อนทีละตัวอักษรกว่าจะออกจากหน้านี้ได้
+   * ส่วนการพิมพ์ค้นหาและการกดโหนดไม่ใช่ — ถ้าเก็บทุกคีย์สโตรกลง history ปุ่ม back
+   * จะต้องกดย้อนทีละตัวอักษรกว่าจะออกจากหน้านี้ได้
    */
   const pushNext = useRef(false);
 
@@ -83,18 +95,26 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options<T>) 
     setQueryState(next);
     setPage(1);
   }, []);
-  const toggleStage = useCallback((token: StageToken) => {
-    setStages((prev) => (prev.includes(token) ? prev.filter((t) => t !== token) : [...prev, token]));
-    setLegacyStatus(null);
-    setPage(1);
-  }, []);
-  const clearStages = useCallback(() => {
-    setStages([]);
-    setLegacyStatus(null);
-    setPage(1);
-  }, []);
 
-  const stageParam = useMemo(() => stages.join(","), [stages]);
+  /**
+   * เลือกทีละโหนด — ไม่ใช่ toggle สะสมเหมือนเม็ดกรองเดิม
+   *
+   * กดโหนดที่ **ไม่ใช่ของตัวเอง** ขณะอยู่แท็บ "ที่ต้องดำเนินการ" ต้องสลับไปแท็บทั้งหมดให้
+   * เพราะ `stage` กับ `scope=mine` AND กันฝั่ง server ไม่งั้นได้ตารางว่างรับประกันโดยไม่มี
+   * อะไรอธิบาย ส่วนโหนดที่เป็นของตัวเองให้อยู่แท็บเดิม — เจ้าหน้าที่ที่ถือสองช่องแล้วกด
+   * ช่องหนึ่งคือการ *แคบลง* ไม่ใช่การออกจากคิวตัวเอง
+   */
+  const selectStage = useCallback(
+    (next: NodeKey | null) => {
+      setStageState(next);
+      setLegacyFilter(null);
+      setPage(1);
+      if (next === null) return;
+      const node = summary?.nodes.find((n) => n.key === next);
+      if (node && !node.mine) setTabState("all");
+    },
+    [summary],
+  );
 
   /** คำตอบที่มาถึงช้ากว่าคำขอที่ใหม่กว่าต้องถูกทิ้ง — ไม่งั้นตารางโชว์หน้า 2 ขณะที่
    *  ตัวเลขบอกหน้า 3 เกิดได้ง่ายกับ debounce บวกการกดเปลี่ยนหน้ารัว ๆ */
@@ -106,8 +126,8 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options<T>) 
       seq.current = mine;
 
       const qs = new URLSearchParams();
-      if (stageParam) qs.set("stage", stageParam);
-      if (legacyStatus) qs.set("status", legacyStatus);
+      if (stage) qs.set("stage", stage);
+      if (legacyFilter) qs.set(legacyFilter.key, legacyFilter.value);
       if (query.trim()) qs.set("q", query.trim());
       if (tab === "mine") qs.set("scope", "mine");
       qs.set("sort", sort);
@@ -135,13 +155,13 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options<T>) 
         });
     }, 250);
     return () => clearTimeout(timer);
-  }, [endpoint, itemsKey, stageParam, legacyStatus, query, tab, sort, page, show]);
+  }, [endpoint, itemsKey, stage, legacyFilter, query, tab, sort, page, show]);
 
   /** เขียนสถานะทั้งชุดกลับลง URL พร้อมกัน ลิงก์ที่แชร์ไปจึงเปิดได้ตามที่เห็นบนจอ */
   useEffect(() => {
     const qs = new URLSearchParams();
     if (tab === "mine") qs.set("tab", "mine");
-    if (stageParam) qs.set("stage", stageParam);
+    if (stage) qs.set("stage", stage);
     if (query.trim()) qs.set("q", query.trim());
     if (sort !== "date_desc") qs.set("sort", sort);
     if (page > 1) qs.set("page", String(page));
@@ -152,7 +172,7 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options<T>) 
       else router.replace(href, { scroll: false });
     }
     pushNext.current = false;
-  }, [tab, stageParam, query, sort, page, router]);
+  }, [tab, stage, query, sort, page, router]);
 
   /**
    * หน้าที่เลยขอบ — เกิดกับ bookmark ที่ `?page=9` แล้วมาเจอผลลัพธ์ 2 หน้า
@@ -175,15 +195,14 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options<T>) 
     summary,
     tab,
     setTab,
-    stages,
-    toggleStage,
-    clearStages,
+    stage,
+    selectStage,
     sort,
     setSort,
     query,
     setQuery,
     page,
     goToPage,
-    hasFilter: stages.length > 0 || query.trim().length > 0,
+    hasFilter: stage !== null || legacyFilter !== null || query.trim().length > 0,
   };
 }

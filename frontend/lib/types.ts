@@ -83,6 +83,8 @@ export interface JourneyProgress {
 export interface JourneyProgressSummary {
   totalSteps: number;
   currentOrder: number | null;
+  /** ช่องที่คำขอค้างอยู่ — คีย์เดียวกับโหนดในแผนภาพ badge อ่านคำจาก currentLabel คู่กัน */
+  currentKey: string | null;
   currentLabel: string | null;
   nextLabel: string | null;
   phase: JourneyPhase;

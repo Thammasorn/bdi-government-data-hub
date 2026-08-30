@@ -234,7 +234,11 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         <div className="min-w-0">
           <h1 className="break-words text-[26px] font-semibold text-navy-800">{org.name}</h1>
         </div>
-        <StatusBadge status={org.status} currentTaskType={org.currentTaskType} />
+        <StatusBadge
+          status={org.status}
+          currentTaskType={org.currentTaskType}
+          waitingLabel={org.progress?.currentStep?.waitingLabel}
+        />
       </header>
 
       {/* ฉบับร่างที่ยังไม่ได้นำส่ง — หน้านี้เคยไม่มีทางกลับเข้าฟอร์มเลย ผู้ใช้ที่ปิดแท็บไป

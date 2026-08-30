@@ -5,17 +5,16 @@ import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { ListSearch } from "@/components/list/ListSearch";
+import { JourneyFlow } from "@/components/list/JourneyFlow";
 import { Pagination } from "@/components/list/Pagination";
 import { QueueTabs } from "@/components/list/QueueTabs";
-import { QueueTiles } from "@/components/list/QueueTiles";
 import { SortSelect } from "@/components/list/SortSelect";
-import { StageFilter } from "@/components/list/StageFilter";
 import { ApprovalStepsCompact } from "@/components/review/ApprovalSteps";
 import { useSession } from "@/components/SessionProvider";
 import { Card, DatasetStatusBadge } from "@/components/ui/Card";
 import { SkeletonRows } from "@/components/ui/Spinner";
 import { formatThaiDate } from "@/lib/status";
-import { hasOwnQueue, type StageToken } from "@/lib/stage";
+import { hasOwnQueue } from "@/lib/stage";
 import { datasetTitle, type DatasetRequestListItem } from "@/lib/types";
 import { useRequestList } from "@/lib/use-request-list";
 
@@ -53,12 +52,17 @@ export function DatasetRequestTable({
     ? "md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_12rem_13rem_8rem]"
     : "md:grid-cols-[minmax(0,2fr)_12rem_13rem_8rem]";
 
-  const stagesAvailable = Object.keys(list.summary?.stages ?? {}) as StageToken[];
-  const showQueue = (list.summary?.myStages.length ?? 0) > 0;
+  const showQueue = list.summary?.nodes.some((n) => n.mine) ?? false;
 
   return (
     <>
-      <QueueTiles summary={list.summary} selected={list.stages} onPick={list.toggleStage} />
+      <JourneyFlow
+        summary={list.summary}
+        selected={list.stage}
+        onSelect={list.selectStage}
+        loading={list.loading}
+        highlightMine={list.tab === "mine" && list.stage === null}
+      />
 
       {showQueue ? (
         <QueueTabs
@@ -70,22 +74,19 @@ export function DatasetRequestTable({
       ) : null}
 
       <div className={clsx("mb-5 flex flex-col gap-4", showQueue ? "mt-5" : "")}>
+        {/* ค้นหา การเรียง และปุ่มของหน้า อยู่บรรทัดเดียวกัน — เม็ดกรองย้ายขึ้นไปเป็น
+            แผนภาพแล้ว เหลือบรรทัดเปล่าที่มีตัวเรียงลอยอยู่ขวาสุดอ่านแล้วเหมือนของตกหล่น */}
         <ListSearch
           value={list.query}
           onChange={list.setQuery}
           placeholder="ค้นหาชื่อชุดข้อมูล เลขที่คำขอ หรือหน่วยงาน"
-          action={action}
+          action={
+            <>
+              <SortSelect value={list.sort} onChange={list.setSort} />
+              {action}
+            </>
+          }
         />
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <StageFilter
-            available={stagesAvailable}
-            counts={list.summary?.stages}
-            selected={list.stages}
-            onToggle={list.toggleStage}
-            onClear={list.clearStages}
-          />
-          <SortSelect value={list.sort} onChange={list.setSort} />
-        </div>
       </div>
 
       <Card className="overflow-hidden">
@@ -132,7 +133,11 @@ export function DatasetRequestTable({
                     ) : null}
                     <span className="justify-self-start">
                       {/* ส่ง currentTaskType ไปด้วย ไม่งั้นแถวขึ้นแค่ "นำส่งแล้ว" ทั้งที่ข้อมูลด่านมาถึงแล้ว */}
-                      <DatasetStatusBadge status={row.status} currentTaskType={row.currentTaskType} />
+                      <DatasetStatusBadge
+                        status={row.status}
+                        currentTaskType={row.currentTaskType}
+                        waitingLabel={row.progress?.currentLabel}
+                      />
                     </span>
                     <span className="min-w-0">
                       <ApprovalStepsCompact progress={row.progress} />

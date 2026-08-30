@@ -20,7 +20,7 @@ import {
   isBdiStaff,
   type OrganizationStatus,
 } from "@/lib/status";
-import type { ListSummary, PageInfo, StageToken } from "@/lib/stage";
+import { nodeCount, type ListSummary, type PageInfo } from "@/lib/stage";
 import type { DatasetRequestListItem, OrganizationListItem } from "@/lib/types";
 
 /** ผลของ endpoint ที่แบ่งหน้าแล้ว — แถวของหน้านี้ กับจำนวนจริงทั้งหมด */
@@ -32,16 +32,15 @@ interface Page<T> {
 const EMPTY_PAGE: PageInfo = { page: 1, pageSize: 5, total: 0, pageCount: 1 };
 
 /**
- * "ยังเดินอยู่ในสายพาน" กับ "จบแล้ว" — เดิมแยกด้วย isPendingDatasetStatus() ในเบราว์เซอร์
- * ตอนนี้ส่งเป็นตัวกรองไปให้ server เพราะหน้านี้ไม่ได้ถือทุกแถวไว้แล้ว
+ * "ยังเดินอยู่ในสายพาน" กับ "จบแล้ว"
+ *
+ * ฝั่งนี้เคยไล่ชื่อด่านเอง ซึ่งแปลว่าหน้าแรกรู้จักเส้นทาง — สิ่งที่กติกาของ lib/stage.ts
+ * ห้ามไว้ และผิดทันทีที่เส้นทางเพิ่มด่าน `SUBMITTED,UNDER_REVIEW` เป็นคำนิยามของ
+ * "ยังเดินอยู่" ที่ backend ใช้อยู่แล้ว (requestStatusFor) และ API ยังรับสองคำนี้อยู่
+ * ส่วน SETTLED เป็นรายชื่อ RequestStatus ล้วน ซึ่งหน้าเว็บเป็นเจ้าของโดยชอบ
  */
-const MOVING: StageToken[] = [
-  "BDI_OFFICER_REVIEW",
-  "DATASET_SPECIALIST_REVIEW",
-  "ORGANIZATION_APPROVAL",
-  "BDI_FINAL_APPROVAL",
-];
-const SETTLED: StageToken[] = ["DRAFT", "RETURNED", "APPROVED", "REJECTED", "CANCELLED"];
+const MOVING = "SUBMITTED,UNDER_REVIEW";
+const SETTLED = ["DRAFT", "RETURNED", "APPROVED", "REJECTED", "CANCELLED"];
 
 export default function HomePage() {
   const { user, loading } = useSession();
@@ -128,7 +127,7 @@ function OrganizationHome({
       .catch(() => show({ tone: "error", title: "โหลดรายการชุดข้อมูลไม่สำเร็จ" }));
 
     load<DatasetRequestListItem>(
-      `/api/dataset-requests?stage=${MOVING.join(",")}&pageSize=5`,
+      `/api/dataset-requests?status=${MOVING}&pageSize=5`,
       "requests",
     )
       .then(setPending)
@@ -191,9 +190,12 @@ function OrganizationHome({
 
   const counts = useMemo(
     () => ({
-      pending: MOVING.reduce((sum, t) => sum + (summary?.stages[t] ?? 0), 0),
-      revision: summary?.stages.RETURNED ?? 0,
-      approved: summary?.stages.APPROVED ?? 0,
+      // ยังเดินอยู่ = ทั้งหมด ลบปลายทางทั้งห้า — อ่านจากโหนดที่ server ส่งมา ไม่ไล่ชื่อด่านเอง
+      pending: summary
+        ? summary.total - SETTLED.reduce((sum, k) => sum + nodeCount(summary, k), 0)
+        : 0,
+      revision: nodeCount(summary, "RETURNED"),
+      approved: nodeCount(summary, "APPROVED"),
     }),
     [summary],
   );
@@ -300,7 +302,7 @@ function OrganizationHome({
               footer={
                 pending.page.total > pending.rows.length ? (
                   <Link
-                    href={`/datasets?stage=${MOVING.join(",")}`}
+                    href={`/datasets?status=${MOVING}`}
                     className="text-sm font-medium text-navy-700 underline-offset-4 hover:underline"
                   >
                     ดูคำขอที่รออนุมัติทั้ง {pending.page.total} รายการ →

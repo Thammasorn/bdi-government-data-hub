@@ -96,13 +96,13 @@ import {
 } from "../lib/validation.js";
 import {
   listOrderBy,
-  myStageTokens,
+  myNodeKeys,
   parseFilterTokens,
   parsePaging,
   parseSort,
   requestIdsAtStage,
-  stageCounts,
-  stageWhere,
+  journeySummary,
+  nodeWhere,
 } from "../lib/queue.js";
 import {
   TASK_TYPE_ROLES,
@@ -616,12 +616,12 @@ organizationRouter.get("/", async (req, res) => {
    * มาจากลิงก์นั้นแล้วกดเม็ดกรองใหม่ก็ไม่ได้ผลลัพธ์ศูนย์แถวจากเงื่อนไขที่ขัดกันเอง
    */
   const tokens = [...parseFilterTokens(status), ...parseFilterTokens(stage)];
-  const stageClause = await stageWhere(prisma, SUBJECT, [...new Set(tokens)]);
+  const stageClause = await nodeWhere(prisma, SUBJECT, [...new Set(tokens)]);
   if (stageClause) and.push(stageClause);
 
   // แท็บ "ที่ต้องดำเนินการ" — ด่านที่ตำแหน่งของผู้เรียกเป็นคนทำ
   if (scope === "mine") {
-    const mine = await stageWhere(prisma, SUBJECT, myStageTokens(session.roles));
+    const mine = await nodeWhere(prisma, SUBJECT, myNodeKeys(SUBJECT, session.roles));
     /**
      * ผู้มีอำนาจกระทำการแทนที่ยังไม่ถูกผูก role แต่ถูกระบุชื่อไว้ในคำขอก็ปิดด่าน
      * ORGANIZATION_APPROVAL ได้ (ดู canAction ใน POST /:id/review) — คิวของเขา
@@ -629,7 +629,7 @@ organizationRouter.get("/", async (req, res) => {
      */
     const asNamedApprover = {
       approverEmail: { equals: session.email, mode: "insensitive" as const },
-      id: { in: await requestIdsAtStage(prisma, SUBJECT, [ReviewTaskType.ORGANIZATION_APPROVAL]) },
+      id: { in: await requestIdsAtStage(prisma, SUBJECT, ["ORGANIZATION_APPROVAL"]) },
     };
     and.push({ OR: mine ? [mine, asNamedApprover] : [asNamedApprover] });
   }
@@ -761,7 +761,7 @@ organizationRouter.get("/summary", async (req, res) => {
     AND: baseFilters(session, q),
   };
 
-  const counts = await stageCounts({
+  const counts = await journeySummary({
     db: prisma,
     subjectType: SUBJECT,
     roles: session.roles,

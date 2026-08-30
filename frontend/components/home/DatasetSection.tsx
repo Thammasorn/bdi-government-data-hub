@@ -99,7 +99,11 @@ function DatasetRow({ row }: { row: DatasetRequestListItem }) {
       </div>
 
       <div className="min-w-0">
-        <DatasetStatusBadge status={row.status} currentTaskType={row.currentTaskType} />
+        <DatasetStatusBadge
+          status={row.status}
+          currentTaskType={row.currentTaskType}
+          waitingLabel={row.progress?.currentLabel}
+        />
         {row.progress ? (
           // แทนที่ประโยค "รอใคร" เดิม — บอกทั้งว่าอยู่ขั้นไหนจากกี่ขั้นและขั้นต่อไปคืออะไร
           <div className="mt-1.5">

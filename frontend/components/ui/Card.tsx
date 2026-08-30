@@ -52,17 +52,26 @@ export function CardHeader({
  *
  * สถานะคำขอเหลือเจ็ดค่าที่ไม่บอกว่า "รอใคร" แล้ว ด่านที่ค้างอยู่จึงมาจาก review_task
  * stageMeta() เลือกให้ว่าจะแสดงด่านหรือสถานะ
+ *
+ * `waitingLabel` (จาก `progress.currentLabel`) ทับคำของ stageMeta เมื่อมี เพราะ
+ * `task_type` แยก **รอบ** ไม่ได้ — ใบที่ค้างด่านตรวจซ้ำกับใบที่ยังอยู่ด่านแรกเป็น
+ * `BDI_OFFICER_REVIEW` เหมือนกัน badge จึงเคยเขียนคำเดียวกันทั้งคู่ พอแผนภาพเส้นทาง
+ * มีโหนด "รอ BDI ตรวจซ้ำ" แยกออกมาแล้วกดเข้าไปเจอ badge คนละคำ ก็เป็นความไม่ตรงกัน
+ * แบบเดียวกับที่เพิ่งกำจัดไป สีมาจาก stageMeta ตามเดิม — คำเปลี่ยน สีไม่เปลี่ยน
  */
 export function StatusBadge({
   status,
   currentTaskType,
+  waitingLabel,
   className,
 }: {
   status: RequestStatus;
   currentTaskType?: ReviewTaskType | null;
+  waitingLabel?: string | null;
   className?: string;
 }) {
   const meta = stageMeta(status, currentTaskType);
+  const label = (currentTaskType ? waitingLabel : null) ?? meta.label;
   return (
     <span
       className={clsx(
@@ -72,7 +81,7 @@ export function StatusBadge({
       )}
     >
       <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" aria-hidden="true" />
-      {meta.label}
+      {label}
     </span>
   );
 }
@@ -81,13 +90,16 @@ export function StatusBadge({
 export function DatasetStatusBadge({
   status,
   currentTaskType,
+  waitingLabel,
   className,
 }: {
   status: RequestStatus;
   currentTaskType?: ReviewTaskType | null;
+  waitingLabel?: string | null;
   className?: string;
 }) {
   const meta = stageMeta(status, currentTaskType);
+  const label = (currentTaskType ? waitingLabel : null) ?? meta.label;
   return (
     <span
       className={clsx(
@@ -97,7 +109,7 @@ export function DatasetStatusBadge({
       )}
     >
       <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" aria-hidden="true" />
-      {meta.label}
+      {label}
     </span>
   );
 }
