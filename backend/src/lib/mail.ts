@@ -522,16 +522,23 @@ export async function sendDatasetPendingOrgApprover(
   );
 }
 
-export async function sendDatasetPendingFinalCheck(
+/**
+ * หน่วยงานลงนามแล้ว รอผู้อนุมัติ BDI
+ *
+ * ต่างจาก `sendDatasetPendingBdiApproval()` ตรงที่บอก **ชื่อผู้ลงนาม** ซึ่งเป็นข้อมูลที่
+ * ผู้อนุมัติต้องใช้ตัดสิน — ฉบับนั้นเป็น template กลางที่ delivery worker ประกอบเองจาก
+ * subject_id จึงไม่รู้จักชื่อคน ฉบับนี้จึงถูกส่งอินไลน์จาก route
+ */
+export async function sendDatasetSignedPendingApproval(
   to: string[],
   info: { requestNumber: string; datasetName: string; organizationName: string; signedBy: string; id: string },
   progress?: JourneyProgress | null,
 ) {
   await sendMany(
     to,
-    datasetSubject(info.requestNumber, `รอตรวจสอบขั้นสุดท้าย: ${info.datasetName}`),
+    datasetSubject(info.requestNumber, `รออนุมัติชุดข้อมูล: ${info.datasetName}`),
     layout({
-      title: "มีคำขอรอการตรวจสอบขั้นสุดท้าย",
+      title: "มีคำขอรอการอนุมัติ",
       intro: `ผู้มีอำนาจของ <strong style="color:${TEXT};">${escapeHtml(info.organizationName)}</strong> ลงนามเห็นชอบแล้ว`,
       body: datasetSummary([
         ["เลขที่คำขอ", info.requestNumber],
@@ -539,7 +546,7 @@ export async function sendDatasetPendingFinalCheck(
         ["ผู้ลงนาม", info.signedBy],
       ]),
       steps: stepsBlock(progress),
-      button: { label: "ตรวจสอบขั้นสุดท้าย", url: bdiLink(info.id) },
+      button: { label: "ตรวจสอบและอนุมัติ", url: bdiLink(info.id) },
     }),
   );
 }
