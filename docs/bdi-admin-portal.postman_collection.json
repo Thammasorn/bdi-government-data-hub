@@ -3,7 +3,7 @@
     "name": "BDI Government Datahub — Admin Portal API",
     "_postman_id": "b91d5f2a-7c4e-4a3d-9f61-2ad0c5e18f30",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Journey A — create an organization ahead of time and send someone an activation link. The spec says these steps have no UI, so the caller here is an operator script rather than a browser.\n\nEvery request is guarded by the `x-admin-token` shared secret, set once at the collection level from the `adminToken` variable.\n\n## Before you start\n\n**This collection fires at `https://bdi-api.thammasorn.org` by default** (the public deployment). Set `adminToken` before you run anything — it is a real secret that lives only in `.env`, so it ships blank:\n\n```bash\ngrep ADMIN_API_TOKEN /hdd1tb/bdi-project/main/.env\n```\n\nPaste it into the collection's `adminToken` variable (Collections → this collection → Variables → *Current value*), or select an environment that carries it (below).\n\n**To point somewhere else, import an environment too** and pick it from the selector at the top right. Three sit next to this file in `docs/`:\n\n| File | Points at | `adminToken` |\n| --- | --- | --- |\n| `bdi-dev-checkout.postman_environment.json` | `http://localhost:4170` (dev slot 07) | filled in — `dev-admin-token-change-me`, the same placeholder as `.env.example` |\n| `bdi-main-local.postman_environment.json` | `http://localhost:4000` (the `main` checkout) | **empty — fill it in yourself** |\n| `bdi-public.postman_environment.json` | `https://bdi-api.thammasorn.org` | **empty — fill it in yourself** |\n\nThe empty ones are typed *secret* and left blank on purpose: `main` and the public deployment use a real token that lives only in `.env`, which git does not track. A Postman environment is exactly the kind of file that gets exported and passed around, so **do not commit that value back into it**.\n\n```bash\ngrep ADMIN_API_TOKEN /hdd1tb/bdi-project/main/.env\n```\n\n**For a different dev checkout**, change `baseUrl` to `http://localhost:41N0`, where `NN` is that checkout's port slot (slot 01 → 4110, slot 07 → 4170). `grep BACKEND_PORT .env` in the checkout tells you.\n\n`organizationId` and `activationKeyId` fill themselves in — each request's Tests script captures them as **collection** variables, so **do not declare either of them in an environment.** Postman resolves `{{organizationId}}` from the environment before the collection, and an empty value there wins over the id just captured: the request goes out with `\"organizationId\": \"\"` and the API answers 400 `validation`. The three environments above no longer carry them — an environment exported before 2026-08-17 still does, and needs both variables deleted.\n\n## The order to run them in\n\n1. **A** creates the organization and captures its id.\n2. **1** invites the organization's user, binding the invitation to that id. The activation link now leads the user straight to the organization you prepared.\n3. **2** invites the signing authority into the same organization.\n4. **4** / **5** list and revoke invitations as needed.\n5. **6** deletes an invitation outright — the only way to free an email or a national ID that a mistyped invitation is holding, since both are unique per account.\n\n**E** edits an organization afterwards — but once the user has opened their registration request, the edit no longer reaches their form, and the response says so.\n\n## Where the activation link is\n\n**The raw key is never returned.** It goes only to the invitee's email, and the database stores an HMAC of it (see `docs/09-auth-tokens.md` §2).\n\nOn a checkout with no SMTP configured (`SMTP_USER` empty) the mailer prints the whole email to stdout instead of sending it:\n\n```bash\ndocker compose logs backend | grep 'activate?token='\n```\n\nOn a checkout with real SMTP — `main` has it — **the email is actually sent**, so be careful inviting made-up addresses.\n\n> Pointing this at `bdi-api.thammasorn.org` means acting on the deployment other people are looking at, and invitations created there send real mail. Try it on a dev checkout first.\n\n## Things that save you a puzzled ten minutes\n\n- **`cid` is required for every role.** §2.4 compares the national ID from ThaiD against the one an officer recorded when the account was created; a number the user typed themselves would prove nothing. The checksum is validated, so an invented number returns 400, and it is **unique per account** — one national ID is one person is one account, so a number that already belongs to someone returns 409 `cid_exists` naming the address that holds it. That is why requests 1 and 3 carry different numbers even though the same person could plausibly hold both roles.\n- **BDI roles need no `organizationId`** — they are attached to the BDI organization automatically, which is a row in `organization.organization` like any other.\n- **Re-inviting an address that is still `PENDING`** is treated as an officer fixing a typo: the national ID is overwritten and a fresh key issued, while the previous key for that (account, organization, role) is revoked.\n- **Inviting an address that is already `ACTIVE`** returns 409.\n- **A request that fails before it is sent** (`organizationId is empty…`) means an id an earlier request was supposed to capture is missing: run **A** first, and check that no environment declares `organizationId` or `activationKeyId` — see *Before you start*.\n- An organization becomes `ACTIVE` only when its registration request clears `BDI_FINAL_APPROVAL` (Journey B). Creating it here, and activating accounts in it, leave it `PENDING_REGISTRATION`."
+    "description": "Journey A — create an organization ahead of time and send someone an activation link. The spec says these steps have no UI, so the caller here is an operator script rather than a browser.\n\nEvery request is guarded by the `x-admin-token` shared secret, set once at the collection level from the `adminToken` variable.\n\n## Before you start\n\n**This collection fires at `https://bdi-api.thammasorn.org` by default** (the public deployment). Set `adminToken` before you run anything — it is a real secret that lives only in `.env`, so it ships blank:\n\n```bash\ngrep ADMIN_API_TOKEN /hdd1tb/bdi-project/main/.env\n```\n\nPaste it into the collection's `adminToken` variable (Collections → this collection → Variables → *Current value*), or select an environment that carries it (below).\n\n**To point somewhere else, import an environment too** and pick it from the selector at the top right. Three sit next to this file in `docs/`:\n\n| File | Points at | `adminToken` |\n| --- | --- | --- |\n| `bdi-dev-checkout.postman_environment.json` | `http://localhost:4170` (dev slot 07) | filled in — `dev-admin-token-change-me`, the same placeholder as `.env.example` |\n| `bdi-main-local.postman_environment.json` | `http://localhost:4000` (the `main` checkout) | **empty — fill it in yourself** |\n| `bdi-public.postman_environment.json` | `https://bdi-api.thammasorn.org` | **empty — fill it in yourself** |\n\nThe empty ones are typed *secret* and left blank on purpose: `main` and the public deployment use a real token that lives only in `.env`, which git does not track. A Postman environment is exactly the kind of file that gets exported and passed around, so **do not commit that value back into it**.\n\n```bash\ngrep ADMIN_API_TOKEN /hdd1tb/bdi-project/main/.env\n```\n\n**For a different dev checkout**, change `baseUrl` to `http://localhost:41N0`, where `NN` is that checkout's port slot (slot 01 → 4110, slot 07 → 4170). `grep BACKEND_PORT .env` in the checkout tells you.\n\n`organizationId` and `activationKeyId` fill themselves in — each request's Tests script captures them as **collection** variables, so **do not declare either of them in an environment.** Postman resolves `{{organizationId}}` from the environment before the collection, and an empty value there wins over the id just captured: the request goes out with `\"organizationId\": \"\"` and the API answers 400 `validation`. The three environments above no longer carry them — an environment exported before 2026-08-17 still does, and needs both variables deleted.\n\n## The order to run them in\n\n1. **A** creates the organization and captures its id.\n2. **1** invites the organization's user, binding the invitation to that id. The activation link now leads the user straight to the organization you prepared.\n3. **2** invites the signing authority into the same organization.\n4. **4** / **5** list and revoke invitations as needed.\n5. **6** deletes an invitation outright — the only way to free an email or a national ID that a mistyped invitation is holding, since both are unique per account.\n\n**E** edits an organization afterwards — but once the user has opened their registration request, the edit no longer reaches their form, and the response says so.\n\n## Where the activation link is\n\n**The raw key is never returned.** It goes only to the invitee's email, and the database stores an HMAC of it (see `docs/09-auth-tokens.md` §2).\n\nOn a checkout with no SMTP configured (`SMTP_USER` empty) the mailer prints the whole email to stdout instead of sending it:\n\n```bash\ndocker compose logs backend | grep 'activate?token='\n```\n\nOn a checkout with real SMTP — `main` has it — **the email is actually sent**, so be careful inviting made-up addresses.\n\n> Pointing this at `bdi-api.thammasorn.org` means acting on the deployment other people are looking at, and invitations created there send real mail. Try it on a dev checkout first.\n\n## Things that save you a puzzled ten minutes\n\n- **`cid` is required for every role.** §2.4 compares the national ID from ThaiD against the one an officer recorded when the account was created; a number the user typed themselves would prove nothing. The checksum is validated, so an invented number returns 400, and it is **unique per account** — one national ID is one person is one account, so a number that already belongs to someone returns 409 `cid_exists` naming the address that holds it. That is why requests 1 and 3 carry different numbers even though the same person could plausibly hold both roles.\n- **`organizationId` is now required** for `ORGANIZATION_USER` and `ORGANIZATION_APPROVER` — a missing one is a 400, not an auto-created placeholder organization. Run **A** or **B** first.\n- **BDI roles need no `organizationId`** — they are attached to the BDI organization automatically, which is a row in `organization.organization` like any other.\n- **There is no re-invite.** An email or national ID that already has an account returns 409 and nothing is overwritten; the response hands back the existing `activationKeyId`. To send a fresh link to the same person, use **4.1 Resend**. To fix wrong data, use **6 Remove** (which frees both the email and the national ID) and invite again. Find the invitation with **4 List**, which now filters by `email`, `cid`, `status` and paginates.\n- **Inviting an address that is already `ACTIVE`** returns 409.\n- **A request that fails before it is sent** (`organizationId is empty…`) means an id an earlier request was supposed to capture is missing: run **A** first, and check that no environment declares `organizationId` or `activationKeyId` — see *Before you start*.\n- An organization becomes `ACTIVE` only when its registration request clears `BDI_FINAL_APPROVAL` (Journey B). Creating it here, and activating accounts in it, leave it `PENDING_REGISTRATION`.\n\n## Managing accounts that are already activated\n\nRequests **U1–U14** cover `/api/admin/users`. The split between them and the invitation requests above is the account's status, not the kind of work: a `PENDING` invitation is deleted and reissued, an activated account is never deleted at all — the database refuses it, because `legal_acceptance`, `signature_confirmation` and `review_task.assigned_user_id` are all `ON DELETE RESTRICT`. Deactivating is what \"delete\" means here, and it keeps the row, the email and the national ID.\n\nA national ID identifies a person and is never released. An email identifies a mailbox, which really can change hands, so **U9** releases that one alone. Someone who comes back is reactivated (**U8**), never recreated — a second row for the same human would split their signatures across two accounts.\n\nEvery command that takes something away from a person requires a `reason`; it is written to the audit trail and shown to them."
   },
   "auth": {
     "type": "apikey",
@@ -362,7 +362,7 @@
             "invitations"
           ]
         },
-        "description": "`organizationId` ties the invitation to the organization created in request A, so the activation link leads this person straight to it.\n\n**Leave `organizationId` out** and the system creates a placeholder organization named \"หน่วยงานใหม่\" with a draft request instead — the older path, for when you do not yet know which organization this is. There is nothing to prefill in that case.\n\n### Body\n\n| Field | Required | Notes |\n| --- | --- | --- |\n| `email` | ✅ | the invitee |\n| `role` | ✅ | `ORGANIZATION_USER` · `ORGANIZATION_APPROVER` · `BDI_OFFICER` · `BDI_DATASET_SPECIALIST` · `BDI_FINAL_APPROVER` · `BDI_LEGAL_OFFICER` · `SYSTEM_ADMINISTRATOR` |\n| `cid` | ✅ | 13-digit national ID, checksum validated |\n| `organizationId` | — | the pre-created organization · BDI roles do not need it |\n| `displayName` | — | defaults to the email address |\n\n### Response 201\n\n```json\n{\n  \"activationKeyId\": \"uuid\",\n  \"userAccountId\": \"uuid\",\n  \"email\": \"somchai@agency.go.th\",\n  \"role\": \"ORGANIZATION_USER\",\n  \"roleLabel\": \"ผู้ดำเนินการของหน่วยงาน\",\n  \"organizationId\": \"uuid\",\n  \"expiresAt\": \"2026-08-23T…Z\"\n}\n```\n\n### What can go wrong\n\n| Status | Error | Cause |\n| --- | --- | --- |\n| 400 | `validation` | bad `cid` checksum · malformed email · unknown `role` |\n| 401 | `unauthenticated` | wrong or missing `x-admin-token` |\n| 404 | `not_found` | `organizationId` is well-formed but does not exist |\n| 409 | `exists` | that email already has an `ACTIVE` account |\n\n`organizationId` must be a **valid v4 UUID** — Zod checks the version and variant bits, so something like `11111111-2222-3333-4444-555555555555` is rejected as 400 `Invalid UUID` before the lookup ever happens, not 404.",
+        "description": "`organizationId` ties the invitation to the organization created in request A, so the activation link leads this person straight to it.\n\n**Leave `organizationId` out** and the system creates a placeholder organization named \"หน่วยงานใหม่\" with a draft request instead — the older path, for when you do not yet know which organization this is. There is nothing to prefill in that case.\n\n### Body\n\n| Field | Required | Notes |\n| --- | --- | --- |\n| `email` | ✅ | the invitee |\n| `role` | ✅ | `ORGANIZATION_USER` · `ORGANIZATION_APPROVER` · `BDI_OFFICER` · `BDI_DATASET_SPECIALIST` · `BDI_FINAL_APPROVER` · `BDI_LEGAL_OFFICER` · `SYSTEM_ADMINISTRATOR` |\n| `cid` | ✅ | 13-digit national ID, checksum validated |\n| `organizationId` | — | the pre-created organization · BDI roles do not need it |\n| `displayName` | — | defaults to the email address |\n\n### Response 201\n\n```json\n{\n  \"activationKeyId\": \"uuid\",\n  \"userAccountId\": \"uuid\",\n  \"email\": \"somchai@agency.go.th\",\n  \"role\": \"ORGANIZATION_USER\",\n  \"roleLabel\": \"ผู้ดำเนินการของหน่วยงาน\",\n  \"organizationId\": \"uuid\",\n  \"expiresAt\": \"2026-08-23T…Z\"\n}\n```\n\n### What can go wrong\n\n| Status | Error | Cause |\n| --- | --- | --- |\n| 400 | `validation` | bad `cid` checksum · malformed email · unknown `role` |\n| 401 | `unauthenticated` | wrong or missing `x-admin-token` |\n| 404 | `not_found` | `organizationId` is well-formed but does not exist |\n| 409 | `exists` | that email already has an `ACTIVE` account |\n\n`organizationId` must be a **valid v4 UUID** — Zod checks the version and variant bits, so something like `11111111-2222-3333-4444-555555555555` is rejected as 400 `Invalid UUID` before the lookup ever happens, not 404.\n\n**`organizationId` บังคับแล้ว** สำหรับ ORGANIZATION_USER และ ORGANIZATION_APPROVER — ไม่ส่งมาได้ 400 ให้รัน request A หรือ B ก่อนเพื่อให้ตัวแปร organizationId ถูกเก็บไว้",
         "body": {
           "mode": "raw",
           "raw": "{\n  \"email\": \"somchai@agency.go.th\",\n  \"role\": \"ORGANIZATION_USER\",\n  \"cid\": \"1101700207129\",\n  \"organizationId\": \"{{organizationId}}\",\n  \"displayName\": \"สมชาย ทดสอบ\"\n}",
@@ -426,7 +426,7 @@
             "invitations"
           ]
         },
-        "description": "A second person into the same organization, using the `organizationId` the earlier request stored.\n\nAn organization holds **one active `ORGANIZATION_USER` and one active `ORGANIZATION_APPROVER`**. That rule is enforced when an account is **activated**, not when it is invited — so inviting a second person of the same role succeeds here and takes effect later, revoking whoever held it before.\n\nBoth people edit the *same* registration request. Whoever starts registering first opens it; the other one is taken to that request rather than starting a rival one.",
+        "description": "A second person into the same organization, using the `organizationId` the earlier request stored.\n\nAn organization holds **one active `ORGANIZATION_USER` and one active `ORGANIZATION_APPROVER`**. That rule is enforced when an account is **activated**, not when it is invited — so inviting a second person of the same role succeeds here and takes effect later, revoking whoever held it before.\n\nBoth people edit the *same* registration request. Whoever starts registering first opens it; the other one is taken to that request rather than starting a rival one.\n\n**`organizationId` บังคับแล้ว** สำหรับ ORGANIZATION_USER และ ORGANIZATION_APPROVER — ไม่ส่งมาได้ 400 ให้รัน request A หรือ B ก่อนเพื่อให้ตัวแปร organizationId ถูกเก็บไว้",
         "body": {
           "mode": "raw",
           "raw": "{\n  \"email\": \"director@agency.go.th\",\n  \"role\": \"ORGANIZATION_APPROVER\",\n  \"cid\": \"3100600123450\",\n  \"organizationId\": \"{{organizationId}}\",\n  \"displayName\": \"ผู้อำนวยการ ทดสอบ\"\n}",
@@ -476,7 +476,7 @@
             "invitations"
           ]
         },
-        "description": "BDI roles — `BDI_OFFICER`, `BDI_DATASET_SPECIALIST`, `BDI_FINAL_APPROVER`, `BDI_LEGAL_OFFICER`, `SYSTEM_ADMINISTRATOR` — are attached to the BDI organization automatically. Sending an `organizationId` has no effect.\n\nBDI is a row in `organization.organization` like any other, which is why `activation_key.organization_id` can be NOT NULL. **Since 2026-08-16 the resulting role assignment carries that organization too**, where it used to be null, so the database can answer which organization a BDI officer belongs to.\n\n**The BDI organization holds as many people per role as you like** — three officers is normal. The uniqueness rule above applies only to ordinary organizations.",
+        "description": "BDI roles — `BDI_OFFICER`, `BDI_DATASET_SPECIALIST`, `BDI_FINAL_APPROVER`, `BDI_LEGAL_OFFICER`, `SYSTEM_ADMINISTRATOR` — are attached to the BDI organization automatically. Sending an `organizationId` has no effect.\n\nBDI is a row in `organization.organization` like any other, which is why `activation_key.organization_id` can be NOT NULL. **Since 2026-08-16 the resulting role assignment carries that organization too**, where it used to be null, so the database can answer which organization a BDI officer belongs to.\n\n**The BDI organization holds as many people per role as you like** — three officers is normal. The uniqueness rule above applies only to ordinary organizations.\n\nrole ฝั่ง BDI ไม่ต้องส่ง organizationId — ระบบผูกกับหน่วยงาน BDI ให้เอง (role ฝั่งหน่วยงานเท่านั้นที่บังคับ)",
         "body": {
           "mode": "raw",
           "raw": "{\n  \"email\": \"officer@bdi.or.th\",\n  \"role\": \"BDI_OFFICER\",\n  \"cid\": \"1101700207137\"\n}",
@@ -515,7 +515,7 @@
         "method": "GET",
         "header": [],
         "url": {
-          "raw": "{{baseUrl}}/api/admin/invitations",
+          "raw": "{{baseUrl}}/api/admin/invitations?email=&cid=&status=&page=1&pageSize=50",
           "host": [
             "{{baseUrl}}"
           ],
@@ -523,9 +523,75 @@
             "api",
             "admin",
             "invitations"
+          ],
+          "query": [
+            {
+              "key": "email",
+              "value": "",
+              "description": "ค้นบางส่วนของอีเมลได้",
+              "disabled": true
+            },
+            {
+              "key": "cid",
+              "value": "",
+              "description": "ต้องตรงตัวเต็ม 13 หลัก ไม่ใช่บางส่วน",
+              "disabled": true
+            },
+            {
+              "key": "status",
+              "value": "",
+              "description": "ISSUED · USED · EXPIRED · REVOKED",
+              "disabled": true
+            },
+            {
+              "key": "page",
+              "value": "1"
+            },
+            {
+              "key": "pageSize",
+              "value": "50"
+            }
           ]
         },
-        "description": "The 100 most recent invitations, newest first. No pagination.\n\nEach carries `id` · `status` (`ISSUED` / `USED` / `REVOKED` / `EXPIRED`) · `issuedAt` · `expiresAt` · `usedAt` · `revokedAt` · `userAccount {id,email,status}` · `role {code,nameTh}` · `organization {id,nameTh}`.\n\n**The raw key is not in the response** — the database holds only its HMAC."
+        "description": "ค้นหาคำเชิญ — เป็นทางหลักที่ใช้หาใบที่ต้องส่งซ้ำหรือต้องลบ เพราะระบบไม่มีการเชิญซ้ำแล้ว\n\n`email` ค้นบางส่วนได้ · `cid` ต้องตรงตัวเต็ม (กันการไล่เดาเลขบัตรทีละหลัก) · คำตอบมี `total` มาด้วยสำหรับแบ่งหน้า"
+      },
+      "response": []
+    },
+    {
+      "name": "4.1 · Resend an invitation (same account, new link)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 created', () => pm.response.to.have.status(201));",
+              "const b = pm.response.json();",
+              "pm.test('a new key replaced the old one', () => {",
+              "  pm.expect(b.activationKeyId).to.not.eql(b.replacedActivationKeyId);",
+              "});",
+              "pm.collectionVariables.set('activationKeyId', b.activationKeyId);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/invitations/{{activationKeyId}}/resend",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "invitations",
+            "{{activationKeyId}}",
+            "resend"
+          ]
+        },
+        "description": "ส่งลิงก์เปิดใช้งานใบใหม่ให้คนเดิม โดย **ไม่รับ body เลย** — บัญชี หน่วยงาน และ role เอาจากคำเชิญใบเดิมทั้งหมด จึงไม่มีอะไรให้กรอกผิด\n\nใช้เมื่อผู้ถูกเชิญทำลิงก์หายหรือลิงก์หมดอายุ แต่ข้อมูลที่เชิญไว้ถูกหมดแล้ว ใบเก่าถูก REVOKED ให้อัตโนมัติ เหลือลิงก์ที่ใช้ได้ใบเดียวเสมอ\n\nถ้าข้อมูลที่เชิญไว้**ผิด** อย่าใช้อันนี้ — ใช้ request 6 ลบทิ้งแล้วเชิญใหม่"
       },
       "response": []
     },
@@ -645,6 +711,480 @@
           ]
         },
         "description": "**Removes the invitation instead of parking it.** Use `5 · Revoke` when you want the link dead but the paper trail intact; use this when the invitation should never have existed.\n\n### Why it exists\n\n`user_account.email` and `user_account.cid` are both unique. Invite the wrong address once and that `PENDING` account holds both values forever: revoking the key does not give them back, so the same person cannot be invited at their real address. Before this endpoint the only way out was deleting rows in the database by hand, which `docs/08-database-access.md` forbids.\n\n### What it deletes\n\nThe activation key always. The user account **only** when that account exists purely because of this invitation:\n\n| Condition | Effect |\n| --- | --- |\n| still `PENDING`, no other key, no role, no assigned review task, no signature or legal acceptance | key **and** account deleted — email and CID are free again |\n| any of those present | key deleted, account kept, and `message` says which one held it |\n| account already `ACTIVE` | 409 `activated` — nothing deleted; suspend the account instead |\n\nAn organization-less invitation also created a placeholder organization (`หน่วยงานใหม่`) and a draft request. Those go too, provided nobody has touched them — otherwise the draft would linger with a `created_by` pointing at a deleted account, and the next invitation would add another placeholder.\n\n### What survives\n\nAn `audit.audit_event` row, action `INVITATION_DELETED`, carrying the email, CID and role of what was removed. After the delete it is the only evidence the invitation ever existed, which is the point.\n\n| Status | Error | Cause |\n| --- | --- | --- |\n| 404 | `not_found` | no such invitation, or the id is not a UUID |\n| 409 | `activated` | the invitee has already activated their account |"
+      },
+      "response": []
+    },
+    {
+      "name": "U1 · Find a user",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/users?q=&cid=&status=&role=&organizationId=",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users"
+          ],
+          "query": [
+            {
+              "key": "q",
+              "value": "",
+              "disabled": true
+            },
+            {
+              "key": "cid",
+              "value": "",
+              "disabled": true
+            },
+            {
+              "key": "status",
+              "value": "",
+              "disabled": true
+            },
+            {
+              "key": "role",
+              "value": "",
+              "disabled": true
+            },
+            {
+              "key": "organizationId",
+              "value": "",
+              "disabled": true
+            }
+          ]
+        },
+        "description": "ค้นหาบัญชี — `q` ค้นบางส่วนของอีเมลหรือชื่อ · `cid` ต้องตรงตัวเต็ม 13 หลัก (กันการไล่เดาเลขบัตร) · กรองด้วย `status` `role` `organizationId` ได้ และแบ่งหน้าด้วย `page`/`pageSize`"
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200', () => pm.response.to.have.status(200));",
+              "const u = pm.response.json().users[0];",
+              "if (u) pm.collectionVariables.set('userAccountId', u.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "U2 · User detail",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/users/{{userAccountId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{userAccountId}}"
+          ]
+        },
+        "description": "โปรไฟล์ + ประวัติ role ทั้งที่ใช้งานอยู่และที่ถูกถอน + คำเชิญ + session ที่ยังเปิด + audit ล่าสุด 20 รายการ"
+      },
+      "response": []
+    },
+    {
+      "name": "U3 · Update profile",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/users/{{userAccountId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{userAccountId}}"
+          ]
+        },
+        "description": "แก้ได้เฉพาะโปรไฟล์ — `email` กับ `cid` ไม่อยู่ในนี้ ต้องใช้ U4 เพราะเป็น identity anchor",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"phoneNumber\": \"021234567\",\n  \"positionTh\": \"นักวิชาการคอมพิวเตอร์ชำนาญการ\"\n}"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "U4 · Change email or national ID",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/users/{{userAccountId}}/identity",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{userAccountId}}",
+            "identity"
+          ]
+        },
+        "description": "แก้ตัวตนของบัญชีที่เปิดใช้งานแล้ว ปิด session ทุกใบหลังแก้ เพราะอีเมลคือตัวล็อกอิน\n\nจำเป็นเพราะบัญชีที่ activate แล้วลบไม่ได้ (FK สามใบเป็น RESTRICT) ถ้าไม่มีทางนี้ การกรอกอีเมลผิดตั้งแต่แรกจะเป็นทางตันถาวร",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"new.address@agency.go.th\",\n  \"reason\": \"ระบุเหตุผลที่ชัดเจนอย่างน้อยสิบตัวอักษร\"\n}"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "U5 · Suspend",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/users/{{userAccountId}}/suspend",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{userAccountId}}",
+            "suspend"
+          ]
+        },
+        "description": "ระงับชั่วคราว — **สิทธิ์ (role) ยังอยู่ครบ** เพราะตั้งใจให้กลับมาใช้ได้ · ปิด session ทันที\n\nตอบ 409 `last_holder` ถ้าเป็นเจ้าหน้าที่ BDI คนสุดท้ายของบทบาทนั้น — ไม่งั้นคำขอทุกใบ ที่เดินมาถึงด่านนั้นจะค้างโดยไม่มีใครปลดได้",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"ระบุเหตุผลที่ชัดเจนอย่างน้อยสิบตัวอักษร\"\n}"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "U6 · Reinstate",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/users/{{userAccountId}}/reinstate",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{userAccountId}}",
+            "reinstate"
+          ]
+        },
+        "description": "คืนสถานะจาก SUSPENDED เท่านั้น · บัญชีที่ DEACTIVATED ใช้ U8",
+        "body": {
+          "mode": "raw",
+          "raw": "{}"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "U7 · Deactivate (this is what 'delete' means here)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/users/{{userAccountId}}/deactivate",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{userAccountId}}",
+            "deactivate"
+          ]
+        },
+        "description": "ยุติการใช้งาน — ถอน role ทุกใบ ยกเลิกคำเชิญที่ยังใช้ได้ ปิด session\n\n**แถวยังอยู่พร้อมอีเมลและเลขบัตรเดิม** เพราะ legal_acceptance · signature_confirmation · review_task ชี้มาที่บัญชีนี้ ประวัติจึงต้องอ่านกลับได้ตลอดไป — ลบจริงทำไม่ได้ ฐานข้อมูลปฏิเสธเอง",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"ระบุเหตุผลที่ชัดเจนอย่างน้อยสิบตัวอักษร\"\n}"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "U8 · Reactivate (the same person came back)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/users/{{userAccountId}}/reactivate",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{userAccountId}}",
+            "reactivate"
+          ]
+        },
+        "description": "เปิดบัญชีที่ยุติไปแล้วกลับมา **ไม่คืน role ให้เอง** ต้องมอบใหม่ด้วย U10\n\nนี่คือทางที่ถูกสำหรับ 'คนเดิมกลับเข้ามา' ไม่ว่าจะกลับหน่วยงานเดิมหรือหน่วยงานใหม่ — ห้ามสร้างบัญชีใหม่ด้วยเลขบัตรเดิม เพราะจะแตกหลักฐานการลงนามของคนคนเดียวเป็นสองแถว",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"ระบุเหตุผลที่ชัดเจนอย่างน้อยสิบตัวอักษร\"\n}"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "U9 · Release the email so it can be used again",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/users/{{userAccountId}}/release-identity",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{userAccountId}}",
+            "release-identity"
+          ]
+        },
+        "description": "ปล่อยอีเมลคืนให้เชิญใหม่ได้ — ใช้กับกล่องจดหมายกลางที่เปลี่ยนมือจริง ๆ (`it@agency.go.th` ส่งต่อให้เจ้าหน้าที่คนใหม่)\n\n**ไม่มีตัวเลือกปล่อยเลขบัตร** เลขบัตรคือคน ไม่ใช่ตำแหน่ง · บัญชีต้อง DEACTIVATED ก่อน · อีเมลเดิมถูกเก็บไว้ใน `before` ของ audit ซึ่งเป็นหลักฐานเดียวที่เหลือ",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"releaseEmail\": true,\n  \"reason\": \"ระบุเหตุผลที่ชัดเจนอย่างน้อยสิบตัวอักษร\"\n}"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "U10 · Grant a role",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/users/{{userAccountId}}/roles",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{userAccountId}}",
+            "roles"
+          ]
+        },
+        "description": "ตอบ 409 `organization_clash` ถ้าบัญชีนี้ถือสิทธิ์ระดับหน่วยงานของที่อื่นอยู่แล้ว — หนึ่งบัญชีอยู่ได้หน่วยงานเดียว ถ้าจะย้ายให้ใช้ U12",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"role\": \"ORGANIZATION_USER\",\n  \"organizationId\": \"{{organizationId}}\",\n  \"reason\": \"ระบุเหตุผลที่ชัดเจนอย่างน้อยสิบตัวอักษร\"\n}"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "U11 · Revoke a role",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/users/{{userAccountId}}/roles/{{roleAssignmentId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{userAccountId}}",
+            "roles",
+            "{{roleAssignmentId}}"
+          ]
+        },
+        "description": "ถอนสิทธิ์หนึ่งใบพร้อมแจ้งเจ้าตัว · `roleAssignmentId` ดูได้จาก U2",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"ระบุเหตุผลที่ชัดเจนอย่างน้อยสิบตัวอักษร\"\n}"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "U12 · Transfer to another organization",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/users/{{userAccountId}}/transfer",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{userAccountId}}",
+            "transfer"
+          ]
+        },
+        "description": "ย้ายหน่วยงานในคำสั่งเดียว — ต้องเป็นคำสั่งเดียวเพราะกฎหนึ่งบัญชีหนึ่งหน่วยงาน จะปฏิเสธถ้ามอบก่อนถอน และถ้าแยกสองคำสั่งแล้วอันที่สองล้ม เขาจะค้างแบบไม่สังกัดที่ไหน\n\n**งานของหน่วยงานเก่าไม่ตามไปด้วย** คำขอที่ค้างอยู่กับเขาถูกดันกลับเป็น DRAFT (ปิด review task เป็น CANCELLED · ล้าง submittedAt · ล้าง approverEmail ถ้าเขาคือผู้มีอำนาจ) แล้วแจ้งคนที่ยังอยู่กับหน่วยงานเดิม\n\nย้ายได้เสมอ ไม่บล็อก — response บอกว่าคำขอใบไหนถูกดันกลับ และหน่วยงานไหนไม่เหลือผู้รับผิดชอบ",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"organizationId\": \"{{organizationId}}\",\n  \"role\": \"ORGANIZATION_USER\",\n  \"reason\": \"ระบุเหตุผลที่ชัดเจนอย่างน้อยสิบตัวอักษร\"\n}"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "U13 · List active sessions",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/users/{{userAccountId}}/sessions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{userAccountId}}",
+            "sessions"
+          ]
+        },
+        "description": "ดูว่าบัญชีนี้ล็อกอินค้างอยู่กี่เครื่อง"
+      },
+      "response": []
+    },
+    {
+      "name": "U14 · Force logout everywhere",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/users/{{userAccountId}}/sessions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "users",
+            "{{userAccountId}}",
+            "sessions"
+          ]
+        },
+        "description": "ปิด session ทุกใบโดยไม่ระงับบัญชี — ใช้ตอนสงสัยว่า session ถูกขโมย",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"ระบุเหตุผลที่ชัดเจนอย่างน้อยสิบตัวอักษร\"\n}"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "L1 · Make a legal document optional (or required again)",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"isRequired\": false\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/legal-documents/A3",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "legal-documents",
+            "A3"
+          ]
+        },
+        "description": "ตั้งเอกสารเป็นไม่บังคับ — ผู้มีอำนาจจะเห็นปุ่ม \"ไม่เกี่ยวข้อง\" ทางซ้ายของ \"เห็นชอบ\" ฉบับที่ถูกข้ามจะไม่ลง legal_acceptance และไม่ถูกส่งต่อให้ฝ่าย BDI เห็นชอบ\n\nส่ง `{\"isRequired\": true}` เพื่อกลับเป็นบังคับ · ไม่มีผลย้อนหลังกับคำขอที่ลงนามไปแล้ว"
       },
       "response": []
     }

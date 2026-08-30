@@ -47,7 +47,13 @@ import {
   LegalDocumentVersionStatus,
 } from "@prisma/client";
 import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
-import { assignRole, issueActivationKey, type RevokedAssignment } from "../lib/iam.js";
+import {
+  activeAssignmentWhere,
+  assignRole,
+  issueActivationKey,
+  type Db,
+  type RevokedAssignment,
+} from "../lib/iam.js";
 import {
   sendActivated,
   sendFinalApprovalRequest,
@@ -80,6 +86,7 @@ import { REVIEW_TASK_TYPE_LABELS, ROLE_LABELS, isBdiStaff } from "../lib/roles.j
 import {
   PLACEHOLDER_ORGANIZATION_NAME,
   BDI_ORGANIZATION_ID,
+  ORGANIZATION_SCOPED_ROLES,
   ROLE_CODES,
   SYSTEM_USER_ID,
   type RoleCode,
@@ -519,13 +526,38 @@ function fullName(prefix?: string | null, first?: string | null, last?: string |
 }
 
 /** ผู้ใช้เห็นคำขอนี้ได้ไหม */
+/**
+ * ใครแก้และนำส่งคำขอใบนี้ได้ — **คำขอเป็นของหน่วยงาน ไม่ใช่ของคนที่กดสร้าง**
+ *
+ * เดิมเกณฑ์คือ `request.createdBy === session.sub` ซึ่งทำให้งานติดตัวคนไป: ถ้าผู้ดำเนินการ
+ * ย้ายหน่วยงานหรือถูกปิดบัญชี คำขอที่เขาสร้างไว้จะไม่มีใครแตะได้อีกเลย เพราะ `created_by`
+ * เป็น NOT NULL ล้างไม่ได้ และคนที่ยังอยู่กับหน่วยงานก็ไม่ผ่านเกณฑ์นี้ — ขณะที่คนที่ย้าย
+ * ออกไปแล้วยังแก้ของหน่วยงานเก่าได้อยู่ ซึ่งกลับด้านกับที่ควรเป็นทั้งสองทาง
+ *
+ * เปลี่ยนเป็น "เป็นผู้ดำเนินการที่ใช้งานอยู่ของหน่วยงานเจ้าของคำขอ" — งานจึงอยู่กับ
+ * หน่วยงาน คนใหม่รับช่วงต่อได้ทันที และคนที่ย้ายออกก็หลุดจากงานเก่าโดยอัตโนมัติ
+ * เพราะ `session.organizationId` คำนวณใหม่จาก role assignment ทุก request
+ */
+function canEdit(
+  session: { roles: RoleCode[]; organizationId: string | null },
+  request: { organizationId: string },
+): boolean {
+  return (
+    session.organizationId === request.organizationId &&
+    session.roles.includes(ROLE_CODES.ORGANIZATION_USER)
+  );
+}
+
 function canView(
   session: { sub: string; roles: RoleCode[]; organizationId: string | null; email: string },
   request: { createdBy: string; organizationId: string; approverEmail: string | null },
 ): boolean {
   if (isBdiStaff(session.roles)) return true;
-  if (request.createdBy === session.sub) return true;
   if (session.organizationId === request.organizationId) return true;
+  /**
+   * ผู้มีอำนาจที่ยังไม่มี role — ถูกเชิญมาลงนามแต่ยังไม่ได้เปิดใช้งานบัญชี จึงยังไม่มี
+   * assignment ให้ `session.organizationId` คำนวณจาก อีเมลบนคำขอเป็นทางเดียวที่เหลือ
+   */
   return request.approverEmail?.toLowerCase() === session.email.toLowerCase();
 }
 
@@ -1054,7 +1086,7 @@ organizationRouter.patch("/:id", async (req, res) => {
     where: { id: req.params.id },
     include: { organization: true },
   });
-  if (!request || request.createdBy !== session.sub) {
+  if (!request || !canEdit(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
@@ -1135,7 +1167,7 @@ organizationRouter.post("/:id/attachments", upload.single("file"), async (req, r
   const request = await prisma.organizationRegistrationRequest.findUnique({
     where: { id: req.params.id },
   });
-  if (!request || request.createdBy !== session.sub) {
+  if (!request || !canEdit(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
@@ -1212,7 +1244,7 @@ organizationRouter.post("/:id/generate-form", async (req, res) => {
     where: { id: req.params.id },
     include: { organization: true },
   });
-  if (!request || request.createdBy !== session.sub) {
+  if (!request || !canEdit(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
@@ -1332,6 +1364,8 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
     fromRequest: boolean;
     fileUrl: string | null;
     acceptedAt: Date | null;
+    /** false = ผู้มีอำนาจกด "ไม่เกี่ยวข้อง" ข้ามฉบับนี้ได้ */
+    isRequired: boolean;
   }> = [];
 
   for (const doc of documents) {
@@ -1348,6 +1382,7 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
         fromRequest: false,
         fileUrl: `/api/organizations/${request.id}/legal-documents/${doc.versionId}/file`,
         acceptedAt: acceptedAt.get(doc.versionId) ?? null,
+        isRequired: doc.isRequired,
       });
       continue;
     }
@@ -1410,6 +1445,7 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
         ? `/api/organizations/${request.id}/legal-documents/${doc.versionId}/file`
         : null,
       acceptedAt: acceptedAt.get(doc.versionId) ?? null,
+      isRequired: doc.isRequired,
     });
   }
 
@@ -1491,7 +1527,7 @@ organizationRouter.post("/:id/submit", async (req, res) => {
     where: { id: req.params.id },
     include: { organization: true },
   });
-  if (!request || request.createdBy !== session.sub) {
+  if (!request || !canEdit(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
@@ -1520,6 +1556,22 @@ organizationRouter.post("/:id/submit", async (req, res) => {
       error: "validation",
       fields: { organizationCode: "รหัสหน่วยงานนี้ถูกใช้กับหน่วยงานอื่นแล้ว" },
     });
+    return;
+  }
+
+  /**
+   * ผู้มีอำนาจกระทำการแทนต้องใช้ได้จริงตั้งแต่ตอนนำส่ง ไม่ใช่ไปรู้ตอน BDI กดอนุมัติ
+   *
+   * เช็คตอนนำส่งไม่ได้แปลว่ายังว่างอยู่ตอนอนุมัติ (คนอื่นอาจจับจองไปก่อนได้)
+   * `ensureApproverAccount()` จึงยังเช็คซ้ำอีกครั้งตอนนั้น
+   */
+  const conflict = await approverConflict(prisma, {
+    email: parsed.data.signatoryEmail,
+    cid: parsed.data.signatoryNationalId ?? null,
+    organizationId: request.organizationId,
+  });
+  if (conflict) {
+    res.status(400).json({ error: "validation", fields: { [conflict.field]: conflict.message } });
     return;
   }
 
@@ -1621,6 +1673,16 @@ const signatureSchema = z.object({
    * ถูกแก้ หลักฐานเก่าต้องไม่เปลี่ยนความหมายตามไปด้วย ฝ่าย BDI ลงนามรวดเดียวโดยไม่มี
    * การยืนยันรายฉบับ (การ์ดข้อ 4) จึงไม่มีค่านี้มา
    */
+  /**
+   * เอกสารที่ผู้มีอำนาจกด "ไม่เกี่ยวข้อง" — ใช้ได้เฉพาะฉบับที่แอดมินตั้งเป็นไม่บังคับ
+   *
+   * แยกจาก `acknowledgements` เพราะความหมายต่างกันคนละเรื่อง: อันบนคือ "อ่านแล้วเห็นชอบ"
+   * ซึ่งลง `legal_acceptance` เป็นหลักฐานว่าหน่วยงานยอมรับเงื่อนไข ส่วนอันนี้คือ
+   * "ฉบับนี้ไม่เกี่ยวกับหน่วยงานเรา" ซึ่งไม่ใช่การยอมรับ จึงไม่ลงตารางนั้น แต่ต้องเก็บไว้
+   * ใน `confirmation_payload_json` ไม่งั้นย้อนหลังจะแยกไม่ออกระหว่าง "ตั้งใจข้าม"
+   * กับ "ตอนนั้นยังไม่มีเอกสารฉบับนี้"
+   */
+  notApplicable: z.array(z.object({ versionId: z.string() })).default([]),
   attestationText: z.string().trim().min(1).max(500).optional(),
   confirmationText: z.string().trim().min(1).max(2000),
 });
@@ -1742,6 +1804,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
      */
     const confirmationType = SIGNING_TASKS[task.taskType];
     let signedVersionIds: string[] = [];
+    let notApplicableVersionIds: string[] = [];
 
     if (confirmationType && result === ReviewResult.APPROVED) {
       if (!signature) {
@@ -1762,7 +1825,43 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
       }
 
       const acknowledged = new Set(signature.acknowledgements.map((a) => a.versionId));
-      const missing = published.filter((doc) => !acknowledged.has(doc.versionId));
+      const skipped = new Set(signature.notApplicable.map((d) => d.versionId));
+
+      /**
+       * ฉบับที่ฝั่งหน่วยงานเคยกด "ไม่เกี่ยวข้อง" ไปแล้ว ไม่ต้องถามฝ่าย BDI อีก
+       *
+       * ด่านของ BDI ต้องเห็นชอบเฉพาะชุดที่หน่วยงานยอมรับจริง — ถ้ายังถามครบทุกฉบับ
+       * ที่เผยแพร่อยู่ เอกสารที่ถูกข้ามไปแล้วจะกลับมาโผล่ที่ด่านหลัง ทั้งที่ไม่มีใคร
+       * ฝั่งหน่วยงานยอมรับมัน
+       */
+      let expected = published;
+      if (confirmationType === ConfirmationType.BDI_FINAL_APPROVAL) {
+        const accepted = await prisma.legalAcceptance.findMany({
+          where: { subjectType: SUBJECT, subjectId: request.id },
+          select: { legalDocumentVersionId: true },
+        });
+        const acceptedIds = new Set(accepted.map((a) => a.legalDocumentVersionId));
+        if (acceptedIds.size > 0) expected = published.filter((d) => acceptedIds.has(d.versionId));
+      }
+
+      /**
+       * ข้ามได้เฉพาะฉบับที่ไม่บังคับ — ฉบับบังคับที่ถูกส่งมาใน `notApplicable`
+       * ต้องถูกปฏิเสธ ไม่ใช่เงียบ ๆ ยอมรับ ไม่งั้นหน้าเว็บที่ผิดพลาดจะข้ามเอกสารบังคับได้
+       */
+      const skippedRequired = expected.filter((doc) => doc.isRequired && skipped.has(doc.versionId));
+      if (skippedRequired.length > 0) {
+        res.status(400).json({
+          error: "required_document_skipped",
+          message:
+            `เอกสาร ${skippedRequired.map((d) => d.code).join(" ")} เป็นเอกสารบังคับ ` +
+            `จึงกด "ไม่เกี่ยวข้อง" ไม่ได้ ต้องอ่านและเห็นชอบ`,
+        });
+        return;
+      }
+
+      const missing = expected.filter(
+        (doc) => !acknowledged.has(doc.versionId) && !(doc.isRequired === false && skipped.has(doc.versionId)),
+      );
       if (missing.length > 0) {
         res.status(400).json({
           error: "documents_not_acknowledged",
@@ -1773,7 +1872,11 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
         return;
       }
 
-      signedVersionIds = published.map((doc) => doc.versionId);
+      // ลงนามเฉพาะฉบับที่เห็นชอบจริง ฉบับที่ข้ามไม่นับเป็นการยอมรับ
+      signedVersionIds = expected.filter((doc) => !skipped.has(doc.versionId)).map((d) => d.versionId);
+      notApplicableVersionIds = expected
+        .filter((doc) => skipped.has(doc.versionId))
+        .map((d) => d.versionId);
     }
 
     /** ผู้ถือ role เดิมที่เสียสิทธิ์ตอนผูกผู้มีอำนาจ — ประกาศหลัง commit */
@@ -1840,6 +1943,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
               signedFirstName: signedFirst,
               signedLastName: signedLast,
               documentVersionIds: signedVersionIds,
+              notApplicableVersionIds,
             },
             ipAddress: req.ip ?? null,
             userAgent: req.get("user-agent") ?? null,
@@ -2032,6 +2136,91 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
  * เป็น NOT NULL — สร้างบัญชี PENDING พร้อม activation key ให้ถ้ายังไม่มี
  * (ขั้นที่ 1–3 ของ "Suggested lifecycle" ใน sheet `activation_key`)
  */
+/**
+ * ผู้มีอำนาจกระทำการแทนที่กรอกมา ใช้กับหน่วยงานนี้ได้หรือไม่
+ *
+ * เดิมกฎพวกนี้อยู่ใน `ensureApproverAccount()` ที่เดียว ซึ่งทำงานตอน **เจ้าหน้าที่ BDI
+ * กด PASSED** — คนละคนและห่างจากตอนกรอกฟอร์มหลายวัน คนที่เห็น error จึงแก้ไม่ได้
+ * และคนที่แก้ได้ก็ไม่เห็น ตอนนี้ย้ายมาเรียกตั้งแต่ตอนนำส่ง (`POST /:id/submit`) ด้วย
+ * โดยยังคงไว้ที่เดิมเป็น backstop เพราะระหว่างนำส่งกับอนุมัติ คนอื่นอาจจับจอง
+ * เลขบัตรหรือ role ไปก่อนได้
+ *
+ * **ข้อความที่ตอบกลับต่างกันสองฝั่ง**: ฝั่งฟอร์ม (ผู้ใช้) บอกแค่ว่าใช้ค่านี้ไม่ได้ ห้าม
+ * เอ่ยชื่อหน่วยงาน อีเมล หรือตัวตนของเจ้าของข้อมูลเดิม เพราะคนกรอกฟอร์มเป็นใครก็ได้
+ * การบอกว่าเลขบัตรนี้เป็นของใครคือการยืนยันข้อมูลส่วนบุคคลให้คนนอก — รายละเอียด
+ * ไปอยู่ใน audit แทน ส่วนฝั่ง admin API ไม่ mask เพราะเรียกได้เฉพาะเจ้าหน้าที่ BDI
+ */
+async function approverConflict(
+  db: Db,
+  params: { email: string; cid: string | null; organizationId: string },
+): Promise<{ field: "signatoryEmail" | "signatoryNationalId"; message: string } | null> {
+  const { email, cid, organizationId } = params;
+
+  const existing = await db.userAccount.findUnique({
+    where: { email },
+    select: { id: true, cid: true },
+  });
+
+  if (!existing) {
+    // อีเมลนี้ยังไม่มีบัญชี — เลขบัตรจึงต้องว่างด้วย ไม่งั้นเป็นของคนอื่น
+    if (cid) {
+      const sameCid = await db.userAccount.findUnique({ where: { cid }, select: { id: true } });
+      if (sameCid) {
+        return {
+          field: "signatoryNationalId",
+          message:
+            "เลขบัตรประชาชนนี้ใช้กับผู้มีอำนาจกระทำการแทนของคำขอนี้ไม่ได้ " +
+            "กรุณาตรวจสอบเลขบัตรและอีเมลให้ตรงกับบุคคลเดียวกัน",
+        };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * อีเมลมีบัญชีอยู่แล้ว แต่เลขบัตรที่กรอกไม่ตรงกับของบัญชีนั้น
+   *
+   * เดิมเคสนี้ผ่านไปเงียบ ๆ เพราะ `existing ?? create` ใช้บัญชีเดิมโดยไม่เคยอ่าน
+   * `approverCid` ที่กรอกมาเลย — กรอกอีเมลของคนหนึ่งกับเลขบัตรของอีกคนจึงผ่าน
+   * แล้วระบบเก็บเลขของเจ้าของอีเมลไว้ ThaiD ก็ไปเทียบกับเลขนั้น ทั้งที่ฟอร์มบอกอีกอย่าง
+   */
+  if (cid && existing.cid && existing.cid !== cid) {
+    return {
+      field: "signatoryNationalId",
+      message:
+        "เลขบัตรประชาชนไม่ตรงกับบัญชีที่ใช้อีเมลนี้อยู่ " +
+        "กรุณาตรวจสอบว่าอีเมลและเลขบัตรเป็นของบุคคลเดียวกัน",
+    };
+  }
+
+  /**
+   * หนึ่งบัญชี = หนึ่งหน่วยงาน (ตัดสินใจ 2026-08-30) — ครอบทั้งสอง role และข้ามบทบาท
+   *
+   * `assignRole()` บังคับแค่ทางเดียวคือ "หนึ่งหน่วยงานมีคนเดียวต่อ role" ส่วนทางกลับ
+   * ไม่เคยมีอะไรกันไว้ ผลคือผู้มีอำนาจของหน่วยงาน A ที่ถูกกรอกในคำขอของหน่วยงาน B
+   * จะได้สิทธิ์ของ B เพิ่มโดยที่ของ A ยังอยู่ — เป็นสองหน่วยงานพร้อมกันเงียบ ๆ
+   */
+  const elsewhere = await db.userRoleAssignment.findFirst({
+    where: {
+      userAccountId: existing.id,
+      organizationId: { not: organizationId },
+      role: { code: { in: [...ORGANIZATION_SCOPED_ROLES] } },
+      ...activeAssignmentWhere(),
+    },
+    select: { id: true },
+  });
+  if (elsewhere) {
+    return {
+      field: "signatoryEmail",
+      message:
+        "อีเมลนี้ใช้เป็นผู้มีอำนาจกระทำการแทนของหน่วยงานนี้ไม่ได้ " +
+        "เนื่องจากผูกอยู่กับหน่วยงานอื่นในระบบแล้ว กรุณาใช้อีเมลอื่น",
+    };
+  }
+
+  return null;
+}
+
 async function ensureApproverAccount(
   tx: Prisma.TransactionClient,
   request: RequestRow,
@@ -2055,16 +2244,19 @@ async function ensureApproverAccount(
    * เลขบัตรผิดไปตรงกับของคนอื่น ถ้าปล่อยให้ create ชน P2002 คนกรอกฟอร์มจะเห็นแค่
    * ข้อผิดพลาดรวม ๆ ตอนกดนำส่ง โดยไม่รู้ว่าต้องกลับไปแก้ช่องไหน
    */
-  if (!existing && request.approverCid) {
-    const sameCid = await tx.userAccount.findUnique({ where: { cid: request.approverCid } });
-    if (sameCid) {
-      throw new WorkflowError(
-        "approver_cid_exists",
-        `เลขบัตรประชาชนของผู้มีอำนาจกระทำการแทนเป็นของบัญชี ${sameCid.email} อยู่แล้ว ` +
-          `กรุณาตรวจสอบเลขบัตร หรือแก้อีเมลผู้มีอำนาจให้เป็นอีเมลของบัญชีนั้น`,
-        409,
-      );
-    }
+  /**
+   * backstop — กฎเดียวกับที่ `POST /:id/submit` เช็คไปแล้ว
+   *
+   * ห้ามถอดออกแม้จะเช็คตอนนำส่งแล้ว เพราะระหว่างนำส่งกับอนุมัติห่างกันหลายวัน
+   * คนอื่นจับจองเลขบัตรหรือ role ระดับหน่วยงานไปก่อนได้
+   */
+  const conflict = await approverConflict(tx, {
+    email,
+    cid: request.approverCid,
+    organizationId: request.organizationId,
+  });
+  if (conflict) {
+    throw new WorkflowError("approver_conflict", conflict.message, 409);
   }
 
   const account =

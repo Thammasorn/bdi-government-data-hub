@@ -17,6 +17,7 @@ import {
 
 import { prisma } from "../db.js";
 import { env } from "../env.js";
+import { AuditAction, AuditSubject, logAudit } from "./audit.js";
 import { generateActivationKey, hashActivationKey } from "./auth.js";
 import {
   BDI_ORGANIZATION_ID,
@@ -199,6 +200,28 @@ export async function revokeRoleAssignments(
       updatedBy: params.actorId,
     },
   });
+
+  /**
+   * การถอนสิทธิ์ไม่เคยถูกบันทึกลง `audit_event` เลย (บันทึกไว้ว่าค้างที่ `routes/auth.ts`)
+   *
+   * เป็นช่องว่างที่สำคัญกว่าที่ดู เพราะฟังก์ชันนี้ถอนสิทธิ์คนโดยที่เจ้าตัวไม่ได้ทำอะไรเลย —
+   * ถูกแทนที่ด้วยผู้รับผิดชอบคนใหม่ ถูกย้ายหน่วยงาน หรือบัญชีถูกปิด ถ้าไม่มีแถว audit
+   * ก็ตอบไม่ได้ว่าใครสั่งและด้วยเหตุผลอะไร เหลือแค่ `revocation_reason` บนแถวที่ถูกถอน
+   *
+   * `logAudit()` กลืน error ของตัวเองอยู่แล้ว จึงไม่ทำให้ transaction ที่เรียกมาล้ม
+   */
+  for (const target of targets) {
+    await logAudit({
+      action: AuditAction.ROLE_REVOKED,
+      subjectType: AuditSubject.USER_ROLE_ASSIGNMENT,
+      subjectId: target.id,
+      organizationId: target.organizationId,
+      actorId: params.actorId,
+      before: { userAccountId: target.userAccountId, roleId: target.roleId, status: "ACTIVE" },
+      after: { status: RoleAssignmentStatus.REVOKED },
+      metadata: { reason: params.reason },
+    });
+  }
 
   return targets;
 }

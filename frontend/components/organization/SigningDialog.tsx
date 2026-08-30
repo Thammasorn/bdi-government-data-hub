@@ -74,11 +74,20 @@ export function SigningDialog({
    * แล้วไม่ต้องติ๊กใหม่ และเพื่อส่งเวลาที่ติ๊กจริงของแต่ละฉบับขึ้นไปเป็นหลักฐาน
    */
   const [attested, setAttested] = useState<Record<string, string>>({});
+  /**
+   * ฉบับที่กด "ไม่เกี่ยวข้อง" — เก็บเป็น set ของ version id
+   *
+   * ไม่รวมเข้ากับ `attested` เพราะสองอย่างนี้คนละความหมาย: ติ๊กแล้วคือ "อ่านและเห็นชอบ"
+   * ซึ่งจะกลายเป็น legal_acceptance ส่วนอันนี้คือ "ฉบับนี้ไม่เกี่ยวกับหน่วยงานเรา"
+   * ซึ่งไม่ใช่การยอมรับ จึงไม่ลงตารางนั้น
+   */
+  const [notApplicable, setNotApplicable] = useState<string[]>([]);
 
   const reset = () => {
     setAcknowledged(0);
     setError(null);
     setAttested({});
+    setNotApplicable([]);
   };
 
   const close = () => {
@@ -93,11 +102,14 @@ export function SigningDialog({
       await api.post(`/api/organizations/${requestId}/review`, {
         action: "approve",
         signature: {
-          acknowledgements: documents.map((d) => ({
-            versionId: d.versionId,
-            // ฝ่าย BDI ไม่มีการติ๊กรายฉบับ จึงใช้เวลาที่กดลงนามเป็นเวลายอมรับ
-            attestedAt: attested[d.versionId] ?? new Date().toISOString(),
-          })),
+          acknowledgements: documents
+            .filter((d) => !notApplicable.includes(d.versionId))
+            .map((d) => ({
+              versionId: d.versionId,
+              // ฝ่าย BDI ไม่มีการติ๊กรายฉบับ จึงใช้เวลาที่กดลงนามเป็นเวลายอมรับ
+              attestedAt: attested[d.versionId] ?? new Date().toISOString(),
+            })),
+          notApplicable: notApplicable.map((versionId) => ({ versionId })),
           ...(perDocument ? { attestationText: ATTESTATION_TEXT } : {}),
           confirmationText: CONFIRMATION_TEXT,
         },
@@ -167,12 +179,40 @@ export function SigningDialog({
           <Button variant="secondary" onClick={close}>
             ปิด
           </Button>
-          <Button
-            disabled={!current.fileUrl || !attested[current.versionId]}
-            onClick={() => setAcknowledged(acknowledged + 1)}
-          >
-            เห็นชอบ
-          </Button>
+          <div className="flex gap-3">
+            {/*
+              ฉบับไม่บังคับข้ามได้ — ปุ่มอยู่ซ้ายของ "เห็นชอบ" ตามการ์ด
+              กดแล้วเดินไปฉบับถัดไปเหมือนกัน ต่างกันแค่ฉบับนี้จะไม่ถูกนับเป็นการยอมรับ
+              และจะไม่ถูกส่งต่อไปให้ฝ่าย BDI เห็นชอบ
+            */}
+            {current.isRequired === false ? (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setNotApplicable((prev) =>
+                    prev.includes(current.versionId) ? prev : [...prev, current.versionId],
+                  );
+                  setAttested((prev) => {
+                    const next = { ...prev };
+                    delete next[current.versionId];
+                    return next;
+                  });
+                  setAcknowledged(acknowledged + 1);
+                }}
+              >
+                ไม่เกี่ยวข้อง
+              </Button>
+            ) : null}
+            <Button
+              disabled={!current.fileUrl || !attested[current.versionId]}
+              onClick={() => {
+                setNotApplicable((prev) => prev.filter((id) => id !== current.versionId));
+                setAcknowledged(acknowledged + 1);
+              }}
+            >
+              เห็นชอบ
+            </Button>
+          </div>
         </div>
       </Modal>
     );
@@ -185,8 +225,22 @@ export function SigningDialog({
       </p>
       <p className="mt-4 text-[13px] leading-relaxed text-ink-muted">
         ระบบจะบันทึกชื่อ เวลา และเอกสารทุกฉบับที่คุณเห็นชอบไว้เป็นหลักฐาน
-        และประทับลายมือชื่อของคุณลงในเอกสาร {documents.map((d) => d.code).join(" · ")}
+        และประทับลายมือชื่อของคุณลงในเอกสาร{" "}
+        {documents
+          .filter((d) => !notApplicable.includes(d.versionId))
+          .map((d) => d.code)
+          .join(" · ")}
       </p>
+      {notApplicable.length > 0 ? (
+        <p className="mt-2 text-[13px] leading-relaxed text-ink-muted">
+          เอกสารที่คุณระบุว่าไม่เกี่ยวข้อง{" "}
+          {documents
+            .filter((d) => notApplicable.includes(d.versionId))
+            .map((d) => d.code)
+            .join(" · ")}{" "}
+          จะไม่ถูกบันทึกเป็นการยอมรับ และจะไม่ถูกส่งต่อให้ BDI พิจารณา
+        </p>
+      ) : null}
       {error ? (
         <p className="mt-4 rounded-xl bg-danger-bg p-4 text-sm leading-relaxed text-danger">{error}</p>
       ) : null}
