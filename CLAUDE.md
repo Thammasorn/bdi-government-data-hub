@@ -142,10 +142,12 @@ The `OrganizationEvent` / `DatasetRequestEvent` tables are gone. The UI timeline
 from `review_task` rows, so every transition must go through `lib/workflow.ts`.
 
 Journey B: `BDI_OFFICER_REVIEW` → `ORGANIZATION_APPROVAL` → `BDI_FINAL_APPROVAL`.
-Journey C: the same plus an optional `DATASET_SPECIALIST_REVIEW`, and a second
-`BDI_OFFICER_REVIEW` round for the re-check after the organisation signs. "Initial review" and
-"re-check" share one `task_type`; they are told apart by whether an `ORGANIZATION_APPROVAL` has
-already completed, not by `round_number` (rounds also increment on every return).
+Journey C: the same, plus an optional `DATASET_SPECIALIST_REVIEW` branching off the officer gate.
+**One `task_type` is one gate on both journeys.** Journey C used to carry a second
+`BDI_OFFICER_REVIEW` round — a "re-check" between the signature and the final approval — which was
+removed on 2026-08-30; the organisation's signature now opens `BDI_FINAL_APPROVAL` directly. A
+request returned *after* signing therefore walks the whole route again, signature included: the
+existing signature is on content that is no longer the content being approved.
 
 **`lib/journey-steps.ts` is the only place that declares those sequences as data.** Everything
 that shows a user "how many steps, which one now, who is next" reads it — the stepper on both
@@ -153,10 +155,7 @@ detail pages, the progress column in both tables, the home cards, the steps bloc
 journey email, and the `REQUEST_PROGRESSED` notification text. It is a pure function over the
 rows `taskHistory()` / `activeTask()` already fetch, so no screen pays an extra query for it.
 **Change it in the same commit as `nextStageAfter()` in `dataset-requests.ts` or the if-chain in
-`organizations.ts`** — otherwise the screen promises a route the backend does not walk. It
-resolves the two officer slots with the same `ORGANIZATION_APPROVAL`-completed predicate the
-routes use, which is what makes a request returned *after* signing come back to the re-check
-step rather than to step one. A plain `task_type` order array cannot express that. `CONFIRMED`
+`organizations.ts`** — otherwise the screen promises a route the backend does not walk. `CONFIRMED`
 counts as a passing result there, not just `PASSED`/`APPROVED`: `recordComment()` closes the
 specialist task with it and opens the next stage immediately.
 
@@ -170,27 +169,18 @@ don't "fix" this by opening that task type.
 is one **node of the journey**: a `StepKey` from `journey-steps.ts` while a request is moving,
 or a terminal `RequestStatus` once it has stopped.
 
-**Neither `status` nor `task_type` can stand in for a gate.** `requestStatusFor()` answers
-`SUBMITTED` for *any* request whose active task nobody has opened yet, so one "นำส่งแล้ว" pill
-swept up three gates at once. `task_type` is one level better and still not enough:
-`BDI_OFFICER_REVIEW` is **two different gates** on the dataset journey — the initial check and
-the re-check after the organisation signs — which `slotOf()` has always told apart by whether an
-`ORGANIZATION_APPROVAL` completed with `APPROVED`, never by `round_number`. `SUBMITTED`,
-`UNDER_REVIEW` and `ORGANIZATION_REVISION` are excluded from the token type at compile time: the
-first two are the ambiguity being removed, and the third is never opened as a task, so filtering
-by it would answer zero rows forever.
+**`status` cannot stand in for a gate.** `requestStatusFor()` answers `SUBMITTED` for *any*
+request whose active task nobody has opened yet, so one "นำส่งแล้ว" pill swept up three gates at
+once. `SUBMITTED`, `UNDER_REVIEW` and `ORGANIZATION_REVISION` are excluded from the token type at
+compile time: the first two are the ambiguity being removed, and the third is never opened as a
+task, so filtering by it would answer zero rows forever.
 
-`resolveTokens()` is the only place the old and new vocabularies meet. A link that still says
-`?stage=BDI_OFFICER_REVIEW` resolves to *both* officer slots — which is what it always meant —
-and `?status=SUBMITTED,UNDER_REVIEW` keeps working. Do not drop either from the accepted set:
-unknown tokens are discarded silently by design, so a stale link would quietly return the
-unfiltered list rather than fail.
-
-Splitting the two officer slots costs one boolean per request, not a history walk. `openTask()`
-gives the active task `sequenceNumber = totalTasks + 1`, so it always has the highest sequence
-and "how many organisation approvals passed before this row" is just "how many passed at all".
-`signedSubjects()` asks that once per page, and only for requests actually sitting at an officer
-gate — the organisation journey has no re-check slot, so it never runs the query.
+`resolveTokens()` is the only place the old and new vocabularies meet, and it carries three
+generations: `?status=SUBMITTED,UNDER_REVIEW`, `?stage=BDI_OFFICER_REVIEW` (a `task_type`, which
+maps to every gate of that type), and `?stage=OFFICER_INITIAL` / `OFFICER_RECHECK` — the two step
+keys the dataset journey used while it had two officer gates, both now aliases of `OFFICER_REVIEW`
+in `LEGACY_NODE_KEYS`. Do not drop any of them from the accepted set: unknown tokens are discarded
+silently by design, so a stale link would quietly return the unfiltered list rather than fail.
 
 **`journeyGraph()` returns the drawable route** — ordered nodes with a lane
 (`main` / `branch` / `revision` / `closed`) and the edges between them. Every edge is *derived*:
@@ -236,10 +226,9 @@ explains itself beats a tab that moves under you. Returning to your own tab drop
 that is no longer reachable, or the reader is left holding a filter they cannot clear.
 
 Every status badge shows the same **short** name as the node (`progress.currentShortLabel`),
-keeping `TASK_TYPE_META` for colour. Without the node's own wording a dataset request at the
-re-check reads "รอเจ้าหน้าที่ BDI ตรวจสอบ" in the row while the node it was filtered by says
-"ตรวจซ้ำ"; and the long form is `whitespace-nowrap`, so in a fixed column it paints over its
-neighbour. In the two tables the badge is therefore given **no** `waitingLabel` — that would
+keeping `TASK_TYPE_META` for colour — the node and the badge must never call the same thing by two
+names, and only the node table knows the short wording. The long form is `whitespace-nowrap`, so
+in a fixed column it paints over its neighbour. In the two tables the badge is therefore given **no** `waitingLabel` — that would
 set a `title`, and the browser's own tooltip would appear on top of the hover card below.
 
 **สถานะ and ความคืบหน้า are one column.** They told one story — the name of the gate, and which
@@ -526,7 +515,7 @@ template has been re-uploaded; `docs/tools/rename-placeholders.py` does the .doc
 to invent one, so the dataset form's signatures live only in `signature_confirmation` /
 `legal_acceptance`. The signature variables still resolve, so adding a block to the template
 later needs no code. Journey C signs at `ORGANIZATION_APPROVAL` and `BDI_FINAL_APPROVAL` only —
-the specialist review and the officer re-check read the document but do not sign.
+the officer review and the specialist review read the document but do not sign.
 
 #### Details that have already cost time
 
@@ -786,11 +775,6 @@ Two API base URLs, and they are not interchangeable:
   `PrismaClientInitializationError`, which carries `errorCode` instead. Handling only the first
   looks correct — until the database is down at boot, when the API answers 500 again. Both are
   mapped in `index.ts`, and an initialization failure answers 503 even when it carries no code.
-- The two `BDI_OFFICER_REVIEW` rounds look identical to anything reading `task_type`.
-  Round one goes to the organization for signature, the re-check after signing goes to
-  BDI final approval. Backend and `components/dataset/DetailView.tsx` both decide by
-  whether an `ORGANIZATION_APPROVAL` has completed — a screen keyed on `task_type`
-  alone will show the wrong button and nothing will fail loudly.
 
 
 ## Notion
