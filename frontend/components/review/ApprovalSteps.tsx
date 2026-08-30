@@ -17,9 +17,9 @@ import { formatThaiDate } from "@/lib/status";
 
 /** ข้อความอธิบายช่วงที่คำขออยู่ ณ ตอนนี้ ใช้ทั้งแบบเต็มและแบบย่อ */
 const PHASE_NOTE: Record<JourneyProgress["phase"], string | null> = {
-  DRAFT: "ยังไม่ได้นำส่ง — ขั้นตอนด้านล่างจะเริ่มเมื่อกดนำส่งคำขอ",
+  DRAFT: "ยังไม่ได้นำส่ง — อยู่ระหว่างการกรอกข้อมูลของหน่วยงาน",
   IN_PROGRESS: null,
-  WAITING_REVISION: "ขณะนี้อยู่ที่หน่วยงาน — รอแก้ไขตามที่ผู้ตรวจส่งกลับ แล้วนำส่งใหม่",
+  WAITING_REVISION: "ยังไม่ได้นำส่ง — อยู่ระหว่างการแก้ไขตามที่ผู้ตรวจส่งกลับ",
   APPROVED: "ผ่านครบทุกขั้นตอนแล้ว",
   REJECTED: "คำขอนี้ไม่ได้รับอนุมัติ — กระบวนการปิดแล้ว",
   CANCELLED: "คำขอนี้ถูกยกเลิก",
@@ -191,7 +191,7 @@ export function ApprovalStepsCompact({
   progress: JourneyProgressSummary | JourneyProgress | null;
   className?: string;
 }) {
-  if (!progress) return <span className="text-[13px] text-ink-muted">—</span>;
+  if (!progress) return <span className={clsx("text-[13px] text-ink-muted", className)}>—</span>;
 
   const label =
     "currentLabel" in progress
@@ -201,33 +201,49 @@ export function ApprovalStepsCompact({
 
   if (!progress.currentOrder) {
     const note = PHASE_NOTE[progress.phase];
+    /**
+     * คำขอที่ยังไม่ได้นำส่งไม่ต้องบอกว่าเส้นทางมีกี่ขั้น — ประโยคเดียวบอกครบว่าอยู่ตรงไหน
+     * และใครถืออยู่ ส่วน "ทั้งหมด 4 ขั้นตอน" ไม่ได้ตอบอะไรที่คนอ่านกำลังถาม
+     * ปลายทางที่จบแล้วยังบอกจำนวนขั้น เพราะตรงนั้นแปลว่า "ผ่านมาครบแล้ว" ซึ่งมีความหมาย
+     */
+    const unstarted = progress.phase === "DRAFT" || progress.phase === "WAITING_REVISION";
     return (
       <div className={clsx("flex flex-col gap-0.5", className)}>
-        <span className="text-[13px] text-ink-muted">
-          {progress.phase === "APPROVED"
-            ? `ครบทั้ง ${progress.totalSteps} ขั้นตอน`
-            : `ทั้งหมด ${progress.totalSteps} ขั้นตอน`}
-        </span>
+        {unstarted ? null : (
+          <span className="text-[13px] text-ink-muted">
+            {progress.phase === "APPROVED"
+              ? `ครบทั้ง ${progress.totalSteps} ขั้นตอน`
+              : `ทั้งหมด ${progress.totalSteps} ขั้นตอน`}
+          </span>
+        )}
         {note && progress.phase !== "IN_PROGRESS" ? (
-          <span className="text-[12px] text-ink-muted">{note}</span>
+          <span className="text-[13px] leading-snug text-ink-muted">{note}</span>
         ) : null}
       </div>
     );
   }
 
+  /**
+   * ช่องแคบ — ตัวเลขขั้นกับจุดพอ ส่วนชื่อด่านกับขั้นต่อไปไปอยู่ใน hover
+   *
+   * เดิมช่องนี้แบกสองประโยคยาวกับแถบสี่ท่อน ซึ่งดันความสูงของแถวและไปชนกับ badge สถานะ
+   * ที่ล้นมาจากคอลัมน์ซ้าย `title` เป็น hover ที่ใช้อยู่แล้วในโปรเจกต์ และเป็นตัวเดียวที่
+   * ไม่โดน `overflow-hidden` ของ <Card> ตัด — แต่คีย์บอร์ดไม่เห็น จึงมี sr-only คู่ไว้เสมอ
+   */
+  const detail = [label, next ? `ขั้นต่อไป: ${next}` : null].filter(Boolean).join(" · ");
+
   return (
-    <div className={clsx("flex flex-col gap-1", className)}>
+    <div className={clsx("flex flex-col gap-1", className)} title={detail || undefined}>
       <span className="text-[13px] font-medium text-ink">
         ขั้นที่ {progress.currentOrder} จาก {progress.totalSteps}
-        {label ? <span className="font-normal text-ink-muted"> · {label}</span> : null}
       </span>
-      {/* แถบนี้เป็นของประดับ ตัวเลขข้างบนคือข้อมูลจริง — ไม่สื่อความหมายด้วยสีอย่างเดียว */}
-      <span aria-hidden="true" className="flex h-1 gap-0.5">
+      {/* จุดเป็นของประดับ ตัวเลขข้างบนคือข้อมูลจริง — ไม่สื่อความหมายด้วยสีอย่างเดียว */}
+      <span aria-hidden="true" className="flex items-center gap-1">
         {Array.from({ length: progress.totalSteps }, (_, i) => (
           <span
             key={i}
             className={clsx(
-              "h-full flex-1 rounded-full",
+              "h-1.5 w-1.5 rounded-full",
               i + 1 < progress.currentOrder!
                 ? "bg-success"
                 : i + 1 === progress.currentOrder
@@ -237,7 +253,7 @@ export function ApprovalStepsCompact({
           />
         ))}
       </span>
-      {next ? <span className="text-[12px] text-ink-muted">ขั้นต่อไป: {next}</span> : null}
+      {detail ? <span className="sr-only">{detail}</span> : null}
     </div>
   );
 }
