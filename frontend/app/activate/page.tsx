@@ -6,7 +6,7 @@ import { Suspense, useCallback, useEffect, useState, type FormEvent } from "reac
 
 import { AuthLayout } from "@/components/AuthLayout";
 import { ThaidButton, storeActivationToken } from "@/components/auth/Thaid";
-import { useSession, type SessionUser } from "@/components/SessionProvider";
+import { sessionUserName, useSession, type SessionUser } from "@/components/SessionProvider";
 import { Button } from "@/components/ui/Button";
 import { SelectField, TextField } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
@@ -84,6 +84,49 @@ function ActivateFlow() {
     <AccountCreationStep token={token} invitation={invitation} thaidBypass={thaidBypass} />
   ) : (
     <IdentityStep token={token} invitation={invitation} thaidBypass={thaidBypass} />
+  );
+}
+
+/**
+ * เตือนก่อนเริ่ม เมื่อเบราว์เซอร์นี้มีคนล็อกอินค้างอยู่ และไม่ใช่คนในคำเชิญ
+ *
+ * การเปิดใช้งานบัญชีจบด้วย `issueSession()` ซึ่งหมุน cookie ใบเดียวของเบราว์เซอร์ทิ้ง
+ * คนที่ล็อกอินค้างอยู่จึงหลุดออกจากระบบทุกแท็บจริง ๆ — คนที่กดลิงก์มาจากอีเมลแทบไม่มีทาง
+ * เดาได้เอง บอกที่ต้นทางถูกกว่ามาบอกทีหลังว่าเกิดอะไรขึ้นไปแล้ว
+ *
+ * ไม่ปิดทางให้ต้องออกจากระบบก่อน — "เครื่องเดียว หลายคนใช้ต่อกัน" เป็นเคสที่ถูกต้อง
+ */
+function SignedInWarning({ invitationEmail }: { invitationEmail: string }) {
+  const { user, setUser } = useSession();
+  const [busy, setBusy] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
+
+  if (!user || acknowledged) return null;
+  if (user.email.toLowerCase() === invitationEmail.toLowerCase()) return null;
+
+  const name = sessionUserName(user);
+  const logout = async () => {
+    setBusy(true);
+    await api.post("/api/auth/logout").catch(() => undefined);
+    setUser(null);
+    setBusy(false);
+  };
+
+  return (
+    <div className="rounded-xl bg-warning-bg p-5">
+      <p className="text-sm leading-relaxed text-warning">
+        เบราว์เซอร์นี้กำลังเข้าสู่ระบบในชื่อ <span className="font-semibold">{name}</span> —
+        การเปิดใช้งานบัญชี {invitationEmail} จะทำให้ {name} ออกจากระบบทุกแท็บ
+      </p>
+      <div className="mt-4 flex flex-wrap gap-3">
+        <Button variant="secondary" loading={busy} onClick={logout}>
+          ออกจากระบบก่อน
+        </Button>
+        <Button variant="secondary" onClick={() => setAcknowledged(true)}>
+          ดำเนินการต่อ
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -166,6 +209,7 @@ function IdentityStep({
       }
     >
       <div className="flex flex-col gap-5">
+        <SignedInWarning invitationEmail={invitation.email} />
         <div className="rounded-xl border border-line bg-canvas p-5">
           {thaidBypass ? (
             <p className="text-sm leading-relaxed text-ink-muted">
@@ -301,6 +345,7 @@ function AccountCreationStep({
       }
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>
+        <SignedInWarning invitationEmail={invitation.email} />
         <div className="rounded-xl bg-success-bg px-4 py-3 text-[13px] leading-relaxed text-success">
           {thaidBypass
             ? "โหมดทดสอบ — ข้ามการยืนยันตัวตนกับ ThaiD แล้ว เหลือเพียงตั้งรหัสผ่าน"
