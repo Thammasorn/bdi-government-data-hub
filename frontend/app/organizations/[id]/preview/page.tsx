@@ -32,7 +32,12 @@ export default function PreviewPage() {
   const [org, setOrg] = useState<Organization | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // ผูกกับ id ของคำขอที่โหลดมาแล้ว ไม่ใช่พารามิเตอร์บน URL (รับได้ทั้งสอง id)
-  const { documents, error: documentsError, reload: reloadDocuments } = useLegalDocuments(org?.id ?? null);
+  const {
+    documents,
+    notApplicable: skippedDocuments,
+    error: documentsError,
+    reload: reloadDocuments,
+  } = useLegalDocuments(org?.id ?? null);
 
   useEffect(() => {
     // ยังไม่ล็อกอิน = API ตอบได้แค่ 401 และหน้านี้จะหมุนค้างตลอดกาล
@@ -97,6 +102,7 @@ export default function PreviewPage() {
 
       <LegalDocumentsCard
         documents={documents}
+        notApplicable={skippedDocuments}
         description={org.name}
         error={documentsError}
         onRetry={reloadDocuments}

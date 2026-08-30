@@ -143,6 +143,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
   /** เอกสารของคำขอนี้ — ผูกกับ id ที่โหลดมาแล้ว ไม่ใช่พารามิเตอร์บน URL */
   const {
     documents: legalDocuments,
+    notApplicable: skippedDocuments,
     error: legalDocumentsError,
     reload: reloadLegalDocuments,
   } = useLegalDocuments(request?.id ?? null, "dataset-requests");
@@ -595,6 +596,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         {request.status !== "DRAFT" ? (
           <LegalDocumentsCard
             documents={legalDocuments}
+            notApplicable={skippedDocuments}
             reloadKey={documentRound}
             error={legalDocumentsError}
             onRetry={reloadLegalDocuments}

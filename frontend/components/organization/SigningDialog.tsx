@@ -223,22 +223,19 @@ export function SigningDialog({
       <p className="text-center text-[17px] font-semibold leading-relaxed text-navy-800">
         {CONFIRMATION_TEXT}
       </p>
+      {/*
+        ไม่ไล่รหัสเอกสารตรงนี้ — "A0 · A1 · A2 · A3" ไม่ได้สื่ออะไรกับผู้ลงนาม (เขาเพิ่งอ่าน
+        มาทีละฉบับ และการ์ดเอกสารด้านหลังก็มีแท็บบอกอยู่) และมันเคยเป็นต้นเหตุให้ข้อความ
+        ผิดตั้งแต่แรก: ฝั่ง BDI เห็นรหัสของฉบับที่หน่วยงานข้ามไปแล้วรวมอยู่ในบรรทัดนี้ด้วย
+      */}
       <p className="mt-4 text-[13px] leading-relaxed text-ink-muted">
         ระบบจะบันทึกชื่อ เวลา และเอกสารทุกฉบับที่คุณเห็นชอบไว้เป็นหลักฐาน
-        และประทับลายมือชื่อของคุณลงในเอกสาร{" "}
-        {documents
-          .filter((d) => !notApplicable.includes(d.versionId))
-          .map((d) => d.code)
-          .join(" · ")}
+        และประทับลายมือชื่อของคุณลงในเอกสารข้อตกลง
       </p>
       {notApplicable.length > 0 ? (
         <p className="mt-2 text-[13px] leading-relaxed text-ink-muted">
-          เอกสารที่คุณระบุว่าไม่เกี่ยวข้อง{" "}
-          {documents
-            .filter((d) => notApplicable.includes(d.versionId))
-            .map((d) => d.code)
-            .join(" · ")}{" "}
-          จะไม่ถูกบันทึกเป็นการยอมรับ และจะไม่ถูกส่งต่อให้ BDI พิจารณา
+          เอกสารที่คุณระบุว่าไม่เกี่ยวข้อง จะไม่ถูกบันทึกเป็นการยอมรับ
+          และจะไม่ถูกส่งต่อให้ BDI พิจารณา
         </p>
       ) : null}
       {error ? (
