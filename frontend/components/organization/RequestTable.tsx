@@ -103,7 +103,15 @@ export function OrganizationRequestTable({ basePath }: { basePath: string }) {
                     onBlur={() => setDetail(null)}
                     className="grid w-full grid-cols-1 items-center gap-2 px-6 py-4 text-left transition-colors hover:bg-navy-50/60 md:grid-cols-[minmax(0,1.7fr)_minmax(0,1.3fr)_16rem_8rem] md:gap-4"
                   >
-                    <span className="truncate font-medium text-ink">{row.name}</span>
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-ink">{row.name}</span>
+                      {/* รหัสหน่วยงานคือสิ่งที่เอกสารและอีเมลใช้อ้างถึงหน่วยงานนี้ */}
+                      {row.organizationCode ? (
+                        <span className="block truncate text-[13px] text-ink-muted">
+                          {row.organizationCode}
+                        </span>
+                      ) : null}
+                    </span>
                     <span className="min-w-0">
                       <span className="block truncate text-sm text-ink">
                         {[row.createdBy.firstName, row.createdBy.lastName].filter(Boolean).join(" ") || "—"}

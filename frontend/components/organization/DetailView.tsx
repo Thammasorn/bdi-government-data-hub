@@ -289,7 +289,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
             </div>
             <div className="flex shrink-0 gap-3">
               <Button variant="secondary" onClick={() => setModal("revise")}>
-                ต้องปรับปรุง
+                ส่งกลับแก้ไข
               </Button>
               <Button onClick={() => setModal(ability.signing ? "sign" : "approve")}>
                 {ability.approveLabel}
@@ -379,10 +379,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         ) : null}
 
         <Card>
-          <CardHeader
-            title="ขั้นตอนการอนุมัติ"
-            description="เส้นทางทั้งหมดของคำขอนี้ — ผ่านมาแล้วกี่ขั้น เหลืออีกกี่ขั้น และแต่ละขั้นเป็นหน้าที่ของใคร"
-          />
+          <CardHeader title="ขั้นตอนการอนุมัติ" />
           <ApprovalSteps progress={org.progress} />
         </Card>
 
@@ -427,8 +424,8 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
       <Modal
         open={modal === "revise"}
         onClose={() => setModal(null)}
-        title="ระบุสิ่งที่ต้องปรับปรุง"
-        description="ข้อความนี้จะถูกส่งทางอีเมลไปยังเจ้าหน้าที่ของหน่วยงาน"
+        title="ส่งกลับแก้ไข"
+        description="ระบุเนื้อหาหรือข้อความที่ต้องการให้ปรับปรุง ระบบจะแจ้งไปยังผู้ดำเนินการของหน่วยงาน"
       >
         <TextAreaField
           label="รายละเอียดที่ต้องแก้ไข"

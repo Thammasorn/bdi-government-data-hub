@@ -148,6 +148,8 @@ export interface Organization {
 export interface OrganizationListItem {
   id: string;
   name: string;
+  /** รหัสที่ใช้อ้างถึงหน่วยงานในเอกสาร — null ได้ถ้ายังไม่ได้ออกรหัสให้ */
+  organizationCode: string | null;
   status: RequestStatus;
   currentTaskType: ReviewTaskType | null;
   progress: JourneyProgressSummary | null;

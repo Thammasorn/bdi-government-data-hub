@@ -80,6 +80,44 @@ export const PENDING_DATASET_STATUSES: RequestStatus[] = ["SUBMITTED", "UNDER_RE
 export const isPendingDatasetStatus = (status: RequestStatus) =>
   PENDING_DATASET_STATUSES.includes(status);
 
+export const ROLE_LABELS: Record<Role, string> = {
+  ORGANIZATION_USER: "ผู้ดำเนินการของหน่วยงาน",
+  ORGANIZATION_APPROVER: "ผู้มีอำนาจกระทำการแทนของหน่วยงาน",
+  BDI_OFFICER: "ผู้ดำเนินการของ BDI",
+  BDI_DATASET_SPECIALIST: "ผู้เชี่ยวชาญด้านข้อมูลของ BDI",
+  BDI_FINAL_APPROVER: "ผู้มีอำนาจอนุมัติฝ่าย BDI",
+  BDI_LEGAL_OFFICER: "ผู้ดำเนินการทางกฎหมายของ BDI",
+  SYSTEM_ADMINISTRATOR: "ผู้ดูแลระบบ",
+};
+
+/**
+ * ภาษาไทยไม่เว้นวรรคระหว่างคำ — ยกเว้นเมื่อคำก่อนหน้าลงท้ายด้วยอักษรละติน
+ * "ผู้ดำเนินการของ BDI" + "ตรวจสอบ" ต่อกันตรง ๆ ได้ "BDIตรวจสอบ" ซึ่งอ่านเป็นคำเดียว
+ */
+export const roleGap = (label: string) => (/[A-Za-z0-9)]$/.test(label) ? " " : "");
+
+/** ชื่อบทบาท + สิ่งที่บทบาทนั้นทำ — ทุกประโยคบอกด่านในหน้าจอประกอบจากตรงนี้ */
+export const withRole = (role: Role, action: string) => {
+  const label = ROLE_LABELS[role];
+  return `${label}${roleGap(label)}${action}`;
+};
+
+/**
+ * ด่านหนึ่ง = บทบาทหนึ่ง — ใช้ชี้ไปที่ `ROLE_LABELS` แทนที่จะมีคำเรียกของตัวเอง
+ *
+ * เดิมมีชุดคำเรียกบทบาทอยู่สามชุดในหน้าจอ ("เจ้าหน้าที่ BDI" ที่ timeline, "รอ BDI ตรวจสอบ"
+ * ที่ badge ในตาราง, "ผู้ดำเนินการของ BDI" ที่อีเมลและ API) ผู้ใช้คนเดียวกันจึงเห็นด่านเดียวกัน
+ * ถูกเรียกคนละชื่อระหว่างอีเมลที่ได้รับ ตารางที่เปิดอยู่ และหน้ารายละเอียดที่กดเข้าไป
+ */
+export const TASK_TYPE_ROLE: Record<ReviewTaskType, Role> = {
+  BDI_OFFICER_REVIEW: "BDI_OFFICER",
+  DATASET_SPECIALIST_REVIEW: "BDI_DATASET_SPECIALIST",
+  ORGANIZATION_APPROVAL: "ORGANIZATION_APPROVER",
+  BDI_FINAL_APPROVAL: "BDI_FINAL_APPROVER",
+  ORGANIZATION_REVISION: "ORGANIZATION_USER",
+};
+
+
 /**
  * ประโยคบอกผู้ใช้ว่า "ตอนนี้ใครถืออยู่" ไม่ใช่แค่ชื่อสถานะ
  *
@@ -91,13 +129,8 @@ export function datasetPendingOwner(
   currentTaskType?: ReviewTaskType | null,
 ): string {
   if (currentTaskType && isPendingDatasetStatus(status)) {
-    return {
-      BDI_OFFICER_REVIEW: "เจ้าหน้าที่ BDI กำลังตรวจสอบ",
-      DATASET_SPECIALIST_REVIEW: "ผู้เชี่ยวชาญด้านข้อมูลกำลังพิจารณา",
-      ORGANIZATION_APPROVAL: "ผู้มีอำนาจกระทำการแทนของหน่วยงานกำลังพิจารณา",
-      BDI_FINAL_APPROVAL: "ผู้อนุมัติ BDI กำลังพิจารณา",
-      ORGANIZATION_REVISION: "รอหน่วยงานของคุณแก้ไข",
-    }[currentTaskType];
+    if (currentTaskType === "ORGANIZATION_REVISION") return "รอหน่วยงานของคุณแก้ไข";
+    return withRole(TASK_TYPE_ROLE[currentTaskType], "กำลังดำเนินการ");
   }
   return {
     DRAFT: "ยังเป็นฉบับร่าง ยังไม่ได้นำส่ง",
@@ -110,20 +143,36 @@ export function datasetPendingOwner(
   }[status];
 }
 
-/** ด่านที่คำขอกำลังรออยู่ — แทน PENDING_* ที่หายไปจาก status */
-export const TASK_TYPE_META: Record<ReviewTaskType, { label: string; className: string }> = {
-  BDI_OFFICER_REVIEW: { label: "รอเจ้าหน้าที่ BDI ตรวจสอบ", className: "bg-warning-bg text-warning" },
-  DATASET_SPECIALIST_REVIEW: {
-    label: "รอผู้เชี่ยวชาญด้านข้อมูลพิจารณา",
-    className: "bg-navy-100 text-navy-600",
-  },
-  ORGANIZATION_APPROVAL: {
-    label: "รอผู้มีอำนาจของหน่วยงานลงนาม",
-    className: "bg-navy-100 text-navy-600",
-  },
-  BDI_FINAL_APPROVAL: { label: "รอ BDI อนุมัติขั้นสุดท้าย", className: "bg-navy-100 text-navy-800" },
-  ORGANIZATION_REVISION: { label: "รอหน่วยงานแก้ไข", className: "bg-danger-bg text-danger" },
+/** สิ่งที่แต่ละด่านทำ — สำเนาของ REVIEW_TASK_ACTION ใน backend/src/lib/roles.ts */
+const TASK_TYPE_ACTION: Record<ReviewTaskType, string> = {
+  BDI_OFFICER_REVIEW: "ตรวจสอบเอกสาร",
+  DATASET_SPECIALIST_REVIEW: "พิจารณา",
+  ORGANIZATION_APPROVAL: "ลงนามเห็นชอบ",
+  BDI_FINAL_APPROVAL: "ดำเนินการอนุมัติ",
+  ORGANIZATION_REVISION: "แก้ไข",
 };
+
+const TASK_TYPE_TONE: Record<ReviewTaskType, string> = {
+  BDI_OFFICER_REVIEW: "bg-warning-bg text-warning",
+  DATASET_SPECIALIST_REVIEW: "bg-navy-100 text-navy-600",
+  ORGANIZATION_APPROVAL: "bg-navy-100 text-navy-600",
+  BDI_FINAL_APPROVAL: "bg-navy-100 text-navy-800",
+  ORGANIZATION_REVISION: "bg-danger-bg text-danger",
+};
+
+/**
+ * ด่านที่คำขอกำลังรออยู่ — แทน PENDING_* ที่หายไปจาก status
+ *
+ * ประกอบจาก `ROLE_LABELS` ตัวเดียวกับที่อีเมลและ API ใช้ ไม่ใช่ชุดคำของหน้าจอเอง —
+ * badge ในตาราง กับ badge ในหน้ารายละเอียด เคยเรียกด่านเดียวกันคนละชื่อ
+ */
+export const TASK_TYPE_META: Record<ReviewTaskType, { label: string; className: string }> =
+  Object.fromEntries(
+    (Object.keys(TASK_TYPE_ACTION) as ReviewTaskType[]).map((t) => [
+      t,
+      { label: `รอ${withRole(TASK_TYPE_ROLE[t], TASK_TYPE_ACTION[t])}`, className: TASK_TYPE_TONE[t] },
+    ]),
+  ) as Record<ReviewTaskType, { label: string; className: string }>;
 
 export const REVIEW_RESULT_LABELS: Record<ReviewResult, string> = {
   PASSED: "ผ่านการตรวจสอบ",
@@ -150,43 +199,13 @@ export function stageMeta(
   return REQUEST_STATUS_META[status];
 }
 
-export const ROLE_LABELS: Record<Role, string> = {
-  ORGANIZATION_USER: "ผู้ดำเนินการของหน่วยงาน",
-  ORGANIZATION_APPROVER: "ผู้มีอำนาจกระทำการแทนของหน่วยงาน",
-  BDI_OFFICER: "ผู้ดำเนินการของ BDI",
-  BDI_DATASET_SPECIALIST: "ผู้เชี่ยวชาญด้านข้อมูลของ BDI",
-  BDI_FINAL_APPROVER: "ผู้มีอำนาจกระทำการแทนของ BDI",
-  BDI_LEGAL_OFFICER: "ผู้ดำเนินการทางกฎหมายของ BDI",
-  SYSTEM_ADMINISTRATOR: "ผู้ดูแลระบบ",
-};
-
 /**
  * บรรทัด timeline — ประกอบจาก review_task ไม่ใช่ตาราง event เดิม
  * ("ผู้เชี่ยวชาญบันทึกความเห็น" = DATASET_SPECIALIST_REVIEW ที่ result = CONFIRMED)
  */
-/**
- * ด่านหนึ่ง = บทบาทหนึ่ง — ใช้ชี้ไปที่ `ROLE_LABELS` แทนที่จะมีคำเรียกของตัวเอง
- *
- * เดิมฟังก์ชันข้างล่างมีชุดคำของมันเอง ("เจ้าหน้าที่ BDI") ซึ่งไม่ตรงกับชุดที่อีเมล
- * การแจ้งเตือน และ API ใช้ ("ผู้ดำเนินการของ BDI") ผู้ใช้คนเดียวกันจึงเห็นบทบาทเดียวกัน
- * ถูกเรียกคนละชื่อ ระหว่างอีเมลที่ได้รับกับหน้าจอที่เปิดอยู่
- */
-export const TASK_TYPE_ROLE: Record<ReviewTaskType, Role> = {
-  BDI_OFFICER_REVIEW: "BDI_OFFICER",
-  DATASET_SPECIALIST_REVIEW: "BDI_DATASET_SPECIALIST",
-  ORGANIZATION_APPROVAL: "ORGANIZATION_APPROVER",
-  BDI_FINAL_APPROVAL: "BDI_FINAL_APPROVER",
-  ORGANIZATION_REVISION: "ORGANIZATION_USER",
-};
-
 export function taskEventLabel(taskType: ReviewTaskType, result?: ReviewResult | null): string {
   const actor = ROLE_LABELS[TASK_TYPE_ROLE[taskType]];
-
-  /**
-   * ภาษาไทยไม่เว้นวรรคระหว่างคำ — ยกเว้นเมื่อคำก่อนหน้าลงท้ายด้วยอักษรละติน
-   * "เจ้าหน้าที่ BDI" + "ดำเนินการ" ต่อกันตรง ๆ ได้ "BDIดำเนินการ" ซึ่งอ่านเป็นคำเดียว
-   */
-  const gap = /[A-Za-z0-9)]$/.test(actor) ? " " : "";
+  const gap = roleGap(actor);
 
   if (!result) return `รอ${actor}${gap}ดำเนินการ`;
   return `${actor}${gap}${

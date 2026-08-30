@@ -225,11 +225,20 @@ is. That replaced an earlier rule where pressing someone else's gate silently sw
 explains itself beats a tab that moves under you. Returning to your own tab drops a selection
 that is no longer reachable, or the reader is left holding a filter they cannot clear.
 
-Every status badge shows the same **short** name as the node (`progress.currentShortLabel`),
-keeping `TASK_TYPE_META` for colour — the node and the badge must never call the same thing by two
-names, and only the node table knows the short wording. The long form is `whitespace-nowrap`, so
-in a fixed column it paints over its neighbour. In the two tables the badge is therefore given **no** `waitingLabel` — that would
-set a `title`, and the browser's own tooltip would appear on top of the hover card below.
+**Status badges say what the detail page says, not what the diagram box says.** They used to
+carry `progress.currentShortLabel` so that badge and node matched, but that made the badge in a
+table and the badge on the request's own page call the same gate by two different names, which
+is what a reader actually compares — they click from one into the other. `StatusBadge` therefore
+reads `stageMeta()` only, and it is no longer `whitespace-nowrap`: the full wording is longer and
+must be allowed to wrap in a fixed column rather than paint over its neighbour. `shortLabel`
+survives for the diagram alone, where every node has to stay inside `min-h-[4.5rem]` or the CSS
+connectors stop lining up.
+
+Those names all come from `ROLE_LABELS` now, through `REVIEW_TASK_ROLE` + `REVIEW_TASK_ACTION` in
+`lib/roles.ts` (and the mirror of both in `frontend/lib/status.ts`). Before that, one role had
+three names — "เจ้าหน้าที่ BDI" in the timeline, "รอ BDI ตรวจสอบ" on the badge, "ผู้ดำเนินการของ
+BDI" in email — so the same person saw the same gate called three things in one sitting. Add a
+gate by adding a row to those two tables, not by writing a sentence.
 
 **สถานะ and ความคืบหน้า are one column.** They told one story — the name of the gate, and which
 number that gate is — so the cell stacks the badge over `ขั้นที่ N จาก M` and the dots, the
