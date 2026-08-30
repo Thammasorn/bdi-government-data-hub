@@ -40,7 +40,7 @@ function navItems(roles: string[], organizationId: string | null) {
   if (isBdiStaff(roles)) {
     // ผู้เชี่ยวชาญมีบทบาทเฉพาะเส้นทางชุดข้อมูล จึงไม่ต้องเห็นเมนูหน่วยงาน
     // (กติกาเดียวกับ bdiLandingPath ที่ตัดสินว่าเข้าสู่ระบบแล้วไปหน้าไหน)
-    if (isSpecialistOnly(roles)) return [{ href: "/admin/datasets", label: "ชุดข้อมูลที่ได้รับมอบหมาย" }];
+    if (isSpecialistOnly(roles)) return [{ href: "/admin/datasets", label: "ชุดข้อมูลที่ขอความเห็น" }];
 
     // เดิมมีเมนูที่สามสำหรับผู้อนุมัติ BDI ที่ลิงก์ไป `?status=SUBMITTED,UNDER_REVIEW`
     // เพราะหน้ารายการกรองตามด่านไม่ได้ ตอนนี้กรองได้แล้ว และทั้งสองหน้าเปิดมาที่แท็บ

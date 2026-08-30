@@ -161,7 +161,7 @@ export function ApprovalSteps({ progress }: { progress: JourneyProgress }) {
                 </div>
                 <p className="mt-0.5 text-[13px] text-ink-muted">
                   โดย{step.roleLabel}
-                  {step.optional ? " · ขั้นตอนนี้มีเมื่อเจ้าหน้าที่มอบหมายเท่านั้น ไม่นับในลำดับขั้น" : ""}
+                  {step.optional ? " · ขั้นตอนนี้ไม่บังคับ ไม่นับในลำดับขั้น" : ""}
                   {/* วันที่บอกได้เฉพาะขั้นที่จบไปแล้วจริง — ขั้นที่ถูกส่งกลับยังมี completedAt
                       ของรอบก่อนติดมาด้วย ซึ่งอ่านคู่กับ "ยังไม่ถึง" แล้วขัดกันเอง */}
                   {step.completedAt && (step.state === "DONE" || step.state === "REJECTED")

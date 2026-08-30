@@ -93,7 +93,8 @@ export function datasetPendingOwner(
   if (currentTaskType && isPendingDatasetStatus(status)) {
     return {
       BDI_OFFICER_REVIEW: "เจ้าหน้าที่ BDI กำลังตรวจสอบ",
-      DATASET_SPECIALIST_REVIEW: "ผู้เชี่ยวชาญด้านข้อมูลกำลังพิจารณา",
+      // ไม่ใช่ด่านที่คำขอค้างอยู่ได้อีกแล้ว (2026-08-30) — เก็บไว้ให้ Record ครบชนิด
+      DATASET_SPECIALIST_REVIEW: "เจ้าหน้าที่ BDI กำลังตรวจสอบ",
       ORGANIZATION_APPROVAL: "ผู้มีอำนาจกระทำการแทนของหน่วยงานกำลังพิจารณา",
       BDI_FINAL_APPROVAL: "ผู้อนุมัติ BDI กำลังพิจารณา",
       ORGANIZATION_REVISION: "รอหน่วยงานของคุณแก้ไข",
@@ -113,8 +114,9 @@ export function datasetPendingOwner(
 /** ด่านที่คำขอกำลังรออยู่ — แทน PENDING_* ที่หายไปจาก status */
 export const TASK_TYPE_META: Record<ReviewTaskType, { label: string; className: string }> = {
   BDI_OFFICER_REVIEW: { label: "รอเจ้าหน้าที่ BDI ตรวจสอบ", className: "bg-warning-bg text-warning" },
+  // เช่นเดียวกัน — แถวชนิดนี้เป็น "ความเห็น" ที่ปิดแล้ว ไม่เคยเป็นด่านที่ค้างอยู่
   DATASET_SPECIALIST_REVIEW: {
-    label: "รอผู้เชี่ยวชาญด้านข้อมูลพิจารณา",
+    label: "ความเห็นของผู้เชี่ยวชาญด้านข้อมูล",
     className: "bg-navy-100 text-navy-600",
   },
   ORGANIZATION_APPROVAL: {

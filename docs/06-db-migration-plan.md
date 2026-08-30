@@ -176,9 +176,12 @@ role กลายเป็นตาราง master พร้อม `is_active` 
 > registration*) เส้นทางชุดข้อมูลปัจจุบันไม่มีด่านเจ้าหน้าที่ BDI รอบสอง — ข้อความนี้ใช้
 > อ่านย้อนหลังว่าข้อมูลเก่าถูกแปลงมาอย่างไรเท่านั้น ไม่ใช่กติกาที่ใช้อยู่
 
-การ assign specialist ของเดิม (field เดียวบน request) กลายเป็น
-สร้าง `DATASET_SPECIALIST_REVIEW` task · ถอน assign = `status = CANCELLED` ·
-comment โดยไม่เปลี่ยนสถานะ = `result_comment` + `comment_visibility = BDI_INTERNAL`
+การ assign specialist ของเดิม (field เดียวบน request) เคยกลายเป็นการสร้าง
+`DATASET_SPECIALIST_REVIEW` task — **กลับมาเป็น field บน request อีกครั้งเมื่อ 2026-08-30**
+(`assigned_specialist_id`, การ์ด *Make Data Specialist Review Advisory*) เพราะการขอความเห็น
+ไม่ใช่การย้ายด่าน และหนึ่งคำขอมี active task ได้ตัวเดียว ส่วน comment ยังเป็นแถวใน
+`review_task` เหมือนเดิม (`result = CONFIRMED` · `comment_visibility = BDI_INTERNAL`)
+แต่เป็นแถวที่ปิดตั้งแต่เกิด ไม่เคย active
 
 ### 3.6 `dataset.*` (4 ตาราง) ← `dataset_requests`
 
@@ -489,7 +492,7 @@ review_task และเขียน audit_event"* ดู §4 ข้อ 3
 
 - `dataset_registration_request` + `dataset_registration_metadata` (1:1)
 - materialize `dataset` + `dataset_metadata` ตอน `APPROVED` พร้อมออก `dataset_code`
-- specialist assignment → `DATASET_SPECIALIST_REVIEW` task
+- specialist assignment → `DATASET_SPECIALIST_REVIEW` task (ย้อนกลับเมื่อ 2026-08-30 — ดู §3.5)
 - Final Check → `BDI_OFFICER_REVIEW` `round_number = 2`
 - `routes/dataset-requests.ts` (1,122 บรรทัด) เขียนใหม่ราวสองในสาม
 

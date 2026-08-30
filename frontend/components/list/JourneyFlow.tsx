@@ -147,7 +147,7 @@ export function JourneyFlow({
                     เลื่อนแนวตั้ง แล้วหัวลูกศรสองอันจะไหลมาชนกันกลางเส้น */}
                 <span
                   aria-hidden="true"
-                  title="ขั้นตอนนี้ไม่บังคับ — เจ้าหน้าที่ BDI เลือกมอบหมาย แล้วคำขอกลับมาที่ด่านเดิม"
+                  title="ขั้นตอนนี้ไม่บังคับ — เกิดเมื่อผู้รับผิดชอบเลือกเท่านั้น แล้วคำขอกลับมาที่ด่านเดิม"
                   className="absolute left-1/2 top-full hidden h-12 border-l border-dashed border-navy-300 md:block"
                 />
                 <Chevron

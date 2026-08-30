@@ -41,7 +41,8 @@ export const REQUEST_STATUS_LABELS: Record<RequestStatus, string> = {
  */
 export const REVIEW_TASK_TYPE_LABELS: Record<ReviewTaskType, string> = {
   [ReviewTaskType.BDI_OFFICER_REVIEW]: "รอเจ้าหน้าที่ BDI ตรวจสอบ",
-  [ReviewTaskType.DATASET_SPECIALIST_REVIEW]: "รอผู้เชี่ยวชาญด้านข้อมูลพิจารณา",
+  // ไม่ใช่ด่านที่ "รอ" ใครแล้วตั้งแต่ 2026-08-30 — แถวชนิดนี้เกิดตอนผู้เชี่ยวชาญบันทึกความเห็น
+  [ReviewTaskType.DATASET_SPECIALIST_REVIEW]: "ความเห็นของผู้เชี่ยวชาญด้านข้อมูล",
   [ReviewTaskType.ORGANIZATION_APPROVAL]: "รอผู้มีอำนาจของหน่วยงานลงนาม",
   [ReviewTaskType.BDI_FINAL_APPROVAL]: "รอ BDI อนุมัติขั้นสุดท้าย",
   [ReviewTaskType.ORGANIZATION_REVISION]: "รอหน่วยงานแก้ไข",

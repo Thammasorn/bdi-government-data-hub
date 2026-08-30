@@ -55,43 +55,34 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string,
      * เคยเป็นสองรอบ (ตรวจเบื้องต้น กับ ตรวจซ้ำหลังลงนาม) ซึ่งใช้ task_type เดียวกันและ
      * ต้องแยกด้วยประวัติ — ด่านตรวจซ้ำถูกยกเลิกเมื่อ 2026-08-30 ปุ่มจึงมีคำเดียว
      */
+    /**
+     * ด่านเดียวที่ฝั่ง BDI มีในเส้นทางนี้ และเป็นของเจ้าหน้าที่ BDI คนเดียว
+     *
+     * ผู้เชี่ยวชาญด้านข้อมูลที่ถูกขอความเห็นอยู่ในด่านนี้ด้วย แต่ **ไม่ได้ถือด่าน** —
+     * เขาอ่านข้อมูล บันทึกความเห็น และคุยกับเจ้าหน้าที่นอกระบบ ส่วนการกดผ่านหรือส่งกลับ
+     * เป็นของเจ้าหน้าที่ BDI ตลอดเวลา ไม่ต้องรอความเห็นและไม่ต้องถอนการมอบหมายก่อน
+     * (เปลี่ยนเมื่อ 2026-08-30 — ก่อนหน้านั้นการมอบหมายพรากด่านไปจากเจ้าหน้าที่ทั้งด่าน)
+     */
     case "BDI_OFFICER_REVIEW":
       if (isOfficer) {
         return {
+          title: "รอการพิจารณาของคุณ",
           advanceLabel: "ส่งต่อให้ผู้มีอำนาจของหน่วยงาน",
-          hint: "ตรวจว่าข้อมูลเพียงพอหรือไม่ มอบหมายผู้เชี่ยวชาญได้ก่อนส่งต่อ",
+          hint: "ตรวจว่าข้อมูลเพียงพอหรือไม่ ขอความเห็นผู้เชี่ยวชาญได้โดยไม่ต้องรอผล",
           canRevise: true,
           canAssign: true,
           canComment: false,
           canReject: false,
         };
       }
-      return null;
-
-    case "DATASET_SPECIALIST_REVIEW":
-      if (isSpecialist || roles.includes("BDI_DATASET_SPECIALIST")) {
+      if (isSpecialist) {
         return {
+          title: "เจ้าหน้าที่ BDI ขอความเห็นของคุณ",
           advanceLabel: null,
-          hint: "คุณได้รับมอบหมายให้ตรวจชุดข้อมูลนี้ บันทึกความเห็นหรือส่งกลับให้แก้ไขได้",
-          canRevise: true,
+          hint: "อ่านรายละเอียดแล้วบันทึกความเห็นไว้ให้เจ้าหน้าที่ BDI — การตัดสินผ่านหรือส่งกลับเป็นของเจ้าหน้าที่",
+          canRevise: false,
           canAssign: false,
           canComment: true,
-          canReject: false,
-        };
-      }
-      /**
-       * เจ้าหน้าที่ BDI ที่มอบหมายไป **ถอนการมอบหมายได้** (§4.4 ข้อ 2) และ backend
-       * รองรับอยู่แล้วด้วย `specialistId: null` — แต่การ์ดนี้เคยหายไปทั้งใบเมื่อคำขอ
-       * ย้ายไปด่านผู้เชี่ยวชาญ เจ้าหน้าที่จึงกดถอนไม่ได้เลย และคำขอค้างอยู่ที่
-       * ผู้เชี่ยวชาญจนกว่าเขาจะลงมือ ไม่มีทางออกจากหน้าจอ
-       */
-      if (isOfficer) {
-        return {
-          advanceLabel: null,
-          hint: "คำขอนี้อยู่ระหว่างการพิจารณาของผู้เชี่ยวชาญ ถอนการมอบหมายเพื่อดึงกลับมาตรวจเองได้",
-          canRevise: false,
-          canAssign: true,
-          canComment: false,
           canReject: false,
         };
       }
@@ -100,6 +91,7 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string,
     case "ORGANIZATION_APPROVAL":
       return isOrgApprover
         ? {
+            title: "รอการพิจารณาของคุณ",
             advanceLabel: "เห็นชอบ",
             hint: "ตรวจแบบนำส่งข้อมูลในฐานะผู้มีอำนาจกระทำการแทน แล้วยืนยันส่งเอกสาร",
             /** ด่านนี้ยืนยันเอกสาร จึงเปิดกล่องยืนยันแทน modal ยืนยันสั้น ๆ */
@@ -114,6 +106,7 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string,
     case "BDI_FINAL_APPROVAL":
       return roles.includes("BDI_FINAL_APPROVER")
         ? {
+            title: "รอการพิจารณาของคุณ",
             advanceLabel: "อนุมัติ",
             hint: "ขั้นตอนสุดท้าย เมื่ออนุมัติแล้วระบบจะออกเอกสารฉบับสมบูรณ์ให้ดาวน์โหลด",
             signing: true,
@@ -295,14 +288,14 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
       });
       show({
         tone: "success",
-        title: specialistId ? "มอบหมายผู้เชี่ยวชาญแล้ว" : "ยกเลิกการมอบหมายแล้ว",
+        title: specialistId ? "ขอความเห็นผู้เชี่ยวชาญแล้ว" : "ถอนผู้เชี่ยวชาญแล้ว",
       });
       closeModal();
       await load();
     } catch (err) {
       show({
         tone: "error",
-        title: "มอบหมายไม่สำเร็จ",
+        title: "บันทึกผู้เชี่ยวชาญไม่สำเร็จ",
         detail: err instanceof ApiError ? err.message : undefined,
       });
     } finally {
@@ -405,13 +398,13 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         <Card className="mb-6 border-l-[3px] border-l-coral-500">
           <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="font-medium text-navy-800">รอการพิจารณาของคุณ</p>
+              <p className="font-medium text-navy-800">{ability.title}</p>
               <p className="mt-0.5 text-sm text-ink-muted">{ability.hint}</p>
             </div>
             <div className="flex shrink-0 flex-wrap gap-3">
               {ability.canAssign ? (
                 <Button variant="ghost" onClick={() => setModal("assign")}>
-                  {request.assignedSpecialist ? "เปลี่ยนหรือถอนผู้เชี่ยวชาญ" : "มอบหมายผู้เชี่ยวชาญ"}
+                  {request.assignedSpecialist ? "เปลี่ยนหรือถอนผู้เชี่ยวชาญ" : "ขอความเห็นผู้เชี่ยวชาญ"}
                 </Button>
               ) : null}
               {ability.canComment ? (
@@ -603,7 +596,10 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
 
         {request.assignedSpecialist ? (
           <Card>
-            <CardHeader title="ผู้เชี่ยวชาญที่ได้รับมอบหมาย" />
+            <CardHeader
+              title="ผู้เชี่ยวชาญด้านข้อมูลที่ร่วมตรวจสอบ"
+              description="เจ้าหน้าที่ BDI ขอความเห็นไว้ประกอบการตัดสินใจ — ไม่ใช่ขั้นตอนที่คำขอต้องรอ"
+            />
             <Rows
               rows={[
                 [
@@ -615,7 +611,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
                   ),
                 ],
                 ["อีเมล", request.assignedSpecialist.email],
-                ["มอบหมายเมื่อ", request.assignedAt ? formatThaiDate(request.assignedAt) : null],
+                ["ขอความเห็นเมื่อ", request.assignedAt ? formatThaiDate(request.assignedAt) : null],
               ]}
             />
           </Card>
@@ -720,8 +716,8 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
       <Modal
         open={modal === "assign"}
         onClose={closeModal}
-        title="มอบหมายผู้เชี่ยวชาญข้อมูล"
-        description="เลือกจากบัญชีผู้เชี่ยวชาญที่เปิดใช้งานแล้วในระบบ — ไม่บังคับ"
+        title="ขอความเห็นผู้เชี่ยวชาญด้านข้อมูล"
+        description="เลือกจากบัญชีผู้เชี่ยวชาญที่เปิดใช้งานแล้วในระบบ — ไม่บังคับ และไม่ทำให้คำขอหยุดรอ"
       >
         <SelectField
           label="ผู้เชี่ยวชาญ"

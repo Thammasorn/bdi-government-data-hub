@@ -132,6 +132,7 @@ model UserAccount {
   legalAcceptances     LegalAcceptance[]
   signatures           SignatureConfirmation[]
   notifications        Notification[]
+  datasetRequestsAsSpecialist DatasetRegistrationRequest[] @relation("DatasetRequestSpecialist")
 
   @@index([status])
   @@index([accountType])
@@ -812,6 +813,19 @@ model DatasetRegistrationRequest {
 
   additionalDetailJson Json? @map("additional_detail_json")
 
+  /// เบี่ยงจากดีไซน์: ผู้เชี่ยวชาญด้านข้อมูลที่เจ้าหน้าที่ BDI ขอความเห็นกับคำขอนี้
+  ///
+  /// การมอบหมายผู้เชี่ยวชาญ **ไม่ใช่ด่านในเส้นทาง** — คำขอยังค้างอยู่ที่ด่านของเจ้าหน้าที่
+  /// BDI ตลอดเวลาที่ผู้เชี่ยวชาญกำลังดู จึงเก็บเป็นคอลัมน์บนคำขอ ไม่ใช่ review_task:
+  /// หนึ่งคำขอมี active task ได้ตัวเดียว (uq_active_review_task_per_subject) การเปิด task
+  /// ให้ผู้เชี่ยวชาญจึงเท่ากับพรากด่านไปจากเจ้าหน้าที่ ซึ่งเป็นสิ่งที่การ์ด
+  /// "Make Data Specialist Review Advisory" (2026-08-30) มายกเลิก
+  assignedSpecialistId   String?      @map("assigned_specialist_id") @db.Uuid
+  assignedSpecialist     UserAccount? @relation("DatasetRequestSpecialist", fields: [assignedSpecialistId], references: [id], onDelete: SetNull)
+  assignedSpecialistAt   DateTime?    @map("assigned_specialist_at") @db.Timestamptz(6)
+  /// เจ้าหน้าที่ที่กดมอบหมาย — เก็บเป็น uuid เปล่าเหมือน cancelled_by ไม่ผูก FK
+  assignedSpecialistById String?      @map("assigned_specialist_by") @db.Uuid
+
   /// FK to dataset หลังอนุมัติ — เติมค่าใน transaction เดียวกับที่สร้าง Dataset
   createdDatasetId String?  @unique @map("created_dataset_id") @db.Uuid
   createdDataset   Dataset? @relation("DatasetFromRequest", fields: [createdDatasetId], references: [id], onDelete: SetNull)
@@ -833,6 +847,7 @@ model DatasetRegistrationRequest {
 
   @@index([organizationId, status])
   @@index([status])
+  @@index([assignedSpecialistId])
   @@map("dataset_registration_request")
   @@schema("dataset")
 }
