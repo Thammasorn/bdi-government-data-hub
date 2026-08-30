@@ -1069,9 +1069,18 @@ organizationRouter.get("/:id", async (req, res) => {
         status: t.status,
         result: t.result,
         note: t.resultComment,
-        actor: t.assignedUser
-          ? { id: t.assignedUser.id, name: t.assignedUser.displayName, email: t.assignedUser.email }
-          : null,
+        /**
+         * ชื่อคนเฉพาะงานที่ทำไปแล้ว
+         *
+         * `assigned_user_id` เป็นแค่การเกลี่ยงานของ `pickAssignee()` ตอนเปิด task —
+         * `canAction()` ให้ใครก็ตามที่ถือ role นั้นปิดด่านได้โดยไม่ดูค่านี้เลย ตอนที่ task
+         * ยังไม่มี `result` จึงยัง**ไม่มีใครรู้**ว่าใครจะเป็นคนทำ ส่งชื่อออกไปเท่ากับ
+         * ส่งคำตอบที่ระบบเองก็ยังไม่รู้ ให้หน้าไหนก็ได้หยิบไปแสดง
+         */
+        actor:
+          t.result && t.assignedUser
+            ? { id: t.assignedUser.id, name: t.assignedUser.displayName, email: t.assignedUser.email }
+            : null,
         assignedAt: t.assignedAt,
         startedAt: t.startedAt,
         completedAt: t.completedAt,

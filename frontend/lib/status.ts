@@ -164,14 +164,23 @@ export const ROLE_LABELS: Record<Role, string> = {
  * บรรทัด timeline — ประกอบจาก review_task ไม่ใช่ตาราง event เดิม
  * ("ผู้เชี่ยวชาญบันทึกความเห็น" = DATASET_SPECIALIST_REVIEW ที่ result = CONFIRMED)
  */
+/**
+ * ด่านหนึ่ง = บทบาทหนึ่ง — ใช้ชี้ไปที่ `ROLE_LABELS` แทนที่จะมีคำเรียกของตัวเอง
+ *
+ * เดิมฟังก์ชันข้างล่างมีชุดคำของมันเอง ("เจ้าหน้าที่ BDI") ซึ่งไม่ตรงกับชุดที่อีเมล
+ * การแจ้งเตือน และ API ใช้ ("ผู้ดำเนินการของ BDI") ผู้ใช้คนเดียวกันจึงเห็นบทบาทเดียวกัน
+ * ถูกเรียกคนละชื่อ ระหว่างอีเมลที่ได้รับกับหน้าจอที่เปิดอยู่
+ */
+export const TASK_TYPE_ROLE: Record<ReviewTaskType, Role> = {
+  BDI_OFFICER_REVIEW: "BDI_OFFICER",
+  DATASET_SPECIALIST_REVIEW: "BDI_DATASET_SPECIALIST",
+  ORGANIZATION_APPROVAL: "ORGANIZATION_APPROVER",
+  BDI_FINAL_APPROVAL: "BDI_FINAL_APPROVER",
+  ORGANIZATION_REVISION: "ORGANIZATION_USER",
+};
+
 export function taskEventLabel(taskType: ReviewTaskType, result?: ReviewResult | null): string {
-  const actor = {
-    BDI_OFFICER_REVIEW: "เจ้าหน้าที่ BDI",
-    DATASET_SPECIALIST_REVIEW: "ผู้เชี่ยวชาญด้านข้อมูล",
-    ORGANIZATION_APPROVAL: "ผู้มีอำนาจกระทำการแทน",
-    BDI_FINAL_APPROVAL: "ผู้อนุมัติ BDI",
-    ORGANIZATION_REVISION: "หน่วยงาน",
-  }[taskType];
+  const actor = ROLE_LABELS[TASK_TYPE_ROLE[taskType]];
 
   /**
    * ภาษาไทยไม่เว้นวรรคระหว่างคำ — ยกเว้นเมื่อคำก่อนหน้าลงท้ายด้วยอักษรละติน
