@@ -179,6 +179,11 @@ export interface LegalDocument {
   fromRequest: boolean;
   fileUrl: string | null;
   acceptedAt: string | null;
+  /**
+   * false = แอดมินตั้งฉบับนี้เป็นเอกสารไม่บังคับ ผู้มีอำนาจกด "ไม่เกี่ยวข้อง" ข้ามได้
+   * ฉบับที่ถูกข้ามจะไม่ถูกส่งต่อไปให้ฝ่าย BDI เห็นชอบด้วย
+   */
+  isRequired: boolean;
 }
 
 // ------------------------------------------------------------------ ชุดข้อมูล (Journey C)

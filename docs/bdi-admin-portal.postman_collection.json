@@ -1157,6 +1157,36 @@
         }
       },
       "response": []
+    },
+    {
+      "name": "L1 · Make a legal document optional (or required again)",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"isRequired\": false\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/legal-documents/A3",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "legal-documents",
+            "A3"
+          ]
+        },
+        "description": "ตั้งเอกสารเป็นไม่บังคับ — ผู้มีอำนาจจะเห็นปุ่ม \"ไม่เกี่ยวข้อง\" ทางซ้ายของ \"เห็นชอบ\" ฉบับที่ถูกข้ามจะไม่ลง legal_acceptance และไม่ถูกส่งต่อให้ฝ่าย BDI เห็นชอบ\n\nส่ง `{\"isRequired\": true}` เพื่อกลับเป็นบังคับ · ไม่มีผลย้อนหลังกับคำขอที่ลงนามไปแล้ว"
+      },
+      "response": []
     }
   ]
 }

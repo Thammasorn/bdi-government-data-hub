@@ -74,6 +74,14 @@ export interface PublishedDocument {
   pdfAttachmentId: string | null;
   /** true = เอกสารมี placeholder จึงต้อง render ใหม่ต่อคำขอ ไม่ใช้ไฟล์กลาง */
   hasPlaceholders: boolean;
+  /**
+   * false = ผู้มีอำนาจกดข้าม "ไม่เกี่ยวข้อง" ได้ ไม่ต้องเห็นชอบก็ลงนามผ่าน
+   *
+   * คอลัมน์ `legal_document.is_required` มีมาตั้งแต่ต้นตามดีไซน์ แต่ไม่เคยมีใครอ่าน —
+   * `seed-masters.ts` ตั้งเป็น true ให้ทุกฉบับแล้วจบ ตอนนี้แอดมินสลับได้ผ่าน
+   * `PATCH /api/admin/legal-documents/:code`
+   */
+  isRequired: boolean;
 }
 
 /**
@@ -106,6 +114,7 @@ export async function publishedDocuments(
       code: doc.documentCode,
       nameTh: doc.nameTh,
       displayOrder: doc.displayOrder,
+      isRequired: doc.isRequired,
       versionId: version.id,
       versionNumber: version.versionNumber,
       pdfAttachmentId: pdf?.id ?? null,

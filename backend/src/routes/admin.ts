@@ -1023,6 +1023,67 @@ const templateUpload = multer({
   fileFilter: (_req, file, cb) => cb(null, TEMPLATE_MIME.has(file.mimetype)),
 });
 
+/**
+ * ตั้งเอกสารเป็นบังคับหรือไม่บังคับ — `PATCH /api/admin/legal-documents/:code`
+ *
+ * `legal_document.is_required` มีในสคีมามาตั้งแต่ต้น ("ผู้ใช้ต้องยอมรับเอกสารนี้หรือไม่")
+ * แต่ไม่เคยมีโค้ดไหนอ่านมัน — `seed-masters.ts` ตั้ง true ให้ทุกฉบับแล้วจบ ที่นี่คือที่ที่
+ * แอดมินสลับได้ โดยไม่ต้องแก้โค้ดหรือ seed ใหม่
+ *
+ * ฉบับที่ไม่บังคับจะมีปุ่ม "ไม่เกี่ยวข้อง" ให้ผู้มีอำนาจกดข้ามตอนลงนาม และฉบับที่ถูกข้าม
+ * จะไม่ถูกส่งต่อไปให้ฝ่าย BDI เห็นชอบด้วย
+ *
+ * **ไม่ย้อนหลัง** — คำขอที่ลงนามไปแล้วเก็บรายการเอกสารของตัวเองไว้ใน
+ * `signature_confirmation.confirmation_payload_json` และ `legal_acceptance` แล้ว
+ * การสลับค่านี้จึงมีผลกับคำขอที่ยังไม่ลงนามเท่านั้น
+ */
+adminRouter.patch("/legal-documents/:code", async (req, res) => {
+  const parsed = z
+    .object({ isRequired: z.boolean({ error: "ต้องระบุ isRequired เป็น true หรือ false" }) })
+    .safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+    return;
+  }
+
+  const document = await prisma.legalDocument.findUnique({
+    where: { documentCode: req.params.code },
+    select: { id: true, documentCode: true, nameTh: true, isRequired: true },
+  });
+  if (!document) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบเอกสารรหัสนี้" });
+    return;
+  }
+
+  if (document.isRequired === parsed.data.isRequired) {
+    res.json({ document, changed: false });
+    return;
+  }
+
+  const updated = await prisma.legalDocument.update({
+    where: { id: document.id },
+    data: { isRequired: parsed.data.isRequired },
+    select: { id: true, documentCode: true, nameTh: true, isRequired: true },
+  });
+
+  await logAudit({
+    action: AuditAction.LEGAL_DOCUMENT_PUBLISHED,
+    subjectType: AuditSubject.LEGAL_DOCUMENT,
+    subjectId: document.id,
+    before: { isRequired: document.isRequired },
+    after: { isRequired: updated.isRequired },
+    metadata: { document_code: document.documentCode, changed_via: "ADMIN_API" },
+  });
+
+  res.json({
+    document: updated,
+    changed: true,
+    message: updated.isRequired
+      ? `${document.documentCode} กลับเป็นเอกสารบังคับแล้ว ผู้มีอำนาจต้องเห็นชอบทุกครั้ง`
+      : `${document.documentCode} เป็นเอกสารไม่บังคับแล้ว ผู้มีอำนาจกด "ไม่เกี่ยวข้อง" ข้ามได้`,
+  });
+});
+
 adminRouter.get("/legal-documents", async (_req, res) => {
   const documents = await prisma.legalDocument.findMany({
     orderBy: [{ applicationScope: "asc" }, { displayOrder: "asc" }],
@@ -1048,6 +1109,7 @@ adminRouter.get("/legal-documents", async (_req, res) => {
       scope: doc.applicationScope,
       status: doc.status,
       displayOrder: doc.displayOrder,
+      isRequired: doc.isRequired,
       versions: doc.versions.map((v) => ({
         id: v.id,
         versionNumber: v.versionNumber,

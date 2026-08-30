@@ -1364,6 +1364,8 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
     fromRequest: boolean;
     fileUrl: string | null;
     acceptedAt: Date | null;
+    /** false = ผู้มีอำนาจกด "ไม่เกี่ยวข้อง" ข้ามฉบับนี้ได้ */
+    isRequired: boolean;
   }> = [];
 
   for (const doc of documents) {
@@ -1380,6 +1382,7 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
         fromRequest: false,
         fileUrl: `/api/organizations/${request.id}/legal-documents/${doc.versionId}/file`,
         acceptedAt: acceptedAt.get(doc.versionId) ?? null,
+        isRequired: doc.isRequired,
       });
       continue;
     }
@@ -1442,6 +1445,7 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
         ? `/api/organizations/${request.id}/legal-documents/${doc.versionId}/file`
         : null,
       acceptedAt: acceptedAt.get(doc.versionId) ?? null,
+      isRequired: doc.isRequired,
     });
   }
 
@@ -1669,6 +1673,16 @@ const signatureSchema = z.object({
    * ถูกแก้ หลักฐานเก่าต้องไม่เปลี่ยนความหมายตามไปด้วย ฝ่าย BDI ลงนามรวดเดียวโดยไม่มี
    * การยืนยันรายฉบับ (การ์ดข้อ 4) จึงไม่มีค่านี้มา
    */
+  /**
+   * เอกสารที่ผู้มีอำนาจกด "ไม่เกี่ยวข้อง" — ใช้ได้เฉพาะฉบับที่แอดมินตั้งเป็นไม่บังคับ
+   *
+   * แยกจาก `acknowledgements` เพราะความหมายต่างกันคนละเรื่อง: อันบนคือ "อ่านแล้วเห็นชอบ"
+   * ซึ่งลง `legal_acceptance` เป็นหลักฐานว่าหน่วยงานยอมรับเงื่อนไข ส่วนอันนี้คือ
+   * "ฉบับนี้ไม่เกี่ยวกับหน่วยงานเรา" ซึ่งไม่ใช่การยอมรับ จึงไม่ลงตารางนั้น แต่ต้องเก็บไว้
+   * ใน `confirmation_payload_json` ไม่งั้นย้อนหลังจะแยกไม่ออกระหว่าง "ตั้งใจข้าม"
+   * กับ "ตอนนั้นยังไม่มีเอกสารฉบับนี้"
+   */
+  notApplicable: z.array(z.object({ versionId: z.string() })).default([]),
   attestationText: z.string().trim().min(1).max(500).optional(),
   confirmationText: z.string().trim().min(1).max(2000),
 });
@@ -1790,6 +1804,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
      */
     const confirmationType = SIGNING_TASKS[task.taskType];
     let signedVersionIds: string[] = [];
+    let notApplicableVersionIds: string[] = [];
 
     if (confirmationType && result === ReviewResult.APPROVED) {
       if (!signature) {
@@ -1810,7 +1825,43 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
       }
 
       const acknowledged = new Set(signature.acknowledgements.map((a) => a.versionId));
-      const missing = published.filter((doc) => !acknowledged.has(doc.versionId));
+      const skipped = new Set(signature.notApplicable.map((d) => d.versionId));
+
+      /**
+       * ฉบับที่ฝั่งหน่วยงานเคยกด "ไม่เกี่ยวข้อง" ไปแล้ว ไม่ต้องถามฝ่าย BDI อีก
+       *
+       * ด่านของ BDI ต้องเห็นชอบเฉพาะชุดที่หน่วยงานยอมรับจริง — ถ้ายังถามครบทุกฉบับ
+       * ที่เผยแพร่อยู่ เอกสารที่ถูกข้ามไปแล้วจะกลับมาโผล่ที่ด่านหลัง ทั้งที่ไม่มีใคร
+       * ฝั่งหน่วยงานยอมรับมัน
+       */
+      let expected = published;
+      if (confirmationType === ConfirmationType.BDI_FINAL_APPROVAL) {
+        const accepted = await prisma.legalAcceptance.findMany({
+          where: { subjectType: SUBJECT, subjectId: request.id },
+          select: { legalDocumentVersionId: true },
+        });
+        const acceptedIds = new Set(accepted.map((a) => a.legalDocumentVersionId));
+        if (acceptedIds.size > 0) expected = published.filter((d) => acceptedIds.has(d.versionId));
+      }
+
+      /**
+       * ข้ามได้เฉพาะฉบับที่ไม่บังคับ — ฉบับบังคับที่ถูกส่งมาใน `notApplicable`
+       * ต้องถูกปฏิเสธ ไม่ใช่เงียบ ๆ ยอมรับ ไม่งั้นหน้าเว็บที่ผิดพลาดจะข้ามเอกสารบังคับได้
+       */
+      const skippedRequired = expected.filter((doc) => doc.isRequired && skipped.has(doc.versionId));
+      if (skippedRequired.length > 0) {
+        res.status(400).json({
+          error: "required_document_skipped",
+          message:
+            `เอกสาร ${skippedRequired.map((d) => d.code).join(" ")} เป็นเอกสารบังคับ ` +
+            `จึงกด "ไม่เกี่ยวข้อง" ไม่ได้ ต้องอ่านและเห็นชอบ`,
+        });
+        return;
+      }
+
+      const missing = expected.filter(
+        (doc) => !acknowledged.has(doc.versionId) && !(doc.isRequired === false && skipped.has(doc.versionId)),
+      );
       if (missing.length > 0) {
         res.status(400).json({
           error: "documents_not_acknowledged",
@@ -1821,7 +1872,11 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
         return;
       }
 
-      signedVersionIds = published.map((doc) => doc.versionId);
+      // ลงนามเฉพาะฉบับที่เห็นชอบจริง ฉบับที่ข้ามไม่นับเป็นการยอมรับ
+      signedVersionIds = expected.filter((doc) => !skipped.has(doc.versionId)).map((d) => d.versionId);
+      notApplicableVersionIds = expected
+        .filter((doc) => skipped.has(doc.versionId))
+        .map((d) => d.versionId);
     }
 
     /** ผู้ถือ role เดิมที่เสียสิทธิ์ตอนผูกผู้มีอำนาจ — ประกาศหลัง commit */
@@ -1888,6 +1943,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
               signedFirstName: signedFirst,
               signedLastName: signedLast,
               documentVersionIds: signedVersionIds,
+              notApplicableVersionIds,
             },
             ipAddress: req.ip ?? null,
             userAgent: req.get("user-agent") ?? null,
