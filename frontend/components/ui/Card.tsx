@@ -53,25 +53,31 @@ export function CardHeader({
  * สถานะคำขอเหลือเจ็ดค่าที่ไม่บอกว่า "รอใคร" แล้ว ด่านที่ค้างอยู่จึงมาจาก review_task
  * stageMeta() เลือกให้ว่าจะแสดงด่านหรือสถานะ
  *
- * `waitingLabel` (จาก `progress.currentLabel`) ทับคำของ stageMeta เมื่อมี เพราะ
+ * `shortLabel` (จาก `progress.currentShortLabel`) ทับคำของ stageMeta เมื่อมี เพราะ
  * `task_type` แยก **รอบ** ไม่ได้ — ใบที่ค้างด่านตรวจซ้ำกับใบที่ยังอยู่ด่านแรกเป็น
- * `BDI_OFFICER_REVIEW` เหมือนกัน badge จึงเคยเขียนคำเดียวกันทั้งคู่ พอแผนภาพเส้นทาง
- * มีโหนด "รอ BDI ตรวจซ้ำ" แยกออกมาแล้วกดเข้าไปเจอ badge คนละคำ ก็เป็นความไม่ตรงกัน
- * แบบเดียวกับที่เพิ่งกำจัดไป สีมาจาก stageMeta ตามเดิม — คำเปลี่ยน สีไม่เปลี่ยน
+ * `BDI_OFFICER_REVIEW` เหมือนกัน badge จึงเคยเขียนคำเดียวกันทั้งคู่ และเป็นคนละคำกับ
+ * กล่องในแผนภาพที่ผู้ใช้กดเข้ามา
+ *
+ * ใช้ **ชื่อสั้น** ตัวเดียวกับกล่อง ส่วนชื่อเต็มไปอยู่ใน `title` — ชื่อเต็มยาวเกินคอลัมน์
+ * 12rem และ badge เป็น `whitespace-nowrap` จึงเคยล้นไปทับคอลัมน์ความคืบหน้า
+ * สีมาจาก stageMeta ตามเดิม
  */
 export function StatusBadge({
   status,
   currentTaskType,
+  shortLabel,
   waitingLabel,
   className,
 }: {
   status: RequestStatus;
   currentTaskType?: ReviewTaskType | null;
+  shortLabel?: string | null;
   waitingLabel?: string | null;
   className?: string;
 }) {
   const meta = stageMeta(status, currentTaskType);
-  const label = (currentTaskType ? waitingLabel : null) ?? meta.label;
+  const label = (currentTaskType ? shortLabel : null) ?? meta.label;
+  const full = (currentTaskType ? waitingLabel : null) ?? meta.label;
   return (
     <span
       className={clsx(
@@ -79,9 +85,11 @@ export function StatusBadge({
         meta.className,
         className,
       )}
+      title={full !== label ? full : undefined}
     >
-      <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" aria-hidden="true" />
-      {label}
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" aria-hidden="true" />
+      <span className="truncate">{label}</span>
+      {full !== label ? <span className="sr-only">{full}</span> : null}
     </span>
   );
 }
@@ -90,16 +98,19 @@ export function StatusBadge({
 export function DatasetStatusBadge({
   status,
   currentTaskType,
+  shortLabel,
   waitingLabel,
   className,
 }: {
   status: RequestStatus;
   currentTaskType?: ReviewTaskType | null;
+  shortLabel?: string | null;
   waitingLabel?: string | null;
   className?: string;
 }) {
   const meta = stageMeta(status, currentTaskType);
-  const label = (currentTaskType ? waitingLabel : null) ?? meta.label;
+  const label = (currentTaskType ? shortLabel : null) ?? meta.label;
+  const full = (currentTaskType ? waitingLabel : null) ?? meta.label;
   return (
     <span
       className={clsx(
@@ -107,9 +118,11 @@ export function DatasetStatusBadge({
         meta.className,
         className,
       )}
+      title={full !== label ? full : undefined}
     >
-      <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" aria-hidden="true" />
-      {label}
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" aria-hidden="true" />
+      <span className="truncate">{label}</span>
+      {full !== label ? <span className="sr-only">{full}</span> : null}
     </span>
   );
 }

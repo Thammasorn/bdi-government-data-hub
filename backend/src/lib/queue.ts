@@ -38,6 +38,7 @@ import {
   hasRecheckStep,
   journeyGraph,
   journeyNodeKeys,
+  journeyUnit,
   planFor,
   type JourneyEdge,
   type JourneyNodeKey,
@@ -268,6 +269,8 @@ export type JourneyNodeCount = JourneyNodeShape & { count: number; mine: boolean
 export type JourneySummary = {
   total: number;
   mine: number;
+  /** คำนามที่ใช้นับของในเส้นทางนี้ — กล่องเขียน "จำนวน: 20 <unit>" */
+  unit: string;
   nodes: JourneyNodeCount[];
   edges: JourneyEdge[];
 };
@@ -339,6 +342,7 @@ export async function journeySummary(params: {
 
   return {
     total,
+    unit: journeyUnit(params.subjectType),
     // ช่องกับปลายทางไม่ทับกัน (ใบที่มี active task เป็น SUBMITTED/UNDER_REVIEW เสมอ)
     // ผลบวกจึงไม่นับซ้ำ และไม่ต้องยิงคิวรีเพิ่ม
     mine: nodes.filter((n) => n.mine).reduce((sum, n) => sum + n.count, 0),

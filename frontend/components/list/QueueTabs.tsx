@@ -5,10 +5,13 @@ import clsx from "clsx";
 import type { QueueTab } from "@/lib/use-request-list";
 
 /**
- * "ที่ต้องดำเนินการ | ทั้งหมด"
+ * "ที่ต้องดำเนินการ | ทั้งหมด" — **ตัวคุมทั้งหน้า** อยู่เหนือแผนภาพ
  *
  * แท็บซ้ายคือคำตอบของคำถาม "ใบไหนที่ตำแหน่งของฉันต้องทำต่อ" ซึ่งเดิมต้องไล่อ่าน
  * badge ทีละแถวเอาเอง คนที่ไม่มีด่านเป็นของตัวเองไม่เห็นแถบนี้เลย ไม่ใช่เห็นแท็บที่ว่าง
+ *
+ * เดิมแท็บอยู่ *ใต้* แผนภาพ ซึ่งอ่านเหมือนตัวกรองอีกชั้นที่ทำงานซ้ำกับการกดกล่อง
+ * ตอนนี้มันคุมว่ากล่องไหนกดได้ — แท็บของตัวเองเหลือเฉพาะขั้นของผู้ใช้ที่กดได้
  */
 export function QueueTabs({
   tab,
@@ -27,7 +30,8 @@ export function QueueTabs({
   ];
 
   return (
-    <div className="flex gap-1 border-b border-line" role="tablist" aria-label="ขอบเขตของรายการ">
+    <div className="mb-5">
+      <div className="flex gap-1 border-b border-line" role="tablist" aria-label="ขอบเขตของรายการ">
       {items.map((item) => {
         const active = tab === item.key;
         return (
@@ -58,6 +62,13 @@ export function QueueTabs({
           </button>
         );
       })}
+      </div>
+      {/* บอกว่าทำไมกล่องอื่นในแผนภาพถึงกดไม่ได้ — จางลงอย่างเดียวไม่ได้อธิบายอะไร */}
+      {tab === "mine" ? (
+        <p className="mt-2 text-[12px] text-ink-subtle">
+          แท็บนี้แสดงเฉพาะขั้นตอนของคุณ — กด “ทั้งหมด” เพื่อดูขั้นอื่นในเส้นทาง
+        </p>
+      ) : null}
     </div>
   );
 }

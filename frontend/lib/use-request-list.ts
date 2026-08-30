@@ -16,6 +16,10 @@ import type { ListSummary, NodeKey, PageInfo, SortOrder } from "@/lib/stage";
 
 export type QueueTab = "mine" | "all";
 
+/** ตัวเลือกจำนวนแถวต่อหน้า — เพดาน 100 มาจาก parsePaging() ฝั่ง backend */
+export const PAGE_SIZES = [10, 20, 50, 100];
+export const DEFAULT_PAGE_SIZE = 20;
+
 interface Options {
   /** เช่น "/api/organizations" — ตัวสรุปคือ path เดียวกันต่อท้าย /summary */
   endpoint: string;
@@ -71,6 +75,11 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
     params.get("sort") === "date_asc" ? "date_asc" : "date_desc",
   );
   const [page, setPage] = useState(() => Math.max(1, Number(params.get("page")) || 1));
+  /** จำนวนแถวต่อหน้า — ผู้ใช้เลือกเองได้ backend รับได้ถึง 100 */
+  const [pageSize, setPageSizeState] = useState(() => {
+    const raw = Number(params.get("pageSize"));
+    return PAGE_SIZES.includes(raw) ? raw : DEFAULT_PAGE_SIZE;
+  });
   const [query, setQueryState] = useState(() => params.get("q") ?? "");
 
   /**
@@ -82,11 +91,23 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
 
   /** เปลี่ยนตัวกรองอะไรก็ตาม = กลับไปหน้า 1 บังคับไว้ในฮุก ไม่ใช่ที่ผู้เรียก
    *  นี่คือบั๊กของ pagination ที่พบบ่อยที่สุด และควรเกิดขึ้นไม่ได้เชิงโครงสร้าง */
-  const setTab = useCallback((next: QueueTab) => {
-    pushNext.current = true;
-    setTabState(next);
-    setPage(1);
-  }, []);
+  const setTab = useCallback(
+    (next: QueueTab) => {
+      pushNext.current = true;
+      setTabState(next);
+      setPage(1);
+      /**
+       * กลับมาแท็บของตัวเองแล้วกล่องที่เลือกค้างไว้ไม่ใช่ของเรา = ตัวกรองที่ยกเลิกไม่ได้
+       * เพราะกล่องนั้น disable ไปแล้วในแท็บนี้ ล้างทิ้งตรงนี้ที่เดียว ผู้เรียกไม่ต้องรู้
+       */
+      if (next !== "mine") return;
+      setStageState((current) => {
+        if (current === null) return null;
+        return summary?.nodes.find((n) => n.key === current)?.mine ? current : null;
+      });
+    },
+    [summary],
+  );
   const setSort = useCallback((next: SortOrder) => {
     setSortState(next);
     setPage(1);
@@ -95,26 +116,23 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
     setQueryState(next);
     setPage(1);
   }, []);
+  /** เปลี่ยนจำนวนแถวต่อหน้าแล้วหน้าเดิมอาจเลยขอบ — กลับหน้า 1 เหมือนตัวกรองอื่น */
+  const setPageSize = useCallback((next: number) => {
+    setPageSizeState(next);
+    setPage(1);
+  }, []);
 
   /**
    * เลือกทีละโหนด — ไม่ใช่ toggle สะสมเหมือนเม็ดกรองเดิม
    *
-   * กดโหนดที่ **ไม่ใช่ของตัวเอง** ขณะอยู่แท็บ "ที่ต้องดำเนินการ" ต้องสลับไปแท็บทั้งหมดให้
-   * เพราะ `stage` กับ `scope=mine` AND กันฝั่ง server ไม่งั้นได้ตารางว่างรับประกันโดยไม่มี
-   * อะไรอธิบาย ส่วนโหนดที่เป็นของตัวเองให้อยู่แท็บเดิม — เจ้าหน้าที่ที่ถือสองช่องแล้วกด
-   * ช่องหนึ่งคือการ *แคบลง* ไม่ใช่การออกจากคิวตัวเอง
+   * ไม่ต้องสลับแท็บให้เองอีกแล้ว: แท็บเป็นตัวคุมว่ากล่องไหนกดได้ กล่องที่ไม่ใช่ของผู้ใช้
+   * จึง disable ในแท็บของตัวเองอยู่แล้ว การกดจึงไม่มีทางขัดกับ `scope=mine`
    */
-  const selectStage = useCallback(
-    (next: NodeKey | null) => {
-      setStageState(next);
-      setLegacyFilter(null);
-      setPage(1);
-      if (next === null) return;
-      const node = summary?.nodes.find((n) => n.key === next);
-      if (node && !node.mine) setTabState("all");
-    },
-    [summary],
-  );
+  const selectStage = useCallback((next: NodeKey | null) => {
+    setStageState(next);
+    setLegacyFilter(null);
+    setPage(1);
+  }, []);
 
   /** คำตอบที่มาถึงช้ากว่าคำขอที่ใหม่กว่าต้องถูกทิ้ง — ไม่งั้นตารางโชว์หน้า 2 ขณะที่
    *  ตัวเลขบอกหน้า 3 เกิดได้ง่ายกับ debounce บวกการกดเปลี่ยนหน้ารัว ๆ */
@@ -132,6 +150,7 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
       if (tab === "mine") qs.set("scope", "mine");
       qs.set("sort", sort);
       qs.set("page", String(page));
+      qs.set("pageSize", String(pageSize));
 
       const summaryQs = new URLSearchParams();
       if (query.trim()) summaryQs.set("q", query.trim());
@@ -155,7 +174,7 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
         });
     }, 250);
     return () => clearTimeout(timer);
-  }, [endpoint, itemsKey, stage, legacyFilter, query, tab, sort, page, show]);
+  }, [endpoint, itemsKey, stage, legacyFilter, query, tab, sort, page, pageSize, show]);
 
   /** เขียนสถานะทั้งชุดกลับลง URL พร้อมกัน ลิงก์ที่แชร์ไปจึงเปิดได้ตามที่เห็นบนจอ */
   useEffect(() => {
@@ -165,6 +184,7 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
     if (query.trim()) qs.set("q", query.trim());
     if (sort !== "date_desc") qs.set("sort", sort);
     if (page > 1) qs.set("page", String(page));
+    if (pageSize !== DEFAULT_PAGE_SIZE) qs.set("pageSize", String(pageSize));
     const next = qs.toString();
     if (next !== window.location.search.replace(/^\?/, "")) {
       const href = next ? `?${next}` : window.location.pathname;
@@ -172,7 +192,7 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
       else router.replace(href, { scroll: false });
     }
     pushNext.current = false;
-  }, [tab, stage, query, sort, page, router]);
+  }, [tab, stage, query, sort, page, pageSize, router]);
 
   /**
    * หน้าที่เลยขอบ — เกิดกับ bookmark ที่ `?page=9` แล้วมาเจอผลลัพธ์ 2 หน้า
@@ -203,6 +223,8 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
     setQuery,
     page,
     goToPage,
+    pageSize,
+    setPageSize,
     hasFilter: stage !== null || legacyFilter !== null || query.trim().length > 0,
   };
 }

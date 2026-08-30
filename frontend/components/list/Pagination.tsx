@@ -3,6 +3,7 @@
 import clsx from "clsx";
 
 import type { PageInfo } from "@/lib/stage";
+import { PAGE_SIZES } from "@/lib/use-request-list";
 
 /**
  * ตัวเลขหน้าแบบมีหน้าต่าง ไม่ใช่ 1..N
@@ -11,7 +12,17 @@ import type { PageInfo } from "@/lib/stage";
  * บรรทัด "แสดง …" ใช้ตัวเลขจาก server ไม่ใช่ rows.length — เดิมบรรทัดนั้นพูดว่า
  * "แสดง 200 รายการ" ทั้งที่ระบบมีมากกว่านั้น และไม่มีอะไรบอกว่าที่เหลือหายไปไหน
  */
-export function Pagination({ info, onPage }: { info: PageInfo | null; onPage: (page: number) => void }) {
+export function Pagination({
+  info,
+  onPage,
+  pageSize,
+  onPageSize,
+}: {
+  info: PageInfo | null;
+  onPage: (page: number) => void;
+  pageSize: number;
+  onPageSize: (size: number) => void;
+}) {
   if (!info || info.total === 0) return null;
 
   const from = (info.page - 1) * info.pageSize + 1;
@@ -19,11 +30,43 @@ export function Pagination({ info, onPage }: { info: PageInfo | null; onPage: (p
 
   return (
     <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-      <p className="text-[13px] text-ink-muted">
-        แสดง <span className="tabular-nums">{from.toLocaleString("th-TH")}</span>–
-        <span className="tabular-nums">{to.toLocaleString("th-TH")}</span> จาก{" "}
-        <span className="tabular-nums">{info.total.toLocaleString("th-TH")}</span> รายการ
-      </p>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <p className="text-[13px] text-ink-muted">
+          แสดง <span className="tabular-nums">{from.toLocaleString("th-TH")}</span>–
+          <span className="tabular-nums">{to.toLocaleString("th-TH")}</span> จาก{" "}
+          <span className="tabular-nums">{info.total.toLocaleString("th-TH")}</span> รายการ
+        </p>
+        <label className="inline-flex items-center gap-2 text-[13px] text-ink-muted">
+          แถวต่อหน้า
+          <span className="relative">
+            {/* ซ่อนลูกศรเนทีฟแล้ววาดเอง ตามธรรมเนียมของ <Select> ใน components/ui/Field.tsx —
+                `<select>` เข้าเงื่อนไข `:read-only` เสมอตามสเปก HTML ปล่อยตามค่าเริ่มต้น
+                จะถูกวาดจนอ่านได้ว่าเป็นช่องที่ถูกล็อก */}
+            <select
+              value={pageSize}
+              onChange={(e) => onPageSize(Number(e.target.value))}
+              aria-label="จำนวนแถวต่อหน้า"
+              className="h-9 appearance-none rounded-full border border-line bg-white pl-3.5 pr-9 text-[13px] font-medium tabular-nums text-ink transition-[border-color,box-shadow] focus:border-navy-500 focus:shadow-[0_0_0_3px_var(--color-navy-100)]"
+            >
+              {PAGE_SIZES.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+            <svg
+              viewBox="0 0 20 20"
+              className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              aria-hidden="true"
+            >
+              <path d="m5 8 5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </span>
+        </label>
+      </div>
 
       {info.pageCount > 1 ? (
         <nav className="flex items-center gap-1" aria-label="เปลี่ยนหน้า">

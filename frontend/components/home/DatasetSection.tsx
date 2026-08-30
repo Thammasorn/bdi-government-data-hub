@@ -102,7 +102,9 @@ function DatasetRow({ row }: { row: DatasetRequestListItem }) {
         <DatasetStatusBadge
           status={row.status}
           currentTaskType={row.currentTaskType}
+          shortLabel={row.progress?.currentShortLabel}
           waitingLabel={row.progress?.currentLabel}
+          className="max-w-full"
         />
         {row.progress ? (
           // แทนที่ประโยค "รอใคร" เดิม — บอกทั้งว่าอยู่ขั้นไหนจากกี่ขั้นและขั้นต่อไปคืออะไร
