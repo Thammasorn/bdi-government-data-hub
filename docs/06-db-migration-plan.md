@@ -171,6 +171,11 @@ role กลายเป็นตาราง master พร้อม `is_active` 
 ไม่มี `task_type` ของตัวเองในแบบใหม่ ให้ใช้ `BDI_OFFICER_REVIEW` + `round_number = 2`
 + `result = CONFIRMED` แทน
 
+> **2026-08-30** — เอกสารนี้เป็นบันทึกของการย้ายสคีมาเมื่อ 2026-08-13 จึงเก็บข้อความข้างบน
+> ไว้ตามเดิม แต่ **ด่าน Final Check ถูกยกเลิกไปแล้วทั้งหมด** (การ์ด *แก้ flow dataset
+> registration*) เส้นทางชุดข้อมูลปัจจุบันไม่มีด่านเจ้าหน้าที่ BDI รอบสอง — ข้อความนี้ใช้
+> อ่านย้อนหลังว่าข้อมูลเก่าถูกแปลงมาอย่างไรเท่านั้น ไม่ใช่กติกาที่ใช้อยู่
+
 การ assign specialist ของเดิม (field เดียวบน request) กลายเป็น
 สร้าง `DATASET_SPECIALIST_REVIEW` task · ถอน assign = `status = CANCELLED` ·
 comment โดยไม่เปลี่ยนสถานะ = `result_comment` + `comment_visibility = BDI_INTERNAL`

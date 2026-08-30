@@ -48,38 +48,23 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string,
     request.organization.signatoryEmail?.toLowerCase() === email.toLowerCase() ||
     roles.includes("ORGANIZATION_APPROVER");
 
-  /**
-   * ด่าน BDI_OFFICER_REVIEW ถูกใช้สองรอบ และหน้าจอต้องพูดคนละอย่าง
-   *
-   * รอบแรกคือตรวจก่อนส่งให้หน่วยงานลงนาม รอบสองคือ "ตรวจซ้ำ" หลังลงนามแล้ว
-   * ซึ่งกดแล้วไปหาผู้อนุมัติ BDI ไม่ได้ย้อนกลับไปหาผู้มีอำนาจอีก — ทั้งสองรอบใช้
-   * task_type เดียวกัน จึงต้องดูจากว่า ORGANIZATION_APPROVAL ปิดไปแล้วหรือยัง
-   * (กติกาเดียวกับที่ backend ใช้ตัดสิน ดู lib/workflow.ts)
-   */
-  const organizationSigned = request.events.some(
-    (event) => event.taskType === "ORGANIZATION_APPROVAL" && event.result === "APPROVED",
-  );
-
   switch (request.currentTaskType) {
+    /**
+     * ด่านเดียวของเจ้าหน้าที่ BDI — ส่งต่อแล้วไปหาผู้มีอำนาจของหน่วยงานเสมอ
+     *
+     * เคยเป็นสองรอบ (ตรวจเบื้องต้น กับ ตรวจซ้ำหลังลงนาม) ซึ่งใช้ task_type เดียวกันและ
+     * ต้องแยกด้วยประวัติ — ด่านตรวจซ้ำถูกยกเลิกเมื่อ 2026-08-30 ปุ่มจึงมีคำเดียว
+     */
     case "BDI_OFFICER_REVIEW":
       if (isOfficer) {
-        return organizationSigned
-          ? {
-              advanceLabel: "ยืนยันผลการตรวจสอบ",
-              hint: "ผู้มีอำนาจของหน่วยงานลงนามแล้ว ตรวจซ้ำแล้วยืนยันเพื่อส่งให้ผู้อนุมัติ BDI",
-              canRevise: true,
-              canAssign: false,
-              canComment: false,
-              canReject: false,
-            }
-          : {
-              advanceLabel: "ส่งต่อให้ผู้มีอำนาจของหน่วยงาน",
-              hint: "ตรวจว่าข้อมูลเพียงพอหรือไม่ มอบหมายผู้เชี่ยวชาญได้ก่อนส่งต่อ",
-              canRevise: true,
-              canAssign: true,
-              canComment: false,
-              canReject: false,
-            };
+        return {
+          advanceLabel: "ส่งต่อให้ผู้มีอำนาจของหน่วยงาน",
+          hint: "ตรวจว่าข้อมูลเพียงพอหรือไม่ มอบหมายผู้เชี่ยวชาญได้ก่อนส่งต่อ",
+          canRevise: true,
+          canAssign: true,
+          canComment: false,
+          canReject: false,
+        };
       }
       return null;
 

@@ -78,7 +78,6 @@ export function JourneyFlow({
   const railFrom = main.findIndex((n) => returning.has(n.key));
   /** โหนด "รอการแก้ไข" อยู่ใต้ด่านแรกที่ส่งกลับได้ */
   const revisionColumn = Math.max(0, railFrom);
-  const anchored = branches.some((b) => b.anchor === main[revisionColumn]?.key);
 
   const disabledOf = (key: NodeKey) => Boolean(lockedTo && !lockedTo.includes(key));
   const pick = (key: NodeKey) => onSelect(selected === key ? null : key);
@@ -101,7 +100,7 @@ export function JourneyFlow({
   /** ด่านที่ส่งกลับได้และไม่ได้อยู่คอลัมน์เดียวกับกล่องรอการแก้ไข — เข้าทางด้านขวา */
   const sideReturns = main
     .map((n, i) => ({ n, i }))
-    .filter(({ n, i }) => returning.has(n.key) && !(i === revisionColumn && !anchored));
+    .filter(({ n, i }) => returning.has(n.key) && i !== revisionColumn);
   const sideRailTo = sideReturns.length > 0 ? Math.max(...sideReturns.map((r) => r.i)) : -1;
 
   return (
@@ -122,6 +121,59 @@ export function JourneyFlow({
         />
         <p className="text-[13px] text-ink-muted">กดขั้นตอนเพื่อดูเฉพาะคำขอที่ค้างอยู่ตรงนั้น</p>
       </div>
+
+      {/* ทางแยก — อยู่ **เหนือ** แถวหลัก และอยู่นอกบล็อกที่ชั้นเส้นเชื่อมใช้อ้างอิง
+          เดิมห้อยอยู่ข้างล่างและบังทางที่ลูกศร "ส่งกลับให้แก้ไข" ต้องดิ่งลงไป จนต้องอ้อม
+          ออกข้าง ย้ายขึ้นมาแล้วเส้นนั้นตรงลงได้ตามแบบ
+          **ต้องอยู่นอก `relative` ข้างล่าง** เพราะทุกเส้นวัดจาก `top: BOX` = ขอบล่างของ
+          แถวหลัก ถ้าย้ายแถวนี้เข้าไปในบล็อกเดียวกัน เส้นทุกเส้นจะเลื่อนพร้อมกันเงียบ ๆ
+          ไม่ได้อยู่ในชั้นเส้นเชื่อมที่ซ่อนต่ำกว่า md ไม่งั้นตัวกรองนี้หายทั้งอันบนมือถือ */}
+      {branches.length > 0 ? (
+        <div
+          className="mb-2 grid grid-cols-2 items-stretch gap-2 sm:grid-cols-3 md:mb-12 md:gap-x-8 md:gap-y-0 md:[grid-template-columns:repeat(var(--flow-cols),minmax(0,1fr))]"
+          style={columns}
+        >
+          {main.map((column) => {
+            const branch = branches.find((b) => b.anchor === column.key);
+            if (!branch) return <span key={column.key} className="hidden md:block" aria-hidden="true" />;
+            return (
+              <div key={column.key} className="relative">
+                {/* เส้นประสองหัวลูกศร — ทางแยกที่ออกไปแล้วกลับเข้าด่านเดิม ไม่ใช่ทางผ่าน
+                    ช่องว่าง 3rem (md:mb-12) พอให้เห็นว่าเส้นเป็นเส้นประจริง ๆ หลังหักหัวลูกศร
+                    หัวละ 0.75rem ออกจากปลายทั้งสองข้างแล้ว
+
+                    **ห้ามจัดกึ่งกลางด้วย `-translate-x-1/2`** — Chevron หมุนด้วย rotate ซึ่ง
+                    Tailwind รวมเป็น transform เดียวกัน การเลื่อนแนวนอนจึงถูกหมุนตามไปเป็นการ
+                    เลื่อนแนวตั้ง แล้วหัวลูกศรสองอันจะไหลมาชนกันกลางเส้น */}
+                <span
+                  aria-hidden="true"
+                  title="ขั้นตอนนี้ไม่บังคับ — เจ้าหน้าที่ BDI เลือกมอบหมาย แล้วคำขอกลับมาที่ด่านเดิม"
+                  className="absolute left-1/2 top-full hidden h-12 border-l border-dashed border-navy-300 md:block"
+                />
+                <Chevron
+                  direction="up"
+                  className="absolute hidden text-ink-subtle md:block"
+                  style={{ left: "calc(50% - 0.375rem)", top: "calc(100% + 0.15rem)" }}
+                />
+                <Chevron
+                  direction="down"
+                  className="absolute hidden text-ink-subtle md:block"
+                  style={{ left: "calc(50% - 0.375rem)", top: "calc(100% + 2.1rem)" }}
+                />
+                <FlowNode
+                  node={branch}
+                  unit={summary.unit}
+                  checked={selected === branch.key}
+                  highlighted={highlightMine && branch.mine}
+                  disabled={disabledOf(branch.key)}
+                  onSelect={() => pick(branch.key)}
+                  hint="ทางแยก — เจ้าหน้าที่เลือกเปิด ไม่ใช่ด่านที่ทุกคำขอต้องผ่าน"
+                />
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
 
       {/* บล็อกเดียวครอบตั้งแต่แถวหลักถึงแถวส่งกลับ — เส้นเชื่อมทั้งหมดวางแบบ absolute
           เทียบกับบล็อกนี้ คอลัมน์จึงตรงกันโดยไม่ต้องวัดอะไรเลย
@@ -149,37 +201,6 @@ export function JourneyFlow({
             </div>
           ))}
         </div>
-
-        {/* ทางแยก — ห้อยใต้โหนดที่ anchor ระบุ ในคอลัมน์เดียวกับแถวบน
-            ไม่ได้อยู่ในชั้นเส้นเชื่อมที่ซ่อนต่ำกว่า md ไม่งั้นตัวกรองนี้หายทั้งอันบนมือถือ */}
-        {branches.length > 0 ? (
-          <div
-            className="mt-2 grid grid-cols-2 items-stretch gap-2 sm:grid-cols-3 md:mt-8 md:gap-x-8 md:gap-y-0 md:[grid-template-columns:repeat(var(--flow-cols),minmax(0,1fr))]"
-            style={columns}
-          >
-            {main.map((column) => {
-              const branch = branches.find((b) => b.anchor === column.key);
-              if (!branch) return <span key={column.key} className="hidden md:block" aria-hidden="true" />;
-              return (
-                <div key={column.key} className="relative">
-                  <span
-                    aria-hidden="true"
-                    className="absolute bottom-full left-1/2 hidden h-8 w-px bg-line md:block"
-                  />
-                  <FlowNode
-                    node={branch}
-                    unit={summary.unit}
-                    checked={selected === branch.key}
-                    highlighted={highlightMine && branch.mine}
-                    disabled={disabledOf(branch.key)}
-                    onSelect={() => pick(branch.key)}
-                    hint="ทางแยก — เจ้าหน้าที่เลือกเปิด ไม่ใช่ด่านที่ทุกคำขอต้องผ่าน"
-                  />
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
 
         {/* แถวส่งกลับ — คอลัมน์เดียวกับด่านแรกที่ส่งกลับได้ */}
         {revision ? (
@@ -209,34 +230,23 @@ export function JourneyFlow({
         {revision && railFrom >= 0 ? (
           <div aria-hidden="true" className="pointer-events-none absolute inset-0 hidden md:block">
             {/* ด่านที่อยู่คอลัมน์เดียวกับกล่องรอการแก้ไข — ดิ่งลงเข้าทางด้านบนของกล่อง
-                ยกเว้นคอลัมน์ที่มีทางแยกห้อยอยู่ เพราะเส้นจะพาดผ่านกล่องทางแยกพอดี
-                กรณีนั้นให้ไปเข้าทางขวาพร้อมด่านอื่นแทน */}
-            {!anchored ? (
-              <>
-                <span
-                  className="absolute w-px bg-line"
-                  style={{ left: colMid(revisionColumn), top: BOX, bottom: BOX }}
-                />
-                <Chevron
-                  direction="down"
-                  className="absolute -translate-x-1/2"
-                  style={{ left: colMid(revisionColumn), bottom: `calc(${BOX} - 0.3rem)` }}
-                />
-              </>
-            ) : null}
+                ทางลงนี้ว่างเสมอตั้งแต่ย้ายแถวทางแยกขึ้นไปอยู่เหนือแถวหลัก */}
+            <span
+              className="absolute w-px bg-line"
+              style={{ left: colMid(revisionColumn), top: BOX, bottom: BOX }}
+            />
+            <Chevron
+              direction="down"
+              className="absolute -translate-x-1/2"
+              style={{ left: colMid(revisionColumn), bottom: `calc(${BOX} - 0.3rem)` }}
+            />
 
             {/* ด่านอื่น — ดิ่งลงมาถึงกึ่งกลางแถวส่งกลับ แล้ววิ่งซ้ายเข้าด้านขวาของกล่อง */}
             {sideReturns.map(({ n, i }) => (
               <span
                 key={n.key}
                 className="absolute w-px bg-line"
-                style={{
-                  /* คอลัมน์ที่มีทั้งทางแยกและกล่องรอการแก้ไขซ้อนอยู่ข้างล่าง เส้นกลางคอลัมน์
-                     จะพาดผ่านทั้งสองกล่อง — เลี่ยงออกไปเดินในช่องว่างทางขวาแทน */
-                  left: i === revisionColumn ? `calc(${colEnd(i)} + 1rem)` : colMid(i),
-                  top: BOX,
-                  bottom: MID,
-                }}
+                style={{ left: colMid(i), top: BOX, bottom: MID }}
               />
             ))}
             {sideRailTo >= 0 ? (
@@ -245,11 +255,7 @@ export function JourneyFlow({
                   className="absolute h-px bg-line"
                   style={{
                     left: colEnd(revisionColumn),
-                    width: `calc(${
-                      sideRailTo === revisionColumn
-                        ? `calc(${colEnd(sideRailTo)} + 1rem)`
-                        : colMid(sideRailTo)
-                    } - ${colEnd(revisionColumn)})`,
+                    width: `calc(${colMid(sideRailTo)} - ${colEnd(revisionColumn)})`,
                     bottom: MID,
                   }}
                 />
@@ -436,7 +442,7 @@ function Chevron({
   className,
   style,
 }: {
-  direction: "right" | "left" | "down";
+  direction: "right" | "left" | "down" | "up";
   className?: string;
   style?: CSSProperties;
 }) {
@@ -447,7 +453,13 @@ function Chevron({
       style={style}
       className={clsx(
         "h-3 w-3",
-        direction === "left" ? "rotate-180" : direction === "down" ? "rotate-90" : "",
+        direction === "left"
+          ? "rotate-180"
+          : direction === "down"
+            ? "rotate-90"
+            : direction === "up"
+              ? "-rotate-90"
+              : "",
         className,
       )}
       fill="none"

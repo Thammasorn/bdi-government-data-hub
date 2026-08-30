@@ -23,7 +23,7 @@
 
 | enum | ค่า |
 | --- | --- |
-| `DatasetRequestStatus` | `DRAFT` · `PENDING_OFFICER_REVIEW` · `PENDING_ORG_APPROVER` · `PENDING_OFFICER_FINAL_CHECK` · `PENDING_BDI_APPROVAL` · `NEEDS_REVISION` · `APPROVED` · `REJECTED` |
+| `DatasetRequestStatus` | `DRAFT` · `PENDING_OFFICER_REVIEW` · `PENDING_ORG_APPROVER` · `PENDING_BDI_APPROVAL` · `NEEDS_REVISION` · `APPROVED` · `REJECTED` |
 | `DatasetRequestEventType` | `CREATED` · `SUBMITTED` · `SPECIALIST_ASSIGNED` · `SPECIALIST_UNASSIGNED` · `SPECIALIST_COMMENTED` · `OFFICER_FORWARDED` · `OFFICER_REVISION_REQUESTED` · `ORG_APPROVER_SIGNED` · `ORG_APPROVER_REVISION_REQUESTED` · `OFFICER_CONFIRMED` · `OFFICER_FINAL_REVISION_REQUESTED` · `BDI_APPROVED` · `BDI_REJECTED` · `BDI_REVISION_REQUESTED` |
 | `DatasetAttachmentKind` | `DATA_DICTIONARY` · `EXAMPLE_DATA` · `GENERATED_FORM` |
 | `DatasetType` | `RECORD` · `STATISTIC` · `GEOGRAPHIC` · `MULTIMEDIA` · `OTHER` |
@@ -99,15 +99,17 @@ docker compose exec backend npm run prisma:migrate -- --name dataset_registratio
 | | | `request_revision` | `NEEDS_REVISION` |
 | | specialist ที่ถูก assign | `comment` | *(ไม่เปลี่ยนสถานะ)* |
 | | | `request_revision` | `NEEDS_REVISION` |
-| `PENDING_ORG_APPROVER` | ผู้มีอำนาจของหน่วยงาน | `approve` (ลงนาม) | `PENDING_OFFICER_FINAL_CHECK` |
-| | | `request_revision` | `NEEDS_REVISION` |
-| `PENDING_OFFICER_FINAL_CHECK` | `BDI_OFFICER` | `confirm` | `PENDING_BDI_APPROVAL` |
+| `PENDING_ORG_APPROVER` | ผู้มีอำนาจของหน่วยงาน | `approve` (ลงนาม) | `PENDING_BDI_APPROVAL` |
 | | | `request_revision` | `NEEDS_REVISION` |
 | `BDI_FINAL_APPROVAL` | `BDI_FINAL_APPROVER` | `approve` | `APPROVED` (+ สร้าง PDF ฉบับอนุมัติ) |
 | | | `reject` | `REJECTED` |
 | | | `request_revision` | `NEEDS_REVISION` |
 
 `request_revision` และ `reject` บังคับ `note` ≥ 10 ตัวอักษร ทุกกรณี
+
+> **แก้ไข 2026-08-30** — เดิมมีอีกหนึ่งแถวคั่นอยู่: `PENDING_OFFICER_FINAL_CHECK` ที่
+> `BDI_OFFICER` กด `confirm` เพื่อไปต่อยัง `PENDING_BDI_APPROVAL` ด่านนั้นถูกยกเลิกทั้งหมด
+> การลงนามของหน่วยงานจึงเปิดด่านอนุมัติโดยตรง
 
 ---
 
