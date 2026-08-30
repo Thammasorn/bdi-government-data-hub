@@ -164,36 +164,81 @@ A `RETURNED` request has no current step, because `ORGANIZATION_REVISION` is nev
 task. The progress object reports `phase: "WAITING_REVISION"` and the screens say so in words;
 don't "fix" this by opening that task type.
 
-### The list filters name the gate, not the status
+### The list filter is a step in the route, and the route is drawn
 
-`backend/src/lib/queue.ts` is the only place the **filter vocabulary** is declared, and it is
-deliberately a mix of two kinds of token: the four `ReviewTaskType`s while a request is moving,
-and the terminal `RequestStatus`es once it has stopped. That set is exactly the set of distinct
-badges `stageMeta()` can draw, so a pill, a tile and a row badge always say the same words.
+`backend/src/lib/queue.ts` is the only place the **filter vocabulary** is declared, and a token
+is one **node of the journey**: a `StepKey` from `journey-steps.ts` while a request is moving,
+or a terminal `RequestStatus` once it has stopped.
 
-**`status` cannot stand in for a gate.** `requestStatusFor()` answers `SUBMITTED` for *any*
-request whose active task nobody has opened yet, so one "นำส่งแล้ว" pill swept up the first
-officer review, the post-signature final approval and the specialist review together. `SUBMITTED`
-and `UNDER_REVIEW` are therefore excluded from `StageToken` at the type level, as is
-`ORGANIZATION_REVISION` — never opened as a task, so filtering by it would answer zero rows
-forever. The API still *accepts* the two old status tokens so existing links keep working.
+**Neither `status` nor `task_type` can stand in for a gate.** `requestStatusFor()` answers
+`SUBMITTED` for *any* request whose active task nobody has opened yet, so one "นำส่งแล้ว" pill
+swept up three gates at once. `task_type` is one level better and still not enough:
+`BDI_OFFICER_REVIEW` is **two different gates** on the dataset journey — the initial check and
+the re-check after the organisation signs — which `slotOf()` has always told apart by whether an
+`ORGANIZATION_APPROVAL` completed with `APPROVED`, never by `round_number`. `SUBMITTED`,
+`UNDER_REVIEW` and `ORGANIZATION_REVISION` are excluded from the token type at compile time: the
+first two are the ambiguity being removed, and the third is never opened as a task, so filtering
+by it would answer zero rows forever.
+
+`resolveTokens()` is the only place the old and new vocabularies meet. A link that still says
+`?stage=BDI_OFFICER_REVIEW` resolves to *both* officer slots — which is what it always meant —
+and `?status=SUBMITTED,UNDER_REVIEW` keeps working. Do not drop either from the accepted set:
+unknown tokens are discarded silently by design, so a stale link would quietly return the
+unfiltered list rather than fail.
+
+Splitting the two officer slots costs one boolean per request, not a history walk. `openTask()`
+gives the active task `sequenceNumber = totalTasks + 1`, so it always has the highest sequence
+and "how many organisation approvals passed before this row" is just "how many passed at all".
+`signedSubjects()` asks that once per page, and only for requests actually sitting at an officer
+gate — the organisation journey has no re-check slot, so it never runs the query.
+
+**`journeyGraph()` returns the drawable route** — ordered nodes with a lane
+(`main` / `branch` / `revision` / `closed`) and the edges between them. Every edge is *derived*:
+the "sent back for revision" arrows come from `ALLOWED_RESULTS`, so the picture is of the state
+machine rather than of someone's memory of it, and a gate that stops accepting `RETURNED` loses
+its arrow on its own. No edge touches `REJECTED`/`CANCELLED` — four gates can reject, and four
+crossing arrows would ruin the drawing to show something nobody filters by.
+
+That payload is also **the exception that keeps the rule** stated in `ApprovalSteps.tsx` and
+`lib/types.ts`: the frontend must not *know* the sequence, but it may be *told* it.
+`components/list/JourneyFlow.tsx` therefore contains no journey facts at all, and adding a gate
+to `journey-steps.ts` makes it appear on screen with no frontend change. What the frontend does
+own is colour — the server sends a tone name, `frontend/lib/stage.ts` maps it to class strings,
+because Tailwind scans statically.
+
+Terminal node labels live in `journey-steps.ts`, **not** in `REQUEST_STATUS_LABELS` from
+`roles.ts`: that table says "ส่งกลับให้แก้ไข" where the badge says "รอการแก้ไข", and it feeds the
+emails, so making it match would reach much further than a list screen should.
 
 `scope=mine` is decided by **role**, never by `assigned_user_id`: `POST /:id/review` lets any
 holder of the matching role close the stage, and `assigned_user_id` is only round-robin load
 spreading. The role→gate map is `ROLE_TASK_TYPES` in `lib/workflow.ts`, computed by inverting
 `TASK_TYPE_ROLES` rather than written out again — both review handlers import that same table,
-so "may act" and "is my work" cannot drift apart.
+so "may act" and "is my work" cannot drift apart. A BDI officer therefore owns *two* nodes on
+the dataset journey, and their counts sum to what the single task-type token used to return.
 
-The frontend has **no copy of the role→gate map**; `/summary` returns `myStages`. The
+The frontend has **no copy of the role→gate map**; each node arrives with a `mine` flag. The
 "deliberate copy" convention that `lib/dataset-form.ts` and `lib/organization-form.ts` follow
-exists for what a screen must know *before* the network answers, which a tab already waiting on
-a count is not. `frontend/lib/stage.ts` holds only labels, and composes them from
-`TASK_TYPE_META` / `REQUEST_STATUS_META` instead of restating them.
+exists for what a screen must know *before* the network answers, which a diagram already waiting
+on counts is not. Guessing wrong here would show the wrong *rows*, not just a wrong label.
+
+Filtering is single-select and the diagram is a `radiogroup`, so it carries a "ทุกขั้นตอน"
+member that is checked when nothing else is — a radiogroup with nothing checked is a
+screen-reader dead end. The default selection is the **tab**, not a token: `scope=mine` already
+means "the union of my gates", it is decided synchronously from roles, and nothing has to wait
+on `/summary` to avoid a visible flip. Clicking a gate that is not yours switches to the ทั้งหมด
+tab, because `stage` and `scope` AND on the server and the alternative is a guaranteed-empty
+table with nothing explaining it.
+
+Every status badge prefers `progress.currentLabel` over `TASK_TYPE_META`, keeping the latter for
+colour. Without that, a dataset request at the re-check reads "รอเจ้าหน้าที่ BDI ตรวจสอบ" in the
+row while the node it was filtered by says "ตรวจซ้ำ" — the same drift the gate vocabulary exists
+to remove.
 
 Counts live in `GET /summary` rather than in the list response because their scope is the one
-that must **not** move when a pill is pressed or a page turned — visibility plus the search box,
+that must **not** move when a node is pressed or a page turned — visibility plus the search box,
 nothing else. Their sum can fall short of `total` by the requests sitting in the
-`requestStatusFor()` fall-through (`UNDER_REVIEW` with no active task); those match no token and
+`requestStatusFor()` fall-through (`UNDER_REVIEW` with no active task); those match no node and
 are visible only on the ทั้งหมด tab. That is a data anomaly worth seeing, not one to paper over.
 
 Both list endpoints page with `page`/`pageSize` and sort with `sort=date_asc|date_desc`. The
