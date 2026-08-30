@@ -653,6 +653,7 @@ organizationRouter.get("/", async (req, res) => {
         userLastnameTh: true,
         submittedAt: true,
         createdAt: true,
+        updatedAt: true,
         organizationId: true,
         createdBy: true,
       },
@@ -729,6 +730,8 @@ organizationRouter.get("/", async (req, res) => {
         progress: progressBySubject.get(r.id) ?? null,
         submittedAt: r.submittedAt,
         createdAt: r.createdAt,
+        // หน้ารายการใช้บอก "อัปเดตล่าสุด" ในกล่องรายละเอียดที่ขึ้นตอนชี้เมาส์
+        updatedAt: r.updatedAt,
         organizationId: r.organizationId,
         createdBy: {
           email: r.userEmail ?? creator?.email ?? "",

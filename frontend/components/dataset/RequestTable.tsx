@@ -7,9 +7,10 @@ import type { ReactNode } from "react";
 import { ListSearch } from "@/components/list/ListSearch";
 import { JourneyFlow } from "@/components/list/JourneyFlow";
 import { Pagination } from "@/components/list/Pagination";
+import { RowDetailCard, useRowDetail } from "@/components/list/RowDetailCard";
 import { QueueTabs } from "@/components/list/QueueTabs";
 import { SortSelect } from "@/components/list/SortSelect";
-import { ApprovalStepsCompact } from "@/components/review/ApprovalSteps";
+import { StepDots } from "@/components/review/ApprovalSteps";
 import { useSession } from "@/components/SessionProvider";
 import { Card, DatasetStatusBadge } from "@/components/ui/Card";
 import { SkeletonRows } from "@/components/ui/Spinner";
@@ -39,6 +40,7 @@ export function DatasetRequestTable({
 }) {
   const router = useRouter();
   const { user } = useSession();
+  const { detail, setDetail } = useRowDetail();
   const list = useRequestList<DatasetRequestListItem>({
     endpoint: "/api/dataset-requests",
     itemsKey: "requests",
@@ -49,8 +51,8 @@ export function DatasetRequestTable({
   // คอลัมน์สถานะกว้างคงที่ ไม่ใช้ auto เพราะหัวตารางกับแถวเป็นคนละ grid
   // ถ้าใช้ auto ต่างฝ่ายต่างคิดความกว้างจากเนื้อหาตัวเอง คอลัมน์จะไม่ตรงกัน
   const columns = showOrganization
-    ? "md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_12rem_13rem_8rem]"
-    : "md:grid-cols-[minmax(0,2fr)_12rem_13rem_8rem]";
+    ? "md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_16rem_8rem]"
+    : "md:grid-cols-[minmax(0,2fr)_16rem_8rem]";
 
   const showQueue = list.summary?.nodes.some((n) => n.mine) ?? false;
 
@@ -110,7 +112,6 @@ export function DatasetRequestTable({
               <span>ชุดข้อมูล</span>
               {showOrganization ? <span>หน่วยงาน</span> : null}
               <span>สถานะ</span>
-              <span>ความคืบหน้า</span>
               <span className="text-right">วันที่นำส่ง</span>
             </div>
             <ul className="divide-y divide-line">
@@ -119,6 +120,17 @@ export function DatasetRequestTable({
                   <button
                     type="button"
                     onClick={() => router.push(`${basePath}/${row.id}`)}
+                    onFocus={(e) =>
+                      setDetail({
+                        rect: e.currentTarget.getBoundingClientRect(),
+                        status: row.status,
+                        currentTaskType: row.currentTaskType,
+                        progress: row.progress,
+                        submittedAt: row.submittedAt,
+                        updatedAt: row.updatedAt,
+                      })
+                    }
+                    onBlur={() => setDetail(null)}
                     className={clsx(
                       "grid w-full grid-cols-1 items-center gap-2 px-6 py-4 text-left transition-colors hover:bg-navy-50/60 md:gap-4",
                       columns,
@@ -136,18 +148,46 @@ export function DatasetRequestTable({
                     {showOrganization ? (
                       <span className="min-w-0 truncate text-sm text-ink">{row.organization.name}</span>
                     ) : null}
-                    <span className="min-w-0 justify-self-start">
-                      {/* ส่ง currentTaskType ไปด้วย ไม่งั้นแถวขึ้นแค่ "นำส่งแล้ว" ทั้งที่ข้อมูลด่านมาถึงแล้ว */}
+                    <span
+                      className="flex min-w-0 flex-col items-start gap-1.5 justify-self-start"
+                      onMouseEnter={(e) =>
+                        setDetail({
+                          rect: e.currentTarget.getBoundingClientRect(),
+                          status: row.status,
+                          currentTaskType: row.currentTaskType,
+                          progress: row.progress,
+                          submittedAt: row.submittedAt,
+                          updatedAt: row.updatedAt,
+                        })
+                      }
+                      onMouseLeave={() => setDetail(null)}
+                    >
+                      {/* ส่ง currentTaskType ไปด้วย ไม่งั้นแถวขึ้นแค่ "นำส่งแล้ว" ทั้งที่ข้อมูลด่านมาถึงแล้ว
+                          ไม่ส่ง waitingLabel แล้ว — ชื่อเต็มอยู่ในกล่องที่ขึ้นตอนชี้เมาส์
+                          ถ้าส่ง badge จะตั้ง title แล้ว tooltip ช้า ๆ ของเบราว์เซอร์จะขึ้นซ้อนกล่องนั้น */}
                       <DatasetStatusBadge
                         status={row.status}
                         currentTaskType={row.currentTaskType}
                         shortLabel={row.progress?.currentShortLabel}
-                        waitingLabel={row.progress?.currentLabel}
                         className="max-w-full"
                       />
-                    </span>
-                    <span className="min-w-0">
-                      <ApprovalStepsCompact progress={row.progress} />
+                      {row.progress?.currentOrder ? (
+                        <span className="flex items-center gap-2">
+                          <span className="text-[12px] text-ink-muted">
+                            ขั้นที่ {row.progress.currentOrder} จาก {row.progress.totalSteps}
+                          </span>
+                          <StepDots
+                            total={row.progress.totalSteps}
+                            current={row.progress.currentOrder}
+                          />
+                        </span>
+                      ) : null}
+                      {/* กล่อง hover เป็น aria-hidden — ข้อความเต็มสำหรับ screen reader อยู่ตรงนี้ที่เดียว */}
+                      <span className="sr-only">
+                        {[row.progress?.currentLabel, row.progress?.nextLabel && `ขั้นต่อไป: ${row.progress.nextLabel}`]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
                     </span>
                     <span className="text-[13px] text-ink-muted md:text-right">
                       {row.submittedAt
@@ -161,6 +201,8 @@ export function DatasetRequestTable({
           </>
         )}
       </Card>
+
+      <RowDetailCard detail={detail} />
 
       <Pagination
         info={list.pageInfo}

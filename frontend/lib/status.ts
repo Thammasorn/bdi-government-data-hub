@@ -241,3 +241,13 @@ export function formatThaiDate(value: string | Date | null | undefined): string 
     timeZone: "Asia/Bangkok",
   }).format(d);
 }
+
+/**
+ * จำนวนวันเต็มนับจากวันที่ให้มาถึงตอนนี้ — ใช้บอก "รอมาแล้ว N วัน"
+ *
+ * ย้ายมาจาก components/home/DatasetSection.tsx ตอนที่กล่องรายละเอียดของตารางต้องใช้
+ * ตัวเดียวกัน สองที่ที่นับวันคนละแบบจะให้ตัวเลขไม่ตรงกันในหน้าจอเดียว
+ */
+export function daysSince(iso: string): number {
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+}

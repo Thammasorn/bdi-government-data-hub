@@ -153,6 +153,8 @@ export interface OrganizationListItem {
   progress: JourneyProgressSummary | null;
   submittedAt: string | null;
   createdAt: string;
+  /** เวลาที่แถวนี้ถูกแก้ล่าสุด — กล่องรายละเอียดตอนชี้เมาส์ใช้บอก "อัปเดตล่าสุด" */
+  updatedAt: string;
   createdBy: { firstName: string | null; lastName: string | null; email: string };
 }
 
