@@ -59,12 +59,22 @@ Content-Type: application/json
 
 - `role` เลือกได้: `BDI_OFFICER` · `BDI_FINAL_APPROVER` · `BDI_DATASET_SPECIALIST` ·
   `BDI_LEGAL_OFFICER` · `SYSTEM_ADMINISTRATOR` · `ORGANIZATION_USER` · `ORGANIZATION_APPROVER`
-- `organizationId` ไม่บังคับแม้กับ role ฝั่งหน่วยงาน — เว้นไว้แปลว่าคนนี้จะมาสร้าง
-  หน่วยงานของตัวเอง ระบบเตรียมหน่วยงานเปล่ากับคำขอฉบับร่างรอไว้ให้
+- `organizationId` **บังคับสำหรับ role ฝั่งหน่วยงาน** (`ORGANIZATION_USER` ·
+  `ORGANIZATION_APPROVER`) — ไม่ส่งมาได้ `400` · role ฝั่ง BDI ผูกกับหน่วยงาน BDI ให้เอง
+  คนที่จะมาสร้างหน่วยงานของตัวเอง (Journey B) ให้แอดมินสร้างหน่วยงานด้วย
+  `POST /api/admin/organizations` ก่อน (บังคับแค่ `organizationCode` กับ `nameTh`)
+  แล้วค่อยเชิญด้วย id ที่ได้ — เดิมระบบสร้างหน่วยงานเปล่าให้เอง ซึ่งสร้างใบใหม่ทุกครั้ง
+  ที่เชิญและทำให้เหลือลิงก์เปิดใช้งานที่ใช้ได้พร้อมกันสองใบ
 - `cid` **บังคับทุก role** — เป็นเลขที่ ThaiD จะถูกนำมาเทียบด้วยตอนเปิดใช้งานบัญชี
   (ดู `docs/07-thaid-integration.md` §1) ตรวจ checksum เลขบัตร 13 หลักที่ชั้น zod
-- ตรวจ format อีเมล และกันเชิญซ้ำ (ถ้ามี invitation ที่ยัง `PENDING` อยู่ → ออก token ใหม่แทนที่ของเดิม)
-- ถ้าอีเมลนี้เป็น user อยู่แล้ว → `409` พร้อมบอกว่ามีบัญชีแล้ว
+- **ไม่มีการเชิญซ้ำ** — อีเมลหรือ `cid` ที่มีบัญชีอยู่แล้ว (สถานะใดก็ตาม) ตอบ `409` เสมอ
+  และไม่เขียนทับข้อมูลเดิม คำตอบคืน `activationKeyId` ของใบเดิมมาให้ด้วย เพื่อให้เลือกได้ว่า
+  จะส่งลิงก์ใหม่ (`POST /api/admin/invitations/:id/resend`) หรือจะลบแล้วเชิญใหม่
+  (`DELETE /api/admin/invitations/:id` ซึ่งคืนทั้งอีเมลและเลขบัตรให้ใช้ใหม่ได้)
+- **ส่งลิงก์ซ้ำ** ใช้ `POST /api/admin/invitations/:id/resend` — ไม่รับ payload เลย
+  ออกคีย์ใบใหม่บนบัญชี/หน่วยงาน/role เดิม แล้วยกเลิกใบเก่าให้
+- **ค้นหาคำเชิญ** `GET /api/admin/invitations?email=&cid=&status=&organizationId=&page=&pageSize=`
+  (`email` ค้นบางส่วนได้ · `cid` ต้องตรงตัวเต็ม)
 - ตอบกลับ `201` พร้อม `invitationId`, `expiresAt` (ไม่คืน token ใน response — token อยู่ในอีเมลเท่านั้น)
 
 ### A.2 การสมัครและ 2FA

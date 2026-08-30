@@ -5,6 +5,7 @@ import {
   ActivationKeyStatus,
   AccountType,
   OrganizationStatus,
+  Prisma,
   RequestStatus,
   UserAccountStatus,
 } from "@prisma/client";
@@ -16,10 +17,6 @@ import { publishVersion } from "../lib/legal.js";
 import { lookupZipcode, resolveAddressCodes, resolveAddressNames } from "../lib/address.js";
 import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
 import { issueActivationKey } from "../lib/iam.js";
-import {
-  nextOrganizationCode,
-  nextOrganizationRequestNumber,
-} from "../lib/request-number.js";
 import { sendInvitationEmail } from "../lib/mail.js";
 import { ROLE_LABELS } from "../lib/roles.js";
 import {
@@ -501,24 +498,49 @@ adminRouter.get("/organizations/:id", async (req, res) => {
 
 // ---------------------------------------------------------------- คำเชิญผู้ใช้
 
-const inviteSchema = z.object({
-  email: emailSchema,
-  role: z.enum(Object.values(ROLE_CODES) as [RoleCode, ...RoleCode[]], { error: "role ไม่ถูกต้อง" }),
-  organizationId: uuidSchema(
-    "organizationId ต้องเป็น UUID ของหน่วยงานที่มีอยู่แล้ว — " +
-      "ถ้าไม่ต้องการผูกกับหน่วยงานใด ให้ไม่ส่งฟิลด์นี้เลย (ส่งค่าว่างไม่นับว่าไม่ส่ง)",
-  ).optional(),
-  displayName: z.string().trim().min(1).optional(),
+const inviteSchema = z
+  .object({
+    email: emailSchema,
+    role: z.enum(Object.values(ROLE_CODES) as [RoleCode, ...RoleCode[]], {
+      error: "role ไม่ถูกต้อง",
+    }),
+    organizationId: uuidSchema(
+      "organizationId ต้องเป็น UUID ของหน่วยงานที่มีอยู่แล้ว (ส่งค่าว่างไม่นับว่าไม่ส่ง)",
+    ).optional(),
+    displayName: z.string().trim().min(1).optional(),
+    /**
+     * เลขประจำตัวประชาชนของคนที่ถูกเชิญ — บังคับทุก role
+     *
+     * §2.4 ของสเปก ThaiD ให้เทียบเลขบัตรที่ ThaiD ส่งกลับมากับ "CID ที่ถูกบันทึกไว้
+     * ในระบบตอนสร้างบัญชี" ไม่ใช่เลขที่ผู้ใช้พิมพ์เองตอนลงทะเบียน — ถ้าให้ผู้ใช้กรอกเอง
+     * การเทียบก็ไม่ได้พิสูจน์อะไร เพราะเขากรอกเลขของบัตรที่ถืออยู่ในมือได้เสมอ
+     * เจ้าหน้าที่จึงต้องกรอกจากเอกสารที่หน่วยงานส่งมา ตั้งแต่ตอนสร้างบัญชี
+     */
+    cid: nationalIdSchema,
+  })
   /**
-   * เลขประจำตัวประชาชนของคนที่ถูกเชิญ — บังคับทุก role
+   * role ระดับหน่วยงานต้องระบุหน่วยงานเสมอ (ตัดสินใจ 2026-08-30)
    *
-   * §2.4 ของสเปก ThaiD ให้เทียบเลขบัตรที่ ThaiD ส่งกลับมากับ "CID ที่ถูกบันทึกไว้
-   * ในระบบตอนสร้างบัญชี" ไม่ใช่เลขที่ผู้ใช้พิมพ์เองตอนลงทะเบียน — ถ้าให้ผู้ใช้กรอกเอง
-   * การเทียบก็ไม่ได้พิสูจน์อะไร เพราะเขากรอกเลขของบัตรที่ถืออยู่ในมือได้เสมอ
-   * เจ้าหน้าที่จึงต้องกรอกจากเอกสารที่หน่วยงานส่งมา ตั้งแต่ตอนสร้างบัญชี
+   * ของเดิมยอมให้ไม่ส่งมา แล้วสร้าง "หน่วยงานใหม่" เปล่า ๆ พร้อมร่างคำขอให้เอง ซึ่งสร้าง
+   * ใบใหม่ทุกครั้งที่เชิญ ไม่เคยใช้ใบเดิมซ้ำ — หน่วยงานเปล่าจึงค้างเพิ่มเรื่อย ๆ และเพราะ
+   * คีย์ผูกกับหน่วยงานคนละใบ `issueActivationKey()` ก็ revoke ใบเก่าไม่เจอ เหลือลิงก์
+   * เปิดใช้งานที่ใช้ได้พร้อมกันสองใบ
+   *
+   * ทางที่ถูกคือแอดมินสร้างหน่วยงานด้วย `POST /api/admin/organizations` ก่อน
+   * (บังคับแค่ organizationCode กับ nameTh) แล้วค่อยเชิญด้วย id ที่ได้
    */
-  cid: nationalIdSchema,
-});
+  .superRefine((value, ctx) => {
+    if (ORGANIZATION_SCOPED_ROLES.includes(value.role) && !value.organizationId) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["organizationId"],
+        message:
+          `role "${value.role}" เป็น role ระดับหน่วยงาน จึงต้องระบุ organizationId เสมอ — ` +
+          `ถ้ายังไม่มีหน่วยงานในระบบ ให้สร้างด้วย POST /api/admin/organizations ก่อน ` +
+          `แล้วนำ id ที่ได้มาใส่ที่นี่`,
+      });
+    }
+  });
 
 /**
  * Journey A ขั้นที่ 2 — "Admin ยิง api เพื่อส่งเมล์ invite ให้คนมาสมัคร (ไม่มี UI)"
@@ -541,22 +563,50 @@ adminRouter.post("/invitations", async (req, res) => {
 
   const isOrgScoped = ORGANIZATION_SCOPED_ROLES.includes(role);
   // activation_key.organization_id เป็น NOT NULL — เจ้าหน้าที่ BDI ผูกกับหน่วยงาน BDI เอง
-  const requestedOrganizationId = isOrgScoped ? parsed.data.organizationId : BDI_ORGANIZATION_ID;
+  // superRefine ข้างบนบังคับแล้วว่า role ระดับหน่วยงานต้องส่ง organizationId มา
+  const organizationId = isOrgScoped ? parsed.data.organizationId! : BDI_ORGANIZATION_ID;
 
-  if (requestedOrganizationId) {
-    const organization = await prisma.organization.findUnique({
-      where: { id: requestedOrganizationId },
-      select: { id: true },
-    });
-    if (!organization) {
-      res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานที่ระบุ" });
-      return;
-    }
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { id: true },
+  });
+  if (!organization) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานที่ระบุ" });
+    return;
   }
 
-  const existing = await prisma.userAccount.findUnique({ where: { email } });
-  if (existing?.status === UserAccountStatus.ACTIVE) {
-    res.status(409).json({ error: "exists", message: "อีเมลนี้มีบัญชีในระบบแล้ว" });
+  /**
+   * ไม่มีการ "เชิญซ้ำ" อีกแล้ว (ตัดสินใจ 2026-08-30)
+   *
+   * ของเดิมถือว่าการเชิญอีเมลเดิมที่ยัง PENDING คือเจ้าหน้าที่แก้ข้อมูลที่กรอกผิด แล้ว
+   * **เขียนทับ `cid` ของบัญชีนั้นเงียบ ๆ** ทั้งที่ endpoint นี้ไม่เขียน audit เลย — `cid`
+   * คือค่าที่ ThaiD §2.4 เอาไปเทียบตอนเปิดใช้งาน พิมพ์ผิดครั้งเดียวจึงเปลี่ยนตัวคนที่
+   * เปิดบัญชีนั้นได้โดยไม่เหลือร่องรอย
+   *
+   * ตอนนี้อีเมลหรือเลขบัตรที่มีบัญชีอยู่แล้วตอบ 409 เสมอ ทางแก้ข้อมูลผิดคือ
+   * `DELETE /api/admin/invitations/:id` ซึ่งเขียน `INVITATION_DELETED` เก็บอีเมล เลขบัตร
+   * และ role ที่ลบไป แล้วค่อยเชิญใหม่ — ทางที่ปลอดภัยกว่าคือทางที่มีหลักฐาน
+   *
+   * ส่วน "ลิงก์หาย/หมดอายุ แต่ข้อมูลถูกหมดแล้ว" ใช้ `POST /invitations/:id/resend`
+   * ซึ่งไม่รับ payload จึงไม่มีอะไรให้กรอกผิด
+   */
+  const existing = await prisma.userAccount.findUnique({
+    where: { email },
+    select: { id: true, status: true, activationKeys: { select: { id: true }, take: 1 } },
+  });
+  if (existing) {
+    res.status(409).json({
+      error: "exists",
+      message:
+        existing.status === UserAccountStatus.ACTIVE
+          ? `อีเมลนี้มีบัญชีที่เปิดใช้งานแล้วในระบบ — เชิญซ้ำไม่ได้`
+          : `อีเมลนี้มีคำเชิญค้างอยู่แล้ว — ระบบไม่มีการเชิญซ้ำ ` +
+            `ถ้าต้องการส่งลิงก์ใหม่ให้คนเดิมโดยไม่แก้ข้อมูล ใช้ POST /api/admin/invitations/:id/resend ` +
+            `ถ้าข้อมูลที่เชิญไว้ผิด ให้ลบด้วย DELETE /api/admin/invitations/:id แล้วเชิญใหม่ ` +
+            `(ค้นหาใบเดิมได้ที่ GET /api/admin/invitations?email=...)`,
+      userAccountId: existing.id,
+      activationKeyId: existing.activationKeys[0]?.id ?? null,
+    });
     return;
   }
 
@@ -565,74 +615,38 @@ adminRouter.post("/invitations", async (req, res) => {
    *
    * ถ้าไม่ดักตรงนี้ Prisma จะโยน P2002 ขึ้นมากลางทรานแซกชันแล้วกลายเป็น 500 ทั้งที่
    * ความหมายจริงคือ "เลขบัตรนี้มีบัญชีอยู่แล้ว" — บอกไปด้วยว่าเป็นบัญชีอีเมลใด เพราะ
-   * คนเรียก endpoint นี้คือเจ้าหน้าที่ที่ถือ admin token และต้องรู้ว่าต้องไปแก้ที่ใบไหน
+   * คนเรียก endpoint นี้คือเจ้าหน้าที่ที่ถือ admin token ไม่ใช่คนนอก จึงไม่ต้อง mask
+   * (ตรงข้ามกับฝั่งฟอร์มจดทะเบียนที่ mask เพราะคนกรอกเป็นใครก็ได้)
    */
-  const sameCid = await prisma.userAccount.findUnique({ where: { cid } });
-  if (sameCid && sameCid.id !== existing?.id) {
+  const sameCid = await prisma.userAccount.findUnique({
+    where: { cid },
+    select: { id: true, email: true, activationKeys: { select: { id: true }, take: 1 } },
+  });
+  if (sameCid) {
     res.status(409).json({
       error: "cid_exists",
       message:
         `เลขบัตรประชาชนนี้เป็นของบัญชี ${sameCid.email} อยู่แล้ว — หนึ่งเลขบัตรมีได้หนึ่งบัญชี ` +
-        `ถ้าต้องการส่งคำเชิญให้คนเดิมอีกครั้ง ให้เชิญอีเมลนั้นซ้ำ ` +
-        `ระบบจะออกคีย์ใบใหม่และยกเลิกใบเก่าให้ ถ้าครั้งแรกกรอกอีเมลผิด ต้องแก้อีเมลของบัญชีนั้นก่อน`,
+        `ถ้าเป็นคนเดียวกันและแค่อยากส่งลิงก์ใหม่ ใช้ POST /api/admin/invitations/:id/resend ` +
+        `ถ้าเชิญผิด ให้ลบคำเชิญใบเดิมด้วย DELETE /api/admin/invitations/:id แล้วเชิญใหม่`,
+      userAccountId: sameCid.id,
+      activationKeyId: sameCid.activationKeys[0]?.id ?? null,
     });
     return;
   }
 
   const result = await prisma.$transaction(async (tx) => {
-    // เชิญซ้ำบัญชีที่ยัง PENDING ถือว่าเจ้าหน้าที่กำลังแก้ข้อมูลที่กรอกผิด — เขียนทับเลขบัตรเดิม
-    const account = existing
-      ? await tx.userAccount.update({
-          where: { id: existing.id },
-          data: { cid, updatedBy: SYSTEM_USER_ID },
-        })
-      : await tx.userAccount.create({
-          data: {
-            email,
-            cid,
-            displayName: displayName ?? email,
-            accountType: isOrgScoped ? AccountType.ORGANIZATION : AccountType.BDI,
-            status: UserAccountStatus.PENDING,
-            createdBy: SYSTEM_USER_ID,
-            updatedBy: SYSTEM_USER_ID,
-          },
-        });
-
-    /**
-     * เชิญคนที่จะมา "สร้างหน่วยงานของตัวเอง" (Journey B) โดยไม่ระบุหน่วยงาน
-     *
-     * activation_key.organization_id เป็น NOT NULL ตามดีไซน์ แต่ตอนเชิญยังไม่มีหน่วยงาน
-     * ให้ผูก — ถ้าบังคับให้ระบุ เส้นทางนี้จะเข้าไม่ได้เลย เพราะหน่วยงานเกิดหลังจากที่
-     * ผู้ใช้ล็อกอินเข้ามากรอกฟอร์ม
-     *
-     * จึงสร้างหน่วยงานเปล่าสถานะ PENDING_REGISTRATION พร้อมคำขอฉบับร่างไว้ล่วงหน้า
-     * ให้เป็นของบัญชีนั้น ผู้ใช้กด "สร้างหน่วยงาน" แล้วจะเจอร่างใบนี้แทนที่จะได้ใบใหม่
-     * (POST /api/organizations ตอบ 409 พร้อม id ของร่างเดิม แล้วหน้าเว็บพาไปแก้ต่อ)
-     */
-    let organizationId = requestedOrganizationId;
-    if (!organizationId) {
-      const placeholder = await tx.organization.create({
-        data: {
-          organizationCode: await nextOrganizationCode(tx),
-          nameTh: PLACEHOLDER_ORGANIZATION_NAME,
-          status: OrganizationStatus.PENDING_REGISTRATION,
-          createdBy: SYSTEM_USER_ID,
-          updatedBy: SYSTEM_USER_ID,
-        },
-      });
-      await tx.organizationRegistrationRequest.create({
-        data: {
-          requestNumber: await nextOrganizationRequestNumber(tx),
-          organizationId: placeholder.id,
-          organizationCode: placeholder.organizationCode,
-          status: RequestStatus.DRAFT,
-          userEmail: email,
-          createdBy: account.id,
-          updatedBy: account.id,
-        },
-      });
-      organizationId = placeholder.id;
-    }
+    const account = await tx.userAccount.create({
+      data: {
+        email,
+        cid,
+        displayName: displayName ?? email,
+        accountType: isOrgScoped ? AccountType.ORGANIZATION : AccountType.BDI,
+        status: UserAccountStatus.PENDING,
+        createdBy: SYSTEM_USER_ID,
+        updatedBy: SYSTEM_USER_ID,
+      },
+    });
 
     const { key, record } = await issueActivationKey(tx, {
       userAccountId: account.id,
@@ -641,10 +655,23 @@ adminRouter.post("/invitations", async (req, res) => {
       actorId: SYSTEM_USER_ID,
     });
 
-    return { account, key, record, organizationId };
+    return { account, key, record };
   });
 
   await sendInvitationEmail(email, result.key, ROLE_LABELS[role]);
+
+  /**
+   * การออกคำเชิญไม่เคยถูกบันทึกลง audit เลย ทั้งที่มันสร้างบัญชีและออกสิทธิ์เข้าระบบ —
+   * `INVITATION_DELETED` จึงเคยเป็นร่องรอยเดียวของคำเชิญ และมีเฉพาะตอนถูกลบ
+   */
+  await logAudit({
+    action: AuditAction.ACTIVATION_KEY_ISSUED,
+    subjectType: AuditSubject.USER_ACTIVATION_KEY,
+    subjectId: result.record.id,
+    organizationId,
+    after: { email, cid, role, userAccountId: result.account.id },
+    metadata: { issued_via: "ADMIN_API", reason: "INVITATION" },
+  });
 
   res.status(201).json({
     activationKeyId: result.record.id,
@@ -652,29 +679,150 @@ adminRouter.post("/invitations", async (req, res) => {
     email,
     role,
     roleLabel: ROLE_LABELS[role],
-    organizationId: result.organizationId,
+    organizationId,
     expiresAt: result.record.expiresAt,
   });
 });
 
-adminRouter.get("/invitations", async (_req, res) => {
-  const keys = await prisma.activationKey.findMany({
-    orderBy: { createdAt: "desc" },
-    take: 100,
-    select: {
-      id: true,
-      status: true,
-      issuedAt: true,
-      expiresAt: true,
-      usedAt: true,
-      revokedAt: true,
-      createdAt: true,
+const invitationQuerySchema = z.object({
+  /** ค้นบางส่วนของอีเมล — ใบที่ต้องลบมักถูกจำได้แค่ "อีเมลอะไรสักอย่างที่มี @mot" */
+  email: z.string().trim().min(1).optional(),
+  /**
+   * เลขบัตรค้นแบบตรงตัวเต็มเท่านั้น ไม่ใช่ substring
+   *
+   * ค้นบางส่วนได้เท่ากับให้ไล่เดาเลขบัตรทีละหลักจาก endpoint นี้ ซึ่งไม่ใช่สิ่งที่
+   * เจ้าหน้าที่ต้องการอยู่แล้ว — เขาถือเลขเต็มจากเอกสารที่หน่วยงานส่งมา
+   */
+  cid: nationalIdSchema.optional(),
+  status: z.enum(Object.values(ActivationKeyStatus) as [string, ...string[]]).optional(),
+  organizationId: uuidSchema("organizationId ต้องเป็น UUID").optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).default(50),
+});
+
+/**
+ * รายการคำเชิญ — ค้นหาได้ เพราะตอนนี้เป็นทางเดียวที่ใช้หาใบที่ต้องลบ
+ *
+ * ของเดิมเป็น `take: 100` ล้วน ๆ ไม่อ่าน query เลย ซึ่งพอเลิกเชิญซ้ำแล้วก็แปลว่า
+ * เจ้าหน้าที่หาใบที่ต้องลบไม่เจอเมื่อคำเชิญเกินร้อยใบ
+ */
+adminRouter.get("/invitations", async (req, res) => {
+  const parsed = invitationQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+    return;
+  }
+  const { email, cid, status, organizationId, page, pageSize } = parsed.data;
+
+  const where: Prisma.ActivationKeyWhereInput = {
+    ...(status ? { status: status as ActivationKeyStatus } : {}),
+    ...(organizationId ? { organizationId } : {}),
+    ...(email || cid
+      ? {
+          userAccount: {
+            ...(email ? { email: { contains: email, mode: "insensitive" as const } } : {}),
+            ...(cid ? { cid } : {}),
+          },
+        }
+      : {}),
+  };
+
+  const [total, keys] = await prisma.$transaction([
+    prisma.activationKey.count({ where }),
+    prisma.activationKey.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      select: {
+        id: true,
+        status: true,
+        issuedAt: true,
+        expiresAt: true,
+        usedAt: true,
+        revokedAt: true,
+        createdAt: true,
+        userAccount: { select: { id: true, email: true, cid: true, status: true } },
+        role: { select: { code: true, nameTh: true } },
+        organization: { select: { id: true, nameTh: true } },
+      },
+    }),
+  ]);
+
+  res.json({ invitations: keys, total, page, pageSize });
+});
+
+/**
+ * ส่งคำเชิญใบเดิมซ้ำ — `POST /api/admin/invitations/:id/resend`
+ *
+ * คู่กับการตัด "เชิญซ้ำ" ออกจาก `POST /invitations`: เคสที่เกิดบ่อยที่สุดคือลิงก์หาย
+ * หรือหมดอายุ โดยที่อีเมล เลขบัตร role และหน่วยงานถูกหมดแล้ว ถ้าบังคับให้ลบแล้วเชิญใหม่
+ * เคสนี้จะกลายเป็นสี่ขั้นและต้องพิมพ์ payload ใหม่ทั้งชุด ซึ่งเป็นจุดที่พิมพ์ผิดตั้งแต่แรก
+ *
+ * **ไม่รับ payload เลย** จึงไม่มีอะไรให้กรอกผิด — ออกคีย์ใบใหม่ให้ (บัญชี/หน่วยงาน/role เดิม)
+ * `issueActivationKey()` ยกเลิกใบเก่าของชุดเดียวกันให้เอง เหลือลิงก์ที่ใช้ได้ใบเดียว
+ */
+adminRouter.post("/invitations/:id/resend", async (req, res) => {
+  const parsedId = z.string().uuid().safeParse(req.params.id);
+  if (!parsedId.success) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบคำเชิญที่ระบุ" });
+    return;
+  }
+
+  const key = await prisma.activationKey.findUnique({
+    where: { id: parsedId.data },
+    include: {
       userAccount: { select: { id: true, email: true, status: true } },
-      role: { select: { code: true, nameTh: true } },
-      organization: { select: { id: true, nameTh: true } },
+      role: { select: { code: true } },
     },
   });
-  res.json({ invitations: keys });
+  if (!key) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบคำเชิญที่ระบุ" });
+    return;
+  }
+
+  if (key.userAccount.status === UserAccountStatus.ACTIVE) {
+    res.status(409).json({
+      error: "activated",
+      message:
+        `บัญชี ${key.userAccount.email} เปิดใช้งานแล้ว จึงไม่ต้องส่งคำเชิญซ้ำ — ` +
+        `ถ้าเขาเข้าระบบไม่ได้ เป็นเรื่องของการล็อกอิน ไม่ใช่คำเชิญ`,
+    });
+    return;
+  }
+
+  const roleCode = key.role.code as RoleCode;
+  const { key: raw, record } = await prisma.$transaction((tx) =>
+    issueActivationKey(tx, {
+      userAccountId: key.userAccountId,
+      organizationId: key.organizationId,
+      roleCode,
+      actorId: SYSTEM_USER_ID,
+    }),
+  );
+
+  await sendInvitationEmail(key.userAccount.email, raw, ROLE_LABELS[roleCode]);
+
+  await logAudit({
+    action: AuditAction.ACTIVATION_KEY_ISSUED,
+    subjectType: AuditSubject.USER_ACTIVATION_KEY,
+    subjectId: record.id,
+    organizationId: key.organizationId,
+    before: { activationKeyId: key.id, status: key.status },
+    after: { email: key.userAccount.email, role: roleCode },
+    metadata: { issued_via: "ADMIN_API", reason: "RESEND", replaced_key_id: key.id },
+  });
+
+  res.status(201).json({
+    activationKeyId: record.id,
+    replacedActivationKeyId: key.id,
+    userAccountId: key.userAccountId,
+    email: key.userAccount.email,
+    role: roleCode,
+    roleLabel: ROLE_LABELS[roleCode],
+    organizationId: key.organizationId,
+    expiresAt: record.expiresAt,
+  });
 });
 
 /**
