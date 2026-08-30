@@ -325,3 +325,16 @@ THAID_REQUIRE_NONCE=false      # ดูข้อ 7
 | ให้ session ใบเดียวตาย | `POST /api/auth/logout` — หรือ `UPDATE iam.session SET revoked_at = now()` |
 | บังคับให้ทุกคนออกจากระบบ | `UPDATE iam.session SET revoked_at = now() WHERE revoked_at IS NULL` (ไม่ต้องรีสตาร์ต ไม่ต้องหมุนความลับ) |
 | เรียก API ด้วย Bearer token ได้ไหม | ไม่ได้ ยกเว้น `/api/admin/*` ที่ใช้ `x-admin-token` |
+
+## Session กับการจัดการบัญชีของแอดมิน
+
+`/api/admin/users` ปิด session ของบัญชีในสามจังหวะ และเหตุผลที่บันทึกต่างกันทุกครั้ง:
+
+| คำสั่ง | `SessionRevokeReason` | ทำไม |
+| --- | --- | --- |
+| `suspend` · `deactivate` | `ACCOUNT_SUSPENDED` | บัญชีเข้าระบบไม่ได้แล้ว ใบที่ค้างอยู่ต้องตายทันที |
+| `identity` (แก้อีเมล/เลขบัตร) · `transfer` | `ROTATED` | ตัวตนหรือระดับสิทธิ์เปลี่ยน — ออกใบใหม่กัน session fixation |
+| `DELETE /users/:id/sessions` | `LOGOUT_ALL` | บังคับออกจากระบบโดยไม่ระงับบัญชี ใช้ตอนสงสัยว่า session ถูกขโมย |
+
+`middleware/auth.ts` ปิด session ให้อยู่แล้วทุกครั้งที่เจอบัญชีสถานะไม่ใช่ `ACTIVE` —
+สามคำสั่งข้างบนปิดตั้งแต่ตอนสั่ง ไม่ต้องรอให้เจ้าตัวยิง request มาก่อน

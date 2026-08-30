@@ -9,6 +9,7 @@ import { env } from "./env.js";
 import { DocumentRenderError } from "./lib/document-render.js";
 import { correlationMiddleware } from "./lib/context.js";
 import { adminRouter } from "./routes/admin.js";
+import { adminUserRouter } from "./routes/admin-users.js";
 import { addressRouter } from "./routes/address.js";
 import { authRouter } from "./routes/auth.js";
 import { datasetRequestRouter } from "./routes/dataset-requests.js";
@@ -34,6 +35,7 @@ app.get("/", (_req, res) => {
 
 app.use("/health", healthRouter);
 app.use("/api/auth", authRouter);
+app.use("/api/admin/users", adminUserRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/address", addressRouter);
 app.use("/api/organizations", organizationRouter);

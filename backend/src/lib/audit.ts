@@ -27,6 +27,26 @@ export const AuditAction = {
   USER_ACCOUNT_ACTIVATED: "USER_ACCOUNT_ACTIVATED",
   USER_ACCOUNT_DEACTIVATED: "USER_ACCOUNT_DEACTIVATED",
 
+  /**
+   * การจัดการบัญชีที่เปิดใช้งานแล้ว — เพิ่มจากรายการใน sheet พร้อม `/api/admin/users`
+   *
+   * `USER_ACCOUNT_DEACTIVATED` มีอยู่ก่อนแล้วแต่ไม่มีใครเขียน เพราะการระงับบัญชีเคยทำ
+   * ผ่านฐานข้อมูลตรง ๆ (คอมเมนต์ใน `middleware/auth.ts` เขียนไว้เอง) สี่ตัวนี้เติมให้ครบวง
+   * เพราะทุกคำสั่งที่ตัดสิทธิ์คนต้องตอบได้ว่าใครสั่ง เมื่อไร ด้วยเหตุผลอะไร
+   */
+  USER_ACCOUNT_SUSPENDED: "USER_ACCOUNT_SUSPENDED",
+  USER_ACCOUNT_REINSTATED: "USER_ACCOUNT_REINSTATED",
+  USER_ACCOUNT_REACTIVATED: "USER_ACCOUNT_REACTIVATED",
+  USER_ACCOUNT_UPDATED: "USER_ACCOUNT_UPDATED",
+  /**
+   * ปล่อยอีเมลของบัญชีให้กลับไปใช้ใหม่ได้ (กล่องจดหมายกลางเปลี่ยนมือ)
+   *
+   * `before` เก็บอีเมลเดิมไว้ เพราะหลังจากนี้แถวนั้นไม่มีอีเมลเดิมอีกแล้ว —
+   * เหตุผลเดียวกับที่ `INVITATION_DELETED` ต้องเก็บอีเมลกับเลขบัตรไว้ในตัวเอง
+   * **เลขบัตรไม่มีทางถูกปล่อย** เลขบัตรคือคน ไม่ใช่ตำแหน่ง
+   */
+  USER_IDENTITY_RELEASED: "USER_IDENTITY_RELEASED",
+
   ACTIVATION_KEY_ISSUED: "ACTIVATION_KEY_ISSUED",
   ACTIVATION_KEY_USED: "ACTIVATION_KEY_USED",
   ACTIVATION_KEY_REVOKED: "ACTIVATION_KEY_REVOKED",

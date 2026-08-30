@@ -526,13 +526,38 @@ function fullName(prefix?: string | null, first?: string | null, last?: string |
 }
 
 /** ผู้ใช้เห็นคำขอนี้ได้ไหม */
+/**
+ * ใครแก้และนำส่งคำขอใบนี้ได้ — **คำขอเป็นของหน่วยงาน ไม่ใช่ของคนที่กดสร้าง**
+ *
+ * เดิมเกณฑ์คือ `request.createdBy === session.sub` ซึ่งทำให้งานติดตัวคนไป: ถ้าผู้ดำเนินการ
+ * ย้ายหน่วยงานหรือถูกปิดบัญชี คำขอที่เขาสร้างไว้จะไม่มีใครแตะได้อีกเลย เพราะ `created_by`
+ * เป็น NOT NULL ล้างไม่ได้ และคนที่ยังอยู่กับหน่วยงานก็ไม่ผ่านเกณฑ์นี้ — ขณะที่คนที่ย้าย
+ * ออกไปแล้วยังแก้ของหน่วยงานเก่าได้อยู่ ซึ่งกลับด้านกับที่ควรเป็นทั้งสองทาง
+ *
+ * เปลี่ยนเป็น "เป็นผู้ดำเนินการที่ใช้งานอยู่ของหน่วยงานเจ้าของคำขอ" — งานจึงอยู่กับ
+ * หน่วยงาน คนใหม่รับช่วงต่อได้ทันที และคนที่ย้ายออกก็หลุดจากงานเก่าโดยอัตโนมัติ
+ * เพราะ `session.organizationId` คำนวณใหม่จาก role assignment ทุก request
+ */
+function canEdit(
+  session: { roles: RoleCode[]; organizationId: string | null },
+  request: { organizationId: string },
+): boolean {
+  return (
+    session.organizationId === request.organizationId &&
+    session.roles.includes(ROLE_CODES.ORGANIZATION_USER)
+  );
+}
+
 function canView(
   session: { sub: string; roles: RoleCode[]; organizationId: string | null; email: string },
   request: { createdBy: string; organizationId: string; approverEmail: string | null },
 ): boolean {
   if (isBdiStaff(session.roles)) return true;
-  if (request.createdBy === session.sub) return true;
   if (session.organizationId === request.organizationId) return true;
+  /**
+   * ผู้มีอำนาจที่ยังไม่มี role — ถูกเชิญมาลงนามแต่ยังไม่ได้เปิดใช้งานบัญชี จึงยังไม่มี
+   * assignment ให้ `session.organizationId` คำนวณจาก อีเมลบนคำขอเป็นทางเดียวที่เหลือ
+   */
   return request.approverEmail?.toLowerCase() === session.email.toLowerCase();
 }
 
@@ -1061,7 +1086,7 @@ organizationRouter.patch("/:id", async (req, res) => {
     where: { id: req.params.id },
     include: { organization: true },
   });
-  if (!request || request.createdBy !== session.sub) {
+  if (!request || !canEdit(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
@@ -1142,7 +1167,7 @@ organizationRouter.post("/:id/attachments", upload.single("file"), async (req, r
   const request = await prisma.organizationRegistrationRequest.findUnique({
     where: { id: req.params.id },
   });
-  if (!request || request.createdBy !== session.sub) {
+  if (!request || !canEdit(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
@@ -1219,7 +1244,7 @@ organizationRouter.post("/:id/generate-form", async (req, res) => {
     where: { id: req.params.id },
     include: { organization: true },
   });
-  if (!request || request.createdBy !== session.sub) {
+  if (!request || !canEdit(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
@@ -1498,7 +1523,7 @@ organizationRouter.post("/:id/submit", async (req, res) => {
     where: { id: req.params.id },
     include: { organization: true },
   });
-  if (!request || request.createdBy !== session.sub) {
+  if (!request || !canEdit(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
