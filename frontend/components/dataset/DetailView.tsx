@@ -643,7 +643,11 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
             title="ประวัติการดำเนินการ"
             description={`สร้างเมื่อ ${formatThaiDate(request.createdAt)}`}
           />
-          <Timeline events={request.events} />
+          <Timeline
+            events={request.events}
+            created={{ at: request.createdAt, by: request.createdBy }}
+            submittedAt={request.submittedAt}
+          />
         </Card>
       </div>
 

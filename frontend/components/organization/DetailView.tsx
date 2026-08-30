@@ -388,7 +388,11 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
 
         <Card>
           <CardHeader title="ประวัติการดำเนินการ" description={`ยื่นเมื่อ ${formatThaiDate(org.submittedAt ?? org.createdAt)}`} />
-          <Timeline events={org.events} />
+          <Timeline
+            events={org.events}
+            created={{ at: org.createdAt, by: org.createdBy }}
+            submittedAt={org.submittedAt}
+          />
         </Card>
       </div>
 
