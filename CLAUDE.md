@@ -235,11 +235,28 @@ is. That replaced an earlier rule where pressing someone else's gate silently sw
 explains itself beats a tab that moves under you. Returning to your own tab drops a selection
 that is no longer reachable, or the reader is left holding a filter they cannot clear.
 
-Every status badge shows the same **short** name as the node (`progress.currentShortLabel`) with
-the long `waitingLabel` on hover, keeping `TASK_TYPE_META` for colour. The short name is what
-stops the badge — `whitespace-nowrap` in a 12rem column — from painting over the progress
-column beside it, and without the node's own wording a dataset request at the re-check reads
-"รอเจ้าหน้าที่ BDI ตรวจสอบ" in the row while the node it was filtered by says "ตรวจซ้ำ".
+Every status badge shows the same **short** name as the node (`progress.currentShortLabel`),
+keeping `TASK_TYPE_META` for colour. Without the node's own wording a dataset request at the
+re-check reads "รอเจ้าหน้าที่ BDI ตรวจสอบ" in the row while the node it was filtered by says
+"ตรวจซ้ำ"; and the long form is `whitespace-nowrap`, so in a fixed column it paints over its
+neighbour. In the two tables the badge is therefore given **no** `waitingLabel` — that would
+set a `title`, and the browser's own tooltip would appear on top of the hover card below.
+
+**สถานะ and ความคืบหน้า are one column.** They told one story — the name of the gate, and which
+number that gate is — so the cell stacks the badge over `ขั้นที่ N จาก M` and the dots, the
+shape `DatasetSection` already used. `RowDetailCard` carries everything that used to be in a
+`title`: full stage name, next stage, phase note, last-touched date and days waited. It opens
+with no delay, which is the point — `title` waits about a second and cannot be tuned.
+
+That card is `position: fixed` and rendered **outside** `<Card>`. `overflow-hidden` on the Card
+clips absolutely-positioned children, but a fixed element is positioned against the viewport
+and escapes — *only while no ancestor has* `transform`, `filter`, `backdrop-filter`,
+`will-change` or `contain`, any of which would make that ancestor the containing block instead.
+Nothing from `body` down to a row does today (`frost-12` is on the header, a sibling of
+`<main>`). Adding an animation to `<main>` or `<Card>` would break this silently. Rendering it
+outside the Card also keeps anything block-level or focusable from nesting inside the row
+`<button>`. One card's state per table, not per row, and it closes on scroll and resize because
+the captured rect goes stale the moment the page moves.
 
 The connectors are CSS, not SVG, and they stay anchored without measuring anything only because
 every node shares a `min-h-[4.5rem]`: a row's centre is then always `2.25rem` from its edge.
