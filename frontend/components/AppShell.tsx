@@ -7,7 +7,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Logo } from "@/components/brand/Logo";
 import { NotificationBell } from "@/components/NotificationBell";
-import { useSession } from "@/components/SessionProvider";
+import { SessionChangedDialog } from "@/components/SessionChangedDialog";
+import { sessionUserName, useSession } from "@/components/SessionProvider";
 import { api } from "@/lib/api";
 import { ROLE_LABELS, isBdiStaff, isSpecialistOnly } from "@/lib/status";
 
@@ -31,6 +32,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Header />
       <main className="flex-1">{children}</main>
       <Footer />
+      {/* ตัวตนของเบราว์เซอร์เปลี่ยนไประหว่างที่แท็บนี้เปิดค้าง — ต้องขวางไว้ ไม่ใช่แค่บอก */}
+      <SessionChangedDialog />
     </div>
   );
 }
@@ -139,7 +142,7 @@ function UserMenu() {
   }, [open]);
 
   if (!user) return null;
-  const name = [user.firstName, user.lastName].filter(Boolean).join(" ") || user.email;
+  const name = sessionUserName(user);
   const initial = (user.firstName ?? user.email)[0]?.toUpperCase() ?? "?";
 
   const logout = async () => {
