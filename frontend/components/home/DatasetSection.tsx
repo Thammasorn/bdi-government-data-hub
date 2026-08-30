@@ -23,6 +23,7 @@ export function DatasetSection({
   title,
   description,
   rows,
+  count,
   emptyText,
   tone = "plain",
   footer,
@@ -30,6 +31,8 @@ export function DatasetSection({
   title: string;
   description: string;
   rows: DatasetRequestListItem[];
+  /** จำนวนจริงทั้งหมด — section แสดงแค่ไม่กี่แถวแรก `rows.length` จึงพูดแทนไม่ได้ */
+  count?: number;
   emptyText: string;
   tone?: "plain" | "attention";
   footer?: ReactNode;
@@ -44,7 +47,7 @@ export function DatasetSection({
             tone === "attention" ? "bg-coral-50 text-coral-600" : "bg-navy-50 text-navy-700",
           )}
         >
-          {rows.length} รายการ
+          {count ?? rows.length} รายการ
         </span>
         <p className="w-full text-[14px] text-ink-muted">{description}</p>
       </header>

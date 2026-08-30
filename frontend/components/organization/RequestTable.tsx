@@ -1,0 +1,148 @@
+"use client";
+
+import clsx from "clsx";
+import { useRouter } from "next/navigation";
+
+import { ListSearch } from "@/components/list/ListSearch";
+import { Pagination } from "@/components/list/Pagination";
+import { QueueTabs } from "@/components/list/QueueTabs";
+import { QueueTiles } from "@/components/list/QueueTiles";
+import { SortSelect } from "@/components/list/SortSelect";
+import { StageFilter } from "@/components/list/StageFilter";
+import { ApprovalStepsCompact } from "@/components/review/ApprovalSteps";
+import { useSession } from "@/components/SessionProvider";
+import { Card, StatusBadge } from "@/components/ui/Card";
+import { SkeletonRows } from "@/components/ui/Spinner";
+import { formatThaiDate } from "@/lib/status";
+import { hasOwnQueue, type StageToken } from "@/lib/stage";
+import type { OrganizationListItem } from "@/lib/types";
+import { useRequestList } from "@/lib/use-request-list";
+
+/**
+ * ตารางคำขอสร้างหน่วยงาน — เดิมเขียนอยู่ในหน้า /admin/organizations ทั้งก้อน และเป็น
+ * สำเนาของตารางชุดข้อมูลเกือบบรรทัดต่อบรรทัด ตอนนี้ทั้งสองแบ่ง useRequestList และ
+ * ชิ้นส่วนใน components/list ร่วมกัน เหลือต่างกันเฉพาะคอลัมน์กับ JSX ของแถว
+ */
+export function OrganizationRequestTable({ basePath }: { basePath: string }) {
+  const router = useRouter();
+  const { user } = useSession();
+  const list = useRequestList<OrganizationListItem>({
+    endpoint: "/api/organizations",
+    itemsKey: "organizations",
+    hasQueue: hasOwnQueue(user?.roles ?? []),
+  });
+
+  const stagesAvailable = Object.keys(list.summary?.stages ?? {}) as StageToken[];
+  const showQueue = (list.summary?.myStages.length ?? 0) > 0;
+
+  return (
+    <>
+      <QueueTiles summary={list.summary} selected={list.stages} onPick={list.toggleStage} />
+
+      {showQueue ? (
+        <QueueTabs
+          tab={list.tab}
+          onChange={list.setTab}
+          mine={list.summary?.mine ?? null}
+          all={list.summary?.total ?? null}
+        />
+      ) : null}
+
+      <div className={clsx("mb-5 flex flex-col gap-4", showQueue ? "mt-5" : "")}>
+        <ListSearch
+          value={list.query}
+          onChange={list.setQuery}
+          placeholder="ค้นหาชื่อหน่วยงาน หรือผู้ยื่น"
+        />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <StageFilter
+            available={stagesAvailable}
+            counts={list.summary?.stages}
+            selected={list.stages}
+            onToggle={list.toggleStage}
+            onClear={list.clearStages}
+          />
+          <SortSelect value={list.sort} onChange={list.setSort} />
+        </div>
+      </div>
+
+      <Card className="overflow-hidden">
+        {list.loading ? (
+          <SkeletonRows />
+        ) : list.rows.length === 0 ? (
+          <EmptyState hasFilter={list.hasFilter} onQueueTab={list.tab === "mine"} />
+        ) : (
+          <>
+            {/* คอลัมน์สถานะต้องกว้างคงที่ ไม่ใช่ auto — หัวตารางกับแถวเป็นคนละ grid
+                ถ้าใช้ auto ความกว้างจะคิดจากเนื้อหาของแต่ละอันแยกกัน แล้วคอลัมน์จะเหลื่อม */}
+            <div className="hidden grid-cols-[minmax(0,1.7fr)_minmax(0,1.3fr)_12rem_13rem_8rem] gap-4 border-b border-line px-6 py-3 text-[12px] font-semibold uppercase tracking-wide text-ink-subtle md:grid">
+              <span>ชื่อหน่วยงาน</span>
+              <span>ผู้สร้าง</span>
+              <span>สถานะ</span>
+              <span>ความคืบหน้า</span>
+              <span className="text-right">วันที่ยื่น</span>
+            </div>
+            <ul className="divide-y divide-line">
+              {list.rows.map((row) => (
+                <li key={row.id}>
+                  <button
+                    type="button"
+                    onClick={() => router.push(`${basePath}/${row.id}`)}
+                    className="grid w-full grid-cols-1 items-center gap-2 px-6 py-4 text-left transition-colors hover:bg-navy-50/60 md:grid-cols-[minmax(0,1.7fr)_minmax(0,1.3fr)_12rem_13rem_8rem] md:gap-4"
+                  >
+                    <span className="truncate font-medium text-ink">{row.name}</span>
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm text-ink">
+                        {[row.createdBy.firstName, row.createdBy.lastName].filter(Boolean).join(" ") || "—"}
+                      </span>
+                      <span className="block truncate text-[13px] text-ink-muted">{row.createdBy.email}</span>
+                    </span>
+                    <span className="justify-self-start">
+                      {/* ส่ง currentTaskType ไปด้วย ไม่งั้นแถวขึ้นแค่ "นำส่งแล้ว" ทั้งที่ข้อมูลด่านมาถึงแล้ว */}
+                      <StatusBadge status={row.status} currentTaskType={row.currentTaskType} />
+                    </span>
+                    <span className="min-w-0">
+                      <ApprovalStepsCompact progress={row.progress} />
+                    </span>
+                    <span className="text-[13px] text-ink-muted md:text-right">
+                      {row.submittedAt ? formatThaiDate(row.submittedAt).split(" ").slice(0, 3).join(" ") : "—"}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </Card>
+
+      <Pagination info={list.pageInfo} onPage={list.goToPage} />
+    </>
+  );
+}
+
+function EmptyState({ hasFilter, onQueueTab }: { hasFilter: boolean; onQueueTab: boolean }) {
+  return (
+    <div className="px-6 py-20 text-center">
+      <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-navy-50">
+        <svg viewBox="0 0 24 24" className="h-6 w-6 text-navy-400" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+          <path d="M4 20V7l8-4 8 4v13" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M2 20h20M10 11h4M10 15h4" strokeLinecap="round" />
+        </svg>
+      </div>
+      <p className="mt-4 font-medium text-ink">
+        {hasFilter
+          ? "ไม่พบรายการที่ตรงกับเงื่อนไข"
+          : onQueueTab
+            ? "ไม่มีคำขอที่รอคุณดำเนินการ"
+            : "ยังไม่มีคำขอสร้างหน่วยงาน"}
+      </p>
+      <p className="mt-1 text-sm text-ink-muted">
+        {hasFilter
+          ? "ลองล้างตัวกรองหรือเปลี่ยนคำค้นหา"
+          : onQueueTab
+            ? 'กดแท็บ "ทั้งหมด" เพื่อดูคำขอที่อยู่ในขั้นตอนของคนอื่น'
+            : "เมื่อมีหน่วยงานยื่นคำขอเข้ามา รายการจะแสดงที่นี่"}
+      </p>
+    </div>
+  );
+}

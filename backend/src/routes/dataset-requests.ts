@@ -98,6 +98,16 @@ import {
 } from "../lib/system.js";
 import { formatZodError, isUuid, parseRequestSnapshot } from "../lib/validation.js";
 import {
+  listOrderBy,
+  myStageTokens,
+  parseFilterTokens,
+  parsePaging,
+  parseSort,
+  stageCounts,
+  stageWhere,
+} from "../lib/queue.js";
+import {
+  TASK_TYPE_ROLES,
   WorkflowError,
   activeTask,
   cancelActiveTask,
@@ -313,38 +323,81 @@ function toApiShape(request: RequestRow, extra?: Record<string, unknown>) {
 
 // ---------------------------------------------------------------- list
 
+/** ช่องที่การค้นหาไล่ดู */
+const searchFilter = (search: string): Prisma.DatasetRegistrationRequestWhereInput => ({
+  OR: [
+    { requestNumber: { contains: search, mode: "insensitive" } },
+    { proposedTitle: { contains: search, mode: "insensitive" } },
+    { metadata: { title: { contains: search, mode: "insensitive" } } },
+    { metadata: { name: { contains: search, mode: "insensitive" } } },
+  ],
+});
+
+/**
+ * เงื่อนไขพื้นฐานของทั้งหน้ารายการและตัวเลขสรุป — เห็นอะไรได้ + ค้นหาอะไรอยู่
+ *
+ * ทุกตัวกรองเป็น **หนึ่ง element ของ AND[]** เดิมการค้นหา assign ทับ `where.OR`
+ * ซึ่งจะล้าง OR ที่ visibilityFilter() คืนมา — วันนี้ยังไม่ระเบิดเพราะ visibilityFilter
+ * ไม่เคยคืน OR แต่ตัวกรองด่านที่เพิ่มเข้ามาเป็น OR อีกก้อน กติกาข้อเดียวนี้จึงเป็น
+ * สิ่งที่ทำให้ตัวกรองสองตัวที่ต่างจำกัด `id` (ผู้เชี่ยวชาญที่กดแท็บ "ที่ต้องดำเนินการ")
+ * ตัดกันถูกต้อง แทนที่จะเงียบ ๆ ทิ้งไปข้างหนึ่ง
+ */
+async function baseFilters(
+  session: Session,
+  q?: string,
+): Promise<Prisma.DatasetRegistrationRequestWhereInput[]> {
+  const and: Prisma.DatasetRegistrationRequestWhereInput[] = [await visibilityFilter(session)];
+  if (q?.trim()) and.push(searchFilter(q.trim()));
+  return and;
+}
+
 datasetRequestRouter.get("/", async (req, res) => {
   const session = req.session! as Session;
-  const { status, q } = req.query as { status?: string; q?: string };
+  const { status, stage, scope, sort, q } = req.query as {
+    status?: string;
+    stage?: string;
+    scope?: string;
+    sort?: string;
+    q?: string;
+  };
 
-  const where: Prisma.DatasetRegistrationRequestWhereInput = { ...(await visibilityFilter(session)) };
+  const and = await baseFilters(session, q);
 
-  const statuses = (status ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s): s is RequestStatus => s in RequestStatus);
-  if (statuses.length > 0) where.status = { in: statuses };
+  /**
+   * `stage` คือชื่อใหม่ `status` คือชื่อเดิม — รวมเป็นชุดเดียวกันแล้ว OR กัน ไม่ใช่ AND
+   * ลิงก์เก่า `?status=SUBMITTED,UNDER_REVIEW` จึงยังทำงาน และคนที่มาจากลิงก์นั้นแล้ว
+   * กดเม็ดกรองใหม่ก็ไม่ได้ผลลัพธ์ศูนย์แถวจากเงื่อนไขที่ขัดกันเอง
+   */
+  const tokens = [...parseFilterTokens(status), ...parseFilterTokens(stage)];
+  const stageClause = await stageWhere(prisma, SUBJECT, [...new Set(tokens)]);
+  if (stageClause) and.push(stageClause);
 
-  if (q?.trim()) {
-    const search = q.trim();
-    where.OR = [
-      { requestNumber: { contains: search, mode: "insensitive" } },
-      { proposedTitle: { contains: search, mode: "insensitive" } },
-      { metadata: { title: { contains: search, mode: "insensitive" } } },
-      { metadata: { name: { contains: search, mode: "insensitive" } } },
-    ];
+  // แท็บ "ที่ต้องดำเนินการ" — ด่านที่ตำแหน่งของผู้เรียกเป็นคนทำ
+  if (scope === "mine") {
+    const mine = await stageWhere(prisma, SUBJECT, myStageTokens(session.roles));
+    // ไม่มีด่านเป็นของตัวเองเลย (เช่น ผู้ดูแลระบบ) = คิวว่าง ไม่ใช่ "ไม่กรอง"
+    and.push(mine ?? { id: { in: [] } });
   }
 
-  const requests = await prisma.datasetRegistrationRequest.findMany({
-    where,
-    orderBy: [{ submittedAt: "desc" }, { createdAt: "desc" }],
-    take: 200,
-    include: requestInclude,
-  });
+  const where: Prisma.DatasetRegistrationRequestWhereInput = { AND: and };
+  const paging = parsePaging(req.query);
+
+  const [requests, total] = await prisma.$transaction([
+    prisma.datasetRegistrationRequest.findMany({
+      where,
+      orderBy: listOrderBy(parseSort(sort)),
+      skip: paging.skip,
+      take: paging.take,
+      include: requestInclude,
+    }),
+    prisma.datasetRegistrationRequest.count({ where }),
+  ]);
 
   /**
    * ประวัติทั้งหมด ไม่ใช่เฉพาะแถวที่ยัง active — คอลัมน์ความคืบหน้าต้องรู้ว่าผ่านมาแล้วกี่ด่าน
    * และการแยก "ตรวจเบื้องต้น" กับ "ตรวจซ้ำ" อ่านไม่ได้จากแถวที่ค้างอยู่แถวเดียว
+   *
+   * คิวรีนี้กับอีกสองอันข้างล่างคีย์ด้วย id ของหน้าปัจจุบัน จึงเล็กลงตาม pageSize เอง
    */
   const tasks = await prisma.reviewTask.findMany({
     where: { subjectType: SUBJECT, subjectId: { in: requests.map((r) => r.id) } },
@@ -363,7 +416,7 @@ datasetRequestRouter.get("/", async (req, res) => {
   const activeTasks = tasks.filter(
     (t) => t.status === ReviewTaskStatus.PENDING || t.status === ReviewTaskStatus.IN_PROGRESS,
   );
-  const stage = new Map(activeTasks.map((t) => [t.subjectId, t]));
+  const stage_ = new Map(activeTasks.map((t) => [t.subjectId, t]));
   const progressBySubject = summariseMany({ subjectType: SUBJECT, requests, tasks });
 
   // ตารางเขียนว่า "· ผู้เชี่ยวชาญ <ชื่อ>" ต่อท้ายสถานะ จึงต้องมีชื่อ ไม่ใช่แค่ id
@@ -401,18 +454,62 @@ datasetRequestRouter.get("/", async (req, res) => {
   res.json({
     requests: requests.map((r) => ({
       ...toApiShape(r),
-      currentTaskType: stage.get(r.id)?.taskType ?? null,
-      currentRound: stage.get(r.id)?.roundNumber ?? null,
+      currentTaskType: stage_.get(r.id)?.taskType ?? null,
+      currentRound: stage_.get(r.id)?.roundNumber ?? null,
       progress: progressBySubject.get(r.id) ?? null,
       assignedSpecialist:
-        stage.get(r.id)?.taskType === ReviewTaskType.DATASET_SPECIALIST_REVIEW
-          ? (specialists.get(stage.get(r.id)!.assignedUserId) ?? null)
+        stage_.get(r.id)?.taskType === ReviewTaskType.DATASET_SPECIALIST_REVIEW
+          ? (specialists.get(stage_.get(r.id)!.assignedUserId) ?? null)
           : null,
       generatedForm: formByRequest.has(r.id)
         ? { id: formByRequest.get(r.id)!.id, filename: formByRequest.get(r.id)!.originalFileName }
         : null,
     })),
+    page: {
+      page: paging.page,
+      pageSize: paging.pageSize,
+      total,
+      pageCount: Math.max(1, Math.ceil(total / paging.pageSize)),
+    },
   });
+});
+
+/**
+ * ตัวเลขของแถบสรุปและป้ายแท็บ
+ *
+ * แยก endpoint เพราะขอบเขตของมันคือขอบเขตที่ **ไม่เปลี่ยน** ตอนกดเม็ดกรอง เปลี่ยนหน้า
+ * หรือสลับแท็บ — ถ้าคิดรวมมากับรายการ ตัวเลขบนแท็บจะขยับทุกครั้งที่กดอะไรในแท็บนั้น
+ *
+ * ต้องประกาศไว้ **เหนือ GET /:id** เหมือน /eligibility และ /specialists
+ */
+datasetRequestRouter.get("/summary", async (req, res) => {
+  const session = req.session! as Session;
+  const { q } = req.query as { q?: string };
+  const where: Prisma.DatasetRegistrationRequestWhereInput = {
+    AND: await baseFilters(session, q),
+  };
+
+  const counts = await stageCounts({
+    db: prisma,
+    subjectType: SUBJECT,
+    roles: session.roles,
+    countAll: () => prisma.datasetRegistrationRequest.count({ where }),
+    groupByStatus: () =>
+      prisma.datasetRegistrationRequest
+        .groupBy({ by: ["status"], where, _count: { _all: true } })
+        .then((rows) => rows.map((r) => ({ status: r.status, _count: r._count }))),
+    inflightIds: () =>
+      prisma.datasetRegistrationRequest
+        .findMany({
+          where: {
+            AND: [where, { status: { in: [RequestStatus.SUBMITTED, RequestStatus.UNDER_REVIEW] } }],
+          },
+          select: { id: true },
+        })
+        .then((rows) => rows.map((r) => r.id)),
+  });
+
+  res.json(counts);
 });
 
 datasetRequestRouter.get("/eligibility", async (req, res) => {
@@ -1276,13 +1373,9 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
       return;
     }
 
-    const allowedRoles: Record<ReviewTaskType, RoleCode[]> = {
-      [ReviewTaskType.BDI_OFFICER_REVIEW]: [ROLE_CODES.BDI_OFFICER],
-      [ReviewTaskType.DATASET_SPECIALIST_REVIEW]: [ROLE_CODES.BDI_DATASET_SPECIALIST],
-      [ReviewTaskType.ORGANIZATION_APPROVAL]: [ROLE_CODES.ORGANIZATION_APPROVER],
-      [ReviewTaskType.BDI_FINAL_APPROVAL]: [ROLE_CODES.BDI_FINAL_APPROVER],
-      [ReviewTaskType.ORGANIZATION_REVISION]: [ROLE_CODES.ORGANIZATION_USER],
-    };
+    // ตารางเดียวกับที่ lib/queue.ts ใช้ตอบว่า "ใบไหนเป็นงานของตำแหน่งฉัน" — เดิมเขียนซ้ำไว้ตรงนี้
+    // ถ้าสองที่ไม่ตรงกัน หน้ารายการจะโชว์ใบที่กดต่อไม่ได้ หรือซ่อนใบที่กดได้
+    const allowedRoles = TASK_TYPE_ROLES;
     const isAssignee = task.assignedUserId === session.sub;
     if (!session.roles.some((r) => allowedRoles[task.taskType].includes(r)) && !isAssignee) {
       res.status(403).json({ error: "forbidden", message: "คุณไม่มีสิทธิ์ดำเนินการขั้นตอนนี้" });

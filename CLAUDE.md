@@ -164,6 +164,43 @@ A `RETURNED` request has no current step, because `ORGANIZATION_REVISION` is nev
 task. The progress object reports `phase: "WAITING_REVISION"` and the screens say so in words;
 don't "fix" this by opening that task type.
 
+### The list filters name the gate, not the status
+
+`backend/src/lib/queue.ts` is the only place the **filter vocabulary** is declared, and it is
+deliberately a mix of two kinds of token: the four `ReviewTaskType`s while a request is moving,
+and the terminal `RequestStatus`es once it has stopped. That set is exactly the set of distinct
+badges `stageMeta()` can draw, so a pill, a tile and a row badge always say the same words.
+
+**`status` cannot stand in for a gate.** `requestStatusFor()` answers `SUBMITTED` for *any*
+request whose active task nobody has opened yet, so one "นำส่งแล้ว" pill swept up the first
+officer review, the post-signature final approval and the specialist review together. `SUBMITTED`
+and `UNDER_REVIEW` are therefore excluded from `StageToken` at the type level, as is
+`ORGANIZATION_REVISION` — never opened as a task, so filtering by it would answer zero rows
+forever. The API still *accepts* the two old status tokens so existing links keep working.
+
+`scope=mine` is decided by **role**, never by `assigned_user_id`: `POST /:id/review` lets any
+holder of the matching role close the stage, and `assigned_user_id` is only round-robin load
+spreading. The role→gate map is `ROLE_TASK_TYPES` in `lib/workflow.ts`, computed by inverting
+`TASK_TYPE_ROLES` rather than written out again — both review handlers import that same table,
+so "may act" and "is my work" cannot drift apart.
+
+The frontend has **no copy of the role→gate map**; `/summary` returns `myStages`. The
+"deliberate copy" convention that `lib/dataset-form.ts` and `lib/organization-form.ts` follow
+exists for what a screen must know *before* the network answers, which a tab already waiting on
+a count is not. `frontend/lib/stage.ts` holds only labels, and composes them from
+`TASK_TYPE_META` / `REQUEST_STATUS_META` instead of restating them.
+
+Counts live in `GET /summary` rather than in the list response because their scope is the one
+that must **not** move when a pill is pressed or a page turned — visibility plus the search box,
+nothing else. Their sum can fall short of `total` by the requests sitting in the
+`requestStatusFor()` fall-through (`UNDER_REVIEW` with no active task); those match no token and
+are visible only on the ทั้งหมด tab. That is a data anomaly worth seeing, not one to paper over.
+
+Both list endpoints page with `page`/`pageSize` and sort with `sort=date_asc|date_desc`. The
+`orderBy` ends with `id` on purpose: rows sharing a `submittedAt` have no defined relative order
+otherwise, so one lands on two pages and another on none — `seed:demo` writes rows in a loop and
+reproduces it immediately.
+
 ### Audit log, notifications and the outbox
 
 `audit.audit_event` replaces `ActivityLog`. It is never shown on screen. `correlation_id` and

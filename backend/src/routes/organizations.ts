@@ -95,6 +95,17 @@ import {
   phoneSchema,
 } from "../lib/validation.js";
 import {
+  listOrderBy,
+  myStageTokens,
+  parseFilterTokens,
+  parsePaging,
+  parseSort,
+  requestIdsAtStage,
+  stageCounts,
+  stageWhere,
+} from "../lib/queue.js";
+import {
+  TASK_TYPE_ROLES,
   WorkflowError,
   activeTask,
   completeTask,
@@ -537,64 +548,125 @@ async function syncStatus(
 
 // ---------------------------------------------------------------- list
 
-organizationRouter.get("/", async (req, res) => {
-  const session = req.session!;
-  const { status, q } = req.query as { status?: string; q?: string };
-
-  const where: Prisma.OrganizationRegistrationRequestWhereInput = {};
-
-  if (!isBdiStaff(session.roles)) {
-    where.OR = [
+/**
+ * ขอบเขตที่ผู้ใช้คนนี้มองเห็น — คืนเป็น clause เดียวเสมอ เพื่อให้ผู้เรียกเอาไป push
+ * เข้า AND[] ได้โดยไม่ต้องรู้ว่าข้างในเป็น OR หรือไม่
+ *
+ * เดิม inline อยู่ในตัว handler และเขียนลง `where.OR` ตรง ๆ ซึ่งชนกับ `where.OR`
+ * ของตัวกรองอื่นได้ทันทีที่มีตัวกรองที่สองที่เป็น OR — ซึ่งตัวกรองด่านคือตัวนั้น
+ */
+function visibilityFilter(session: {
+  sub: string;
+  roles: RoleCode[];
+  organizationId: string | null;
+  email: string;
+}): Prisma.OrganizationRegistrationRequestWhereInput {
+  if (isBdiStaff(session.roles)) return {};
+  return {
+    OR: [
       { createdBy: session.sub },
       ...(session.organizationId ? [{ organizationId: session.organizationId }] : []),
       { approverEmail: { equals: session.email, mode: "insensitive" as const } },
-    ];
+    ],
+  };
+}
+
+/** ช่องที่การค้นหาไล่ดู */
+const searchFilter = (search: string): Prisma.OrganizationRegistrationRequestWhereInput => ({
+  OR: [
+    { organizationNameTh: { contains: search, mode: "insensitive" } },
+    { requestNumber: { contains: search, mode: "insensitive" } },
+    { userEmail: { contains: search, mode: "insensitive" } },
+    { approverEmail: { contains: search, mode: "insensitive" } },
+  ],
+});
+
+/**
+ * เงื่อนไขพื้นฐานของทั้งหน้ารายการและตัวเลขสรุป — เห็นอะไรได้ + ค้นหาอะไรอยู่
+ *
+ * ทุกตัวกรองเป็น **หนึ่ง element ของ AND[]** ไม่มีใครเขียนทับ where.OR / where.AND
+ * ของใคร นี่คือกติกาการประกอบเงื่อนไขเพียงข้อเดียวของไฟล์นี้ และเป็นเหตุผลที่
+ * ตัวกรองสองตัวที่ต่างจำกัด `id` (เช่นผู้เชี่ยวชาญที่กดแท็บ "ที่ต้องดำเนินการ")
+ * ตัดกันถูกต้อง แทนที่จะเงียบ ๆ ทิ้งไปข้างหนึ่ง
+ */
+function baseFilters(
+  session: { sub: string; roles: RoleCode[]; organizationId: string | null; email: string },
+  q?: string,
+): Prisma.OrganizationRegistrationRequestWhereInput[] {
+  const and: Prisma.OrganizationRegistrationRequestWhereInput[] = [visibilityFilter(session)];
+  if (q?.trim()) and.push(searchFilter(q.trim()));
+  return and;
+}
+
+organizationRouter.get("/", async (req, res) => {
+  const session = req.session!;
+  const { status, stage, scope, sort, q } = req.query as {
+    status?: string;
+    stage?: string;
+    scope?: string;
+    sort?: string;
+    q?: string;
+  };
+
+  const and = baseFilters(session, q);
+
+  /**
+   * `stage` คือชื่อใหม่ `status` คือชื่อเดิม — รวมเป็นชุดเดียวกันแล้ว OR กัน
+   * ไม่ใช่ AND กัน ลิงก์เก่า `?status=SUBMITTED,UNDER_REVIEW` จึงยังทำงาน และคนที่
+   * มาจากลิงก์นั้นแล้วกดเม็ดกรองใหม่ก็ไม่ได้ผลลัพธ์ศูนย์แถวจากเงื่อนไขที่ขัดกันเอง
+   */
+  const tokens = [...parseFilterTokens(status), ...parseFilterTokens(stage)];
+  const stageClause = await stageWhere(prisma, SUBJECT, [...new Set(tokens)]);
+  if (stageClause) and.push(stageClause);
+
+  // แท็บ "ที่ต้องดำเนินการ" — ด่านที่ตำแหน่งของผู้เรียกเป็นคนทำ
+  if (scope === "mine") {
+    const mine = await stageWhere(prisma, SUBJECT, myStageTokens(session.roles));
+    /**
+     * ผู้มีอำนาจกระทำการแทนที่ยังไม่ถูกผูก role แต่ถูกระบุชื่อไว้ในคำขอก็ปิดด่าน
+     * ORGANIZATION_APPROVAL ได้ (ดู canAction ใน POST /:id/review) — คิวของเขา
+     * จึงต้องรวมใบนั้นด้วย ไม่งั้นคนที่ถูกเชิญมาเซ็นโดยเฉพาะเปิดมาแล้วเห็นคิวว่าง
+     */
+    const asNamedApprover = {
+      approverEmail: { equals: session.email, mode: "insensitive" as const },
+      id: { in: await requestIdsAtStage(prisma, SUBJECT, [ReviewTaskType.ORGANIZATION_APPROVAL]) },
+    };
+    and.push({ OR: mine ? [mine, asNamedApprover] : [asNamedApprover] });
   }
 
-  const statuses = (status ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s): s is RequestStatus => s in RequestStatus);
-  if (statuses.length > 0) where.status = { in: statuses };
+  const where: Prisma.OrganizationRegistrationRequestWhereInput = { AND: and };
+  const paging = parsePaging(req.query);
 
-  if (q?.trim()) {
-    const search = q.trim();
-    where.AND = [
-      {
-        OR: [
-          { organizationNameTh: { contains: search, mode: "insensitive" } },
-          { requestNumber: { contains: search, mode: "insensitive" } },
-          { userEmail: { contains: search, mode: "insensitive" } },
-          { approverEmail: { contains: search, mode: "insensitive" } },
-        ],
+  const [requests, total] = await prisma.$transaction([
+    prisma.organizationRegistrationRequest.findMany({
+      where,
+      orderBy: listOrderBy(parseSort(sort)),
+      skip: paging.skip,
+      take: paging.take,
+      select: {
+        id: true,
+        requestNumber: true,
+        status: true,
+        organizationNameTh: true,
+        userEmail: true,
+        userFirstnameTh: true,
+        userLastnameTh: true,
+        submittedAt: true,
+        createdAt: true,
+        organizationId: true,
+        createdBy: true,
       },
-    ];
-  }
-
-  const requests = await prisma.organizationRegistrationRequest.findMany({
-    where,
-    orderBy: [{ submittedAt: "desc" }, { createdAt: "desc" }],
-    take: 200,
-    select: {
-      id: true,
-      requestNumber: true,
-      status: true,
-      organizationNameTh: true,
-      userEmail: true,
-      userFirstnameTh: true,
-      userLastnameTh: true,
-      submittedAt: true,
-      createdAt: true,
-      organizationId: true,
-      createdBy: true,
-    },
-  });
+    }),
+    prisma.organizationRegistrationRequest.count({ where }),
+  ]);
 
   /**
    * ด่านที่แต่ละคำขอค้างอยู่ — badge บนหน้าจอใช้ค่านี้แทน PENDING_* ที่หายไปจาก status
    *
    * ดึงประวัติทั้งหมด ไม่ใช่เฉพาะแถวที่ยัง active เพราะคอลัมน์ความคืบหน้าต้องรู้ว่าผ่านมาแล้ว
    * กี่ด่าน แถวที่ active ก็คัดออกมาจากชุดเดียวกันนี้ ไม่ต้องยิง query เพิ่ม
+   *
+   * คิวรีนี้กับอีกสองอันข้างล่างคีย์ด้วย id ของหน้าปัจจุบัน จึงเล็กลงตาม pageSize เอง
    */
   const tasks = await prisma.reviewTask.findMany({
     where: { subjectType: SUBJECT, subjectId: { in: requests.map((r) => r.id) } },
@@ -665,7 +737,54 @@ organizationRouter.get("/", async (req, res) => {
         },
       };
     }),
+    page: {
+      page: paging.page,
+      pageSize: paging.pageSize,
+      total,
+      pageCount: Math.max(1, Math.ceil(total / paging.pageSize)),
+    },
   });
+});
+
+/**
+ * ตัวเลขของแถบสรุปและป้ายแท็บ
+ *
+ * แยก endpoint เพราะขอบเขตของมันคือขอบเขตที่ **ไม่เปลี่ยน** ตอนกดเม็ดกรอง เปลี่ยนหน้า
+ * หรือสลับแท็บ — ถ้าคิดรวมมากับรายการ ตัวเลขบนแท็บจะขยับทุกครั้งที่กดอะไรในแท็บนั้น
+ *
+ * ต้องประกาศไว้ **เหนือ GET /:id** ไม่งั้น /summary จะถูกจับเป็น id แล้ว Prisma ตอบ 500
+ */
+organizationRouter.get("/summary", async (req, res) => {
+  const session = req.session!;
+  const { q } = req.query as { q?: string };
+  const where: Prisma.OrganizationRegistrationRequestWhereInput = {
+    AND: baseFilters(session, q),
+  };
+
+  const counts = await stageCounts({
+    db: prisma,
+    subjectType: SUBJECT,
+    roles: session.roles,
+    countAll: () => prisma.organizationRegistrationRequest.count({ where }),
+    groupByStatus: () =>
+      prisma.organizationRegistrationRequest
+        .groupBy({ by: ["status"], where, _count: { _all: true } })
+        .then((rows) => rows.map((r) => ({ status: r.status, _count: r._count }))),
+    inflightIds: () =>
+      prisma.organizationRegistrationRequest
+        .findMany({
+          where: {
+            AND: [
+              where,
+              { status: { in: [RequestStatus.SUBMITTED, RequestStatus.UNDER_REVIEW] } },
+            ],
+          },
+          select: { id: true },
+        })
+        .then((rows) => rows.map((r) => r.id)),
+  });
+
+  res.json(counts);
 });
 
 // ---------------------------------------------------------------- create draft
@@ -1560,13 +1679,9 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
     }
 
     // ใครมีสิทธิ์ปิด task นี้ — role ที่ตรงกับด่าน หรือเป็นผู้รับมอบหมายโดยตรง
-    const allowedRoles: Record<ReviewTaskType, RoleCode[]> = {
-      [ReviewTaskType.BDI_OFFICER_REVIEW]: [ROLE_CODES.BDI_OFFICER],
-      [ReviewTaskType.ORGANIZATION_APPROVAL]: [ROLE_CODES.ORGANIZATION_APPROVER],
-      [ReviewTaskType.BDI_FINAL_APPROVAL]: [ROLE_CODES.BDI_FINAL_APPROVER],
-      [ReviewTaskType.DATASET_SPECIALIST_REVIEW]: [ROLE_CODES.BDI_DATASET_SPECIALIST],
-      [ReviewTaskType.ORGANIZATION_REVISION]: [ROLE_CODES.ORGANIZATION_USER],
-    };
+    // ตารางเดียวกับที่ lib/queue.ts ใช้ตอบว่า "ใบไหนเป็นงานของตำแหน่งฉัน" — เดิมเขียนซ้ำไว้ตรงนี้
+    // ถ้าสองที่ไม่ตรงกัน หน้ารายการจะโชว์ใบที่กดต่อไม่ได้ หรือซ่อนใบที่กดได้
+    const allowedRoles = TASK_TYPE_ROLES;
     /** ผู้ใช้คนนี้ปิดด่านชนิดนี้ของคำขอนี้ได้ไหม */
     const canAction = (taskType: ReviewTaskType) =>
       session.roles.some((r) => allowedRoles[taskType].includes(r)) ||

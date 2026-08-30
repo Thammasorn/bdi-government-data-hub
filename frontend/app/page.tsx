@@ -18,11 +18,30 @@ import {
   bdiLandingPath,
   formatThaiDate,
   isBdiStaff,
-  isPendingDatasetStatus,
-  type DatasetRequestStatus,
   type OrganizationStatus,
 } from "@/lib/status";
+import type { ListSummary, PageInfo, StageToken } from "@/lib/stage";
 import type { DatasetRequestListItem, OrganizationListItem } from "@/lib/types";
+
+/** ผลของ endpoint ที่แบ่งหน้าแล้ว — แถวของหน้านี้ กับจำนวนจริงทั้งหมด */
+interface Page<T> {
+  rows: T[];
+  page: PageInfo;
+}
+
+const EMPTY_PAGE: PageInfo = { page: 1, pageSize: 5, total: 0, pageCount: 1 };
+
+/**
+ * "ยังเดินอยู่ในสายพาน" กับ "จบแล้ว" — เดิมแยกด้วย isPendingDatasetStatus() ในเบราว์เซอร์
+ * ตอนนี้ส่งเป็นตัวกรองไปให้ server เพราะหน้านี้ไม่ได้ถือทุกแถวไว้แล้ว
+ */
+const MOVING: StageToken[] = [
+  "BDI_OFFICER_REVIEW",
+  "DATASET_SPECIALIST_REVIEW",
+  "ORGANIZATION_APPROVAL",
+  "BDI_FINAL_APPROVAL",
+];
+const SETTLED: StageToken[] = ["DRAFT", "RETURNED", "APPROVED", "REJECTED", "CANCELLED"];
 
 export default function HomePage() {
   const { user, loading } = useSession();
@@ -80,20 +99,47 @@ function OrganizationHome({
 }) {
   const { user } = useSession();
   const { show } = useToast();
-  const [rows, setRows] = useState<DatasetRequestListItem[] | null>(null);
-  /** `null` = ยังไม่รู้ผล — ต่างจาก `[]` ที่แปลว่ารู้แล้วว่าไม่มีคำขอเลย */
+
+  /**
+   * หน้านี้เคยดึงรายการทั้งสองเส้นทางมาแบบไม่จำกัดแล้วแบ่ง section เองในเบราว์เซอร์
+   * ทำแบบนั้นไม่ได้อีกแล้วเมื่อ API แบ่งหน้า — และไม่ควรทำตั้งแต่แรก เพราะตัวเลขบนการ์ด
+   * ที่นับจากแถวที่โหลดมาได้พูดความจริงแค่ตอนที่ยังไม่ถึงเพดาน
+   *
+   * ตอนนี้ทุกตัวเลขมาจาก `/summary` และแต่ละ section ขอมาแค่ห้าแถวแรกของตัวเอง
+   * คำขอมากขึ้นจึงไม่ทำให้หน้าแรกช้าลง
+   */
+  const [summary, setSummary] = useState<ListSummary | null>(null);
+  /** `null` = ยังไม่รู้ผล — ต่างจากผลที่ว่างเปล่า ซึ่งแปลว่ารู้แล้วว่าไม่มีคำขอเลย */
+  const [pending, setPending] = useState<Page<DatasetRequestListItem> | null>(null);
+  const [others, setOthers] = useState<Page<DatasetRequestListItem> | null>(null);
+  const [awaitingMe, setAwaitingMe] = useState<Page<DatasetRequestListItem> | null>(null);
   const [orgRequests, setOrgRequests] = useState<OrganizationListItem[] | null>(null);
 
   useEffect(() => {
-    // ดึงครั้งเดียวแล้วแบ่ง section ฝั่งหน้าเว็บ — endpoint คืนเฉพาะคำขอที่ผู้ใช้เห็นได้อยู่แล้ว
-    // และยิงสองรอบด้วย ?status= ก็ได้ข้อมูลชุดเดียวกันแต่เสียรอบเน็ตเวิร์กเปล่า ๆ
+    const load = <T,>(path: string, key: string): Promise<Page<T>> =>
+      api.get<Record<string, unknown>>(path).then((d) => ({
+        rows: (d[key] as T[]) ?? [],
+        page: (d.page as PageInfo) ?? EMPTY_PAGE,
+      }));
+
     api
-      .get<{ requests: DatasetRequestListItem[] }>("/api/dataset-requests")
-      .then((d) => setRows(d.requests))
-      .catch(() => {
-        setRows([]);
-        show({ tone: "error", title: "โหลดรายการชุดข้อมูลไม่สำเร็จ" });
-      });
+      .get<ListSummary>("/api/dataset-requests/summary")
+      .then(setSummary)
+      .catch(() => show({ tone: "error", title: "โหลดรายการชุดข้อมูลไม่สำเร็จ" }));
+
+    load<DatasetRequestListItem>(
+      `/api/dataset-requests?stage=${MOVING.join(",")}&pageSize=5`,
+      "requests",
+    )
+      .then(setPending)
+      .catch(() => setPending({ rows: [], page: EMPTY_PAGE }));
+
+    load<DatasetRequestListItem>(
+      `/api/dataset-requests?stage=${SETTLED.join(",")}&pageSize=5`,
+      "requests",
+    )
+      .then(setOthers)
+      .catch(() => setOthers({ rows: [], page: EMPTY_PAGE }));
 
     /**
      * คำขอลงทะเบียนหน่วยงาน — คนละเส้นทางกับชุดข้อมูล และหน้าแรกเคยไม่พูดถึงเลย
@@ -101,12 +147,27 @@ function OrganizationHome({
      * ผู้มีอำนาจกระทำการแทนถูกเชิญเข้ามาเพื่อลงนามในคำขอใบหนึ่งโดยเฉพาะ แต่เข้ามาแล้ว
      * เจอหน้าแรกที่พูดเรื่องชุดข้อมูลล้วน ๆ ไม่มีทางไปต่อ ต้องเดาว่าต้องกดเมนู
      * "หน่วยงานของฉัน" เอง
+     *
+     * หนึ่งหน่วยงานมีคำขอที่ยังไม่จบได้ใบเดียว ห้าแถวจึงเหลือเฟือสำหรับสองคำถามที่
+     * หน้านี้ถาม: ยื่นไปแล้วหรือยัง และมีใบไหนหยุดรอลายเซ็นของคนนี้อยู่ไหม
      */
-    api
-      .get<{ organizations: OrganizationListItem[] }>("/api/organizations")
-      .then((d) => setOrgRequests(d.organizations))
+    load<OrganizationListItem>(
+      "/api/organizations?status=SUBMITTED,UNDER_REVIEW&pageSize=5",
+      "organizations",
+    )
+      .then((d) => setOrgRequests(d.rows))
       .catch(() => setOrgRequests([]));
-  }, [show]);
+
+    // ยิงเฉพาะคนที่การ์ดนี้พูดด้วย — ผู้ดำเนินการของหน่วยงานไม่มีการ์ดนี้
+    if (isApprover) {
+      load<DatasetRequestListItem>(
+        "/api/dataset-requests?stage=ORGANIZATION_APPROVAL&pageSize=5",
+        "requests",
+      )
+        .then(setAwaitingMe)
+        .catch(() => setAwaitingMe({ rows: [], page: EMPTY_PAGE }));
+    }
+  }, [show, isApprover]);
 
   /** คำขอลงทะเบียนหน่วยงานที่หยุดรอการลงนามของผู้ใช้คนนี้ */
   const awaitingSignature = isApprover
@@ -123,12 +184,19 @@ function OrganizationHome({
    *
    * ฉบับร่างและใบที่ถูกส่งกลับมาแก้ยังเห็นปุ่มอยู่ เพราะทั้งสองกรณีปุ่มพา "เข้าไปกรอกต่อ"
    * ไม่ใช่ "ยื่นใบใหม่" ส่วนใบที่ถูกปฏิเสธหรือยกเลิกก็ยังเห็น เพราะ API ยอมให้เริ่มใหม่จริง
+   *
+   * คิวรีข้างบนกรองเหลือเฉพาะใบที่ยังเดินอยู่แล้ว จึงเป็นคำถามว่ามีแถวไหม ไม่ต้องอ่านสถานะซ้ำ
    */
-  const registrationInReview = orgRequests?.some(
-    (r) => r.status === "SUBMITTED" || r.status === "UNDER_REVIEW",
-  );
+  const registrationInReview = orgRequests === null ? undefined : orgRequests.length > 0;
 
-  const { pending, others, awaitingMe, counts } = useMemo(() => split(rows ?? []), [rows]);
+  const counts = useMemo(
+    () => ({
+      pending: MOVING.reduce((sum, t) => sum + (summary?.stages[t] ?? 0), 0),
+      revision: summary?.stages.RETURNED ?? 0,
+      approved: summary?.stages.APPROVED ?? 0,
+    }),
+    [summary],
+  );
 
   const name = user?.firstName?.trim() || user?.email || "";
   const organization = user?.organization ?? null;
@@ -140,7 +208,7 @@ function OrganizationHome({
    * จนกว่าหน่วยงานจะเปิดใช้งาน จึงยุบเหลือประโยคเดียว
    */
   const organizationActive = organization?.status === "ACTIVE";
-  const datasetHalfIsEmpty = !organizationActive && rows !== null && rows.length === 0;
+  const datasetHalfIsEmpty = !organizationActive && summary !== null && summary.total === 0;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
@@ -184,7 +252,7 @@ function OrganizationHome({
         </Card>
       ) : null}
 
-      {rows === null ? (
+      {summary === null || pending === null || others === null ? (
         <Spinner className="min-h-[40vh]" />
       ) : datasetHalfIsEmpty ? (
         <p className="rounded-2xl bg-white p-6 text-[15px] leading-relaxed text-ink-muted shadow-card ring-1 ring-line">
@@ -192,29 +260,29 @@ function OrganizationHome({
         </p>
       ) : (
         <>
-          <StatTiles counts={counts} total={rows.length} />
+          <StatTiles counts={counts} total={summary.total} />
 
           {/* ผู้มีอำนาจกระทำการแทนคือคนเดียวที่กดต่อได้เมื่อคำขอค้างที่ด่านนี้
               จึงยกขึ้นมาเป็นการ์ดแยก ไม่ให้จมอยู่ในรายการรวม */}
-          {isApprover && awaitingMe.length > 0 ? (
+          {isApprover && awaitingMe && awaitingMe.rows.length > 0 ? (
             <Card className="mb-8 border-l-[3px] border-l-coral-500">
               <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="font-medium text-navy-800">
-                    รอคุณพิจารณาและลงนาม {awaitingMe.length} รายการ
+                    รอคุณพิจารณาและลงนาม {awaitingMe.page.total} รายการ
                   </p>
                   <p className="mt-0.5 text-sm text-ink-muted">
                     คำขอเหล่านี้ผ่านการตรวจสอบเบื้องต้นจาก BDI แล้ว และหยุดรอความเห็นชอบของคุณ
                   </p>
                   {/* ใบเดียวเท่านั้นที่บอกความคืบหน้าตรงนี้ได้ตรง ๆ หลายใบอาจอยู่คนละขั้น
                       และรายการด้านล่างบอกทีละแถวอยู่แล้ว */}
-                  {awaitingMe.length === 1 && awaitingMe[0].progress ? (
+                  {awaitingMe.page.total === 1 && awaitingMe.rows[0].progress ? (
                     <div className="mt-2">
-                      <ApprovalStepsCompact progress={awaitingMe[0].progress} />
+                      <ApprovalStepsCompact progress={awaitingMe.rows[0].progress} />
                     </div>
                   ) : null}
                 </div>
-                <Link href={`/datasets/${awaitingMe[0].id}`} className="shrink-0">
+                <Link href={`/datasets/${awaitingMe.rows[0].id}`} className="shrink-0">
                   <Button>เริ่มพิจารณา</Button>
                 </Link>
               </div>
@@ -224,16 +292,28 @@ function OrganizationHome({
           <div className="flex flex-col gap-8">
             <DatasetSection
               title="รายการข้อมูลที่รออนุมัติ"
-              description="คำขอที่นำส่งแล้วและยังอยู่ระหว่างการพิจารณา เรียงตามวันเวลาที่ส่งคำขอ ล่าสุดอยู่บนสุด"
-              rows={pending}
+              description="คำขอที่นำส่งแล้วและยังอยู่ระหว่างการพิจารณา ห้ารายการล่าสุดอยู่ที่นี่"
+              rows={pending.rows}
+              count={pending.page.total}
               tone="attention"
               emptyText="ยังไม่มีคำขอที่รอการอนุมัติ"
+              footer={
+                pending.page.total > pending.rows.length ? (
+                  <Link
+                    href={`/datasets?stage=${MOVING.join(",")}`}
+                    className="text-sm font-medium text-navy-700 underline-offset-4 hover:underline"
+                  >
+                    ดูคำขอที่รออนุมัติทั้ง {pending.page.total} รายการ →
+                  </Link>
+                ) : null
+              }
             />
 
             <DatasetSection
               title="ชุดข้อมูลของหน่วยงาน"
-              description="ชุดข้อมูลที่ลงทะเบียนเข้ามาแล้ว ทั้งฉบับร่าง รายการที่ต้องแก้ไข และรายการที่จบกระบวนการ"
-              rows={others}
+              description="ชุดข้อมูลที่ลงทะเบียนเข้ามาแล้ว ทั้งฉบับร่าง รายการที่ต้องแก้ไข และรายการที่จบกระบวนการ — ห้ารายการล่าสุด"
+              rows={others.rows}
+              count={others.page.total}
               emptyText="ยังไม่มีชุดข้อมูลอื่นของหน่วยงาน"
               footer={
                 <Link
@@ -482,32 +562,3 @@ function CreateOrganizationPrompt({
   );
 }
 
-/**
- * แบ่งคำขอออกเป็นสอง section ตามสเปก แล้วนับยอดสำหรับการ์ดสรุป
- *
- * รายการที่รออนุมัติไม่ถูกใส่ซ้ำใน section ล่าง — สเปกเขียนว่า "ตามด้วยชุดข้อมูลของ
- * organization นั้น ๆ" คือส่วนที่เหลือ ไม่ใช่รายการเดิมซ้ำอีกรอบ
- *
- * ทั้งสอง section เรียงตามวันเวลาที่ส่งคำขอจากใหม่ไปเก่า (ร่างที่ยังไม่ส่งใช้วันที่สร้างแทน)
- * ทิศทางเดียวกับตารางในหน้า /datasets เพื่อไม่ให้ผู้ใช้ต้องอ่านสองแบบในจอเดียว
- */
-function split(rows: DatasetRequestListItem[]) {
-  const at = (r: DatasetRequestListItem) => new Date(r.submittedAt ?? r.createdAt).getTime();
-  const byNewest = (a: DatasetRequestListItem, b: DatasetRequestListItem) => at(b) - at(a);
-
-  const pending = rows.filter((r) => isPendingDatasetStatus(r.status)).sort(byNewest);
-  const others = rows.filter((r) => !isPendingDatasetStatus(r.status)).sort(byNewest);
-
-  const count = (status: DatasetRequestStatus) => rows.filter((r) => r.status === status).length;
-
-  return {
-    pending,
-    others,
-    awaitingMe: pending.filter((r) => r.currentTaskType === "ORGANIZATION_APPROVAL"),
-    counts: {
-      pending: pending.length,
-      revision: count("RETURNED"),
-      approved: count("APPROVED"),
-    },
-  };
-}

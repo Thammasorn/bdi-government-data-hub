@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 
 import { DatasetRequestTable } from "@/components/dataset/RequestTable";
 import { Button } from "@/components/ui/Button";
@@ -12,6 +12,16 @@ import { useRequireAuth } from "@/lib/require-auth";
 import { isBdiStaff } from "@/lib/status";
 
 export default function DatasetsPage() {
+  // ตารางอ่านสถานะของตัวเองจาก query string ผ่าน useSearchParams จึงต้องมี Suspense ครอบ
+  // ไม่งั้น next build ล้ม (ผ่าน tsc และผ่าน next dev — เห็นตอน production build เท่านั้น)
+  return (
+    <Suspense fallback={<Spinner />}>
+      <DatasetList />
+    </Suspense>
+  );
+}
+
+function DatasetList() {
   const router = useRouter();
   const { user, loading } = useRequireAuth();
   const { show } = useToast();

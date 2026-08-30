@@ -2,77 +2,49 @@
 
 import clsx from "clsx";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
+import { ListSearch } from "@/components/list/ListSearch";
+import { Pagination } from "@/components/list/Pagination";
+import { QueueTabs } from "@/components/list/QueueTabs";
+import { QueueTiles } from "@/components/list/QueueTiles";
+import { SortSelect } from "@/components/list/SortSelect";
+import { StageFilter } from "@/components/list/StageFilter";
 import { ApprovalStepsCompact } from "@/components/review/ApprovalSteps";
+import { useSession } from "@/components/SessionProvider";
 import { Card, DatasetStatusBadge } from "@/components/ui/Card";
 import { SkeletonRows } from "@/components/ui/Spinner";
-import { useToast } from "@/components/ui/Toast";
-import { api } from "@/lib/api";
-import { DATASET_STATUS_META, formatThaiDate, type DatasetRequestStatus } from "@/lib/status";
+import { formatThaiDate } from "@/lib/status";
+import { hasOwnQueue, type StageToken } from "@/lib/stage";
 import { datasetTitle, type DatasetRequestListItem } from "@/lib/types";
-
-const FILTERABLE: DatasetRequestStatus[] = [
-  "DRAFT",
-  "SUBMITTED",
-  "UNDER_REVIEW",
-  "RETURNED",
-  "APPROVED",
-  "REJECTED",
-];
+import { useRequestList } from "@/lib/use-request-list";
 
 /**
  * ตารางคำขอที่ใช้ร่วมกันทั้งฝั่งหน่วยงานและฝั่ง BDI
  * ต่างกันแค่ปลายทางของลิงก์และคอลัมน์ "หน่วยงาน" ที่ฝั่งหน่วยงานไม่ต้องเห็น
+ *
+ * สถานะทั้งหมด (แท็บ ตัวกรอง การเรียง หน้า คำค้น) อยู่ใน useRequestList ซึ่งตาราง
+ * หน่วยงานใช้ตัวเดียวกัน เหลือไว้ที่นี่เฉพาะสิ่งที่ต่างกันจริง: คลาส grid ของคอลัมน์
+ * (Tailwind สแกนแบบ static จึงต่อสตริงเองไม่ได้) กับ JSX ของแถว
  */
 export function DatasetRequestTable({
   basePath,
   showOrganization,
-  initialStatuses = [],
   emptyHint,
   action,
 }: {
   basePath: string;
   showOrganization: boolean;
-  initialStatuses?: DatasetRequestStatus[];
   emptyHint: string;
   action?: ReactNode;
 }) {
   const router = useRouter();
-  const { show } = useToast();
-
-  const [rows, setRows] = useState<DatasetRequestListItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<Set<DatasetRequestStatus>>(
-    () => new Set(initialStatuses),
-  );
-
-  const statusParam = useMemo(() => [...selected].join(","), [selected]);
-
-  useEffect(() => {
-    // debounce การค้นหา ไม่ยิง API ทุกตัวอักษร
-    const timer = setTimeout(() => {
-      const qs = new URLSearchParams();
-      if (statusParam) qs.set("status", statusParam);
-      if (query.trim()) qs.set("q", query.trim());
-      api
-        .get<{ requests: DatasetRequestListItem[] }>(`/api/dataset-requests?${qs}`)
-        .then((d) => setRows(d.requests))
-        .catch(() => show({ tone: "error", title: "โหลดรายการไม่สำเร็จ" }))
-        .finally(() => setLoading(false));
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [statusParam, query, show]);
-
-  const toggle = (status: DatasetRequestStatus) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(status)) next.delete(status);
-      else next.add(status);
-      return next;
-    });
-  };
+  const { user } = useSession();
+  const list = useRequestList<DatasetRequestListItem>({
+    endpoint: "/api/dataset-requests",
+    itemsKey: "requests",
+    hasQueue: hasOwnQueue(user?.roles ?? []),
+  });
 
   // เขียนคลาสเต็มทั้งสองแบบไว้ตรง ๆ — Tailwind สแกนไฟล์แบบ static คลาสที่ต่อสตริงเองจะไม่ถูกสร้าง
   // คอลัมน์สถานะกว้างคงที่ ไม่ใช้ auto เพราะหัวตารางกับแถวเป็นคนละ grid
@@ -81,74 +53,46 @@ export function DatasetRequestTable({
     ? "md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_12rem_13rem_8rem]"
     : "md:grid-cols-[minmax(0,2fr)_12rem_13rem_8rem]";
 
+  const stagesAvailable = Object.keys(list.summary?.stages ?? {}) as StageToken[];
+  const showQueue = (list.summary?.myStages.length ?? 0) > 0;
+
   return (
     <>
-      <div className="mb-5 flex flex-col gap-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="relative max-w-md flex-1">
-            <svg
-              viewBox="0 0 20 20"
-              className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              aria-hidden="true"
-            >
-              <circle cx="9" cy="9" r="6" />
-              <path d="m13.5 13.5 3 3" strokeLinecap="round" />
-            </svg>
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="ค้นหาชื่อชุดข้อมูล เลขที่คำขอ หรือหน่วยงาน"
-              aria-label="ค้นหา"
-              className="h-11 w-full rounded-full border border-line bg-white pl-10 pr-4 text-[15px] transition-[border-color,box-shadow] placeholder:text-ink-subtle focus:border-navy-500 focus:shadow-[0_0_0_3px_var(--color-navy-100)]"
-            />
-          </div>
-          {action}
-        </div>
+      <QueueTiles summary={list.summary} selected={list.stages} onPick={list.toggleStage} />
 
-        <div className="flex flex-wrap gap-2" role="group" aria-label="กรองตามสถานะ">
-          {FILTERABLE.map((s) => {
-            const active = selected.has(s);
-            return (
-              <button
-                key={s}
-                type="button"
-                aria-pressed={active}
-                onClick={() => toggle(s)}
-                className={clsx(
-                  "rounded-full border px-3.5 py-1.5 text-[13px] font-medium transition-colors",
-                  active
-                    ? "border-navy-800 bg-navy-800 text-white"
-                    : "border-line bg-white text-ink-muted hover:border-navy-300 hover:text-navy-700",
-                )}
-              >
-                {DATASET_STATUS_META[s].label}
-              </button>
-            );
-          })}
-          {selected.size > 0 ? (
-            <button
-              type="button"
-              onClick={() => setSelected(new Set())}
-              className="rounded-full px-3 py-1.5 text-[13px] font-medium text-ink-muted underline-offset-2 hover:underline"
-            >
-              ล้างตัวกรอง
-            </button>
-          ) : null}
+      {showQueue ? (
+        <QueueTabs
+          tab={list.tab}
+          onChange={list.setTab}
+          mine={list.summary?.mine ?? null}
+          all={list.summary?.total ?? null}
+        />
+      ) : null}
+
+      <div className={clsx("mb-5 flex flex-col gap-4", showQueue ? "mt-5" : "")}>
+        <ListSearch
+          value={list.query}
+          onChange={list.setQuery}
+          placeholder="ค้นหาชื่อชุดข้อมูล เลขที่คำขอ หรือหน่วยงาน"
+          action={action}
+        />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <StageFilter
+            available={stagesAvailable}
+            counts={list.summary?.stages}
+            selected={list.stages}
+            onToggle={list.toggleStage}
+            onClear={list.clearStages}
+          />
+          <SortSelect value={list.sort} onChange={list.setSort} />
         </div>
       </div>
 
       <Card className="overflow-hidden">
-        {loading ? (
+        {list.loading ? (
           <SkeletonRows />
-        ) : rows.length === 0 ? (
-          <EmptyState
-            hasFilter={selected.size > 0 || query.trim().length > 0}
-            emptyHint={emptyHint}
-          />
+        ) : list.rows.length === 0 ? (
+          <EmptyState hasFilter={list.hasFilter} onQueueTab={list.tab === "mine"} emptyHint={emptyHint} />
         ) : (
           <>
             <div
@@ -164,7 +108,7 @@ export function DatasetRequestTable({
               <span className="text-right">วันที่นำส่ง</span>
             </div>
             <ul className="divide-y divide-line">
-              {rows.map((row) => (
+              {list.rows.map((row) => (
                 <li key={row.id}>
                   <button
                     type="button"
@@ -206,14 +150,20 @@ export function DatasetRequestTable({
         )}
       </Card>
 
-      {!loading && rows.length > 0 ? (
-        <p className="mt-4 text-[13px] text-ink-muted">แสดง {rows.length} รายการ</p>
-      ) : null}
+      <Pagination info={list.pageInfo} onPage={list.goToPage} />
     </>
   );
 }
 
-function EmptyState({ hasFilter, emptyHint }: { hasFilter: boolean; emptyHint: string }) {
+function EmptyState({
+  hasFilter,
+  onQueueTab,
+  emptyHint,
+}: {
+  hasFilter: boolean;
+  onQueueTab: boolean;
+  emptyHint: string;
+}) {
   return (
     <div className="px-6 py-20 text-center">
       <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-navy-50">
@@ -231,10 +181,18 @@ function EmptyState({ hasFilter, emptyHint }: { hasFilter: boolean; emptyHint: s
         </svg>
       </div>
       <p className="mt-4 font-medium text-ink">
-        {hasFilter ? "ไม่พบรายการที่ตรงกับเงื่อนไข" : "ยังไม่มีคำขอลงทะเบียนชุดข้อมูล"}
+        {hasFilter
+          ? "ไม่พบรายการที่ตรงกับเงื่อนไข"
+          : onQueueTab
+            ? "ไม่มีคำขอที่รอคุณดำเนินการ"
+            : "ยังไม่มีคำขอลงทะเบียนชุดข้อมูล"}
       </p>
       <p className="mt-1 text-sm text-ink-muted">
-        {hasFilter ? "ลองล้างตัวกรองหรือเปลี่ยนคำค้นหา" : emptyHint}
+        {hasFilter
+          ? "ลองล้างตัวกรองหรือเปลี่ยนคำค้นหา"
+          : onQueueTab
+            ? 'กดแท็บ "ทั้งหมด" เพื่อดูคำขอที่อยู่ในขั้นตอนของคนอื่น'
+            : emptyHint}
       </p>
     </div>
   );

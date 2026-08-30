@@ -42,17 +42,13 @@ function navItems(roles: string[], organizationId: string | null) {
     // (กติกาเดียวกับ bdiLandingPath ที่ตัดสินว่าเข้าสู่ระบบแล้วไปหน้าไหน)
     if (isSpecialistOnly(roles)) return [{ href: "/admin/datasets", label: "ชุดข้อมูลที่ได้รับมอบหมาย" }];
 
-    const items = [
+    // เดิมมีเมนูที่สามสำหรับผู้อนุมัติ BDI ที่ลิงก์ไป `?status=SUBMITTED,UNDER_REVIEW`
+    // เพราะหน้ารายการกรองตามด่านไม่ได้ ตอนนี้กรองได้แล้ว และทั้งสองหน้าเปิดมาที่แท็บ
+    // "ที่ต้องดำเนินการ" ของตำแหน่งผู้ใช้เองอยู่แล้ว เมนูนั้นจึงพาไปที่เดิมกับเมนูแรก
+    return [
       { href: "/admin/organizations", label: "หน่วยงาน" },
       { href: "/admin/datasets", label: "ชุดข้อมูล" },
     ];
-    if (roles.includes("BDI_FINAL_APPROVER")) {
-      // ด่าน "รอลงนาม" ไม่ใช่สถานะอีกแล้ว แต่เป็น task_type ที่ค้างอยู่ ซึ่งหน้ารายการ
-      // ยังกรองไม่ได้ — ลิงก์นี้จึงพาไปที่คำขอที่ยังเดินอยู่ทั้งหมด แล้วให้ badge
-      // ในตารางบอกต่อว่าใบไหนค้างที่ด่านไหน
-      items.push({ href: "/admin/organizations?status=SUBMITTED,UNDER_REVIEW", label: "คำขอที่ต้องพิจารณา" });
-    }
-    return items;
   }
   // ผู้มีอำนาจกระทำการแทนที่ถูกเชิญเข้ามาทีหลังยังไม่ถูกผูก organizationId
   // แต่ต้องเข้าหน้าแรกและหน้าชุดข้อมูลได้ เพราะเป็นผู้พิจารณาด่านที่ 2 ของเส้นทาง C
