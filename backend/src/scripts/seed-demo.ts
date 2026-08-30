@@ -733,7 +733,21 @@ async function main() {
     let seq = 1;
 
     if (spec.specialist) {
-      // officer มอบหมายผู้เชี่ยวชาญ แล้วผู้เชี่ยวชาญบันทึกความเห็นกลับมา
+      /**
+       * officer ขอความเห็นผู้เชี่ยวชาญ แล้วผู้เชี่ยวชาญบันทึกความเห็นไว้
+       *
+       * ชื่อผู้เชี่ยวชาญอยู่บนคำขอ ไม่ใช่ใน review_task — การขอความเห็นไม่ย้ายด่านตั้งแต่
+       * 2026-08-30 ส่วนแถวใน review_task คือตัวความเห็น ซึ่งปิดตั้งแต่เกิด
+       */
+      await prisma.datasetRegistrationRequest.update({
+        where: { id: request.id },
+        data: {
+          assignedSpecialistId: specialist.id,
+          assignedSpecialistAt: t(1),
+          assignedSpecialistById: officer.id,
+          updatedBy: officer.id,
+        },
+      });
       await closedTask({
         subjectType: DS_SUBJECT,
         subjectId: request.id,

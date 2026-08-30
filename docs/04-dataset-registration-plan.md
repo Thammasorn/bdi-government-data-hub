@@ -84,7 +84,7 @@ docker compose exec backend npm run prisma:migrate -- --name dataset_registratio
 | `POST` | `/api/dataset-requests/:id/generate-form` | `ORG_USER` ในหน่วยงาน | validate ครบชุด แล้วสร้าง PDF |
 | `POST` | `/api/dataset-requests/:id/submit` | `ORG_USER` ในหน่วยงาน | นำส่ง → `PENDING_OFFICER_REVIEW` |
 | `POST` | `/api/dataset-requests/:id/review` | ตามสถานะปัจจุบัน | **จุดตัดสินใจเดียวของทุกด่าน** |
-| `POST` | `/api/dataset-requests/:id/assign` | `BDI_OFFICER` | assign / ถอน data specialist |
+| `POST` | `/api/dataset-requests/:id/assign` | `BDI_OFFICER` | ขอความเห็น / ถอน data specialist — **ไม่ย้ายด่าน** (409 ถ้าคำขอไม่ได้อยู่ที่ `BDI_OFFICER_REVIEW`) |
 | `GET` | `/api/dataset-requests/specialists` | `BDI_OFFICER` | รายชื่อ `BDI_DATASET_SPECIALIST` ที่ `ACTIVE` |
 | `GET` | `/api/notifications` | ทุกคนที่ล็อกอิน | 20 รายการล่าสุด + จำนวนที่ยังไม่อ่าน |
 | `POST` | `/api/notifications/:id/read`, `/api/notifications/read-all` | เจ้าของ notification | ทำเครื่องหมายว่าอ่านแล้ว |
@@ -97,8 +97,7 @@ docker compose exec backend npm run prisma:migrate -- --name dataset_registratio
 | --- | --- | --- | --- |
 | `PENDING_OFFICER_REVIEW` | `BDI_OFFICER` | `forward` | `PENDING_ORG_APPROVER` |
 | | | `request_revision` | `NEEDS_REVISION` |
-| | specialist ที่ถูก assign | `comment` | *(ไม่เปลี่ยนสถานะ)* |
-| | | `request_revision` | `NEEDS_REVISION` |
+| | specialist ที่ถูกขอความเห็น | `comment` | *(ไม่เปลี่ยนทั้งสถานะและด่าน)* |
 | `PENDING_ORG_APPROVER` | ผู้มีอำนาจของหน่วยงาน | `approve` (ลงนาม) | `PENDING_BDI_APPROVAL` |
 | | | `request_revision` | `NEEDS_REVISION` |
 | `BDI_FINAL_APPROVAL` | `BDI_FINAL_APPROVER` | `approve` | `APPROVED` (+ สร้าง PDF ฉบับอนุมัติ) |

@@ -44,6 +44,11 @@ export const ALLOWED_RESULTS: Record<ReviewTaskType, ReviewResult[]> = {
     ReviewResult.REJECTED,
     ReviewResult.CONFIRMED,
   ],
+  /**
+   * ตารางนี้ตามชีทไว้ครบ แต่ตั้งแต่ 2026-08-30 แถวของผู้เชี่ยวชาญถูกเขียนด้วย CONFIRMED
+   * อย่างเดียว (`recordAdvisoryNote()`) — ไม่มีเส้นทางไหนเรียก `completeTask()` กับด่านนี้
+   * อีกแล้ว เพราะมันไม่ใช่ด่านที่คำขอค้างอยู่ได้
+   */
   [ReviewTaskType.DATASET_SPECIALIST_REVIEW]: [
     ReviewResult.PASSED,
     ReviewResult.RETURNED,
@@ -347,27 +352,57 @@ export async function reassignTask(
 }
 
 /**
- * บันทึกความเห็นโดยไม่เปลี่ยนสถานะ
+ * ความเห็นของผู้เชี่ยวชาญ — แถวที่เกิดมาแล้วปิดทันที ไม่เคยเป็น active task
  *
- * ของเดิมทำด้วย event type SPECIALIST_COMMENTED แบบใหม่คือปิด task ของผู้เชี่ยวชาญ
- * ด้วย result = CONFIRMED ("ยืนยันการตรวจสอบ โดยไม่ถือเป็น Approval" ตามนิยามใน sheet)
- * แล้วมองเห็นได้เฉพาะฝั่ง BDI
+ * ตั้งแต่ 2026-08-30 การมอบหมายผู้เชี่ยวชาญด้านข้อมูลไม่ย้ายด่านอีกต่อไป: คำขอค้างอยู่ที่
+ * ด่านของเจ้าหน้าที่ BDI ตลอด และตัวการมอบหมายเป็นคอลัมน์บนคำขอ แต่ไทม์ไลน์บนหน้าจอ
+ * เรนเดอร์จาก review_task ล้วน ๆ ความเห็นที่เขาบันทึกจึงยังต้องเป็นแถวหนึ่งแถว
+ * ปิดด้วย result = CONFIRMED ("ยืนยันการตรวจสอบ โดยไม่ถือเป็น Approval" ตาม sheet)
+ *
+ * **ไม่เรียก openTask() โดยตั้งใจ** — ฟังก์ชันนั้นปฏิเสธเมื่อมี active task ค้างอยู่ ซึ่งที่นี่
+ * มีเสมอคือด่านของเจ้าหน้าที่ ส่วนแถวนี้ไม่เคย active จึงไม่ชนกับ
+ * uq_active_review_task_per_subject
  */
-export async function recordComment(
+export async function recordAdvisoryNote(
   db: Db,
   params: {
-    taskId: string;
+    subjectType: SubjectType;
+    subjectId: string;
+    taskType: ReviewTaskType;
+    assignedUserId: string;
+    assignedRole: RoleCode;
     comment: string;
-    visibility?: CommentVisibility;
     actorId: string;
+    visibility?: CommentVisibility;
   },
 ) {
-  return completeTask(db, {
-    taskId: params.taskId,
-    result: ReviewResult.CONFIRMED,
-    comment: params.comment,
-    commentVisibility: params.visibility ?? CommentVisibility.BDI_INTERNAL,
-    actorId: params.actorId,
+  const { subjectType, subjectId, taskType } = params;
+  const [totalTasks, sameTypeTasks] = await Promise.all([
+    db.reviewTask.count({ where: { subjectType, subjectId } }),
+    db.reviewTask.count({ where: { subjectType, subjectId, taskType } }),
+  ]);
+  const now = new Date();
+
+  return db.reviewTask.create({
+    data: {
+      subjectType,
+      subjectId,
+      taskType,
+      sequenceNumber: totalTasks + 1,
+      roundNumber: sameTypeTasks + 1,
+      assignedUserId: params.assignedUserId,
+      assignedRole: params.assignedRole,
+      assignmentSource: AssignmentSource.MANUAL,
+      status: ReviewTaskStatus.COMPLETED,
+      result: ReviewResult.CONFIRMED,
+      resultComment: params.comment,
+      commentVisibility: params.visibility ?? CommentVisibility.BDI_INTERNAL,
+      assignedAt: now,
+      startedAt: now,
+      completedAt: now,
+      createdBy: params.actorId,
+      updatedBy: params.actorId,
+    },
   });
 }
 

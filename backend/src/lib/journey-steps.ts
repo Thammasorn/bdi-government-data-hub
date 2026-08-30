@@ -78,7 +78,7 @@ export interface JourneyStep {
 
 export interface JourneyProgress {
   steps: JourneyStep[];
-  /** จำนวนขั้นบังคับ — Journey B = 3, Journey C = 4 (ขั้นผู้เชี่ยวชาญไม่ถูกนับ) */
+  /** จำนวนขั้นบังคับ — ตอนนี้ทั้งสองเส้นทางเท่ากับ 3 */
   totalSteps: number;
   currentOrder: number | null;
   currentStep: JourneyStep | null;
@@ -86,11 +86,7 @@ export interface JourneyProgress {
   phase: JourneyPhase;
 }
 
-export type StepKey =
-  | "OFFICER_REVIEW"
-  | "SPECIALIST_REVIEW"
-  | "ORGANIZATION_APPROVAL"
-  | "FINAL_APPROVAL";
+export type StepKey = "OFFICER_REVIEW" | "ORGANIZATION_APPROVAL" | "FINAL_APPROVAL";
 
 export interface StepPlan {
   key: StepKey;
@@ -147,8 +143,11 @@ const ORGANIZATION_PLAN: StepPlan[] = [
  * Journey C — `docs/01-user-journey.md` §4
  * ตรงกับ nextStageAfter() ใน dataset-requests.ts
  *
- * สามด่านเท่ากับเส้นทางหน่วยงาน ต่างกันแค่ทางแยกผู้เชี่ยวชาญที่ไม่บังคับ — ด่านตรวจซ้ำของ
- * เจ้าหน้าที่ BDI ที่เคยคั่นระหว่างการลงนามกับการอนุมัติถูกยกเลิกเมื่อ 2026-08-30
+ * สามด่านเท่ากับเส้นทางหน่วยงานทุกประการ — ด่านตรวจซ้ำของเจ้าหน้าที่ BDI ที่เคยคั่นระหว่าง
+ * การลงนามกับการอนุมัติถูกยกเลิกเมื่อ 2026-08-30 และด่านผู้เชี่ยวชาญด้านข้อมูลถูกยกเลิก
+ * ในวันเดียวกัน: การมอบหมายผู้เชี่ยวชาญกลายเป็น "ขอความเห็น" ที่ไม่ย้ายด่าน คำขอค้างอยู่ที่
+ * BDI_OFFICER_REVIEW ตลอด (คอลัมน์ `assigned_specialist_id` บนคำขอ) จึงไม่มีช่องของตัวเอง
+ * ในเส้นทาง — ดู routes/dataset-requests.ts `POST /:id/assign`
  */
 const DATASET_PLAN: StepPlan[] = [
   {
@@ -159,15 +158,6 @@ const DATASET_PLAN: StepPlan[] = [
     shortLabel: "รอ BDI ตรวจสอบ",
     waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.BDI_OFFICER_REVIEW],
     roleCode: ROLE_CODES.BDI_OFFICER,
-  },
-  {
-    key: "SPECIALIST_REVIEW",
-    taskType: ReviewTaskType.DATASET_SPECIALIST_REVIEW,
-    optional: true,
-    label: withRole(ROLE_CODES.BDI_DATASET_SPECIALIST, "พิจารณา"),
-    shortLabel: "รอผู้เชี่ยวชาญ",
-    waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.DATASET_SPECIALIST_REVIEW],
-    roleCode: ROLE_CODES.BDI_DATASET_SPECIALIST,
   },
   {
     key: "ORGANIZATION_APPROVAL",
@@ -208,8 +198,7 @@ export const journeyUnit = (subjectType: SubjectType): string =>
  * ผลที่ถือว่า "ผ่านด่านนี้ไปแล้ว"
  *
  * PASSED สำหรับด่านตรวจ, APPROVED สำหรับด่านอนุมัติ และ **CONFIRMED ก็นับด้วย** —
- * `recordComment()` ปิด task ของผู้เชี่ยวชาญด้วย CONFIRMED แล้วเปิดด่านถัดไปทันที
- * และ ALLOWED_RESULTS ก็ยอมให้ BDI_OFFICER_REVIEW จบด้วย CONFIRMED ได้เช่นกัน
+ * ALLOWED_RESULTS ยอมให้ BDI_OFFICER_REVIEW จบด้วย CONFIRMED ได้ (action `confirm`)
  * ตกข้อนี้ไปแล้วด่านที่ทำเสร็จจริงจะขึ้นว่า "ยังไม่ถึง" ทั้งที่คำขอเดินผ่านไปแล้ว
  * COMPLETED เป็นของ ORGANIZATION_REVISION ซึ่งยังไม่มีโค้ดเส้นไหนเปิด — ใส่ไว้ให้ครบตาราง
  */
@@ -280,9 +269,9 @@ function phaseFor(status: RequestStatus): JourneyPhase {
 /**
  * ประกอบเส้นทางทั้งเส้นพร้อมสถานะของแต่ละขั้น
  *
- * ขั้นผู้เชี่ยวชาญของ Journey C แสดงเสมอแต่ไม่มีเลขกำกับและไม่ถูกนับใน totalSteps —
- * มันเป็นทางแยกที่เจ้าหน้าที่เลือกได้ ไม่ใช่ด่านที่ทุกคำขอต้องผ่าน ถ้านับรวมด้วย
- * "จาก N" จะเปลี่ยนกลางคันตอนมีการมอบหมาย ซึ่งอ่านแล้วเหมือนระบบเปลี่ยนกติกา
+ * `optional` ยังอยู่ในโครงสร้าง (ขั้นที่แสดงแต่ไม่ถูกนับใน totalSteps และวาดเป็นทางแยก)
+ * แต่ **ไม่มีเส้นทางไหนใช้แล้ว** หลังด่านผู้เชี่ยวชาญถูกถอดออกเมื่อ 2026-08-30 — เก็บไว้
+ * เพราะเป็นกลไกทั่วไปของแผนภาพ ไม่ใช่เพราะมีของที่ยังใช้มันอยู่
  */
 export function buildJourneyProgress(params: {
   subjectType: SubjectType;
@@ -345,8 +334,7 @@ export function buildJourneyProgress(params: {
 /**
  * ขั้นบังคับถัดไปที่คำขอจะไปถึง
  *
- * กำลังเดินอยู่ → ขั้นบังคับถัดจากขั้นปัจจุบัน (ข้ามขั้นผู้เชี่ยวชาญ เพราะเป็นทางแยก
- * ที่เจ้าหน้าที่เลือก ไม่ใช่ปลายทางที่รับประกันได้)
+ * กำลังเดินอยู่ → ขั้นบังคับถัดจากขั้นปัจจุบัน
  *
  * ร่างหรือถูกส่งกลับ → ปลายทางคือด่านที่ `POST /:id/submit` จะเปิด ซึ่ง **เปิด
  * `BDI_OFFICER_REVIEW` เสมอ** ไม่ว่าจะถูกส่งกลับจากด่านไหน — รวมถึงใบที่หน่วยงานลงนาม
@@ -361,9 +349,6 @@ function nextStepFor(params: {
   if (params.phase === "APPROVED" || params.phase === "REJECTED" || params.phase === "CANCELLED") {
     return null;
   }
-
-  // ผู้เชี่ยวชาญพิจารณาเสร็จแล้วคืนให้เจ้าหน้าที่ตัดสินใจเสมอ ไม่ได้เดินต่อไปด่านถัดไปเอง
-  if (params.currentStep?.key === "SPECIALIST_REVIEW") return params.byKey("OFFICER_REVIEW");
 
   if (params.currentStep) {
     const from = params.steps.indexOf(params.currentStep);

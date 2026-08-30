@@ -78,7 +78,11 @@ export const REVIEW_TASK_ACTION: Record<ReviewTaskType, string> = {
 export const REVIEW_TASK_TYPE_LABELS: Record<ReviewTaskType, string> = Object.fromEntries(
   (Object.keys(REVIEW_TASK_ROLE) as ReviewTaskType[]).map((t) => [
     t,
-    `รอ${withRole(REVIEW_TASK_ROLE[t], REVIEW_TASK_ACTION[t])}`,
+    // ด่านผู้เชี่ยวชาญไม่ใช่ด่านที่ "รอ" ใครแล้วตั้งแต่ 2026-08-30 — แถวชนิดนี้เกิดขึ้น
+    // ตอนผู้เชี่ยวชาญบันทึกความเห็น ซึ่งเป็นสิ่งที่จบไปแล้ว ไม่ใช่สิ่งที่ใครกำลังรอ
+    t === ReviewTaskType.DATASET_SPECIALIST_REVIEW
+      ? `ความเห็นของ${ROLE_LABELS[REVIEW_TASK_ROLE[t]]}`
+      : `รอ${withRole(REVIEW_TASK_ROLE[t], REVIEW_TASK_ACTION[t])}`,
   ]),
 ) as Record<ReviewTaskType, string>;
 

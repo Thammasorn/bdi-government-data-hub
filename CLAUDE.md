@@ -142,7 +142,19 @@ The `OrganizationEvent` / `DatasetRequestEvent` tables are gone. The UI timeline
 from `review_task` rows, so every transition must go through `lib/workflow.ts`.
 
 Journey B: `BDI_OFFICER_REVIEW` → `ORGANIZATION_APPROVAL` → `BDI_FINAL_APPROVAL`.
-Journey C: the same, plus an optional `DATASET_SPECIALIST_REVIEW` branching off the officer gate.
+Journey C: exactly the same three gates.
+
+**Assigning a data specialist is not a gate.** `POST /dataset-requests/:id/assign` writes
+`assigned_specialist_id` on the request and nothing else: the request stays on
+`BDI_OFFICER_REVIEW`, and the officer can forward or return it at any moment without waiting for
+the specialist or withdrawing them. The specialist reads the request, talks to the officer
+outside the system, and may record an opinion — `recordAdvisoryNote()` in `lib/workflow.ts`
+writes a `DATASET_SPECIALIST_REVIEW` row that is `COMPLETED`/`CONFIRMED` from birth, because the
+timeline is rendered from `review_task` and an opinion still has to appear there. It never opens
+a task, so it cannot collide with the one-active-task index. Until 2026-08-30 the assignment
+opened that task type *instead of* the officer's, which took the gate away from the officer and
+let the specialist send the request back to the organisation on their own.
+
 **One `task_type` is one gate on both journeys.** Journey C used to carry a second
 `BDI_OFFICER_REVIEW` round — a "re-check" between the signature and the final approval — which was
 removed on 2026-08-30; the organisation's signature now opens `BDI_FINAL_APPROVAL` directly. A
@@ -156,8 +168,8 @@ journey email, and the `REQUEST_PROGRESSED` notification text. It is a pure func
 rows `taskHistory()` / `activeTask()` already fetch, so no screen pays an extra query for it.
 **Change it in the same commit as `nextStageAfter()` in `dataset-requests.ts` or the if-chain in
 `organizations.ts`** — otherwise the screen promises a route the backend does not walk. `CONFIRMED`
-counts as a passing result there, not just `PASSED`/`APPROVED`: `recordComment()` closes the
-specialist task with it and opens the next stage immediately.
+counts as a passing result there, not just `PASSED`/`APPROVED`, because `ALLOWED_RESULTS` lets a
+`BDI_OFFICER_REVIEW` close with it (the `confirm` action).
 
 A `RETURNED` request has no current step, because `ORGANIZATION_REVISION` is never opened as a
 task. The progress object reports `phase: "WAITING_REVISION"` and the screens say so in words;

@@ -80,11 +80,38 @@ const isTerminalKey = (t: string): t is TerminalKey =>
 type LegacyToken = "SUBMITTED" | "UNDER_REVIEW" | ReviewTaskType;
 export type FilterToken = JourneyNodeKey | LegacyToken | keyof typeof LEGACY_NODE_KEYS;
 
-/** ชื่อช่องที่เลิกใช้แล้ว → ช่องที่รับความหมายนั้นต่อ */
+/**
+ * ชื่อช่องที่เลิกใช้แล้ว → ช่องที่รับความหมายนั้นต่อ
+ *
+ * `SPECIALIST_REVIEW` เคยเป็นช่องจริงของ Journey C จนถึง 2026-08-30 ตอนนี้การขอความเห็น
+ * ผู้เชี่ยวชาญไม่ย้ายด่านอีกแล้ว คำขอที่ "อยู่กับผู้เชี่ยวชาญ" จึงคือคำขอที่ยังอยู่ที่ด่าน
+ * ของเจ้าหน้าที่ BDI — ลิงก์เก่าที่กรองด้วยชื่อนี้ยังชี้ไปที่กองเดิมได้ถูกต้อง
+ */
 const LEGACY_NODE_KEYS = {
   OFFICER_INITIAL: "OFFICER_REVIEW",
   OFFICER_RECHECK: "OFFICER_REVIEW",
+  SPECIALIST_REVIEW: "OFFICER_REVIEW",
+  /**
+   * ชื่อ task_type ก็ต้องแปลด้วย ไม่ใช่แค่ชื่อช่อง — `?stage=DATASET_SPECIALIST_REVIEW`
+   * เคยตกไปที่กติกา "โทเคนที่ไม่รู้จักถูกทิ้งเงียบ" แล้วคืน **ทั้งรายการ** ราวกับไม่ได้กรอง
+   * ซึ่งอ่านไม่ออกเลยว่าลิงก์เก่าใช้ไม่ได้แล้ว
+   */
+  DATASET_SPECIALIST_REVIEW: "OFFICER_REVIEW",
 } as const satisfies Record<string, StepKey>;
+
+/**
+ * ช่องที่ไม่ใช่ "งานของ role นี้" แต่เป็น "ช่องที่ role นี้ถูกขอความเห็นระหว่างนั้น"
+ *
+ * ผู้เชี่ยวชาญด้านข้อมูลไม่มีด่านของตัวเองอีกแล้ว (`TASK_TYPE_ROLES` จึงไม่พาไปไหน) แต่
+ * แท็บ "ที่ต้องดำเนินการ" ของเขาต้องไม่ว่างเปล่าทั้งที่รายการของเขามีคำขออยู่ — สิ่งที่รอ
+ * เขาอยู่คือคำขอที่ยังค้างที่ด่านของเจ้าหน้าที่ BDI ซึ่งเป็นช่วงเดียวที่ความเห็นมีที่ใช้
+ *
+ * แยกจาก TASK_TYPE_ROLES โดยตั้งใจ: ตารางนั้นตอบว่า "ใครกดปิดด่านนี้ได้" ซึ่งผู้เชี่ยวชาญ
+ * **ไม่ได้** และต้องไม่ได้ ส่วนตารางนี้ตอบแค่ว่า "ใบไหนควรอยู่ในสายตาเขา"
+ */
+const ADVISORY_NODE_KEYS: Partial<Record<RoleCode, StepKey[]>> = {
+  BDI_DATASET_SPECIALIST: ["OFFICER_REVIEW"],
+};
 
 const ACCEPTED: string[] = [
   ...new Set([
@@ -154,6 +181,9 @@ export function myNodeKeys(subjectType: SubjectType, roles: RoleCode[]): Journey
   const keys = new Set<JourneyNodeKey>();
 
   for (const role of roles) {
+    for (const key of ADVISORY_NODE_KEYS[role] ?? []) {
+      if (plan.some((s) => s.key === key)) keys.add(key);
+    }
     for (const taskType of ROLE_TASK_TYPES[role] ?? []) {
       if (taskType === ReviewTaskType.ORGANIZATION_REVISION) {
         // ด่านนี้ไม่เคยถูกเปิดเป็น task — คิวของผู้ดำเนินการหน่วยงานคือใบที่ถูกส่งกลับ

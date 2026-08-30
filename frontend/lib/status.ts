@@ -130,7 +130,15 @@ export function datasetPendingOwner(
 ): string {
   if (currentTaskType && isPendingDatasetStatus(status)) {
     if (currentTaskType === "ORGANIZATION_REVISION") return "รอหน่วยงานของคุณแก้ไข";
-    return withRole(TASK_TYPE_ROLE[currentTaskType], "กำลังดำเนินการ");
+    /**
+     * ด่านผู้เชี่ยวชาญไม่ใช่ด่านที่คำขอค้างอยู่ได้อีกแล้ว (2026-08-30) — คำขอยังอยู่กับ
+     * เจ้าหน้าที่ตลอดเวลาที่ขอความเห็น จึงตอบชื่อเดียวกับด่านของเจ้าหน้าที่
+     */
+    const role =
+      currentTaskType === "DATASET_SPECIALIST_REVIEW"
+        ? TASK_TYPE_ROLE.BDI_OFFICER_REVIEW
+        : TASK_TYPE_ROLE[currentTaskType];
+    return withRole(role, "กำลังดำเนินการ");
   }
   return {
     DRAFT: "ยังเป็นฉบับร่าง ยังไม่ได้นำส่ง",
@@ -170,7 +178,14 @@ export const TASK_TYPE_META: Record<ReviewTaskType, { label: string; className: 
   Object.fromEntries(
     (Object.keys(TASK_TYPE_ACTION) as ReviewTaskType[]).map((t) => [
       t,
-      { label: `รอ${withRole(TASK_TYPE_ROLE[t], TASK_TYPE_ACTION[t])}`, className: TASK_TYPE_TONE[t] },
+      {
+        // แถวของผู้เชี่ยวชาญเป็นความเห็นที่บันทึกไปแล้ว ไม่ใช่ด่านที่ใครกำลังรอ
+        label:
+          t === "DATASET_SPECIALIST_REVIEW"
+            ? `ความเห็นของ${ROLE_LABELS[TASK_TYPE_ROLE[t]]}`
+            : `รอ${withRole(TASK_TYPE_ROLE[t], TASK_TYPE_ACTION[t])}`,
+        className: TASK_TYPE_TONE[t],
+      },
     ]),
   ) as Record<ReviewTaskType, { label: string; className: string }>;
 
