@@ -23,7 +23,7 @@ import {
   SubjectType,
 } from "@prisma/client";
 
-import { ROLE_LABELS } from "./roles.js";
+import { REVIEW_TASK_TYPE_LABELS, ROLE_LABELS, withRole } from "./roles.js";
 import { ROLE_CODES, type RoleCode } from "./system.js";
 import { ALLOWED_RESULTS } from "./workflow.js";
 
@@ -118,27 +118,27 @@ const ORGANIZATION_PLAN: StepPlan[] = [
     key: "OFFICER_REVIEW",
     taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
     optional: false,
-    label: "เจ้าหน้าที่ BDI ตรวจสอบเอกสาร",
+    label: withRole(ROLE_CODES.BDI_OFFICER, "ตรวจสอบเอกสาร"),
     shortLabel: "รอ BDI ตรวจสอบ",
-    waitingLabel: "รอเจ้าหน้าที่ BDI ตรวจสอบเอกสาร",
+    waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.BDI_OFFICER_REVIEW],
     roleCode: ROLE_CODES.BDI_OFFICER,
   },
   {
     key: "ORGANIZATION_APPROVAL",
     taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
     optional: false,
-    label: "ผู้มีอำนาจของหน่วยงานลงนามเห็นชอบ",
+    label: withRole(ROLE_CODES.ORGANIZATION_APPROVER, "ลงนามเห็นชอบ"),
     shortLabel: "รอหน่วยงานลงนาม",
-    waitingLabel: "รอผู้มีอำนาจของหน่วยงานลงนามเห็นชอบ",
+    waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.ORGANIZATION_APPROVAL],
     roleCode: ROLE_CODES.ORGANIZATION_APPROVER,
   },
   {
     key: "FINAL_APPROVAL",
     taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
     optional: false,
-    label: "BDI อนุมัติขั้นสุดท้าย",
+    label: withRole(ROLE_CODES.BDI_FINAL_APPROVER, "ดำเนินการอนุมัติ"),
     shortLabel: "รอ BDI อนุมัติ",
-    waitingLabel: "รอ BDI อนุมัติขั้นสุดท้าย",
+    waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.BDI_FINAL_APPROVAL],
     roleCode: ROLE_CODES.BDI_FINAL_APPROVER,
   },
 ];
@@ -155,36 +155,36 @@ const DATASET_PLAN: StepPlan[] = [
     key: "OFFICER_REVIEW",
     taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
     optional: false,
-    label: "เจ้าหน้าที่ BDI ตรวจสอบเอกสาร",
+    label: withRole(ROLE_CODES.BDI_OFFICER, "ตรวจสอบเอกสาร"),
     shortLabel: "รอ BDI ตรวจสอบ",
-    waitingLabel: "รอเจ้าหน้าที่ BDI ตรวจสอบเอกสาร",
+    waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.BDI_OFFICER_REVIEW],
     roleCode: ROLE_CODES.BDI_OFFICER,
   },
   {
     key: "SPECIALIST_REVIEW",
     taskType: ReviewTaskType.DATASET_SPECIALIST_REVIEW,
     optional: true,
-    label: "ผู้เชี่ยวชาญด้านข้อมูลพิจารณา",
+    label: withRole(ROLE_CODES.BDI_DATASET_SPECIALIST, "พิจารณา"),
     shortLabel: "รอผู้เชี่ยวชาญ",
-    waitingLabel: "รอผู้เชี่ยวชาญด้านข้อมูลพิจารณา",
+    waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.DATASET_SPECIALIST_REVIEW],
     roleCode: ROLE_CODES.BDI_DATASET_SPECIALIST,
   },
   {
     key: "ORGANIZATION_APPROVAL",
     taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
     optional: false,
-    label: "ผู้มีอำนาจของหน่วยงานลงนามเห็นชอบ",
+    label: withRole(ROLE_CODES.ORGANIZATION_APPROVER, "ลงนามเห็นชอบ"),
     shortLabel: "รอหน่วยงานลงนาม",
-    waitingLabel: "รอผู้มีอำนาจของหน่วยงานลงนามเห็นชอบ",
+    waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.ORGANIZATION_APPROVAL],
     roleCode: ROLE_CODES.ORGANIZATION_APPROVER,
   },
   {
     key: "FINAL_APPROVAL",
     taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
     optional: false,
-    label: "BDI อนุมัติขั้นสุดท้าย",
+    label: withRole(ROLE_CODES.BDI_FINAL_APPROVER, "ดำเนินการอนุมัติ"),
     shortLabel: "รอ BDI อนุมัติ",
-    waitingLabel: "รอ BDI อนุมัติขั้นสุดท้าย",
+    waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.BDI_FINAL_APPROVAL],
     roleCode: ROLE_CODES.BDI_FINAL_APPROVER,
   },
 ];

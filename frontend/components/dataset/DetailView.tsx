@@ -58,7 +58,7 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string,
     case "BDI_OFFICER_REVIEW":
       if (isOfficer) {
         return {
-          advanceLabel: "ส่งต่อให้ผู้มีอำนาจของหน่วยงาน",
+          advanceLabel: "ผ่านการตรวจสอบ",
           hint: "ตรวจว่าข้อมูลเพียงพอหรือไม่ มอบหมายผู้เชี่ยวชาญได้ก่อนส่งต่อ",
           canRevise: true,
           canAssign: true,
@@ -418,18 +418,18 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
             </div>
             <div className="flex shrink-0 flex-wrap gap-3">
               {ability.canAssign ? (
-                <Button variant="ghost" onClick={() => setModal("assign")}>
+                <Button variant="secondary" onClick={() => setModal("assign")}>
                   {request.assignedSpecialist ? "เปลี่ยนหรือถอนผู้เชี่ยวชาญ" : "มอบหมายผู้เชี่ยวชาญ"}
                 </Button>
               ) : null}
               {ability.canComment ? (
-                <Button variant="ghost" onClick={() => setModal("comment")}>
+                <Button variant="secondary" onClick={() => setModal("comment")}>
                   บันทึกความเห็น
                 </Button>
               ) : null}
               {ability.canRevise ? (
                 <Button variant="secondary" onClick={() => setModal("revise")}>
-                  ต้องปรับปรุง
+                  ส่งกลับแก้ไข
                 </Button>
               ) : null}
               {ability.canReject ? (
@@ -631,10 +631,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         ) : null}
 
         <Card>
-          <CardHeader
-            title="ขั้นตอนการอนุมัติ"
-            description="เส้นทางทั้งหมดของคำขอนี้ — ผ่านมาแล้วกี่ขั้น เหลืออีกกี่ขั้น และแต่ละขั้นเป็นหน้าที่ของใคร"
-          />
+          <CardHeader title="ขั้นตอนการอนุมัติ" />
           <ApprovalSteps progress={request.progress} />
         </Card>
 
@@ -654,8 +651,8 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
       <Modal
         open={modal === "revise"}
         onClose={closeModal}
-        title="ระบุสิ่งที่ต้องปรับปรุง"
-        description="ข้อความนี้จะถูกส่งทางอีเมลและแจ้งเตือนในระบบให้ผู้ใช้ของหน่วยงาน"
+        title="ส่งกลับแก้ไข"
+        description="ระบุเนื้อหาหรือข้อความที่ต้องการให้ปรับปรุง ระบบจะแจ้งไปยังผู้ดำเนินการของหน่วยงาน"
       >
         <TextAreaField
           label="รายละเอียดที่ต้องแก้ไข"
@@ -790,7 +787,8 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
       <Modal
         open={modal === "advance"}
         onClose={closeModal}
-        title={ability?.advanceLabel ?? "ยืนยัน"}
+        // กล่องยืนยันใช้คำว่า "ยืนยัน" เสมอ — ชื่อการกระทำอยู่ที่ปุ่มที่เพิ่งกดไปแล้ว
+        title="ยืนยัน"
         description="ยืนยันว่าคุณตรวจสอบข้อมูลและเอกสารทั้งหมดเรียบร้อยแล้ว"
       >
         <p className="text-[15px] leading-relaxed text-ink-muted">

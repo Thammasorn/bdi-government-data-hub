@@ -413,9 +413,9 @@ export default function EditOrganizationPage() {
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
       <header className="mb-8">
-        <h1 className="text-[26px] font-semibold text-navy-800">สร้างหน่วยงาน</h1>
+        <h1 className="text-[26px] font-semibold text-navy-800">ลงทะเบียนหน่วยงาน</h1>
         <p className="mt-1.5 text-[15px] text-ink-muted">
-          กรอกข้อมูลให้ครบทั้งสามส่วน ระบบจะสร้างแบบฟอร์ม PDF ให้ตรวจสอบก่อนนำส่ง
+          แบบคำขอลงทะเบียนหน่วยงานเพื่อเข้าใช้งานระบบธรรมาภิบาลข้อมูลภาครัฐ
         </p>
       </header>
 
@@ -441,7 +441,7 @@ export default function EditOrganizationPage() {
                   ตัวเองไม่ได้ และรหัสที่ไปชนของหน่วยงานอื่นเคยไประเบิดตอนอนุมัติขั้นสุดท้าย
                   ฝั่ง API ปฏิเสธค่าที่ต่างจากเดิมด้วย ไม่ได้กันแค่ที่หน้าจอ */}
               <Wrap name="organizationCode">
-                <TextField label="รหัสหน่วยงาน" readOnly value={form.organizationCode} error={fields.organizationCode} hint="ระบบกำหนดให้อัตโนมัติ แก้ไขไม่ได้ — หากไม่ถูกต้องกรุณาแจ้งเจ้าหน้าที่ BDI" />
+                <TextField label="รหัสหน่วยงาน" readOnly value={form.organizationCode} error={fields.organizationCode} hint="หากรหัสหน่วยงานไม่ถูกต้อง กรุณาแจ้งเจ้าหน้าที่ BDI" />
               </Wrap>
               <Wrap name="name">
                 <TextField label="ชื่อหน่วยงาน" required value={form.name} onChange={(e) => set("name", e.target.value)} {...fieldProps("name")} placeholder="เช่น สำนักงานปลัดกระทรวงสาธารณสุข" />
@@ -482,10 +482,11 @@ export default function EditOrganizationPage() {
               </div>
               <div className="grid gap-5 sm:grid-cols-2">
                 <Wrap name="postalCode">
-                  <TextField label="รหัสไปรษณีย์" required inputMode="numeric" maxLength={5} value={form.postalCode} onChange={(e) => set("postalCode", e.target.value)} {...fieldProps("postalCode")} hint="เติมอัตโนมัติเมื่อเลือกตำบล" />
+                  {/* มาจากตำบลที่เลือก ไม่ใช่ช่องกรอก — แก้เองแล้วจะไม่ตรงกับที่อยู่ที่พิมพ์ลงเอกสาร A0 */}
+                  <TextField label="รหัสไปรษณีย์" required readOnly inputMode="numeric" maxLength={5} value={form.postalCode} error={fields.postalCode} />
                 </Wrap>
                 <Wrap name="email">
-                  <TextField label="อีเมลหน่วยงาน" required type="email" value={form.email} onChange={(e) => set("email", e.target.value)} {...fieldProps("email")} placeholder="contact@agency.go.th" hint="อีเมลกลางของหน่วยงาน ต้องไม่ใช่อีเมลของผู้มีอำนาจกระทำการแทนในส่วนที่ 2" />
+                  <TextField label="อีเมลหน่วยงาน" required type="email" value={form.email} onChange={(e) => set("email", e.target.value)} {...fieldProps("email")} placeholder="contact@agency.go.th" hint="อีเมลกลางของหน่วยงาน" />
                 </Wrap>
               </div>
             </div>
@@ -493,7 +494,7 @@ export default function EditOrganizationPage() {
 
           {/* ---------------- ส่วนที่ 2 ---------------- */}
           <Card id={SECTIONS[1].id} className="scroll-mt-24">
-            <CardHeader tag={SECTIONS[1].tag} title={SECTIONS[1].title} description="ผู้ที่จะลงนามรับรองการสร้างหน่วยงานนี้" />
+            <CardHeader tag={SECTIONS[1].tag} title={SECTIONS[1].title} description="ผู้มีอำนาจลงนามรับรองคำขอนี้ ระบบจะส่งคำขอลงนามไปยังอีเมลที่ระบุในส่วนนี้" />
             <div className="grid gap-5 p-6">
               <PersonFields prefixKey="signatoryPrefix" firstKey="signatoryFirstName" lastKey="signatoryLastName" form={form} fieldProps={fieldProps} set={set} />
               <div className="grid gap-5 sm:grid-cols-2">
@@ -501,7 +502,7 @@ export default function EditOrganizationPage() {
                   <TextField label="ตำแหน่ง" required value={form.signatoryPosition} onChange={(e) => set("signatoryPosition", e.target.value)} {...fieldProps("signatoryPosition")} />
                 </Wrap>
                 <Wrap name="signatoryEmail">
-                  <TextField label="อีเมล" required type="email" value={form.signatoryEmail} onChange={(e) => set("signatoryEmail", e.target.value)} {...fieldProps("signatoryEmail")} hint="ระบบจะส่งคำขอให้ลงนามไปที่อีเมลนี้" />
+                  <TextField label="อีเมล" required type="email" value={form.signatoryEmail} onChange={(e) => set("signatoryEmail", e.target.value)} {...fieldProps("signatoryEmail")} />
                 </Wrap>
               </div>
               <div className="grid gap-5 sm:grid-cols-2">
@@ -525,7 +526,13 @@ export default function EditOrganizationPage() {
           <Card id={SECTIONS[2].id} className="scroll-mt-24">
             <CardHeader tag={SECTIONS[2].tag} title={SECTIONS[2].title} description="ผู้ประสานงานที่กรอกแบบฟอร์มนี้" />
             <div className="grid gap-5 p-6">
-              <PersonFields prefixKey="contactPrefix" firstKey="contactFirstName" lastKey="contactLastName" form={form} fieldProps={fieldProps} set={set} />
+              {/*
+                ชื่อ นามสกุล อีเมล และเบอร์โทร มาจากบัญชีของผู้กรอกเอง (backend เติมให้ตอน
+                สร้างคำขอ) แก้ที่นี่ได้ก็จะกลายเป็นข้อมูลที่ไม่ตรงกับบัญชีที่ล็อกอินอยู่ และ
+                ชื่อนี้คือชื่อที่ไปพิมพ์อยู่บนเอกสารที่ลงนาม — คำนำหน้ายังแก้ได้ เพราะ ThaiD
+                ไม่ส่ง claim `title` มา บัญชีจำนวนหนึ่งจึงยังไม่มีค่านี้
+              */}
+              <PersonFields prefixKey="contactPrefix" firstKey="contactFirstName" lastKey="contactLastName" form={form} fieldProps={fieldProps} set={set} lockName />
               <div className="grid gap-5 sm:grid-cols-2">
                 <Wrap name="contactPosition">
                   <TextField label="ตำแหน่ง" required value={form.contactPosition} onChange={(e) => set("contactPosition", e.target.value)} {...fieldProps("contactPosition")} />
@@ -536,10 +543,10 @@ export default function EditOrganizationPage() {
               </div>
               <div className="grid gap-5 sm:grid-cols-2">
                 <Wrap name="contactEmail">
-                  <TextField label="อีเมล" required type="email" value={form.contactEmail} onChange={(e) => set("contactEmail", e.target.value)} {...fieldProps("contactEmail")} />
+                  <TextField label="อีเมล" required type="email" disabled value={form.contactEmail} error={fields.contactEmail} />
                 </Wrap>
                 <Wrap name="contactPhone">
-                  <TextField label="เบอร์โทรศัพท์" required inputMode="tel" maxLength={20} value={form.contactPhone} onChange={(e) => set("contactPhone", e.target.value)} {...fieldProps("contactPhone")} hint="มือถือ 10 หลัก หรือเบอร์ที่ทำงาน 9 หลัก (เช่น 0812345678 หรือ 021234567)" />
+                  <TextField label="เบอร์โทรศัพท์" required disabled inputMode="tel" maxLength={20} value={form.contactPhone} error={fields.contactPhone} />
                 </Wrap>
               </div>
             </div>
@@ -573,6 +580,7 @@ function PersonFields({
   form,
   fieldProps,
   set,
+  lockName = false,
 }: {
   prefixKey: keyof FormState;
   firstKey: keyof FormState;
@@ -580,6 +588,8 @@ function PersonFields({
   form: FormState;
   fieldProps: (k: keyof FormState) => { error?: string; valid: boolean; onBlur: () => void };
   set: (k: keyof FormState, v: string) => void;
+  /** ชื่อ-นามสกุลมาจากบัญชี ไม่ใช่ช่องกรอก — คำนำหน้ายังเปิดไว้ */
+  lockName?: boolean;
 }) {
   return (
     <div className="grid gap-5 sm:grid-cols-[7.5rem_minmax(0,1fr)_minmax(0,1fr)]">
@@ -592,10 +602,10 @@ function PersonFields({
         </SelectField>
       </Wrap>
       <Wrap name={firstKey}>
-        <TextField label="ชื่อ" required value={form[firstKey]} onChange={(e) => set(firstKey, e.target.value)} {...fieldProps(firstKey)} />
+        <TextField label="ชื่อ" required disabled={lockName} value={form[firstKey]} onChange={(e) => set(firstKey, e.target.value)} {...fieldProps(firstKey)} />
       </Wrap>
       <Wrap name={lastKey}>
-        <TextField label="นามสกุล" required value={form[lastKey]} onChange={(e) => set(lastKey, e.target.value)} {...fieldProps(lastKey)} />
+        <TextField label="นามสกุล" required disabled={lockName} value={form[lastKey]} onChange={(e) => set(lastKey, e.target.value)} {...fieldProps(lastKey)} />
       </Wrap>
     </div>
   );

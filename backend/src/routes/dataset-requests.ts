@@ -1047,7 +1047,8 @@ datasetRequestRouter.post("/:id/submit", async (req, res) => {
   };
   await notifyUsers(officers, {
     type: NotificationType.REQUEST_SUBMITTED,
-    title: `มีคำขอลงทะเบียนชุดข้อมูลใหม่ ${request.requestNumber}`,
+    // เลขคำขอไม่ได้ช่วยให้ผู้อ่านรู้ว่าเรื่องอะไร และลิงก์ในแจ้งเตือนพาไปที่คำขอใบนั้นอยู่แล้ว
+    title: "มีคำขอลงทะเบียนชุดข้อมูลใหม่",
     message: `${info.organizationName} — ${info.datasetName}`,
     subjectType: SUBJECT,
     subjectId: request.id,
@@ -1157,7 +1158,7 @@ datasetRequestRouter.post("/:id/assign", async (req, res, next) => {
     if (specialistId) {
       await notifyUsers([specialistId], {
         type: NotificationType.SPECIALIST_ASSIGNED,
-        title: `คุณได้รับมอบหมายให้พิจารณา ${request.requestNumber}`,
+        title: "คุณได้รับมอบหมายให้พิจารณาชุดข้อมูล",
         message: datasetLabel(request),
         subjectType: SUBJECT,
         subjectId: request.id,
@@ -1790,7 +1791,7 @@ async function dispatchDatasetNotifications(
   if (result === ReviewResult.RETURNED) {
     await notifyUsers([...members.users, request.createdBy], {
       type: NotificationType.REQUEST_RETURNED,
-      title: `คำขอ ${request.requestNumber} ถูกส่งกลับให้แก้ไข`,
+      title: "คำขอถูกส่งกลับให้แก้ไข",
       message: note ?? "",
       subjectType: SUBJECT,
       subjectId: request.id,
@@ -1802,7 +1803,7 @@ async function dispatchDatasetNotifications(
   if (result === ReviewResult.REJECTED) {
     await notifyUsers([...members.users, request.createdBy], {
       type: NotificationType.REQUEST_REJECTED,
-      title: `คำขอ ${request.requestNumber} ไม่ได้รับอนุมัติ`,
+      title: "คำขอไม่ได้รับอนุมัติ",
       message: note ?? "",
       subjectType: SUBJECT,
       subjectId: request.id,
@@ -1814,7 +1815,7 @@ async function dispatchDatasetNotifications(
   if (taskType === ReviewTaskType.BDI_OFFICER_REVIEW) {
     await notifyUsers(members.approvers, {
       type: NotificationType.REQUEST_SUBMITTED,
-      title: `คำขอ ${request.requestNumber} รอคุณลงนาม`,
+      title: "มีคำขอรอคุณลงนาม",
       message: info.datasetName,
       subjectType: SUBJECT,
       subjectId: request.id,
@@ -1834,7 +1835,7 @@ async function dispatchDatasetNotifications(
     const approvers = await bdiApproverIds();
     await notifyUsers(approvers, {
       type: NotificationType.REQUEST_SUBMITTED,
-      title: `คำขอ ${request.requestNumber} รออนุมัติขั้นสุดท้าย`,
+      title: "มีคำขอรออนุมัติขั้นสุดท้าย",
       message: info.datasetName,
       subjectType: SUBJECT,
       subjectId: request.id,
@@ -1851,7 +1852,7 @@ async function dispatchDatasetNotifications(
   if (taskType === ReviewTaskType.BDI_FINAL_APPROVAL && result === ReviewResult.APPROVED) {
     await notifyUsers([...members.users, ...members.approvers, request.createdBy], {
       type: NotificationType.REQUEST_APPROVED,
-      title: `คำขอ ${request.requestNumber} ได้รับอนุมัติแล้ว`,
+      title: "คำขอได้รับอนุมัติแล้ว",
       message: info.datasetName,
       subjectType: SUBJECT,
       subjectId: request.id,

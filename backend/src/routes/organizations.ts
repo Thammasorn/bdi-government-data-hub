@@ -688,6 +688,8 @@ organizationRouter.get("/", async (req, res) => {
         updatedAt: true,
         organizationId: true,
         createdBy: true,
+        organizationCode: true,
+        organization: { select: { organizationCode: true } },
       },
     }),
     prisma.organizationRegistrationRequest.count({ where }),
@@ -765,6 +767,8 @@ organizationRouter.get("/", async (req, res) => {
         // หน้ารายการใช้บอก "อัปเดตล่าสุด" ในกล่องรายละเอียดที่ขึ้นตอนชี้เมาส์
         updatedAt: r.updatedAt,
         organizationId: r.organizationId,
+        // รหัสของคำขอมาก่อน — คำขอที่ยังไม่อนุมัติอาจถือรหัสที่ต่างจากหน่วยงานตั้งต้น
+        organizationCode: r.organizationCode ?? r.organization?.organizationCode ?? null,
         createdBy: {
           email: r.userEmail ?? creator?.email ?? "",
           firstName: r.userFirstnameTh ?? creator?.firstnameTh ?? null,
@@ -1656,7 +1660,8 @@ organizationRouter.post("/:id/submit", async (req, res) => {
   await notifyUsers(await bdiOfficerIds(), {
     type: NotificationType.REQUEST_SUBMITTED,
     title: "มีคำขอลงทะเบียนหน่วยงานใหม่",
-    message: `${shape.name} นำส่งคำขอ ${request.requestNumber}`,
+    // เลขคำขอไม่ได้ช่วยให้ผู้อ่านรู้ว่าเรื่องอะไร และลิงก์ในแจ้งเตือนพาไปที่คำขอใบนั้นอยู่แล้ว
+    message: `${shape.name} นำส่งคำขอลงทะเบียนหน่วยงาน`,
     subjectType: SUBJECT,
     subjectId: request.id,
     organizationId: request.organizationId,
@@ -2381,7 +2386,7 @@ async function dispatchReviewNotifications(
     await notifyUsers(await bdiApproverIds(), {
       type: NotificationType.REQUEST_SUBMITTED,
       title: "มีคำขอรออนุมัติขั้นสุดท้าย",
-      message: `${name} — ${request.requestNumber}`,
+      message: name,
       subjectType: SUBJECT,
       subjectId: request.id,
       organizationId: request.organizationId,

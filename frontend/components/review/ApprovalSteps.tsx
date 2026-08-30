@@ -77,9 +77,9 @@ function StepMark({ step }: { step: JourneyStep }) {
 /** ป้ายบอกสถานะของขั้น — มีทั้งสีและข้อความเสมอ ตาม docs/02-ui-spec.md §5 ข้อ 3 */
 function StepState({ step }: { step: JourneyStep }) {
   const meta: Record<JourneyStep["state"], { label: string; className: string }> = {
-    DONE: { label: "ผ่านแล้ว", className: "bg-success-bg text-success" },
-    CURRENT: { label: "อยู่ขั้นนี้", className: "bg-warning-bg text-warning" },
-    UPCOMING: { label: "ยังไม่ถึง", className: "bg-navy-50 text-ink-muted" },
+    DONE: { label: "เสร็จสิ้น", className: "bg-success-bg text-success" },
+    CURRENT: { label: "รอดำเนินการ", className: "bg-warning-bg text-warning" },
+    UPCOMING: { label: "ยังไม่เริ่ม", className: "bg-navy-50 text-ink-muted" },
     REJECTED: { label: "ไม่อนุมัติ", className: "bg-danger-bg text-danger" },
   };
   const { label, className } = meta[step.state];
@@ -111,9 +111,7 @@ export function ApprovalSteps({ progress }: { progress: JourneyProgress }) {
             <strong className="font-semibold text-navy-800">{progress.totalSteps} ขั้นตอน</strong>
           </>
         )}
-        {progress.nextStep ? (
-          <span className="text-ink-muted"> · ขั้นต่อไป: {progress.nextStep.label}</span>
-        ) : null}
+        {/* ขั้นต่อไปอ่านได้จากรายการข้างล่างอยู่แล้ว บรรทัดนี้จึงเป็นการพูดซ้ำ */}
       </p>
 
       {note ? (

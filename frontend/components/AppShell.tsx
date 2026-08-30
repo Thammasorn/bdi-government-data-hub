@@ -38,12 +38,24 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
 }
 
-function navItems(roles: string[], organizationId: string | null) {
+/** เมนูหนึ่งช่อง — `disabledReason` ไม่ null = เห็นได้แต่กดไม่ได้ พร้อมเหตุผล */
+interface NavItem {
+  href: string;
+  label: string;
+  disabledReason?: string;
+}
+
+function navItems(
+  roles: string[],
+  organizationId: string | null,
+  organizationStatus: string | null,
+): NavItem[] {
   const hasOrganization = Boolean(organizationId);
   if (isBdiStaff(roles)) {
     // ผู้เชี่ยวชาญมีบทบาทเฉพาะเส้นทางชุดข้อมูล จึงไม่ต้องเห็นเมนูหน่วยงาน
     // (กติกาเดียวกับ bdiLandingPath ที่ตัดสินว่าเข้าสู่ระบบแล้วไปหน้าไหน)
-    if (isSpecialistOnly(roles)) return [{ href: "/admin/datasets", label: "ชุดข้อมูลที่ได้รับมอบหมาย" }];
+    // ชื่อเมนูเดียวกับของคนอื่น — หน้าที่ปลายทางกรองให้เองว่าเห็นอะไรได้บ้าง
+    if (isSpecialistOnly(roles)) return [{ href: "/admin/datasets", label: "ชุดข้อมูล" }];
 
     // เดิมมีเมนูที่สามสำหรับผู้อนุมัติ BDI ที่ลิงก์ไป `?status=SUBMITTED,UNDER_REVIEW`
     // เพราะหน้ารายการกรองตามด่านไม่ได้ ตอนนี้กรองได้แล้ว และทั้งสองหน้าเปิดมาที่แท็บ
@@ -62,12 +74,28 @@ function navItems(roles: string[], organizationId: string | null) {
     ];
   }
 
+  /**
+   * ชุดข้อมูลนำส่งได้ต่อเมื่อหน่วยงานเปิดใช้งานแล้ว
+   *
+   * `organizationId` มีค่าตั้งแต่เปิดคำขอลงทะเบียนใบแรก (หน่วยงานถูกสร้างเป็น
+   * PENDING_REGISTRATION รอผลอนุมัติ) เมนูจึงโผล่มาให้กดตั้งแต่ยังลงทะเบียนไม่เสร็จ
+   * แล้วพาไปหน้าที่ทำอะไรไม่ได้ — ทางที่ตรงกว่าคือให้เห็นว่ามีเมนูนี้อยู่ แต่ยังกดไม่ได้
+   * และบอกว่าทำไม
+   */
+  const datasetsLocked = organizationStatus !== "ACTIVE";
+
   // สเปก: ผู้ใช้ที่ยังไม่มีหน่วยงานเห็นได้แค่ปุ่มสร้างหน่วยงานกลางจอ ไม่มีเมนู
   return hasOrganization
     ? [
         { href: "/", label: "หน้าแรก" },
         { href: `/organizations/${organizationId}`, label: "หน่วยงานของฉัน" },
-        { href: "/datasets", label: "ชุดข้อมูล" },
+        {
+          href: "/datasets",
+          label: "ชุดข้อมูล",
+          ...(datasetsLocked
+            ? { disabledReason: "ใช้งานได้เมื่อหน่วยงานของคุณได้รับอนุมัติแล้ว" }
+            : {}),
+        },
       ]
     : [];
 }
@@ -75,7 +103,11 @@ function navItems(roles: string[], organizationId: string | null) {
 function Header() {
   const { user } = useSession();
   const pathname = usePathname();
-  const items = navItems(user?.roles ?? [], user?.organizationId ?? null);
+  const items = navItems(
+    user?.roles ?? [],
+    user?.organizationId ?? null,
+    user?.organization?.status ?? null,
+  );
 
   return (
     <header className="sticky top-0 z-40 bg-white/85 frost-12">
@@ -90,6 +122,19 @@ function Header() {
           <nav className="hidden flex-1 items-center gap-1 md:flex">
             {items.map((item) => {
               const active = pathname === item.href.split("?")[0];
+              if (item.disabledReason) {
+                return (
+                  <span
+                    key={item.href}
+                    aria-disabled="true"
+                    title={item.disabledReason}
+                    className="cursor-not-allowed rounded-full px-3.5 py-2 text-sm font-medium text-ink-subtle"
+                  >
+                    {item.label}
+                    <span className="sr-only"> — {item.disabledReason}</span>
+                  </span>
+                );
+              }
               return (
                 <Link
                   key={item.href}
@@ -143,7 +188,6 @@ function UserMenu() {
 
   if (!user) return null;
   const name = sessionUserName(user);
-  const initial = (user.firstName ?? user.email)[0]?.toUpperCase() ?? "?";
 
   const logout = async () => {
     await api.post("/api/auth/logout").catch(() => undefined);
@@ -158,12 +202,9 @@ function UserMenu() {
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-haspopup="menu"
-        className="flex items-center gap-2.5 rounded-full py-1 pl-1 pr-2.5 transition-colors hover:bg-navy-50"
+        className="flex items-center gap-2 rounded-full px-3 py-2 transition-colors hover:bg-navy-50"
       >
-        <span className="grid h-8 w-8 place-items-center rounded-full bg-navy-800 text-[13px] font-semibold text-white">
-          {initial}
-        </span>
-        <span className="hidden text-sm font-medium text-ink sm:block">{name}</span>
+        <span className="text-sm font-medium text-ink">{name}</span>
         <svg viewBox="0 0 20 20" className="h-4 w-4 text-ink-subtle" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
           <path d="m5 8 5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>

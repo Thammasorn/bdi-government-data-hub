@@ -34,7 +34,7 @@ function AdminOrganizationList() {
       <header className="mb-7">
         <h1 className="text-[26px] font-semibold text-navy-800">หน่วยงาน</h1>
         <p className="mt-1.5 text-[15px] text-ink-muted">
-          คำขอสร้างหน่วยงานทั้งหมดในระบบ กรองตามขั้นตอนที่คำขอค้างอยู่ หรือค้นหาจากชื่อหน่วยงานและผู้ยื่น
+          คำขอลงทะเบียนหน่วยงานทั้งหมดในระบบ
         </p>
       </header>
 
