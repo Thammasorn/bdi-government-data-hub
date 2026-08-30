@@ -26,8 +26,12 @@ export const DATASET_ATTESTATION_TEXT = "ข้าพเจ้าได้อ่
 /**
  * ขั้นตอนยืนยันแบบนำส่งข้อมูลของผู้มีอำนาจกระทำการแทน และของผู้อนุมัติ BDI
  *
- * เส้นทางนี้มีเอกสารฉบับเดียว จึงไม่มีการเดินอ่านทีละฉบับเหมือนเส้นทางหน่วยงาน —
- * อ่านเอกสารในกล่องนี้ ติ๊กยืนยันว่าอ่านครบ แล้วกดยืนยัน
+ * ต่างกันที่ `perDocument` เหมือนเส้นทางจดทะเบียนหน่วยงาน:
+ *   true  — ฝั่งหน่วยงาน อ่านแบบนำส่งข้อมูลในกล่องนี้ ติ๊กยืนยันว่าอ่านครบ แล้วกดยืนยัน
+ *   false — ฝั่ง BDI อ่านเอกสารจากการ์ดในหน้ารายละเอียดแล้วยืนยันทีเดียว
+ *
+ * เส้นทางนี้มีเอกสารฉบับเดียว จึงไม่มีการเดินอ่านทีละฉบับแบบเส้นทางหน่วยงาน — `perDocument`
+ * ที่นี่จึงหมายถึง "ต้องติ๊กว่าอ่านครบก่อนไหม" ไม่ใช่ "เดินทีละฉบับไหม"
  */
 export function DatasetSigningDialog({
   open,
@@ -38,6 +42,7 @@ export function DatasetSigningDialog({
   documents,
   title,
   action,
+  perDocument,
 }: {
   open: boolean;
   onClose: () => void;
@@ -48,6 +53,8 @@ export function DatasetSigningDialog({
   title: string;
   /** ค่าที่ backend รับ — ด่านผู้อนุมัติใช้ approve เหมือนกันทั้งสองฝ่าย */
   action: "approve";
+  /** true = ต้องอ่านเอกสารในกล่องนี้และติ๊กยืนยันก่อน (ฝั่งหน่วยงาน) */
+  perDocument: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,9 +79,16 @@ export function DatasetSigningDialog({
         signature: {
           acknowledgements: documents.map((d) => ({
             versionId: d.versionId,
+            // ฝั่ง BDI ไม่มีการติ๊กรายฉบับ จึงใช้เวลาที่กดยืนยันเป็นเวลายอมรับ
             attestedAt: attested[d.versionId] ?? new Date().toISOString(),
           })),
-          attestationText: DATASET_ATTESTATION_TEXT,
+          /**
+           * ส่งข้อความติ๊กขึ้นไปเฉพาะตอนที่มีการติ๊กจริง
+           *
+           * `attestationText` คือหลักฐานว่า "ผู้ใช้ยืนยันข้อความอะไรตอนติ๊ก" ถ้าฝั่ง BDI
+           * ซึ่งไม่มีช่องติ๊กส่งค่านี้ไปด้วย มันจะกลายเป็นหลักฐานของการกระทำที่ไม่ได้เกิดขึ้น
+           */
+          ...(perDocument ? { attestationText: DATASET_ATTESTATION_TEXT } : {}),
           confirmationText: DATASET_CONFIRMATION_TEXT,
         },
       });
@@ -92,6 +106,44 @@ export function DatasetSigningDialog({
       setBusy(false);
     }
   };
+
+  /**
+   * ฝั่ง BDI — กดอนุมัติแล้วยืนยันจบ เท่ากับด่านเดียวกันของเส้นทางจดทะเบียนหน่วยงาน
+   *
+   * ช่องติ๊กมีไว้เป็นหลักฐานว่า**หน่วยงาน**อ่านเอกสารแล้วจึงยอมรับ ซึ่งลงเป็นแถวใน
+   * `legal_acceptance` แต่ backend ไม่เคยเขียนตารางนั้นให้ฝั่ง BDI เลย — การอนุมัติของ
+   * BDI เป็นการเห็นชอบของสำนักงาน ไม่ใช่การยอมรับเงื่อนไข ค่าที่ติ๊กจึงถูกโยนทิ้ง
+   * ประตูที่ไม่ได้สร้างหลักฐานอะไรขึ้นมาเลย มีค่าเท่ากับความหน่วง
+   *
+   * เอกสารยังอ่านได้จากการ์ด "เอกสารข้อตกลง" ในหน้ารายละเอียด เหมือนที่ฝั่ง BDI ของ
+   * เส้นทางจดทะเบียนหน่วยงานอ่าน
+   */
+  if (!perDocument) {
+    return (
+      <Modal open={open} onClose={close} title={title}>
+        <p className="text-center text-[17px] font-semibold leading-relaxed text-navy-800">
+          {DATASET_CONFIRMATION_TEXT}
+        </p>
+        <p className="mt-4 text-[13px] leading-relaxed text-ink-muted">
+          ระบบจะบันทึกชื่อ เวลา และแบบนำส่งข้อมูลที่คุณเห็นชอบไว้เป็นหลักฐาน
+          แล้วแจ้งผู้เกี่ยวข้องในขั้นถัดไป
+        </p>
+        {error ? (
+          <p className="mt-4 rounded-xl bg-danger-bg p-4 text-sm leading-relaxed text-danger">
+            {error}
+          </p>
+        ) : null}
+        <div className="mt-6 flex justify-between gap-3">
+          <Button variant="secondary" onClick={close}>
+            ปิด
+          </Button>
+          <Button loading={busy} onClick={submit}>
+            ยืนยัน
+          </Button>
+        </div>
+      </Modal>
+    );
+  }
 
   return (
     <Modal open={open} onClose={close} size="lg" title={title}>

@@ -104,6 +104,8 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string,
             hint: "ตรวจแบบนำส่งข้อมูลในฐานะผู้มีอำนาจกระทำการแทน แล้วยืนยันส่งเอกสาร",
             /** ด่านนี้ยืนยันเอกสาร จึงเปิดกล่องยืนยันแทน modal ยืนยันสั้น ๆ */
             signing: true,
+            /** ฝั่งหน่วยงานเป็นคนยอมรับเอกสาร จึงต้องอ่านในกล่องแล้วติ๊กยืนยันก่อน */
+            perDocument: true,
             canRevise: true,
             canAssign: false,
             canComment: false,
@@ -117,6 +119,11 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string,
             advanceLabel: "อนุมัติ",
             hint: "ขั้นตอนสุดท้าย เมื่ออนุมัติแล้วระบบจะออกเอกสารฉบับสมบูรณ์ให้ดาวน์โหลด",
             signing: true,
+            /**
+             * กดอนุมัติแล้วยืนยันจบ เท่ากับด่านเดียวกันของเส้นทางจดทะเบียนหน่วยงาน —
+             * เอกสารอ่านได้จากการ์ดในหน้านี้ ไม่ต้องอ่านซ้ำในกล่องยืนยัน
+             */
+            perDocument: false,
             canRevise: true,
             canAssign: false,
             canComment: false,
@@ -770,6 +777,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
           documents={legalDocuments}
           title={ability?.advanceLabel ?? "ยืนยัน"}
           action="approve"
+          perDocument={ability?.perDocument ?? false}
         />
       ) : null}
 
