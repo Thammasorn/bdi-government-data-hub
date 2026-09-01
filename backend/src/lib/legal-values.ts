@@ -117,6 +117,15 @@ export interface AgreementInput {
   /** คนที่กดสร้างเอกสารครั้งนี้ */
   printedByName: string | null;
   printedAt: Date;
+
+  /**
+   * เวอร์ชันของ **เอกสารฉบับที่กำลัง render** ไม่ใช่ของคำขอ
+   *
+   * คำขอหนึ่งใบมีเอกสารหลายฉบับที่เผยแพร่คนละรอบกัน ค่าคู่นี้จึงต่างกันได้ในคำขอเดียวกัน
+   * และเป็นเหตุผลที่มันมาเป็น argument ต่อการ render ไม่ได้อยู่ในข้อมูลของคำขอ
+   */
+  documentVersionNumber: number | null;
+  documentEffectiveAt: Date | null;
 }
 
 export const SYSTEM_NAME = "ระบบกลางเพื่อการแบ่งปันข้อมูล (Government Datahub Platform)";
@@ -220,6 +229,11 @@ export function agreementValues(input: AgreementInput): TemplateValues {
     "bdi.phone": thaiNumerals(input.officePhone ?? ""),
     "bdi.directorName": OFFICE_DEFAULTS.directorName,
     "bdi.directorPosition": OFFICE_DEFAULTS.directorPosition,
+
+    // ── ตัวเอกสารเอง ──
+    "document.version":
+      input.documentVersionNumber === null ? "" : thaiNumerals(String(input.documentVersionNumber)),
+    "document.effectiveDate": date(input.documentEffectiveAt),
 
     // ── ระบบ ──
     "system.name": SYSTEM_NAME,

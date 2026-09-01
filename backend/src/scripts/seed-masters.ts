@@ -91,8 +91,15 @@ async function seedRoles() {
  * เอกสารทางกฎหมาย A0–A4 — sheet `legal_document`
  *
  * ชื่อของแต่ละฉบับมาจากไฟล์จริงใน assets/document-template ไม่ใช่ชื่อที่เดาไว้ตอนที่
- * ยังไม่ได้ไฟล์ (ของเดิมเขียน A1 ว่า "เงื่อนไขการเชื่อมโยงและแลกเปลี่ยนข้อมูล"
- * ทั้งที่ผนวก 1 คือข้อตกลงการประมวลผลข้อมูล DPA)
+ * ยังไม่ได้ไฟล์
+ *
+ * **ชุด 2026-08-31 สลับลำดับผนวก** จากเดิม 1=DPA 2=PDPA 3=NDA เป็น 1=NDA 2=DPA 3=PDPA
+ * รหัส `A1`–`A3` แปลว่า "ผนวก 1–3" เสมอ รหัสจึงเดินตามเลขผนวกของฝ่ายกฎหมาย ไม่ใช่ตาม
+ * เนื้อหา — ผนวกที่เผยแพร่ใหม่เป็นเวอร์ชันถัดไปของรหัสเดิม
+ *
+ * ผลข้างเคียงที่ต้องรู้: `legal_acceptance` ชี้ที่ `legal_document_version` ไฟล์ที่แต่ละคน
+ * ยอมรับไว้จึงไม่เปลี่ยน แต่ `legal_document.name_th` เป็นของ**ตัวเอกสาร** ไม่ใช่ของเวอร์ชัน
+ * แถวเก่าจึงถูกอ่านใหม่ภายใต้ชื่อใหม่ ถ้าต้องอ้างว่าใครยอมรับ "อะไร" ให้ดูที่ไฟล์ของเวอร์ชัน
  *
  * เวอร์ชัน 1 ถูกเผยแพร่จาก .docx ที่ติดมากับโค้ดใน src/assets/legal-templates/
  * **นั่นเป็นแค่ฉบับตั้งต้น** ของจริงหลังจากนี้คือเวอร์ชันล่าสุดในฐานข้อมูล ซึ่ง BDI
@@ -103,10 +110,10 @@ async function seedRoles() {
  * เหมือนเส้นทาง B ตัวมันมีช่องติ๊กตามตัวเลือกในแบบฟอร์ม (ดู docs/19)
  */
 const LEGAL_DOCUMENTS = [
-  { code: "A0", type: "DATA_SHARING_AGREEMENT", nameTh: "ข้อตกลงในการบริหารจัดการและการแบ่งปันข้อมูล", scope: "ORGANIZATION_REGISTRATION", order: 1, signature: true, template: "A0.docx" },
-  { code: "A1", type: "DATA_PROCESSING_AGREEMENT", nameTh: "ผนวก 1 ข้อตกลงในการประมวลผลข้อมูล (DPA)", scope: "ORGANIZATION_REGISTRATION", order: 2, signature: true, template: "A1.docx" },
-  { code: "A2", type: "PERSONAL_DATA_PROCESSING_AGREEMENT", nameTh: "ผนวก 2 ข้อตกลงประมวลผลข้อมูลส่วนบุคคล (PDPA)", scope: "ORGANIZATION_REGISTRATION", order: 3, signature: true, template: "A2.docx" },
-  { code: "A3", type: "NON_DISCLOSURE_AGREEMENT", nameTh: "ผนวก 3 ข้อตกลงรักษาความลับ (NDA)", scope: "ORGANIZATION_REGISTRATION", order: 4, signature: true, template: "A3.docx" },
+  { code: "A0", type: "DATA_SHARING_AGREEMENT", nameTh: "ข้อตกลงหลักในการบริหารจัดการและการแบ่งปันข้อมูล", scope: "ORGANIZATION_REGISTRATION", order: 1, signature: true, template: "A0.docx" },
+  { code: "A1", type: "NON_DISCLOSURE_AGREEMENT", nameTh: "ผนวก 1 สัญญารักษาความลับ (NDA)", scope: "ORGANIZATION_REGISTRATION", order: 2, signature: true, template: "A1.docx" },
+  { code: "A2", type: "DATA_PROCESSING_AGREEMENT", nameTh: "ผนวก 2 ข้อตกลงการประมวลผลข้อมูล (DPA)", scope: "ORGANIZATION_REGISTRATION", order: 3, signature: true, template: "A2.docx" },
+  { code: "A3", type: "PERSONAL_DATA_PROCESSING_AGREEMENT", nameTh: "ผนวก 3 ข้อตกลงประมวลผลข้อมูลส่วนบุคคล (PDPA)", scope: "ORGANIZATION_REGISTRATION", order: 4, signature: true, template: "A3.docx" },
   { code: "A4", type: "DATA_DELIVERY_FORM", nameTh: "แบบนำส่งข้อมูล", scope: "DATASET_REGISTRATION", order: 1, signature: true, template: "A4.docx" },
 ] as const;
 

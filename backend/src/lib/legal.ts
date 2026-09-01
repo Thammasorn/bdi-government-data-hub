@@ -70,6 +70,8 @@ export interface PublishedDocument {
   displayOrder: number;
   versionId: string;
   versionNumber: number;
+  /** วันที่เวอร์ชันนี้เริ่มมีผล — เอกสารพิมพ์ค่านี้ได้ผ่าน {{document.effectiveDate}} */
+  effectiveAt: Date | null;
   /** PDF ที่ render ไว้ให้เปิดอ่าน — ผนวกที่ไม่มีช่องให้เติมใช้ไฟล์นี้ได้ตรง ๆ */
   pdfAttachmentId: string | null;
   /** true = เอกสารมี placeholder จึงต้อง render ใหม่ต่อคำขอ ไม่ใช้ไฟล์กลาง */
@@ -108,6 +110,7 @@ export async function publishedDocuments(
       displayOrder: doc.displayOrder,
       versionId: version.id,
       versionNumber: version.versionNumber,
+      effectiveAt: version.effectiveAt,
       pdfAttachmentId: pdf?.id ?? null,
       hasPlaceholders: source
         ? assertKnownPlaceholders(await readAttachment(source), variableScopeOf(scope)).length > 0
