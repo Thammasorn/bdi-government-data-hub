@@ -40,9 +40,10 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   Sarabun faces from `assets/theme_ci_design/Font/Sarabun.zip` **embedded**, rebuilt by
   `docs/tools/manual-to-docx.py`; the Markdown stays the source, so never hand-edit the .docx
 - `docs/18-document-template-variables.md` — **คู่มือสำหรับผู้เขียนเอกสาร** (ไม่ใช่ผู้เขียนโค้ด):
-  ตัวแปรทั้ง 53 ตัวที่ template ใช้ได้ พร้อมตัวอย่างค่า วิธีพิมพ์ placeholder ให้ไม่พลาด
+  ตัวแปรทั้ง 74 ตัวที่ template ใช้ได้ พร้อมตัวอย่างค่า วิธีพิมพ์ placeholder ให้ไม่พลาด
   วิธีอัปโหลดเวอร์ชันใหม่ และเส้นแบ่งว่าอะไรแก้เองได้ อะไรต้องให้ทีมพัฒนาทำก่อน
-  §3.1 คือตารางชื่อเดิม→ชื่อใหม่ของการเปลี่ยนชื่อเมื่อ 2026-08-24 — มีฉบับ .docx อยู่ที่
+  §3.1 คือตารางชื่อเดิม→ชื่อใหม่ของการเปลี่ยนชื่อเมื่อ 2026-08-24 · §3.2 คือชุดเอกสาร
+  2026-08-31 ที่สลับเลขผนวก — มีฉบับ .docx อยู่ที่
   `docs/manuals-docx/18-document-template-variables.docx` สร้างจากตัวเดียวกับคู่มือผู้ทดสอบ
 - `docs/17-legal-document-rendering.md` — เอกสารข้อตกลง A0–A3: ทำไมต้องเดินทาง
   `.docx` → LibreOffice → PDF, template อยู่ในฐานข้อมูลไม่ใช่ใน repo, รายชื่อ placeholder
@@ -578,11 +579,26 @@ rather than re-rendered, so approved documents do not get a new "พิมพ์
 **The variable catalogue is the contract between documents and code.**
 `TEMPLATE_VARIABLES` in `lib/document-render.ts` is the single source for validation, the admin
 API listing and `docs/18-document-template-variables.md`; `lib/legal-values.ts` fills every entry.
-It covers 53 variables across organisation, org approver, org officer, request, signature, BDI and
-system data — deliberately wider than A0 uses, so a new document can pull data it needs without a
-code change. Adding a *name* still needs code, and upload validation rejects unknown names for
+It covers 74 variables across organisation, org approver, org officer, request, dataset, signature,
+BDI, document-version and system data — deliberately wider than A0 uses, so a new document can pull
+data it needs without a code change. Adding a *name* still needs code, and upload validation rejects unknown names for
 exactly that reason. `bdi.address` / `bdi.directorName` are constants (`OFFICE_DEFAULTS`)
 because no column holds them; they need editing when BDI moves or changes director.
+
+**`document.version` / `document.effectiveDate` belong to the document, not the request.** Every
+other variable is a fact about the organisation or the dataset, so one request yields one set of
+values; these two are read off the `legal.legal_document_version` row being rendered, so two
+documents of the *same* request legitimately print different numbers. That is why
+`renderLegalDocument()` / `renderDatasetDocument()` take `versionNumber` and `effectiveAt` on the
+`document` argument rather than reading them out of the request shape.
+
+**`A1`–`A3` are annex numbers, not content names.** The 2026-08-31 template set renumbered the
+annexes — 1=NDA, 2=DPA, 3=PDPA, from 1=DPA, 2=PDPA, 3=NDA — so each code now carries different
+wording under the same code, published as the next *version* of that row. `legal_acceptance` points
+at a version, so what each signatory accepted is still the file they saw; `legal_document.name_th`
+belongs to the document rather than the version, so old rows are read back under the new name. To
+say what someone accepted, open that version's file, don't read the code. Codes follow the legal
+team's annex numbers on purpose: that is what everyone reading the paper calls them.
 
 **Reading is attested, not measured.** The organisation approver ticks
 "ข้าพเจ้าได้อ่านเอกสารฉบับนี้ครบถ้วนแล้ว" per document before `เห็นชอบ` unlocks, and the tick

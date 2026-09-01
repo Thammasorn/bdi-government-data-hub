@@ -60,6 +60,7 @@ export const VARIABLE_GROUPS = {
   org_officer: "ผู้กรอกข้อมูลของหน่วยงาน",
   signature: "ลายมือชื่อและตราเห็นชอบ",
   bdi: "สำนักงาน (BDI)",
+  document: "ตัวเอกสารและเวอร์ชัน",
   system: "ระบบและการพิมพ์เอกสาร",
 } as const;
 
@@ -181,6 +182,18 @@ export const TEMPLATE_VARIABLES = {
   "bdi.phone": { group: "bdi", description: "เบอร์โทรศัพท์สำนักงาน — ว่างถ้ายังไม่ได้บันทึกไว้ในระบบ", example: "๐๒๑๔๒๑๔๔๔" },
   "bdi.directorName": { group: "bdi", description: "ชื่อผู้อำนวยการสถาบัน — เป็นค่าตั้งไว้ในโค้ด ต้องแก้เมื่อเปลี่ยนผู้อำนวยการ", example: "ศาสตราจารย์ธีรณี อจลากุล" },
   "bdi.directorPosition": { group: "bdi", description: "ตำแหน่งผู้ลงนามฝ่ายสำนักงาน", example: "ผู้อำนวยการสถาบันข้อมูลขนาดใหญ่" },
+
+  // ── ตัวเอกสารเอง ────────────────────────────────────────────
+  /**
+   * เอกสารบอกได้ว่าตัวมันเองเป็นฉบับไหน — ชุด template 2026-08-31 ทำเครื่องหมายช่องนี้
+   * ไว้ที่ท้ายเอกสาร (`legal_document_version.version_number` / `.effective_at`)
+   *
+   * ค่ามาจากแถว `legal.legal_document_version` ที่ถูกหยิบมา render รอบนั้น ไม่ใช่จากคำขอ
+   * จึงเป็นตัวแปรชุดเดียวที่ **เอกสารคนละฉบับในคำขอเดียวกันได้ค่าไม่เท่ากัน** — ผนวกที่
+   * เผยแพร่คนละวันกับข้อตกลงหลักย่อมมีเลขเวอร์ชันของตัวเอง
+   */
+  "document.version": { group: "document", description: "เลขเวอร์ชันของเอกสารฉบับนี้ (เลขไทย)", example: "๒" },
+  "document.effectiveDate": { group: "document", description: "วันที่เอกสารเวอร์ชันนี้เริ่มมีผล — ว่างถ้ายังไม่ได้เผยแพร่", example: "๓๑ สิงหาคม ๒๕๖๙" },
 
   // ── ระบบ ────────────────────────────────────────────────────
   "system.name": { group: "system", description: "ชื่อระบบ", example: "ระบบกลางเพื่อการแบ่งปันข้อมูล (Government Datahub Platform)" },
@@ -333,7 +346,7 @@ export function assertKnownPlaceholders(docx: Buffer, scope: VariableScope = "bo
   const unknown = used.filter((name) => !variableAllowed(name, scope));
   if (unknown.length > 0) {
     /**
-     * ไม่ไล่ชื่อตัวแปรทั้ง 53 ตัวลงในข้อความ — ยาวเกินกว่าจะอ่านบนหน้าจอ
+     * ไม่ไล่ชื่อตัวแปรทั้ง 74 ตัวลงในข้อความ — ยาวเกินกว่าจะอ่านบนหน้าจอ
      * บอกตัวที่ผิด แล้วเสนอตัวที่ชื่อใกล้กันในกลุ่มเดียวกัน ซึ่งมักเป็นตัวที่เขาตั้งใจพิมพ์
      */
     const suggestions = unknown

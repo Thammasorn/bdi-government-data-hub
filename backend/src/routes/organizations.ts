@@ -1453,7 +1453,13 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
       const data = await requestShape();
       const result = await renderLegalDocument(prisma, {
         request: { ...data, submittedAt: request.submittedAt },
-        document: { code: doc.code, nameTh: doc.nameTh, versionId: doc.versionId },
+        document: {
+          code: doc.code,
+          nameTh: doc.nameTh,
+          versionId: doc.versionId,
+          versionNumber: doc.versionNumber,
+          effectiveAt: doc.effectiveAt,
+        },
         printedByName: fullName(data.contactPrefix, data.contactFirstName, data.contactLastName),
         actorId: session.sub,
       });

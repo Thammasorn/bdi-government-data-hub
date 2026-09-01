@@ -40,6 +40,8 @@ export type DatasetDocumentRequest = Omit<
   | "bdiSignedAt"
   | "printedByName"
   | "printedAt"
+  | "documentVersionNumber"
+  | "documentEffectiveAt"
 > & { id: string };
 
 async function signaturesOf(db: Db, requestId: string) {
@@ -92,7 +94,13 @@ export async function renderDatasetDocument(
   db: Db,
   params: {
     request: DatasetDocumentRequest;
-    document: { code: string; nameTh: string; versionId: string };
+    document: {
+      code: string;
+      nameTh: string;
+      versionId: string;
+      versionNumber: number;
+      effectiveAt: Date | null;
+    };
     printedByName: string | null;
     actorId: string;
   },
@@ -110,6 +118,8 @@ export async function renderDatasetDocument(
     bdiSignedAt: signatures.bdi.at,
     printedByName: params.printedByName,
     printedAt: new Date(),
+    documentVersionNumber: params.document.versionNumber,
+    documentEffectiveAt: params.document.effectiveAt,
   });
 
   const pdf = await renderTemplateToPdf(docx, values, `${params.document.code}.docx`);
@@ -142,7 +152,13 @@ export async function renderDatasetDocuments(
     if (!doc.hasPlaceholders) continue;
     await renderDatasetDocument(db, {
       request: params.request,
-      document: { code: doc.code, nameTh: doc.nameTh, versionId: doc.versionId },
+      document: {
+        code: doc.code,
+        nameTh: doc.nameTh,
+        versionId: doc.versionId,
+        versionNumber: doc.versionNumber,
+        effectiveAt: doc.effectiveAt,
+      },
       printedByName: params.printedByName,
       actorId: params.actorId,
     });

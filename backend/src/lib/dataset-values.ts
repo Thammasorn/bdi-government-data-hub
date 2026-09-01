@@ -43,6 +43,10 @@ export interface DatasetDocumentInput extends MetadataValues {
   approvedAt: Date | null;
   printedByName: string | null;
   printedAt: Date;
+
+  /** เวอร์ชันของเอกสารฉบับที่กำลัง render — ดูคำอธิบายใน lib/legal-values.ts */
+  documentVersionNumber: number | null;
+  documentEffectiveAt: Date | null;
 }
 
 /**
@@ -109,6 +113,11 @@ export function datasetDocumentValues(input: DatasetDocumentInput): Record<strin
     "bdi_approver.lastName": input.bdiSignedLastName ?? "",
     "bdi_approver.signedDate": date(input.bdiSignedAt),
     "bdi_approver.endorsement": input.bdiSignedAt ? "เห็นชอบ\n" : "",
+
+    // ── ตัวเอกสารเอง ──
+    "document.version":
+      input.documentVersionNumber === null ? "" : thaiNumerals(String(input.documentVersionNumber)),
+    "document.effectiveDate": date(input.documentEffectiveAt),
 
     // ── ระบบ ──
     "system.name": "ระบบกลางเพื่อการแบ่งปันข้อมูล (Government Datahub Platform)",
