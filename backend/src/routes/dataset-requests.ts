@@ -1240,7 +1240,13 @@ datasetRequestRouter.get("/:id/legal-documents", async (req, res) => {
     if (stale) {
       const result = await renderDatasetDocument(prisma, {
         request: datasetDocumentRequestOf(request),
-        document: { code: doc.code, nameTh: doc.nameTh, versionId: doc.versionId },
+        document: {
+          code: doc.code,
+          nameTh: doc.nameTh,
+          versionId: doc.versionId,
+          versionNumber: doc.versionNumber,
+          effectiveAt: doc.effectiveAt,
+        },
         printedByName: await submitterNameOf(request),
         actorId: session.sub,
       });

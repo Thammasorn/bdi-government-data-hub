@@ -62,6 +62,8 @@ export type AgreementRequest = Omit<
   | "officePhone"
   | "printedByName"
   | "printedAt"
+  | "documentVersionNumber"
+  | "documentEffectiveAt"
 > & { id: string };
 
 /**
@@ -129,7 +131,13 @@ export async function renderLegalDocument(
   params: {
     request: AgreementRequest;
     /** เอกสารที่จะ render — ต้องเป็นเวอร์ชันที่เผยแพร่อยู่ */
-    document: { code: string; nameTh: string; versionId: string };
+    document: {
+      code: string;
+      nameTh: string;
+      versionId: string;
+      versionNumber: number;
+      effectiveAt: Date | null;
+    };
     /** ชื่อคนที่ทำให้เอกสารฉบับนี้ถูกสร้าง — ไปอยู่บรรทัด "พิมพ์จากระบบโดย" */
     printedByName: string | null;
     actorId: string;
@@ -161,6 +169,8 @@ export async function renderLegalDocument(
     officePhone: office?.phone ?? null,
     printedByName: params.printedByName,
     printedAt: now,
+    documentVersionNumber: params.document.versionNumber,
+    documentEffectiveAt: params.document.effectiveAt,
   });
 
   const pdf = await renderTemplateToPdf(docx, values, `${params.document.code}.docx`);
@@ -216,7 +226,13 @@ export async function renderPlaceholderDocuments(
     if (!doc.hasPlaceholders) continue;
     await renderLegalDocument(db, {
       request: params.request,
-      document: { code: doc.code, nameTh: doc.nameTh, versionId: doc.versionId },
+      document: {
+        code: doc.code,
+        nameTh: doc.nameTh,
+        versionId: doc.versionId,
+        versionNumber: doc.versionNumber,
+        effectiveAt: doc.effectiveAt,
+      },
       printedByName: params.printedByName,
       actorId: params.actorId,
     });
