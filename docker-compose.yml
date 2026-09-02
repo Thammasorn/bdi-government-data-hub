@@ -124,7 +124,6 @@ services:
       THAID_SCOPE: ${THAID_SCOPE:-}
       THAID_USE_PID: ${THAID_USE_PID:-true}
       THAID_REQUIRE_NONCE: ${THAID_REQUIRE_NONCE:-false}
-      THAID_BYPASS: ${THAID_BYPASS:-false}
       COOKIE_SECURE: ${COOKIE_SECURE:-}
     ports:
       # ตรึงไว้ — โดเมนสาธารณะ bdi-api.thammasorn.org ชี้มาที่พอร์ตนี้
