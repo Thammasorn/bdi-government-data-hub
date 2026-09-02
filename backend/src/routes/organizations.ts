@@ -1062,6 +1062,7 @@ organizationRouter.get("/:id", async (req, res) => {
         status: request.status,
         tasks,
         active,
+        submittedAt: request.submittedAt,
       }),
       attachments: attachments.map(publicAttachment),
       // timeline มาจาก review_task แทน organization_events เดิม

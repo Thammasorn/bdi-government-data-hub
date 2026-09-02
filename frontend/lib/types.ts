@@ -56,7 +56,8 @@ export type JourneyPhase =
 
 export interface JourneyStep {
   key: string;
-  taskType: ReviewTaskType;
+  /** null = ขั้นที่ไม่ใช่ด่าน ไม่มีแถวใน review_task — ขั้น "นำส่งคำขอ" เป็นขั้นเดียว */
+  taskType: ReviewTaskType | null;
   /** เลขที่แสดง; null สำหรับขั้นไม่บังคับ ซึ่งไม่ถูกนับใน totalSteps */
   order: number | null;
   optional: boolean;
