@@ -143,7 +143,8 @@ The `OrganizationEvent` / `DatasetRequestEvent` tables are gone. The UI timeline
 from `review_task` rows, so every transition must go through `lib/workflow.ts`.
 
 Journey B: `BDI_OFFICER_REVIEW` → `ORGANIZATION_APPROVAL` → `BDI_FINAL_APPROVAL`.
-Journey C: exactly the same three gates.
+Journey C: exactly the same three gates. Both are shown to users as **four** steps, because the
+organisation's own submission is step 1 — see `journey-steps.ts` below.
 
 **Assigning a data specialist is not a gate.** `POST /dataset-requests/:id/assign` writes
 `assigned_specialist_id` on the request and nothing else: the request stays on
@@ -172,9 +173,18 @@ rows `taskHistory()` / `activeTask()` already fetch, so no screen pays an extra 
 counts as a passing result there, not just `PASSED`/`APPROVED`, because `ALLOWED_RESULTS` lets a
 `BDI_OFFICER_REVIEW` close with it (the `confirm` action).
 
-A `RETURNED` request has no current step, because `ORGANIZATION_REVISION` is never opened as a
-task. The progress object reports `phase: "WAITING_REVISION"` and the screens say so in words;
-don't "fix" this by opening that task type.
+**Step 1 of both journeys is the organisation submitting, and it has no `review_task`.** Its
+`StepPlan` entry carries `taskType: null`, which is what every other file keys off: `slotOf()`
+finds no row for it, `journeyNodeKeys()` leaves it out of the filter vocabulary (a token nothing
+can ever match returns the *unfiltered* list, silently), and `journeyGraph()` draws no box for it
+— the existing `ฉบับร่าง` node carries its number instead. Its state comes from `status`: CURRENT
+while `DRAFT` or `RETURNED`, DONE otherwise. Don't give it a row by opening `ORGANIZATION_REVISION`
+as a task; the one-active-task index would start colliding with real gates.
+
+So a `RETURNED` request *does* have a current step now — step 1, waiting to be resubmitted, which
+is what the screens said in words before. Anything asking "has this moved forward?" must therefore
+test `step.taskType !== null`, not just "is there a current step": `announceProgress()` did the
+latter, and would mail "คำขอของคุณเดินหน้าไปอีกขั้น" right behind the return notice.
 
 ### The list filter is a step in the route, and the route is drawn
 

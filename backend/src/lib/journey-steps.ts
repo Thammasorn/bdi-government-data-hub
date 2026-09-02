@@ -57,7 +57,8 @@ export type JourneyPhase =
 export interface JourneyStep {
   /** id ของช่องในเส้นทาง ไม่ใช่ id ของ task — คงที่ตลอดอายุคำขอ */
   key: StepKey;
-  taskType: ReviewTaskType;
+  /** null = ขั้นที่ไม่ใช่ด่าน ไม่มีแถวใน review_task ให้อ่าน — ดู SUBMISSION_STEP */
+  taskType: ReviewTaskType | null;
   /** เลขที่แสดงบนหน้าจอ; null สำหรับขั้นไม่บังคับซึ่งไม่ถูกนับ */
   order: number | null;
   optional: boolean;
@@ -78,7 +79,7 @@ export interface JourneyStep {
 
 export interface JourneyProgress {
   steps: JourneyStep[];
-  /** จำนวนขั้นบังคับ — ตอนนี้ทั้งสองเส้นทางเท่ากับ 3 */
+  /** จำนวนขั้นบังคับ — ตอนนี้ทั้งสองเส้นทางเท่ากับ 4 (นับขั้นนำส่งด้วย) */
   totalSteps: number;
   currentOrder: number | null;
   currentStep: JourneyStep | null;
@@ -86,11 +87,21 @@ export interface JourneyProgress {
   phase: JourneyPhase;
 }
 
-export type StepKey = "OFFICER_REVIEW" | "ORGANIZATION_APPROVAL" | "FINAL_APPROVAL";
+export type StepKey =
+  | "SUBMISSION"
+  | "OFFICER_REVIEW"
+  | "ORGANIZATION_APPROVAL"
+  | "FINAL_APPROVAL";
 
 export interface StepPlan {
   key: StepKey;
-  taskType: ReviewTaskType;
+  /**
+   * ด่านใน review_task ที่ขั้นนี้ตรงกับ — **null คือขั้นที่ไม่ใช่ด่าน**
+   *
+   * ค่านี้เป็นตัวแยกที่โค้ดทุกที่ใช้: `slotOf()` หาแถวให้ขั้นนี้ไม่เจอ
+   * `journeyNodeKeys()` ไม่เอาไปทำเม็ดกรอง และ `journeyGraph()` ไม่วาดกล่องใหม่ให้
+   */
+  taskType: ReviewTaskType | null;
   optional: boolean;
   label: string;
   /**
@@ -106,10 +117,35 @@ export interface StepPlan {
 }
 
 /**
+ * ขั้นแรกของทั้งสองเส้นทาง — **ขั้นเดียวที่ไม่มี `review_task`**
+ *
+ * ไม่มีใครต้อง "ปิด" ขั้นนี้ มันจบลงเองตอนหน่วยงานกดนำส่งคำขอ สถานะจึงอ่านจาก `status`
+ * ของคำขอ ไม่ใช่จากแถวใน review_task และ `taskType: null` คือสิ่งที่บอกโค้ดทุกที่ว่า
+ * อย่าไปหาแถวให้ขั้นนี้ — `slotOf()` · `requestIdsAtStage()` · `myNodeKeys()`
+ *
+ * **อย่าทำให้ขั้นนี้มีแถวด้วยการเปิด `ORGANIZATION_REVISION` เป็น task** ทั้ง
+ * `main/CLAUDE.md` และหัวข้อ WAITING_REVISION ข้างบนห้ามไว้ และ partial unique index
+ * "หนึ่งคำขอมี task ค้างได้ไม่เกินหนึ่ง" จะเริ่มชนกับด่านจริงทันที
+ *
+ * เส้นทางทั้งสองใช้ก้อนเดียวกัน เพราะเป็นเหตุการณ์เดียวกันจริง ๆ ทั้งสองฝั่ง —
+ * `POST /:id/submit` ของทั้งสอง route เปิด `BDI_OFFICER_REVIEW` เหมือนกัน
+ */
+const SUBMISSION_STEP: StepPlan = {
+  key: "SUBMISSION",
+  taskType: null,
+  optional: false,
+  label: withRole(ROLE_CODES.ORGANIZATION_USER, "นำส่งคำขอ"),
+  shortLabel: "รอหน่วยงานนำส่ง",
+  waitingLabel: `รอ${withRole(ROLE_CODES.ORGANIZATION_USER, "นำส่งคำขอ")}`,
+  roleCode: ROLE_CODES.ORGANIZATION_USER,
+};
+
+/**
  * Journey B — `docs/01-user-journey.md` §3
  * ตรงกับ organizations.ts: submit → BDI_OFFICER_REVIEW → ORGANIZATION_APPROVAL → BDI_FINAL_APPROVAL
  */
 const ORGANIZATION_PLAN: StepPlan[] = [
+  SUBMISSION_STEP,
   {
     key: "OFFICER_REVIEW",
     taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
@@ -150,6 +186,7 @@ const ORGANIZATION_PLAN: StepPlan[] = [
  * ในเส้นทาง — ดู routes/dataset-requests.ts `POST /:id/assign`
  */
 const DATASET_PLAN: StepPlan[] = [
+  SUBMISSION_STEP,
   {
     key: "OFFICER_REVIEW",
     taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
@@ -278,19 +315,39 @@ export function buildJourneyProgress(params: {
   status: RequestStatus;
   tasks: JourneyTaskRow[];
   active: JourneyTaskRow | null;
+  /**
+   * วันที่นำส่ง — วันที่ของ **ขั้นที่ 1** ซึ่งไม่มี review_task ให้อ่าน `completedAt`
+   *
+   * ไม่บังคับ เพราะผู้เรียกที่สร้างอีเมลกับ PDF ไม่ได้อ่านคอลัมน์นี้มาด้วย และ
+   * steps block ในอีเมลก็ไม่ได้พิมพ์วันที่ของขั้นไหนอยู่แล้ว — หน้าจอรายละเอียด
+   * ซึ่งเป็นที่เดียวที่พิมพ์วันที่ มีค่านี้อยู่ในมือแล้วทั้งสองเส้นทาง
+   */
+  submittedAt?: Date | null;
 }): JourneyProgress {
   const plan = planFor(params.subjectType);
   const { latest, slotOfTaskId } = latestBySlot(params.tasks, plan);
   const activeSlot = params.active ? (slotOfTaskId.get(params.active.id) ?? null) : null;
+  const phase = phaseFor(params.status);
+
+  /**
+   * ขั้นที่ไม่ใช่ด่านยังไม่จบก็ต่อเมื่อคำขอยัง "ไม่ได้อยู่ในมือใคร" — ร่างอยู่ หรือถูกส่ง
+   * กลับมาแก้ สองสถานะนี้คือช่วงที่ยังรอหน่วยงานกดนำส่งพอดี และเป็นช่วงที่เมื่อก่อน
+   * ตอบว่า "ไม่มีขั้นปัจจุบัน" ทั้งที่มีคนต้องทำอะไรอยู่จริง ๆ
+   */
+  const awaitingSubmission = phase === "DRAFT" || phase === "WAITING_REVISION";
 
   let order = 0;
   const steps: JourneyStep[] = plan.map((step) => {
     const task = latest.get(step.key) ?? null;
-    const isCurrent = activeSlot === step.key;
+    const isCurrent = step.taskType === null ? awaitingSubmission : activeSlot === step.key;
 
     let state: StepState;
     if (isCurrent) {
       state = "CURRENT";
+    } else if (step.taskType === null) {
+      // ขั้นนำส่งไม่มีผลลัพธ์ให้อ่าน — ไม่ใช่ขั้นปัจจุบันแปลว่านำส่งไปแล้ว ไม่มีทางเป็น
+      // "ยังไม่เริ่ม" เพราะเป็นขั้นแรกเสมอ และไม่มีทาง "ไม่อนุมัติ" เพราะไม่มีใครตัดสิน
+      state = "DONE";
     } else if (task?.result && PASSING_RESULTS.includes(task.result)) {
       state = "DONE";
     } else if (task?.result === ReviewResult.REJECTED) {
@@ -312,13 +369,16 @@ export function buildJourneyProgress(params: {
       state,
       // ขั้นที่กำลังทำอยู่ยังไม่มีผล — อย่าเอาผลของรอบก่อนหน้ามาแสดงว่าเป็นผลของรอบนี้
       result: isCurrent ? null : (task?.result ?? null),
-      completedAt: isCurrent ? null : (task?.completedAt ?? null),
+      completedAt: isCurrent
+        ? null
+        : step.taskType === null
+          ? (params.submittedAt ?? null)
+          : (task?.completedAt ?? null),
       roundNumber: task?.roundNumber ?? null,
     };
   });
 
   const currentStep = steps.find((s) => s.state === "CURRENT") ?? null;
-  const phase = phaseFor(params.status);
   const byKey = (key: StepKey) => steps.find((s) => s.key === key) ?? null;
 
   return {
@@ -500,9 +560,19 @@ const toneOf = (taskType: ReviewTaskType): NodeTone =>
     ? "approval"
     : "review";
 
-/** คีย์ของช่องทั้งหมดในเส้นทางนี้ ตามลำดับที่คำขอเดินผ่าน */
+/**
+ * คีย์ของ **ด่าน** ทั้งหมดในเส้นทางนี้ ตามลำดับที่คำขอเดินผ่าน
+ *
+ * ขั้นที่ไม่มี task ไม่อยู่ในนี้ — `queue.ts` เอารายการนี้ไปประกอบเป็นคำศัพท์ของตัวกรอง
+ * และเม็ดกรองที่ไม่มีวันตรงกับแถวไหนเลยจะคืน "รายการทั้งหมดที่ไม่ถูกกรอง" อย่างเงียบ ๆ
+ * ซึ่งเป็นเหตุผลเดียวกับที่ `SUBMITTED` / `UNDER_REVIEW` / `ORGANIZATION_REVISION`
+ * ถูกกันออกจากคำศัพท์ตั้งแต่แรก ฉบับร่างกับใบที่ถูกส่งกลับกรองได้อยู่แล้วด้วยโหนด
+ * `DRAFT` / `RETURNED`
+ */
 export const journeyNodeKeys = (subjectType: SubjectType): StepKey[] =>
-  planFor(subjectType).map((s) => s.key);
+  planFor(subjectType)
+    .filter((s) => s.taskType !== null)
+    .map((s) => s.key);
 
 /** ช่องที่ task ที่ยัง active หนึ่งแถวตกอยู่ — หน้ารายการใช้ตัวนี้ ไม่ต้องเดินประวัติทั้งใบ */
 export const currentSlotOf = (params: {
@@ -543,11 +613,28 @@ export function journeyGraph(subjectType: SubjectType): {
     tone: TERMINAL_NODES[key].tone,
   });
 
-  nodes.push(terminal("DRAFT", "main"));
-
   let order = 0;
+
+  /**
+   * ขั้น "นำส่งคำขอ" ไม่ได้เป็นกล่องของตัวเอง — มันเกิดที่โหนด **ฉบับร่าง** ซึ่งมีอยู่แล้ว
+   *
+   * เพิ่มกล่องใหม่จะได้สองกล่องที่หมายถึงที่เดียวกัน บวกเม็ดกรองที่คืนศูนย์แถวตลอดกาล
+   * สิ่งที่ยกให้โหนดนั้นคือ **เลขขั้นกับบทบาท** เพื่อให้เลขบนแผนภาพตรงกับเลขบนการ์ด
+   * ขั้นตอนการอนุมัติ ส่วนคำบนกล่องยังเป็น "ฉบับร่าง" เพราะกดแล้วได้ใบที่เป็นฉบับร่าง
+   * ไม่ใช่ใบที่กำลังจะถูกนำส่ง (ใบที่ถูกส่งกลับก็อยู่ขั้นนี้ แต่มีโหนดของตัวเองอยู่แล้ว)
+   */
+  const submission = plan.find((s) => s.taskType === null) ?? null;
+  nodes.push({
+    ...terminal("DRAFT", "main", submission?.roleCode ?? null),
+    order: submission ? ++order : null,
+    waitingLabel: submission?.waitingLabel ?? null,
+  });
+
   let previousMandatory: JourneyNodeKey = "DRAFT";
   for (const step of plan) {
+    // โหนดของขั้นนี้ถูกวาดไปแล้วข้างบนในชื่อ ฉบับร่าง
+    if (step.taskType === null) continue;
+
     nodes.push({
       key: step.key,
       lane: step.optional ? "branch" : "main",

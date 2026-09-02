@@ -230,14 +230,19 @@ export function ApprovalStepsCompact({
       : (progress.currentStep?.waitingLabel ?? null);
   const next = "nextLabel" in progress ? progress.nextLabel : (progress.nextStep?.label ?? null);
 
-  if (!progress.currentOrder) {
+  /**
+   * คำขอที่ยังไม่ได้นำส่งไม่ต้องบอกว่าเส้นทางมีกี่ขั้น — ประโยคเดียวบอกครบว่าอยู่ตรงไหน
+   * และใครถืออยู่ ส่วน "ทั้งหมด 4 ขั้นตอน" ไม่ได้ตอบอะไรที่คนอ่านกำลังถาม
+   * ปลายทางที่จบแล้วยังบอกจำนวนขั้น เพราะตรงนั้นแปลว่า "ผ่านมาครบแล้ว" ซึ่งมีความหมาย
+   *
+   * ตั้งแต่ขั้น "นำส่งคำขอ" เป็นขั้นที่ 1 ช่วงสองช่วงนี้ก็มี `currentOrder` แล้ว (เท่ากับ 1)
+   * เงื่อนไขจึงถาม phase ตรง ๆ ไม่ใช่ถามว่ามีเลขขั้นไหม — ไม่งั้นการ์ดหน้าแรกจะเปลี่ยน
+   * จากประโยคที่บอกว่าต้องทำอะไร ไปเป็น "ขั้นที่ 1 จาก 4" กับจุดสี่จุด ซึ่งบอกน้อยกว่าเดิม
+   */
+  const unstarted = progress.phase === "DRAFT" || progress.phase === "WAITING_REVISION";
+
+  if (!progress.currentOrder || unstarted) {
     const note = PHASE_NOTE[progress.phase];
-    /**
-     * คำขอที่ยังไม่ได้นำส่งไม่ต้องบอกว่าเส้นทางมีกี่ขั้น — ประโยคเดียวบอกครบว่าอยู่ตรงไหน
-     * และใครถืออยู่ ส่วน "ทั้งหมด 4 ขั้นตอน" ไม่ได้ตอบอะไรที่คนอ่านกำลังถาม
-     * ปลายทางที่จบแล้วยังบอกจำนวนขั้น เพราะตรงนั้นแปลว่า "ผ่านมาครบแล้ว" ซึ่งมีความหมาย
-     */
-    const unstarted = progress.phase === "DRAFT" || progress.phase === "WAITING_REVISION";
     return (
       <div className={clsx("flex flex-col gap-0.5", className)}>
         {unstarted ? null : (

@@ -68,7 +68,16 @@ export function RowDetailCard({ detail }: { detail: RowDetail | null }) {
   const meta = stageMeta(detail.status, detail.currentTaskType);
   const title = (detail.currentTaskType ? progress?.currentLabel : null) ?? meta.label;
   const note = progress ? PHASE_NOTE[progress.phase] : null;
-  const waited = detail.submittedAt && progress?.currentOrder ? daysSince(detail.submittedAt) : null;
+  /**
+   * "รอมาแล้ว" คือเวลาที่คำขอค้างอยู่ที่ด่านของผู้ตรวจ — นับเฉพาะตอนที่มันค้างอยู่จริง
+   *
+   * ใบที่ถูกส่งกลับมีเลขขั้นแล้ว (ขั้นที่ 1 รอหน่วยงานนำส่งใหม่) แต่ไม่มีใครฝั่งผู้ตรวจ
+   * ถืออยู่ ถ้านับต่อไปกล่องจะบอกว่า "รอมาแล้ว 12 วัน" ทั้งที่คนที่ต้องขยับคือหน่วยงานเอง
+   */
+  const waited =
+    detail.submittedAt && progress?.phase === "IN_PROGRESS"
+      ? daysSince(detail.submittedAt)
+      : null;
 
   // หนีบไม่ให้ล้นจอ และพลิกขึ้นด้านบนเมื่อแถวอยู่ใกล้ขอบล่าง
   const left = Math.min(Math.max(GAP, rect.left), viewport.w - CARD_WIDTH - GAP);
