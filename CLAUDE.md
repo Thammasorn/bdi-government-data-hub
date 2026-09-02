@@ -484,18 +484,18 @@ turns identity verification into a button is not something to leave lying in a r
 
 `THAID_SCOPE` defaults to `openid pid given_name family_name given_name_en family_name_en`
 (set 2026-08-24 from the Enhance card; it used to also ask for `title` `middle_name` `name`
-`name_en`). Two consequences. **It contains `pid`, which this project's own client is still
-refused** — a deployment using those credentials must override the env, not the code:
-`THAID_SCOPE=openid given_name family_name given_name_en family_name_en` with
-`THAID_USE_PID=false`. And **there is no `title` claim any more**, so the activation form fills
-first and last name from the card and leaves the prefix for the user to choose; `toIdentity()`
-still reads `title` / `name` / `name_en` in case DOPA sends them unasked.
+`name_en`). **DOPA granted this project's client the `pid` scope**, found by probing on
+2026-09-02, so the default now works as written and `main` runs `THAID_USE_PID=true`. There is
+no `title` claim, so the activation form fills first and last name from the card and leaves the
+prefix for the user to choose; `toIdentity()` still reads `title` / `name` / `name_en` in case
+DOPA sends them unasked.
 
 `THAID_USE_PID` chooses **which claim the CID is read from** — `pid` (the manual's answer,
 needs the `pid` scope) or `sub`. It is not a switch that disables the check: the comparison
-against `user_account.cid` runs either way, and a mismatch revokes the key either way. It
-exists because DOPA has not granted this project's client the `pid` scope, while `sub` comes
-back as the 13-digit national ID.
+against `user_account.cid` runs either way, and a mismatch revokes the key either way. It was
+written when the `pid` scope was refused; it stays as the way back if `pid` does not actually
+arrive in an id_token, since `sub` comes back as the 13-digit national ID. Changing it needs
+only a backend restart, never a rebuild.
 
 Whichever claim it reads, the value must pass the national-ID checksum before it counts
 (`toIdentity()` in `lib/thaid.ts`). A claim that is missing or opaque yields 502
@@ -775,13 +775,17 @@ Two API base URLs, and they are not interchangeable:
   redirecting, which reads like a broken client. Screenshot runs must override the user
   agent. Its login page also polls for the QR scan forever, so `waitUntil: "networkidle"`
   never resolves there.
-- The client credentials registered for this project (`assets/thaid/env_dev.txt`) are
-  **not granted the `pid` scope** and are pinned to `http://localhost:3000/auth/callback/thaid`.
-  Asking for `pid` with them returns `invalid_scope` at the authorize step, and no CID means
-  no CID matching. Development therefore runs on DOPA's sandbox demo client, which accepts
-  any `redirect_uri` and grants `pid`. Both gaps are DOPA-side registration changes, not code.
-  Because of the pinned redirect URI, **the project's own credentials can only be exercised
-  from `main`** (it owns port 3000); no dev checkout can be used with them.
+- The client credentials registered for this project (`assets/thaid/env_dev.txt`) are pinned to
+  **`https://bdi.thammasorn.org/auth/callback/thaid` and nothing else** — `localhost:3000`, any
+  other port, and the `http://` form of the public domain all answer
+  `400 invalid_request — redirect url mismatch`. That is the reverse of what was true until
+  2026-08-16, and DOPA changed it without telling anyone: they granted the `pid` scope and
+  swapped the redirect URI in the same edit, found only by probing the authorize endpoint on
+  2026-09-02. So **only `main` can use the project's own credentials**, and every dev checkout
+  must use DOPA's sandbox demo client, which accepts any `redirect_uri` and grants `pid`
+  (`assets/thaid/thaid sandbox.postman_environment.json`). When ThaiD behaves oddly, probe
+  `/api/v2/oauth2/auth/` with a deliberately wrong scope, client and redirect first: three 400s
+  are what proves the endpoint is still validating rather than waving everything through.
 - DOPA's `sub` is the 13-digit national ID — verified on both the demo client and the
   project's client, with `scope=openid` and nothing else. So the CID comparison is
   recoverable without the `pid` scope. It is deliberately not wired up yet: OIDC does not
