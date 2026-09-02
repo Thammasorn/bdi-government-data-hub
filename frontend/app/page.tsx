@@ -294,7 +294,7 @@ function OrganizationHome({
           <div className="flex flex-col gap-8">
             <DatasetSection
               title="รายการข้อมูลที่รออนุมัติ"
-              description="คำขอที่นำส่งแล้วและยังอยู่ระหว่างการพิจารณา ห้ารายการล่าสุดอยู่ที่นี่"
+              description="คำขอที่นำส่งแล้วและยังอยู่ระหว่างการพิจารณา"
               rows={pending.rows}
               count={pending.page.total}
               tone="attention"
@@ -313,7 +313,7 @@ function OrganizationHome({
 
             <DatasetSection
               title="ชุดข้อมูลของหน่วยงาน"
-              description="ชุดข้อมูลที่ลงทะเบียนเข้ามาแล้ว ทั้งฉบับร่าง รายการที่ต้องแก้ไข และรายการที่จบกระบวนการ — ห้ารายการล่าสุด"
+              description="ชุดข้อมูลที่ลงทะเบียนเข้ามาแล้ว ทั้งฉบับร่าง รายการที่ต้องแก้ไข และรายการที่จบกระบวนการ"
               rows={others.rows}
               count={others.page.total}
               emptyText="ยังไม่มีชุดข้อมูลอื่นของหน่วยงาน"
