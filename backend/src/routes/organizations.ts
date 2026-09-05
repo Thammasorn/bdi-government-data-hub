@@ -874,7 +874,7 @@ organizationRouter.post("/", async (req, res) => {
         organizationId: organization.id,
         status: RequestStatus.DRAFT,
         ...prefillFromOrganization(organization),
-        // ผู้กรอกคือผู้ประสานงานโดยปริยาย เอาจากบัญชีที่ ThaiD ยืนยันมาแล้ว ผู้ใช้แก้ได้
+        // ผู้กรอกคือผู้ประสานงานโดยปริยาย เอาจากบัญชีที่ ThaID ยืนยันมาแล้ว ผู้ใช้แก้ได้
         userPrefixTh: account?.prefixTh ?? undefined,
         userFirstnameTh: account?.firstnameTh ?? undefined,
         userLastnameTh: account?.lastnameTh ?? undefined,
@@ -2257,7 +2257,7 @@ async function approverConflict(
    *
    * เดิมเคสนี้ผ่านไปเงียบ ๆ เพราะ `existing ?? create` ใช้บัญชีเดิมโดยไม่เคยอ่าน
    * `approverCid` ที่กรอกมาเลย — กรอกอีเมลของคนหนึ่งกับเลขบัตรของอีกคนจึงผ่าน
-   * แล้วระบบเก็บเลขของเจ้าของอีเมลไว้ ThaiD ก็ไปเทียบกับเลขนั้น ทั้งที่ฟอร์มบอกอีกอย่าง
+   * แล้วระบบเก็บเลขของเจ้าของอีเมลไว้ ThaID ก็ไปเทียบกับเลขนั้น ทั้งที่ฟอร์มบอกอีกอย่าง
    */
   if (cid && existing.cid && existing.cid !== cid) {
     return {

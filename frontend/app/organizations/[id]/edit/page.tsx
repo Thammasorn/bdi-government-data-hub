@@ -529,7 +529,7 @@ export default function EditOrganizationPage() {
               {/*
                 ชื่อ นามสกุล อีเมล และเบอร์โทร มาจากบัญชีของผู้กรอกเอง (backend เติมให้ตอน
                 สร้างคำขอ) แก้ที่นี่ได้ก็จะกลายเป็นข้อมูลที่ไม่ตรงกับบัญชีที่ล็อกอินอยู่ และ
-                ชื่อนี้คือชื่อที่ไปพิมพ์อยู่บนเอกสารที่ลงนาม — คำนำหน้ายังแก้ได้ เพราะ ThaiD
+                ชื่อนี้คือชื่อที่ไปพิมพ์อยู่บนเอกสารที่ลงนาม — คำนำหน้ายังแก้ได้ เพราะ ThaID
                 ไม่ส่ง claim `title` มา บัญชีจำนวนหนึ่งจึงยังไม่มีค่านี้
               */}
               <PersonFields prefixKey="contactPrefix" firstKey="contactFirstName" lastKey="contactLastName" form={form} fieldProps={fieldProps} set={set} lockName />

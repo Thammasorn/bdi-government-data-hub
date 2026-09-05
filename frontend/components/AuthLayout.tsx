@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
-import { Logo, LogoLockup } from "@/components/brand/Logo";
+import { Logo, LogoImage } from "@/components/brand/Logo";
 
 /**
  * โครงหน้า auth สองคอลัมน์ — ซ้ายเป็นแบรนด์ ขวาเป็นฟอร์ม (docs/02-ui-spec.md §3.1)
@@ -32,7 +32,8 @@ export function AuthLayout({
           aria-hidden="true"
           className="bg-dot-grid absolute -bottom-24 -left-10 h-80 w-80 text-white opacity-[0.10]"
         />
-        <LogoLockup className="relative h-8 w-auto text-white" dotClassName="fill-coral-200" />
+        {/* self-start: aside เป็น flex column ถ้าปล่อยให้ stretch รูปจะถูกยืดเต็มความกว้าง */}
+        <LogoImage tone="white" className="relative h-28 self-start" />
 
         <div className="relative max-w-md">
           <h2 className="text-[32px] font-semibold leading-tight text-white">
@@ -47,7 +48,7 @@ export function AuthLayout({
         </div>
 
         <p className="relative text-[13px] text-white/55">
-          © {new Date().getFullYear()} Big Data Institute
+          © {new Date().getFullYear()} Big Data Institute (Public Organization)
         </p>
       </aside>
 

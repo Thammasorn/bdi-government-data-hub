@@ -17,7 +17,7 @@ import { bdiLandingPath, isBdiStaff } from "@/lib/status";
  * หน้านี้ไม่ตัดสินอะไรเอง — ส่ง code กับ state ต่อให้ backend แล้วทำตามคำตอบ
  * client secret และการเทียบเลขบัตรอยู่ฝั่ง server ทั้งหมด
  *
- * ThaiD ตอบกลับมาทาง query string เสมอ ทั้งกรณีสำเร็จ (code) และผิดพลาด (error)
+ * ThaID ตอบกลับมาทาง query string เสมอ ทั้งกรณีสำเร็จ (code) และผิดพลาด (error)
  */
 export default function ThaidCallbackPage() {
   return (
@@ -48,7 +48,7 @@ function ThaidCallback() {
 
     const state = params.get("state") ?? "";
     if (!state) {
-      setError("ไม่พบผลการยืนยันจาก ThaiD กรุณาเริ่มใหม่อีกครั้ง");
+      setError("ไม่พบผลการยืนยันจาก ThaID กรุณาเริ่มใหม่อีกครั้ง");
       return;
     }
 
@@ -63,7 +63,7 @@ function ThaidCallback() {
 
         if (result.user) {
           setUser(result.user);
-          // ปลายทางที่ฝากไว้ก่อนออกไป ThaiD — ผู้ที่มาจากลิงก์ในอีเมลต้องได้กลับ
+          // ปลายทางที่ฝากไว้ก่อนออกไป ThaID — ผู้ที่มาจากลิงก์ในอีเมลต้องได้กลับ
           // ไปหน้าที่ตั้งใจ ไม่ใช่หน้าแรก (เหมือนทางรหัสผ่าน + OTP)
           const next = takeNextPath();
           router.replace(
@@ -76,7 +76,7 @@ function ThaidCallback() {
         const token = takeActivationToken();
         router.replace(token ? `/activate?token=${encodeURIComponent(token)}` : "/activate");
       } catch (err) {
-        setError(err instanceof ApiError ? err.message : "ยืนยันตัวตนกับ ThaiD ไม่สำเร็จ");
+        setError(err instanceof ApiError ? err.message : "ยืนยันตัวตนกับ ThaID ไม่สำเร็จ");
       }
     })();
   }, [params, router, setUser]);
@@ -86,7 +86,7 @@ function ThaidCallback() {
     return (
       <AuthLayout
         title="ยืนยันตัวตนไม่สำเร็จ"
-        description="ระบบไม่สามารถยืนยันตัวตนของคุณกับ ThaiD ได้"
+        description="ระบบไม่สามารถยืนยันตัวตนของคุณกับ ThaID ได้"
         footer={
           <div className="flex flex-col gap-2">
             {token ? (
@@ -111,7 +111,7 @@ function ThaidCallback() {
   }
 
   return (
-    <AuthLayout title="กำลังยืนยันตัวตน" description="ระบบกำลังตรวจสอบผลการยืนยันจาก ThaiD">
+    <AuthLayout title="กำลังยืนยันตัวตน" description="ระบบกำลังตรวจสอบผลการยืนยันจาก ThaID">
       <div className="flex justify-center py-6">
         <Spinner />
       </div>

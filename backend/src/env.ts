@@ -31,7 +31,7 @@ function requiredInProduction(name: string, devFallback: string): string {
   return devFallback;
 }
 
-/** อ่านก่อนสร้าง env เพราะ redirect_uri ของ ThaiD ตั้งต้นจากค่านี้ */
+/** อ่านก่อนสร้าง env เพราะ redirect_uri ของ ThaID ตั้งต้นจากค่านี้ */
 const APP_URL = optional("APP_URL", "http://localhost:3000").replace(/\/$/, "");
 
 export const env = {
@@ -90,7 +90,7 @@ export const env = {
   },
 
   /**
-   * ThaiD (DOPA IdP) — OAuth 2.0 authorization code flow
+   * ThaID (DOPA IdP) — OAuth 2.0 authorization code flow
    *
    * ทุกค่าอ่านจาก environment เพราะ sandbox กับของจริงคนละ host คนละ client และ
    * redirect_uri ต้อง "ตรงตัวอักษร" กับที่ลงทะเบียนไว้กับกรมการปกครอง ไม่งั้นได้
@@ -147,7 +147,7 @@ export const env = {
      * จึงเป็น false (เตือนใน log แล้วไปต่อ) เปิดเป็น true เมื่อเห็นจากการยิงจริงแล้วว่ามีมา
      */
     requireNonce: optional("THAID_REQUIRE_NONCE", "false") === "true",
-    /** อายุของ state ที่ค้างรอ callback — ยาวพอให้เปิดแอป ThaiD บนมือถือแล้วกลับมา */
+    /** อายุของ state ที่ค้างรอ callback — ยาวพอให้เปิดแอป ThaID บนมือถือแล้วกลับมา */
     stateTtlMinutes: Number(optional("THAID_STATE_TTL_MINUTES", "15")),
     /** ยืนยันตัวตนแล้วมีเวลาเท่านี้ในการตั้งรหัสผ่านให้จบ ก่อนต้องยืนยันใหม่ */
     verificationTtlMinutes: Number(optional("THAID_VERIFICATION_TTL_MINUTES", "30")),

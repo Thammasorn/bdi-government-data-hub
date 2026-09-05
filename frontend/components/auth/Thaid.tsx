@@ -8,10 +8,10 @@ import { api, ApiError } from "@/lib/api";
 import { nextFromLocation, safeNextPath } from "@/lib/require-auth";
 
 /**
- * ปุ่มเริ่มยืนยันตัวตนกับ ThaiD
+ * ปุ่มเริ่มยืนยันตัวตนกับ ThaID
  *
  * backend คืน URL มาให้ แล้วหน้านี้พาเบราว์เซอร์ออกไปทั้งหน้า (ไม่ใช่ fetch) เพราะ
- * ผู้ใช้ต้องไปยืนยันบนเว็บ/แอปของกรมการปกครองจริง ๆ — และ redirect_uri ที่ ThaiD
+ * ผู้ใช้ต้องไปยืนยันบนเว็บ/แอปของกรมการปกครองจริง ๆ — และ redirect_uri ที่ ThaID
  * รู้จักคือหน้าเว็บของเรา ไม่ใช่ API
  */
 const TOKEN_KEY = "thaid:activation-token";
@@ -19,9 +19,9 @@ const PROFILE_KEY = "thaid:profile";
 const NEXT_KEY = "thaid:next";
 
 /**
- * ฝาก activation key ไว้ก่อนออกไป ThaiD
+ * ฝาก activation key ไว้ก่อนออกไป ThaID
  *
- * ThaiD ส่งกลับมาแค่ code กับ state — ตัว key จริงจะไม่ถูกส่งออกนอกเบราว์เซอร์เลย
+ * ThaID ส่งกลับมาแค่ code กับ state — ตัว key จริงจะไม่ถูกส่งออกนอกเบราว์เซอร์เลย
  * (sessionStorage อยู่กับแท็บนี้เท่านั้น และหายเมื่อปิดแท็บ) หน้า callback หยิบไป
  * ใช้พากลับเข้าหน้า /activate ต่อ ส่วน backend ผูก callback กับคำขอเดิมด้วย state
  * ของตัวเอง ไม่ได้เชื่อค่าที่เบราว์เซอร์ถือไว้
@@ -39,10 +39,10 @@ export function storeThaidProfile(profile: unknown) {
 }
 
 /**
- * ฝากปลายทางหลังล็อกอินไว้ก่อนออกไป ThaiD ด้วยเหตุผลเดียวกับ activation key
+ * ฝากปลายทางหลังล็อกอินไว้ก่อนออกไป ThaID ด้วยเหตุผลเดียวกับ activation key
  *
  * ผู้ที่กดลิงก์ในอีเมลตอนยังไม่ล็อกอินจะมาถึงหน้า /login พร้อม ?next=<หน้านั้น>
- * แต่การล็อกอินด้วย ThaiD พาเบราว์เซอร์ออกนอกเว็บแล้วกลับเข้ามาที่
+ * แต่การล็อกอินด้วย ThaID พาเบราว์เซอร์ออกนอกเว็บแล้วกลับเข้ามาที่
  * /auth/callback/thaid ซึ่งเป็นคนละ URL — ค่า next บน query string จึงหายไป
  * ระหว่างทาง ถ้าไม่ฝากไว้ ผู้ใช้ที่เลือกทางนี้จะไปโผล่หน้าแรกแทนหน้าที่ตั้งใจไป
  */
@@ -108,7 +108,7 @@ export function ThaidButton({
   );
 }
 
-/** เครื่องหมายบัตรประชาชนแบบเรียบ — ไม่ได้ใช้โลโก้ ThaiD จริงเพราะยังไม่ได้ขออนุญาตใช้ */
+/** เครื่องหมายบัตรประชาชนแบบเรียบ — ไม่ได้ใช้โลโก้ ThaID จริงเพราะยังไม่ได้ขออนุญาตใช้ */
 function ThaidMark() {
   return (
     <svg viewBox="0 0 20 20" className="h-[18px] w-[18px]" fill="none" aria-hidden="true">
