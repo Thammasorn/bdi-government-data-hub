@@ -2,13 +2,13 @@
 
 import clsx from "clsx";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Logo } from "@/components/brand/Logo";
 import { NotificationBell } from "@/components/NotificationBell";
 import { SessionChangedDialog } from "@/components/SessionChangedDialog";
-import { sessionUserName, useSession } from "@/components/SessionProvider";
+import { announceSignOut, sessionUserName, useSession } from "@/components/SessionProvider";
 import { api } from "@/lib/api";
 import { ROLE_LABELS, isBdiStaff, isSpecialistOnly } from "@/lib/status";
 
@@ -172,8 +172,7 @@ function SignInLink() {
 }
 
 function UserMenu() {
-  const { user, setUser } = useSession();
-  const router = useRouter();
+  const { user } = useSession();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -189,10 +188,26 @@ function UserMenu() {
   if (!user) return null;
   const name = sessionUserName(user);
 
+  /**
+   * ออกจากระบบแล้วต้องจบที่ `/login` เปล่า ๆ — ไม่ใช่ `/login?next=<หน้าที่เพิ่งอยู่>`
+   *
+   * เดิมที่นี่ทำ setUser(null) แล้ว router.push("/login") ซึ่งแพ้การแข่งกับตัวเอง:
+   * setUser(null) ทำให้หน้าที่ยังค้างอยู่ re-render, useRequireAuth ของหน้านั้นเห็นว่า
+   * ไม่มี user จึง router.replace("/login?next=<หน้านั้น>") ทับ push ที่เพิ่งทำไป
+   * ผลคือ ?next= ค้างบน URL ข้ามไปถึงการล็อกอินครั้งถัดไป แล้วหน้า login ก็พาไปตามนั้น
+   * โดยไม่ดู role — คนละบัญชีที่ล็อกอินต่อบนเบราว์เซอร์เดียวกันจึงไปโผล่หน้าที่ไม่มีสิทธิ
+   *
+   * โหลดหน้าใหม่ทั้งหน้าแทน: ไม่มี state เปลี่ยน ก็ไม่มี effect ไหนมาเขียน URL ทับ —
+   * ตัดการแข่งขันทิ้ง ไม่ใช่พยายามชนะมัน และ replace ยังไม่ทิ้งหน้าเดิมไว้ใน history
+   * ปุ่ม Back หลังออกจากระบบจึงไม่เด้งกลับเข้าหน้าที่ต้องล็อกอินอีก
+   *
+   * แลกมาด้วยการต้องประกาศให้แท็บอื่นเองด้วย เพราะ effect ที่เคยทำให้ตอน user เปลี่ยน
+   * จะไม่ได้ทำงานแล้ว
+   */
   const logout = async () => {
     await api.post("/api/auth/logout").catch(() => undefined);
-    setUser(null);
-    router.push("/login");
+    announceSignOut();
+    window.location.replace("/login");
   };
 
   return (
