@@ -13,7 +13,6 @@ import { OtpInput } from "@/components/ui/OtpInput";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
 import { nextFromLocation } from "@/lib/require-auth";
-import { bdiLandingPath, isBdiStaff } from "@/lib/status";
 import type { SessionUser } from "@/components/SessionProvider";
 
 /**
@@ -159,7 +158,8 @@ function OtpStep({ email, onBack }: { email: string; onBack: () => void }) {
          * เบราว์เซอร์พร้อมมานานแล้ว
          */
         const next = nextFromLocation();
-        router.push(next ?? (isBdiStaff(data.user.roles) ? bdiLandingPath(data.user.roles) : "/"));
+        // ทุก role มีหน้าแรกที่ `/` แล้ว รวมถึงเจ้าหน้าที่ BDI ที่เคยถูกส่งไปตารางคิวตรง ๆ
+        router.push(next ?? "/");
       } catch (err) {
         setError(err instanceof ApiError ? err.message : "ยืนยันไม่สำเร็จ");
         setCode("");
