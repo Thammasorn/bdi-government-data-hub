@@ -1,17 +1,17 @@
 "use client";
 
-import clsx from "clsx";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { HomeSection, type SectionTone } from "@/components/home/HomeSection";
 import { ApprovalStepsCompact } from "@/components/review/ApprovalSteps";
-import { Card, DatasetStatusBadge } from "@/components/ui/Card";
+import { DatasetStatusBadge } from "@/components/ui/Card";
 import { api } from "@/lib/api";
 import { datasetPendingOwner, daysSince, formatThaiDate, isPendingDatasetStatus } from "@/lib/status";
 import { datasetTitle, type DatasetRequestListItem } from "@/lib/types";
 
 /**
- * หนึ่ง section ของหน้าแรกผู้ใช้หน่วยงาน
+ * หนึ่ง section ของรายการคำขอลงทะเบียนชุดข้อมูลบนหน้าแรก
  *
  * ทุกแถวมีครบตามสเปก: ชื่อชุดข้อมูลที่ขอลงทะเบียน, สถานะ, วันเวลาที่นำเข้ามา,
  * วันเวลาที่อัปเดตล่าสุด และปุ่ม view / download
@@ -27,6 +27,7 @@ export function DatasetSection({
   emptyText,
   tone = "plain",
   footer,
+  basePath = "/datasets",
 }: {
   title: string;
   description: string;
@@ -34,47 +35,35 @@ export function DatasetSection({
   /** จำนวนจริงทั้งหมด — section แสดงแค่ไม่กี่แถวแรก `rows.length` จึงพูดแทนไม่ได้ */
   count?: number;
   emptyText: string;
-  tone?: "plain" | "attention";
+  tone?: SectionTone;
   footer?: ReactNode;
+  /**
+   * หน้ารายละเอียดที่แถวนี้พาไป — ฝั่งหน่วยงานคือ `/datasets` ฝั่ง BDI คือ `/admin/datasets`
+   * สองหน้านั้นเป็นคอมโพเนนต์เดียวกัน ต่างกันแค่ปุ่มย้อนกลับและด่านที่กดได้ แต่หน้าที่
+   * ผู้อ่านไม่มีสิทธิ์เข้าจะเด้งเขากลับ ลิงก์จึงต้องตรงกับฝั่งที่เขายืนอยู่
+   */
+  basePath?: string;
 }) {
   return (
-    <section>
-      <header className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 className="text-[19px] font-semibold text-navy-800">{title}</h2>
-        <span
-          className={clsx(
-            "rounded-full px-2.5 py-0.5 text-[13px] font-semibold",
-            tone === "attention" ? "bg-coral-50 text-coral-600" : "bg-navy-50 text-navy-700",
-          )}
-        >
-          {count ?? rows.length} รายการ
-        </span>
-        <p className="w-full text-[14px] text-ink-muted">{description}</p>
-      </header>
-
-      <Card
-        className={clsx(
-          "overflow-hidden",
-          tone === "attention" && rows.length > 0 ? "ring-coral-200" : undefined,
-        )}
-      >
-        {rows.length === 0 ? (
-          <p className="px-6 py-10 text-center text-[15px] text-ink-muted">{emptyText}</p>
-        ) : (
-          <ul className="divide-y divide-line">
-            {rows.map((row) => (
-              <DatasetRow key={row.id} row={row} />
-            ))}
-          </ul>
-        )}
-      </Card>
-
-      {footer ? <div className="mt-3">{footer}</div> : null}
-    </section>
+    <HomeSection
+      title={title}
+      description={description}
+      count={count ?? rows.length}
+      empty={rows.length === 0}
+      emptyText={emptyText}
+      tone={tone}
+      footer={footer}
+    >
+      <ul className="divide-y divide-line">
+        {rows.map((row) => (
+          <DatasetRow key={row.id} row={row} basePath={basePath} />
+        ))}
+      </ul>
+    </HomeSection>
   );
 }
 
-function DatasetRow({ row }: { row: DatasetRequestListItem }) {
+function DatasetRow({ row, basePath }: { row: DatasetRequestListItem; basePath: string }) {
   const owner = datasetPendingOwner(row.status, row.currentTaskType);
   // วันที่นำข้อมูลเข้ามา = วันที่นำส่งคำขอ ร่างที่ยังไม่ได้ส่งยังไม่มี จึงถอยไปใช้วันที่สร้าง
   const enteredAt = row.submittedAt ?? row.createdAt;
@@ -87,7 +76,7 @@ function DatasetRow({ row }: { row: DatasetRequestListItem }) {
     <li className="group relative grid grid-cols-1 items-center gap-3 px-6 py-4 transition-colors hover:bg-navy-50/50 md:grid-cols-[minmax(0,2.1fr)_15rem_minmax(0,1.1fr)_auto] md:gap-4">
       <div className="min-w-0">
         <Link
-          href={`/datasets/${row.id}`}
+          href={`${basePath}/${row.id}`}
           // ครอบทั้งแถวเพื่อให้คลิกตรงไหนก็เข้าคำขอได้ ยกเว้นปุ่มที่ยกตัวเองขึ้นมาด้วย z-10
           className="before:absolute before:inset-0 before:content-[''] focus-visible:outline-none"
         >
@@ -133,7 +122,7 @@ function DatasetRow({ row }: { row: DatasetRequestListItem }) {
 
       <div className="z-10 flex shrink-0 items-center gap-2 justify-self-start md:justify-self-end">
         <Link
-          href={`/datasets/${row.id}`}
+          href={`${basePath}/${row.id}`}
           className="rounded-full border border-line bg-white px-3.5 py-1.5 text-[13px] font-medium text-navy-700 transition-colors hover:bg-navy-50"
         >
           ดูรายละเอียด
