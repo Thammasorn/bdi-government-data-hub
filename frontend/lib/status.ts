@@ -251,11 +251,17 @@ export const isBdiStaff = (roles: string[]) =>
 /**
  * ผู้เชี่ยวชาญข้อมูลที่ไม่ได้ถือ role อื่นของ BDI ด้วย — เมนูของเขามีรายการเดียว
  * คือชุดข้อมูลที่ถูกมอบหมาย (ดู navItems ใน components/AppShell.tsx)
+ *
+ * สำเนาของ `isSpecialistOnly` ใน backend/src/lib/roles.ts และต้องตัด role เดียวกันทั้งสี่ตัว
+ * ที่นั่นตัด `BDI_LEGAL_OFFICER` ออกด้วย ที่นี่เคยไม่ตัด — คนที่ถือทั้งผู้เชี่ยวชาญและนิติกร
+ * จึงได้เมนูของผู้เชี่ยวชาญ (ชุดข้อมูลที่ถูกมอบหมายอย่างเดียว) ขณะที่ `visibilityFilter()`
+ * ฝั่ง API คืนคำขอทั้งระบบให้เขา สองฝั่งพูดคนละเรื่องกับผู้ใช้คนเดียวกัน
  */
 export const isSpecialistOnly = (roles: string[]) =>
   roles.includes("BDI_DATASET_SPECIALIST") &&
   !roles.includes("BDI_OFFICER") &&
-  !roles.includes("BDI_FINAL_APPROVER");
+  !roles.includes("BDI_FINAL_APPROVER") &&
+  !roles.includes("BDI_LEGAL_OFFICER");
 
 /**
  * หน้าแรกของเจ้าหน้าที่ BDI หลังเข้าสู่ระบบ
