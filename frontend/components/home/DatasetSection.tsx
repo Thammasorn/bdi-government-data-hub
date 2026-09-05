@@ -28,6 +28,7 @@ export function DatasetSection({
   tone = "plain",
   footer,
   basePath = "/datasets",
+  showOrganization = false,
 }: {
   title: string;
   description: string;
@@ -43,6 +44,11 @@ export function DatasetSection({
    * ผู้อ่านไม่มีสิทธิ์เข้าจะเด้งเขากลับ ลิงก์จึงต้องตรงกับฝั่งที่เขายืนอยู่
    */
   basePath?: string;
+  /**
+   * เขียนชื่อหน่วยงานต่อท้ายเลขที่คำขอ — จำเป็นเฉพาะฝั่ง BDI ที่เห็นคำขอของทุกหน่วยงาน
+   * ปนกันอยู่ในรายการเดียว ฝั่งหน่วยงานเห็นแต่ของตัวเอง บรรทัดนี้จึงพูดซ้ำเปล่า ๆ
+   */
+  showOrganization?: boolean;
 }) {
   return (
     <HomeSection
@@ -56,14 +62,22 @@ export function DatasetSection({
     >
       <ul className="divide-y divide-line">
         {rows.map((row) => (
-          <DatasetRow key={row.id} row={row} basePath={basePath} />
+          <DatasetRow key={row.id} row={row} basePath={basePath} showOrganization={showOrganization} />
         ))}
       </ul>
     </HomeSection>
   );
 }
 
-function DatasetRow({ row, basePath }: { row: DatasetRequestListItem; basePath: string }) {
+function DatasetRow({
+  row,
+  basePath,
+  showOrganization,
+}: {
+  row: DatasetRequestListItem;
+  basePath: string;
+  showOrganization: boolean;
+}) {
   const owner = datasetPendingOwner(row.status, row.currentTaskType);
   // วันที่นำข้อมูลเข้ามา = วันที่นำส่งคำขอ ร่างที่ยังไม่ได้ส่งยังไม่มี จึงถอยไปใช้วันที่สร้าง
   const enteredAt = row.submittedAt ?? row.createdAt;
@@ -84,7 +98,9 @@ function DatasetRow({ row, basePath }: { row: DatasetRequestListItem; basePath: 
             {datasetTitle(row)}
           </span>
         </Link>
-        <span className="mt-0.5 block truncate text-[13px] text-ink-muted">{row.requestNumber}</span>
+        <span className="mt-0.5 block truncate text-[13px] text-ink-muted">
+          {showOrganization ? `${row.requestNumber} · ${row.organization.name}` : row.requestNumber}
+        </span>
       </div>
 
       <div className="min-w-0">
