@@ -231,11 +231,17 @@ export async function sendOtpEmail(to: string, code: string) {
     `รหัสยืนยันตัวตน ${code} — BDI Datahub`,
     layout({
       title: "รหัสยืนยันตัวตน",
-      intro: `กรอกรหัสนี้เพื่อยืนยันตัวตน รหัสมีอายุ ${env.auth.otpTtlMinutes} นาที`,
+      intro: "ใช้รหัสนี้เพื่อยืนยันตัวตนในระบบ:",
       body: `<div style="background:#F6F7FB;border:1px solid ${BORDER};border-radius:12px;padding:20px;text-align:center;">
                <span style="font:700 32px/1 'Helvetica Neue',Arial,sans-serif;color:${NAVY};letter-spacing:8px;">${code}</span>
-             </div>`,
-      footnote: "หากคุณไม่ได้เป็นผู้ขอรหัสนี้ ให้เพิกเฉยต่ออีเมลฉบับนี้",
+             </div>
+             <p style="margin:20px 0 0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
+               รหัสนี้ใช้ได้ภายใน <strong style="color:${TEXT};">${env.auth.otpTtlMinutes} นาที</strong>
+             </p>
+             <p style="margin:8px 0 0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
+               กรุณาอย่าเปิดเผยรหัสนี้แก่ผู้อื่น
+             </p>`,
+      footnote: "หากคุณไม่ได้เป็นผู้ขอรหัสนี้ คุณสามารถเพิกเฉยต่ออีเมลฉบับนี้ได้",
     }),
   );
 }
