@@ -91,7 +91,7 @@ import { DocumentRenderError } from "../lib/document-render.js";
 import { LEGAL_SCOPES, publishedDocuments } from "../lib/legal.js";
 import { nextDatasetCode, nextDatasetRequestNumber } from "../lib/request-number.js";
 import { buildJourneyProgress, summariseMany } from "../lib/journey-steps.js";
-import { isBdiStaff, isSpecialistOnly } from "../lib/roles.js";
+import { REVIEW_TASK_TYPE_LABELS, isBdiStaff, isSpecialistOnly } from "../lib/roles.js";
 import {
   BDI_ORGANIZATION_ID,
   ROLE_CODES,
@@ -110,6 +110,7 @@ import {
 } from "../lib/queue.js";
 import {
   TASK_TYPE_ROLES,
+  ACTIVE_STATUSES,
   WorkflowError,
   activeTask,
   cancelActiveTask,
@@ -118,6 +119,9 @@ import {
   openTask,
   recordAdvisoryNote,
   startTask,
+  latestTaskTouch,
+  roleHolderId,
+  stateVersionOf,
   taskHistory,
 } from "../lib/workflow.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -239,40 +243,6 @@ async function prerequisiteError(session: Session): Promise<string | null> {
 function mayEdit(session: Session, request: { organizationId: string; createdBy: string }): boolean {
   if (isBdiStaff(session.roles)) return false;
   return session.organizationId === request.organizationId || request.createdBy === session.sub;
-}
-
-/**
- * เลือกผู้รับมอบหมายที่ว่างที่สุด — assigned_user_id เป็น NOT NULL ในดีไซน์
- *
- * เจ้าหน้าที่ BDI สังกัดหน่วยงาน BDI ตั้งแต่ 2026-08-16 — เดิม organization_id ของพวกเขา
- * เป็น NULL ผู้เรียกจึงส่ง `null` มาเพื่อหมายถึง "ฝั่ง BDI ไม่ผูกหน่วยงาน" ตอนนี้ตัวกรองนั้น
- * ไม่ตรงกับใครเลย ผลคือ submit ตอบ 503 no_reviewer ทั้งที่มีเจ้าหน้าที่อยู่ครบ
- * จึงต้องส่ง BDI_ORGANIZATION_ID มาแทน
- */
-async function pickAssignee(roleCode: RoleCode, organizationId?: string | null): Promise<string | null> {
-  const assignments = await prisma.userRoleAssignment.findMany({
-    where: {
-      role: { code: roleCode, isActive: true },
-      status: "ACTIVE",
-      OR: [{ effectiveUntil: null }, { effectiveUntil: { gt: new Date() } }],
-      userAccount: { status: UserAccountStatus.ACTIVE },
-      ...(organizationId !== undefined ? { organizationId } : {}),
-    },
-    select: { userAccountId: true },
-  });
-  const candidates = [...new Set(assignments.map((a) => a.userAccountId))];
-  if (candidates.length === 0) return null;
-
-  const loads = await prisma.reviewTask.groupBy({
-    by: ["assignedUserId"],
-    where: {
-      assignedUserId: { in: candidates },
-      status: { in: [ReviewTaskStatus.PENDING, ReviewTaskStatus.IN_PROGRESS] },
-    },
-    _count: { _all: true },
-  });
-  const loadByUser = new Map(loads.map((l) => [l.assignedUserId, l._count._all]));
-  return candidates.sort((a, b) => (loadByUser.get(a) ?? 0) - (loadByUser.get(b) ?? 0))[0] ?? null;
 }
 
 async function syncStatus(
@@ -595,6 +565,52 @@ datasetRequestRouter.post("/", async (req, res) => {
 
 // ---------------------------------------------------------------- detail
 
+/**
+ * สถานะย่อของคำขอ สำหรับหน้าจอที่เปิดค้างไว้ถามเป็นระยะว่า "มีอะไรเปลี่ยนไหม"
+ *
+ * ทุกด่านเปิดให้ทุกคนที่ถือ role นั้นกดได้ เจ้าหน้าที่หลายคนจึงเปิดคำขอใบเดียวกันพร้อมกันได้
+ * และคนที่ไม่ได้กดต้องรู้ว่าคำขอเดินไปแล้ว ไม่ใช่รู้ตอนกดปุ่มแล้วเจอ error
+ *
+ * **แยก endpoint เพราะ `GET /:id` แพงเกินกว่าจะ poll** — ตัวนั้นดึงไทม์ไลน์ทั้งเส้น ไฟล์แนบ
+ * ความคืบหน้า และ (ฝั่งหน่วยงาน) ชื่อจังหวัด/อำเภอ/ตำบล รวมสิบกว่า SELECT ต่อครั้ง
+ * ตัวนี้ตอบเฉพาะสิ่งที่ใช้ตัดสินว่าเปลี่ยนหรือยัง แล้วให้หน้าจอไปโหลดตัวเต็มเองเมื่อเปลี่ยนจริง
+ *
+ * `updatedAt` เอาค่ามากสุดของแถวคำขอกับ review_task ของมัน — `syncStatus()` เขียนแถวคำขอ
+ * ทุกครั้งที่มี transition ก็จริง แต่ความเห็นของผู้เชี่ยวชาญ (`recordAdvisoryNote()`)
+ * เขียนแค่ review_task ถ้าดูแค่แถวคำขอ ไทม์ไลน์จะขยับโดยที่ไม่มีใครรู้
+ */
+datasetRequestRouter.get("/:id/state", async (req, res) => {
+  const session = req.session! as Session;
+  // AND ไม่ใช่ spread — เหตุผลเดียวกับใน GET /:id ตัวกรองของผู้เชี่ยวชาญมี `id` ของตัวเอง
+  const request = await prisma.datasetRegistrationRequest.findFirst({
+    where: { AND: [{ id: req.params.id }, await visibilityFilter(session)] },
+    select: { id: true, status: true, updatedAt: true },
+  });
+  if (!request) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
+    return;
+  }
+
+  const [active, tasks] = await Promise.all([
+    prisma.reviewTask.findFirst({
+      where: { subjectType: SUBJECT, subjectId: request.id, status: { in: ACTIVE_STATUSES } },
+      select: { id: true, taskType: true, roundNumber: true },
+    }),
+    prisma.reviewTask.aggregate({
+      where: { subjectType: SUBJECT, subjectId: request.id },
+      _max: { updatedAt: true },
+    }),
+  ]);
+
+  res.json({
+    state: {
+      status: request.status,
+      currentTaskType: active?.taskType ?? null,
+      stateVersion: stateVersionOf(request.updatedAt, tasks._max.updatedAt),
+    },
+  });
+});
+
 datasetRequestRouter.get("/:id", async (req, res) => {
   const session = req.session! as Session;
   const request = await prisma.datasetRegistrationRequest.findFirst({
@@ -645,9 +661,9 @@ datasetRequestRouter.get("/:id", async (req, res) => {
     .reverse()
     .find((t) => t.result === ReviewResult.APPROVED || t.result === ReviewResult.REJECTED);
   const approvedByName =
-    decided?.result === ReviewResult.APPROVED ? (decided.assignedUser?.displayName ?? null) : null;
+    decided?.result === ReviewResult.APPROVED ? (decided.completedByUser?.displayName ?? null) : null;
   const rejectedByName =
-    decided?.result === ReviewResult.REJECTED ? (decided.assignedUser?.displayName ?? null) : null;
+    decided?.result === ReviewResult.REJECTED ? (decided.completedByUser?.displayName ?? null) : null;
   const rejectionReason =
     decided?.result === ReviewResult.REJECTED ? (decided.resultComment ?? null) : null;
 
@@ -669,7 +685,8 @@ datasetRequestRouter.get("/:id", async (req, res) => {
         : null,
       currentTaskType: active?.taskType ?? null,
       currentRound: active?.roundNumber ?? null,
-      currentAssignee: active?.assignedUser?.displayName ?? null,
+      // ค่าเดียวกับที่ GET /:id/state คืน — หน้าจอเทียบสองค่านี้เพื่อรู้ว่าที่ถืออยู่เก่าหรือยัง
+      stateVersion: stateVersionOf(request.updatedAt, latestTaskTouch(tasks)),
       // เส้นทางทั้งเส้น ไม่ใช่แค่ด่านที่ค้างอยู่ — ดู lib/journey-steps.ts
       progress: buildJourneyProgress({
         subjectType: SUBJECT,
@@ -693,17 +710,15 @@ datasetRequestRouter.get("/:id", async (req, res) => {
             ? null
             : t.resultComment,
         /**
-         * ชื่อคนเฉพาะงานที่ทำไปแล้ว
-         *
-         * `assigned_user_id` เป็นแค่การเกลี่ยงานของ `pickAssignee()` ตอนเปิด task —
-         * `canAction()` ให้ใครก็ตามที่ถือ role นั้นปิดด่านได้โดยไม่ดูค่านี้เลย ตอนที่ task
-         * ยังไม่มี `result` จึงยัง**ไม่มีใครรู้**ว่าใครจะเป็นคนทำ ส่งชื่อออกไปเท่ากับ
-         * ส่งคำตอบที่ระบบเองก็ยังไม่รู้ ให้หน้าไหนก็ได้หยิบไปแสดง
+         * ชื่อ**คนที่กด** ไม่ใช่ชื่อคนที่ถูกมอบหมาย — เหตุผลเดียวกับใน organizations.ts
          */
-        actor:
-          t.result && t.assignedUser
-            ? { id: t.assignedUser.id, name: t.assignedUser.displayName, email: t.assignedUser.email }
-            : null,
+        actor: t.completedByUser
+          ? {
+              id: t.completedByUser.id,
+              name: t.completedByUser.displayName,
+              email: t.completedByUser.email,
+            }
+          : null,
         assignedAt: t.assignedAt,
         startedAt: t.startedAt,
         completedAt: t.completedAt,
@@ -987,8 +1002,7 @@ datasetRequestRouter.post("/:id/submit", async (req, res) => {
     return;
   }
 
-  const officer = await pickAssignee(ROLE_CODES.BDI_OFFICER, BDI_ORGANIZATION_ID);
-  if (!officer) {
+  if (!(await roleHolderId(prisma, ROLE_CODES.BDI_OFFICER, BDI_ORGANIZATION_ID))) {
     res
       .status(503)
       .json({ error: "no_reviewer", message: "ยังไม่มีเจ้าหน้าที่ BDI ในระบบ กรุณาติดต่อผู้ดูแล" });
@@ -1004,7 +1018,6 @@ datasetRequestRouter.post("/:id/submit", async (req, res) => {
       subjectType: SUBJECT,
       subjectId: request.id,
       taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
-      assignedUserId: officer,
       assignedRole: ROLE_CODES.BDI_OFFICER,
       actorId: session.sub,
     });
@@ -1416,8 +1429,42 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
     // ตารางเดียวกับที่ lib/queue.ts ใช้ตอบว่า "ใบไหนเป็นงานของตำแหน่งฉัน" — เดิมเขียนซ้ำไว้ตรงนี้
     // ถ้าสองที่ไม่ตรงกัน หน้ารายการจะโชว์ใบที่กดต่อไม่ได้ หรือซ่อนใบที่กดได้
     const allowedRoles = TASK_TYPE_ROLES;
-    const isAssignee = task.assignedUserId === session.sub;
-    if (!session.roles.some((r) => allowedRoles[task.taskType].includes(r)) && !isAssignee) {
+    /** ผู้ใช้คนนี้ปิดด่านชนิดนี้ของคำขอนี้ได้ไหม */
+    const canAction = (taskType: ReviewTaskType) =>
+      session.roles.some((r) => allowedRoles[taskType].includes(r));
+
+    if (!canAction(task.taskType)) {
+      /**
+       * "ไม่มีสิทธิ์" กับ "คำขอเดินไปแล้ว" ไม่ใช่เรื่องเดียวกัน — สาขาเดียวกับ organizations.ts
+       *
+       * เส้นทางนี้เคยตอบ 403 forbidden เปล่า ๆ ให้ทั้งสองกรณี ทั้งที่เคสที่เกิดบ่อยกว่าคือ
+       * เจ้าหน้าที่เปิดหน้าไว้แล้วมีคนอื่นกดไปก่อน พอเขากดบ้าง active task กลายเป็นด่านของ
+       * ตำแหน่งอื่นไปแล้ว ระบบเลยบอกว่าเขาไม่มีสิทธิ์ ทั้งที่เขามีสิทธิ์เต็มที่ในด่านของตัวเอง
+       *
+       * เดิมมี fallback ว่า "หรือเป็นผู้รับมอบหมาย" ด้วย ซึ่งถอดออกแล้ว: ด่านฝั่ง BDI ไม่มี
+       * ผู้รับมอบหมายอีกต่อไป และ role คือสิ่งเดียวที่ตัดสินสิทธิ์อยู่แล้ว
+       */
+      const ownStage = await prisma.reviewTask.findFirst({
+        where: {
+          subjectType: SUBJECT,
+          subjectId: request.id,
+          status: ReviewTaskStatus.COMPLETED,
+          taskType: { in: Object.values(ReviewTaskType).filter(canAction) },
+        },
+        orderBy: { completedAt: "desc" },
+      });
+
+      if (ownStage) {
+        res.status(409).json({
+          error: "stage_completed",
+          message:
+            `ขั้นตอนของคุณในคำขอนี้ดำเนินการเรียบร้อยแล้ว ` +
+            `ตอนนี้คำขออยู่ที่ขั้น "${REVIEW_TASK_TYPE_LABELS[task.taskType]}" — ` +
+            `หน้าจอที่เปิดอยู่เป็นข้อมูลก่อนหน้านั้น กรุณาโหลดหน้าใหม่`,
+        });
+        return;
+      }
+
       res.status(403).json({ error: "forbidden", message: "คุณไม่มีสิทธิ์ดำเนินการขั้นตอนนี้" });
       return;
     }
@@ -1632,8 +1679,9 @@ async function nextStageAfter(
 ) {
   const open = async (taskType: ReviewTaskType, roleCode: RoleCode, orgScope?: string | null) => {
     // ไม่ระบุ orgScope = ด่านฝั่ง BDI ซึ่งอยู่ในหน่วยงาน BDI
-    const assignee = await pickAssignee(roleCode, orgScope ?? BDI_ORGANIZATION_ID);
-    if (!assignee) {
+    const isBdiStage = orgScope === undefined;
+    const holder = await roleHolderId(tx, roleCode, orgScope ?? BDI_ORGANIZATION_ID);
+    if (!holder) {
       throw new WorkflowError(
         "no_reviewer",
         `ยังไม่มีผู้รับผิดชอบขั้นตอน ${taskType} ในระบบ กรุณาติดต่อผู้ดูแล`,
@@ -1644,7 +1692,12 @@ async function nextStageAfter(
       subjectType: SUBJECT,
       subjectId: request.id,
       taskType,
-      assignedUserId: assignee,
+      /**
+       * ด่านฝั่ง BDI ไม่มีเจ้าของ — ใครถือ role นั้นก็ทำได้ และทุกคนได้อีเมลแจ้ง
+       * ด่านของหน่วยงานมีเจ้าของจริง: `assignRole()` บังคับว่าหนึ่งหน่วยงานมีผู้มีอำนาจ
+       * ลงนามที่ ACTIVE ได้คนเดียว และชื่อคนนั้นคือชื่อที่ไปพิมพ์บนเอกสาร
+       */
+      assignedUserId: isBdiStage ? null : holder,
       assignedRole: roleCode,
       assignedById: actorId,
       actorId,

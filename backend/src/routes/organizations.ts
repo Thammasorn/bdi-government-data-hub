@@ -113,12 +113,16 @@ import {
 } from "../lib/queue.js";
 import {
   TASK_TYPE_ROLES,
+  ACTIVE_STATUSES,
   WorkflowError,
   activeTask,
   completeTask,
   deriveRequestStatus,
   openTask,
   startTask,
+  latestTaskTouch,
+  roleHolderId,
+  stateVersionOf,
   taskHistory,
 } from "../lib/workflow.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -480,44 +484,21 @@ async function toApiShape(request: RequestRow) {
 // ---------------------------------------------------------------- helpers
 
 /**
- * เลือกผู้รับมอบหมายของด่านถัดไป
+ * เปิดด่านนี้ไปแล้วจะมีคนทำไหม
  *
- * sheet มาร์ก review_task.assigned_user_id เป็น Required จึงต้องมีคนรับตั้งแต่สร้าง task
- * เลือกคนที่มี active task น้อยที่สุด เพื่อไม่ให้งานกองที่คนเดียว
- * (docs/01-user-journey.md §4.4 เขียนว่า "BDI Officer ทุกคนเห็นคำขอทั้งหมด" ใครว่างก่อนหยิบก่อน
- *  — ดีไซน์บังคับให้มีเจ้าของ จึงมอบหมายอัตโนมัติแล้วให้ reassign ได้ทีหลังแทน)
+ * เดิมเป็น `pickAssignee()` ที่เลือกคนที่มี active task น้อยที่สุดมาใส่ `assigned_user_id`
+ * ค่านั้นไม่เคยถูกใช้ตัดสินอะไรเลย — `canAction()` ดู role ล้วน ๆ, `lib/queue.ts` กรอง
+ * "งานของฉัน" ด้วย role, และอีเมลแจ้งเตือนก็ส่งหาทุกคนที่ถือ role อยู่แล้ว (`bdiOfficerIds()`)
+ * สิ่งเดียวที่มันทำได้จริงคือทำให้ไทม์ไลน์ขึ้นชื่อคนที่ไม่ได้เป็นคนกด — เกิดจริงบน production
+ * 2026-09-04 จึงเหลือไว้แค่คำถามที่มันตอบได้จริง แล้วตอบด้วยการนับ ไม่ใช่ด้วยการเลือกคน
  *
  * เจ้าหน้าที่ BDI สังกัดหน่วยงาน BDI ตั้งแต่ 2026-08-16 — เดิม organization_id ของพวกเขา
  * เป็น NULL ผู้เรียกจึงส่ง `null` มาเพื่อหมายถึง "ฝั่ง BDI ไม่ผูกหน่วยงาน" ตอนนี้ตัวกรองนั้น
  * ไม่ตรงกับใครเลย ผลคือ submit ตอบ 503 no_reviewer ทั้งที่มีเจ้าหน้าที่อยู่ครบ
  * จึงต้องส่ง BDI_ORGANIZATION_ID มาแทน
  */
-async function pickAssignee(roleCode: RoleCode, organizationId?: string | null): Promise<string | null> {
-  const assignments = await prisma.userRoleAssignment.findMany({
-    where: {
-      role: { code: roleCode, isActive: true },
-      status: "ACTIVE",
-      OR: [{ effectiveUntil: null }, { effectiveUntil: { gt: new Date() } }],
-      userAccount: { status: UserAccountStatus.ACTIVE },
-      ...(organizationId !== undefined ? { organizationId } : {}),
-    },
-    select: { userAccountId: true },
-  });
-
-  const candidates = [...new Set(assignments.map((a) => a.userAccountId))];
-  if (candidates.length === 0) return null;
-
-  const loads = await prisma.reviewTask.groupBy({
-    by: ["assignedUserId"],
-    where: {
-      assignedUserId: { in: candidates },
-      status: { in: [ReviewTaskStatus.PENDING, ReviewTaskStatus.IN_PROGRESS] },
-    },
-    _count: { _all: true },
-  });
-
-  const loadByUser = new Map(loads.map((l) => [l.assignedUserId, l._count._all]));
-  return candidates.sort((a, b) => (loadByUser.get(a) ?? 0) - (loadByUser.get(b) ?? 0))[0] ?? null;
+async function hasRoleHolder(roleCode: RoleCode, organizationId?: string | null): Promise<boolean> {
+  return (await roleHolderId(prisma, roleCode, organizationId)) !== null;
 }
 
 /** คำนำหน้า ชื่อ นามสกุล ที่ต่อกันแล้ว ข้ามช่องที่ยังว่าง */
@@ -1012,6 +993,64 @@ async function findRequestByRequestOrOrganizationId(id: string) {
   });
 }
 
+/**
+ * สถานะย่อของคำขอ สำหรับหน้าจอที่เปิดค้างไว้ถามเป็นระยะว่า "มีอะไรเปลี่ยนไหม"
+ *
+ * ทุกด่านเปิดให้ทุกคนที่ถือ role นั้นกดได้ เจ้าหน้าที่หลายคนจึงเปิดคำขอใบเดียวกันพร้อมกันได้
+ * และคนที่ไม่ได้กดต้องรู้ว่าคำขอเดินไปแล้ว ไม่ใช่รู้ตอนกดปุ่มแล้วเจอ error
+ *
+ * **แยก endpoint เพราะ `GET /:id` แพงเกินกว่าจะ poll** — ตัวนั้นดึงไทม์ไลน์ทั้งเส้น ไฟล์แนบ
+ * ความคืบหน้า และ (ฝั่งหน่วยงาน) ชื่อจังหวัด/อำเภอ/ตำบล รวมสิบกว่า SELECT ต่อครั้ง
+ * ตัวนี้ตอบเฉพาะสิ่งที่ใช้ตัดสินว่าเปลี่ยนหรือยัง แล้วให้หน้าจอไปโหลดตัวเต็มเองเมื่อเปลี่ยนจริง
+ *
+ * `updatedAt` เอาค่ามากสุดของแถวคำขอกับ review_task ของมัน — `syncStatus()` เขียนแถวคำขอ
+ * ทุกครั้งที่มี transition ก็จริง แต่ความเห็นของผู้เชี่ยวชาญ (`recordAdvisoryNote()`)
+ * เขียนแค่ review_task ถ้าดูแค่แถวคำขอ ไทม์ไลน์จะขยับโดยที่ไม่มีใครรู้
+ */
+organizationRouter.get("/:id/state", async (req, res) => {
+  const session = req.session!;
+  /**
+   * อ่านแถวเดียวแบบ select เจาะจง ไม่ใช่ `findRequestByRequestOrOrganizationId()`
+   *
+   * ตัวนั้นยอมให้ `:id` เป็น id ของหน่วยงานด้วย ซึ่งต้องค้นสองรอบทุกครั้งที่ไม่ตรง —
+   * หน้าจอ poll ด้วย id ของ *คำขอ* ที่ได้จาก payload ตัวเต็มมาแล้ว จึงไม่ต้องเผื่อกรณีนั้น
+   */
+  const request = await prisma.organizationRegistrationRequest.findUnique({
+    where: { id: req.params.id },
+    select: {
+      id: true,
+      status: true,
+      updatedAt: true,
+      createdBy: true,
+      organizationId: true,
+      approverEmail: true,
+    },
+  });
+  if (!request || !canView(session, request)) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
+    return;
+  }
+
+  const [active, tasks] = await Promise.all([
+    prisma.reviewTask.findFirst({
+      where: { subjectType: SUBJECT, subjectId: request.id, status: { in: ACTIVE_STATUSES } },
+      select: { id: true, taskType: true, roundNumber: true },
+    }),
+    prisma.reviewTask.aggregate({
+      where: { subjectType: SUBJECT, subjectId: request.id },
+      _max: { updatedAt: true },
+    }),
+  ]);
+
+  res.json({
+    state: {
+      status: request.status,
+      currentTaskType: active?.taskType ?? null,
+      stateVersion: stateVersionOf(request.updatedAt, tasks._max.updatedAt),
+    },
+  });
+});
+
 organizationRouter.get("/:id", async (req, res) => {
   const session = req.session!;
   const request = await findRequestByRequestOrOrganizationId(req.params.id);
@@ -1054,7 +1093,8 @@ organizationRouter.get("/:id", async (req, res) => {
         : null,
       currentTaskType: active?.taskType ?? null,
       currentRound: active?.roundNumber ?? null,
-      currentAssignee: active?.assignedUser?.displayName ?? null,
+      // ค่าเดียวกับที่ GET /:id/state คืน — หน้าจอเทียบสองค่านี้เพื่อรู้ว่าที่ถืออยู่เก่าหรือยัง
+      stateVersion: stateVersionOf(request.updatedAt, latestTaskTouch(tasks)),
       // เส้นทางทั้งเส้น ไม่ใช่แค่ด่านที่ค้างอยู่ — หน้าจอต้องบอกได้ว่ามีกี่ขั้น
       // ตอนนี้ขั้นไหน และขั้นต่อไปเป็นหน้าที่ของบทบาทใด
       progress: buildJourneyProgress({
@@ -1075,17 +1115,22 @@ organizationRouter.get("/:id", async (req, res) => {
         result: t.result,
         note: t.resultComment,
         /**
-         * ชื่อคนเฉพาะงานที่ทำไปแล้ว
+         * ชื่อ**คนที่กด** ไม่ใช่ชื่อคนที่ถูกมอบหมาย
          *
-         * `assigned_user_id` เป็นแค่การเกลี่ยงานของ `pickAssignee()` ตอนเปิด task —
-         * `canAction()` ให้ใครก็ตามที่ถือ role นั้นปิดด่านได้โดยไม่ดูค่านี้เลย ตอนที่ task
-         * ยังไม่มี `result` จึงยัง**ไม่มีใครรู้**ว่าใครจะเป็นคนทำ ส่งชื่อออกไปเท่ากับ
-         * ส่งคำตอบที่ระบบเองก็ยังไม่รู้ ให้หน้าไหนก็ได้หยิบไปแสดง
+         * เดิมอ่านจาก `assignedUser` ซึ่งเป็นแค่การเกลี่ยงานตอนเปิด task — ใครก็ตามที่ถือ
+         * role นั้นปิดด่านได้ ชื่อที่ขึ้นจึงเป็นคนละคนกับคนที่ทำได้เสมอ และเป็นคนละคนจริง ๆ
+         * บน production 2026-09-04 ตอนนี้ด่านฝั่ง BDI ไม่มีผู้รับมอบหมายแล้วด้วยซ้ำ
+         *
+         * `completed_by` ว่างได้สองแบบ: task ที่ยังไม่ปิด (ยังไม่มีใครทำ ไม่ควรมีชื่อ) และ
+         * แถวเก่าที่ seed สร้างไว้ ซึ่งไม่มีคนกดจริง — ทั้งสองแบบไม่แสดงชื่อ ถูกต้องทั้งคู่
          */
-        actor:
-          t.result && t.assignedUser
-            ? { id: t.assignedUser.id, name: t.assignedUser.displayName, email: t.assignedUser.email }
-            : null,
+        actor: t.completedByUser
+          ? {
+              id: t.completedByUser.id,
+              name: t.completedByUser.displayName,
+              email: t.completedByUser.email,
+            }
+          : null,
         assignedAt: t.assignedAt,
         startedAt: t.startedAt,
         completedAt: t.completedAt,
@@ -1625,8 +1670,7 @@ organizationRouter.post("/:id/submit", async (req, res) => {
     return;
   }
 
-  const officer = await pickAssignee(ROLE_CODES.BDI_OFFICER, BDI_ORGANIZATION_ID);
-  if (!officer) {
+  if (!(await hasRoleHolder(ROLE_CODES.BDI_OFFICER, BDI_ORGANIZATION_ID))) {
     res.status(503).json({
       error: "no_reviewer",
       message: "ยังไม่มีเจ้าหน้าที่ BDI ในระบบ กรุณาติดต่อผู้ดูแล",
@@ -1643,7 +1687,6 @@ organizationRouter.post("/:id/submit", async (req, res) => {
       subjectType: SUBJECT,
       subjectId: request.id,
       taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
-      assignedUserId: officer,
       assignedRole: ROLE_CODES.BDI_OFFICER,
       actorId: session.sub,
     });
@@ -2031,8 +2074,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
       }
 
       if (result === ReviewResult.APPROVED && task.taskType === ReviewTaskType.ORGANIZATION_APPROVAL) {
-        const finalApprover = await pickAssignee(ROLE_CODES.BDI_FINAL_APPROVER, BDI_ORGANIZATION_ID);
-        if (!finalApprover) {
+        if (!(await hasRoleHolder(ROLE_CODES.BDI_FINAL_APPROVER, BDI_ORGANIZATION_ID))) {
           throw new WorkflowError(
             "no_reviewer",
             "ยังไม่มีผู้อนุมัติ BDI ในระบบ กรุณาติดต่อผู้ดูแล",
@@ -2043,7 +2085,6 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
           subjectType: SUBJECT,
           subjectId: request.id,
           taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
-          assignedUserId: finalApprover,
           assignedRole: ROLE_CODES.BDI_FINAL_APPROVER,
           assignedById: session.sub,
           actorId: session.sub,

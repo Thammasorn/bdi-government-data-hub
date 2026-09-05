@@ -8,6 +8,7 @@ import { DatasetSigningDialog } from "@/components/dataset/DatasetSigningDialog"
 import { LegalDocumentsCard, useLegalDocuments } from "@/components/organization/LegalDocuments";
 import { Timeline } from "@/components/organization/Timeline";
 import { ApprovalSteps } from "@/components/review/ApprovalSteps";
+import { RequestMovedNotice } from "@/components/review/RequestMovedNotice";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader, DatasetStatusBadge } from "@/components/ui/Card";
 import { SelectField, TextAreaField } from "@/components/ui/Field";
@@ -17,6 +18,7 @@ import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
 import { useRequireAuth } from "@/lib/require-auth";
 import { taskEventLabel, formatThaiDate } from "@/lib/status";
+import { describeState, movedMessage, useRequestWatch } from "@/lib/use-request-watch";
 import {
   DATA_CATEGORY_LABELS,
   DATA_CLASSIFICATION_LABELS,
@@ -152,6 +154,8 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
   const [noteError, setNoteError] = useState<string | undefined>();
   const [specialistId, setSpecialistId] = useState("");
   const [busy, setBusy] = useState(false);
+  /** ประกาศว่าคำขอเดินไปแล้วระหว่างที่หน้านี้เปิดค้างอยู่ — ค้างไว้จนกว่าผู้ใช้จะกดรับทราบ */
+  const [movedNotice, setMovedNotice] = useState<string | null>(null);
 
   const load = useCallback(
     () =>
@@ -181,6 +185,44 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
     if (!ready) return;
     void load();
   }, [load, ready]);
+
+  /**
+   * โหลดใหม่ให้ครบทั้งหน้า — เอกสารกฎหมายมี state ของตัวเองที่ `load()` ไม่แตะ และ
+   * `documentRound` คือตัวทำลาย cache ของ iframe ที่ฝัง PDF ไว้
+   */
+  const reloadAll = useCallback(() => {
+    void load();
+    reloadLegalDocuments();
+    setDocumentRound((r) => r + 1);
+  }, [load, reloadLegalDocuments]);
+
+  /**
+   * คำขอเดินไปแล้ว — ไม่ว่าจะรู้จากการ poll หรือจาก 409 ตอนกดปุ่ม ก็ลงทางเดียวกัน
+   *
+   * ปิด modal ที่ค้างอยู่ แต่ **ไม่ผ่าน `closeModal()`** เพราะตัวนั้นล้าง `note` ทิ้งด้วย —
+   * การกลืนสิ่งที่ผู้ใช้พิมพ์ไปทั้งย่อหน้าเพราะคนอื่นกดปุ่มก่อนเป็นการลงโทษผิดคน
+   */
+  const handleMoved = useCallback(
+    (message: string) => {
+      setModal(null);
+      setMovedNotice(message);
+      reloadAll();
+    },
+    [reloadAll],
+  );
+
+  useRequestWatch({
+    kind: "dataset-requests",
+    requestId: request?.id ?? null,
+    current: request
+      ? {
+          status: request.status,
+          currentTaskType: request.currentTaskType,
+          stateVersion: request.stateVersion,
+        }
+      : null,
+    onChanged: (next) => handleMoved(describeState(next)),
+  });
 
   useEffect(() => {
     if (!user?.roles.includes("BDI_OFFICER")) return;
@@ -278,6 +320,15 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
       closeModal();
       await load();
     } catch (err) {
+      /**
+       * "คนอื่นทำไปก่อนแล้ว" ไม่ใช่ความล้มเหลวของผู้ใช้คนนี้ — เป็นผลปกติของการที่ทุกคนที่ถือ
+       * role เดียวกันกดได้ จึงบอกด้วยประกาศที่ค้างไว้พร้อมข้อมูลที่โหลดใหม่แล้ว
+       */
+      const moved = movedMessage(err);
+      if (moved) {
+        handleMoved(moved);
+        return;
+      }
       show({
         tone: "error",
         title: "ดำเนินการไม่สำเร็จ",
@@ -347,6 +398,10 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
           waitingLabel={request.progress?.currentStep?.waitingLabel}
         />
       </header>
+
+      {movedNotice ? (
+        <RequestMovedNotice message={movedNotice} onDismiss={() => setMovedNotice(null)} />
+      ) : null}
 
       {request.status === "RETURNED" && request.revisionNote ? (
         <div className="mb-6 rounded-xl border-l-[3px] border-danger bg-danger-bg p-5">
@@ -766,12 +821,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
             reloadLegalDocuments();
             void load();
           }}
-          onStale={(message) => {
-            closeModal();
-            show({ tone: "error", title: "คำขอเดินไปขั้นถัดไปแล้ว", detail: message });
-            reloadLegalDocuments();
-            void load();
-          }}
+          onStale={handleMoved}
           requestId={request.id}
           documents={legalDocuments}
           title={ability?.advanceLabel ?? "ยืนยัน"}

@@ -107,6 +107,24 @@ export class WorkflowError extends Error {
   }
 }
 
+/**
+ * ข้อความเดียวที่ทุกด่านใช้ตอบเมื่อมีคนอื่นชิงทำไปก่อน
+ *
+ * ทุกด่านเปิดให้ทุกคนที่ถือ role นั้นกดได้ การกดพร้อมกันจึงเป็นเรื่องปกติ ไม่ใช่ความผิดพลาด
+ * ของใคร ข้อความจึงต้องบอกว่าเกิดอะไรขึ้นและให้ทำอะไรต่อ ไม่ใช่แค่บอกว่าล้มเหลว
+ */
+export const TASK_TAKEN_MESSAGE =
+  "มีผู้ใช้ท่านอื่นดำเนินการขั้นตอนนี้ไปแล้ว หน้าจอที่เปิดอยู่เป็นข้อมูลก่อนหน้านั้น กรุณาโหลดหน้าใหม่";
+
+/** field ของคนที่ต้องเอาชื่อไปแสดง — ใช้ร่วมกันทั้งผู้รับมอบหมายและผู้ปิดด่าน */
+const TASK_PERSON = {
+  id: true,
+  displayName: true,
+  email: true,
+  firstnameTh: true,
+  lastnameTh: true,
+} as const;
+
 /** สถานะของ task ที่ถือว่ายัง "ค้างอยู่" — lib/queue.ts ใช้ชุดเดียวกันนี้ */
 export const ACTIVE_STATUSES: ReviewTaskStatus[] = [
   ReviewTaskStatus.PENDING,
@@ -118,15 +136,8 @@ export async function activeTask(db: Db, subjectType: SubjectType, subjectId: st
   return db.reviewTask.findFirst({
     where: { subjectType, subjectId, status: { in: ACTIVE_STATUSES } },
     include: {
-      assignedUser: {
-        select: {
-          id: true,
-          displayName: true,
-          email: true,
-          firstnameTh: true,
-          lastnameTh: true,
-        },
-      },
+      assignedUser: { select: TASK_PERSON },
+      completedByUser: { select: TASK_PERSON },
     },
   });
 }
@@ -136,17 +147,68 @@ export async function taskHistory(db: Db, subjectType: SubjectType, subjectId: s
     where: { subjectType, subjectId },
     orderBy: { sequenceNumber: "asc" },
     include: {
-      assignedUser: {
-        select: {
-          id: true,
-          displayName: true,
-          email: true,
-          firstnameTh: true,
-          lastnameTh: true,
-        },
-      },
+      assignedUser: { select: TASK_PERSON },
+      completedByUser: { select: TASK_PERSON },
     },
   });
+}
+
+/**
+ * ค่าที่ตอบว่า "ข้อมูลที่หน้าจอถืออยู่เก่าหรือยัง"
+ *
+ * `GET /:id` กับ `GET /:id/state` ต้องคิดค่านี้แบบเดียวกันเป๊ะ ไม่งั้นหน้าจอที่เพิ่งโหลดเสร็จ
+ * จะเทียบแล้วพบว่าต่าง แล้วขึ้นประกาศ "คำขอเปลี่ยนแปลง" ทั้งที่ไม่มีอะไรเกิดขึ้น
+ *
+ * เอาค่ามากสุดของแถวคำขอกับ review_task ของมัน — `syncStatus()` เขียนแถวคำขอทุกครั้งที่มี
+ * transition ก็จริง แต่ความเห็นของผู้เชี่ยวชาญ (`recordAdvisoryNote()`) เขียนแค่ review_task
+ * ถ้าดูแค่แถวคำขอ ไทม์ไลน์จะขยับโดยที่ไม่มีใครรู้
+ */
+export function stateVersionOf(requestUpdatedAt: Date, latestTaskUpdatedAt: Date | null): string {
+  const latest =
+    latestTaskUpdatedAt && latestTaskUpdatedAt > requestUpdatedAt
+      ? latestTaskUpdatedAt
+      : requestUpdatedAt;
+  return latest.toISOString();
+}
+
+/** เวลาที่ task ล่าสุดของชุดนี้ถูกแตะ — null เมื่อยังไม่มี task เลย */
+export function latestTaskTouch(tasks: { updatedAt: Date }[]): Date | null {
+  return tasks.reduce<Date | null>(
+    (max, t) => (max === null || t.updatedAt > max ? t.updatedAt : max),
+    null,
+  );
+}
+
+/**
+ * id ของคนที่ถือ role นี้อยู่จริง ณ ตอนนี้ — null เมื่อไม่มีใครเลย
+ *
+ * แทนที่ `pickAssignee()` เดิมของทั้งสอง route ซึ่งเลือก "คนที่มี active task น้อยที่สุด"
+ * มาใส่ `assigned_user_id` การเกลี่ยงานนั้นไม่เคยถูกใช้ตัดสินอะไร — `canAction()` ดู role
+ * ล้วน ๆ, `lib/queue.ts` กรอง "งานของฉัน" ด้วย role, อีเมลก็ส่งหาทุกคนที่ถือ role อยู่แล้ว
+ * ผลข้างเคียงเดียวที่มันมีคือทำให้ไทม์ไลน์ขึ้นชื่อคนที่ไม่ได้กด (เกิดจริง 2026-09-04)
+ *
+ * ใช้สองแบบ: ด่านฝั่ง BDI เรียกเพื่อถามว่า "มีคนทำไหม" แล้วเปิด task โดยไม่ใส่ผู้รับมอบหมาย
+ * ส่วนด่านของหน่วยงานเรียกเพื่อเอา id จริง เพราะกติกาใน `assignRole()` บังคับว่าหนึ่ง
+ * หน่วยงานมีผู้มีอำนาจลงนามที่ ACTIVE ได้คนเดียว ด่านนั้นจึงเป็นของคนคนนั้นจริง ๆ
+ */
+export async function roleHolderId(
+  db: Db,
+  roleCode: RoleCode,
+  organizationId?: string | null,
+): Promise<string | null> {
+  const holder = await db.userRoleAssignment.findFirst({
+    where: {
+      role: { code: roleCode, isActive: true },
+      status: "ACTIVE",
+      OR: [{ effectiveUntil: null }, { effectiveUntil: { gt: new Date() } }],
+      userAccount: { status: "ACTIVE" },
+      ...(organizationId !== undefined ? { organizationId } : {}),
+    },
+    // เรียงให้ผลนิ่ง — ไม่งั้นสองครั้งติดกันอาจได้คนละคนโดยไม่มีเหตุผล
+    orderBy: { createdAt: "asc" },
+    select: { userAccountId: true },
+  });
+  return holder?.userAccountId ?? null;
 }
 
 /**
@@ -163,7 +225,13 @@ export async function openTask(
     subjectType: SubjectType;
     subjectId: string;
     taskType: ReviewTaskType;
-    assignedUserId: string;
+    /**
+     * NULL = ด่านของ **บทบาท** ไม่ใช่ของคน
+     *
+     * ด่านฝั่ง BDI ส่ง null: `canAction()` ตัดสินจาก role ล้วน ๆ การใส่ชื่อใครลงไปคือการ
+     * ตอบคำถามที่ระบบยังไม่รู้คำตอบ และเคยหลุดไปโผล่เป็นชื่อผู้ทำบนไทม์ไลน์
+     */
+    assignedUserId?: string | null;
     assignedRole: RoleCode;
     actorId: string;
     assignedById?: string | null;
@@ -187,23 +255,41 @@ export async function openTask(
     db.reviewTask.count({ where: { subjectType, subjectId, taskType } }),
   ]);
 
-  return db.reviewTask.create({
-    data: {
-      subjectType,
-      subjectId,
-      taskType,
-      sequenceNumber: totalTasks + 1,
-      roundNumber: sameTypeTasks + 1,
-      assignedUserId: params.assignedUserId,
-      assignedRole: params.assignedRole,
-      assignedById: params.assignedById ?? null,
-      assignmentSource: params.assignmentSource ?? AssignmentSource.SYSTEM,
-      status: ReviewTaskStatus.PENDING,
-      dueAt: params.dueAt ?? null,
-      createdBy: params.actorId,
-      updatedBy: params.actorId,
-    },
-  });
+  try {
+    return await db.reviewTask.create({
+      data: {
+        subjectType,
+        subjectId,
+        taskType,
+        sequenceNumber: totalTasks + 1,
+        roundNumber: sameTypeTasks + 1,
+        assignedUserId: params.assignedUserId ?? null,
+        assignedRole: params.assignedRole,
+        assignedById: params.assignedById ?? null,
+        assignmentSource: params.assignmentSource ?? AssignmentSource.SYSTEM,
+        status: ReviewTaskStatus.PENDING,
+        dueAt: params.dueAt ?? null,
+        createdBy: params.actorId,
+        updatedBy: params.actorId,
+      },
+    });
+  } catch (err) {
+    /**
+     * ตะแกรงจริงของ "หนึ่งคำขอ หนึ่ง active task" คือ uq_active_review_task_per_subject
+     *
+     * การอ่าน activeTask() ข้างบนเป็น read-then-write จึงกันสองคนที่มาพร้อมกันไม่ได้ —
+     * ทั้งคู่เห็นว่าว่างแล้วทั้งคู่ก็ insert ตัว index เป็นคนปฏิเสธรายที่สอง ถ้าไม่ดักตรงนี้
+     * ผู้ใช้จะได้ "ข้อมูลนี้มีอยู่ในระบบแล้ว" จาก middleware ซึ่งไม่ได้บอกว่าเกิดอะไรขึ้น
+     */
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002" &&
+      JSON.stringify(err.meta?.target ?? "").includes("uq_active_review_task_per_subject")
+    ) {
+      throw new WorkflowError("active_task_exists", TASK_TAKEN_MESSAGE, 409);
+    }
+    throw err;
+  }
 }
 
 /**
@@ -212,12 +298,15 @@ export async function openTask(
  * นี่คือจุดที่ทำให้ request.status เปลี่ยนจาก SUBMITTED เป็น UNDER_REVIEW
  * เรียกซ้ำได้ ไม่เปลี่ยน started_at ที่บันทึกไว้แล้ว
  */
-export async function startTask(db: Db, taskId: string, actorId: string) {
-  const task = await db.reviewTask.findUniqueOrThrow({ where: { id: taskId } });
-  if (task.status !== ReviewTaskStatus.PENDING) return task;
-
-  return db.reviewTask.update({
-    where: { id: taskId },
+export async function startTask(db: Db, taskId: string, actorId: string): Promise<void> {
+  /**
+   * เงื่อนไข "ยังเป็น PENDING อยู่" อยู่ใน WHERE ไม่ใช่ใน if ข้างนอก
+   *
+   * ตรงนี้เรียกซ้ำได้อยู่แล้วจึงไม่ใช่จุดที่อันตราย แต่เขียนให้ตรงแบบกับ completeTask() ไว้
+   * จะได้ไม่มีใครหยิบรูปแบบอ่านก่อนเขียนทีหลังไปใช้ต่อโดยคิดว่ามันกันการชนกันได้
+   */
+  await db.reviewTask.updateMany({
+    where: { id: taskId, status: ReviewTaskStatus.PENDING },
     data: { status: ReviewTaskStatus.IN_PROGRESS, startedAt: new Date(), updatedBy: actorId },
   });
 }
@@ -237,11 +326,11 @@ export async function completeTask(
     resultDetail?: Prisma.InputJsonValue;
     actorId: string;
   },
-) {
+): Promise<void> {
   const task = await db.reviewTask.findUniqueOrThrow({ where: { id: params.taskId } });
 
   if (!ACTIVE_STATUSES.includes(task.status)) {
-    throw new WorkflowError("task_closed", "ขั้นตอนนี้ถูกปิดไปแล้ว", 409);
+    throw new WorkflowError("task_closed", TASK_TAKEN_MESSAGE, 409);
   }
 
   if (!ALLOWED_RESULTS[task.taskType].includes(params.result)) {
@@ -256,8 +345,19 @@ export async function completeTask(
     throw new WorkflowError("comment_required", "กรุณาระบุเหตุผลเมื่อส่งกลับหรือไม่อนุมัติ");
   }
 
-  return db.reviewTask.update({
-    where: { id: params.taskId },
+  /**
+   * ปิดด่านด้วย updateMany ที่มีเงื่อนไขสถานะอยู่ใน WHERE ไม่ใช่ update ธรรมดา
+   *
+   * การอ่านข้างบนบอกได้แค่ว่า "ตอนที่อ่าน ยังเปิดอยู่" — ภายใต้ READ COMMITTED สองคนที่กด
+   * พร้อมกันผ่านด่านนั้นได้ทั้งคู่ แล้วคนที่สองก็รอ row lock และเขียนทับผลของคนแรก
+   * ที่ด่านกลางทาง uq_active_review_task_per_subject ยังช่วยไว้ตอนเปิดด่านถัดไป แต่ที่
+   * **ด่านปลายทาง (อนุมัติขั้นสุดท้าย / ไม่อนุมัติ) ไม่มีการเปิด task ใหม่ จึงไม่มีอะไรกันเลย**
+   * ผลคือลายมือชื่อสองแถว เอกสารเรนเดอร์สองรอบ และอีเมลออกสองชุด
+   *
+   * UPDATE ประเมิน WHERE ใหม่หลังปล่อย row lock คนที่สองจึงตรง 0 แถวเสมอ
+   */
+  const { count } = await db.reviewTask.updateMany({
+    where: { id: params.taskId, status: { in: ACTIVE_STATUSES } },
     data: {
       status: ReviewTaskStatus.COMPLETED,
       result: params.result,
@@ -266,9 +366,14 @@ export async function completeTask(
       ...(params.resultDetail !== undefined ? { resultDetailJson: params.resultDetail } : {}),
       startedAt: task.startedAt ?? new Date(),
       completedAt: new Date(),
+      // คนที่กดจริง ๆ ไม่ใช่คนที่ถูกมอบหมาย — ไทม์ไลน์อ่านคอลัมน์นี้
+      completedBy: params.actorId,
       updatedBy: params.actorId,
     },
   });
+  if (count === 0) {
+    throw new WorkflowError("task_closed", TASK_TAKEN_MESSAGE, 409);
+  }
 }
 
 /** ยกเลิก task ที่ยังค้าง — ไม่เกิดผล review หรือ approval */
@@ -284,8 +389,8 @@ export async function cancelActiveTask(
   const task = await activeTask(db, params.subjectType, params.subjectId);
   if (!task) return null;
 
-  return db.reviewTask.update({
-    where: { id: task.id },
+  const { count } = await db.reviewTask.updateMany({
+    where: { id: task.id, status: { in: ACTIVE_STATUSES } },
     data: {
       status: ReviewTaskStatus.CANCELLED,
       cancelledAt: new Date(),
@@ -294,6 +399,8 @@ export async function cancelActiveTask(
       updatedBy: params.actorId,
     },
   });
+  // ถูกปิดไปก่อนแล้วโดยคนอื่น — ไม่ใช่ข้อผิดพลาด ผู้เรียกอยากได้แค่ "ไม่มีด่านค้างแล้ว"
+  return count === 0 ? null : task;
 }
 
 /**
@@ -314,17 +421,20 @@ export async function reassignTask(
 ) {
   const previous = await db.reviewTask.findUniqueOrThrow({ where: { id: params.taskId } });
   if (!ACTIVE_STATUSES.includes(previous.status)) {
-    throw new WorkflowError("task_closed", "ขั้นตอนนี้ถูกปิดไปแล้ว", 409);
+    throw new WorkflowError("task_closed", TASK_TAKEN_MESSAGE, 409);
   }
 
-  await db.reviewTask.update({
-    where: { id: previous.id },
+  const { count } = await db.reviewTask.updateMany({
+    where: { id: previous.id, status: { in: ACTIVE_STATUSES } },
     data: {
       status: ReviewTaskStatus.REASSIGNED,
       cancellationReason: params.reason ?? "เปลี่ยนผู้รับมอบหมาย",
       updatedBy: params.actorId,
     },
   });
+  if (count === 0) {
+    throw new WorkflowError("task_closed", TASK_TAKEN_MESSAGE, 409);
+  }
 
   const totalTasks = await db.reviewTask.count({
     where: { subjectType: previous.subjectType, subjectId: previous.subjectId },
@@ -395,6 +505,7 @@ export async function recordAdvisoryNote(
       assignmentSource: AssignmentSource.MANUAL,
       status: ReviewTaskStatus.COMPLETED,
       result: ReviewResult.CONFIRMED,
+      completedBy: params.actorId,
       resultComment: params.comment,
       commentVisibility: params.visibility ?? CommentVisibility.BDI_INTERNAL,
       assignedAt: now,
@@ -486,10 +597,6 @@ export async function deriveRequestStatus(
 }
 
 /** ผู้ใช้คนนี้เป็นเจ้าของ task ที่ค้างอยู่หรือไม่ */
-export function isAssignee(task: { assignedUserId: string } | null, userId: string): boolean {
-  return task?.assignedUserId === userId;
-}
-
 /** ความเห็นที่ผู้ใช้ฝั่งหน่วยงานเห็นได้ — sheet `review_task` คอลัมน์ comment_visibility */
 export function isCommentVisibleToOrganization(task: {
   commentVisibility: CommentVisibility | null;

@@ -8,6 +8,7 @@ import { LegalDocumentsCard, useLegalDocuments } from "@/components/organization
 import { SigningDialog } from "@/components/organization/SigningDialog";
 import { Timeline } from "@/components/organization/Timeline";
 import { ApprovalSteps } from "@/components/review/ApprovalSteps";
+import { RequestMovedNotice } from "@/components/review/RequestMovedNotice";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader, StatusBadge } from "@/components/ui/Card";
 import { TextAreaField } from "@/components/ui/Field";
@@ -18,6 +19,7 @@ import { api, ApiError } from "@/lib/api";
 import { useRequireAuth } from "@/lib/require-auth";
 import { formatThaiDate } from "@/lib/status";
 import { useOrganizationRegistration } from "@/lib/use-organization-registration";
+import { describeState, movedMessage, useRequestWatch } from "@/lib/use-request-watch";
 import { ATTACHMENT_LABELS, fullName, type Organization } from "@/lib/types";
 
 /** ผู้ใช้ปัจจุบันตัดสินใจกับคำขอนี้ได้หรือไม่ ขึ้นกับสถานะ + role */
@@ -68,6 +70,8 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
   const [note, setNote] = useState("");
   const [noteError, setNoteError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
+  /** ประกาศว่าคำขอเดินไปแล้วระหว่างที่หน้านี้เปิดค้างอยู่ — ค้างไว้จนกว่าผู้ใช้จะกดรับทราบ */
+  const [movedNotice, setMovedNotice] = useState<string | null>(null);
   const { start: startRegistration, starting } = useOrganizationRegistration();
   /**
    * ผูกกับ `org.id` ไม่ใช่ `id` บน URL
@@ -108,6 +112,41 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, ready]);
+
+  /**
+   * โหลดใหม่ให้ครบทั้งหน้า
+   *
+   * สามอย่างนี้ต้องไปด้วยกันเสมอ — `load()` ไม่แตะเอกสารกฎหมายซึ่งมี state ของตัวเอง และ
+   * `documentRound` คือตัวทำลาย cache ของ iframe ที่ฝัง PDF ไว้ (URL ของ A0 ไม่เปลี่ยนแม้
+   * ไฟล์จะถูกสร้างใหม่หลังมีคนลงนาม)
+   */
+  const reloadAll = () => {
+    void load();
+    reloadLegalDocuments();
+    setDocumentRound((r) => r + 1);
+  };
+
+  /**
+   * คำขอเดินไปแล้ว — ไม่ว่าจะรู้จากการ poll หรือจาก 409 ตอนกดปุ่ม ก็ลงทางเดียวกัน
+   *
+   * ปิด modal ที่ค้างอยู่ แต่ **ไม่ล้าง `note` ที่พิมพ์ไว้** เปิดใหม่แล้วข้อความยังอยู่ครบ —
+   * การกลืนสิ่งที่ผู้ใช้พิมพ์ไปทั้งย่อหน้าเพราะคนอื่นกดปุ่มก่อนเป็นการลงโทษผิดคน
+   */
+  const handleMoved = (message: string) => {
+    setModal(null);
+    setMovedNotice(message);
+    reloadAll();
+  };
+
+  useRequestWatch({
+    kind: "organizations",
+    // `org.id` เสมอ — พารามิเตอร์บน URL เป็น id ของหน่วยงานได้ ซึ่ง /state ไม่รับ
+    requestId: org?.id ?? null,
+    current: org
+      ? { status: org.status, currentTaskType: org.currentTaskType, stateVersion: org.stateVersion }
+      : null,
+    onChanged: (next) => handleMoved(describeState(next)),
+  });
 
   if (notFound) {
     /**
@@ -212,6 +251,16 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
       setNote("");
       await load();
     } catch (err) {
+      /**
+       * "คนอื่นทำไปก่อนแล้ว" ไม่ใช่ความล้มเหลวของผู้ใช้คนนี้ — เป็นผลปกติของการที่ทุกคนที่ถือ
+       * role เดียวกันกดได้ จึงบอกด้วยประกาศที่ค้างไว้พร้อมข้อมูลที่โหลดใหม่แล้ว ไม่ใช่ toast
+       * แดงที่หายไปใน 6 วินาทีโดยที่ปุ่มยังตั้งอยู่เหมือนเดิม
+       */
+      const moved = movedMessage(err);
+      if (moved) {
+        handleMoved(moved);
+        return;
+      }
       show({
         tone: "error",
         title: "ดำเนินการไม่สำเร็จ",
@@ -258,6 +307,10 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
             </Button>
           </div>
         </Card>
+      ) : null}
+
+      {movedNotice ? (
+        <RequestMovedNotice message={movedNotice} onDismiss={() => setMovedNotice(null)} />
       ) : null}
 
       {org.status === "RETURNED" && org.revisionNote ? (
@@ -408,12 +461,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
             reloadLegalDocuments();
             void load();
           }}
-          onStale={(message) => {
-            setModal(null);
-            show({ tone: "error", title: "คำขอเดินไปขั้นถัดไปแล้ว", detail: message });
-            reloadLegalDocuments();
-            void load();
-          }}
+          onStale={handleMoved}
           requestId={org.id}
           documents={legalDocuments}
           perDocument={ability.perDocument ?? false}

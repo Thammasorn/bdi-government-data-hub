@@ -101,6 +101,11 @@ export interface Organization {
   organizationId: string;
   status: RequestStatus;
   currentTaskType: ReviewTaskType | null;
+  /**
+   * ค่าที่ใช้ตอบว่าข้อมูลชุดนี้เก่าหรือยัง — เทียบกับที่ `GET /:id/state` คืนมา
+   * ทั้งสอง endpoint คิดจาก `stateVersionOf()` ตัวเดียวกัน ดู lib/use-request-watch.ts
+   */
+  stateVersion: string;
   /** รหัสหน่วยงาน — เจ้าหน้าที่กรอกไว้ล่วงหน้า ผู้ใช้ยืนยัน/แก้ไขในฟอร์ม */
   organizationCode: string | null;
   name: string;
@@ -223,6 +228,8 @@ export interface DatasetRequest {
   requestNumber: string;
   status: RequestStatus;
   currentTaskType: ReviewTaskType | null;
+  /** เหมือน Organization.stateVersion — ดู lib/use-request-watch.ts */
+  stateVersion: string;
 
   /**
    * metadata ตามชีท A4_dataset_metadata ของ metadata_mapping.xlsx
