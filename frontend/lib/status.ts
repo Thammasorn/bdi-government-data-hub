@@ -264,15 +264,6 @@ export const isSpecialistOnly = (roles: string[]) =>
   !roles.includes("BDI_LEGAL_OFFICER");
 
 /**
- * หน้าแรกของเจ้าหน้าที่ BDI หลังเข้าสู่ระบบ
- *
- * ทุกที่เคยส่งไป `/admin/organizations` ตรง ๆ ซึ่งเป็นหน้าที่ **ไม่มีในเมนู**
- * ของผู้เชี่ยวชาญ เขาจึงถูกพาไปยืนอยู่บนหน้าที่กดกลับมาเองไม่ได้ทุกครั้งที่ล็อกอิน
- */
-export const bdiLandingPath = (roles: string[]) =>
-  isSpecialistOnly(roles) ? "/admin/datasets" : "/admin/organizations";
-
-/**
  * role ที่ผูกกับหน่วยงาน — ตรงกับ ORGANIZATION_SCOPED_ROLES ใน backend/src/lib/system.ts
  * สองตัวนี้บังคับกรอกเลขประจำตัวประชาชนตอนลงทะเบียน (ดีไซน์มาร์ก cid เป็น Required)
  */

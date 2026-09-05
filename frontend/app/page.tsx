@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
+import { BdiHome } from "@/components/home/BdiHome";
 import { DatasetSection } from "@/components/home/DatasetSection";
 import { LandingPage } from "@/components/landing/LandingPage";
 import { ApprovalStepsCompact } from "@/components/review/ApprovalSteps";
@@ -14,12 +14,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api } from "@/lib/api";
 import { useOrganizationRegistration } from "@/lib/use-organization-registration";
-import {
-  bdiLandingPath,
-  formatThaiDate,
-  isBdiStaff,
-  type OrganizationStatus,
-} from "@/lib/status";
+import { formatThaiDate, isBdiStaff, type OrganizationStatus } from "@/lib/status";
 import { nodeCount, type ListSummary, type PageInfo } from "@/lib/stage";
 import type { DatasetRequestListItem, OrganizationListItem } from "@/lib/types";
 
@@ -44,20 +39,19 @@ const SETTLED = ["DRAFT", "RETURNED", "APPROVED", "REJECTED", "CANCELLED"];
 
 export default function HomePage() {
   const { user, loading } = useSession();
-  const router = useRouter();
   const { start, starting } = useOrganizationRegistration();
 
-  useEffect(() => {
-    if (loading) return;
-    // ผู้ที่ยังไม่ล็อกอินได้หน้าแนะนำระบบ ไม่ใช่หน้าล็อกอิน — เดิมเด้งไป /login ทันที
-    // ทำให้ไม่มีที่อธิบายว่าระบบนี้คืออะไรให้คนที่เพิ่งเข้ามาอ่าน
-    if (!user) return;
-    if (isBdiStaff(user.roles)) router.replace(bdiLandingPath(user.roles));
-  }, [user, loading, router]);
-
   if (loading) return <Spinner />;
+  // ผู้ที่ยังไม่ล็อกอินได้หน้าแนะนำระบบ ไม่ใช่หน้าล็อกอิน — เดิมเด้งไป /login ทันที
+  // ทำให้ไม่มีที่อธิบายว่าระบบนี้คืออะไรให้คนที่เพิ่งเข้ามาอ่าน
   if (!user) return <LandingPage />;
-  if (isBdiStaff(user.roles)) return <Spinner />;
+  /**
+   * เจ้าหน้าที่ BDI เคยถูกเด้งออกจากหน้านี้ไปยืนบนตารางคิว เพราะยังไม่มีหน้าแรกให้
+   * ตอนนี้มีแล้ว — ต้องเช็ค **ก่อน** เงื่อนไข organizationId ข้างล่าง เพราะทุก role
+   * assignment มีหน่วยงานติดมาด้วย เจ้าหน้าที่ BDI จึงสังกัดแถวหน่วยงาน BDI จริง ๆ
+   * และจะตกไปได้หน้าแรกของผู้ใช้หน่วยงานถ้าปล่อยผ่าน
+   */
+  if (isBdiStaff(user.roles)) return <BdiHome />;
 
   // ผู้มีอำนาจกระทำการแทนที่ถูกเชิญเข้ามาทีหลังยังไม่ถูกผูก organizationId
   // แต่เห็นคำขอของหน่วยงานตัวเองผ่าน signatoryEmail จึงต้องได้หน้าแรกแบบเดียวกัน

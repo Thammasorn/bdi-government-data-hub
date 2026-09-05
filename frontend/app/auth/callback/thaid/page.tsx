@@ -9,7 +9,6 @@ import { storeThaidProfile, takeActivationToken, takeNextPath } from "@/componen
 import { useSession, type SessionUser } from "@/components/SessionProvider";
 import { Spinner } from "@/components/ui/Spinner";
 import { api, ApiError } from "@/lib/api";
-import { bdiLandingPath, isBdiStaff } from "@/lib/status";
 
 /**
  * redirect_uri ที่ลงทะเบียนไว้กับกรมการปกครอง
@@ -67,7 +66,8 @@ function ThaidCallback() {
           // ไปหน้าที่ตั้งใจ ไม่ใช่หน้าแรก (เหมือนทางรหัสผ่าน + OTP)
           const next = takeNextPath();
           router.replace(
-            next ?? (isBdiStaff(result.user.roles) ? bdiLandingPath(result.user.roles) : "/"),
+            // ทุก role มีหน้าแรกที่ `/` แล้ว
+            next ?? "/",
           );
           return;
         }
