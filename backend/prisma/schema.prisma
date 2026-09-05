@@ -129,6 +129,7 @@ model UserAccount {
   sessions             Session[]
   assignedReviewTasks  ReviewTask[]            @relation("ReviewTaskAssignee")
   delegatedReviewTasks ReviewTask[]            @relation("ReviewTaskAssigner")
+  completedReviewTasks ReviewTask[]            @relation("ReviewTaskCompleter")
   legalAcceptances     LegalAcceptance[]
   signatures           SignatureConfirmation[]
   notifications        Notification[]
@@ -515,8 +516,13 @@ model ReviewTask {
   /// เป็นคนละด่าน (ด่านตรวจซ้ำที่เคยใช้ round 2 ถูกยกเลิกเมื่อ 2026-08-30)
   roundNumber    Int            @default(1) @map("round_number")
 
-  assignedUserId String      @map("assigned_user_id") @db.Uuid
-  assignedUser   UserAccount @relation("ReviewTaskAssignee", fields: [assignedUserId], references: [id])
+  /// NULL = ด่านนี้เป็นของ **บทบาท** ไม่ใช่ของคนใดคนหนึ่ง
+  ///
+  /// ด่านฝั่ง BDI ไม่มีผู้รับมอบหมายอีกแล้ว — ใครถือ role ตรงกับ `assigned_role` ก็ปิดด่านได้
+  /// (`canAction()` ไม่เคยดูคอลัมน์นี้เลย) เหลือค่าไว้เฉพาะด่านที่เป็นของคนจริง ๆ คือ
+  /// ORGANIZATION_APPROVAL ซึ่งชี้ไปยังผู้มีอำนาจลงนามที่หน่วยงานระบุชื่อมาในฟอร์ม
+  assignedUserId String?      @map("assigned_user_id") @db.Uuid
+  assignedUser   UserAccount? @relation("ReviewTaskAssignee", fields: [assignedUserId], references: [id], onDelete: Restrict)
 
   /// Role ที่ผู้รับมอบหมายใช้ดำเนินการใน task นี้ — เก็บ role.code ณ เวลานั้น
   assignedRole String @map("assigned_role") @db.VarChar(64)
@@ -550,6 +556,14 @@ model ReviewTask {
   cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(6)
   cancelledBy        String?   @map("cancelled_by") @db.Uuid
   cancellationReason String?   @map("cancellation_reason") @db.VarChar(500)
+
+  /// คนที่ปิดด่านนี้จริง ๆ — NULL ตราบใดที่ task ยังไม่ถูกปิด
+  ///
+  /// ไทม์ไลน์เคยแสดง `assigned_user_id` เป็นชื่อผู้ทำ ซึ่งเป็นคนละคนได้เสมอเพราะการมอบหมาย
+  /// เป็นแค่การเกลี่ยงาน (เกิดจริงบน production 2026-09-04) คอลัมน์นี้คือค่าที่ตอบคำถาม
+  /// "ใครกด" ได้จริง — `updated_by` ตอบได้โดยบังเอิญเท่านั้น มันเป็นคอลัมน์ audit ทั่วไป
+  completedBy     String?      @map("completed_by") @db.Uuid
+  completedByUser UserAccount? @relation("ReviewTaskCompleter", fields: [completedBy], references: [id], onDelete: Restrict)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   createdBy String   @map("created_by") @db.Uuid

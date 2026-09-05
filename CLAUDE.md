@@ -223,9 +223,33 @@ Terminal node labels live in `journey-steps.ts`, **not** in `REQUEST_STATUS_LABE
 `roles.ts`: that table says "ส่งกลับให้แก้ไข" where the badge says "รอการแก้ไข", and it feeds the
 emails, so making it match would reach much further than a list screen should.
 
+**The BDI gates have no assignee at all.** `assigned_user_id` is nullable, and
+`BDI_OFFICER_REVIEW` / `BDI_FINAL_APPROVAL` open with `null`: `canAction()` decides from roles
+alone, `lib/queue.ts` answers "my work" from roles alone, and the "your turn" emails already go
+to every holder of the role (`bdiOfficerIds()` / `bdiApproverIds()`), so the value decided
+nothing. What it did do was reach the screen as the name of the person who acted — it is only
+the person a round-robin *picked*, so on 2026-09-04 an approval by `ศ.ดร.ธีรณี ตัวปลอม` was
+shown on production as `นางสุดารัตน์ อนุมัติ`. `review_task.completed_by` now records who
+actually closed the gate, and every screen reads that. `pickAssignee()` is replaced by
+`roleHolderId()` in `lib/workflow.ts`, which both routes use two ways: as an existence check
+before opening a BDI gate (503 `no_reviewer` when nobody holds the role), and to resolve the
+real person for `ORGANIZATION_APPROVAL`, which **keeps its assignee** — that gate belongs to the
+one signatory the organisation named in its form, whose name is printed on A0, and
+`revertStrandedWork()` in `admin-users.ts` finds stranded work through that column.
+
+**Two people pressing the same button at the same moment is now expected, not exceptional.**
+Every write in `lib/workflow.ts` that closes or moves a task is a conditional `updateMany` with
+the status test **inside the WHERE**, not a read-then-write: under READ COMMITTED both callers
+pass a plain `if` and the second silently overwrote the first. Mid-route that was masked by
+`uq_active_review_task_per_subject` firing on the next `openTask` (as a bare P2002, "ข้อมูลซ้ำ"),
+but a **terminal** action — final approval, or any rejection — opens no new task and had nothing
+guarding it: two signature rows, two document renders, two sets of email. The loser now gets 409
+`task_closed` with `TASK_TAKEN_MESSAGE`, the same wording every gate uses, and `openTask()`
+translates that P2002 into the same error rather than letting the middleware answer.
+
 `scope=mine` is decided by **role**, never by `assigned_user_id`: `POST /:id/review` lets any
-holder of the matching role close the stage, and `assigned_user_id` is only round-robin load
-spreading. The role→gate map is `ROLE_TASK_TYPES` in `lib/workflow.ts`, computed by inverting
+holder of the matching role close the stage. The role→gate map is `ROLE_TASK_TYPES` in
+`lib/workflow.ts`, computed by inverting
 `TASK_TYPE_ROLES` rather than written out again — both review handlers import that same table,
 so "may act" and "is my work" cannot drift apart. A BDI officer therefore owns *two* nodes on
 the dataset journey, and their counts sum to what the single task-type token used to return.
@@ -315,6 +339,18 @@ they are sent inline because the raw key only exists in memory at that moment.
 
 Notifications need not be real time, so the bell fetches on page load and on navigation — there
 is no polling loop, no websocket. Don't add one without a requirement.
+
+**There is exactly one requirement, and one poller.** Since the BDI gates lost their assignee,
+several officers can sit on the same request's detail page at once, so `frontend/lib/use-request-watch.ts`
+asks `GET /:id/state` every 15 seconds while the tab is visible. What is stale on that screen is
+not just news — it is a button offering an action that no longer exists. It stops on the terminal
+statuses, stops while `document.hidden` (which also keeps a parked tab from holding the session
+open against `SESSION_IDLE_HOURS`), and is silent on error. **Never point it at `GET /:id`**: that
+handler is ten to seventeen SELECTs, `/state` is three. Both compute `stateVersion` from the same
+`stateVersionOf()`, so the page can tell "changed" from "same" without a second full fetch — and
+if they ever disagree, a freshly loaded page announces a change that did not happen.
+`P2024` (pool timeout) joined the Prisma error map when this landed, because the number of
+concurrent requests now follows the number of open tabs.
 
 **Two audiences per transition, and they must not overlap.** The dispatchers tell the *next*
 actor what to do (`REQUEST_SUBMITTED` and friends) and `announceProgress()` in `lib/notify.ts`
@@ -796,10 +832,12 @@ Two API base URLs, and they are not interchangeable:
   `subject_type_supported: ["public"]`, so the pairwise scenario is off the table there;
   production is still a different system. That document also answers PKCE (not advertised)
   and refresh tokens (the grant is supported) — §4.4 has the whole reading of it.
-- Giving BDI staff a real organisation broke every automatic assignment. `pickAssignee()` was
+- Giving BDI staff a real organisation broke every automatic assignment. The assignee picker was
   called with `organizationId: null` to mean "BDI side, no organisation", which after
   2026-08-16 matches nobody — `POST /:id/submit` answered 503 `no_reviewer` on both journeys
-  while the officers were sitting right there. BDI picks now pass `BDI_ORGANIZATION_ID`.
+  while the officers were sitting right there. Its replacement `roleHolderId()` keeps the same
+  trap: BDI lookups must pass `BDI_ORGANIZATION_ID`, and `undefined` (not `null`) is what means
+  "any organisation".
 - `publicAttachment()` used to return the slot as `attachmentType`, but every screen (and the
   `Attachment` type in `frontend/lib/types.ts`) reads `kind`. `a.kind` was `undefined`
   everywhere, so the preview page never found the generated PDF and **"นำส่งคำขอ" stayed

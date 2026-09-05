@@ -110,8 +110,23 @@ async function makeUser(opts: {
 // ------------------------------------------------------------------ review task
 
 /**
+ * ด่านฝั่ง BDI ที่ไม่มีเจ้าของ — ใครถือ role นี้ก็ทำได้
+ *
+ * ต้องตรงกับที่ route เปิด task จริง ไม่งั้นข้อมูลเดโมจะเป็นรูปที่ระบบสร้างเองไม่ได้ และ
+ * ไทม์ไลน์ของคำขอที่ seed มาจะขึ้นชื่อคนที่ไม่ได้กด ซึ่งคือบั๊กที่การเปลี่ยนนี้มาแก้พอดี
+ */
+const UNASSIGNED_ROLES: RoleCode[] = [ROLE_CODES.BDI_OFFICER, ROLE_CODES.BDI_FINAL_APPROVER];
+
+/** ด่านนี้มีเจ้าของไหม — ด่านของหน่วยงานและของผู้เชี่ยวชาญยังเป็นของคนคนเดียว */
+const assigneeOf = (role: RoleCode, userId: string) =>
+  UNASSIGNED_ROLES.includes(role) ? null : userId;
+
+/**
  * สร้าง review_task ที่ปิดไปแล้วหนึ่งด่าน — ใช้ประกอบประวัติของคำขอที่เดินไปไกลแล้ว
  * ไม่ผ่าน lib/workflow เพราะต้องกำหนดเวลาให้ย้อนหลังได้
+ *
+ * `userId` คือ **คนที่ลงมือ** ลงไปที่ `completed_by` เสมอ ส่วน `assigned_user_id` ลงเฉพาะ
+ * ด่านที่ยังมีเจ้าของ
  */
 async function closedTask(params: {
   subjectType: SubjectType;
@@ -119,7 +134,7 @@ async function closedTask(params: {
   taskType: ReviewTaskType;
   sequenceNumber: number;
   roundNumber?: number;
-  assignedUserId: string;
+  userId: string;
   assignedRole: RoleCode;
   result: ReviewResult;
   comment?: string | null;
@@ -132,10 +147,11 @@ async function closedTask(params: {
       taskType: params.taskType,
       sequenceNumber: params.sequenceNumber,
       roundNumber: params.roundNumber ?? 1,
-      assignedUserId: params.assignedUserId,
+      assignedUserId: assigneeOf(params.assignedRole, params.userId),
       assignedRole: params.assignedRole,
       assignmentSource: AssignmentSource.SYSTEM,
       status: ReviewTaskStatus.COMPLETED,
+      completedBy: params.userId,
       result: params.result,
       resultComment: params.comment ?? null,
       commentVisibility: params.comment ? CommentVisibility.ORGANIZATION : null,
@@ -155,7 +171,7 @@ async function openTaskRow(params: {
   taskType: ReviewTaskType;
   sequenceNumber: number;
   roundNumber?: number;
-  assignedUserId: string;
+  userId: string;
   assignedRole: RoleCode;
   status?: ReviewTaskStatus;
   at: Date;
@@ -167,7 +183,7 @@ async function openTaskRow(params: {
       taskType: params.taskType,
       sequenceNumber: params.sequenceNumber,
       roundNumber: params.roundNumber ?? 1,
-      assignedUserId: params.assignedUserId,
+      assignedUserId: assigneeOf(params.assignedRole, params.userId),
       assignedRole: params.assignedRole,
       assignmentSource: AssignmentSource.SYSTEM,
       status: params.status ?? ReviewTaskStatus.PENDING,
@@ -450,7 +466,7 @@ async function main() {
         subjectId: request.id,
         taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
         sequenceNumber: seq++,
-        assignedUserId: officer.id,
+        userId: officer.id,
         assignedRole: ROLE_CODES.BDI_OFFICER,
         result: ReviewResult.RETURNED,
         comment: "เอกสารคำสั่งแต่งตั้งไม่ชัดเจน กรุณาแนบฉบับที่อ่านออกได้ทั้งหน้า",
@@ -462,7 +478,7 @@ async function main() {
         subjectId: request.id,
         taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
         sequenceNumber: seq++,
-        assignedUserId: officer.id,
+        userId: officer.id,
         assignedRole: ROLE_CODES.BDI_OFFICER,
         at: t(1),
       });
@@ -473,7 +489,7 @@ async function main() {
         subjectId: request.id,
         taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
         sequenceNumber: seq++,
-        assignedUserId: officer.id,
+        userId: officer.id,
         assignedRole: ROLE_CODES.BDI_OFFICER,
         result: ReviewResult.PASSED,
         at: t(1),
@@ -485,7 +501,7 @@ async function main() {
           subjectId: request.id,
           taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
           sequenceNumber: seq++,
-          assignedUserId: orgApprover.id,
+          userId: orgApprover.id,
           assignedRole: ROLE_CODES.ORGANIZATION_APPROVER,
           at: t(2),
         });
@@ -495,7 +511,7 @@ async function main() {
           subjectId: request.id,
           taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
           sequenceNumber: seq++,
-          assignedUserId: orgApprover.id,
+          userId: orgApprover.id,
           assignedRole: ROLE_CODES.ORGANIZATION_APPROVER,
           result: ReviewResult.APPROVED,
           at: t(2),
@@ -507,7 +523,7 @@ async function main() {
             subjectId: request.id,
             taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
             sequenceNumber: seq++,
-            assignedUserId: approver.id,
+            userId: approver.id,
             assignedRole: ROLE_CODES.BDI_FINAL_APPROVER,
             at: t(3),
           });
@@ -517,7 +533,7 @@ async function main() {
             subjectId: request.id,
             taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
             sequenceNumber: seq++,
-            assignedUserId: approver.id,
+            userId: approver.id,
             assignedRole: ROLE_CODES.BDI_FINAL_APPROVER,
             result: ReviewResult.APPROVED,
             at: t(3),
@@ -753,7 +769,7 @@ async function main() {
         subjectId: request.id,
         taskType: ReviewTaskType.DATASET_SPECIALIST_REVIEW,
         sequenceNumber: seq++,
-        assignedUserId: specialist.id,
+        userId: specialist.id,
         assignedRole: ROLE_CODES.BDI_DATASET_SPECIALIST,
         result: ReviewResult.CONFIRMED,
         comment: "โครงสร้างข้อมูลเหมาะสม แนะนำให้ระบุหน่วยนับในพจนานุกรมข้อมูลให้ครบ",
@@ -767,7 +783,7 @@ async function main() {
         subjectId: request.id,
         taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
         sequenceNumber: seq++,
-        assignedUserId: officer.id,
+        userId: officer.id,
         assignedRole: ROLE_CODES.BDI_OFFICER,
         result: ReviewResult.RETURNED,
         comment: "กรุณาระบุฐานอำนาจตามกฎหมายและแนบตัวอย่างข้อมูลเพิ่มเติม",
@@ -780,7 +796,7 @@ async function main() {
         taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
         sequenceNumber: seq++,
         roundNumber: spec.specialist ? 2 : 1,
-        assignedUserId: officer.id,
+        userId: officer.id,
         assignedRole: ROLE_CODES.BDI_OFFICER,
         at: t(2),
       });
@@ -790,7 +806,7 @@ async function main() {
         subjectId: request.id,
         taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
         sequenceNumber: seq++,
-        assignedUserId: officer.id,
+        userId: officer.id,
         assignedRole: ROLE_CODES.BDI_OFFICER,
         result: ReviewResult.PASSED,
         at: t(2),
@@ -802,7 +818,7 @@ async function main() {
           subjectId: request.id,
           taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
           sequenceNumber: seq++,
-          assignedUserId: nso.approverId,
+          userId: nso.approverId,
           assignedRole: ROLE_CODES.ORGANIZATION_APPROVER,
           at: t(3),
         });
@@ -812,7 +828,7 @@ async function main() {
           subjectId: request.id,
           taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
           sequenceNumber: seq++,
-          assignedUserId: nso.approverId,
+          userId: nso.approverId,
           assignedRole: ROLE_CODES.ORGANIZATION_APPROVER,
           result: ReviewResult.APPROVED,
           at: t(3),
@@ -849,7 +865,7 @@ async function main() {
             subjectId: request.id,
             taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
             sequenceNumber: seq++,
-            assignedUserId: approver.id,
+            userId: approver.id,
             assignedRole: ROLE_CODES.BDI_FINAL_APPROVER,
             at: t(5),
           });
@@ -859,7 +875,7 @@ async function main() {
             subjectId: request.id,
             taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
             sequenceNumber: seq++,
-            assignedUserId: approver.id,
+            userId: approver.id,
             assignedRole: ROLE_CODES.BDI_FINAL_APPROVER,
             result: spec.result,
             comment:
