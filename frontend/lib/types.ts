@@ -153,7 +153,13 @@ export interface Organization {
 
 export interface OrganizationListItem {
   id: string;
-  name: string;
+  /** เลขที่คำขอ — API ส่งมาตั้งแต่แรก แต่ type นี้ไม่เคยประกาศไว้ */
+  requestNumber: string;
+  /**
+   * ชื่อหน่วยงานตามที่กรอกไว้ในคำขอ ว่างได้จริง — `organizationNameTh ?? ชื่อหน่วยงาน ?? null`
+   * ฉบับร่างที่ยังไม่ได้กรอกจึงไม่มีชื่อ ใช้ `organizationTitle()` แทนการอ่านตรง ๆ
+   */
+  name: string | null;
   /** รหัสที่ใช้อ้างถึงหน่วยงานในเอกสาร — null ได้ถ้ายังไม่ได้ออกรหัสให้ */
   organizationCode: string | null;
   status: RequestStatus;
@@ -165,6 +171,10 @@ export interface OrganizationListItem {
   updatedAt: string;
   createdBy: { firstName: string | null; lastName: string | null; email: string };
 }
+
+/** ชื่อที่แสดงของคำขอลงทะเบียนหน่วยงาน — คู่กับ datasetTitle() ของเส้นทางชุดข้อมูล */
+export const organizationTitle = (r: { name: string | null; requestNumber: string }) =>
+  r.name?.trim() || `คำขอ ${r.requestNumber}`;
 
 export const fullName = (
   prefix?: string | null,

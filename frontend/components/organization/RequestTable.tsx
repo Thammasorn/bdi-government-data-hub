@@ -14,7 +14,7 @@ import { Card, StatusBadge } from "@/components/ui/Card";
 import { SkeletonRows } from "@/components/ui/Spinner";
 import { formatThaiDate } from "@/lib/status";
 import { hasOwnQueue } from "@/lib/stage";
-import type { OrganizationListItem } from "@/lib/types";
+import { organizationTitle, type OrganizationListItem } from "@/lib/types";
 import { useRequestList } from "@/lib/use-request-list";
 
 /**
@@ -104,7 +104,7 @@ export function OrganizationRequestTable({ basePath }: { basePath: string }) {
                     className="grid w-full grid-cols-1 items-center gap-2 px-6 py-4 text-left transition-colors hover:bg-navy-50/60 md:grid-cols-[minmax(0,1.7fr)_minmax(0,1.3fr)_16rem_8rem] md:gap-4"
                   >
                     <span className="min-w-0">
-                      <span className="block truncate font-medium text-ink">{row.name}</span>
+                      <span className="block truncate font-medium text-ink">{organizationTitle(row)}</span>
                       {/* รหัสหน่วยงานคือสิ่งที่เอกสารและอีเมลใช้อ้างถึงหน่วยงานนี้ */}
                       {row.organizationCode ? (
                         <span className="block truncate text-[13px] text-ink-muted">
