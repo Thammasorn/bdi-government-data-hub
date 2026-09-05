@@ -114,7 +114,7 @@ function Header() {
       {/* แถบ gradient ประจำแบรนด์ */}
       <div className="bg-brand-gradient h-[3px]" />
       <div className="border-b border-line">
-        <div className="mx-auto flex h-16 max-w-6xl items-center gap-6 px-4 sm:px-6">
+        <div className="mx-auto flex h-20 max-w-6xl items-center gap-6 px-4 sm:px-6">
           <Link href="/" className="shrink-0" aria-label="หน้าแรก Government Datahub">
             <Logo />
           </Link>
@@ -261,7 +261,7 @@ function Footer() {
       <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-7 sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <Logo subtitle={null} />
         <p className="text-[13px] text-ink-muted">
-          สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) · Big Data Institute
+          สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) · Big Data Institute (Public Organization)
         </p>
       </div>
     </footer>

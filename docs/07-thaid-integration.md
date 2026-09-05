@@ -1,6 +1,6 @@
-# การเชื่อมต่อ ThaiD — ออกแบบ ตั้งค่า และผล SIT
+# การเชื่อมต่อ ThaID — ออกแบบ ตั้งค่า และผล SIT
 
-การ์ด Notion: **ThaiD Integration** (Task Board, 2026-08-13)
+การ์ด Notion: **ThaID Integration** (Task Board, 2026-08-13)
 คู่มือและ credentials ของกรมการปกครองอยู่ใน `assets/thaid/` (นอก git)
 
 ---
@@ -9,12 +9,12 @@
 
 | | ก่อนหน้านี้ | ตอนนี้ |
 |---|---|---|
-| เปิดใช้งานบัญชี | `/register` กรอกประวัติ + ตั้งรหัสผ่าน → OTP ทางอีเมล | `/activate` → **ThaiD** → เทียบเลขบัตร → ตั้งรหัสผ่าน |
+| เปิดใช้งานบัญชี | `/register` กรอกประวัติ + ตั้งรหัสผ่าน → OTP ทางอีเมล | `/activate` → **ThaID** → เทียบเลขบัตร → ตั้งรหัสผ่าน |
 | ที่มาของเลขบัตร | ผู้ใช้พิมพ์เองตอนลงทะเบียน | เจ้าหน้าที่บันทึกตอนสร้างบัญชี (`POST /api/admin/invitations` บังคับ `cid`) |
-| เข้าสู่ระบบ | อีเมล + รหัสผ่าน (ขั้นเดียว) | รหัสผ่าน **+ OTP ทางอีเมล** หรือ **ThaiD** |
-| ThaiD | `POST /api/auth/thaid/verify` โหมดจำลองอย่างเดียว | OAuth 2.0 code flow จริงกับ `imauthsbx.bora.dopa.go.th` |
+| เข้าสู่ระบบ | อีเมล + รหัสผ่าน (ขั้นเดียว) | รหัสผ่าน **+ OTP ทางอีเมล** หรือ **ThaID** |
+| ThaID | `POST /api/auth/thaid/verify` โหมดจำลองอย่างเดียว | OAuth 2.0 code flow จริงกับ `imauthsbx.bora.dopa.go.th` |
 
-เหตุผลที่ย้ายเลขบัตรไปอยู่ฝั่งเจ้าหน้าที่: §2.4 ของการ์ดให้เทียบเลขจาก ThaiD กับ
+เหตุผลที่ย้ายเลขบัตรไปอยู่ฝั่งเจ้าหน้าที่: §2.4 ของการ์ดให้เทียบเลขจาก ThaID กับ
 "CID ที่ถูกบันทึกไว้ในระบบตอนสร้างบัญชี" ถ้าผู้ใช้เป็นคนกรอกเอง การเทียบก็ไม่ได้พิสูจน์อะไร
 เพราะเขากรอกเลขของบัตรที่ถืออยู่ในมือได้เสมอ
 
@@ -30,7 +30,7 @@
                 ├─ GET  /api/auth/invitation      ตรวจคีย์ (หมดอายุ/ถูกใช้/ถูกยกเลิก)
                 ├─ POST /api/auth/thaid/start     → integration_operation (PENDING) + authorize URL
                 │        เบราว์เซอร์ออกไป https://imauthsbx.bora.dopa.go.th/api/v2/oauth2/auth/
-                ├─ ThaiD redirect กลับ /auth/callback/thaid?code=&state=
+                ├─ ThaID redirect กลับ /auth/callback/thaid?code=&state=
                 ├─ POST /api/auth/thaid/callback  แลก token → ตรวจลายเซ็น id_token → อ่าน pid
                 │        pid == user_account.cid ?
                 │          ไม่ตรง → activation_key = REVOKED, audit FAILURE, ตอบ 403
@@ -38,7 +38,7 @@
                 └─ POST /api/auth/activate        ตั้งรหัสผ่าน → ACTIVE + role + key USED → session
 ```
 
-เข้าสู่ระบบด้วย ThaiD ใช้เส้นทางเดียวกัน ต่างที่ `purpose: "login"` และจับคู่บัญชีจาก `pid`
+เข้าสู่ระบบด้วย ThaID ใช้เส้นทางเดียวกัน ต่างที่ `purpose: "login"` และจับคู่บัญชีจาก `pid`
 กับ `user_account.cid` ของบัญชีที่ `ACTIVE` แล้ว
 
 **สถานะหน่วยงานไม่ถูกแตะที่ขั้นนี้** — การ์ด §2.5 เขียนว่าให้ปรับเป็น `ACTIVE`
@@ -60,7 +60,7 @@
 | `status` | `PENDING` → `PROCESSING` (จอง state) → `SUCCEEDED` / `FAILED` |
 
 จงใจไม่เก็บ: raw activation key (callback กลับเข้าเรื่องเดิมด้วย `subject_id`) และเลขบัตรจาก
-ThaiD (ใช้เทียบแล้วทิ้ง audit เก็บแค่ `sub`)
+ThaID (ใช้เทียบแล้วทิ้ง audit เก็บแค่ `sub`)
 
 ## 4. ตั้งค่า
 
@@ -82,7 +82,7 @@ THAID_REQUIRE_NONCE=false      # true = ปฏิเสธ id_token ที่ไ
 
 **สรุปที่ใช้ได้วันนี้:** client ของโครงการใน `assets/thaid/env_dev.txt` ได้ scope `pid`
 และผูกกับ `https://bdi.thammasorn.org/auth/callback/thaid` เรียบร้อยแล้ว — `main` จึงใช้
-ThaiD ของจริงได้ **แต่ `http://localhost:3000/...` ถูกถอดออกจากทะเบียนไปพร้อมกัน**
+ThaID ของจริงได้ **แต่ `http://localhost:3000/...` ถูกถอดออกจากทะเบียนไปพร้อมกัน**
 dev checkout จึงยังต้องใช้ client ตัวอย่างของ sandbox เหมือนเดิม (สลับข้างกับของเดิมพอดี)
 
 #### สิ่งที่ยิงจริงเมื่อ 2026-09-02
@@ -108,7 +108,7 @@ dev checkout จึงยังต้องใช้ client ตัวอย่�
 และให้ scope ครบ ทั้งสองข้อเป็นเรื่องทะเบียนฝั่งกรมการปกครอง ไม่ใช่เรื่องโค้ด — และ
 กรมการปกครองก็แก้ทะเบียนให้แล้วโดยไม่ได้แจ้ง จึงต้องยิงดูเองถึงจะรู้
 
-ระหว่างที่ยังใช้ ThaiD จริงบนโดเมนสาธารณะไม่ได้ มีโหมด `THAID_BYPASS` อยู่บน branch
+ระหว่างที่ยังใช้ ThaID จริงบนโดเมนสาธารณะไม่ได้ มีโหมด `THAID_BYPASS` อยู่บน branch
 `thaid-bypass-for-sit` เพื่อให้ SIT เดินต่อได้ **ถูกถอดออกทั้งหมดเมื่อ 2026-09-02**
 พร้อมกับ `docs/16-thaid-bypass.md` เพราะเหตุผลที่ต้องมีหมดไปแล้ว — ระบบไม่มีทางไหนที่
 เปิดใช้งานบัญชีได้โดยไม่เทียบเลขบัตรอีกต่อไป ตรงกับที่ `CLAUDE.md` เขียนไว้ว่าไม่มีโหมด mock
@@ -218,7 +218,7 @@ sandbox ที่เจอตั้งแต่ SIT รอบแรก
 
 แถวที่สามคือเหตุผลที่แถวที่สองพิสูจน์อะไรไม่ได้ **ส่ง PKCE ไปแล้วไม่พัง ≠ เขาบังคับใช้**
 การพิสูจน์ว่าเขาบังคับใช้จริงต้องแลก `code` ด้วย `code_verifier` ที่**ผิด**แล้วดูว่าถูกปฏิเสธไหม
-ซึ่งต้องมีคนสแกน ThaiD จริงหนึ่งครั้ง — หรือถามกรมการปกครองตรง ๆ ซึ่งควรถามอยู่ดีเพราะ
+ซึ่งต้องมีคนสแกน ThaID จริงหนึ่งครั้ง — หรือถามกรมการปกครองตรง ๆ ซึ่งควรถามอยู่ดีเพราะ
 sandbox กับ production เป็นคนละระบบ
 
 ## 5. ผล SIT (2026-08-13)
@@ -231,9 +231,9 @@ checkout `dev/dev_20260813_thaid-integration` (frontend 3160 / backend 4160)
 |---|---|---|---|
 | 1 | เปิดใช้งานบัญชี เลขบัตรตรง | ผ่าน — `user_account.status=ACTIVE`, `activation_key.status=USED`, มี `external_subject` | `01`–`05` |
 | 2 | เข้าสู่ระบบ รหัสผ่าน + OTP | ผ่าน — ขั้นแรกตอบ 202 ไม่ออก session, OTP จากอีเมลผ่านแล้วจึงเข้าได้ | `06`–`08` |
-| 3 | เข้าสู่ระบบด้วย ThaiD | ผ่าน — จับคู่บัญชีจาก `pid` แล้วออก session | `09`–`10` |
+| 3 | เข้าสู่ระบบด้วย ThaID | ผ่าน — จับคู่บัญชีจาก `pid` แล้วออก session | `09`–`10` |
 | 4 | เลขบัตรไม่ตรง | ผ่าน — 403, `activation_key=REVOKED`, บัญชียัง `PENDING`, audit `IDENTITY_VERIFICATION_FAILED / FAILURE / CID_MISMATCH`, `integration_operation=FAILED (cid_mismatch)` และลิงก์เดิมใช้ต่อไม่ได้ | `11`–`13` |
-| 5 | เข้าจากหน้า login แล้วกรอก Activation Key | ผ่าน — เข้าหน้ายืนยันตัวตนด้วย ThaiD เหมือนกดจากอีเมล | `14`–`15` |
+| 5 | เข้าจากหน้า login แล้วกรอก Activation Key | ผ่าน — เข้าหน้ายืนยันตัวตนด้วย ThaID เหมือนกดจากอีเมล | `14`–`15` |
 
 กรณีที่ 1 ยังตรวจเพิ่มว่า `organization.status` ยังเป็น `PENDING_REGISTRATION` หลังเปิดใช้งานบัญชี
 ตามที่ตัดสินไว้ในข้อ 2
@@ -246,7 +246,7 @@ checkout `dev/dev_20260813_thaid-integration` (frontend 3160 / backend 4160)
 | # | กรณี | ที่ไหน | ผล |
 |---|---|---|---|
 | 6 | เปิดใช้งานบัญชี เลขบัตรตรง (เลขมาจาก `sub`) | dev checkout 3160 | ผ่าน — `ACTIVE / USED`, `external_subject=3100600123450`, audit `cid_source: sub` |
-| 7 | เข้าสู่ระบบด้วย ThaiD | dev checkout 3160 | ผ่าน — จับคู่บัญชีจาก `cid` แล้วออก session |
+| 7 | เข้าสู่ระบบด้วย ThaID | dev checkout 3160 | ผ่าน — จับคู่บัญชีจาก `cid` แล้วออก session |
 | 8 | **เลขบัตรไม่ตรง** | dev checkout 3160 | ผ่าน — 403, คีย์ `REVOKED`, บัญชียัง `PENDING`, audit `IDENTITY_VERIFICATION_FAILED / FAILURE / CID_MISMATCH`, `integration_operation=FAILED (cid_mismatch)` |
 | 9 | **เปิดใช้งานบัญชีด้วย credentials จริงของโครงการ** | `main` 3000 | ผ่าน — authorize/token/ตรวจลายเซ็นครบ `VERIFY_IDENTITY SUCCEEDED`, บัญชี `ACTIVE`, ได้ session |
 | 10 | `sub` ซ้ำกับบัญชีที่ผูกไว้แล้ว | dev checkout 3160 | ผ่าน — 409 `identity_in_use` บัญชียัง `PENDING` ไม่ค้างครึ่งทาง |
@@ -290,7 +290,7 @@ node sit-thaid.mjs
       ไม่เร่งแล้วเพราะ `main` อ่านจาก `pid` ตามคู่มือได้แล้ว แต่ `THAID_USE_PID=false`
       ยังเป็นทางถอยที่ตั้งได้ทาง env — ถ้าจะพึ่งทางนั้นเมื่อไรก็ต้องได้คำตอบนี้ก่อน
 - [ ] บัญชีที่ seed ไว้ก่อนหน้านี้บางบัญชี (เจ้าหน้าที่ BDI ใน `seed:demo`) ไม่มี `cid`
-      จึงเปิดใช้งานผ่าน ThaiD ไม่ได้ — endpoint ตอบ 409 `cid_missing` พร้อมบอกให้ติดต่อเจ้าหน้าที่
+      จึงเปิดใช้งานผ่าน ThaID ไม่ได้ — endpoint ตอบ 409 `cid_missing` พร้อมบอกให้ติดต่อเจ้าหน้าที่
       ถ้าจะสาธิตด้วยบัญชีเหล่านั้นต้องเติม `cid` ให้ก่อน (ข้อนี้หายไปเองเมื่อปิดการเทียบ)
 - [ ] **ถามกรมการปกครองว่ารองรับ PKCE หรือไม่** — discovery document ของ sandbox
       **ไม่ประกาศ** `code_challenge_methods_supported` (ข้อ 4.4) ซึ่งเป็นคำตอบที่ดีพอจะ
@@ -298,7 +298,7 @@ node sit-thaid.mjs
       — scope `pid` และ redirect URI ของโดเมนจริง — ได้มาแล้ว)
 - [ ] **ตรวจตอนยิงจริงว่า id_token มี claim `nonce` กลับมาหรือไม่** ถ้ามี ให้ตั้ง
       `THAID_REQUIRE_NONCE=true` ทุก deployment — ตอนนี้ระบบยอมให้ผ่านเมื่อไม่มี claim
-- [ ] **ตรวจตอนยิงจริงว่า ThaiD ออก `refresh_token` มาด้วยหรือไม่** — discovery document
+- [ ] **ตรวจตอนยิงจริงว่า ThaID ออก `refresh_token` มาด้วยหรือไม่** — discovery document
       บอกว่า server รองรับ grant `refresh_token` (ข้อ 4.4) เหลือแค่ยืนยันว่าออกให้ flow ของเรา
       `resolveIdentity()` เขียนลง log ไว้แล้วว่ารอบนั้นได้มาหรือไม่ (ไม่ใช่ตัว token)
 - [ ] **ยังไม่มีใครสแกนบัตรจริงผ่านเส้นทางใหม่นี้** — ตรวจแล้วแค่ถึงขั้น authorize (302 ไป

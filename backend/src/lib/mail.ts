@@ -73,7 +73,7 @@ function layout(opts: {
         <tr><td style="padding:32px 32px 0;">
           ${
             logo
-              ? `<img src="cid:${LOGO_CID}" width="200" height="34" alt="สถาบันข้อมูลขนาดใหญ่"
+              ? `<img src="cid:${LOGO_CID}" width="88" height="64" alt="สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)"
                       style="display:block;border:0;outline:none;text-decoration:none;">`
               : `<div style="font:700 20px/1.3 'Helvetica Neue',Arial,sans-serif;color:${NAVY};letter-spacing:-0.01em;">
                    BDI<span style="color:${CORAL};">.</span>
@@ -108,7 +108,7 @@ function layout(opts: {
           <div style="border-top:1px solid ${BORDER};padding-top:16px;
                       font:400 12px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
             ${footnote ?? "อีเมลฉบับนี้ส่งจากระบบอัตโนมัติ กรุณาอย่าตอบกลับ"}<br>
-            สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) — Big Data Institute
+            สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) — Big Data Institute (Public Organization)
           </div>
         </td></tr>
       </table>
@@ -215,9 +215,9 @@ export async function sendInvitationEmail(to: string, token: string, roleLabel: 
     "คำเชิญเข้าใช้งาน Government Datahub Platform",
     layout({
       title: "คุณได้รับเชิญให้เข้าใช้งานระบบ",
-      intro: `สถาบันข้อมูลขนาดใหญ่ (BDI) เชิญคุณเข้าใช้งาน Government Datahub Platform ในสิทธิ์ <strong style="color:${TEXT};">${roleLabel}</strong>`,
+      intro: `สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) เชิญคุณเข้าใช้งาน Government Datahub Platform ในสิทธิ์ <strong style="color:${TEXT};">${roleLabel}</strong>`,
       body: `<p style="margin:0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-               กดปุ่มด้านล่างเพื่อยืนยันตัวตนด้วย ThaiD แล้วตั้งรหัสผ่าน
+               กดปุ่มด้านล่างเพื่อยืนยันตัวตนด้วย ThaID แล้วตั้งรหัสผ่าน
                ลิงก์นี้ใช้ได้ ${env.auth.activationKeyTtlDays} วัน
              </p>`,
       button: { label: "เปิดใช้งานบัญชี", url },

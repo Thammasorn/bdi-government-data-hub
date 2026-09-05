@@ -307,8 +307,8 @@ export async function findUsableActivationKey(rawKey: string) {
 /**
  * เหมือน findUsableActivationKey แต่หาจาก id ของแถว
  *
- * callback ของ ThaiD ไม่มี raw key อยู่ในมือ (จงใจ — คีย์จริงไม่เคยถูกส่งผ่าน
- * ThaiD หรือถูกเก็บลงฐานข้อมูล) มีแต่ subject_id ของ integration_operation
+ * callback ของ ThaID ไม่มี raw key อยู่ในมือ (จงใจ — คีย์จริงไม่เคยถูกส่งผ่าน
+ * ThaID หรือถูกเก็บลงฐานข้อมูล) มีแต่ subject_id ของ integration_operation
  */
 export async function usableActivationKeyById(id: string) {
   const record = await prisma.activationKey.findUnique({
@@ -352,7 +352,7 @@ async function evaluateActivationKey(record: ActivationKeyRecord) {
 /**
  * ยกเลิกคีย์ที่ยังใช้ได้อยู่
  *
- * §2.4 ของสเปกสั่งไว้ว่าเลขบัตรจาก ThaiD ไม่ตรงกับที่บันทึกไว้ → REVOKED ไม่ใช่แค่
+ * §2.4 ของสเปกสั่งไว้ว่าเลขบัตรจาก ThaID ไม่ตรงกับที่บันทึกไว้ → REVOKED ไม่ใช่แค่
  * ปฏิเสธครั้งนั้น คนที่ถือลิงก์ต้องขอใบใหม่จากเจ้าหน้าที่ ลองสุ่มเลขบัตรซ้ำ ๆ ไม่ได้
  */
 export async function revokeActivationKey(

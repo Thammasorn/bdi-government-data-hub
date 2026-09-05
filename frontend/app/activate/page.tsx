@@ -15,13 +15,13 @@ import { api, ApiError } from "@/lib/api";
 import { PREFIXES, bdiLandingPath, isBdiStaff } from "@/lib/status";
 
 /**
- * หน้าจอ Account Activation (§2.3–2.5 ของสเปก ThaiD)
+ * หน้าจอ Account Activation (§2.3–2.5 ของสเปก ThaID)
  *
- *   ?token=... มาจากลิงก์ในอีเมล  → ตรวจคีย์ แล้วเข้าขั้นยืนยันตัวตนด้วย ThaiD ทันที
+ *   ?token=... มาจากลิงก์ในอีเมล  → ตรวจคีย์ แล้วเข้าขั้นยืนยันตัวตนด้วย ThaID ทันที
  *   ไม่มี token (เข้ามาจากหน้า login) → ให้กรอก activation key ก่อน แล้วเดินเส้นทางเดียวกัน
  *
  * "ยืนยันตัวตนแล้วหรือยัง" ถามจาก backend เสมอ (`identityVerified`) ไม่ได้จำไว้ในหน้าเว็บ
- * เพราะกลับมาจาก ThaiD คนละ page load กัน และค่าที่เบราว์เซอร์อ้างเองก็เชื่อไม่ได้อยู่ดี
+ * เพราะกลับมาจาก ThaID คนละ page load กัน และค่าที่เบราว์เซอร์อ้างเองก็เชื่อไม่ได้อยู่ดี
  */
 interface InvitationInfo {
   email: string;
@@ -173,16 +173,16 @@ function KeyEntry() {
   );
 }
 
-// ------------------------------------------------------------------ §2.4 ThaiD
+// ------------------------------------------------------------------ §2.4 ThaID
 
 function IdentityStep({ token, invitation }: { token: string; invitation: InvitationInfo }) {
   return (
     <AuthLayout
-      title="ยืนยันตัวตนด้วย ThaiD"
+      title="ยืนยันตัวตนด้วย ThaID"
       description={`เปิดใช้งานบัญชี ${invitation.email} ในสิทธิ์ ${invitation.roleLabel}`}
       footer={
         <p>
-          ยังไม่มีแอปพลิเคชัน ThaiD? ลงทะเบียนได้ที่แอป ThaiD ของกรมการปกครอง
+          ยังไม่มีแอปพลิเคชัน ThaID? ลงทะเบียนได้ที่แอป ThaID ของกรมการปกครอง
           หรือติดต่อเจ้าหน้าที่ BDI ที่เชิญคุณเข้าระบบ
         </p>
       }
@@ -191,7 +191,7 @@ function IdentityStep({ token, invitation }: { token: string; invitation: Invita
         <SignedInWarning invitationEmail={invitation.email} />
         <div className="rounded-xl border border-line bg-canvas p-5">
           <p className="text-sm leading-relaxed text-ink-muted">
-            ระบบจะเปรียบเทียบเลขประจำตัวประชาชนที่ได้จาก ThaiD
+            ระบบจะเปรียบเทียบเลขประจำตัวประชาชนที่ได้จาก ThaID
             กับเลขที่เจ้าหน้าที่บันทึกไว้ตอนสร้างบัญชีของคุณ
             {invitation.cidHint ? (
               <>
@@ -214,7 +214,7 @@ function IdentityStep({ token, invitation }: { token: string; invitation: Invita
           purpose="activate"
           token={token}
           onBeforeRedirect={() => storeActivationToken(token)}
-          label="ยืนยันตัวตนด้วย ThaiD"
+          label="ยืนยันตัวตนด้วย ThaID"
         />
       </div>
     </AuthLayout>
@@ -248,12 +248,12 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
   const [submitting, setSubmitting] = useState(false);
 
   /**
-   * ชื่อจาก ThaiD ที่หน้า callback ฝากไว้ ใช้เติมฟอร์มให้ตรงกับบัตร
+   * ชื่อจาก ThaID ที่หน้า callback ฝากไว้ ใช้เติมฟอร์มให้ตรงกับบัตร
    * ไม่มีก็ไม่เป็นไร — ผู้ใช้กรอกเองได้ และฝั่ง server ไม่ได้เชื่อค่านี้อยู่แล้ว
    *
    * **ทับค่าที่มาจากคำเชิญ** สำหรับชื่อ นามสกุล และคำนำหน้า — บัตรประชาชนมีน้ำหนักกว่า
-   * สิ่งที่เพื่อนร่วมงานพิมพ์ให้ ส่วนเบอร์โทรไม่มีใน ThaiD จึงเหลือค่าจากคำเชิญไว้อย่างเดิม
-   * ค่าที่ ThaiD ไม่ได้ส่งมา (คำนำหน้าอยู่นอก scope ที่ขอ) ก็ไม่ล้างของเดิมทิ้ง
+   * สิ่งที่เพื่อนร่วมงานพิมพ์ให้ ส่วนเบอร์โทรไม่มีใน ThaID จึงเหลือค่าจากคำเชิญไว้อย่างเดิม
+   * ค่าที่ ThaID ไม่ได้ส่งมา (คำนำหน้าอยู่นอก scope ที่ขอ) ก็ไม่ล้างของเดิมทิ้ง
    */
   useEffect(() => {
     const raw = sessionStorage.getItem("thaid:profile");
@@ -299,12 +299,12 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
   return (
     <AuthLayout
       title="สร้างบัญชีผู้ใช้"
-      description={`ยืนยันตัวตนกับ ThaiD เรียบร้อยแล้ว เหลือเพียงตั้งรหัสผ่านสำหรับ ${invitation.email}`}
+      description={`ยืนยันตัวตนกับ ThaID เรียบร้อยแล้ว เหลือเพียงตั้งรหัสผ่านสำหรับ ${invitation.email}`}
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>
         <SignedInWarning invitationEmail={invitation.email} />
         <div className="rounded-xl bg-success-bg px-4 py-3 text-[13px] leading-relaxed text-success">
-          ยืนยันตัวตนด้วย ThaiD สำเร็จ — เลขประจำตัวประชาชนตรงกับที่บันทึกไว้ในระบบ
+          ยืนยันตัวตนด้วย ThaID สำเร็จ — เลขประจำตัวประชาชนตรงกับที่บันทึกไว้ในระบบ
         </div>
 
         <TextField label="อีเมล" value={invitation.email} readOnly disabled hint="อีเมลนี้มาจากคำเชิญ แก้ไขไม่ได้" />
