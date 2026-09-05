@@ -4,7 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Government Datahub Platform for BDI (สถาบันข้อมูลขนาดใหญ่). Government agencies register
+Government Datahub Platform for BDI (สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) / Big Data Institute
+(Public Organization)). Government agencies register
 themselves, and their registration is approved through a multi-stage workflow.
 
 The spec lives in Notion, not here. `docs/` holds the expanded, buildable version:
@@ -18,12 +19,12 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
 - `notebooks/journey-a-admin-create-user.ipynb` — Journey A has no UI by design, so this walks
   its API calls one cell at a time against a checkout with real SMTP configured
 - `docs/04-dataset-registration-plan.md` — how Journey C maps onto schema, endpoints and screens
-- `docs/07-thaid-integration.md` — the ThaiD flow, its configuration, what DOPA has not
+- `docs/07-thaid-integration.md` — the ThaID flow, its configuration, what DOPA has not
   granted us yet, and the SIT run that exercised it against their sandbox
 - `docs/08-database-access.md` — connecting DBeaver (or psql) to a checkout's database:
   which port belongs to which checkout, the schema layout, and what not to edit by hand
 - `docs/09-auth-tokens.md` — every token in the system (session id, activation key, OTP,
-  admin token, ThaiD's tokens, OAuth `state`, OIDC `nonce`): where each lives, how it is
+  admin token, ThaID's tokens, OAuth `state`, OIDC `nonce`): where each lives, how it is
   hashed, when it expires. **There is no refresh token and no need for one**; §1.4 explains
   the session table that replaced the old JWT
 - `docs/10-admin-prefill-organization.md` — organizations an admin creates ahead of time,
@@ -381,7 +382,7 @@ the cookie, and don't "optimise" this read away.
 
 **The cookie holds an opaque random value, not a JWT.** It points at a row in `iam.session`,
 which is what makes revocation possible at all; there is no `JWT_SECRET` any more
-(`jsonwebtoken` stays, for ThaiD's `id_token`). `lib/session.ts` owns the lifecycle. Two
+(`jsonwebtoken` stays, for ThaID's `id_token`). `lib/session.ts` owns the lifecycle. Two
 expiries, both enforced: absolute (`SESSION_TTL_DAYS`, 7 days, not renewable) and idle
 (`SESSION_IDLE_HOURS`, 8 hours, `last_seen_at` moves — written at most once a minute, not per
 request). `issueSession()` revokes whatever session the caller arrived with, so logging in
@@ -429,8 +430,8 @@ The key is hashed with **HMAC-SHA-256** (`ACTIVATION_KEY_SECRET`), not bare SHA-
 database leak alone cannot produce a usable key. `organization_id` is NOT NULL there, which is
 why BDI itself is a row in `organization.organization` (`lib/system.ts`).
 
-Activation is ThaiD-first and has no email-OTP variant. `POST /api/auth/thaid/start` →
-the user verifies on ThaiD → `POST /api/auth/thaid/callback` compares the `pid` claim with
+Activation is ThaID-first and has no email-OTP variant. `POST /api/auth/thaid/start` →
+the user verifies on ThaID → `POST /api/auth/thaid/callback` compares the `pid` claim with
 `user_account.cid` → `POST /api/auth/activate` sets the password and flips the account to
 `ACTIVE`, creates the role assignment and marks the key `USED`, all in one transaction.
 **`password_hash` and `iam.otp_code` are deliberate additions not present in the Excel**;
@@ -480,8 +481,8 @@ returns a `profile` (prefix, first name, last name, phone) read off the `iam.use
 invitation points at. It matters most for the organisation approver: the officer typed that
 person's name and telephone into the registration form days earlier, and `ensureApproverAccount()`
 wrote them onto the PENDING account — making them retype it invited a mismatch with the
-registration they are about to sign. ThaiD's claims then overwrite the name fields (the card
-outranks a colleague's typing) while the phone, which ThaiD never sends, survives. The prefix is
+registration they are about to sign. ThaID's claims then overwrite the name fields (the card
+outranks a colleague's typing) while the phone, which ThaID never sends, survives. The prefix is
 only seeded when it is one of the form's `PREFIXES`; imported values like `นายแพทย์` are not, and
 a `<select>` holding a value that is not an option submits empty without showing anyone.
 
@@ -489,7 +490,7 @@ Activation does **not** touch `organization.status`. An organisation goes `ACTIV
 its registration request clears `BDI_FINAL_APPROVAL` (Journey B). The Notion card §2.5 says
 otherwise; that was raised and settled on 2026-08-13 in favour of Journey B.
 
-### ThaiD
+### ThaID
 
 `lib/thaid.ts` talks to DOPA (authorize URL, token exchange, ES256 id_token verification
 against their JWKS, revoke); `lib/thaid-flow.ts` keeps the in-flight state. Both the OAuth
@@ -498,7 +499,7 @@ against their JWKS, revoke); `lib/thaid-flow.ts` keeps the in-flight state. Both
 table — the sheet already designates that table for this, and every attempt, including the
 failures, lands in it for free.
 
-The raw activation key is never sent to ThaiD and never stored: the callback finds its way
+The raw activation key is never sent to ThaID and never stored: the callback finds its way
 back through `subject_id`, which is the `activation_key` row id.
 
 Every authorization request carries a random `nonce` alongside `state`, stored in
@@ -707,12 +708,15 @@ sampled from the `.ai` files in `assets/theme_ci_design/`, not chosen by eye —
 navy `#192768`, coral `#E5775A`. The same values are duplicated as constants in
 `mail.ts` and `pdf.ts` (email clients have no CSS, PDFKit has no CSS); change all three together.
 
-The logo is the real artwork from `assets/theme_ci_design/LOGO/`, not a redrawing.
-`components/brand/Logo.tsx` inlines the SVG paths (navy on `currentColor`, the coral dot on its
-own class, so one file covers every tone); the PDF and email headers use trimmed PNGs in
-`backend/src/assets/brand/` because neither PDFKit nor an email client can render SVG.
-`docs/02-ui-spec.md` §1.6 maps each surface to the source file it came from — regenerate from
-those originals rather than editing path coordinates by hand.
+The logo is the real artwork from `assets/theme_ci_design/LOGO/`, not a redrawing. Every
+surface uses the square lockup with the organisation name under the mark
+(`1x/sqr-logo-normal-with-label.png`, and `-white-` on the dark side of the auth page — not
+`-for-dark-bg-`, which is coral and vanishes into the coral end of `bg-brand-gradient`): the web
+copies both files
+next to `components/brand/Logo.tsx` and static-imports them through `next/image`, and the email
+header attaches the same PNG and references it by `cid:` because mail clients block remote
+images. `docs/02-ui-spec.md` §1.6 maps each surface to the source file it came from — copy from
+those originals rather than exporting your own.
 
 `frontend/lib/dataset-form.ts` is a **deliberate copy** of the code lists and the conditions
 engine in `backend/src/lib/dataset.ts` — the form has to show what a choice forces the moment
@@ -806,7 +810,7 @@ Two API base URLs, and they are not interchangeable:
   it cached and whoever just signed sees a copy without their own name on it. The screen passes
   a `reloadKey` query parameter to bust it. Same class of problem as the `next/image` cache
   further down, different cache.
-- The ThaiD sandbox sits behind a WAF that blocks any user agent containing
+- The ThaID sandbox sits behind a WAF that blocks any user agent containing
   `HeadlessChrome` — it answers with an HTML page saying "Web Page Blocked!" instead of
   redirecting, which reads like a broken client. Screenshot runs must override the user
   agent. Its login page also polls for the QR scan forever, so `waitUntil: "networkidle"`
@@ -819,7 +823,7 @@ Two API base URLs, and they are not interchangeable:
   swapped the redirect URI in the same edit, found only by probing the authorize endpoint on
   2026-09-02. So **only `main` can use the project's own credentials**, and every dev checkout
   must use DOPA's sandbox demo client, which accepts any `redirect_uri` and grants `pid`
-  (`assets/thaid/thaid sandbox.postman_environment.json`). When ThaiD behaves oddly, probe
+  (`assets/thaid/thaid sandbox.postman_environment.json`). When ThaID behaves oddly, probe
   `/api/v2/oauth2/auth/` with a deliberately wrong scope, client and redirect first: three 400s
   are what proves the endpoint is still validating rather than waving everything through.
 - DOPA's `sub` is the 13-digit national ID — verified on both the demo client and the

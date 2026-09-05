@@ -12,7 +12,7 @@
 | 2 | Activation key | "คุณคือคนที่ถูกเชิญ" | 7 วัน | HMAC-SHA-256 |
 | 3 | OTP | "อีเมลนี้เป็นของคุณจริง" | 10 นาที | bcrypt |
 | 4 | `x-admin-token` | "ผู้เรียกคือสคริปต์ฝั่ง admin" | ไม่หมดอายุ | ค่าคงที่ใน env |
-| 5 | โทเคนจาก ThaiD | "กรมการปกครองยืนยันตัวตนให้แล้ว" | ใช้ครั้งเดียวแล้วทิ้ง | **ไม่เก็บ** |
+| 5 | โทเคนจาก ThaID | "กรมการปกครองยืนยันตัวตนให้แล้ว" | ใช้ครั้งเดียวแล้วทิ้ง | **ไม่เก็บ** |
 | 6 | OAuth `state` | "callback นี้มาจากคำขอที่เราเป็นคนเริ่ม" | 15 นาที | `integration_operation` |
 | 7 | OIDC `nonce` | "id_token ใบนี้ออกให้คำขอของเราจริง" | 15 นาที | `integration_operation` |
 
@@ -49,7 +49,7 @@
 **เดิมเป็น JWT ลงลายเซ็น HS256** ที่แบก `sub`/`email`/`roles`/`organizationId` มาในตัว
 เปลี่ยนเมื่อ 2026-08-16 — payload นั้นถูก `requireAuth` เขียนทับทุก request อยู่แล้ว
 จึงมีแต่โอกาสทำให้เข้าใจผิด และการไม่มีสถานะฝั่ง server แปลว่า logout จริง ๆ ทำไม่ได้
-**`JWT_SECRET` ไม่มีอีกแล้ว** (`jsonwebtoken` ยังอยู่ ใช้ตรวจลายเซ็น id_token ของ ThaiD)
+**`JWT_SECRET` ไม่มีอีกแล้ว** (`jsonwebtoken` ยังอยู่ ใช้ตรวจลายเซ็น id_token ของ ThaID)
 
 ### 1.2 ออกเมื่อไร
 
@@ -58,8 +58,8 @@
 | เส้นทาง | ก่อนหน้านั้นต้องผ่านอะไร |
 |---|---|
 | `POST /api/auth/login/verify-otp` | รหัสผ่านถูก **และ** OTP ในอีเมลถูก |
-| `POST /api/auth/thaid/callback` (`purpose: login`) | ThaiD ยืนยัน + เลขบัตรตรงกับบัญชี |
-| `POST /api/auth/activate` | ThaiD ยืนยัน + ตั้งรหัสผ่านเสร็จ |
+| `POST /api/auth/thaid/callback` (`purpose: login`) | ThaID ยืนยัน + เลขบัตรตรงกับบัญชี |
+| `POST /api/auth/activate` | ThaID ยืนยัน + ตั้งรหัสผ่านเสร็จ |
 
 `POST /api/auth/login` (ขั้นแรก) **ไม่ออก session** — ตอบ `202` กับ `nextStep: "verify_otp"`
 รหัสผ่านอย่างเดียวไม่พอเข้าระบบ
@@ -155,7 +155,7 @@ session หนึ่งใบ = แถวหนึ่งแถวใน `iam.ses
 วงจรชีวิตอยู่ในตาราง `iam.activation_key`: `ISSUED` → `USED` / `REVOKED` / หมดอายุใน 7 วัน
 (`ACTIVATION_KEY_TTL_DAYS`) ออกใบใหม่ให้ (บัญชี, หน่วยงาน, role) เดิมจะ `REVOKED` ใบเก่าอัตโนมัติ
 
-**คีย์ดิบไม่เคยถูกเขียนลงฐานข้อมูลและไม่เคยถูกส่งไป ThaiD** — callback ของ ThaiD หาทางกลับ
+**คีย์ดิบไม่เคยถูกเขียนลงฐานข้อมูลและไม่เคยถูกส่งไป ThaID** — callback ของ ThaID หาทางกลับ
 เข้าเรื่องเดิมด้วย `subject_id` ซึ่งเป็น id ของแถว activation_key ไม่ใช่ตัวคีย์
 อีเมลที่มีคีย์จึงถูกส่งแบบ inline ไม่ผ่าน outbox เพราะคีย์ดิบมีอยู่แค่ในหน่วยความจำชั่วขณะนั้น
 
@@ -193,7 +193,7 @@ session หนึ่งใบ = แถวหนึ่งแถวใน `iam.ses
 - ข้อความตอบกลับตอนรหัสผ่านผิดเหมือนกันทุกกรณี ไม่บอกว่าอีเมลนั้นมีอยู่จริงหรือไม่
 
 `OtpPurpose` มีสองค่า — `LOGIN` ใช้อยู่จริง ส่วน `REGISTRATION` เหลือจากตอนที่การเปิดใช้งาน
-บัญชียังใช้ OTP ทางอีเมล ตอนนี้การเปิดใช้งานเป็น ThaiD ทางเดียว ไม่มีเส้นทางไหนออก
+บัญชียังใช้ OTP ทางอีเมล ตอนนี้การเปิดใช้งานเป็น ThaID ทางเดียว ไม่มีเส้นทางไหนออก
 OTP แบบ `REGISTRATION` อีกแล้ว
 
 ## 4. `x-admin-token` — shared secret ไม่ใช่ session
@@ -218,7 +218,7 @@ OTP แบบ `REGISTRATION` อีกแล้ว
 คอลเลกชัน Postman ของ endpoint กลุ่มนี้อยู่ที่ `docs/bdi-admin-portal.postman_collection.json`
 (สร้างหน่วยงาน + ส่งลิงก์เปิดใช้งาน + ดู/ยกเลิกคำเชิญ)
 
-## 5. โทเคนจาก ThaiD — รับมาแล้วทิ้งทันที
+## 5. โทเคนจาก ThaID — รับมาแล้วทิ้งทันที
 
 `resolveIdentity()` ใน `lib/thaid.ts` ทำสามอย่างแล้วจบ
 
@@ -229,7 +229,7 @@ OTP แบบ `REGISTRATION` อีกแล้ว
 4. เรียก `/api/v2/oauth2/revoke/` คืน **ทั้ง access token และ refresh token** ทิ้ง
    แต่ละใบส่ง `token_type_hint` ตาม RFC 7009 แบบไม่รอผลและไม่ให้พัง flow
 
-**access token, refresh token และ id_token ไม่เคยถูกเก็บลงฐานข้อมูล** ระบบนี้ใช้ ThaiD เพื่อ
+**access token, refresh token และ id_token ไม่เคยถูกเก็บลงฐานข้อมูล** ระบบนี้ใช้ ThaID เพื่อ
 "ยืนยันตัวตนครั้งเดียว" ไม่ได้ใช้เรียก API อื่นของกรมการปกครองต่อ
 
 ก่อน 2026-08-16 `revokeToken()` ส่งเฉพาะ access token — ถ้ากรมการปกครองออก refresh token
@@ -258,7 +258,7 @@ id_token มาถึงเราทาง back channel ผ่าน TLS มา�
 
 `claimThaidState()` จองด้วย `updateMany` ที่กรอง `status = PENDING` — เป็น atomic
 กด refresh ที่หน้า callback รอบสองจะได้ `already_used` แทนที่จะแลก token ซ้ำ
-อายุ 15 นาที (`THAID_STATE_TTL_MINUTES`) ยาวพอให้เปิดแอป ThaiD บนมือถือแล้วกลับมา
+อายุ 15 นาที (`THAID_STATE_TTL_MINUTES`) ยาวพอให้เปิดแอป ThaID บนมือถือแล้วกลับมา
 
 หลังยืนยันผ่าน แถวเดิมทำหน้าที่เป็น "ใบเสร็จ" ให้ขั้นตั้งรหัสผ่านอีก 30 นาที
 (`THAID_VERIFICATION_TTL_MINUTES`) — `POST /api/auth/activate` เรียก `latestVerification()`

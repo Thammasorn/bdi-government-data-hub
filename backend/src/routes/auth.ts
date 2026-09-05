@@ -104,7 +104,7 @@ authRouter.get("/invitation", async (req, res) => {
     return;
   }
 
-  // ยืนยัน ThaiD ผ่านแล้วหรือยัง ตัดสินที่ฝั่ง server เสมอ — หน้าเว็บแค่แสดงตาม
+  // ยืนยัน ThaID ผ่านแล้วหรือยัง ตัดสินที่ฝั่ง server เสมอ — หน้าเว็บแค่แสดงตาม
   const verification = await latestVerification(key.id);
 
   res.json({
@@ -114,7 +114,7 @@ authRouter.get("/invitation", async (req, res) => {
     organizationId: key.organization.id,
     organizationName: key.organization.nameTh,
     expiresAt: key.expiresAt,
-    /** บัญชีที่ไม่มีเลขบัตรในระบบยืนยันด้วย ThaiD ไม่ได้ — หน้าเว็บต้องบอกให้ชัด */
+    /** บัญชีที่ไม่มีเลขบัตรในระบบยืนยันด้วย ThaID ไม่ได้ — หน้าเว็บต้องบอกให้ชัด */
     cidHint: maskCid(key.userAccount.cid),
     identityVerified: Boolean(verification),
     /**
@@ -137,7 +137,7 @@ authRouter.get("/invitation", async (req, res) => {
   });
 });
 
-// ---------------------------------------------------------------- ThaiD
+// ---------------------------------------------------------------- ThaID
 
 const startSchema = z.object({
   purpose: z.enum(["activate", "login"]),
@@ -146,7 +146,7 @@ const startSchema = z.object({
 });
 
 /**
- * ขั้นที่ 1 ของ §2.4 — พาผู้ใช้ไปยืนยันตัวตนที่ ThaiD
+ * ขั้นที่ 1 ของ §2.4 — พาผู้ใช้ไปยืนยันตัวตนที่ ThaID
  *
  * คืน URL ให้เบราว์เซอร์พาไปเอง แทนที่จะ 302 จาก API เพราะหน้าเว็บเรียกด้วย fetch
  * (ตอบ 302 จะถูก follow แล้วชน CORS ของ imauthsbx.bora.dopa.go.th)
@@ -160,7 +160,7 @@ authRouter.post("/thaid/start", async (req, res) => {
   if (!thaidConfigured()) {
     res.status(501).json({
       error: "not_configured",
-      message: "ระบบยังไม่ได้ตั้งค่าการเชื่อมต่อ ThaiD กรุณาติดต่อผู้ดูแลระบบ",
+      message: "ระบบยังไม่ได้ตั้งค่าการเชื่อมต่อ ThaID กรุณาติดต่อผู้ดูแลระบบ",
     });
     return;
   }
@@ -179,12 +179,12 @@ authRouter.post("/thaid/start", async (req, res) => {
       return;
     }
     // ไม่มีเลขบัตรบันทึกไว้ = ไม่มีอะไรให้เทียบ ปิดทางตั้งแต่ต้นดีกว่าปล่อยให้ผู้ใช้
-    // เสียเวลาไปยืนยันกับ ThaiD แล้วค่อยล้มตอนกลับมา
+    // เสียเวลาไปยืนยันกับ ThaID แล้วค่อยล้มตอนกลับมา
     if (!key.userAccount.cid) {
       res.status(409).json({
         error: "cid_missing",
         message:
-          "บัญชีนี้ยังไม่มีเลขประจำตัวประชาชนบันทึกไว้ จึงเทียบกับ ThaiD ไม่ได้ กรุณาติดต่อเจ้าหน้าที่",
+          "บัญชีนี้ยังไม่มีเลขประจำตัวประชาชนบันทึกไว้ จึงเทียบกับ ThaID ไม่ได้ กรุณาติดต่อเจ้าหน้าที่",
       });
       return;
     }
@@ -204,7 +204,7 @@ authRouter.post("/thaid/start", async (req, res) => {
 const callbackSchema = z.object({
   state: z.string().min(1),
   code: z.string().min(1).optional(),
-  /** ThaiD ส่ง error กลับมาทาง query string เมื่อผู้ใช้ไม่ยินยอมหรือยืนยันไม่ผ่าน */
+  /** ThaID ส่ง error กลับมาทาง query string เมื่อผู้ใช้ไม่ยินยอมหรือยืนยันไม่ผ่าน */
   error: z.string().optional(),
   errorDescription: z.string().optional(),
 });
@@ -212,7 +212,7 @@ const callbackSchema = z.object({
 /**
  * ขั้นที่ 2 ของ §2.4 — รับ authorization code แล้วเทียบเลขบัตร
  *
- * ทั้งขา activate และ login จบที่นี่ เพราะ ThaiD รู้จัก redirect_uri เดียว
+ * ทั้งขา activate และ login จบที่นี่ เพราะ ThaID รู้จัก redirect_uri เดียว
  * ตัวที่บอกว่าเป็นขาไหนคือแถว integration_operation ที่ผูกกับ state ไม่ใช่ค่าจากเบราว์เซอร์
  */
 authRouter.post("/thaid/callback", async (req, res) => {
@@ -242,14 +242,14 @@ authRouter.post("/thaid/callback", async (req, res) => {
       error: parsed.data.error,
       message:
         parsed.data.error === "user_denied"
-          ? "คุณไม่ได้ให้ความยินยอมกับ ThaiD การยืนยันตัวตนจึงไม่สำเร็จ"
-          : "ยืนยันตัวตนกับ ThaiD ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
+          ? "คุณไม่ได้ให้ความยินยอมกับ ThaID การยืนยันตัวตนจึงไม่สำเร็จ"
+          : "ยืนยันตัวตนกับ ThaID ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
     });
     return;
   }
   if (!parsed.data.code) {
     await failThaidOperation(operation, "missing_code", "callback ไม่มี authorization code");
-    res.status(400).json({ error: "missing_code", message: "ไม่พบผลการยืนยันจาก ThaiD" });
+    res.status(400).json({ error: "missing_code", message: "ไม่พบผลการยืนยันจาก ThaID" });
     return;
   }
 
@@ -275,14 +275,14 @@ authRouter.post("/thaid/callback", async (req, res) => {
     if (code === "nonce_mismatch" || code === "nonce_missing") {
       res.status(403).json({
         error: code,
-        message: "ผลการยืนยันจาก ThaiD ไม่ตรงกับคำขอที่เริ่มไว้ กรุณาเริ่มยืนยันตัวตนใหม่อีกครั้ง",
+        message: "ผลการยืนยันจาก ThaID ไม่ตรงกับคำขอที่เริ่มไว้ กรุณาเริ่มยืนยันตัวตนใหม่อีกครั้ง",
       });
       return;
     }
 
     res.status(502).json({
       error: "thaid_error",
-      message: "ติดต่อระบบ ThaiD ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
+      message: "ติดต่อระบบ ThaID ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
     });
     return;
   }
@@ -304,7 +304,7 @@ authRouter.post("/thaid/callback", async (req, res) => {
     console.error(`[thaid] ไม่ได้เลขบัตรจาก claim ${claim} — ตรวจ THAID_USE_PID และ THAID_SCOPE`);
     res.status(502).json({
       error: "cid_unavailable",
-      message: "ระบบไม่ได้รับเลขประจำตัวประชาชนจาก ThaiD จึงยืนยันตัวตนไม่ได้ กรุณาติดต่อผู้ดูแลระบบ",
+      message: "ระบบไม่ได้รับเลขประจำตัวประชาชนจาก ThaID จึงยืนยันตัวตนไม่ได้ กรุณาติดต่อผู้ดูแลระบบ",
     });
     return;
   }
@@ -325,9 +325,9 @@ authRouter.post("/thaid/callback", async (req, res) => {
   if (key.userAccount.cid !== identity.pid) {
     await revokeActivationKey(prisma, {
       activationKeyId: key.id,
-      reason: "เลขประจำตัวประชาชนจาก ThaiD ไม่ตรงกับที่บันทึกไว้",
+      reason: "เลขประจำตัวประชาชนจาก ThaID ไม่ตรงกับที่บันทึกไว้",
     });
-    await failThaidOperation(operation, "cid_mismatch", "เลขบัตรจาก ThaiD ไม่ตรงกับบัญชี");
+    await failThaidOperation(operation, "cid_mismatch", "เลขบัตรจาก ThaID ไม่ตรงกับบัญชี");
     await logAudit({
       action: AuditAction.IDENTITY_VERIFICATION_FAILED,
       subjectType: AuditSubject.USER_ACTIVATION_KEY,
@@ -337,7 +337,7 @@ authRouter.post("/thaid/callback", async (req, res) => {
       metadata: {
         failure_reason: "CID_MISMATCH",
         user_account_id: key.userAccountId,
-        // ไม่บันทึกเลขบัตรของทั้งสองฝั่งลง log — เก็บแค่ subject ที่ ThaiD ออกให้
+        // ไม่บันทึกเลขบัตรของทั้งสองฝั่งลง log — เก็บแค่ subject ที่ ThaID ออกให้
         thaid_subject: identity.subject,
         integration_operation_id: operation.id,
       },
@@ -345,7 +345,7 @@ authRouter.post("/thaid/callback", async (req, res) => {
     res.status(403).json({
       error: "cid_mismatch",
       message:
-        "เลขประจำตัวประชาชนที่ยืนยันผ่าน ThaiD ไม่ตรงกับที่บันทึกไว้ในระบบ " +
+        "เลขประจำตัวประชาชนที่ยืนยันผ่าน ThaID ไม่ตรงกับที่บันทึกไว้ในระบบ " +
         "ลิงก์นี้ถูกยกเลิกแล้วเพื่อความปลอดภัย กรุณาติดต่อเจ้าหน้าที่เพื่อขอลิงก์ใหม่",
     });
     return;
@@ -377,11 +377,11 @@ authRouter.post("/thaid/callback", async (req, res) => {
      * จึงเป็น null ตามปกติ — ปล่อยไว้เผื่อกรมการปกครองส่งมาให้เอง
      */
     /**
-     * ThaiD มาก่อน แล้วตกมาที่ชื่อที่เจ้าหน้าที่กรอกไว้ตอนเชิญ
+     * ThaID มาก่อน แล้วตกมาที่ชื่อที่เจ้าหน้าที่กรอกไว้ตอนเชิญ
      *
      * `given_name` / `family_name` อยู่ใน scope ที่กรมการปกครองอนุมัติแล้ว เคสปกติจึงได้
-     * ชื่อจากบัตรมาเติมให้ ส่วนที่ตกมาใช้ค่าจากคำเชิญคือเคสที่ ThaiD ไม่ได้ทำงาน:
-     * ยังไม่ได้ตั้งค่า ThaiD · หรือ DOPA ส่ง claim มาเป็นค่าว่าง
+     * ชื่อจากบัตรมาเติมให้ ส่วนที่ตกมาใช้ค่าจากคำเชิญคือเคสที่ ThaID ไม่ได้ทำงาน:
+     * ยังไม่ได้ตั้งค่า ThaID · หรือ DOPA ส่ง claim มาเป็นค่าว่าง
      *
      * คำนำหน้าตกมาที่ค่าจากคำเชิญแทบทุกครั้ง เพราะ claim `title` ไม่ได้อยู่ใน scope
      * ที่ได้รับ (`docs/07` §4.1) — ช่องนี้จึงเป็นช่องที่ค่าจากคำเชิญมีประโยชน์ที่สุด
@@ -397,7 +397,7 @@ authRouter.post("/thaid/callback", async (req, res) => {
   });
 });
 
-/** เข้าสู่ระบบด้วย ThaiD — จับคู่บัญชีด้วยเลขบัตร ไม่ใช่อีเมล */
+/** เข้าสู่ระบบด้วย ThaID — จับคู่บัญชีด้วยเลขบัตร ไม่ใช่อีเมล */
 async function thaidLogin(
   req: import("express").Request,
   res: import("express").Response,
@@ -497,7 +497,7 @@ authRouter.post("/activate", async (req, res) => {
   if (!verification) {
     res.status(409).json({
       error: "identity_required",
-      message: "กรุณายืนยันตัวตนด้วย ThaiD ก่อนตั้งรหัสผ่าน",
+      message: "กรุณายืนยันตัวตนด้วย ThaID ก่อนตั้งรหัสผ่าน",
     });
     return;
   }
@@ -533,12 +533,12 @@ authRouter.post("/activate", async (req, res) => {
       replaced = activation.replaced;
     });
   } catch (err) {
-    // external_subject ซ้ำ = ThaiD คนเดียวกันเคยเปิดบัญชีอื่นไปแล้ว
-    // (พูดถึง "บัญชี ThaiD" ไม่ใช่ "เลขบัตร" เพราะเมื่อไม่ได้รับ scope pid ระบบไม่เคยเห็นเลขบัตร)
+    // external_subject ซ้ำ = ThaID คนเดียวกันเคยเปิดบัญชีอื่นไปแล้ว
+    // (พูดถึง "บัญชี ThaID" ไม่ใช่ "เลขบัตร" เพราะเมื่อไม่ได้รับ scope pid ระบบไม่เคยเห็นเลขบัตร)
     if (typeof err === "object" && err && (err as { code?: string }).code === "P2002") {
       res.status(409).json({
         error: "identity_in_use",
-        message: "บัญชี ThaiD นี้ถูกใช้เปิดใช้งานบัญชีอื่นในระบบแล้ว กรุณาติดต่อเจ้าหน้าที่",
+        message: "บัญชี ThaID นี้ถูกใช้เปิดใช้งานบัญชีอื่นในระบบแล้ว กรุณาติดต่อเจ้าหน้าที่",
       });
       return;
     }

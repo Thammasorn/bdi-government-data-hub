@@ -51,15 +51,21 @@ async function seedSystemUser() {
 }
 
 async function seedBdiOrganization() {
+  const bdiNames = {
+    nameTh: "สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)",
+    nameEn: "Big Data Institute (Public Organization)",
+  };
   await prisma.organization.upsert({
     where: { id: BDI_ORGANIZATION_ID },
-    update: {},
+    // ชื่อองค์กรเป็นค่าที่ไปโผล่บนเอกสารที่ลงนาม การ seed ซ้ำจึงต้องแก้ชื่อของแถวเดิมด้วย
+    // ไม่ใช่ปล่อยผ่านเหมือนตอนที่ update เป็นอ็อบเจ็กต์ว่าง มิฉะนั้นฐานข้อมูลที่ตั้งไว้ก่อน
+    // การเปลี่ยนชื่อ (2026-09-05) จะค้างชื่อเก่าไว้ตลอด
+    update: bdiNames,
     create: {
       id: BDI_ORGANIZATION_ID,
       organizationCode: BDI_ORGANIZATION_CODE,
       organizationType: "PUBLIC_ORGANIZATION",
-      nameTh: "สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)",
-      nameEn: "Big Data Institute",
+      ...bdiNames,
       status: OrganizationStatus.ACTIVE,
       activatedAt: new Date(),
       activatedBy: SYSTEM_USER_ID,

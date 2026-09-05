@@ -18,7 +18,7 @@ import type { SessionUser } from "@/components/SessionProvider";
 /**
  * เข้าสู่ระบบสองทาง ตาม "Login Step" ของสเปก
  *   1. รหัสผ่าน + OTP ทางอีเมล  (สองขั้น — /login แล้ว /login/verify-otp)
- *   2. ThaiD                    (จับคู่บัญชีด้วยเลขประจำตัวประชาชน)
+ *   2. ThaID                    (จับคู่บัญชีด้วยเลขประจำตัวประชาชน)
  */
 export default function LoginPage() {
   const [step, setStep] = useState<"credentials" | "otp">("credentials");
@@ -66,7 +66,7 @@ function CredentialsStep({
   return (
     <AuthLayout
       title="เข้าสู่ระบบ"
-      description="ใช้อีเมลที่ได้รับคำเชิญจากสถาบันข้อมูลขนาดใหญ่"
+      description="ใช้อีเมลที่ได้รับคำเชิญจากสถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)"
       back={{ href: "/", label: "กลับไปหน้าแรก" }}
       footer={
         <div className="flex flex-col gap-2">
@@ -112,9 +112,9 @@ function CredentialsStep({
         <span className="h-px flex-1 bg-line" />
       </div>
 
-      <ThaidButton purpose="login" variant="secondary" label="เข้าสู่ระบบด้วย ThaiD" />
+      <ThaidButton purpose="login" variant="secondary" label="เข้าสู่ระบบด้วย ThaID" />
       <p className="mt-2.5 text-center text-[13px] text-ink-muted">
-        ใช้ได้กับบัญชีที่เปิดใช้งานด้วย ThaiD แล้ว
+        ใช้ได้กับบัญชีที่เปิดใช้งานด้วย ThaID แล้ว
       </p>
     </AuthLayout>
   );

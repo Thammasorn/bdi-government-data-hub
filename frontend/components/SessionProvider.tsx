@@ -92,6 +92,17 @@ function announceIdentity(user: SessionUser | null) {
   }
 }
 
+/**
+ * ประกาศว่าเบราว์เซอร์นี้ไม่มีใครล็อกอินแล้ว โดยไม่ต้องแตะ state ของแท็บตัวเอง
+ *
+ * ปกติการประกาศเป็นหน้าที่ของ effect ข้างล่างซึ่งเฝ้าดู `user` อยู่ แต่ปุ่มออกจากระบบ
+ * เลือกโหลดหน้าใหม่ทั้งหน้าแทนการ setUser(null) (เหตุผลอยู่ที่ AppShell) — เมื่อไม่มี
+ * state เปลี่ยน ก็ไม่มี effect ไหนทำงาน แท็บอื่นจึงต้องได้ยินจากตรงนี้แทน
+ */
+export function announceSignOut() {
+  announceIdentity(null);
+}
+
 function parseIdentity(raw: string | null): AnnouncedIdentity | null {
   if (!raw) return null;
   try {
