@@ -710,7 +710,9 @@ navy `#192768`, coral `#E5775A`. The same values are duplicated as constants in
 
 The logo is the real artwork from `assets/theme_ci_design/LOGO/`, not a redrawing. Every
 surface uses the square lockup with the organisation name under the mark
-(`1x/sqr-logo-normal-with-label.png`, and `-for-dark-bg-` on navy): the web copies both files
+(`1x/sqr-logo-normal-with-label.png`, and `-white-` on the dark side of the auth page — not
+`-for-dark-bg-`, which is coral and vanishes into the coral end of `bg-brand-gradient`): the web
+copies both files
 next to `components/brand/Logo.tsx` and static-imports them through `next/image`, and the email
 header attaches the same PNG and references it by `cid:` because mail clients block remote
 images. `docs/02-ui-spec.md` §1.6 maps each surface to the source file it came from — copy from

@@ -125,15 +125,20 @@ line-height เนื้อความไทย **1.7** (สูงกว่า�
 
 | ที่ใช้ | มาจาก | รูปแบบ |
 | --- | --- | --- |
-| เว็บ (`frontend/components/brand/Logo.tsx`) | `1x/sqr-logo-normal-with-label.png` และ `1x/sqr-logo-for-dark-bg-with-label.png` | PNG คัดลอกมาไว้ข้างคอมโพเนนต์ แล้ว `import` ผ่าน `next/image` |
+| เว็บ (`frontend/components/brand/Logo.tsx`) | `1x/sqr-logo-normal-with-label.png` และ `1x/sqr-logo-white-with-label.png` | PNG คัดลอกมาไว้ข้างคอมโพเนนต์ แล้ว `import` ผ่าน `next/image` |
 | favicon (`frontend/app/icon.svg`, `apple-icon.png`) | `sqr-logo-for-dark-bg.svg` | เครื่องหมายบนพื้นกรมท่า |
 | PDF (`backend/src/assets/brand/bdi-mark.png`) | `3x/sqr-logo-normal@3x.png` | PNG ครอปขอบ — PDFKit ฝัง SVG ไม่ได้ |
 | อีเมล (`backend/src/assets/brand/bdi-logo.png`) | `1x/sqr-logo-normal-with-label.png` | PNG แนบไปกับอีเมลแล้วอ้างด้วย `cid:` |
 
 **โลโก้ทรงจัตุรัสสูงกว่าแบบแนวนอนของเดิมมาก** สัดส่วนไฟล์คือ 403×293 บรรทัด
 "BIG DATA INSTITUTE" กินความสูงราวหนึ่งในสิบ ความสูงตั้งต้นในเว็บจึงเป็น `h-12` (48px)
-ไม่ใช่ `h-7` — เล็กกว่านี้ชื่อสถาบันจะอ่านไม่ออก ส่วนพื้นเข้มต้องสลับไปใช้ไฟล์
-`-for-dark-bg-` ไม่ใช่ใส่ฟิลเตอร์ทับ เพราะ CI ให้เวอร์ชันนั้นมาแล้ว
+ไม่ใช่ `h-7` — เล็กกว่านี้ชื่อสถาบันจะอ่านไม่ออก ส่วนพื้นเข้มต้องสลับไฟล์ ไม่ใช่ใส่ฟิลเตอร์ทับ
+เพราะ CI ให้เวอร์ชันสำหรับพื้นเข้มมาแล้ว
+
+**พื้นเข้มในเว็บใช้ `-white-` ไม่ใช่ `-for-dark-bg-`** ทั้งที่ชื่อหลังฟังดูตรงกว่า — เพราะที่เดียว
+ที่ใช้มันคือ aside ของหน้า auth ซึ่งพื้นเป็น `bg-brand-gradient` ไล่จากคอรัลไปกรมท่า และ
+`-for-dark-bg-` เองก็เป็นโทนคอรัล โลโก้จึงไปตกบนคอรัลพอดีจนแทบมองไม่เห็น เวอร์ชันขาว
+อ่านออกตลอดช่วงไล่สี ถ้าวันหนึ่งมีพื้นกรมท่าล้วน `-for-dark-bg-` ก็กลับมาใช้ได้
 
 ### 1.7 Support element
 
