@@ -184,7 +184,7 @@ export const fullName = (
 
 export const ATTACHMENT_LABELS: Record<Attachment["kind"], string> = {
   AUTHORIZED_REPRESENTATIVE_APPOINTMENT_ORDER: "คำสั่งแต่งตั้งผู้มีอำนาจกระทำการแทน",
-  POWER_OF_ATTORNEY: "คำสั่งมอบอำนาจ",
+  POWER_OF_ATTORNEY: "คำสั่ง/หนังสือมอบอำนาจ",
   GENERATED_FORM: "แบบฟอร์มที่ระบบสร้าง",
 };
 

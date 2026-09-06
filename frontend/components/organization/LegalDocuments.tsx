@@ -67,6 +67,7 @@ export function LegalDocumentsCard({
   reloadKey = 0,
   error = null,
   onRetry,
+  regenerateLabel = "ตรวจสอบและสร้าง PDF",
 }: {
   documents: LegalDocument[] | null;
   /** ฉบับที่หน่วยงานระบุว่าไม่เกี่ยวข้อง — แสดงเป็นบรรทัดบอก ไม่ใช่แท็บให้เปิดอ่าน */
@@ -77,6 +78,11 @@ export function LegalDocumentsCard({
   /** ข้อความจาก useLegalDocuments เมื่อโหลดไม่สำเร็จ */
   error?: string | null;
   onRetry?: () => void;
+  /**
+   * ชื่อปุ่มที่พาไปสร้างเอกสารใหม่ — การ์ดนี้ใช้ร่วมกันทั้งเส้นทางหน่วยงานและชุดข้อมูล
+   * ซึ่งตั้งชื่อปุ่มไม่เหมือนกัน บอกให้กดปุ่มที่ไม่มีอยู่บนหน้าจอคือทางตันสำหรับผู้ใช้
+   */
+  regenerateLabel?: string;
 }) {
   const [active, setActive] = useState(0);
 
@@ -200,7 +206,7 @@ export function LegalDocumentsCard({
           />
         ) : (
           <p className="rounded-xl bg-warning-bg p-5 text-sm text-warning">
-            ยังไม่ได้สร้างเอกสารฉบับนี้ กรุณากลับไปกด &ldquo;ตรวจสอบและสร้าง PDF&rdquo; อีกครั้ง
+            ยังไม่ได้สร้างเอกสารฉบับนี้ กรุณากลับไปกด &ldquo;{regenerateLabel}&rdquo; อีกครั้ง
           </p>
         )}
       </div>

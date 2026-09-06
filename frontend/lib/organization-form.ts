@@ -207,7 +207,13 @@ export function validateOrganizationField(
       return isValidThaiPhone(trimmed) ? null : PHONE_MESSAGE;
     }
 
+    /**
+     * "ระบุ" ไม่ใช่ "เลือก" — คำนำหน้าของผู้มีอำนาจกระทำการแทนเหลือ นาย/นาง/นางสาว/อื่น ๆ
+     * เลือก "อื่น ๆ" แล้วจะมีช่องให้พิมพ์เอง ข้อความเดียวกันนี้จึงต้องอ่านรู้เรื่องทั้งใต้
+     * dropdown และใต้ช่องพิมพ์ (คู่ของข้อความนี้อยู่ใน submitSchema ฝั่ง API)
+     */
     case "signatoryPrefix":
+      return required(value, "กรุณาระบุคำนำหน้า");
     case "contactPrefix":
       return required(value, "กรุณาเลือกคำนำหน้า");
     case "signatoryFirstName":
