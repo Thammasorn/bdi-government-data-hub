@@ -425,6 +425,57 @@ function providedOnly<T extends object>(value: T): Partial<T> {
   ) as Partial<T>;
 }
 
+type ContactAccount = {
+  prefixTh: string | null;
+  firstnameTh: string | null;
+  lastnameTh: string | null;
+  email: string;
+  phoneNumber: string | null;
+};
+
+const CONTACT_ACCOUNT_SELECT = {
+  prefixTh: true,
+  firstnameTh: true,
+  lastnameTh: true,
+  email: true,
+  phoneNumber: true,
+} as const;
+
+/**
+ * ตัวตนของ "ผู้กรอกข้อมูล" (ส่วนที่ 3) เป็นของบัญชีที่เปิดคำขอใบนี้ ไม่ใช่ของฟอร์ม
+ *
+ * ผู้กรอกคือคนที่ล็อกอินอยู่ ระบบรู้จักเขาอยู่แล้ว — คำนำหน้า ชื่อ นามสกุลผ่าน ThaID
+ * และคำเชิญ ส่วนอีเมลคือตัวบัญชีเอง ให้กรอกใหม่ในฟอร์มมีแต่ทางเสีย: ได้ชื่อที่ไม่ตรงกับ
+ * บัญชีที่ล็อกอินอยู่ ทั้งที่ชื่อนี้ถูกพิมพ์ลงเอกสารที่ลงนาม (การ์ด "แก้แบบฟอร์ม org
+ * registration" หัวข้อ *แก้ไขเพิ่มเติม*)
+ *
+ * คืนเฉพาะช่องที่บัญชี**มีค่าจริง** — แบบเดียวกับ `lockedProfile()` ใน `routes/auth.ts`
+ * ที่หน้า `/activate` ใช้ ThaID ไม่ส่ง claim `title` มา (`docs/07` §4.1) บัญชีที่เจ้าหน้าที่
+ * ไม่ได้กรอกคำนำหน้าให้ตอนเชิญจึงยังไม่มีค่านี้ ถ้าล็อกตายตัวทั้งชุด คนกลุ่มนั้นจะกรอก
+ * ฟอร์มไม่จบเลย เพราะ `submitSchema` บังคับ `contactPrefix`
+ */
+function contactFromAccount(account: ContactAccount | null) {
+  const take = (value: string | null) => {
+    const trimmed = value?.trim();
+    return trimmed ? trimmed : undefined;
+  };
+  return providedOnly({
+    userPrefixTh: take(account?.prefixTh ?? null),
+    userFirstnameTh: take(account?.firstnameTh ?? null),
+    userLastnameTh: take(account?.lastnameTh ?? null),
+    userEmail: take(account?.email ?? null),
+    userPhoneNumber: take(account?.phoneNumber ?? null),
+  });
+}
+
+/** บัญชีของคนที่เปิดคำขอใบนี้ — ผู้กรอกข้อมูลคือคนนั้นเสมอ */
+function contactAccount(request: { createdBy: string }) {
+  return prisma.userAccount.findUnique({
+    where: { id: request.createdBy },
+    select: CONTACT_ACCOUNT_SELECT,
+  });
+}
+
 /**
  * รหัสหน่วยงานเป็นของระบบ ไม่ใช่ของผู้กรอก — คืนข้อความผิดพลาดถ้าฟอร์มพยายามเปลี่ยน
  *
@@ -515,6 +566,7 @@ function organizationNameEdit(
  */
 async function toApiShape(request: RequestRow) {
   const systemName = systemOrganizationName(request);
+  const contact = contactFromAccount(await contactAccount(request));
   const names = await resolveAddressNames(prisma, {
     provinceCode: request.organizationProvinceCode,
     districtCode: request.organizationDistrictCode,
@@ -563,14 +615,33 @@ async function toApiShape(request: RequestRow) {
     signatoryNationalId: request.approverCid,
     signatoryPhone: request.approverPhoneNumber,
 
-    contactPrefix: request.userPrefixTh,
-    contactFirstName: request.userFirstnameTh,
-    contactLastName: request.userLastnameTh,
+    /**
+     * ตัวตนของผู้กรอก: **บัญชีมาก่อน snapshot** เหมือนที่ชื่อหน่วยงานให้ master มาก่อน
+     *
+     * snapshot ที่ค้างอยู่เป็นได้แค่ค่าที่เก่ากว่า (ร่างที่เปิดไว้ก่อนที่ช่องเหล่านี้จะถูกล็อก
+     * หรือเจ้าหน้าที่แก้ชื่อบนบัญชีให้หลังจากเปิดร่างแล้ว) การให้ค่าเก่าชนะเท่ากับพิมพ์ชื่อ
+     * ผู้กรอกผิดลงเอกสาร A0 — `generate-form` กับ `submit` อ่านจากรูปนี้ทั้งคู่
+     */
+    contactPrefix: contact.userPrefixTh ?? request.userPrefixTh,
+    contactFirstName: contact.userFirstnameTh ?? request.userFirstnameTh,
+    contactLastName: contact.userLastnameTh ?? request.userLastnameTh,
     contactPosition: request.userPositionTh,
     contactDepartment: request.userDepartmentTh,
     contactNationalId: request.userCid,
-    contactEmail: request.userEmail,
-    contactPhone: request.userPhoneNumber,
+    contactEmail: contact.userEmail ?? request.userEmail,
+    contactPhone: contact.userPhoneNumber ?? request.userPhoneNumber,
+    /**
+     * ช่องไหนในส่วนที่ 3 เป็นแบบอ่านอย่างเดียว — ตัดสินที่นี่ที่เดียว หน้าเว็บแค่แสดงตาม
+     * (แบบเดียวกับ `profileLocked` ของ `GET /api/auth/invitation`) ช่องที่บัญชียังไม่มีค่า
+     * ยังกรอกได้และยังบังคับกรอก ไม่งั้นเจ้าของบัญชีที่ไม่มีคำนำหน้าจะนำส่งคำขอไม่ได้เลย
+     */
+    contactLocked: {
+      prefix: contact.userPrefixTh !== undefined,
+      firstName: contact.userFirstnameTh !== undefined,
+      lastName: contact.userLastnameTh !== undefined,
+      email: contact.userEmail !== undefined,
+      phone: contact.userPhoneNumber !== undefined,
+    },
 
     submittedAt: request.submittedAt,
     approvedAt: request.approvedAt,
@@ -984,15 +1055,15 @@ organizationRouter.post("/", async (req, res) => {
         organizationId: organization.id,
         status: RequestStatus.DRAFT,
         ...prefillFromOrganization(organization),
-        // ผู้กรอกคือผู้ประสานงานโดยปริยาย เอาจากบัญชีที่ ThaID ยืนยันมาแล้ว ผู้ใช้แก้ได้
-        userPrefixTh: account?.prefixTh ?? undefined,
-        userFirstnameTh: account?.firstnameTh ?? undefined,
-        userLastnameTh: account?.lastnameTh ?? undefined,
-        userEmail: account?.email,
-        userPhoneNumber: account?.phoneNumber ?? undefined,
         userCid: account?.cid ?? undefined,
         // ค่าที่ส่งมากับ body (ถ้ามี) ชนะค่าที่คัดลอกมา
         ...providedOnly(snapshot),
+        /**
+         * ...ยกเว้นตัวตนของผู้กรอก ซึ่งเป็นของบัญชีที่ ThaID ยืนยันมาแล้ว จึงมาทีหลังสุด
+         * เพื่อทับค่าจาก body — นี่คือจุดที่ "ห้ามผู้ใช้แก้" ถูกบังคับ ไม่ใช่ `disabled`
+         * บนหน้าเว็บ ซึ่งยิง API ตรงข้ามได้เสมอ
+         */
+        ...contactFromAccount(account),
         createdBy: session.sub,
         updatedBy: session.sub,
       },
@@ -1022,6 +1093,15 @@ organizationRouter.post("/", async (req, res) => {
     return;
   }
 
+  /**
+   * หน่วยงานที่ผู้กรอกเปิดเองก็ต้องได้ส่วนที่ 3 มาจากบัญชีเหมือนกัน — เดิมสาขานี้ไม่เติมอะไร
+   * เลย ผู้กรอกจึงเจอช่องอีเมล/เบอร์โทรที่ปิดไว้และว่างเปล่า แก้เองก็ไม่ได้ นำส่งก็ไม่ผ่าน
+   */
+  const ownerAccount = await prisma.userAccount.findUnique({
+    where: { id: session.sub },
+    select: CONTACT_ACCOUNT_SELECT,
+  });
+
   /** คนที่เสีย role ไปเพราะ assignRole ด้านล่าง — ประกาศหลัง transaction commit */
   let replacedHolders: RevokedAssignment[] = [];
 
@@ -1045,6 +1125,7 @@ organizationRouter.post("/", async (req, res) => {
         organizationId: organization.id,
         status: RequestStatus.DRAFT,
         ...snapshot,
+        ...contactFromAccount(ownerAccount),
         organizationCode: organization.organizationCode,
         createdBy: session.sub,
         updatedBy: session.sub,
@@ -1300,7 +1381,18 @@ organizationRouter.patch("/:id", async (req, res) => {
     return;
   }
 
-  const snapshot = await toRequestData(parsed.data);
+  /**
+   * ตัวตนของผู้กรอกมาทับค่าจาก body เสมอ — ทิ้งค่าที่ส่งมาเงียบ ๆ ไม่ตอบ error
+   *
+   * เหตุผลเดียวกับ `POST /api/auth/activate`: แท็บที่เปิดค้างไว้ก่อนงานนี้ยังส่งครบทุกช่อง
+   * มาตามเดิม และค่าที่มันส่งก็เป็นค่าเดียวกับที่ถูกล็อกอยู่ ตอบ 400 จึงได้แต่ทำให้ฟอร์ม
+   * ที่ไม่ได้ทำอะไรผิดบันทึกไม่ได้ ผลข้างเคียงที่ต้องการอีกอย่างคือ snapshot ที่ค้างค่าเก่า
+   * อยู่ถูกเขียนให้ตรงกับบัญชีตั้งแต่การบันทึกร่างครั้งแรก
+   */
+  const snapshot = {
+    ...(await toRequestData(parsed.data)),
+    ...contactFromAccount(await contactAccount(request)),
+  };
 
   const updated = await prisma.$transaction(async (tx) => {
     const next = await tx.organizationRegistrationRequest.update({
