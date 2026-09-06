@@ -103,6 +103,7 @@ export default function PreviewPage() {
         description={org.name}
         error={documentsError}
         onRetry={reloadDocuments}
+        regenerateLabel="ตรวจสอบข้อมูล"
       />
 
       <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">

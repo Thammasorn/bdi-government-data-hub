@@ -306,7 +306,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
             <div>
               <p className="font-medium text-navy-800">ฉบับร่าง — ยังไม่ได้นำส่ง</p>
               <p className="mt-0.5 text-sm text-ink-muted">
-                กรอกให้ครบแล้วกด &ldquo;ตรวจสอบและสร้างแบบฟอร์ม&rdquo; เพื่อนำส่งให้ BDI ตรวจสอบ
+                กรอกให้ครบแล้วกด &ldquo;ตรวจสอบข้อมูล&rdquo; เพื่อนำส่งให้ BDI ตรวจสอบ
               </p>
             </div>
             <Button className="shrink-0" onClick={() => router.push(`/organizations/${org.id}/edit`)}>
@@ -435,6 +435,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
             reloadKey={documentRound}
             error={legalDocumentsError}
             onRetry={reloadLegalDocuments}
+            regenerateLabel="ตรวจสอบข้อมูล"
           />
         ) : null}
 

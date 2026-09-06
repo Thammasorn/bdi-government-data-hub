@@ -243,7 +243,12 @@ const submitSchema = z
   postalCode: z.string().trim().regex(/^\d{5}$/, "รหัสไปรษณีย์ต้องเป็นตัวเลข 5 หลัก"),
   email: emailSchema,
 
-  signatoryPrefix: z.string().trim().min(1, "กรุณาเลือกคำนำหน้า"),
+  /**
+   * "ระบุ" ไม่ใช่ "เลือก" — ตัวเลือกของผู้มีอำนาจกระทำการแทนเหลือ นาย/นาง/นางสาว/อื่น ๆ
+   * และถ้าเป็นอื่น ๆ ผู้ใช้พิมพ์เอง ข้อความจึงต้องอ่านรู้เรื่องทั้งใต้ dropdown และใต้ช่องพิมพ์
+   * (คู่ของข้อความนี้อยู่ที่ frontend/lib/organization-form.ts — แก้พร้อมกันเสมอ)
+   */
+  signatoryPrefix: z.string().trim().min(1, "กรุณาระบุคำนำหน้า"),
   signatoryFirstName: z.string().trim().min(1, "กรุณากรอกชื่อ"),
   signatoryLastName: z.string().trim().min(1, "กรุณากรอกนามสกุล"),
   signatoryPosition: z.string().trim().min(1, "กรุณากรอกตำแหน่ง"),
@@ -442,10 +447,71 @@ function organizationCodeEdit(
 }
 
 /**
+ * ชื่อหน่วยงานตามที่ระบบมีอยู่ — null แปลว่าระบบยังไม่มีชื่อจริง ฟอร์มจึงเป็นคนกรอก
+ *
+ * ชื่อของหน่วยงานที่ BDI เปิดไว้ให้ล่วงหน้าเป็นข้อมูลของระบบ ไม่ใช่ของผู้กรอก — ฟอร์ม
+ * ต้องแสดงชื่อนั้นและแก้ไม่ได้ (การ์ด "แก้แบบฟอร์ม org registration" ข้อ 1) มีสองกรณีที่
+ * ยัง "ไม่มีชื่อจากระบบ" และผู้กรอกต้องเป็นคนตั้งเอง:
+ *
+ *   1. ผู้กรอกเป็นคนเปิดแถวหน่วยงานนั้นเอง (คำเชิญที่ไม่ผูกหน่วยงาน → POST /) — แถวนั้น
+ *      `created_by` เป็นตัวผู้กรอก ส่วนหน่วยงานที่มาจากฝั่ง admin เป็น SYSTEM_USER_ID
+ *   2. ชื่อยังเป็นชื่อชั่วคราวที่ระบบตั้งให้เอง (`หน่วยงานใหม่`)
+ *
+ * ทั้งสองกรณีตอบ null เหมือนกัน และเป็นเงื่อนไขเดียวกับที่ PATCH ใช้ตัดสินว่าจะให้ชื่อ
+ * บนแถว master ตามฟอร์มไปด้วยหรือไม่ — ถ้าสองที่นี้ไม่ตรงกัน ช่องจะเปลี่ยนเป็นอ่าน
+ * อย่างเดียวกลางคันหลังผู้ใช้กดบันทึกร่างครั้งแรก แล้วพิมพ์ผิดไว้ก็แก้ไม่ได้อีกเลย
+ */
+function systemOrganizationName(request: {
+  createdBy: string;
+  organization: { createdBy: string; nameTh: string };
+}): string | null {
+  if (nameOwnedByForm(request)) return null;
+  return request.organization.nameTh === PLACEHOLDER_ORGANIZATION_NAME
+    ? null
+    : request.organization.nameTh;
+}
+
+/**
+ * ฟอร์มเป็นเจ้าของชื่อหน่วยงานหรือไม่ — จริงเมื่อผู้สร้างคำขอเป็นคนเปิดแถวหน่วยงานนั้นเอง
+ *
+ * เป็นเงื่อนไข**ที่ไม่มีวันเปลี่ยน**ระหว่างที่ร่างถูกแก้ ต่างจาก "ชื่อบนแถว master ยังเป็น
+ * placeholder อยู่ไหม" ซึ่งเปลี่ยนทันทีที่บันทึกร่างครั้งแรก ถ้าใช้อย่างหลังตัดสิน ช่องชื่อ
+ * ของผู้ใช้ที่ได้คำเชิญแบบไม่ระบุหน่วยงาน (หน่วยงานเปล่าที่ระบบสร้างให้) จะกลายเป็นอ่าน
+ * อย่างเดียวหลังกดบันทึกร่างครั้งแรก แล้วพิมพ์ผิดไว้ก็แก้ไม่ได้อีกเลย — เจอตอนทดสอบผ่านหน้าเว็บ
+ *
+ * ผลอีกด้านคือหน่วยงานเปล่าแบบนั้นจะยังชื่อ "หน่วยงานใหม่" บนแถว master จนกว่าคำขอจะได้รับ
+ * อนุมัติขั้นสุดท้าย (ตอนนั้น snapshot จะถูกเขียนทับลง master อยู่แล้ว) — ตารางของเจ้าหน้าที่
+ * อ่านชื่อจาก snapshot ก่อนเสมอ จึงไม่ได้รับผลกระทบ
+ */
+function nameOwnedByForm(request: {
+  createdBy: string;
+  organization: { createdBy: string };
+}): boolean {
+  return request.organization.createdBy === request.createdBy;
+}
+
+/**
+ * ชื่อหน่วยงานที่ระบบมีอยู่แล้วแก้ผ่านฟอร์มไม่ได้ — คืนข้อความผิดพลาดถ้าฟอร์มพยายามเปลี่ยน
+ *
+ * เหตุผลและวิธีตอบเหมือน organizationCodeEdit() ทุกประการ: ค่าที่ส่งมาตรงกับของเดิม
+ * ผ่านได้ตามปกติ (ฟอร์มจึงยังส่งทั้งชุดได้) ค่าที่ต่างออกไปตอบ 400 พร้อมบอกว่าทำไม
+ * แทนที่จะรับแล้วทิ้งเงียบ ๆ
+ */
+function organizationNameEdit(
+  input: { name?: string },
+  current: string | null,
+): string | null {
+  if (!input.name || !current) return null;
+  if (input.name === current) return null;
+  return "ชื่อหน่วยงานแก้ไขไม่ได้ — ระบบดึงจากข้อมูลหน่วยงานที่ลงทะเบียนไว้ หากไม่ถูกต้องกรุณาแจ้งเจ้าหน้าที่ BDI";
+}
+
+/**
  * แปลงกลับเป็นรูปที่ frontend และ zod ชุด submit เข้าใจ
  * คงชื่อฟิลด์เดิมไว้เพื่อไม่ให้ต้องแก้ฟอร์มทั้งหน้า
  */
 async function toApiShape(request: RequestRow) {
+  const systemName = systemOrganizationName(request);
   const names = await resolveAddressNames(prisma, {
     provinceCode: request.organizationProvinceCode,
     districtCode: request.organizationDistrictCode,
@@ -461,7 +527,16 @@ async function toApiShape(request: RequestRow) {
     // snapshot ของคำขอมาก่อน master — ผู้ใช้แก้รหัสในฟอร์มได้ และค่าจะไปทับ master ตอนอนุมัติ
     organizationCode: request.organizationCode ?? request.organization.organizationCode,
 
-    name: request.organizationNameTh,
+    /**
+     * ชื่อหน่วยงานสลับกันกับรหัส: **master มาก่อน snapshot** เมื่อระบบเป็นเจ้าของชื่อ
+     *
+     * ฟอร์มแก้ชื่อไม่ได้แล้ว snapshot ที่ค้างอยู่จึงเป็นได้แค่ค่าที่เก่ากว่า (เช่น admin
+     * แก้ชื่อหน่วยงานให้หลังจากเปิดร่างไว้แล้ว) การให้ค่าที่เก่ากว่าชนะเท่ากับพิมพ์ชื่อผิด
+     * ลงเอกสาร A0 ที่ผู้มีอำนาจกำลังจะลงนาม
+     */
+    name: systemName ?? request.organizationNameTh,
+    /** ช่องชื่อหน่วยงานเป็นแบบอ่านอย่างเดียวหรือไม่ — ฟอร์มใช้ตัดสินว่าจะส่ง `name` กลับมาไหม */
+    nameLocked: systemName !== null,
     nameEn: request.organizationNameEn,
     organizationType: request.organizationType,
     addressLine: request.organizationAddressLine,
@@ -888,6 +963,15 @@ organizationRouter.post("/", async (req, res) => {
       return;
     }
 
+    const nameEdit = organizationNameEdit(
+      parsed.data,
+      systemOrganizationName({ createdBy: session.sub, organization }),
+    );
+    if (nameEdit) {
+      res.status(400).json({ error: "validation", fields: { name: nameEdit } });
+      return;
+    }
+
     const account = await prisma.userAccount.findUnique({ where: { id: session.sub } });
     const prefilled = await prisma.organizationRegistrationRequest.create({
       data: {
@@ -1193,6 +1277,13 @@ organizationRouter.patch("/:id", async (req, res) => {
     return;
   }
 
+  const systemName = systemOrganizationName(request);
+  const nameEdit = organizationNameEdit(parsed.data, systemName);
+  if (nameEdit) {
+    res.status(400).json({ error: "validation", fields: { name: nameEdit } });
+    return;
+  }
+
   const snapshot = await toRequestData(parsed.data);
 
   const updated = await prisma.$transaction(async (tx) => {
@@ -1201,8 +1292,12 @@ organizationRouter.patch("/:id", async (req, res) => {
       data: { ...snapshot, updatedBy: session.sub },
       include: { organization: true },
     });
-    // ชื่อหน่วยงานบน master ตามคำขอไปด้วย ตราบใดที่ยังไม่อนุมัติ
-    if (parsed.data.name) {
+    /**
+     * ชื่อหน่วยงานบน master ตามคำขอไปด้วย ตราบใดที่ยังไม่อนุมัติ — เฉพาะหน่วยงานที่ผู้กรอก
+     * เปิดเอง ไม่ใช่แค่ "ยังไม่ถูกล็อก" เพราะการเขียนทับหน่วยงานที่ระบบเปิดให้จะทำให้
+     * systemOrganizationName() เปลี่ยนคำตอบ แล้วช่องชื่อล็อกตัวเองกลางคัน (ดู nameOwnedByForm)
+     */
+    if (parsed.data.name && nameOwnedByForm(request)) {
       await tx.organization.update({
         where: { id: request.organizationId },
         data: {
@@ -1687,7 +1782,7 @@ organizationRouter.post("/:id/submit", async (req, res) => {
     AttachmentType.GENERATED_FORM,
   );
   if (!form) {
-    res.status(400).json({ error: "no_form", message: "กรุณาสร้างและตรวจสอบ PDF ก่อนนำส่ง" });
+    res.status(400).json({ error: "no_form", message: "กรุณากดตรวจสอบข้อมูลเพื่อสร้างเอกสารก่อนนำส่ง" });
     return;
   }
 
