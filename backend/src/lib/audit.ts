@@ -20,12 +20,33 @@ import {
 
 import { prisma } from "../db.js";
 import { correlationId, currentContext, sourceComponent } from "./context.js";
+import { NAME_FIELDS, fullNameTh } from "./person-name.js";
 
 /** action code ตามตัวอย่างใน sheet `audit.audit_event` */
 export const AuditAction = {
   USER_ACCOUNT_CREATED: "USER_ACCOUNT_CREATED",
   USER_ACCOUNT_ACTIVATED: "USER_ACCOUNT_ACTIVATED",
   USER_ACCOUNT_DEACTIVATED: "USER_ACCOUNT_DEACTIVATED",
+
+  /**
+   * การจัดการบัญชีที่เปิดใช้งานแล้ว — เพิ่มจากรายการใน sheet พร้อม `/api/admin/users`
+   *
+   * `USER_ACCOUNT_DEACTIVATED` มีอยู่ก่อนแล้วแต่ไม่มีใครเขียน เพราะการระงับบัญชีเคยทำ
+   * ผ่านฐานข้อมูลตรง ๆ (คอมเมนต์ใน `middleware/auth.ts` เขียนไว้เอง) สี่ตัวนี้เติมให้ครบวง
+   * เพราะทุกคำสั่งที่ตัดสิทธิ์คนต้องตอบได้ว่าใครสั่ง เมื่อไร ด้วยเหตุผลอะไร
+   */
+  USER_ACCOUNT_SUSPENDED: "USER_ACCOUNT_SUSPENDED",
+  USER_ACCOUNT_REINSTATED: "USER_ACCOUNT_REINSTATED",
+  USER_ACCOUNT_REACTIVATED: "USER_ACCOUNT_REACTIVATED",
+  USER_ACCOUNT_UPDATED: "USER_ACCOUNT_UPDATED",
+  /**
+   * ปล่อยอีเมลของบัญชีให้กลับไปใช้ใหม่ได้ (กล่องจดหมายกลางเปลี่ยนมือ)
+   *
+   * `before` เก็บอีเมลเดิมไว้ เพราะหลังจากนี้แถวนั้นไม่มีอีเมลเดิมอีกแล้ว —
+   * เหตุผลเดียวกับที่ `INVITATION_DELETED` ต้องเก็บอีเมลกับเลขบัตรไว้ในตัวเอง
+   * **เลขบัตรไม่มีทางถูกปล่อย** เลขบัตรคือคน ไม่ใช่ตำแหน่ง
+   */
+  USER_IDENTITY_RELEASED: "USER_IDENTITY_RELEASED",
 
   ACTIVATION_KEY_ISSUED: "ACTIVATION_KEY_ISSUED",
   ACTIVATION_KEY_USED: "ACTIVATION_KEY_USED",
@@ -40,6 +61,19 @@ export const AuditAction = {
    * และ role ของใบที่ลบไว้ด้วยเหตุนี้
    */
   INVITATION_DELETED: "INVITATION_DELETED",
+
+  /**
+   * คำเชิญผู้มีอำนาจกระทำการแทนถูกยกเลิกพร้อมกับผลการตรวจสอบของเจ้าหน้าที่ BDI
+   *
+   * แยกจาก `INVITATION_DELETED` เพราะคนละคนสั่งและคนละเหตุ: อันนั้นคือผู้ดูแลระบบลบ
+   * คำเชิญที่ออกผิด ส่วนอันนี้คือเจ้าหน้าที่ BDI ถอนผลการตรวจสอบของตัวเองเพื่อปลดคำขอ
+   * ที่ค้างอยู่กับคนที่เข้าระบบไม่ได้ และมันเกิดพร้อมกับ `REQUEST_RETURNED` เสมอ
+   *
+   * เก็บอีเมล เลขบัตร และชื่อของผู้ถูกเชิญไว้ในตัวเอง เพราะบัญชี PENDING ใบนั้นมัก
+   * ถูกลบทิ้งไปด้วย (เพื่อคืนอีเมลกับเลขบัตรให้กรอกใหม่) แถวนี้จึงเป็นหลักฐานเดียว
+   * ที่เหลือว่าเคยมีคำเชิญไปหาที่อยู่ไหน — จำเป็นทั้งตอนสอบทานและตอนตอบเรื่อง PDPA
+   */
+  APPROVER_INVITATION_RECALLED: "APPROVER_INVITATION_RECALLED",
 
   ROLE_ASSIGNED: "ROLE_ASSIGNED",
   ROLE_REVOKED: "ROLE_REVOKED",
@@ -70,7 +104,7 @@ export const AuditAction = {
   SESSION_REVOKED: "SESSION_REVOKED",
 
   /**
-   * ยืนยันตัวตนกับ ThaiD — เพิ่มจากรายการตัวอย่างใน sheet
+   * ยืนยันตัวตนกับ ThaID — เพิ่มจากรายการตัวอย่างใน sheet
    * §2.4 สั่งให้ "บันทึก Log การทำรายการ" ตอนเลขบัตรไม่ตรงโดยเฉพาะ ซึ่งไม่มี action
    * เดิมอันไหนตรงความหมาย (LOGIN_FAILED คนละเรื่อง — ยังไม่มีบัญชีให้ล็อกอินด้วยซ้ำ)
    */
@@ -151,7 +185,7 @@ export async function logAudit(input: AuditInput): Promise<void> {
       const actor = await prisma.userAccount.findUnique({
         where: { id: actorId },
         select: {
-          displayName: true,
+          ...NAME_FIELDS,
           email: true,
           roleAssignments: {
             where: { status: RoleAssignmentStatus.ACTIVE },
@@ -161,7 +195,9 @@ export async function logAudit(input: AuditInput): Promise<void> {
       });
       if (actor) {
         actorSnapshot = {
-          actor_name: actor.displayName || actor.email,
+          // audit ไม่เคยขึ้นหน้าจอ (ดู CLAUDE.md) อีเมลจึงเป็นตัวสำรองที่ดีกว่าค่าว่าง
+          // ตรงนี้ — บันทึกต้องชี้ตัวคนได้แม้บัญชีนั้นยังไม่มีชื่อไทย
+          actor_name: fullNameTh(actor) || actor.email,
           actor_roles: actor.roleAssignments.map((a) => a.role.code),
           actor_organization_id: actor.roleAssignments.find((a) => a.organizationId)?.organizationId,
         };

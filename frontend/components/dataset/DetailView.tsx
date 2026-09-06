@@ -7,6 +7,8 @@ import { useCallback, useEffect, useState } from "react";
 import { DatasetSigningDialog } from "@/components/dataset/DatasetSigningDialog";
 import { LegalDocumentsCard, useLegalDocuments } from "@/components/organization/LegalDocuments";
 import { Timeline } from "@/components/organization/Timeline";
+import { ApprovalSteps } from "@/components/review/ApprovalSteps";
+import { RequestMovedNotice } from "@/components/review/RequestMovedNotice";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader, DatasetStatusBadge } from "@/components/ui/Card";
 import { SelectField, TextAreaField } from "@/components/ui/Field";
@@ -15,7 +17,8 @@ import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
 import { useRequireAuth } from "@/lib/require-auth";
-import { taskEventLabel, formatThaiDate } from "@/lib/status";
+import { ROLE_LABELS, taskEventLabel, formatThaiDate } from "@/lib/status";
+import { describeState, movedMessage, useRequestWatch } from "@/lib/use-request-watch";
 import {
   DATA_CATEGORY_LABELS,
   DATA_CLASSIFICATION_LABELS,
@@ -40,72 +43,47 @@ import {
 } from "@/lib/types";
 
 /** สิ่งที่ผู้ใช้ปัจจุบันทำได้กับคำขอนี้ — สะท้อน decide() ใน backend/src/routes/dataset-requests.ts */
-function decideAbility(request: DatasetRequest, roles: string[], userId: string, email: string) {
+function decideAbility(request: DatasetRequest, roles: string[], userId: string) {
   const isOfficer = roles.includes("BDI_OFFICER");
   const isSpecialist = request.assignedSpecialist?.id === userId;
-  const isOrgApprover =
-    request.organization.signatoryEmail?.toLowerCase() === email.toLowerCase() ||
-    roles.includes("ORGANIZATION_APPROVER");
-
-  /**
-   * ด่าน BDI_OFFICER_REVIEW ถูกใช้สองรอบ และหน้าจอต้องพูดคนละอย่าง
-   *
-   * รอบแรกคือตรวจก่อนส่งให้หน่วยงานลงนาม รอบสองคือ "ตรวจซ้ำ" หลังลงนามแล้ว
-   * ซึ่งกดแล้วไปหาผู้อนุมัติ BDI ไม่ได้ย้อนกลับไปหาผู้มีอำนาจอีก — ทั้งสองรอบใช้
-   * task_type เดียวกัน จึงต้องดูจากว่า ORGANIZATION_APPROVAL ปิดไปแล้วหรือยัง
-   * (กติกาเดียวกับที่ backend ใช้ตัดสิน ดู lib/workflow.ts)
-   */
-  const organizationSigned = request.events.some(
-    (event) => event.taskType === "ORGANIZATION_APPROVAL" && event.result === "APPROVED",
-  );
+  // role เท่านั้น — อีเมลที่กรอกในช่องผู้มีอำนาจฯ ไม่ใช่หลักฐานของสิทธิ์ (2026-09-03)
+  const isOrgApprover = roles.includes("ORGANIZATION_APPROVER");
 
   switch (request.currentTaskType) {
+    /**
+     * ด่านเดียวของเจ้าหน้าที่ BDI — ส่งต่อแล้วไปหาผู้มีอำนาจของหน่วยงานเสมอ
+     *
+     * เคยเป็นสองรอบ (ตรวจเบื้องต้น กับ ตรวจซ้ำหลังลงนาม) ซึ่งใช้ task_type เดียวกันและ
+     * ต้องแยกด้วยประวัติ — ด่านตรวจซ้ำถูกยกเลิกเมื่อ 2026-08-30 ปุ่มจึงมีคำเดียว
+     */
+    /**
+     * ด่านเดียวที่ฝั่ง BDI มีในเส้นทางนี้ และเป็นของเจ้าหน้าที่ BDI คนเดียว
+     *
+     * ผู้เชี่ยวชาญด้านข้อมูลที่ถูกขอความเห็นอยู่ในด่านนี้ด้วย แต่ **ไม่ได้ถือด่าน** —
+     * เขาอ่านข้อมูล บันทึกความเห็น และคุยกับเจ้าหน้าที่นอกระบบ ส่วนการกดผ่านหรือส่งกลับ
+     * เป็นของเจ้าหน้าที่ BDI ตลอดเวลา ไม่ต้องรอความเห็นและไม่ต้องถอนการมอบหมายก่อน
+     * (เปลี่ยนเมื่อ 2026-08-30 — ก่อนหน้านั้นการมอบหมายพรากด่านไปจากเจ้าหน้าที่ทั้งด่าน)
+     */
     case "BDI_OFFICER_REVIEW":
       if (isOfficer) {
-        return organizationSigned
-          ? {
-              advanceLabel: "ยืนยันผลการตรวจสอบ",
-              hint: "ผู้มีอำนาจของหน่วยงานลงนามแล้ว ตรวจซ้ำแล้วยืนยันเพื่อส่งให้ผู้อนุมัติ BDI",
-              canRevise: true,
-              canAssign: false,
-              canComment: false,
-              canReject: false,
-            }
-          : {
-              advanceLabel: "ส่งต่อให้ผู้มีอำนาจของหน่วยงาน",
-              hint: "ตรวจว่าข้อมูลเพียงพอหรือไม่ มอบหมายผู้เชี่ยวชาญได้ก่อนส่งต่อ",
-              canRevise: true,
-              canAssign: true,
-              canComment: false,
-              canReject: false,
-            };
-      }
-      return null;
-
-    case "DATASET_SPECIALIST_REVIEW":
-      if (isSpecialist || roles.includes("BDI_DATASET_SPECIALIST")) {
         return {
-          advanceLabel: null,
-          hint: "คุณได้รับมอบหมายให้ตรวจชุดข้อมูลนี้ บันทึกความเห็นหรือส่งกลับให้แก้ไขได้",
+          title: "รอการพิจารณาของคุณ",
+          advanceLabel: "ผ่านการตรวจสอบ",
+          hint: "ตรวจว่าข้อมูลเพียงพอหรือไม่ ขอความเห็นผู้เชี่ยวชาญได้โดยไม่ต้องรอผล",
           canRevise: true,
-          canAssign: false,
-          canComment: true,
+          canAssign: true,
+          canComment: false,
           canReject: false,
         };
       }
-      /**
-       * เจ้าหน้าที่ BDI ที่มอบหมายไป **ถอนการมอบหมายได้** (§4.4 ข้อ 2) และ backend
-       * รองรับอยู่แล้วด้วย `specialistId: null` — แต่การ์ดนี้เคยหายไปทั้งใบเมื่อคำขอ
-       * ย้ายไปด่านผู้เชี่ยวชาญ เจ้าหน้าที่จึงกดถอนไม่ได้เลย และคำขอค้างอยู่ที่
-       * ผู้เชี่ยวชาญจนกว่าเขาจะลงมือ ไม่มีทางออกจากหน้าจอ
-       */
-      if (isOfficer) {
+      if (isSpecialist) {
         return {
+          title: "เจ้าหน้าที่ BDI ขอความเห็นของคุณ",
           advanceLabel: null,
-          hint: "คำขอนี้อยู่ระหว่างการพิจารณาของผู้เชี่ยวชาญ ถอนการมอบหมายเพื่อดึงกลับมาตรวจเองได้",
+          hint: "อ่านรายละเอียดแล้วบันทึกความเห็นไว้ให้เจ้าหน้าที่ BDI — การตัดสินผ่านหรือส่งกลับเป็นของเจ้าหน้าที่",
           canRevise: false,
-          canAssign: true,
-          canComment: false,
+          canAssign: false,
+          canComment: true,
           canReject: false,
         };
       }
@@ -114,10 +92,13 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string,
     case "ORGANIZATION_APPROVAL":
       return isOrgApprover
         ? {
+            title: "รอการพิจารณาของคุณ",
             advanceLabel: "เห็นชอบ",
-            hint: "ตรวจแบบนำส่งข้อมูลในฐานะผู้มีอำนาจกระทำการแทน แล้วยืนยันส่งเอกสาร",
+            hint: "ตรวจแบบนำส่งข้อมูลในฐานะผู้มีอำนาจอนุมัติของหน่วยงาน แล้วยืนยันส่งเอกสาร",
             /** ด่านนี้ยืนยันเอกสาร จึงเปิดกล่องยืนยันแทน modal ยืนยันสั้น ๆ */
             signing: true,
+            /** ฝั่งหน่วยงานเป็นคนยอมรับเอกสาร จึงต้องอ่านในกล่องแล้วติ๊กยืนยันก่อน */
+            perDocument: true,
             canRevise: true,
             canAssign: false,
             canComment: false,
@@ -128,9 +109,15 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string,
     case "BDI_FINAL_APPROVAL":
       return roles.includes("BDI_FINAL_APPROVER")
         ? {
+            title: "รอการพิจารณาของคุณ",
             advanceLabel: "อนุมัติ",
             hint: "ขั้นตอนสุดท้าย เมื่ออนุมัติแล้วระบบจะออกเอกสารฉบับสมบูรณ์ให้ดาวน์โหลด",
             signing: true,
+            /**
+             * กดอนุมัติแล้วยืนยันจบ เท่ากับด่านเดียวกันของเส้นทางจดทะเบียนหน่วยงาน —
+             * เอกสารอ่านได้จากการ์ดในหน้านี้ ไม่ต้องอ่านซ้ำในกล่องยืนยัน
+             */
+            perDocument: false,
             canRevise: true,
             canAssign: false,
             canComment: false,
@@ -157,6 +144,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
   /** เอกสารของคำขอนี้ — ผูกกับ id ที่โหลดมาแล้ว ไม่ใช่พารามิเตอร์บน URL */
   const {
     documents: legalDocuments,
+    notApplicable: skippedDocuments,
     error: legalDocumentsError,
     reload: reloadLegalDocuments,
   } = useLegalDocuments(request?.id ?? null, "dataset-requests");
@@ -165,6 +153,8 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
   const [noteError, setNoteError] = useState<string | undefined>();
   const [specialistId, setSpecialistId] = useState("");
   const [busy, setBusy] = useState(false);
+  /** ประกาศว่าคำขอเดินไปแล้วระหว่างที่หน้านี้เปิดค้างอยู่ — ค้างไว้จนกว่าผู้ใช้จะกดรับทราบ */
+  const [movedNotice, setMovedNotice] = useState<string | null>(null);
 
   const load = useCallback(
     () =>
@@ -194,6 +184,44 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
     if (!ready) return;
     void load();
   }, [load, ready]);
+
+  /**
+   * โหลดใหม่ให้ครบทั้งหน้า — เอกสารกฎหมายมี state ของตัวเองที่ `load()` ไม่แตะ และ
+   * `documentRound` คือตัวทำลาย cache ของ iframe ที่ฝัง PDF ไว้
+   */
+  const reloadAll = useCallback(() => {
+    void load();
+    reloadLegalDocuments();
+    setDocumentRound((r) => r + 1);
+  }, [load, reloadLegalDocuments]);
+
+  /**
+   * คำขอเดินไปแล้ว — ไม่ว่าจะรู้จากการ poll หรือจาก 409 ตอนกดปุ่ม ก็ลงทางเดียวกัน
+   *
+   * ปิด modal ที่ค้างอยู่ แต่ **ไม่ผ่าน `closeModal()`** เพราะตัวนั้นล้าง `note` ทิ้งด้วย —
+   * การกลืนสิ่งที่ผู้ใช้พิมพ์ไปทั้งย่อหน้าเพราะคนอื่นกดปุ่มก่อนเป็นการลงโทษผิดคน
+   */
+  const handleMoved = useCallback(
+    (message: string) => {
+      setModal(null);
+      setMovedNotice(message);
+      reloadAll();
+    },
+    [reloadAll],
+  );
+
+  useRequestWatch({
+    kind: "dataset-requests",
+    requestId: request?.id ?? null,
+    current: request
+      ? {
+          status: request.status,
+          currentTaskType: request.currentTaskType,
+          stateVersion: request.stateVersion,
+        }
+      : null,
+    onChanged: (next) => handleMoved(describeState(next)),
+  });
 
   useEffect(() => {
     if (!user?.roles.includes("BDI_OFFICER")) return;
@@ -235,7 +263,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
 
   if (!request || !user) return <Spinner />;
 
-  const ability = decideAbility(request, user.roles, user.id, user.email);
+  const ability = decideAbility(request, user.roles, user.id);
   // ชีท conditions ตัดสินว่าช่องไหนถูกถามจริง — หน้ารายละเอียดจึงไม่ขึ้นหัวข้อที่ระบบไม่ได้ถาม
   // (เช่น รายละเอียดข้อมูลส่วนบุคคล เมื่อชุดข้อมูลตอบว่าไม่มีข้อมูลส่วนบุคคล)
   const rules = formRules(toFormState(request as unknown as Record<string, unknown>));
@@ -249,6 +277,17 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
   // §4.8 — เมื่อถูกส่งกลับต้องบอกให้ครบว่าแก้เรื่องอะไร โดยใคร เมื่อไหร่
   // "ขอให้ปรับปรุง" = review_task ที่ปิดด้วย result = RETURNED
   const lastRevision = [...request.events].reverse().find((e) => e.result === "RETURNED");
+
+  /**
+   * ความเห็นล่าสุดของผู้เชี่ยวชาญ — แถวสุดท้ายของด่านนั้นที่**มีข้อความ**
+   *
+   * ผู้เชี่ยวชาญบันทึกความเห็นได้หลายครั้ง แถวไหนไม่มีข้อความก็ไม่มีอะไรให้อ่าน
+   * (backend ตัดความเห็นที่เป็น BDI_INTERNAL ออกให้ฝั่งหน่วยงานไปแล้ว — ที่นี่จึงเห็น
+   * เฉพาะที่ตัวเองมีสิทธิ์เห็นอยู่แล้ว)
+   */
+  const latestSpecialistNote = [...request.events]
+    .reverse()
+    .find((e) => e.taskType === "DATASET_SPECIALIST_REVIEW" && Boolean(e.note?.trim()));
 
   const closeModal = () => {
     setModal(null);
@@ -291,6 +330,15 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
       closeModal();
       await load();
     } catch (err) {
+      /**
+       * "คนอื่นทำไปก่อนแล้ว" ไม่ใช่ความล้มเหลวของผู้ใช้คนนี้ — เป็นผลปกติของการที่ทุกคนที่ถือ
+       * role เดียวกันกดได้ จึงบอกด้วยประกาศที่ค้างไว้พร้อมข้อมูลที่โหลดใหม่แล้ว
+       */
+      const moved = movedMessage(err);
+      if (moved) {
+        handleMoved(moved);
+        return;
+      }
       show({
         tone: "error",
         title: "ดำเนินการไม่สำเร็จ",
@@ -309,14 +357,14 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
       });
       show({
         tone: "success",
-        title: specialistId ? "มอบหมายผู้เชี่ยวชาญแล้ว" : "ยกเลิกการมอบหมายแล้ว",
+        title: specialistId ? "ขอความเห็นผู้เชี่ยวชาญแล้ว" : "ถอนผู้เชี่ยวชาญแล้ว",
       });
       closeModal();
       await load();
     } catch (err) {
       show({
         tone: "error",
-        title: "มอบหมายไม่สำเร็จ",
+        title: "บันทึกผู้เชี่ยวชาญไม่สำเร็จ",
         detail: err instanceof ApiError ? err.message : undefined,
       });
     } finally {
@@ -354,8 +402,16 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
             ) : null}
           </p>
         </div>
-        <DatasetStatusBadge status={request.status} currentTaskType={request.currentTaskType} />
+        <DatasetStatusBadge
+          status={request.status}
+          currentTaskType={request.currentTaskType}
+          waitingLabel={request.progress?.currentStep?.waitingLabel}
+        />
       </header>
+
+      {movedNotice ? (
+        <RequestMovedNotice message={movedNotice} onDismiss={() => setMovedNotice(null)} />
+      ) : null}
 
       {request.status === "RETURNED" && request.revisionNote ? (
         <div className="mb-6 rounded-xl border-l-[3px] border-danger bg-danger-bg p-5">
@@ -415,23 +471,23 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         <Card className="mb-6 border-l-[3px] border-l-coral-500">
           <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="font-medium text-navy-800">รอการพิจารณาของคุณ</p>
+              <p className="font-medium text-navy-800">{ability.title}</p>
               <p className="mt-0.5 text-sm text-ink-muted">{ability.hint}</p>
             </div>
             <div className="flex shrink-0 flex-wrap gap-3">
               {ability.canAssign ? (
-                <Button variant="ghost" onClick={() => setModal("assign")}>
-                  {request.assignedSpecialist ? "เปลี่ยนหรือถอนผู้เชี่ยวชาญ" : "มอบหมายผู้เชี่ยวชาญ"}
+                <Button variant="secondary" onClick={() => setModal("assign")}>
+                  {request.assignedSpecialist ? "เปลี่ยนหรือถอนผู้เชี่ยวชาญ" : "ขอความเห็นผู้เชี่ยวชาญ"}
                 </Button>
               ) : null}
               {ability.canComment ? (
-                <Button variant="ghost" onClick={() => setModal("comment")}>
+                <Button variant="secondary" onClick={() => setModal("comment")}>
                   บันทึกความเห็น
                 </Button>
               ) : null}
               {ability.canRevise ? (
                 <Button variant="secondary" onClick={() => setModal("revise")}>
-                  ต้องปรับปรุง
+                  ส่งกลับแก้ไข
                 </Button>
               ) : null}
               {ability.canReject ? (
@@ -449,9 +505,43 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         </Card>
       ) : null}
 
+      {/*
+        ความเห็นล่าสุดของผู้เชี่ยวชาญ — อยู่บนสุด ใต้แถวปุ่ม (BDI ขอเมื่อ 2026-09-04)
+
+        เดิมความเห็นอยู่ในไทม์ไลน์ล่างสุดของหน้าเท่านั้น เจ้าหน้าที่ที่กำลังตัดสินใจว่าจะ
+        ส่งผ่านหรือส่งกลับต้องเลื่อนผ่านทั้งฟอร์มไปหามัน — ทั้งที่มันคือสิ่งที่เขาขอไว้เอง
+
+        ไม่ต้องยิง API เพิ่ม: `events` คือ `review_task` ทั้งชุดที่หน้านี้โหลดมาอยู่แล้ว และ
+        แถวของผู้เชี่ยวชาญเป็น COMPLETED/CONFIRMED ตั้งแต่เกิด (`recordAdvisoryNote()`)
+        การกรองความเห็นที่เป็น BDI_INTERNAL ออกจากฝั่งหน่วยงานทำที่ backend แล้ว —
+        ที่นี่จึงกรองแค่ "มีข้อความไหม" ไม่ได้ตัดสินใจเรื่องสิทธิ์เอง
+
+        ไม่มีความเห็น = ไม่มีบล็อก ไม่ใช่บล็อกว่าง — บล็อกว่างบอกว่ามีเรื่องต้องรอ ทั้งที่ไม่มี
+        แถวเดิมยังอยู่ในไทม์ไลน์ตามเดิม อันนี้เป็นทางลัด ไม่ใช่การย้าย
+      */}
+      {latestSpecialistNote ? (
+        <Card className="mb-6 border-l-[3px] border-l-navy-500">
+          <div className="p-6">
+            <p className="text-[13px] font-semibold uppercase tracking-wide text-navy-500">
+              {ROLE_LABELS.BDI_DATASET_SPECIALIST}
+            </p>
+            <p className="mt-1 font-medium text-navy-800">ความเห็นล่าสุด</p>
+            <p className="mt-2 whitespace-pre-wrap text-[15px] leading-relaxed text-ink">
+              {latestSpecialistNote.note}
+            </p>
+            <p className="mt-3 text-[13px] text-ink-muted">
+              {latestSpecialistNote.actor?.name || "—"}
+              {latestSpecialistNote.completedAt
+                ? ` · ${formatThaiDate(latestSpecialistNote.completedAt)}`
+                : ""}
+            </p>
+          </div>
+        </Card>
+      ) : null}
+
       <div className="flex flex-col gap-6">
         <Card>
-          <CardHeader tag="ส่วนที่ 1" title="ประเภทและชื่อชุดข้อมูล" />
+          <CardHeader tag="ส่วนที่ 1" title="ข้อมูลทั่วไปของชุดข้อมูล" />
           <Rows
             rows={[
               ["ประเภทข้อมูล", pick(DATA_TYPE_LABELS, request.dataType)],
@@ -472,7 +562,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         </Card>
 
         <Card>
-          <CardHeader tag="ส่วนที่ 2" title="ความถี่ ขอบเขต และรูปแบบการนำส่ง" />
+          <CardHeader tag="ส่วนที่ 2" title="แหล่งที่มา การปรับปรุง และการนำส่ง" />
           <Rows
             rows={[
               [
@@ -494,7 +584,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         </Card>
 
         <Card>
-          <CardHeader tag="ส่วนที่ 3" title="หมวดหมู่ ระดับชั้น และสัญญาอนุญาต" />
+          <CardHeader tag="ส่วนที่ 3" title="การจัดประเภทและระดับชั้นข้อมูล" />
           <Rows
             rows={[
               ["หมวดหมู่ข้อมูลตามธรรมาภิบาลภาครัฐ", pick(DATA_CATEGORY_LABELS, request.dataCategory)],
@@ -525,7 +615,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         </Card>
 
         <Card>
-          <CardHeader tag="ส่วนที่ 4" title="การจัดเก็บและส่งต่อข้อมูล" />
+          <CardHeader tag="ส่วนที่ 4" title="เงื่อนไขการจัดเก็บและการส่งต่อ" />
           <Rows
             rows={[
               [
@@ -605,6 +695,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         {request.status !== "DRAFT" ? (
           <LegalDocumentsCard
             documents={legalDocuments}
+            notApplicable={skippedDocuments}
             reloadKey={documentRound}
             error={legalDocumentsError}
             onRetry={reloadLegalDocuments}
@@ -613,38 +704,50 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
 
         {request.assignedSpecialist ? (
           <Card>
-            <CardHeader title="ผู้เชี่ยวชาญที่ได้รับมอบหมาย" />
+            <CardHeader
+              title="ผู้เชี่ยวชาญด้านข้อมูลที่ร่วมตรวจสอบ"
+              description="เจ้าหน้าที่ BDI ขอความเห็นไว้ประกอบการตัดสินใจ — ไม่ใช่ขั้นตอนที่คำขอต้องรอ"
+            />
             <Rows
               rows={[
                 [
                   "ชื่อ",
                   fullName(
-                    null,
+                    request.assignedSpecialist.prefix,
                     request.assignedSpecialist.firstName,
                     request.assignedSpecialist.lastName,
                   ),
                 ],
                 ["อีเมล", request.assignedSpecialist.email],
-                ["มอบหมายเมื่อ", request.assignedAt ? formatThaiDate(request.assignedAt) : null],
+                ["ขอความเห็นเมื่อ", request.assignedAt ? formatThaiDate(request.assignedAt) : null],
               ]}
             />
           </Card>
         ) : null}
 
         <Card>
+          <CardHeader title="ขั้นตอนการอนุมัติ" />
+          <ApprovalSteps progress={request.progress} />
+        </Card>
+
+        <Card>
           <CardHeader
             title="ประวัติการดำเนินการ"
             description={`สร้างเมื่อ ${formatThaiDate(request.createdAt)}`}
           />
-          <Timeline events={request.events} />
+          <Timeline
+            events={request.events}
+            created={{ at: request.createdAt, by: request.createdBy }}
+            submittedAt={request.submittedAt}
+          />
         </Card>
       </div>
 
       <Modal
         open={modal === "revise"}
         onClose={closeModal}
-        title="ระบุสิ่งที่ต้องปรับปรุง"
-        description="ข้อความนี้จะถูกส่งทางอีเมลและแจ้งเตือนในระบบให้ผู้ใช้ของหน่วยงาน"
+        title="ส่งกลับแก้ไข"
+        description="ระบุเนื้อหาหรือข้อความที่ต้องการให้ปรับปรุง ระบบจะแจ้งไปยังผู้ประสานงานของหน่วยงาน"
       >
         <TextAreaField
           label="รายละเอียดที่ต้องแก้ไข"
@@ -722,8 +825,8 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
       <Modal
         open={modal === "assign"}
         onClose={closeModal}
-        title="มอบหมายผู้เชี่ยวชาญข้อมูล"
-        description="เลือกจากบัญชีผู้เชี่ยวชาญที่เปิดใช้งานแล้วในระบบ — ไม่บังคับ"
+        title="ขอความเห็นผู้เชี่ยวชาญด้านข้อมูล"
+        description="เลือกจากบัญชีผู้เชี่ยวชาญที่เปิดใช้งานแล้วในระบบ — ไม่บังคับ และไม่ทำให้คำขอหยุดรอ"
       >
         <SelectField
           label="ผู้เชี่ยวชาญ"
@@ -762,27 +865,24 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
             reloadLegalDocuments();
             void load();
           }}
-          onStale={(message) => {
-            closeModal();
-            show({ tone: "error", title: "คำขอเดินไปขั้นถัดไปแล้ว", detail: message });
-            reloadLegalDocuments();
-            void load();
-          }}
+          onStale={handleMoved}
           requestId={request.id}
           documents={legalDocuments}
           title={ability?.advanceLabel ?? "ยืนยัน"}
           action="approve"
+          perDocument={ability?.perDocument ?? false}
         />
       ) : null}
 
       <Modal
         open={modal === "advance"}
         onClose={closeModal}
-        title={ability?.advanceLabel ?? "ยืนยัน"}
+        // กล่องยืนยันใช้คำว่า "ยืนยัน" เสมอ — ชื่อการกระทำอยู่ที่ปุ่มที่เพิ่งกดไปแล้ว
+        title="ยืนยัน"
         description="ยืนยันว่าคุณตรวจสอบข้อมูลและเอกสารทั้งหมดเรียบร้อยแล้ว"
       >
         <p className="text-[15px] leading-relaxed text-ink-muted">
-          ระบบจะบันทึกการตัดสินใจนี้พร้อมชื่อและเวลาของคุณ และแจ้งผู้เกี่ยวข้องในขั้นถัดไป
+          ระบบจะบันทึกกระบวนการนี้และแจ้งผู้เกี่ยวข้องในขั้นตอนถัดไป
         </p>
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="secondary" onClick={closeModal}>

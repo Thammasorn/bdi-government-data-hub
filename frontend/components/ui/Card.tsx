@@ -52,6 +52,15 @@ export function CardHeader({
  *
  * สถานะคำขอเหลือเจ็ดค่าที่ไม่บอกว่า "รอใคร" แล้ว ด่านที่ค้างอยู่จึงมาจาก review_task
  * stageMeta() เลือกให้ว่าจะแสดงด่านหรือสถานะ
+ *
+ * **คำเดียวกับหน้ารายละเอียดเสมอ** — เดิม badge ในตารางใช้ `shortLabel` ("รอ BDI ตรวจสอบ")
+ * ส่วนหน้ารายละเอียดใช้คำของ `stageMeta` ("รอเจ้าหน้าที่ BDI ตรวจสอบ") คนที่กดจากตาราง
+ * เข้าไปดูรายละเอียดจึงเห็นด่านเดียวกันถูกเรียกคนละชื่อในสองหน้าจอติดกัน
+ *
+ * ชื่อยาวกว่าเดิมจึงต้องยอมให้ตกบรรทัดได้ (เดิม `whitespace-nowrap` + ชื่อเต็ม เคยล้นไป
+ * ทับคอลัมน์ความคืบหน้า) — สองบรรทัดในคอลัมน์แคบ ดีกว่าสองคำเรียกสำหรับสิ่งเดียวกัน
+ *
+ * `shortLabel` ยังอยู่ในข้อมูล แต่ใช้เฉพาะกล่องในแผนภาพเส้นทาง ซึ่งวาดเป็นกล่องเล็กจริง ๆ
  */
 export function StatusBadge({
   status,
@@ -60,19 +69,26 @@ export function StatusBadge({
 }: {
   status: RequestStatus;
   currentTaskType?: ReviewTaskType | null;
+  /** ไม่ได้ใช้แล้ว — คงพารามิเตอร์ไว้ให้แผนภาพเส้นทางที่ยังส่งมา ไม่ต้องแก้พร้อมกัน */
+  shortLabel?: string | null;
+  waitingLabel?: string | null;
   className?: string;
 }) {
   const meta = stageMeta(status, currentTaskType);
+  const label = meta.label;
   return (
     <span
       className={clsx(
-        "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1 text-[13px] font-medium",
+        "inline-flex items-start gap-1.5 rounded-2xl px-3 py-1 text-[13px] font-medium leading-snug",
         meta.className,
         className,
       )}
     >
-      <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" aria-hidden="true" />
-      {meta.label}
+      <span
+        className="mt-[6px] h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70"
+        aria-hidden="true"
+      />
+      <span>{label}</span>
     </span>
   );
 }
@@ -85,19 +101,26 @@ export function DatasetStatusBadge({
 }: {
   status: RequestStatus;
   currentTaskType?: ReviewTaskType | null;
+  /** ไม่ได้ใช้แล้ว — คงพารามิเตอร์ไว้ให้แผนภาพเส้นทางที่ยังส่งมา ไม่ต้องแก้พร้อมกัน */
+  shortLabel?: string | null;
+  waitingLabel?: string | null;
   className?: string;
 }) {
   const meta = stageMeta(status, currentTaskType);
+  const label = meta.label;
   return (
     <span
       className={clsx(
-        "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1 text-[13px] font-medium",
+        "inline-flex items-start gap-1.5 rounded-2xl px-3 py-1 text-[13px] font-medium leading-snug",
         meta.className,
         className,
       )}
     >
-      <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" aria-hidden="true" />
-      {meta.label}
+      <span
+        className="mt-[6px] h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70"
+        aria-hidden="true"
+      />
+      <span>{label}</span>
     </span>
   );
 }

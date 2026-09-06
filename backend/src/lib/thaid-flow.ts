@@ -1,15 +1,15 @@
 /**
- * สถานะระหว่างทางของการยืนยันตัวตนด้วย ThaiD
+ * สถานะระหว่างทางของการยืนยันตัวตนด้วย ThaID
  *
  * OAuth ต้องจำสองอย่างข้ามการ redirect: `state` (กัน CSRF และผูก callback กลับเข้า
  * คำขอเดิม) และผลลัพธ์ "ยืนยันผ่านแล้ว" ที่ต้องอยู่รอดจนผู้ใช้ตั้งรหัสผ่านเสร็จ
  *
  * ทั้งสองอย่างเก็บใน `integration.integration_operation` ไม่ใช่ตารางใหม่ — sheet นั้น
  * ระบุ THAID → VERIFY_IDENTITY ไว้ตรง ๆ ว่าเป็นที่บันทึกงาน integration หนึ่งงาน
- * ผลพลอยได้คือได้ audit trail ของทุกครั้งที่เรียก ThaiD ฟรี รวมทั้งครั้งที่ล้มเหลว
+ * ผลพลอยได้คือได้ audit trail ของทุกครั้งที่เรียก ThaID ฟรี รวมทั้งครั้งที่ล้มเหลว
  *
  * ที่จงใจ **ไม่** เก็บ: raw activation key (callback อ้าง `subject_id` = id ของแถว
- * activation_key แทน คีย์จริงจึงไม่เคยถูกเขียนลงฐานข้อมูล) และเลขบัตรจาก ThaiD
+ * activation_key แทน คีย์จริงจึงไม่เคยถูกเขียนลงฐานข้อมูล) และเลขบัตรจาก ThaID
  * (ใช้เทียบแล้วทิ้ง เก็บไว้แค่ `sub` ลง external_reference)
  */
 import { randomUUID } from "node:crypto";
@@ -24,7 +24,7 @@ import { generateNonce, generateState } from "./thaid.js";
 /**
  * operation code
  *   VERIFY_IDENTITY — ยืนยันตัวตนตอนเปิดใช้งานบัญชี (ตามตัวอย่างใน sheet)
- *   AUTHENTICATE    — เข้าสู่ระบบด้วย ThaiD แทนรหัสผ่าน (เพิ่มจาก sheet ตาม Login Step)
+ *   AUTHENTICATE    — เข้าสู่ระบบด้วย ThaID แทนรหัสผ่าน (เพิ่มจาก sheet ตาม Login Step)
  */
 export const ThaidOperation = {
   VERIFY_IDENTITY: "VERIFY_IDENTITY",
@@ -100,7 +100,7 @@ export async function claimThaidState(
   const ageMs = Date.now() - existing.createdAt.getTime();
   if (ageMs > env.thaid.stateTtlMinutes * 60_000) {
     if (existing.status === IntegrationStatus.PENDING) {
-      await failThaidOperation(existing, "state_expired", "หมดเวลารอการยืนยันจาก ThaiD");
+      await failThaidOperation(existing, "state_expired", "หมดเวลารอการยืนยันจาก ThaID");
     }
     return { operation: null, reason: "expired" };
   }

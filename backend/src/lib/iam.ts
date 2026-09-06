@@ -17,7 +17,9 @@ import {
 
 import { prisma } from "../db.js";
 import { env } from "../env.js";
+import { AuditAction, AuditSubject, logAudit } from "./audit.js";
 import { generateActivationKey, hashActivationKey } from "./auth.js";
+import { ROLE_LABELS } from "./roles.js";
 import {
   BDI_ORGANIZATION_ID,
   ORGANIZATION_SCOPED_ROLES,
@@ -45,6 +47,24 @@ export async function roleIdByCode(db: Db, code: RoleCode): Promise<string> {
  * หน่วยงานเลย — `removedFromOrganization()` ใน routes/auth.ts เทียบกับค่านี้
  */
 export const ROLE_REPLACED_REASON = "มีผู้รับผิดชอบคนใหม่แทน";
+
+/**
+ * บัญชีนี้ถือบทบาทอื่นอยู่แล้ว — กฎ *หนึ่งผู้ใช้ = หนึ่งบทบาท* (ตัดสินใจ 2026-09-03)
+ *
+ * เป็น error แยกชนิด ไม่ใช่ `Error` ลอย ๆ เพราะผู้เรียกทุกทางต้องแปลงเป็น 409 พร้อม
+ * บอกว่าบทบาทที่ถืออยู่คืออะไร ไม่ใช่ปล่อยเป็น 500 กลางทรานแซกชัน — ทุกเส้นทางที่
+ * มอบบทบาทควรดักไว้ก่อนหน้านี้ด้วยข้อความของตัวเอง ตัวนี้คือตาข่ายชั้นสุดท้าย
+ */
+export class RoleConflictError extends Error {
+  constructor(
+    readonly currentRole: RoleCode,
+    readonly currentOrganizationId: string | null,
+    message: string,
+  ) {
+    super(message);
+    this.name = "RoleConflictError";
+  }
+}
 
 /** เงื่อนไข "assignment ใช้งานได้" ตามที่ sheet `user_role_assignment` เขียนไว้ */
 export function activeAssignmentWhere() {
@@ -83,6 +103,10 @@ export function derivedAssignmentStatus(assignment: {
  * และเขียน index ให้แยก role ไม่ได้ (role.id สุ่มใหม่ทุกฐานข้อมูล)
  *
  * **หน่วยงาน BDI ยกเว้นจากกติกานี้** มีเจ้าหน้าที่กี่คนต่อ role ก็ได้
+ *
+ * อีกกติกาหนึ่งที่คนละเรื่องกันและบังคับที่นี่เหมือนกันคือ **หนึ่งผู้ใช้ = หนึ่งบทบาท**
+ * (2026-09-03) ซึ่งครอบทุก role ทั้งฝั่งหน่วยงานและฝั่ง BDI ไม่มีข้อยกเว้น — ดูเหตุผล
+ * ในตัวฟังก์ชัน มอบบทบาทที่ถืออยู่แล้ว (คู่ role+หน่วยงานเดิม) ยังเป็น no-op เหมือนเดิม
  */
 export async function assignRole(
   db: Db,
@@ -105,6 +129,45 @@ export async function assignRole(
   }
 
   const roleId = await roleIdByCode(db, roleCode);
+
+  /**
+   * **หนึ่งผู้ใช้ = หนึ่งบทบาท** (ตัดสินใจ 2026-09-03) — บังคับที่นี่ที่เดียว
+   *
+   * ทุกทางที่มอบบทบาทวิ่งผ่านฟังก์ชันนี้ (เปิดใช้งานบัญชีจาก activation key ·
+   * `POST /api/admin/users/:id/roles` · `POST /:id/transfer` · Journey B ตอน BDI
+   * กดผ่านด่านแรก · `seed:demo`) เขียนกฎไว้ตรงนี้จึงปิดได้ครบด้วยจุดเดียว
+   *
+   * กฎที่มีมาก่อนหน้านี้เป็นคนละกฎ และไม่มีอันไหนกันเคสนี้: `assignRole()` กัน
+   * "หนึ่งหน่วยงาน หนึ่งคนต่อ role" ส่วน `organizationClash()` ใน routes/admin-users.ts
+   * กัน "หนึ่งบัญชี หนึ่งหน่วยงาน" — ผู้ดำเนินการของหน่วยงานหนึ่งจึงรับบทบาท
+   * ผู้มีอำนาจกระทำการแทนของ **หน่วยงานเดียวกัน** เพิ่มได้ แล้วนำส่งคำขอเองและ
+   * ลงนามรับรองคำขอของตัวเองที่ด่าน `ORGANIZATION_APPROVAL` ฝั่ง BDI ก็เช่นกัน:
+   * คนเดียวถือ `BDI_OFFICER` + `BDI_FINAL_APPROVER` แล้วตรวจด่านที่ 2 กับอนุมัติ
+   * ด่านที่ 4 ของใบเดียวกันได้
+   *
+   * **ปฏิเสธคนใหม่ ไม่ใช่เพิกถอนของเดิม** — ตรงข้ามกับกติกา "หนึ่งหน่วยงานหนึ่งคน
+   * ต่อ role" ข้างล่างที่เพิกถอนคนเดิมเงียบ ๆ เพราะที่นี่ของเดิมเป็นสิทธิ์ของคนคนนี้เอง
+   * การถอนมันทิ้งโดยไม่มีใครสั่งคือการเปลี่ยนหน้าที่ของเขาโดยที่ไม่มีใครตั้งใจ
+   * ทางเปลี่ยนบทบาทที่ตั้งใจแล้วคือ `POST /api/admin/users/:id/transfer` (ถอนของเดิม
+   * และมอบของใหม่ในคำสั่งเดียว) หรือ `DELETE /:id/roles/:assignmentId` ก่อนมอบใหม่
+   */
+  const held = await db.userRoleAssignment.findFirst({
+    where: {
+      userAccountId,
+      NOT: { roleId, organizationId },
+      ...activeAssignmentWhere(),
+    },
+    select: { organizationId: true, role: { select: { code: true } } },
+  });
+  if (held) {
+    const heldCode = held.role.code as RoleCode;
+    throw new RoleConflictError(
+      heldCode,
+      held.organizationId,
+      `บัญชีนี้ถือบทบาท "${ROLE_LABELS[heldCode]}" อยู่แล้ว — ผู้ใช้หนึ่งคนมีได้บทบาทเดียว ` +
+        `ต้องถอนบทบาทเดิมก่อนจึงจะมอบบทบาทใหม่ได้`,
+    );
+  }
 
   /**
    * หนึ่ง role หนึ่งคนต่อหนึ่งหน่วยงาน — เพิกถอนคนเดิมก่อนเสมอ ไม่ใช่ปฏิเสธคนใหม่
@@ -200,6 +263,28 @@ export async function revokeRoleAssignments(
     },
   });
 
+  /**
+   * การถอนสิทธิ์ไม่เคยถูกบันทึกลง `audit_event` เลย (บันทึกไว้ว่าค้างที่ `routes/auth.ts`)
+   *
+   * เป็นช่องว่างที่สำคัญกว่าที่ดู เพราะฟังก์ชันนี้ถอนสิทธิ์คนโดยที่เจ้าตัวไม่ได้ทำอะไรเลย —
+   * ถูกแทนที่ด้วยผู้รับผิดชอบคนใหม่ ถูกย้ายหน่วยงาน หรือบัญชีถูกปิด ถ้าไม่มีแถว audit
+   * ก็ตอบไม่ได้ว่าใครสั่งและด้วยเหตุผลอะไร เหลือแค่ `revocation_reason` บนแถวที่ถูกถอน
+   *
+   * `logAudit()` กลืน error ของตัวเองอยู่แล้ว จึงไม่ทำให้ transaction ที่เรียกมาล้ม
+   */
+  for (const target of targets) {
+    await logAudit({
+      action: AuditAction.ROLE_REVOKED,
+      subjectType: AuditSubject.USER_ROLE_ASSIGNMENT,
+      subjectId: target.id,
+      organizationId: target.organizationId,
+      actorId: params.actorId,
+      before: { userAccountId: target.userAccountId, roleId: target.roleId, status: "ACTIVE" },
+      after: { status: RoleAssignmentStatus.REVOKED },
+      metadata: { reason: params.reason },
+    });
+  }
+
   return targets;
 }
 
@@ -284,8 +369,8 @@ export async function findUsableActivationKey(rawKey: string) {
 /**
  * เหมือน findUsableActivationKey แต่หาจาก id ของแถว
  *
- * callback ของ ThaiD ไม่มี raw key อยู่ในมือ (จงใจ — คีย์จริงไม่เคยถูกส่งผ่าน
- * ThaiD หรือถูกเก็บลงฐานข้อมูล) มีแต่ subject_id ของ integration_operation
+ * callback ของ ThaID ไม่มี raw key อยู่ในมือ (จงใจ — คีย์จริงไม่เคยถูกส่งผ่าน
+ * ThaID หรือถูกเก็บลงฐานข้อมูล) มีแต่ subject_id ของ integration_operation
  */
 export async function usableActivationKeyById(id: string) {
   const record = await prisma.activationKey.findUnique({
@@ -329,7 +414,7 @@ async function evaluateActivationKey(record: ActivationKeyRecord) {
 /**
  * ยกเลิกคีย์ที่ยังใช้ได้อยู่
  *
- * §2.4 ของสเปกสั่งไว้ว่าเลขบัตรจาก ThaiD ไม่ตรงกับที่บันทึกไว้ → REVOKED ไม่ใช่แค่
+ * §2.4 ของสเปกสั่งไว้ว่าเลขบัตรจาก ThaID ไม่ตรงกับที่บันทึกไว้ → REVOKED ไม่ใช่แค่
  * ปฏิเสธครั้งนั้น คนที่ถือลิงก์ต้องขอใบใหม่จากเจ้าหน้าที่ ลองสุ่มเลขบัตรซ้ำ ๆ ไม่ได้
  */
 export async function revokeActivationKey(

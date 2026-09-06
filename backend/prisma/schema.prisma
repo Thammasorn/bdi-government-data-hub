@@ -1,4 +1,4 @@
-// Government Datahub Platform — data model
+// ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2) — data model
 //
 // ต้นทางของสคีมานี้คือ assets/db_schema/draft_db_design_downloaded_on_2026-08-11.xlsx
 // (21 sheet — _index + 20 ตาราง + ภาพประกอบในแต่ละ sheet)
@@ -60,7 +60,7 @@ enum RoleAssignmentStatus {
 
 /// เบี่ยงจากดีไซน์: ไม่มีใน Excel
 /// เพิ่มเพราะ ThaID ยังไม่มี client credentials และ docs/01-user-journey.md §A.2
-/// บังคับ 2FA ด้วย email หรือ ThaiD — ดีไซน์รองรับแค่ทางหลัง
+/// บังคับ 2FA ด้วย email หรือ ThaID — ดีไซน์รองรับแค่ทางหลัง
 /// ถอดออกทั้งชุดเมื่อ ThaID พร้อม
 enum OtpPurpose {
   REGISTRATION
@@ -129,9 +129,11 @@ model UserAccount {
   sessions             Session[]
   assignedReviewTasks  ReviewTask[]            @relation("ReviewTaskAssignee")
   delegatedReviewTasks ReviewTask[]            @relation("ReviewTaskAssigner")
+  completedReviewTasks ReviewTask[]            @relation("ReviewTaskCompleter")
   legalAcceptances     LegalAcceptance[]
   signatures           SignatureConfirmation[]
   notifications        Notification[]
+  datasetRequestsAsSpecialist DatasetRegistrationRequest[] @relation("DatasetRequestSpecialist")
 
   @@index([status])
   @@index([accountType])
@@ -353,7 +355,9 @@ model Organization {
 
   status OrganizationStatus @default(PENDING_REGISTRATION)
 
-  addressLine     String? @map("address_line") @db.VarChar(500)
+  /// เบี่ยงจากดีไซน์: กว้าง 2000 ไม่ใช่ 500
+  /// ที่อยู่ราชการเต็มรูป (ชื่ออาคาร ชั้น เลขห้อง ซอย พร้อมวงเล็บอธิบายทางเข้า) ชน 500 ได้จริง
+  addressLine     String? @map("address_line") @db.VarChar(2000)
   /// เบี่ยงจากดีไซน์: Excel มีแต่ address_line บรรทัดเดียว
   /// เอกสาร A0 แยกช่อง "ตั้งอยู่เลขที่ ___ ถนน ___" ตามแบบฟอร์มราชการ ถ้าเก็บรวมบรรทัดเดียว
   /// ช่องถนนในข้อตกลงจะว่างตลอดไป — ที่อยู่ไทยหลายแห่งไม่มีชื่อถนนจริง จึงยัง nullable
@@ -508,11 +512,17 @@ model ReviewTask {
   /// ลำดับของ action ภายในคำขอ
   sequenceNumber Int            @map("sequence_number")
   /// รอบการดำเนินการของ task_type เดียวกัน เริ่มต้นที่ 1
-  /// ด่าน "BDI Officer ตรวจซ้ำ" เดิม = BDI_OFFICER_REVIEW round 2 + result CONFIRMED
+  /// เพิ่มขึ้นเมื่อคำขอถูกส่งกลับให้แก้ไข และเมื่อมอบหมาย/ถอนผู้เชี่ยวชาญ — ไม่ได้แปลว่า
+  /// เป็นคนละด่าน (ด่านตรวจซ้ำที่เคยใช้ round 2 ถูกยกเลิกเมื่อ 2026-08-30)
   roundNumber    Int            @default(1) @map("round_number")
 
-  assignedUserId String      @map("assigned_user_id") @db.Uuid
-  assignedUser   UserAccount @relation("ReviewTaskAssignee", fields: [assignedUserId], references: [id])
+  /// NULL = ด่านนี้เป็นของ **บทบาท** ไม่ใช่ของคนใดคนหนึ่ง
+  ///
+  /// ด่านฝั่ง BDI ไม่มีผู้รับมอบหมายอีกแล้ว — ใครถือ role ตรงกับ `assigned_role` ก็ปิดด่านได้
+  /// (`canAction()` ไม่เคยดูคอลัมน์นี้เลย) เหลือค่าไว้เฉพาะด่านที่เป็นของคนจริง ๆ คือ
+  /// ORGANIZATION_APPROVAL ซึ่งชี้ไปยังผู้มีอำนาจลงนามที่หน่วยงานระบุชื่อมาในฟอร์ม
+  assignedUserId String?      @map("assigned_user_id") @db.Uuid
+  assignedUser   UserAccount? @relation("ReviewTaskAssignee", fields: [assignedUserId], references: [id], onDelete: Restrict)
 
   /// Role ที่ผู้รับมอบหมายใช้ดำเนินการใน task นี้ — เก็บ role.code ณ เวลานั้น
   assignedRole String @map("assigned_role") @db.VarChar(64)
@@ -546,6 +556,14 @@ model ReviewTask {
   cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(6)
   cancelledBy        String?   @map("cancelled_by") @db.Uuid
   cancellationReason String?   @map("cancellation_reason") @db.VarChar(500)
+
+  /// คนที่ปิดด่านนี้จริง ๆ — NULL ตราบใดที่ task ยังไม่ถูกปิด
+  ///
+  /// ไทม์ไลน์เคยแสดง `assigned_user_id` เป็นชื่อผู้ทำ ซึ่งเป็นคนละคนได้เสมอเพราะการมอบหมาย
+  /// เป็นแค่การเกลี่ยงาน (เกิดจริงบน production 2026-09-04) คอลัมน์นี้คือค่าที่ตอบคำถาม
+  /// "ใครกด" ได้จริง — `updated_by` ตอบได้โดยบังเอิญเท่านั้น มันเป็นคอลัมน์ audit ทั่วไป
+  completedBy     String?      @map("completed_by") @db.Uuid
+  completedByUser UserAccount? @relation("ReviewTaskCompleter", fields: [completedBy], references: [id], onDelete: Restrict)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   createdBy String   @map("created_by") @db.Uuid
@@ -585,7 +603,8 @@ model OrganizationRegistrationRequest {
   organizationType            String? @map("organization_type") @db.VarChar(64)
   organizationNameTh          String? @map("organization_name_th") @db.VarChar(255)
   organizationNameEn          String? @map("organization_name_en") @db.VarChar(255)
-  organizationAddressLine     String? @map("organization_address_line") @db.VarChar(500)
+  /// เบี่ยงจากดีไซน์: กว้าง 2000 — คู่กับ organization.address_line ดูเหตุผลที่ตารางนั้น
+  organizationAddressLine     String? @map("organization_address_line") @db.VarChar(2000)
   /// เบี่ยงจากดีไซน์: คู่กับ organization.road — ดูเหตุผลที่ตารางนั้น
   organizationRoad            String? @map("organization_road") @db.VarChar(255)
   organizationSubdistrictCode String? @map("organization_subdistrict_code") @db.VarChar(16)
@@ -606,7 +625,7 @@ model OrganizationRegistrationRequest {
   approverDepartmentTh String? @map("approver_department_th") @db.VarChar(255)
   approverPositionTh   String? @map("approver_position_th") @db.VarChar(255)
 
-  // ── snapshot ผู้ดำเนินการของหน่วยงาน ───────────────────────────
+  // ── snapshot ผู้ประสานงานของหน่วยงาน ───────────────────────────
   userCid          String? @map("user_cid") @db.VarChar(13)
   userPrefixTh     String? @map("user_prefix_th") @db.VarChar(64)
   userFirstnameTh  String? @map("user_firstname_th") @db.VarChar(255)
@@ -808,6 +827,19 @@ model DatasetRegistrationRequest {
 
   additionalDetailJson Json? @map("additional_detail_json")
 
+  /// เบี่ยงจากดีไซน์: ผู้เชี่ยวชาญด้านข้อมูลที่เจ้าหน้าที่ BDI ขอความเห็นกับคำขอนี้
+  ///
+  /// การมอบหมายผู้เชี่ยวชาญ **ไม่ใช่ด่านในเส้นทาง** — คำขอยังค้างอยู่ที่ด่านของเจ้าหน้าที่
+  /// BDI ตลอดเวลาที่ผู้เชี่ยวชาญกำลังดู จึงเก็บเป็นคอลัมน์บนคำขอ ไม่ใช่ review_task:
+  /// หนึ่งคำขอมี active task ได้ตัวเดียว (uq_active_review_task_per_subject) การเปิด task
+  /// ให้ผู้เชี่ยวชาญจึงเท่ากับพรากด่านไปจากเจ้าหน้าที่ ซึ่งเป็นสิ่งที่การ์ด
+  /// "Make Data Specialist Review Advisory" (2026-08-30) มายกเลิก
+  assignedSpecialistId   String?      @map("assigned_specialist_id") @db.Uuid
+  assignedSpecialist     UserAccount? @relation("DatasetRequestSpecialist", fields: [assignedSpecialistId], references: [id], onDelete: SetNull)
+  assignedSpecialistAt   DateTime?    @map("assigned_specialist_at") @db.Timestamptz(6)
+  /// เจ้าหน้าที่ที่กดมอบหมาย — เก็บเป็น uuid เปล่าเหมือน cancelled_by ไม่ผูก FK
+  assignedSpecialistById String?      @map("assigned_specialist_by") @db.Uuid
+
   /// FK to dataset หลังอนุมัติ — เติมค่าใน transaction เดียวกับที่สร้าง Dataset
   createdDatasetId String?  @unique @map("created_dataset_id") @db.Uuid
   createdDataset   Dataset? @relation("DatasetFromRequest", fields: [createdDatasetId], references: [id], onDelete: SetNull)
@@ -829,6 +861,7 @@ model DatasetRegistrationRequest {
 
   @@index([organizationId, status])
   @@index([status])
+  @@index([assignedSpecialistId])
   @@map("dataset_registration_request")
   @@schema("dataset")
 }
@@ -1096,6 +1129,13 @@ model LegalDocument {
 
   nameTh String  @map("name_th") @db.VarChar(500)
   nameEn String? @map("name_en") @db.VarChar(500)
+
+  /// ชื่อสั้นที่ผู้ใช้เห็นแทนรหัส — "ผนวก 1", "ข้อตกลงหลัก…" รหัส A0–A4 เป็นของภายใน
+  /// เบี่ยงจากดีไซน์: การ์ดขอให้ required แต่ค่าที่ให้มาบอกว่า A4 เป็น null — required
+  /// กับ null พร้อมกันไม่ได้ จึงเป็น nullable ฉบับที่ไม่มีชื่อสั้น (A4) ตกกลับไปใช้ nameTh
+  shortname   String? @unique @map("shortname") @db.VarChar(200)
+  /// ข้อความเตือนที่แสดงใต้บรรทัด "เอกสารฉบับที่ n จาก m" ตอนอ่าน/ลงนาม — ไม่ใช่เนื้อเอกสาร
+  legalNotice String? @map("legal_notice") @db.Text
 
   /// Flow ที่เอกสารนี้นำไปใช้ เช่น ORGANIZATION_REGISTRATION, DATASET_REGISTRATION, DATASET_REQUEST
   applicationScope              String  @map("application_scope") @db.VarChar(64)

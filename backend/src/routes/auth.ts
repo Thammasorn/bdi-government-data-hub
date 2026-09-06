@@ -10,6 +10,7 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "../db.js";
+import { NAME_FIELDS, fullNameTh } from "../lib/person-name.js";
 import { env } from "../env.js";
 import {
   SESSION_COOKIE,
@@ -90,6 +91,32 @@ function maskCid(cid: string | null): string | null {
   return cid ? `${"•".repeat(9)}${cid.slice(-4)}` : null;
 }
 
+/**
+ * ช่องชื่อที่ระบบมีค่าอยู่แล้ว = ช่องที่เจ้าของบัญชีแก้ไม่ได้
+ *
+ * การ์ด "แก้ form user registration" สั่งว่าคำนำหน้า ชื่อ นามสกุล ให้ดึงจาก ThaID มา
+ * เติมไว้และห้ามผู้ใช้เปลี่ยน บังคับที่ฝั่ง server ไม่ใช่แค่ `readOnly` บนหน้าเว็บ:
+ * `POST /activate` ไม่ยอมให้ค่าใน body ทับค่าที่อยู่บนบัญชีแล้ว
+ *
+ * ค่าที่ "อยู่บนบัญชีแล้ว" มาได้สองทาง — claim จาก ThaID ที่ callback เขียนลงทันที
+ * ที่เทียบเลขบัตรผ่าน และชื่อที่เจ้าหน้าที่กรอกไว้ตอนเชิญ (`ensureApproverAccount()`)
+ * ทั้งสองทางไม่ใช่สิ่งที่เจ้าของบัญชีพิมพ์เอง จึงล็อกได้ด้วยเหตุผลเดียวกัน
+ *
+ * ช่องที่ยังว่างต้องปล่อยให้กรอก มิฉะนั้นเปิดใช้งานบัญชีไม่ได้เลย — **คำนำหน้าเป็น
+ * เคสปกติของเรื่องนี้** เพราะ ThaID ไม่มี claim `title` ใน scope ที่ได้รับ (docs/07 §4.1)
+ */
+function lockedProfile(account: {
+  prefixTh: string | null;
+  firstnameTh: string | null;
+  lastnameTh: string | null;
+}) {
+  return {
+    prefix: Boolean(account.prefixTh?.trim()),
+    firstName: Boolean(account.firstnameTh?.trim()),
+    lastName: Boolean(account.lastnameTh?.trim()),
+  };
+}
+
 // ---------------------------------------------------------------- ตรวจลิงก์เชิญ
 
 authRouter.get("/invitation", async (req, res) => {
@@ -104,7 +131,7 @@ authRouter.get("/invitation", async (req, res) => {
     return;
   }
 
-  // ยืนยัน ThaiD ผ่านแล้วหรือยัง ตัดสินที่ฝั่ง server เสมอ — หน้าเว็บแค่แสดงตาม
+  // ยืนยัน ThaID ผ่านแล้วหรือยัง ตัดสินที่ฝั่ง server เสมอ — หน้าเว็บแค่แสดงตาม
   const verification = await latestVerification(key.id);
 
   res.json({
@@ -114,7 +141,7 @@ authRouter.get("/invitation", async (req, res) => {
     organizationId: key.organization.id,
     organizationName: key.organization.nameTh,
     expiresAt: key.expiresAt,
-    /** บัญชีที่ไม่มีเลขบัตรในระบบยืนยันด้วย ThaiD ไม่ได้ — หน้าเว็บต้องบอกให้ชัด */
+    /** บัญชีที่ไม่มีเลขบัตรในระบบยืนยันด้วย ThaID ไม่ได้ — หน้าเว็บต้องบอกให้ชัด */
     cidHint: maskCid(key.userAccount.cid),
     identityVerified: Boolean(verification),
     /**
@@ -134,10 +161,12 @@ authRouter.get("/invitation", async (req, res) => {
       lastName: key.userAccount.lastnameTh,
       phone: key.userAccount.phoneNumber,
     },
+    /** ช่องไหนล็อก ตัดสินที่นี่ที่เดียว หน้าเว็บแค่แสดงตาม — ดู lockedProfile() */
+    profileLocked: lockedProfile(key.userAccount),
   });
 });
 
-// ---------------------------------------------------------------- ThaiD
+// ---------------------------------------------------------------- ThaID
 
 const startSchema = z.object({
   purpose: z.enum(["activate", "login"]),
@@ -146,7 +175,7 @@ const startSchema = z.object({
 });
 
 /**
- * ขั้นที่ 1 ของ §2.4 — พาผู้ใช้ไปยืนยันตัวตนที่ ThaiD
+ * ขั้นที่ 1 ของ §2.4 — พาผู้ใช้ไปยืนยันตัวตนที่ ThaID
  *
  * คืน URL ให้เบราว์เซอร์พาไปเอง แทนที่จะ 302 จาก API เพราะหน้าเว็บเรียกด้วย fetch
  * (ตอบ 302 จะถูก follow แล้วชน CORS ของ imauthsbx.bora.dopa.go.th)
@@ -160,7 +189,7 @@ authRouter.post("/thaid/start", async (req, res) => {
   if (!thaidConfigured()) {
     res.status(501).json({
       error: "not_configured",
-      message: "ระบบยังไม่ได้ตั้งค่าการเชื่อมต่อ ThaiD กรุณาติดต่อผู้ดูแลระบบ",
+      message: "ระบบยังไม่ได้ตั้งค่าการเชื่อมต่อ ThaID กรุณาติดต่อผู้ดูแลระบบ",
     });
     return;
   }
@@ -179,12 +208,12 @@ authRouter.post("/thaid/start", async (req, res) => {
       return;
     }
     // ไม่มีเลขบัตรบันทึกไว้ = ไม่มีอะไรให้เทียบ ปิดทางตั้งแต่ต้นดีกว่าปล่อยให้ผู้ใช้
-    // เสียเวลาไปยืนยันกับ ThaiD แล้วค่อยล้มตอนกลับมา
+    // เสียเวลาไปยืนยันกับ ThaID แล้วค่อยล้มตอนกลับมา
     if (!key.userAccount.cid) {
       res.status(409).json({
         error: "cid_missing",
         message:
-          "บัญชีนี้ยังไม่มีเลขประจำตัวประชาชนบันทึกไว้ จึงเทียบกับ ThaiD ไม่ได้ กรุณาติดต่อเจ้าหน้าที่",
+          "บัญชีนี้ยังไม่มีเลขประจำตัวประชาชนบันทึกไว้ จึงเทียบกับ ThaID ไม่ได้ กรุณาติดต่อเจ้าหน้าที่",
       });
       return;
     }
@@ -204,7 +233,7 @@ authRouter.post("/thaid/start", async (req, res) => {
 const callbackSchema = z.object({
   state: z.string().min(1),
   code: z.string().min(1).optional(),
-  /** ThaiD ส่ง error กลับมาทาง query string เมื่อผู้ใช้ไม่ยินยอมหรือยืนยันไม่ผ่าน */
+  /** ThaID ส่ง error กลับมาทาง query string เมื่อผู้ใช้ไม่ยินยอมหรือยืนยันไม่ผ่าน */
   error: z.string().optional(),
   errorDescription: z.string().optional(),
 });
@@ -212,7 +241,7 @@ const callbackSchema = z.object({
 /**
  * ขั้นที่ 2 ของ §2.4 — รับ authorization code แล้วเทียบเลขบัตร
  *
- * ทั้งขา activate และ login จบที่นี่ เพราะ ThaiD รู้จัก redirect_uri เดียว
+ * ทั้งขา activate และ login จบที่นี่ เพราะ ThaID รู้จัก redirect_uri เดียว
  * ตัวที่บอกว่าเป็นขาไหนคือแถว integration_operation ที่ผูกกับ state ไม่ใช่ค่าจากเบราว์เซอร์
  */
 authRouter.post("/thaid/callback", async (req, res) => {
@@ -242,14 +271,14 @@ authRouter.post("/thaid/callback", async (req, res) => {
       error: parsed.data.error,
       message:
         parsed.data.error === "user_denied"
-          ? "คุณไม่ได้ให้ความยินยอมกับ ThaiD การยืนยันตัวตนจึงไม่สำเร็จ"
-          : "ยืนยันตัวตนกับ ThaiD ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
+          ? "คุณไม่ได้ให้ความยินยอมกับ ThaID การยืนยันตัวตนจึงไม่สำเร็จ"
+          : "ยืนยันตัวตนกับ ThaID ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
     });
     return;
   }
   if (!parsed.data.code) {
     await failThaidOperation(operation, "missing_code", "callback ไม่มี authorization code");
-    res.status(400).json({ error: "missing_code", message: "ไม่พบผลการยืนยันจาก ThaiD" });
+    res.status(400).json({ error: "missing_code", message: "ไม่พบผลการยืนยันจาก ThaID" });
     return;
   }
 
@@ -275,14 +304,14 @@ authRouter.post("/thaid/callback", async (req, res) => {
     if (code === "nonce_mismatch" || code === "nonce_missing") {
       res.status(403).json({
         error: code,
-        message: "ผลการยืนยันจาก ThaiD ไม่ตรงกับคำขอที่เริ่มไว้ กรุณาเริ่มยืนยันตัวตนใหม่อีกครั้ง",
+        message: "ผลการยืนยันจาก ThaID ไม่ตรงกับคำขอที่เริ่มไว้ กรุณาเริ่มยืนยันตัวตนใหม่อีกครั้ง",
       });
       return;
     }
 
     res.status(502).json({
       error: "thaid_error",
-      message: "ติดต่อระบบ ThaiD ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
+      message: "ติดต่อระบบ ThaID ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
     });
     return;
   }
@@ -304,7 +333,7 @@ authRouter.post("/thaid/callback", async (req, res) => {
     console.error(`[thaid] ไม่ได้เลขบัตรจาก claim ${claim} — ตรวจ THAID_USE_PID และ THAID_SCOPE`);
     res.status(502).json({
       error: "cid_unavailable",
-      message: "ระบบไม่ได้รับเลขประจำตัวประชาชนจาก ThaiD จึงยืนยันตัวตนไม่ได้ กรุณาติดต่อผู้ดูแลระบบ",
+      message: "ระบบไม่ได้รับเลขประจำตัวประชาชนจาก ThaID จึงยืนยันตัวตนไม่ได้ กรุณาติดต่อผู้ดูแลระบบ",
     });
     return;
   }
@@ -325,9 +354,9 @@ authRouter.post("/thaid/callback", async (req, res) => {
   if (key.userAccount.cid !== identity.pid) {
     await revokeActivationKey(prisma, {
       activationKeyId: key.id,
-      reason: "เลขประจำตัวประชาชนจาก ThaiD ไม่ตรงกับที่บันทึกไว้",
+      reason: "เลขประจำตัวประชาชนจาก ThaID ไม่ตรงกับที่บันทึกไว้",
     });
-    await failThaidOperation(operation, "cid_mismatch", "เลขบัตรจาก ThaiD ไม่ตรงกับบัญชี");
+    await failThaidOperation(operation, "cid_mismatch", "เลขบัตรจาก ThaID ไม่ตรงกับบัญชี");
     await logAudit({
       action: AuditAction.IDENTITY_VERIFICATION_FAILED,
       subjectType: AuditSubject.USER_ACTIVATION_KEY,
@@ -337,7 +366,7 @@ authRouter.post("/thaid/callback", async (req, res) => {
       metadata: {
         failure_reason: "CID_MISMATCH",
         user_account_id: key.userAccountId,
-        // ไม่บันทึกเลขบัตรของทั้งสองฝั่งลง log — เก็บแค่ subject ที่ ThaiD ออกให้
+        // ไม่บันทึกเลขบัตรของทั้งสองฝั่งลง log — เก็บแค่ subject ที่ ThaID ออกให้
         thaid_subject: identity.subject,
         integration_operation_id: operation.id,
       },
@@ -345,7 +374,7 @@ authRouter.post("/thaid/callback", async (req, res) => {
     res.status(403).json({
       error: "cid_mismatch",
       message:
-        "เลขประจำตัวประชาชนที่ยืนยันผ่าน ThaiD ไม่ตรงกับที่บันทึกไว้ในระบบ " +
+        "เลขประจำตัวประชาชนที่ยืนยันผ่าน ThaID ไม่ตรงกับที่บันทึกไว้ในระบบ " +
         "ลิงก์นี้ถูกยกเลิกแล้วเพื่อความปลอดภัย กรุณาติดต่อเจ้าหน้าที่เพื่อขอลิงก์ใหม่",
     });
     return;
@@ -366,20 +395,48 @@ authRouter.post("/thaid/callback", async (req, res) => {
     },
   });
 
+  /**
+   * เขียนชื่อจากบัตรลงบัญชีทันที ไม่ใช่รอให้หน้าเว็บส่งกลับมาตอนตั้งรหัสผ่าน
+   *
+   * การ์ดสั่งว่าผู้ใช้ห้ามเปลี่ยนชื่อที่ได้จาก ThaID — ค่าที่เดินทางผ่านเบราว์เซอร์แล้ว
+   * ส่งกลับมาใน body บังคับแบบนั้นไม่ได้ ใครก็แก้ก่อนส่งได้ พอเก็บลงแถวบัญชีตรงนี้
+   * แล้วให้ `POST /activate` อ่านจากแถวนั้น "ห้ามเปลี่ยน" จึงเป็นจริงทั้งเส้นทาง
+   *
+   * เขียนเฉพาะ claim ที่มาจริง: ThaID ไม่ส่ง `title` มาเลย (docs/07 §4.1) และ claim
+   * ที่ว่างเปล่าต้องไม่ไปล้างชื่อที่เจ้าหน้าที่กรอกไว้ตอนเชิญทิ้ง
+   */
+  const fromCard = {
+    ...(identity.titleTh ? { prefixTh: identity.titleTh } : {}),
+    ...(identity.givenNameTh ? { firstnameTh: identity.givenNameTh } : {}),
+    ...(identity.familyNameTh ? { lastnameTh: identity.familyNameTh } : {}),
+  };
+  if (Object.keys(fromCard).length > 0) {
+    await prisma.userAccount.update({
+      where: { id: key.userAccountId },
+      data: { ...fromCard, updatedBy: key.userAccountId },
+    });
+  }
+
   res.json({
     purpose: "activate",
     verified: true,
     email: key.userAccount.email,
     /**
-     * เอาไว้เติมฟอร์มขั้นสร้างบัญชีให้ตรงกับบัตร ผู้ใช้ยังแก้ได้
+     * สิ่งที่ ThaID ส่งมาในรอบนี้ — หน้าเว็บไม่ได้ใช้แล้ว แต่เก็บไว้ในคำตอบเพราะเป็น
+     * ทางเดียวที่จะเห็นว่า DOPA ส่ง claim ไหนมาบ้างโดยไม่ต้องเปิด log ของ backend
+     * (`fullName` / `firstNameEn` / `lastNameEn` ไม่มีที่เก็บในบัญชี)
+     *
+     * ชื่อที่ฟอร์มใช้จริงมาจาก `GET /invitation` ซึ่งอ่านจากแถวบัญชีที่เพิ่งเขียนไป
+     * ข้างบน — ทางเดียวเท่านั้น มิฉะนั้นล็อกช่องชื่อไม่ได้จริง ดู lockedProfile()
      *
      * `prefix` / `fullName` มาจาก claim `title` / `name` ซึ่งไม่ได้อยู่ใน scope ที่ขอ
-     * จึงเป็น null ตามปกติ — ปล่อยไว้เผื่อกรมการปกครองส่งมาให้เอง
+     * จึงเป็น null ตามปกติ — ปล่อยไว้เผื่อกรมการปกครองส่งมาให้เอง คำนำหน้าจึงตกมาที่
+     * ค่าที่เจ้าหน้าที่กรอกไว้ตอนเชิญแทบทุกครั้ง (`docs/07` §4.1)
      */
     profile: {
-      prefix: identity.titleTh,
-      firstName: identity.givenNameTh,
-      lastName: identity.familyNameTh,
+      prefix: identity.titleTh ?? key.userAccount.prefixTh,
+      firstName: identity.givenNameTh ?? key.userAccount.firstnameTh,
+      lastName: identity.familyNameTh ?? key.userAccount.lastnameTh,
       firstNameEn: identity.givenNameEn,
       lastNameEn: identity.familyNameEn,
       fullName: identity.nameTh,
@@ -387,7 +444,7 @@ authRouter.post("/thaid/callback", async (req, res) => {
   });
 });
 
-/** เข้าสู่ระบบด้วย ThaiD — จับคู่บัญชีด้วยเลขบัตร ไม่ใช่อีเมล */
+/** เข้าสู่ระบบด้วย ThaID — จับคู่บัญชีด้วยเลขบัตร ไม่ใช่อีเมล */
 async function thaidLogin(
   req: import("express").Request,
   res: import("express").Response,
@@ -447,14 +504,26 @@ async function thaidLogin(
 
 // ---------------------------------------------------------------- สร้างบัญชี (§2.5)
 
-const activateSchema = z.object({
-  token: z.string().min(1),
-  prefix: z.string().trim().min(1, "กรุณาเลือกคำนำหน้า"),
-  firstName: z.string().trim().min(1, "กรุณากรอกชื่อ"),
-  lastName: z.string().trim().min(1, "กรุณากรอกนามสกุล"),
-  phone: phoneSchema,
-  password: passwordSchema,
-});
+const activateSchema = z
+  .object({
+    token: z.string().min(1),
+    /**
+     * ช่องชื่อเป็น optional เพราะปกติมีอยู่บนบัญชีแล้ว (ดู lockedProfile) — body มีสิทธิ์
+     * เติมได้เฉพาะช่องที่ยังว่าง ค่าที่ส่งมาทับช่องที่ล็อกไว้ถูกทิ้งเงียบ ๆ ไม่ตอบ error
+     * เพราะแท็บที่เปิดค้างไว้ก่อนงานนี้ก็ยังส่งครบทุกช่องมาตามเดิม และค่าที่มันส่งมา
+     * ก็เป็นค่าเดียวกับที่ถูกล็อกอยู่
+     */
+    prefix: z.string().trim().optional(),
+    firstName: z.string().trim().optional(),
+    lastName: z.string().trim().optional(),
+    phone: phoneSchema,
+    password: passwordSchema,
+    confirmPassword: z.string().min(1, "กรุณากรอกรหัสผ่านอีกครั้งเพื่อยืนยัน"),
+  })
+  .refine((value) => value.password === value.confirmPassword, {
+    path: ["confirmPassword"],
+    message: "รหัสผ่านทั้งสองช่องไม่ตรงกัน",
+  });
 
 /**
  * ขั้นสุดท้าย: ตั้งรหัสผ่านแล้วเปิดใช้งานบัญชี
@@ -471,7 +540,7 @@ authRouter.post("/activate", async (req, res) => {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;
   }
-  const { token, prefix, firstName, lastName, phone, password } = parsed.data;
+  const { token, phone, password } = parsed.data;
 
   const { key, reason } = await findUsableActivationKey(token);
   if (!key) {
@@ -487,8 +556,31 @@ authRouter.post("/activate", async (req, res) => {
   if (!verification) {
     res.status(409).json({
       error: "identity_required",
-      message: "กรุณายืนยันตัวตนด้วย ThaiD ก่อนตั้งรหัสผ่าน",
+      message: "กรุณายืนยันตัวตนด้วย ThaID ก่อนตั้งรหัสผ่าน",
     });
+    return;
+  }
+
+  /**
+   * ชื่อที่บันทึกจริงมาจากบัญชีก่อนเสมอ ค่าจาก body ใช้ได้เฉพาะช่องที่บัญชียังว่าง
+   * — นี่คือจุดที่ "ห้าม user เปลี่ยน" ถูกบังคับ ไม่ใช่ `readOnly` บนหน้าเว็บ
+   */
+  const locked = lockedProfile(key.userAccount);
+  const prefix = locked.prefix ? key.userAccount.prefixTh!.trim() : (parsed.data.prefix ?? "");
+  const firstName = locked.firstName
+    ? key.userAccount.firstnameTh!.trim()
+    : (parsed.data.firstName ?? "");
+  const lastName = locked.lastName
+    ? key.userAccount.lastnameTh!.trim()
+    : (parsed.data.lastName ?? "");
+
+  // ช่องที่ไม่ได้ล็อกยังบังคับกรอก — ข้อความผูกกับช่องเดิมที่หน้าเว็บรู้จักอยู่แล้ว
+  const blank: Record<string, string> = {};
+  if (!prefix) blank.prefix = "กรุณาเลือกคำนำหน้า";
+  if (!firstName) blank.firstName = "กรุณากรอกชื่อ";
+  if (!lastName) blank.lastName = "กรุณากรอกนามสกุล";
+  if (Object.keys(blank).length > 0) {
+    res.status(400).json({ error: "validation", fields: blank });
     return;
   }
 
@@ -506,7 +598,7 @@ authRouter.post("/activate", async (req, res) => {
           prefixTh: prefix,
           firstnameTh: firstName,
           lastnameTh: lastName,
-          displayName: `${prefix}${firstName} ${lastName}`,
+          displayName: fullNameTh({ prefixTh: prefix, firstnameTh: firstName, lastnameTh: lastName }),
           phoneNumber: phone,
           passwordHash: await hashPassword(password),
           externalSubject: verification.externalReference,
@@ -523,12 +615,12 @@ authRouter.post("/activate", async (req, res) => {
       replaced = activation.replaced;
     });
   } catch (err) {
-    // external_subject ซ้ำ = ThaiD คนเดียวกันเคยเปิดบัญชีอื่นไปแล้ว
-    // (พูดถึง "บัญชี ThaiD" ไม่ใช่ "เลขบัตร" เพราะเมื่อไม่ได้รับ scope pid ระบบไม่เคยเห็นเลขบัตร)
+    // external_subject ซ้ำ = ThaID คนเดียวกันเคยเปิดบัญชีอื่นไปแล้ว
+    // (พูดถึง "บัญชี ThaID" ไม่ใช่ "เลขบัตร" เพราะเมื่อไม่ได้รับ scope pid ระบบไม่เคยเห็นเลขบัตร)
     if (typeof err === "object" && err && (err as { code?: string }).code === "P2002") {
       res.status(409).json({
         error: "identity_in_use",
-        message: "บัญชี ThaiD นี้ถูกใช้เปิดใช้งานบัญชีอื่นในระบบแล้ว กรุณาติดต่อเจ้าหน้าที่",
+        message: "บัญชี ThaID นี้ถูกใช้เปิดใช้งานบัญชีอื่นในระบบแล้ว กรุณาติดต่อเจ้าหน้าที่",
       });
       return;
     }
@@ -816,7 +908,7 @@ async function removedFromOrganization(userAccountId: string, organizationId: st
       ...activeAssignmentWhere(),
     },
     orderBy: { effectiveFrom: "desc" },
-    select: { userAccount: { select: { displayName: true } } },
+    select: { userAccount: { select: NAME_FIELDS } },
   });
 
   return {
@@ -824,7 +916,7 @@ async function removedFromOrganization(userAccountId: string, organizationId: st
     role: removal.role.code,
     roleLabel: ROLE_LABELS[removal.role.code as RoleCode] ?? removal.role.code,
     removedAt: removal.revokedAt,
-    replacedBy: successor?.userAccount.displayName ?? null,
+    replacedBy: fullNameTh(successor?.userAccount) || null,
   };
 }
 

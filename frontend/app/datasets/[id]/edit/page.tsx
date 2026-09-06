@@ -39,10 +39,10 @@ import {
 import type { DatasetRequest } from "@/lib/types";
 
 const SECTIONS = [
-  { id: "section-1", tag: "ส่วนที่ 1", title: "ประเภทและชื่อชุดข้อมูล" },
-  { id: "section-2", tag: "ส่วนที่ 2", title: "ความถี่ ขอบเขต และการนำส่ง" },
-  { id: "section-3", tag: "ส่วนที่ 3", title: "หมวดหมู่และระดับชั้นข้อมูล" },
-  { id: "section-4", tag: "ส่วนที่ 4", title: "การจัดเก็บและส่งต่อข้อมูล" },
+  { id: "section-1", tag: "ส่วนที่ 1", title: "ข้อมูลทั่วไปของชุดข้อมูล" },
+  { id: "section-2", tag: "ส่วนที่ 2", title: "แหล่งที่มา การปรับปรุง และการนำส่ง" },
+  { id: "section-3", tag: "ส่วนที่ 3", title: "การจัดประเภทและระดับชั้นข้อมูล" },
+  { id: "section-4", tag: "ส่วนที่ 4", title: "เงื่อนไขการจัดเก็บและการส่งต่อ" },
   { id: "section-5", tag: "ส่วนที่ 5", title: "เอกสารแนบ" },
 ];
 
@@ -262,10 +262,6 @@ export default function EditDatasetRequestPage() {
           {requestNumber}
         </p>
         <h1 className="mt-1 text-[26px] font-semibold text-navy-800">ลงทะเบียนชุดข้อมูล</h1>
-        <p className="mt-1.5 text-[15px] text-ink-muted">
-          กรอกข้อมูลให้ครบทั้งห้าส่วน ระบบจะสร้างแบบฟอร์ม PDF ให้ตรวจสอบก่อนนำส่ง
-          บางช่องระบบกำหนดค่าให้เองตามหมวดหมู่และระดับชั้นของข้อมูล
-        </p>
       </header>
 
       {revisionNote ? (
@@ -284,7 +280,7 @@ export default function EditDatasetRequestPage() {
             <CardHeader
               tag={SECTIONS[0]!.tag}
               title={SECTIONS[0]!.title}
-              description="ข้อมูลที่ใช้อธิบายชุดข้อมูลในบัญชีข้อมูลภาครัฐ"
+              description="ระบุข้อมูลพื้นฐานที่ใช้ระบุ อธิบาย และค้นหาชุดข้อมูลใน D2"
             />
             <div className="grid gap-5 p-6">
               <div className="grid gap-5 sm:grid-cols-2">
@@ -420,7 +416,7 @@ export default function EditDatasetRequestPage() {
             <CardHeader
               tag={SECTIONS[1]!.tag}
               title={SECTIONS[1]!.title}
-              description="ความถี่ของข้อมูล ขอบเขตพื้นที่ แหล่งที่มา และรูปแบบที่จะนำส่ง"
+              description="ระบุแหล่งที่มา รอบการปรับปรุง ขอบเขตพื้นที่ และวิธีนำส่งข้อมูลเข้าสู่ D2"
             />
             <div className="grid gap-5 p-6">
               <div className="grid gap-5 sm:grid-cols-2">
@@ -520,7 +516,7 @@ export default function EditDatasetRequestPage() {
             <CardHeader
               tag={SECTIONS[2]!.tag}
               title={SECTIONS[2]!.title}
-              description="หมวดหมู่ตามธรรมาภิบาลข้อมูลภาครัฐเป็นตัวกำหนดระดับชั้นและสัญญาอนุญาตที่เลือกได้"
+              description="ระบุประเภทและระดับชั้นของข้อมูลตามหลักธรรมาภิบาลข้อมูลภาครัฐ ระบบจะแสดงตัวเลือกที่เกี่ยวข้องตามข้อมูลที่คุณเลือก"
             />
             <div className="grid gap-5 p-6">
               <Wrap name="dataCategory">
@@ -542,7 +538,7 @@ export default function EditDatasetRequestPage() {
                   forced={rules.containsPersonalData.forced}
                   onChange={(v) => set("containsPersonalData", v)}
                   error={fields.containsPersonalData}
-                  hint="ข้อมูลส่วนบุคคลตาม พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562"
+                  hint="ข้อมูลส่วนบุคคลตามกฎหมายว่าด้วยการคุ้มครองข้อมูลส่วนบุคคล"
                   forcedHint="ข้อมูลสาธารณะต้องไม่มีข้อมูลส่วนบุคคล"
                 />
               </Wrap>
@@ -659,7 +655,7 @@ export default function EditDatasetRequestPage() {
             <CardHeader
               tag={SECTIONS[3]!.tag}
               title={SECTIONS[3]!.title}
-              description="สิทธิที่หน่วยงานให้สำนักงานในการจัดเก็บและส่งต่อข้อมูล — “อนุญาต” คือส่งต่อได้ทันที “ไม่อนุญาต” คือต้องขออนุญาตเป็นครั้ง ๆ ไป"
+              description="กำหนดสิทธิที่หน่วยงานเจ้าของข้อมูลให้แก่สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) หรือ BDI ในการจัดเก็บ ประมวลผล และส่งต่อข้อมูลผ่าน D2"
             />
             <div className="grid gap-5 p-6">
               <Wrap name="allowOriginalRawDataRetention">
@@ -808,7 +804,6 @@ export default function EditDatasetRequestPage() {
             <CardHeader
               tag={SECTIONS[4]!.tag}
               title={SECTIONS[4]!.title}
-              description="พจนานุกรมข้อมูลบังคับแนบ ตัวอย่างข้อมูลแนบได้ถ้ามี"
             />
             <div className="grid gap-5 p-6 sm:grid-cols-2">
               <div data-field="DATA_DICTIONARY">
@@ -845,7 +840,7 @@ export default function EditDatasetRequestPage() {
               บันทึกแบบร่าง
             </Button>
             <Button type="submit" loading={generating}>
-              ตรวจสอบและสร้าง PDF
+              ตรวจสอบคำขอ
             </Button>
           </div>
         </form>

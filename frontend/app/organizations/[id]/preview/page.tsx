@@ -32,7 +32,12 @@ export default function PreviewPage() {
   const [org, setOrg] = useState<Organization | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // ผูกกับ id ของคำขอที่โหลดมาแล้ว ไม่ใช่พารามิเตอร์บน URL (รับได้ทั้งสอง id)
-  const { documents, error: documentsError, reload: reloadDocuments } = useLegalDocuments(org?.id ?? null);
+  const {
+    documents,
+    notApplicable: skippedDocuments,
+    error: documentsError,
+    reload: reloadDocuments,
+  } = useLegalDocuments(org?.id ?? null);
 
   useEffect(() => {
     // ยังไม่ล็อกอิน = API ตอบได้แค่ 401 และหน้านี้จะหมุนค้างตลอดกาล
@@ -89,17 +94,16 @@ export default function PreviewPage() {
       <header className="mb-7 mt-4">
         <h1 className="text-[26px] font-semibold text-navy-800">ตรวจสอบเอกสารก่อนนำส่ง</h1>
         <p className="mt-1.5 text-[15px] leading-relaxed text-ink-muted">
-          ระบบนำข้อมูลที่คุณกรอกไปเติมลงในข้อตกลง (A0) แล้ว กรุณาตรวจสอบความถูกต้องให้เรียบร้อย
-          พร้อมอ่านผนวกแนบท้าย A1–A3 ซึ่งเป็นส่วนหนึ่งของข้อตกลงเดียวกัน
-          เมื่อนำส่งแล้วจะแก้ไขไม่ได้จนกว่าผู้ตรวจสอบจะส่งกลับ
-        </p>
+          ระบบสร้างเอกสารของคำขอนี้จากข้อมูลที่กรอกไว้เรียบร้อยแล้ว โปรดตรวจสอบความถูกต้องของเอกสารทุกฉบับก่อนนำส่ง เมื่อนำส่งแล้วจะแก้ไขไม่ได้จนกว่าผู้ตรวจสอบจะส่งกลับ</p>
       </header>
 
       <LegalDocumentsCard
         documents={documents}
+        notApplicable={skippedDocuments}
         description={org.name}
         error={documentsError}
         onRetry={reloadDocuments}
+        regenerateLabel="ตรวจสอบข้อมูล"
       />
 
       <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">

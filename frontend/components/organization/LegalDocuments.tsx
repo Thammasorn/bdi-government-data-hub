@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from "react";
 
+import { LegalNotice } from "@/components/organization/LegalNotice";
 import { PdfViewer } from "@/components/organization/PdfViewer";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
+import { documentLabel } from "@/lib/legal-document";
 import { formatThaiDate } from "@/lib/status";
-import type { LegalDocument } from "@/lib/types";
+import type { LegalDocument, SkippedLegalDocument } from "@/lib/types";
 
 /**
  * โหลดชุดเอกสารกฎหมายของคำขอหนึ่งใบ — ใช้ทั้งหน้าตรวจสอบก่อนนำส่งและหน้ารายละเอียด
@@ -22,6 +24,8 @@ export function useLegalDocuments(
   base: "organizations" | "dataset-requests" = "organizations",
 ) {
   const [documents, setDocuments] = useState<LegalDocument[] | null>(null);
+  /** ฉบับที่หน่วยงานระบุว่าไม่เกี่ยวข้อง — ไม่อยู่ใน `documents` แต่ยังต้องบอกผู้ใช้ว่ามีอยู่ */
+  const [notApplicable, setNotApplicable] = useState<SkippedLegalDocument[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [round, setRound] = useState(0);
 
@@ -30,9 +34,14 @@ export function useLegalDocuments(
     let alive = true;
     setError(null);
     api
-      .get<{ documents: LegalDocument[] }>(`/api/${base}/${requestId}/legal-documents`)
+      // เส้นทางชุดข้อมูลไม่มีการกดข้ามเอกสาร จึงไม่ส่งคีย์นี้มา — ถือว่าไม่มีฉบับที่ถูกข้าม
+      .get<{ documents: LegalDocument[]; notApplicable?: SkippedLegalDocument[] }>(
+        `/api/${base}/${requestId}/legal-documents`,
+      )
       .then((d) => {
-        if (alive) setDocuments(d.documents);
+        if (!alive) return;
+        setDocuments(d.documents);
+        setNotApplicable(d.notApplicable ?? []);
       })
       .catch((err) => {
         // ต้องเก็บข้อความไว้ ไม่ใช่แค่ธง — การ์ดเคยแสดง spinner ตลอดไปเมื่อโหลดไม่สำเร็จ
@@ -44,7 +53,7 @@ export function useLegalDocuments(
     };
   }, [requestId, base, round]);
 
-  return { documents, error, reload: () => setRound((r) => r + 1) };
+  return { documents, notApplicable, error, reload: () => setRound((r) => r + 1) };
 }
 
 /**
@@ -55,18 +64,27 @@ export function useLegalDocuments(
  */
 export function LegalDocumentsCard({
   documents,
+  notApplicable = [],
   description,
   reloadKey = 0,
   error = null,
   onRetry,
+  regenerateLabel = "ตรวจสอบและสร้าง PDF",
 }: {
   documents: LegalDocument[] | null;
+  /** ฉบับที่หน่วยงานระบุว่าไม่เกี่ยวข้อง — แสดงเป็นบรรทัดบอก ไม่ใช่แท็บให้เปิดอ่าน */
+  notApplicable?: SkippedLegalDocument[];
   description?: string;
   /** เพิ่มค่าเมื่อไฟล์ถูกสร้างใหม่ เพื่อไม่ให้ iframe เสิร์ฟฉบับที่ cache ไว้ */
   reloadKey?: number;
   /** ข้อความจาก useLegalDocuments เมื่อโหลดไม่สำเร็จ */
   error?: string | null;
   onRetry?: () => void;
+  /**
+   * ชื่อปุ่มที่พาไปสร้างเอกสารใหม่ — การ์ดนี้ใช้ร่วมกันทั้งเส้นทางหน่วยงานและชุดข้อมูล
+   * ซึ่งตั้งชื่อปุ่มไม่เหมือนกัน บอกให้กดปุ่มที่ไม่มีอยู่บนหน้าจอคือทางตันสำหรับผู้ใช้
+   */
+  regenerateLabel?: string;
 }) {
   const [active, setActive] = useState(0);
 
@@ -104,14 +122,30 @@ export function LegalDocumentsCard({
     );
   }
 
+  /**
+   * ฉบับที่ถูกข้ามหายไปจากแท็บ จึงต้องมีบรรทัดบอกว่ามันหายไปไหน
+   *
+   * ผู้อนุมัติ BDI เห็นบรรทัดนี้ด้วย — เขาควรรู้ว่าหน่วยงานระบุฉบับไหนว่าไม่เกี่ยวข้อง
+   * เขาแค่ไม่ต้องอ่านและลงนามรับรองมัน
+   */
+  const skippedNote =
+    notApplicable.length > 0 ? (
+      <p className="text-[13px] leading-relaxed text-ink-muted">
+        หน่วยงานระบุว่า &ldquo;{notApplicable.map(documentLabel).join(" · ")}&rdquo;
+        ไม่เกี่ยวข้องกับหน่วยงาน จึงไม่อยู่ในชุดที่ต้องเห็นชอบและลงนาม
+      </p>
+    ) : null;
+
   if (documents.length === 0) {
     return (
       <Card>
         <CardHeader title="เอกสารข้อตกลง" description={description} />
         <div className="p-6">
-          <p className="rounded-xl bg-warning-bg p-5 text-sm text-warning">
-            ยังไม่มีเอกสารข้อตกลงที่เผยแพร่ในระบบ กรุณาแจ้งผู้ดูแลระบบ
-          </p>
+          {skippedNote ?? (
+            <p className="rounded-xl bg-warning-bg p-5 text-sm text-warning">
+              ยังไม่มีเอกสารข้อตกลงที่เผยแพร่ในระบบ กรุณาแจ้งผู้ดูแลระบบ
+            </p>
+          )}
         </div>
       </Card>
     );
@@ -139,7 +173,7 @@ export function LegalDocumentsCard({
                   : "border-line bg-white text-navy-700 hover:border-navy-300 hover:bg-navy-50"
               }`}
             >
-              {doc.code}
+              {documentLabel(doc)}
               {doc.acceptedAt ? (
                 <>
                   <span aria-hidden="true">✓</span>
@@ -149,6 +183,7 @@ export function LegalDocumentsCard({
             </button>
           ))}
         </div>
+        {skippedNote ? <div className="mt-3">{skippedNote}</div> : null}
       </div>
       <div className="p-6">
         {/* ไม่พิมพ์ชื่อเอกสารซ้ำเหนือตัวอ่าน — หัวของ PdfViewer แสดงชื่อเดียวกันอยู่แล้ว
@@ -160,6 +195,8 @@ export function LegalDocumentsCard({
             เห็นชอบเมื่อ {formatThaiDate(current.acceptedAt)}
           </p>
         ) : null}
+        {/* คำเตือนของฉบับที่กำลังเปิดอยู่ — ทุกคนที่เปิดอ่านต้องเห็น ไม่ใช่เฉพาะตอนลงนาม */}
+        <LegalNotice document={current} className="mb-4" />
         {current.fileUrl ? (
           <PdfViewer
             /**
@@ -168,12 +205,12 @@ export function LegalDocumentsCard({
              * และผู้ที่เพิ่งลงนามจะเห็นฉบับที่ยังไม่มีลายมือชื่อของตัวเอง
              */
             url={`${api.fileUrl(current.fileUrl)}?v=${reloadKey}`}
-            filename={`${current.code} · ${current.name}`}
+            filename={documentLabel(current)}
             title={current.name}
           />
         ) : (
           <p className="rounded-xl bg-warning-bg p-5 text-sm text-warning">
-            ยังไม่ได้สร้างเอกสารฉบับนี้ กรุณากลับไปกด &ldquo;ตรวจสอบและสร้าง PDF&rdquo; อีกครั้ง
+            ยังไม่ได้สร้างเอกสารฉบับนี้ กรุณากลับไปกด &ldquo;{regenerateLabel}&rdquo; อีกครั้ง
           </p>
         )}
       </div>

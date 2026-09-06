@@ -2,15 +2,15 @@
  * ข้อมูลคำขอลงทะเบียนชุดข้อมูล -> ค่าของ placeholder ในแบบนำส่งข้อมูล (A4)
  *
  * ต่างจาก lib/legal-values.ts ที่ทำหน้าเดียวกันให้เส้นทางลงทะเบียนหน่วยงาน — เอกสาร
- * คนละฉบับดึงข้อมูลคนละชุด ตัวเลขและวันที่ยังเป็นเลขไทยและ พ.ศ. เหมือนกัน
+ * คนละฉบับดึงข้อมูลคนละชุด แต่ใช้ตัวจัดรูปแบบวันที่ชุดเดียวกัน — พ.ศ. และเลขอารบิก
  *
  * **ช่องติ๊ก** เป็นของใหม่ที่เส้นทางนี้ต้องใช้: A4 เป็นแบบฟอร์มกระดาษที่มีตัวเลือกให้กา
  * ทุกตัวเลือกยังพิมพ์ออกมาครบ ข้อที่ตรงกับคำขอได้ ✔ ข้อที่ไม่ตรงได้ ☐ ผู้อ่านจึงเห็นว่า
  * ตัวเลือกอื่นมีอะไรและไม่ได้เลือกอะไร ซึ่งเป็นสิ่งที่แบบฟอร์มกระดาษสื่อ
  */
-import { TICK_FIELDS } from "./document-render.js";
+import { SYSTEM_NAME, TICK_FIELDS } from "./document-render.js";
 import { splitTags, type MetadataValues } from "./dataset.js";
-import { thaiLongDate, thaiLongDateTime, thaiNumerals } from "./legal-values.js";
+import { thaiLongDate, thaiLongDateTime } from "./legal-values.js";
 
 /**
  * ✔ ติ๊กแล้ว · ☐ ยังไม่ติ๊ก
@@ -43,6 +43,10 @@ export interface DatasetDocumentInput extends MetadataValues {
   approvedAt: Date | null;
   printedByName: string | null;
   printedAt: Date;
+
+  /** เวอร์ชันของเอกสารฉบับที่กำลัง render — ดูคำอธิบายใน lib/legal-values.ts */
+  documentVersionNumber: number | null;
+  documentEffectiveAt: Date | null;
 }
 
 /**
@@ -67,7 +71,7 @@ function tickValues(metadata: MetadataValues): Record<string, string> {
 
 export function datasetDocumentValues(input: DatasetDocumentInput): Record<string, string> {
   const date = (d: Date | null) => (d ? thaiLongDate(d) : "");
-  const num = (n: number | null) => (n === null || n === undefined ? "" : thaiNumerals(String(n)));
+  const num = (n: number | null) => (n === null || n === undefined ? "" : String(n));
 
   return {
     ...tickValues(input),
@@ -110,8 +114,13 @@ export function datasetDocumentValues(input: DatasetDocumentInput): Record<strin
     "bdi_approver.signedDate": date(input.bdiSignedAt),
     "bdi_approver.endorsement": input.bdiSignedAt ? "เห็นชอบ\n" : "",
 
+    // ── ตัวเอกสารเอง ──
+    "document.version":
+      input.documentVersionNumber === null ? "" : String(input.documentVersionNumber),
+    "document.effectiveDate": date(input.documentEffectiveAt),
+
     // ── ระบบ ──
-    "system.name": "ระบบกลางเพื่อการแบ่งปันข้อมูล (Government Datahub Platform)",
+    "system.name": SYSTEM_NAME,
     printedBy: input.printedByName ?? "",
     printedAt: thaiLongDate(input.printedAt),
     printedDateTime: thaiLongDateTime(input.printedAt),

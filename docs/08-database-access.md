@@ -138,7 +138,7 @@ join notification.notification n on n.id = nd.notification_id
 where nd.status <> 'SENT'
 order by n.created_at desc;
 
--- ผลการคุยกับ ThaiD ล่าสุด (ดู docs/07-thaid-integration.md)
+-- ผลการคุยกับ ThaID ล่าสุด (ดู docs/07-thaid-integration.md)
 select operation, status, last_error_code, external_reference, created_at
 from integration.integration_operation
 order by created_at desc limit 20;

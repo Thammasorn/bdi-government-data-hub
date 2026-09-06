@@ -610,7 +610,7 @@ def cover(doc, title, subtitle, source_name, audience, updated):
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     spacing(p, after=2, line=1.2)
-    style_run(p.add_run("Government Datahub Platform"), size=13, color=CORAL, bold=True)
+    style_run(p.add_run("ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)"), size=13, color=CORAL, bold=True)
 
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER

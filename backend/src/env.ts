@@ -31,7 +31,7 @@ function requiredInProduction(name: string, devFallback: string): string {
   return devFallback;
 }
 
-/** อ่านก่อนสร้าง env เพราะ redirect_uri ของ ThaiD ตั้งต้นจากค่านี้ */
+/** อ่านก่อนสร้าง env เพราะ redirect_uri ของ ThaID ตั้งต้นจากค่านี้ */
 const APP_URL = optional("APP_URL", "http://localhost:3000").replace(/\/$/, "");
 
 export const env = {
@@ -90,7 +90,7 @@ export const env = {
   },
 
   /**
-   * ThaiD (DOPA IdP) — OAuth 2.0 authorization code flow
+   * ThaID (DOPA IdP) — OAuth 2.0 authorization code flow
    *
    * ทุกค่าอ่านจาก environment เพราะ sandbox กับของจริงคนละ host คนละ client และ
    * redirect_uri ต้อง "ตรงตัวอักษร" กับที่ลงทะเบียนไว้กับกรมการปกครอง ไม่งั้นได้
@@ -147,7 +147,7 @@ export const env = {
      * จึงเป็น false (เตือนใน log แล้วไปต่อ) เปิดเป็น true เมื่อเห็นจากการยิงจริงแล้วว่ามีมา
      */
     requireNonce: optional("THAID_REQUIRE_NONCE", "false") === "true",
-    /** อายุของ state ที่ค้างรอ callback — ยาวพอให้เปิดแอป ThaiD บนมือถือแล้วกลับมา */
+    /** อายุของ state ที่ค้างรอ callback — ยาวพอให้เปิดแอป ThaID บนมือถือแล้วกลับมา */
     stateTtlMinutes: Number(optional("THAID_STATE_TTL_MINUTES", "15")),
     /** ยืนยันตัวตนแล้วมีเวลาเท่านี้ในการตั้งรหัสผ่านให้จบ ก่อนต้องยืนยันใหม่ */
     verificationTtlMinutes: Number(optional("THAID_VERIFICATION_TTL_MINUTES", "30")),
@@ -200,9 +200,20 @@ export const env = {
     secure: optional("SMTP_SECURE", "false") === "true",
     user: optional("SMTP_USER", ""),
     pass: optional("SMTP_PASS", ""),
-    from: optional("SMTP_FROM", "BDI Datahub <no-reply@bdi.or.th>"),
+    from: optional("SMTP_FROM", "ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล <no-reply@bdi.or.th>"),
     /** ไม่ตั้ง SMTP_USER = พิมพ์อีเมลลง log แทนการส่งจริง (สะดวกตอน dev) */
     enabled: Boolean(optional("SMTP_USER", "")),
+  },
+  /**
+   * ช่องทางติดต่อที่พิมพ์อยู่ท้ายอีเมลทุกฉบับ
+   *
+   * อีเมลมาจากการ์ด "แก้เนื้อหา invitation email" ส่วนเบอร์โทรยังไม่มีใครให้มา และทั้ง
+   * repo ก็ไม่มีเบอร์ของสำนักงานเก็บไว้ที่ไหน — ค่าว่างแปลว่า "ไม่ต้องพิมพ์วรรคเบอร์โทร"
+   * ดีกว่าส่ง [หมายเลขโทรศัพท์] ออกไปถึงผู้รับจริง ๆ ตั้งค่าแล้วรีสตาร์ต backend ก็ขึ้นทันที
+   */
+  support: {
+    email: optional("SUPPORT_EMAIL", "d2-support@bdi.or.th"),
+    phone: optional("SUPPORT_PHONE", ""),
   },
 } as const;
 

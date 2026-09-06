@@ -9,11 +9,13 @@
  *          dataset            1:1  dataset_metadata
  *
  * ลำดับด่านใน review.review_task:
- *   BDI_OFFICER_REVIEW → [DATASET_SPECIALIST_REVIEW] → BDI_OFFICER_REVIEW
- *   → ORGANIZATION_APPROVAL → BDI_OFFICER_REVIEW (ตรวจซ้ำ) → BDI_FINAL_APPROVAL
+ *   BDI_OFFICER_REVIEW → ORGANIZATION_APPROVAL → BDI_FINAL_APPROVAL
  *
- * ด่าน "ตรวจซ้ำ" ไม่มี task_type ของตัวเองในดีไซน์ — ใช้ BDI_OFFICER_REVIEW รอบถัดไป
- * แล้วดูจากประวัติว่า ORGANIZATION_APPROVAL ผ่านไปแล้วหรือยัง (nextStageAfter())
+ * เท่ากับเส้นทางหน่วยงานทุกด่าน หลังการยกเลิกสองอย่างเมื่อ 2026-08-30:
+ * ด่าน "ตรวจซ้ำ" ของเจ้าหน้าที่ BDI หลังการลงนาม (ลงนามแล้วส่งให้ผู้อนุมัติ BDI ทันที) และ
+ * **ด่านของผู้เชี่ยวชาญด้านข้อมูล** ซึ่งกลายเป็นการ "ขอความเห็น" ที่ไม่ย้ายด่าน — ชื่อ
+ * ผู้เชี่ยวชาญอยู่ในคอลัมน์ `assigned_specialist_id` ของคำขอ ไม่ใช่ใน review_task และ
+ * เจ้าหน้าที่ BDI เป็นผู้ตัดสิน "ผ่าน/ส่งกลับ" อยู่คนเดียวตลอดด่านนั้น (ดู POST /:id/assign)
  */
 import { Router } from "../lib/async-route.js";
 import multer from "multer";
@@ -67,10 +69,12 @@ import {
   sendDatasetSubmitted,
   sendDatasetPendingBdiApproval,
   sendDatasetPendingOrgApprover,
+  sendDatasetSignedPendingApproval,
   sendDatasetSpecialistAssigned,
 } from "../lib/mail.js";
 import {
   NotificationType,
+  announceProgress,
   bdiApproverIds,
   bdiOfficerIds,
   emailsOf,
@@ -86,7 +90,8 @@ import {
 import { DocumentRenderError } from "../lib/document-render.js";
 import { LEGAL_SCOPES, publishedDocuments } from "../lib/legal.js";
 import { nextDatasetCode, nextDatasetRequestNumber } from "../lib/request-number.js";
-import { isBdiStaff, isSpecialistOnly } from "../lib/roles.js";
+import { buildJourneyProgress, summariseMany } from "../lib/journey-steps.js";
+import { REVIEW_TASK_TYPE_LABELS, isBdiStaff, isSpecialistOnly } from "../lib/roles.js";
 import {
   BDI_ORGANIZATION_ID,
   ROLE_CODES,
@@ -95,17 +100,32 @@ import {
 } from "../lib/system.js";
 import { formatZodError, isUuid, parseRequestSnapshot } from "../lib/validation.js";
 import {
+  listOrderBy,
+  myNodeKeys,
+  parseFilterTokens,
+  parsePaging,
+  parseSort,
+  journeySummary,
+  nodeWhere,
+} from "../lib/queue.js";
+import {
+  TASK_TYPE_ROLES,
+  ACTIVE_STATUSES,
   WorkflowError,
   activeTask,
   cancelActiveTask,
   completeTask,
   deriveRequestStatus,
   openTask,
-  recordComment,
+  recordAdvisoryNote,
   startTask,
+  latestTaskTouch,
+  roleHolderId,
+  stateVersionOf,
   taskHistory,
 } from "../lib/workflow.js";
 import { requireAuth } from "../middleware/auth.js";
+import { NAME_FIELDS, fullNameTh } from "../lib/person-name.js";
 
 export const datasetRequestRouter = Router();
 datasetRequestRouter.use(requireAuth);
@@ -141,6 +161,10 @@ const upload = multer({
 const requestInclude = {
   metadata: true,
   organization: { select: { id: true, nameTh: true, status: true } },
+  // ผู้เชี่ยวชาญที่ถูกขอความเห็น — คอลัมน์บนคำขอ ไม่ใช่ด่านใน review_task (ดู POST /:id/assign)
+  assignedSpecialist: {
+    select: { id: true, email: true, prefixTh: true, firstnameTh: true, lastnameTh: true },
+  },
 } satisfies Prisma.DatasetRegistrationRequestInclude;
 
 type RequestRow = Prisma.DatasetRegistrationRequestGetPayload<{ include: typeof requestInclude }>;
@@ -152,38 +176,44 @@ type RequestRow = Prisma.DatasetRegistrationRequestGetPayload<{ include: typeof 
  * role อื่น เดิม `isBdiStaff` เหมารวมเขาไปด้วย หน้าที่พาดหัวว่า "คำขอที่คุณได้รับมอบหมาย"
  * จึงแสดงคำขอของทุกหน่วยงาน และเปิดดูรายละเอียดใบไหนก็ได้
  *
- * review_task อ้างถึงคำขอแบบ logical (ไม่ใช่ relation ของ Prisma) จึงต้องอ่าน id
- * ที่เคยถูกมอบหมายออกมาก่อนแล้วค่อยกรอง — รวมงานที่ปิดไปแล้วด้วย เพื่อให้เขายังเปิดดู
- * สิ่งที่ตัวเองเคยตรวจได้หลังส่งคืนเจ้าหน้าที่
+ * "ถูกมอบหมายให้ตนเอง" อ่านจากคอลัมน์ `assigned_specialist_id` บนคำขอตรง ๆ ตั้งแต่
+ * 2026-08-30 — เดิมต้องไล่หา review_task ของด่านผู้เชี่ยวชาญ เพราะการมอบหมายคือการเปิด
+ * ด่าน ตอนนี้การมอบหมายไม่ใช่ด่านแล้ว และคำขอเดินหน้าต่อได้โดยที่ชื่อเขายังอยู่
+ * เจ้าหน้าที่ที่ถอนการมอบหมายจึงเป็นสิ่งเดียวที่ทำให้คำขอหายไปจากรายการของเขา
  */
 async function visibilityFilter(
   session: Session,
 ): Promise<Prisma.DatasetRegistrationRequestWhereInput> {
-  if (isSpecialistOnly(session.roles)) {
-    const assigned = await prisma.reviewTask.findMany({
-      where: {
-        subjectType: SUBJECT,
-        taskType: ReviewTaskType.DATASET_SPECIALIST_REVIEW,
-        assignedUserId: session.sub,
-      },
-      select: { subjectId: true },
-    });
-    return { id: { in: [...new Set(assigned.map((t) => t.subjectId))] } };
-  }
+  if (isSpecialistOnly(session.roles)) return { assignedSpecialistId: session.sub };
   if (isBdiStaff(session.roles)) return {};
   if (session.organizationId) return { organizationId: session.organizationId };
   return { createdBy: session.sub };
 }
 
+/**
+ * ผู้เชี่ยวชาญในรูปแบบที่หน้าเว็บใช้ — ก้อนเดียวกันทั้งหน้ารายการและหน้ารายละเอียด
+ */
+const publicSpecialist = (r: RequestRow) =>
+  r.assignedSpecialist
+    ? {
+        id: r.assignedSpecialist.id,
+        email: r.assignedSpecialist.email,
+        prefix: r.assignedSpecialist.prefixTh,
+        firstName: r.assignedSpecialist.firstnameTh,
+        lastName: r.assignedSpecialist.lastnameTh,
+      }
+    : null;
+
 const datasetLabel = (r: RequestRow) =>
   r.metadata?.title?.trim() || r.proposedTitle?.trim() || `คำขอ ${r.requestNumber}`;
 
-async function displayName(userId: string): Promise<string> {
+async function personNameOf(userId: string): Promise<string> {
   const user = await prisma.userAccount.findUnique({
     where: { id: userId },
-    select: { displayName: true, email: true },
+    select: NAME_FIELDS,
   });
-  return user?.displayName || user?.email || "ไม่ทราบชื่อ";
+  // ไม่ตกกลับไปใช้อีเมล — ชื่อนี้ไปโผล่ในอีเมลแจ้งเตือนและบนหน้าจอของคนอื่น
+  return fullNameTh(user) || "ไม่ทราบชื่อ";
 }
 
 /**
@@ -208,7 +238,7 @@ async function prerequisiteError(session: Session): Promise<string | null> {
   const members = await organizationMemberIds(session.organizationId);
   if (members.users.length === 0) return "หน่วยงานต้องมีผู้ใช้ที่เปิดใช้งานแล้วอย่างน้อยหนึ่งคน";
   if (members.approvers.length === 0) {
-    return "หน่วยงานต้องมีผู้มีอำนาจกระทำการแทนที่เปิดใช้งานบัญชีแล้ว จึงจะลงทะเบียนชุดข้อมูลได้";
+    return "หน่วยงานต้องมีผู้มีอำนาจอนุมัติของหน่วยงานที่เปิดใช้งานบัญชีแล้ว จึงจะลงทะเบียนชุดข้อมูลได้";
   }
   return null;
 }
@@ -216,40 +246,6 @@ async function prerequisiteError(session: Session): Promise<string | null> {
 function mayEdit(session: Session, request: { organizationId: string; createdBy: string }): boolean {
   if (isBdiStaff(session.roles)) return false;
   return session.organizationId === request.organizationId || request.createdBy === session.sub;
-}
-
-/**
- * เลือกผู้รับมอบหมายที่ว่างที่สุด — assigned_user_id เป็น NOT NULL ในดีไซน์
- *
- * เจ้าหน้าที่ BDI สังกัดหน่วยงาน BDI ตั้งแต่ 2026-08-16 — เดิม organization_id ของพวกเขา
- * เป็น NULL ผู้เรียกจึงส่ง `null` มาเพื่อหมายถึง "ฝั่ง BDI ไม่ผูกหน่วยงาน" ตอนนี้ตัวกรองนั้น
- * ไม่ตรงกับใครเลย ผลคือ submit ตอบ 503 no_reviewer ทั้งที่มีเจ้าหน้าที่อยู่ครบ
- * จึงต้องส่ง BDI_ORGANIZATION_ID มาแทน
- */
-async function pickAssignee(roleCode: RoleCode, organizationId?: string | null): Promise<string | null> {
-  const assignments = await prisma.userRoleAssignment.findMany({
-    where: {
-      role: { code: roleCode, isActive: true },
-      status: "ACTIVE",
-      OR: [{ effectiveUntil: null }, { effectiveUntil: { gt: new Date() } }],
-      userAccount: { status: UserAccountStatus.ACTIVE },
-      ...(organizationId !== undefined ? { organizationId } : {}),
-    },
-    select: { userAccountId: true },
-  });
-  const candidates = [...new Set(assignments.map((a) => a.userAccountId))];
-  if (candidates.length === 0) return null;
-
-  const loads = await prisma.reviewTask.groupBy({
-    by: ["assignedUserId"],
-    where: {
-      assignedUserId: { in: candidates },
-      status: { in: [ReviewTaskStatus.PENDING, ReviewTaskStatus.IN_PROGRESS] },
-    },
-    _count: { _all: true },
-  });
-  const loadByUser = new Map(loads.map((l) => [l.assignedUserId, l._count._all]));
-  return candidates.sort((a, b) => (loadByUser.get(a) ?? 0) - (loadByUser.get(b) ?? 0))[0] ?? null;
 }
 
 async function syncStatus(
@@ -303,6 +299,12 @@ function toApiShape(request: RequestRow, extra?: Record<string, unknown>) {
     rejectedAt: request.rejectedAt,
     createdAt: request.createdAt,
     updatedAt: request.updatedAt,
+    /**
+     * ผู้เชี่ยวชาญที่ถูกขอความเห็น — อยู่ในก้อนกลางเพราะทุกคำตอบต้องมีเหมือนกัน รวมถึง
+     * คำตอบของ POST /:id/assign เองที่หน้าเว็บเอาไปวางทับ state ทันทีหลังกดบันทึก
+     */
+    assignedSpecialist: publicSpecialist(request),
+    assignedAt: request.assignedSpecialistAt,
     ...metadata,
     ...extra,
   };
@@ -310,64 +312,101 @@ function toApiShape(request: RequestRow, extra?: Record<string, unknown>) {
 
 // ---------------------------------------------------------------- list
 
+/** ช่องที่การค้นหาไล่ดู */
+const searchFilter = (search: string): Prisma.DatasetRegistrationRequestWhereInput => ({
+  OR: [
+    { requestNumber: { contains: search, mode: "insensitive" } },
+    { proposedTitle: { contains: search, mode: "insensitive" } },
+    { metadata: { title: { contains: search, mode: "insensitive" } } },
+    { metadata: { name: { contains: search, mode: "insensitive" } } },
+  ],
+});
+
+/**
+ * เงื่อนไขพื้นฐานของทั้งหน้ารายการและตัวเลขสรุป — เห็นอะไรได้ + ค้นหาอะไรอยู่
+ *
+ * ทุกตัวกรองเป็น **หนึ่ง element ของ AND[]** เดิมการค้นหา assign ทับ `where.OR`
+ * ซึ่งจะล้าง OR ที่ visibilityFilter() คืนมา — วันนี้ยังไม่ระเบิดเพราะ visibilityFilter
+ * ไม่เคยคืน OR แต่ตัวกรองด่านที่เพิ่มเข้ามาเป็น OR อีกก้อน กติกาข้อเดียวนี้จึงเป็น
+ * สิ่งที่ทำให้ตัวกรองสองตัวที่ต่างจำกัด `id` (ผู้เชี่ยวชาญที่กดแท็บ "ที่ต้องดำเนินการ")
+ * ตัดกันถูกต้อง แทนที่จะเงียบ ๆ ทิ้งไปข้างหนึ่ง
+ */
+async function baseFilters(
+  session: Session,
+  q?: string,
+): Promise<Prisma.DatasetRegistrationRequestWhereInput[]> {
+  const and: Prisma.DatasetRegistrationRequestWhereInput[] = [await visibilityFilter(session)];
+  if (q?.trim()) and.push(searchFilter(q.trim()));
+  return and;
+}
+
 datasetRequestRouter.get("/", async (req, res) => {
   const session = req.session! as Session;
-  const { status, q } = req.query as { status?: string; q?: string };
+  const { status, stage, scope, sort, q } = req.query as {
+    status?: string;
+    stage?: string;
+    scope?: string;
+    sort?: string;
+    q?: string;
+  };
 
-  const where: Prisma.DatasetRegistrationRequestWhereInput = { ...(await visibilityFilter(session)) };
+  const and = await baseFilters(session, q);
 
-  const statuses = (status ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s): s is RequestStatus => s in RequestStatus);
-  if (statuses.length > 0) where.status = { in: statuses };
+  /**
+   * `stage` คือชื่อใหม่ `status` คือชื่อเดิม — รวมเป็นชุดเดียวกันแล้ว OR กัน ไม่ใช่ AND
+   * ลิงก์เก่า `?status=SUBMITTED,UNDER_REVIEW` จึงยังทำงาน และคนที่มาจากลิงก์นั้นแล้ว
+   * กดเม็ดกรองใหม่ก็ไม่ได้ผลลัพธ์ศูนย์แถวจากเงื่อนไขที่ขัดกันเอง
+   */
+  const tokens = [...parseFilterTokens(status), ...parseFilterTokens(stage)];
+  const stageClause = await nodeWhere(prisma, SUBJECT, [...new Set(tokens)]);
+  if (stageClause) and.push(stageClause);
 
-  if (q?.trim()) {
-    const search = q.trim();
-    where.OR = [
-      { requestNumber: { contains: search, mode: "insensitive" } },
-      { proposedTitle: { contains: search, mode: "insensitive" } },
-      { metadata: { title: { contains: search, mode: "insensitive" } } },
-      { metadata: { name: { contains: search, mode: "insensitive" } } },
-    ];
+  // แท็บ "ที่ต้องดำเนินการ" — ด่านที่ตำแหน่งของผู้เรียกเป็นคนทำ
+  if (scope === "mine") {
+    const mine = await nodeWhere(prisma, SUBJECT, myNodeKeys(SUBJECT, session.roles));
+    // ไม่มีด่านเป็นของตัวเองเลย (เช่น ผู้ดูแลระบบ) = คิวว่าง ไม่ใช่ "ไม่กรอง"
+    and.push(mine ?? { id: { in: [] } });
   }
 
-  const requests = await prisma.datasetRegistrationRequest.findMany({
-    where,
-    orderBy: [{ submittedAt: "desc" }, { createdAt: "desc" }],
-    take: 200,
-    include: requestInclude,
-  });
+  const where: Prisma.DatasetRegistrationRequestWhereInput = { AND: and };
+  const paging = parsePaging(req.query);
 
+  const [requests, total] = await prisma.$transaction([
+    prisma.datasetRegistrationRequest.findMany({
+      where,
+      orderBy: listOrderBy(parseSort(sort)),
+      skip: paging.skip,
+      take: paging.take,
+      include: requestInclude,
+    }),
+    prisma.datasetRegistrationRequest.count({ where }),
+  ]);
+
+  /**
+   * ประวัติทั้งหมด ไม่ใช่เฉพาะแถวที่ยัง active — คอลัมน์ความคืบหน้าต้องบอกได้ว่าแต่ละขั้น
+   * ผ่านไปแล้วหรือยัง ซึ่งอ่านจากแถวที่ค้างอยู่แถวเดียวไม่ได้
+   *
+   * คิวรีนี้กับอีกสองอันข้างล่างคีย์ด้วย id ของหน้าปัจจุบัน จึงเล็กลงตาม pageSize เอง
+   */
   const tasks = await prisma.reviewTask.findMany({
-    where: {
-      subjectType: SUBJECT,
-      subjectId: { in: requests.map((r) => r.id) },
-      status: { in: [ReviewTaskStatus.PENDING, ReviewTaskStatus.IN_PROGRESS] },
+    where: { subjectType: SUBJECT, subjectId: { in: requests.map((r) => r.id) } },
+    select: {
+      id: true,
+      subjectId: true,
+      taskType: true,
+      sequenceNumber: true,
+      roundNumber: true,
+      status: true,
+      result: true,
+      completedAt: true,
+      assignedUserId: true,
     },
-    select: { subjectId: true, taskType: true, roundNumber: true, assignedUserId: true },
   });
-  const stage = new Map(tasks.map((t) => [t.subjectId, t]));
-
-  // ตารางเขียนว่า "· ผู้เชี่ยวชาญ <ชื่อ>" ต่อท้ายสถานะ จึงต้องมีชื่อ ไม่ใช่แค่ id
-  const specialistIds = [
-    ...new Set(
-      tasks
-        .filter((t) => t.taskType === ReviewTaskType.DATASET_SPECIALIST_REVIEW && t.assignedUserId)
-        .map((t) => t.assignedUserId),
-    ),
-  ];
-  const specialists = new Map(
-    (
-      await prisma.userAccount.findMany({
-        where: { id: { in: specialistIds } },
-        select: { id: true, email: true, firstnameTh: true, lastnameTh: true },
-      })
-    ).map((u) => [
-      u.id,
-      { id: u.id, email: u.email, firstName: u.firstnameTh, lastName: u.lastnameTh },
-    ]),
+  const activeTasks = tasks.filter(
+    (t) => t.status === ReviewTaskStatus.PENDING || t.status === ReviewTaskStatus.IN_PROGRESS,
   );
+  const stage_ = new Map(activeTasks.map((t) => [t.subjectId, t]));
+  const progressBySubject = summariseMany({ subjectType: SUBJECT, requests, tasks });
 
   // เอกสารที่ระบบสร้าง — หน้าแรกทำปุ่มดาวน์โหลดในรายการได้โดยไม่ต้องเปิดคำขอทีละใบ
   const forms = await prisma.attachment.findMany({
@@ -384,17 +423,58 @@ datasetRequestRouter.get("/", async (req, res) => {
   res.json({
     requests: requests.map((r) => ({
       ...toApiShape(r),
-      currentTaskType: stage.get(r.id)?.taskType ?? null,
-      currentRound: stage.get(r.id)?.roundNumber ?? null,
-      assignedSpecialist:
-        stage.get(r.id)?.taskType === ReviewTaskType.DATASET_SPECIALIST_REVIEW
-          ? (specialists.get(stage.get(r.id)!.assignedUserId) ?? null)
-          : null,
+      currentTaskType: stage_.get(r.id)?.taskType ?? null,
+      currentRound: stage_.get(r.id)?.roundNumber ?? null,
+      progress: progressBySubject.get(r.id) ?? null,
       generatedForm: formByRequest.has(r.id)
         ? { id: formByRequest.get(r.id)!.id, filename: formByRequest.get(r.id)!.originalFileName }
         : null,
     })),
+    page: {
+      page: paging.page,
+      pageSize: paging.pageSize,
+      total,
+      pageCount: Math.max(1, Math.ceil(total / paging.pageSize)),
+    },
   });
+});
+
+/**
+ * ตัวเลขของแถบสรุปและป้ายแท็บ
+ *
+ * แยก endpoint เพราะขอบเขตของมันคือขอบเขตที่ **ไม่เปลี่ยน** ตอนกดเม็ดกรอง เปลี่ยนหน้า
+ * หรือสลับแท็บ — ถ้าคิดรวมมากับรายการ ตัวเลขบนแท็บจะขยับทุกครั้งที่กดอะไรในแท็บนั้น
+ *
+ * ต้องประกาศไว้ **เหนือ GET /:id** เหมือน /eligibility และ /specialists
+ */
+datasetRequestRouter.get("/summary", async (req, res) => {
+  const session = req.session! as Session;
+  const { q } = req.query as { q?: string };
+  const where: Prisma.DatasetRegistrationRequestWhereInput = {
+    AND: await baseFilters(session, q),
+  };
+
+  const counts = await journeySummary({
+    db: prisma,
+    subjectType: SUBJECT,
+    roles: session.roles,
+    countAll: () => prisma.datasetRegistrationRequest.count({ where }),
+    groupByStatus: () =>
+      prisma.datasetRegistrationRequest
+        .groupBy({ by: ["status"], where, _count: { _all: true } })
+        .then((rows) => rows.map((r) => ({ status: r.status, _count: r._count }))),
+    inflightIds: () =>
+      prisma.datasetRegistrationRequest
+        .findMany({
+          where: {
+            AND: [where, { status: { in: [RequestStatus.SUBMITTED, RequestStatus.UNDER_REVIEW] } }],
+          },
+          select: { id: true },
+        })
+        .then((rows) => rows.map((r) => r.id)),
+  });
+
+  res.json(counts);
 });
 
 datasetRequestRouter.get("/eligibility", async (req, res) => {
@@ -488,6 +568,52 @@ datasetRequestRouter.post("/", async (req, res) => {
 
 // ---------------------------------------------------------------- detail
 
+/**
+ * สถานะย่อของคำขอ สำหรับหน้าจอที่เปิดค้างไว้ถามเป็นระยะว่า "มีอะไรเปลี่ยนไหม"
+ *
+ * ทุกด่านเปิดให้ทุกคนที่ถือ role นั้นกดได้ เจ้าหน้าที่หลายคนจึงเปิดคำขอใบเดียวกันพร้อมกันได้
+ * และคนที่ไม่ได้กดต้องรู้ว่าคำขอเดินไปแล้ว ไม่ใช่รู้ตอนกดปุ่มแล้วเจอ error
+ *
+ * **แยก endpoint เพราะ `GET /:id` แพงเกินกว่าจะ poll** — ตัวนั้นดึงไทม์ไลน์ทั้งเส้น ไฟล์แนบ
+ * ความคืบหน้า และ (ฝั่งหน่วยงาน) ชื่อจังหวัด/อำเภอ/ตำบล รวมสิบกว่า SELECT ต่อครั้ง
+ * ตัวนี้ตอบเฉพาะสิ่งที่ใช้ตัดสินว่าเปลี่ยนหรือยัง แล้วให้หน้าจอไปโหลดตัวเต็มเองเมื่อเปลี่ยนจริง
+ *
+ * `updatedAt` เอาค่ามากสุดของแถวคำขอกับ review_task ของมัน — `syncStatus()` เขียนแถวคำขอ
+ * ทุกครั้งที่มี transition ก็จริง แต่ความเห็นของผู้เชี่ยวชาญ (`recordAdvisoryNote()`)
+ * เขียนแค่ review_task ถ้าดูแค่แถวคำขอ ไทม์ไลน์จะขยับโดยที่ไม่มีใครรู้
+ */
+datasetRequestRouter.get("/:id/state", async (req, res) => {
+  const session = req.session! as Session;
+  // AND ไม่ใช่ spread — เหตุผลเดียวกับใน GET /:id ตัวกรองของผู้เชี่ยวชาญมี `id` ของตัวเอง
+  const request = await prisma.datasetRegistrationRequest.findFirst({
+    where: { AND: [{ id: req.params.id }, await visibilityFilter(session)] },
+    select: { id: true, status: true, updatedAt: true },
+  });
+  if (!request) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
+    return;
+  }
+
+  const [active, tasks] = await Promise.all([
+    prisma.reviewTask.findFirst({
+      where: { subjectType: SUBJECT, subjectId: request.id, status: { in: ACTIVE_STATUSES } },
+      select: { id: true, taskType: true, roundNumber: true },
+    }),
+    prisma.reviewTask.aggregate({
+      where: { subjectType: SUBJECT, subjectId: request.id },
+      _max: { updatedAt: true },
+    }),
+  ]);
+
+  res.json({
+    state: {
+      status: request.status,
+      currentTaskType: active?.taskType ?? null,
+      stateVersion: stateVersionOf(request.updatedAt, tasks._max.updatedAt),
+    },
+  });
+});
+
 datasetRequestRouter.get("/:id", async (req, res) => {
   const session = req.session! as Session;
   const request = await prisma.datasetRegistrationRequest.findFirst({
@@ -538,9 +664,9 @@ datasetRequestRouter.get("/:id", async (req, res) => {
     .reverse()
     .find((t) => t.result === ReviewResult.APPROVED || t.result === ReviewResult.REJECTED);
   const approvedByName =
-    decided?.result === ReviewResult.APPROVED ? (decided.assignedUser?.displayName ?? null) : null;
+    decided?.result === ReviewResult.APPROVED ? (fullNameTh(decided.completedByUser) || null) : null;
   const rejectedByName =
-    decided?.result === ReviewResult.REJECTED ? (decided.assignedUser?.displayName ?? null) : null;
+    decided?.result === ReviewResult.REJECTED ? (fullNameTh(decided.completedByUser) || null) : null;
   const rejectionReason =
     decided?.result === ReviewResult.REJECTED ? (decided.resultComment ?? null) : null;
 
@@ -562,24 +688,16 @@ datasetRequestRouter.get("/:id", async (req, res) => {
         : null,
       currentTaskType: active?.taskType ?? null,
       currentRound: active?.roundNumber ?? null,
-      currentAssignee: active?.assignedUser?.displayName ?? null,
-      /**
-       * คืนเป็น **ก้อน** ไม่ใช่แค่ id — ทุกหน้าจออ่าน `assignedSpecialist.…`
-       * (การ์ด "ผู้เชี่ยวชาญที่ได้รับมอบหมาย" ป้ายปุ่มมอบหมาย/เปลี่ยน และค่าตั้งต้น
-       * ใน modal) เดิมส่งไปแต่ `assignedSpecialistId` ทุกที่จึงเป็น undefined เงียบ ๆ
-       */
-      assignedSpecialist:
-        active?.taskType === ReviewTaskType.DATASET_SPECIALIST_REVIEW && active.assignedUser
-          ? {
-              id: active.assignedUser.id,
-              email: active.assignedUser.email,
-              firstName: active.assignedUser.firstnameTh,
-              lastName: active.assignedUser.lastnameTh,
-            }
-          : null,
-      // การ์ดเดียวกันมีบรรทัด "มอบหมายเมื่อ" — เวลาที่มอบหมายคือเวลาที่เปิด task ของด่านนั้น
-      assignedAt:
-        active?.taskType === ReviewTaskType.DATASET_SPECIALIST_REVIEW ? active.assignedAt : null,
+      // ค่าเดียวกับที่ GET /:id/state คืน — หน้าจอเทียบสองค่านี้เพื่อรู้ว่าที่ถืออยู่เก่าหรือยัง
+      stateVersion: stateVersionOf(request.updatedAt, latestTaskTouch(tasks)),
+      // เส้นทางทั้งเส้น ไม่ใช่แค่ด่านที่ค้างอยู่ — ดู lib/journey-steps.ts
+      progress: buildJourneyProgress({
+        subjectType: SUBJECT,
+        status: request.status,
+        tasks,
+        active,
+        submittedAt: request.submittedAt,
+      }),
       attachments: attachments.map(publicAttachment),
       // timeline มาจาก review_task แทน dataset_request_events เดิม
       // ความเห็นที่ตั้งไว้เป็น BDI_INTERNAL ถูกซ่อนจากฝั่งหน่วยงาน
@@ -594,8 +712,15 @@ datasetRequestRouter.get("/:id", async (req, res) => {
           isOrgSide && t.commentVisibility === CommentVisibility.BDI_INTERNAL
             ? null
             : t.resultComment,
-        actor: t.assignedUser
-          ? { id: t.assignedUser.id, name: t.assignedUser.displayName, email: t.assignedUser.email }
+        /**
+         * ชื่อ**คนที่กด** ไม่ใช่ชื่อคนที่ถูกมอบหมาย — เหตุผลเดียวกับใน organizations.ts
+         */
+        actor: t.completedByUser
+          ? {
+              id: t.completedByUser.id,
+              name: fullNameTh(t.completedByUser),
+              email: t.completedByUser.email,
+            }
           : null,
         assignedAt: t.assignedAt,
         startedAt: t.startedAt,
@@ -835,11 +960,9 @@ function datasetDocumentRequestOf(request: RequestRow) {
 async function submitterNameOf(request: RequestRow): Promise<string | null> {
   const account = await prisma.userAccount.findUnique({
     where: { id: request.createdBy },
-    select: { displayName: true, prefixTh: true, firstnameTh: true, lastnameTh: true },
+    select: NAME_FIELDS,
   });
-  if (!account) return null;
-  const full = [account.prefixTh, account.firstnameTh, account.lastnameTh].filter(Boolean).join(" ").trim();
-  return full || account.displayName;
+  return fullNameTh(account) || null;
 }
 
 
@@ -880,8 +1003,7 @@ datasetRequestRouter.post("/:id/submit", async (req, res) => {
     return;
   }
 
-  const officer = await pickAssignee(ROLE_CODES.BDI_OFFICER, BDI_ORGANIZATION_ID);
-  if (!officer) {
+  if (!(await roleHolderId(prisma, ROLE_CODES.BDI_OFFICER, BDI_ORGANIZATION_ID))) {
     res
       .status(503)
       .json({ error: "no_reviewer", message: "ยังไม่มีเจ้าหน้าที่ BDI ในระบบ กรุณาติดต่อผู้ดูแล" });
@@ -897,7 +1019,6 @@ datasetRequestRouter.post("/:id/submit", async (req, res) => {
       subjectType: SUBJECT,
       subjectId: request.id,
       taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
-      assignedUserId: officer,
       assignedRole: ROLE_CODES.BDI_OFFICER,
       actorId: session.sub,
     });
@@ -909,12 +1030,13 @@ datasetRequestRouter.post("/:id/submit", async (req, res) => {
     requestNumber: request.requestNumber,
     datasetName: datasetLabel(request),
     organizationName: request.organization.nameTh,
-    submitter: await displayName(session.sub),
+    submitter: await personNameOf(session.sub),
     id: request.id,
   };
   await notifyUsers(officers, {
     type: NotificationType.REQUEST_SUBMITTED,
-    title: `มีคำขอลงทะเบียนชุดข้อมูลใหม่ ${request.requestNumber}`,
+    // เลขคำขอไม่ได้ช่วยให้ผู้อ่านรู้ว่าเรื่องอะไร และลิงก์ในแจ้งเตือนพาไปที่คำขอใบนั้นอยู่แล้ว
+    title: "มีคำขอลงทะเบียนชุดข้อมูลใหม่",
     message: `${info.organizationName} — ${info.datasetName}`,
     subjectType: SUBJECT,
     subjectId: request.id,
@@ -941,11 +1063,16 @@ datasetRequestRouter.post("/:id/submit", async (req, res) => {
 const assignSchema = z.object({ specialistId: z.string().uuid().nullable() });
 
 /**
- * มอบหมาย/ถอนผู้เชี่ยวชาญ (§4.4 ข้อ 2 — ไม่บังคับ)
+ * ขอความเห็นจากผู้เชี่ยวชาญด้านข้อมูล / ถอนการขอ (§4.4 ข้อ 2 — ไม่บังคับ)
  *
- * ของเดิมเป็นคอลัมน์เดียวบนคำขอ แบบใหม่คือเปิด DATASET_SPECIALIST_REVIEW task
- * เพราะหนึ่งคำขอมี active task ได้ตัวเดียว การมอบหมายจึงต้องปิด task ของ officer ก่อน
- * และเมื่อผู้เชี่ยวชาญทำเสร็จ ระบบจะเปิด BDI_OFFICER_REVIEW รอบถัดไปคืนให้ officer
+ * **การมอบหมายไม่ใช่ด่าน** — คำขอยังค้างอยู่ที่ `BDI_OFFICER_REVIEW` ตลอด เจ้าหน้าที่ BDI
+ * กด "ส่งต่อ" หรือ "ต้องปรับปรุง" ได้ตลอดเวลาโดยไม่ต้องรอผู้เชี่ยวชาญและไม่ต้องถอนก่อน
+ * ผู้เชี่ยวชาญเข้ามาอ่านข้อมูล คุยกับเจ้าหน้าที่นอกระบบ และบันทึกความเห็นไว้ในไทม์ไลน์ได้
+ * เท่านั้น (ตัดสินใจ 2026-08-30 — การ์ด Make Data Specialist Review Advisory)
+ *
+ * ของเดิมเปิด `DATASET_SPECIALIST_REVIEW` เป็น active task แทนด่านของเจ้าหน้าที่ ซึ่งแปลว่า
+ * เจ้าหน้าที่กดอะไรไม่ได้เลยจนกว่าผู้เชี่ยวชาญจะลงมือ และผู้เชี่ยวชาญกดส่งกลับหน่วยงานเองได้
+ * ทั้งสองอย่างไม่ใช่สิ่งที่ flow ต้องการ
  */
 datasetRequestRouter.post("/:id/assign", async (req, res, next) => {
   try {
@@ -969,62 +1096,58 @@ datasetRequestRouter.post("/:id/assign", async (req, res, next) => {
       return;
     }
 
+    /**
+     * ขอความเห็นได้เฉพาะช่วงที่คำขออยู่ในมือเจ้าหน้าที่ BDI — หลังส่งต่อไปแล้วการเพิ่มชื่อ
+     * ผู้เชี่ยวชาญไม่มีความหมาย เพราะไม่มีใครที่ฝั่ง BDI ต้องตัดสินใจอะไรอีกในรอบนั้น
+     */
     const current = await activeTask(prisma, SUBJECT, request.id);
-    if (!current) {
-      res.status(409).json({ error: "invalid_state", message: "คำขอนี้ไม่ได้อยู่ระหว่างการตรวจสอบ" });
+    if (current?.taskType !== ReviewTaskType.BDI_OFFICER_REVIEW) {
+      res.status(409).json({
+        error: "invalid_state",
+        message: "มอบหมายผู้เชี่ยวชาญได้เฉพาะช่วงที่คำขออยู่ระหว่างการตรวจสอบของเจ้าหน้าที่ BDI",
+      });
       return;
     }
 
     const { specialistId } = parsed.data;
 
-    await prisma.$transaction(async (tx) => {
-      if (specialistId) {
-        if (current.taskType !== ReviewTaskType.BDI_OFFICER_REVIEW) {
-          throw new WorkflowError("invalid_state", "มอบหมายผู้เชี่ยวชาญได้เฉพาะช่วงที่ BDI ตรวจสอบ");
-        }
-        await cancelActiveTask(tx, {
-          subjectType: SUBJECT,
-          subjectId: request.id,
-          actorId: session.sub,
-          reason: "มอบหมายให้ผู้เชี่ยวชาญด้านข้อมูลพิจารณา",
+    // ต้องเป็นผู้เชี่ยวชาญจริง ๆ ไม่ใช่ uuid ของผู้ใช้คนไหนก็ได้ที่ FK ยอมรับ
+    if (specialistId) {
+      const holdsRole = await prisma.userRoleAssignment.findFirst({
+        where: {
+          userAccountId: specialistId,
+          role: { code: ROLE_CODES.BDI_DATASET_SPECIALIST, isActive: true },
+          status: "ACTIVE",
+          userAccount: { status: UserAccountStatus.ACTIVE },
+        },
+        select: { id: true },
+      });
+      if (!holdsRole) {
+        res.status(400).json({
+          error: "validation",
+          fields: { specialistId: "บัญชีนี้ไม่ใช่ผู้เชี่ยวชาญด้านข้อมูลที่เปิดใช้งานอยู่" },
         });
-        await openTask(tx, {
-          subjectType: SUBJECT,
-          subjectId: request.id,
-          taskType: ReviewTaskType.DATASET_SPECIALIST_REVIEW,
-          assignedUserId: specialistId,
-          assignedRole: ROLE_CODES.BDI_DATASET_SPECIALIST,
-          assignedById: session.sub,
-          assignmentSource: "MANUAL",
-          actorId: session.sub,
-        });
-      } else {
-        if (current.taskType !== ReviewTaskType.DATASET_SPECIALIST_REVIEW) {
-          throw new WorkflowError("invalid_state", "ไม่มีผู้เชี่ยวชาญที่ได้รับมอบหมายอยู่");
-        }
-        await cancelActiveTask(tx, {
-          subjectType: SUBJECT,
-          subjectId: request.id,
-          actorId: session.sub,
-          reason: "ถอนการมอบหมายผู้เชี่ยวชาญ",
-        });
-        const officer = await pickAssignee(ROLE_CODES.BDI_OFFICER, BDI_ORGANIZATION_ID);
-        await openTask(tx, {
-          subjectType: SUBJECT,
-          subjectId: request.id,
-          taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
-          assignedUserId: officer ?? session.sub,
-          assignedRole: ROLE_CODES.BDI_OFFICER,
-          actorId: session.sub,
-        });
+        return;
       }
-      await syncStatus(tx, request);
+    }
+
+    const changed = (request.assignedSpecialistId ?? null) !== specialistId;
+
+    await prisma.datasetRegistrationRequest.update({
+      where: { id: request.id },
+      data: {
+        assignedSpecialistId: specialistId,
+        assignedSpecialistAt: specialistId ? new Date() : null,
+        assignedSpecialistById: specialistId ? session.sub : null,
+        updatedBy: session.sub,
+      },
     });
 
-    if (specialistId) {
+    // แจ้งเฉพาะตอนที่ชื่อเปลี่ยนจริง — กดบันทึกซ้ำคนเดิมไม่ควรส่งอีเมลซ้ำ
+    if (specialistId && changed) {
       await notifyUsers([specialistId], {
         type: NotificationType.SPECIALIST_ASSIGNED,
-        title: `คุณได้รับมอบหมายให้พิจารณา ${request.requestNumber}`,
+        title: "ขอความเห็นของคุณต่อชุดข้อมูล",
         message: datasetLabel(request),
         subjectType: SUBJECT,
         subjectId: request.id,
@@ -1094,6 +1217,8 @@ datasetRequestRouter.get("/:id/legal-documents", async (req, res) => {
       out.push({
         code: doc.code,
         name: doc.nameTh,
+        shortname: doc.shortname,
+        legalNotice: doc.legalNotice,
         versionId: doc.versionId,
         versionNumber: doc.versionNumber,
         fromRequest: false,
@@ -1116,7 +1241,13 @@ datasetRequestRouter.get("/:id/legal-documents", async (req, res) => {
     if (stale) {
       const result = await renderDatasetDocument(prisma, {
         request: datasetDocumentRequestOf(request),
-        document: { code: doc.code, nameTh: doc.nameTh, versionId: doc.versionId },
+        document: {
+          code: doc.code,
+          nameTh: doc.nameTh,
+          versionId: doc.versionId,
+          versionNumber: doc.versionNumber,
+          effectiveAt: doc.effectiveAt,
+        },
         printedByName: await submitterNameOf(request),
         actorId: session.sub,
       });
@@ -1126,6 +1257,8 @@ datasetRequestRouter.get("/:id/legal-documents", async (req, res) => {
     out.push({
       code: doc.code,
       name: doc.nameTh,
+      shortname: doc.shortname,
+      legalNotice: doc.legalNotice,
       versionId: doc.versionId,
       versionNumber: doc.versionNumber,
       fromRequest: true,
@@ -1204,8 +1337,8 @@ const reviewSchema = z.object({
 /**
  * ด่านที่การอนุมัติคือการลงนามบนเอกสาร
  *
- * ด่านผู้เชี่ยวชาญข้อมูลและด่านตรวจซ้ำของเจ้าหน้าที่ BDI ไม่อยู่ในนี้โดยตั้งใจ —
- * ทั้งสองอ่านเอกสารได้แต่ไม่ลงนาม ตามที่การ์ดกำหนด (ตัดสินไว้ 2026-08-20)
+ * ด่านผู้เชี่ยวชาญข้อมูลไม่อยู่ในนี้โดยตั้งใจ — อ่านเอกสารได้แต่ไม่ลงนาม
+ * ตามที่การ์ดกำหนด (ตัดสินไว้ 2026-08-20)
  */
 const SIGNING_TASKS: Partial<Record<ReviewTaskType, ConfirmationType>> = {
   [ReviewTaskType.ORGANIZATION_APPROVAL]: ConfirmationType.ORGANIZATION_APPROVAL,
@@ -1251,48 +1384,93 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
       return;
     }
 
-    const allowedRoles: Record<ReviewTaskType, RoleCode[]> = {
-      [ReviewTaskType.BDI_OFFICER_REVIEW]: [ROLE_CODES.BDI_OFFICER],
-      [ReviewTaskType.DATASET_SPECIALIST_REVIEW]: [ROLE_CODES.BDI_DATASET_SPECIALIST],
-      [ReviewTaskType.ORGANIZATION_APPROVAL]: [ROLE_CODES.ORGANIZATION_APPROVER],
-      [ReviewTaskType.BDI_FINAL_APPROVAL]: [ROLE_CODES.BDI_FINAL_APPROVER],
-      [ReviewTaskType.ORGANIZATION_REVISION]: [ROLE_CODES.ORGANIZATION_USER],
-    };
-    const isAssignee = task.assignedUserId === session.sub;
-    if (!session.roles.some((r) => allowedRoles[task.taskType].includes(r)) && !isAssignee) {
-      res.status(403).json({ error: "forbidden", message: "คุณไม่มีสิทธิ์ดำเนินการขั้นตอนนี้" });
-      return;
-    }
-
-    // บันทึกความเห็นโดยไม่เปลี่ยนด่าน — ผู้เชี่ยวชาญเท่านั้น
+    /**
+     * บันทึกความเห็นโดยไม่แตะด่าน — ผู้เชี่ยวชาญที่ถูกขอความเห็นกับคำขอใบนี้เท่านั้น
+     *
+     * ตรวจก่อนตารางสิทธิ์ข้างล่างโดยตั้งใจ: ตั้งแต่ 2026-08-30 ผู้เชี่ยวชาญไม่ได้ถือ task
+     * ไหนอยู่เลย ด่านที่ค้างอยู่เป็นของเจ้าหน้าที่ BDI เสมอ เขาจึงไม่มีวันผ่าน
+     * TASK_TYPE_ROLES ได้ และสิทธิ์ของเขามาจากคอลัมน์ `assigned_specialist_id` แทน
+     */
     if (action === "comment") {
-      if (task.taskType !== ReviewTaskType.DATASET_SPECIALIST_REVIEW) {
-        res.status(409).json({ error: "invalid_state", message: "บันทึกความเห็นได้เฉพาะผู้เชี่ยวชาญ" });
+      if (request.assignedSpecialistId !== session.sub) {
+        res.status(403).json({
+          error: "forbidden",
+          message: "บันทึกความเห็นได้เฉพาะผู้เชี่ยวชาญที่ได้รับมอบหมายกับคำขอนี้",
+        });
+        return;
+      }
+      if (task.taskType !== ReviewTaskType.BDI_OFFICER_REVIEW) {
+        res.status(409).json({
+          error: "invalid_state",
+          message: "บันทึกความเห็นได้เฉพาะช่วงที่คำขออยู่ระหว่างการตรวจสอบของเจ้าหน้าที่ BDI",
+        });
         return;
       }
       if (!note) {
         res.status(400).json({ error: "validation", fields: { note: "กรุณากรอกความเห็น" } });
         return;
       }
-      await prisma.$transaction(async (tx) => {
-        await startTask(tx, task.id, session.sub);
-        await recordComment(tx, { taskId: task.id, comment: note, actorId: session.sub });
-        const officer = await pickAssignee(ROLE_CODES.BDI_OFFICER, BDI_ORGANIZATION_ID);
-        await openTask(tx, {
-          subjectType: SUBJECT,
-          subjectId: request.id,
-          taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
-          assignedUserId: officer ?? task.assignedUserId,
-          assignedRole: ROLE_CODES.BDI_OFFICER,
-          actorId: session.sub,
-        });
-        await syncStatus(tx, request);
+      /**
+       * ด่านของเจ้าหน้าที่ **ไม่ถูกแตะ** — ความเห็นเป็นแถวที่ปิดตั้งแต่เกิด เพื่อให้ไทม์ไลน์
+       * ซึ่งเรนเดอร์จาก review_task ล้วน ๆ ยังเห็นมัน โดยที่คำขอไม่ขยับไปไหน
+       */
+      await recordAdvisoryNote(prisma, {
+        subjectType: SUBJECT,
+        subjectId: request.id,
+        taskType: ReviewTaskType.DATASET_SPECIALIST_REVIEW,
+        assignedUserId: session.sub,
+        assignedRole: ROLE_CODES.BDI_DATASET_SPECIALIST,
+        comment: note,
+        actorId: session.sub,
       });
       const fresh = await prisma.datasetRegistrationRequest.findUniqueOrThrow({
         where: { id: request.id },
         include: requestInclude,
       });
       res.json({ request: toApiShape(fresh) });
+      return;
+    }
+
+    // ตารางเดียวกับที่ lib/queue.ts ใช้ตอบว่า "ใบไหนเป็นงานของตำแหน่งฉัน" — เดิมเขียนซ้ำไว้ตรงนี้
+    // ถ้าสองที่ไม่ตรงกัน หน้ารายการจะโชว์ใบที่กดต่อไม่ได้ หรือซ่อนใบที่กดได้
+    const allowedRoles = TASK_TYPE_ROLES;
+    /** ผู้ใช้คนนี้ปิดด่านชนิดนี้ของคำขอนี้ได้ไหม */
+    const canAction = (taskType: ReviewTaskType) =>
+      session.roles.some((r) => allowedRoles[taskType].includes(r));
+
+    if (!canAction(task.taskType)) {
+      /**
+       * "ไม่มีสิทธิ์" กับ "คำขอเดินไปแล้ว" ไม่ใช่เรื่องเดียวกัน — สาขาเดียวกับ organizations.ts
+       *
+       * เส้นทางนี้เคยตอบ 403 forbidden เปล่า ๆ ให้ทั้งสองกรณี ทั้งที่เคสที่เกิดบ่อยกว่าคือ
+       * เจ้าหน้าที่เปิดหน้าไว้แล้วมีคนอื่นกดไปก่อน พอเขากดบ้าง active task กลายเป็นด่านของ
+       * ตำแหน่งอื่นไปแล้ว ระบบเลยบอกว่าเขาไม่มีสิทธิ์ ทั้งที่เขามีสิทธิ์เต็มที่ในด่านของตัวเอง
+       *
+       * เดิมมี fallback ว่า "หรือเป็นผู้รับมอบหมาย" ด้วย ซึ่งถอดออกแล้ว: ด่านฝั่ง BDI ไม่มี
+       * ผู้รับมอบหมายอีกต่อไป และ role คือสิ่งเดียวที่ตัดสินสิทธิ์อยู่แล้ว
+       */
+      const ownStage = await prisma.reviewTask.findFirst({
+        where: {
+          subjectType: SUBJECT,
+          subjectId: request.id,
+          status: ReviewTaskStatus.COMPLETED,
+          taskType: { in: Object.values(ReviewTaskType).filter(canAction) },
+        },
+        orderBy: { completedAt: "desc" },
+      });
+
+      if (ownStage) {
+        res.status(409).json({
+          error: "stage_completed",
+          message:
+            `ขั้นตอนของคุณในคำขอนี้ดำเนินการเรียบร้อยแล้ว ` +
+            `ตอนนี้คำขออยู่ที่ขั้น "${REVIEW_TASK_TYPE_LABELS[task.taskType]}" — ` +
+            `หน้าจอที่เปิดอยู่เป็นข้อมูลก่อนหน้านั้น กรุณาโหลดหน้าใหม่`,
+        });
+        return;
+      }
+
+      res.status(403).json({ error: "forbidden", message: "คุณไม่มีสิทธิ์ดำเนินการขั้นตอนนี้" });
       return;
     }
 
@@ -1365,14 +1543,13 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
       if (confirmationType && signature && result === ReviewResult.APPROVED) {
         const account = await tx.userAccount.findUnique({
           where: { id: session.sub },
-          select: { displayName: true, prefixTh: true, firstnameTh: true, lastnameTh: true },
+          select: NAME_FIELDS,
         });
         const signedFirst = account?.firstnameTh ?? null;
         const signedLast = account?.lastnameTh ?? null;
-        const signedName =
-          [account?.prefixTh, signedFirst, signedLast].filter(Boolean).join(" ").trim() ||
-          account?.displayName ||
-          session.email;
+        // ตกกลับไปที่อีเมลได้ที่นี่ที่เดียว — ลายมือชื่อต้องมีอะไรสักอย่างเสมอ และผู้ที่มาถึง
+        // ขั้นลงนามได้ผ่าน activate มาแล้ว จึงมีชื่อไทยครบ ทางนี้จึงเป็นตาข่ายที่ไม่ควรได้ใช้
+        const signedName = fullNameTh(account) || session.email;
 
         const confirmation = await tx.signatureConfirmation.create({
           data: {
@@ -1494,9 +1671,9 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
 /**
  * ด่านถัดไปหลังปิด task หนึ่ง
  *
- * BDI_OFFICER_REVIEW มีสองความหมายในเส้นทางนี้ ("ตรวจเบื้องต้น" กับ "ตรวจซ้ำ")
- * แยกจากกันด้วยว่ามี ORGANIZATION_APPROVAL ที่ปิดแล้วหรือยัง ไม่ใช่ด้วย round_number
- * เพราะรอบเพิ่มขึ้นทุกครั้งที่ส่งกลับให้แก้ไขหรือมอบหมายผู้เชี่ยวชาญด้วย
+ * ลำดับเป็นเส้นตรงตั้งแต่ด่านตรวจซ้ำถูกยกเลิก — ไม่ต้องอ่านประวัติเพื่อตัดสินอะไรอีก
+ * ผลที่ตามมาซึ่งตั้งใจให้เป็นแบบนี้: ใบที่ถูกส่งกลับ **หลัง** หน่วยงานลงนามไปแล้ว เมื่อ
+ * นำส่งใหม่จะเดินผ่านการลงนามอีกครั้ง เพราะเนื้อหาที่ผู้มีอำนาจลงนามไว้ไม่ใช่ฉบับนี้แล้ว
  */
 async function nextStageAfter(
   tx: Prisma.TransactionClient,
@@ -1504,19 +1681,11 @@ async function nextStageAfter(
   completed: ReviewTaskType,
   actorId: string,
 ) {
-  const orgApproved = await tx.reviewTask.count({
-    where: {
-      subjectType: SUBJECT,
-      subjectId: request.id,
-      taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
-      result: ReviewResult.APPROVED,
-    },
-  });
-
   const open = async (taskType: ReviewTaskType, roleCode: RoleCode, orgScope?: string | null) => {
     // ไม่ระบุ orgScope = ด่านฝั่ง BDI ซึ่งอยู่ในหน่วยงาน BDI
-    const assignee = await pickAssignee(roleCode, orgScope ?? BDI_ORGANIZATION_ID);
-    if (!assignee) {
+    const isBdiStage = orgScope === undefined;
+    const holder = await roleHolderId(tx, roleCode, orgScope ?? BDI_ORGANIZATION_ID);
+    if (!holder) {
       throw new WorkflowError(
         "no_reviewer",
         `ยังไม่มีผู้รับผิดชอบขั้นตอน ${taskType} ในระบบ กรุณาติดต่อผู้ดูแล`,
@@ -1527,7 +1696,12 @@ async function nextStageAfter(
       subjectType: SUBJECT,
       subjectId: request.id,
       taskType,
-      assignedUserId: assignee,
+      /**
+       * ด่านฝั่ง BDI ไม่มีเจ้าของ — ใครถือ role นั้นก็ทำได้ และทุกคนได้อีเมลแจ้ง
+       * ด่านของหน่วยงานมีเจ้าของจริง: `assignRole()` บังคับว่าหนึ่งหน่วยงานมีผู้มีอำนาจ
+       * ลงนามที่ ACTIVE ได้คนเดียว และชื่อคนนั้นคือชื่อที่ไปพิมพ์บนเอกสาร
+       */
+      assignedUserId: isBdiStage ? null : holder,
       assignedRole: roleCode,
       assignedById: actorId,
       actorId,
@@ -1535,26 +1709,17 @@ async function nextStageAfter(
   };
 
   switch (completed) {
-    case ReviewTaskType.DATASET_SPECIALIST_REVIEW:
-      // ผู้เชี่ยวชาญพิจารณาเสร็จ — คืนให้ officer ตัดสินใจ
-      await open(ReviewTaskType.BDI_OFFICER_REVIEW, ROLE_CODES.BDI_OFFICER);
-      return;
-
     case ReviewTaskType.BDI_OFFICER_REVIEW:
-      if (orgApproved === 0) {
-        await open(
-          ReviewTaskType.ORGANIZATION_APPROVAL,
-          ROLE_CODES.ORGANIZATION_APPROVER,
-          request.organizationId,
-        );
-      } else {
-        // §4.5 ข้อ 4 — ตรวจซ้ำผ่านแล้ว ส่งให้ผู้อนุมัติ BDI
-        await open(ReviewTaskType.BDI_FINAL_APPROVAL, ROLE_CODES.BDI_FINAL_APPROVER);
-      }
+      await open(
+        ReviewTaskType.ORGANIZATION_APPROVAL,
+        ROLE_CODES.ORGANIZATION_APPROVER,
+        request.organizationId,
+      );
       return;
 
     case ReviewTaskType.ORGANIZATION_APPROVAL:
-      await open(ReviewTaskType.BDI_OFFICER_REVIEW, ROLE_CODES.BDI_OFFICER);
+      // §4.5 — ลงนามแล้วส่งให้ผู้อนุมัติ BDI ทันที ไม่มีด่านตรวจซ้ำคั่นอีกต่อไป
+      await open(ReviewTaskType.BDI_FINAL_APPROVAL, ROLE_CODES.BDI_FINAL_APPROVER);
       return;
 
     case ReviewTaskType.BDI_FINAL_APPROVAL:
@@ -1650,7 +1815,7 @@ async function dispatchDatasetNotifications(
   actorId: string,
 ) {
   const members = await organizationMemberIds(request.organizationId);
-  const actorName = await displayName(actorId);
+  const actorName = await personNameOf(actorId);
   const info = {
     requestNumber: request.requestNumber,
     datasetName: datasetLabel(request),
@@ -1658,10 +1823,23 @@ async function dispatchDatasetNotifications(
     id: request.id,
   };
 
+  /**
+   * ฝั่งหน่วยงานได้ยินทุกครั้งที่คำขอขยับ ไม่ใช่แค่ตอนถูกส่งกลับหรืออนุมัติจบ
+   * announceProgress() เงียบเองเมื่อไม่มีด่านใหม่เปิดขึ้น จึงเรียกก่อนแล้วปล่อยให้
+   * การแจ้ง "คนต่อไปที่ต้องทำ" ด้านล่างทำงานตามเดิม — คนละกลุ่มผู้รับ ไม่ทับกัน
+   */
+  const progress = await announceProgress({
+    subjectType: SUBJECT,
+    subjectId: request.id,
+    organizationId: request.organizationId,
+    createdBy: request.createdBy,
+    subjectLabel: `${info.datasetName} — ${request.requestNumber}`,
+  });
+
   if (result === ReviewResult.RETURNED) {
     await notifyUsers([...members.users, request.createdBy], {
       type: NotificationType.REQUEST_RETURNED,
-      title: `คำขอ ${request.requestNumber} ถูกส่งกลับให้แก้ไข`,
+      title: "คำขอถูกส่งกลับให้แก้ไข",
       message: note ?? "",
       subjectType: SUBJECT,
       subjectId: request.id,
@@ -1673,7 +1851,7 @@ async function dispatchDatasetNotifications(
   if (result === ReviewResult.REJECTED) {
     await notifyUsers([...members.users, request.createdBy], {
       type: NotificationType.REQUEST_REJECTED,
-      title: `คำขอ ${request.requestNumber} ไม่ได้รับอนุมัติ`,
+      title: "คำขอไม่ได้รับอนุมัติ",
       message: note ?? "",
       subjectType: SUBJECT,
       subjectId: request.id,
@@ -1683,32 +1861,38 @@ async function dispatchDatasetNotifications(
   }
 
   if (taskType === ReviewTaskType.BDI_OFFICER_REVIEW) {
-    const orgApproved = await prisma.reviewTask.count({
-      where: {
-        subjectType: SUBJECT,
-        subjectId: request.id,
-        taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
-        result: ReviewResult.APPROVED,
-      },
+    await notifyUsers(members.approvers, {
+      type: NotificationType.REQUEST_SUBMITTED,
+      title: "มีคำขอรอคุณลงนาม",
+      message: info.datasetName,
+      subjectType: SUBJECT,
+      subjectId: request.id,
+      organizationId: request.organizationId,
     });
-    if (orgApproved === 0) {
-      await notifyUsers(members.approvers, {
-        type: NotificationType.REQUEST_SUBMITTED,
-        title: `คำขอ ${request.requestNumber} รอคุณลงนาม`,
-        message: info.datasetName,
-        subjectType: SUBJECT,
-        subjectId: request.id,
-        organizationId: request.organizationId,
-      });
-    } else {
-      await notifyUsers(await bdiApproverIds(), {
-        type: NotificationType.REQUEST_SUBMITTED,
-        title: `คำขอ ${request.requestNumber} รออนุมัติขั้นสุดท้าย`,
-        message: info.datasetName,
-        subjectType: SUBJECT,
-        subjectId: request.id,
-        organizationId: request.organizationId,
-      });
+    return;
+  }
+
+  /**
+   * หน่วยงานลงนามแล้ว → ด่านอนุมัติของ BDI เปิดขึ้นทันที
+   *
+   * ผู้รับคือ **ผู้อนุมัติ BDI** ไม่ใช่เจ้าหน้าที่ — เดิมด่านนี้ส่งต่อไปให้เจ้าหน้าที่ตรวจซ้ำ
+   * ก่อน ซึ่งถูกยกเลิกไปแล้ว อีเมลจึงถูกส่งอินไลน์เหมือนเดิมเพราะเป็นฉบับเดียวที่บอก
+   * **ชื่อผู้ลงนาม** ได้ ซึ่ง template กลางของ worker ไม่รู้จัก
+   */
+  if (taskType === ReviewTaskType.ORGANIZATION_APPROVAL && result === ReviewResult.APPROVED) {
+    const approvers = await bdiApproverIds();
+    await notifyUsers(approvers, {
+      type: NotificationType.REQUEST_SUBMITTED,
+      title: "มีคำขอรออนุมัติขั้นสุดท้าย",
+      message: info.datasetName,
+      subjectType: SUBJECT,
+      subjectId: request.id,
+      organizationId: request.organizationId,
+      email: false,
+    });
+    const emails = await emailsOf(approvers);
+    if (emails.length > 0) {
+      await sendDatasetSignedPendingApproval(emails, { ...info, signedBy: actorName }, progress);
     }
     return;
   }
@@ -1716,7 +1900,7 @@ async function dispatchDatasetNotifications(
   if (taskType === ReviewTaskType.BDI_FINAL_APPROVAL && result === ReviewResult.APPROVED) {
     await notifyUsers([...members.users, ...members.approvers, request.createdBy], {
       type: NotificationType.REQUEST_APPROVED,
-      title: `คำขอ ${request.requestNumber} ได้รับอนุมัติแล้ว`,
+      title: "คำขอได้รับอนุมัติแล้ว",
       message: info.datasetName,
       subjectType: SUBJECT,
       subjectId: request.id,

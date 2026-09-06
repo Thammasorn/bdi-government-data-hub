@@ -4,7 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Government Datahub Platform for BDI (สถาบันข้อมูลขนาดใหญ่). Government agencies register
+ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2) — Data Integration and Intelligence Platform — ของ BDI
+(สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) / Big Data Institute (Public Organization)). Government agencies register
 themselves, and their registration is approved through a multi-stage workflow.
 
 The spec lives in Notion, not here. `docs/` holds the expanded, buildable version:
@@ -18,12 +19,12 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
 - `notebooks/journey-a-admin-create-user.ipynb` — Journey A has no UI by design, so this walks
   its API calls one cell at a time against a checkout with real SMTP configured
 - `docs/04-dataset-registration-plan.md` — how Journey C maps onto schema, endpoints and screens
-- `docs/07-thaid-integration.md` — the ThaiD flow, its configuration, what DOPA has not
+- `docs/07-thaid-integration.md` — the ThaID flow, its configuration, what DOPA has not
   granted us yet, and the SIT run that exercised it against their sandbox
 - `docs/08-database-access.md` — connecting DBeaver (or psql) to a checkout's database:
   which port belongs to which checkout, the schema layout, and what not to edit by hand
 - `docs/09-auth-tokens.md` — every token in the system (session id, activation key, OTP,
-  admin token, ThaiD's tokens, OAuth `state`, OIDC `nonce`): where each lives, how it is
+  admin token, ThaID's tokens, OAuth `state`, OIDC `nonce`): where each lives, how it is
   hashed, when it expires. **There is no refresh token and no need for one**; §1.4 explains
   the session table that replaced the old JWT
 - `docs/10-admin-prefill-organization.md` — organizations an admin creates ahead of time,
@@ -40,9 +41,10 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   Sarabun faces from `assets/theme_ci_design/Font/Sarabun.zip` **embedded**, rebuilt by
   `docs/tools/manual-to-docx.py`; the Markdown stays the source, so never hand-edit the .docx
 - `docs/18-document-template-variables.md` — **คู่มือสำหรับผู้เขียนเอกสาร** (ไม่ใช่ผู้เขียนโค้ด):
-  ตัวแปรทั้ง 53 ตัวที่ template ใช้ได้ พร้อมตัวอย่างค่า วิธีพิมพ์ placeholder ให้ไม่พลาด
+  ตัวแปรทั้ง 74 ตัวที่ template ใช้ได้ พร้อมตัวอย่างค่า วิธีพิมพ์ placeholder ให้ไม่พลาด
   วิธีอัปโหลดเวอร์ชันใหม่ และเส้นแบ่งว่าอะไรแก้เองได้ อะไรต้องให้ทีมพัฒนาทำก่อน
-  §3.1 คือตารางชื่อเดิม→ชื่อใหม่ของการเปลี่ยนชื่อเมื่อ 2026-08-24 — มีฉบับ .docx อยู่ที่
+  §3.1 คือตารางชื่อเดิม→ชื่อใหม่ของการเปลี่ยนชื่อเมื่อ 2026-08-24 · §3.2 คือชุดเอกสาร
+  2026-08-31 ที่สลับเลขผนวก — มีฉบับ .docx อยู่ที่
   `docs/manuals-docx/18-document-template-variables.docx` สร้างจากตัวเดียวกับคู่มือผู้ทดสอบ
 - `docs/17-legal-document-rendering.md` — เอกสารข้อตกลง A0–A3: ทำไมต้องเดินทาง
   `.docx` → LibreOffice → PDF, template อยู่ในฐานข้อมูลไม่ใช่ใน repo, รายชื่อ placeholder
@@ -146,10 +148,183 @@ The `OrganizationEvent` / `DatasetRequestEvent` tables are gone. The UI timeline
 from `review_task` rows, so every transition must go through `lib/workflow.ts`.
 
 Journey B: `BDI_OFFICER_REVIEW` → `ORGANIZATION_APPROVAL` → `BDI_FINAL_APPROVAL`.
-Journey C: the same plus an optional `DATASET_SPECIALIST_REVIEW`, and a second
-`BDI_OFFICER_REVIEW` round for the re-check after the organisation signs. "Initial review" and
-"re-check" share one `task_type`; they are told apart by whether an `ORGANIZATION_APPROVAL` has
-already completed, not by `round_number` (rounds also increment on every return).
+Journey C: exactly the same three gates. Both are shown to users as **four** steps, because the
+organisation's own submission is step 1 — see `journey-steps.ts` below.
+
+**Assigning a data specialist is not a gate.** `POST /dataset-requests/:id/assign` writes
+`assigned_specialist_id` on the request and nothing else: the request stays on
+`BDI_OFFICER_REVIEW`, and the officer can forward or return it at any moment without waiting for
+the specialist or withdrawing them. The specialist reads the request, talks to the officer
+outside the system, and may record an opinion — `recordAdvisoryNote()` in `lib/workflow.ts`
+writes a `DATASET_SPECIALIST_REVIEW` row that is `COMPLETED`/`CONFIRMED` from birth, because the
+timeline is rendered from `review_task` and an opinion still has to appear there. It never opens
+a task, so it cannot collide with the one-active-task index. Until 2026-08-30 the assignment
+opened that task type *instead of* the officer's, which took the gate away from the officer and
+let the specialist send the request back to the organisation on their own.
+
+**One `task_type` is one gate on both journeys.** Journey C used to carry a second
+`BDI_OFFICER_REVIEW` round — a "re-check" between the signature and the final approval — which was
+removed on 2026-08-30; the organisation's signature now opens `BDI_FINAL_APPROVAL` directly. A
+request returned *after* signing therefore walks the whole route again, signature included: the
+existing signature is on content that is no longer the content being approved.
+
+**`lib/journey-steps.ts` is the only place that declares those sequences as data.** Everything
+that shows a user "how many steps, which one now, who is next" reads it — the stepper on both
+detail pages, the progress column in both tables, the home cards, the steps block in every
+journey email, and the `REQUEST_PROGRESSED` notification text. It is a pure function over the
+rows `taskHistory()` / `activeTask()` already fetch, so no screen pays an extra query for it.
+**Change it in the same commit as `nextStageAfter()` in `dataset-requests.ts` or the if-chain in
+`organizations.ts`** — otherwise the screen promises a route the backend does not walk. `CONFIRMED`
+counts as a passing result there, not just `PASSED`/`APPROVED`, because `ALLOWED_RESULTS` lets a
+`BDI_OFFICER_REVIEW` close with it (the `confirm` action).
+
+**Step 1 of both journeys is the organisation submitting, and it has no `review_task`.** Its
+`StepPlan` entry carries `taskType: null`, which is what every other file keys off: `slotOf()`
+finds no row for it, `journeyNodeKeys()` leaves it out of the filter vocabulary (a token nothing
+can ever match returns the *unfiltered* list, silently), and `journeyGraph()` draws no box for it
+— the existing `ฉบับร่าง` node carries its number instead. Its state comes from `status`: CURRENT
+while `DRAFT` or `RETURNED`, DONE otherwise. Don't give it a row by opening `ORGANIZATION_REVISION`
+as a task; the one-active-task index would start colliding with real gates.
+
+So a `RETURNED` request *does* have a current step now — step 1, waiting to be resubmitted, which
+is what the screens said in words before. Anything asking "has this moved forward?" must therefore
+test `step.taskType !== null`, not just "is there a current step": `announceProgress()` did the
+latter, and would mail "คำขอของคุณเดินหน้าไปอีกขั้น" right behind the return notice.
+
+### The list filter is a step in the route, and the route is drawn
+
+`backend/src/lib/queue.ts` is the only place the **filter vocabulary** is declared, and a token
+is one **node of the journey**: a `StepKey` from `journey-steps.ts` while a request is moving,
+or a terminal `RequestStatus` once it has stopped.
+
+**`status` cannot stand in for a gate.** `requestStatusFor()` answers `SUBMITTED` for *any*
+request whose active task nobody has opened yet, so one "นำส่งแล้ว" pill swept up three gates at
+once. `SUBMITTED`, `UNDER_REVIEW` and `ORGANIZATION_REVISION` are excluded from the token type at
+compile time: the first two are the ambiguity being removed, and the third is never opened as a
+task, so filtering by it would answer zero rows forever.
+
+`resolveTokens()` is the only place the old and new vocabularies meet, and it carries three
+generations: `?status=SUBMITTED,UNDER_REVIEW`, `?stage=BDI_OFFICER_REVIEW` (a `task_type`, which
+maps to every gate of that type), and `?stage=OFFICER_INITIAL` / `OFFICER_RECHECK` — the two step
+keys the dataset journey used while it had two officer gates, both now aliases of `OFFICER_REVIEW`
+in `LEGACY_NODE_KEYS`. Do not drop any of them from the accepted set: unknown tokens are discarded
+silently by design, so a stale link would quietly return the unfiltered list rather than fail.
+
+**`journeyGraph()` returns the drawable route** — ordered nodes with a lane
+(`main` / `branch` / `revision` / `closed`) and the edges between them. Every edge is *derived*:
+the "sent back for revision" arrows come from `ALLOWED_RESULTS`, so the picture is of the state
+machine rather than of someone's memory of it, and a gate that stops accepting `RETURNED` loses
+its arrow on its own. No edge touches `REJECTED`/`CANCELLED` — four gates can reject, and four
+crossing arrows would ruin the drawing to show something nobody filters by.
+
+That payload is also **the exception that keeps the rule** stated in `ApprovalSteps.tsx` and
+`lib/types.ts`: the frontend must not *know* the sequence, but it may be *told* it.
+`components/list/JourneyFlow.tsx` therefore contains no journey facts at all, and adding a gate
+to `journey-steps.ts` makes it appear on screen with no frontend change. What the frontend does
+own is colour — the server sends a tone name, `frontend/lib/stage.ts` maps it to class strings,
+because Tailwind scans statically.
+
+Terminal node labels live in `journey-steps.ts`, **not** in `REQUEST_STATUS_LABELS` from
+`roles.ts`: that table says "ส่งกลับให้แก้ไข" where the badge says "รอการแก้ไข", and it feeds the
+emails, so making it match would reach much further than a list screen should.
+
+**The BDI gates have no assignee at all.** `assigned_user_id` is nullable, and
+`BDI_OFFICER_REVIEW` / `BDI_FINAL_APPROVAL` open with `null`: `canAction()` decides from roles
+alone, `lib/queue.ts` answers "my work" from roles alone, and the "your turn" emails already go
+to every holder of the role (`bdiOfficerIds()` / `bdiApproverIds()`), so the value decided
+nothing. What it did do was reach the screen as the name of the person who acted — it is only
+the person a round-robin *picked*, so on 2026-09-04 an approval by `ศ.ดร.ธีรณี ตัวปลอม` was
+shown on production as `นางสุดารัตน์ อนุมัติ`. `review_task.completed_by` now records who
+actually closed the gate, and every screen reads that. `pickAssignee()` is replaced by
+`roleHolderId()` in `lib/workflow.ts`, which both routes use two ways: as an existence check
+before opening a BDI gate (503 `no_reviewer` when nobody holds the role), and to resolve the
+real person for `ORGANIZATION_APPROVAL`, which **keeps its assignee** — that gate belongs to the
+one signatory the organisation named in its form, whose name is printed on A0, and
+`revertStrandedWork()` in `admin-users.ts` finds stranded work through that column.
+
+**Two people pressing the same button at the same moment is now expected, not exceptional.**
+Every write in `lib/workflow.ts` that closes or moves a task is a conditional `updateMany` with
+the status test **inside the WHERE**, not a read-then-write: under READ COMMITTED both callers
+pass a plain `if` and the second silently overwrote the first. Mid-route that was masked by
+`uq_active_review_task_per_subject` firing on the next `openTask` (as a bare P2002, "ข้อมูลซ้ำ"),
+but a **terminal** action — final approval, or any rejection — opens no new task and had nothing
+guarding it: two signature rows, two document renders, two sets of email. The loser now gets 409
+`task_closed` with `TASK_TAKEN_MESSAGE`, the same wording every gate uses, and `openTask()`
+translates that P2002 into the same error rather than letting the middleware answer.
+
+`scope=mine` is decided by **role**, never by `assigned_user_id`: `POST /:id/review` lets any
+holder of the matching role close the stage. The role→gate map is `ROLE_TASK_TYPES` in
+`lib/workflow.ts`, computed by inverting
+`TASK_TYPE_ROLES` rather than written out again — both review handlers import that same table,
+so "may act" and "is my work" cannot drift apart. A BDI officer therefore owns *two* nodes on
+the dataset journey, and their counts sum to what the single task-type token used to return.
+
+The frontend has **no copy of the role→gate map**; each node arrives with a `mine` flag. The
+"deliberate copy" convention that `lib/dataset-form.ts` and `lib/organization-form.ts` follow
+exists for what a screen must know *before* the network answers, which a diagram already waiting
+on counts is not. Guessing wrong here would show the wrong *rows*, not just a wrong label.
+
+Filtering is single-select and the diagram is a `radiogroup`, so it carries a "ทุกขั้นตอน"
+member that is checked when nothing else is — a radiogroup with nothing checked is a
+screen-reader dead end. The default selection is the **tab**, not a token: `scope=mine` already
+means "the union of my gates", it is decided synchronously from roles, and nothing has to wait
+on `/summary` to avoid a visible flip.
+
+**The tab sits above the diagram and controls it.** On ที่ต้องดำเนินการ only the reader's own
+gates are pressable and the rest are `disabled`, with a line saying why; on ทั้งหมด every gate
+is. That replaced an earlier rule where pressing someone else's gate silently switched tabs —
+`stage` and `scope` AND on the server, so the press had to go somewhere, and a greyed box that
+explains itself beats a tab that moves under you. Returning to your own tab drops a selection
+that is no longer reachable, or the reader is left holding a filter they cannot clear.
+
+**Status badges say what the detail page says, not what the diagram box says.** They used to
+carry `progress.currentShortLabel` so that badge and node matched, but that made the badge in a
+table and the badge on the request's own page call the same gate by two different names, which
+is what a reader actually compares — they click from one into the other. `StatusBadge` therefore
+reads `stageMeta()` only, and it is no longer `whitespace-nowrap`: the full wording is longer and
+must be allowed to wrap in a fixed column rather than paint over its neighbour. `shortLabel`
+survives for the diagram alone, where every node has to stay inside `min-h-[4.5rem]` or the CSS
+connectors stop lining up.
+
+Those names all come from `ROLE_LABELS` now, through `REVIEW_TASK_ROLE` + `REVIEW_TASK_ACTION` in
+`lib/roles.ts` (and the mirror of both in `frontend/lib/status.ts`). Before that, one role had
+three names — "เจ้าหน้าที่ BDI" in the timeline, "รอ BDI ตรวจสอบ" on the badge, "ผู้ดำเนินการของ
+BDI" in email — so the same person saw the same gate called three things in one sitting. Add a
+gate by adding a row to those two tables, not by writing a sentence.
+
+**สถานะ and ความคืบหน้า are one column.** They told one story — the name of the gate, and which
+number that gate is — so the cell stacks the badge over `ขั้นที่ N จาก M` and the dots, the
+shape `DatasetSection` already used. `RowDetailCard` carries everything that used to be in a
+`title`: full stage name, next stage, phase note, last-touched date and days waited. It opens
+with no delay, which is the point — `title` waits about a second and cannot be tuned.
+
+That card is `position: fixed` and rendered **outside** `<Card>`. `overflow-hidden` on the Card
+clips absolutely-positioned children, but a fixed element is positioned against the viewport
+and escapes — *only while no ancestor has* `transform`, `filter`, `backdrop-filter`,
+`will-change` or `contain`, any of which would make that ancestor the containing block instead.
+Nothing from `body` down to a row does today (`frost-12` is on the header, a sibling of
+`<main>`). Adding an animation to `<main>` or `<Card>` would break this silently. Rendering it
+outside the Card also keeps anything block-level or focusable from nesting inside the row
+`<button>`. One card's state per table, not per row, and it closes on scroll and resize because
+the captured rect goes stale the moment the page moves.
+
+The connectors are CSS, not SVG, and they stay anchored without measuring anything only because
+every node shares a `min-h-[4.5rem]`: a row's centre is then always `2.25rem` from its edge.
+Two routes are deliberately not straight — the resubmit line runs in the 2rem column gutter
+rather than down the middle of the `ฉบับร่าง` column, and a gate whose column also carries the
+optional specialist leaves through the gutter on its right. Both would otherwise draw a line
+straight through a box. `assets/status_filtering_ui/mock-to.png` is the drawing this matches.
+
+Counts live in `GET /summary` rather than in the list response because their scope is the one
+that must **not** move when a node is pressed or a page turned — visibility plus the search box,
+nothing else. Their sum can fall short of `total` by the requests sitting in the
+`requestStatusFor()` fall-through (`UNDER_REVIEW` with no active task); those match no node and
+are visible only on the ทั้งหมด tab. That is a data anomaly worth seeing, not one to paper over.
+
+Both list endpoints page with `page`/`pageSize` and sort with `sort=date_asc|date_desc`. The
+`orderBy` ends with `id` on purpose: rows sharing a `submittedAt` have no defined relative order
+otherwise, so one lands on two pages and another on none — `seed:demo` writes rows in a loop and
+reproduces it immediately.
 
 ### Audit log, notifications and the outbox
 
@@ -170,6 +345,33 @@ they are sent inline because the raw key only exists in memory at that moment.
 Notifications need not be real time, so the bell fetches on page load and on navigation — there
 is no polling loop, no websocket. Don't add one without a requirement.
 
+**There is exactly one requirement, and one poller.** Since the BDI gates lost their assignee,
+several officers can sit on the same request's detail page at once, so `frontend/lib/use-request-watch.ts`
+asks `GET /:id/state` every 15 seconds while the tab is visible. What is stale on that screen is
+not just news — it is a button offering an action that no longer exists. It stops on the terminal
+statuses, stops while `document.hidden` (which also keeps a parked tab from holding the session
+open against `SESSION_IDLE_HOURS`), and is silent on error. **Never point it at `GET /:id`**: that
+handler is ten to seventeen SELECTs, `/state` is three. Both compute `stateVersion` from the same
+`stateVersionOf()`, so the page can tell "changed" from "same" without a second full fetch — and
+if they ever disagree, a freshly loaded page announces a change that did not happen.
+`P2024` (pool timeout) joined the Prisma error map when this landed, because the number of
+concurrent requests now follows the number of open tabs.
+
+**Two audiences per transition, and they must not overlap.** The dispatchers tell the *next*
+actor what to do (`REQUEST_SUBMITTED` and friends) and `announceProgress()` in `lib/notify.ts`
+tells the *organisation side* that the request moved (`REQUEST_PROGRESSED`). Before that
+existed, the submitter heard nothing between submitting and being returned or approved, which
+read as the request having vanished. `announceProgress()` drops the org approver from its
+recipients when the new stage is theirs — they already get the direct "รอคุณลงนาม" mail, and two
+messages about the same event in the same minute bury the one with the button. It returns the
+`JourneyProgress` it computed so callers can hand it to emails they send inline instead of
+recomputing.
+
+`docs/01-user-journey.md` §4.5 item 4 requires BDI officers to be told when the organisation
+signs a dataset request; `sendDatasetPendingFinalCheck()` had been written for it but the
+dispatcher had no `ORGANIZATION_APPROVAL` branch at all, so that stage opened in silence until
+2026-08-29.
+
 ### Auth
 
 Invite-only. There is no self-signup and no admin UI — the spec says so explicitly.
@@ -184,7 +386,7 @@ the cookie, and don't "optimise" this read away.
 
 **The cookie holds an opaque random value, not a JWT.** It points at a row in `iam.session`,
 which is what makes revocation possible at all; there is no `JWT_SECRET` any more
-(`jsonwebtoken` stays, for ThaiD's `id_token`). `lib/session.ts` owns the lifecycle. Two
+(`jsonwebtoken` stays, for ThaID's `id_token`). `lib/session.ts` owns the lifecycle. Two
 expiries, both enforced: absolute (`SESSION_TTL_DAYS`, 7 days, not renewable) and idle
 (`SESSION_IDLE_HOURS`, 8 hours, `last_seen_at` moves — written at most once a minute, not per
 request). `issueSession()` revokes whatever session the caller arrived with, so logging in
@@ -226,14 +428,47 @@ carries `removedFromOrganization` so the home page can say what happened instead
 duplicate registration. The rule itself is unchanged and still contradicts
 `docs/01-user-journey.md` §1.
 
+**One user is one role** — settled 2026-09-03, and a different rule from the one above. Nothing
+enforced it: `assignRole` caps *one holder per role per organisation*, `organizationClash()` in
+`routes/admin-users.ts` caps *one organisation per account* and returns early for the BDI
+organisation, so the operator of an organisation could take that same organisation's approver
+role (same organisation, no clash) and one BDI officer could hold `BDI_OFFICER` +
+`BDI_FINAL_APPROVER`. Roles here are approval gates (`TASK_TYPE_ROLES` in `lib/workflow.ts`),
+so two roles means walking one request through two of its own gates — submit the registration
+and then sign it at `ORGANIZATION_APPROVAL`, or review at step 2 and approve at step 4.
+**BDI staff are not exempt this time**, which is the part that changes how the BDI team works.
+
+It is enforced in `assignRole`, which every granting path runs through (activation, `POST
+/api/admin/users/:id/roles`, `POST /users/:id/transfer`, Journey B's `ensureApproverAccount()`,
+`seed:demo`); it throws `RoleConflictError` so a caller that skipped its own check gets a 409
+rather than a 500 mid-transaction. It **refuses the newcomer** instead of revoking what is held
+— the opposite of the rule above — because here the existing role belongs to the same person,
+and dropping it silently would change their job with nobody asking. `transfer` is the intended
+way to change one: it now revokes *every* assignment before granting (not just the source
+organisation's, which would leave a BDI role behind for `assignRole` to trip over) and answers
+`already_there` only when organisation **and** role both match, so it also covers a role change
+within one organisation. `20260903120000_one_active_role_per_user` adds the net that this rule
+*can* express as an index — `user_account_id where status = 'ACTIVE'`, no `role.id` to name —
+for the concurrent writes the application layer cannot see.
+
+Closing that rule alone would not have closed the hole. `POST /organizations/:id/review` let
+anyone whose email matched `request.approverEmail` close `ORGANIZATION_APPROVAL` **without
+holding the role at all**, and both detail views drew the button from the same email test; all
+three now go by role only, which is safe because `ensureApproverAccount()` grants
+`ORGANIZATION_APPROVER` when the gate opens. `approverConflict()` widened from "holds an
+organisation-scoped role elsewhere" to "holds any other role", so the signatory email is
+rejected at `POST /:id/submit` rather than days later at officer approval, and
+`submitSchema` plus `frontend/lib/organization-form.ts` reject a signatory email equal to the
+operator's own — the read-only contact email — while the form is still being filled.
+
 `Invitation` is replaced by `iam.activation_key`, following the lifecycle in that sheet: create
 the `user_account` as `PENDING` first, then issue a key for (account, organisation, role).
 The key is hashed with **HMAC-SHA-256** (`ACTIVATION_KEY_SECRET`), not bare SHA-256, so a
 database leak alone cannot produce a usable key. `organization_id` is NOT NULL there, which is
 why BDI itself is a row in `organization.organization` (`lib/system.ts`).
 
-Activation is ThaiD-first and has no email-OTP variant. `POST /api/auth/thaid/start` →
-the user verifies on ThaiD → `POST /api/auth/thaid/callback` compares the `pid` claim with
+Activation is ThaID-first and has no email-OTP variant. `POST /api/auth/thaid/start` →
+the user verifies on ThaID → `POST /api/auth/thaid/callback` compares the `pid` claim with
 `user_account.cid` → `POST /api/auth/activate` sets the password and flips the account to
 `ACTIVE`, creates the role assignment and marks the key `USED`, all in one transaction.
 **`password_hash` and `iam.otp_code` are deliberate additions not present in the Excel**;
@@ -278,21 +513,70 @@ account answers 409 — deleting a working account is not "removing an invitatio
 is the only record that the invitation ever existed. `docs/09-auth-tokens.md` §2.1 has the
 table.
 
-**The activation form starts from what is already known, not blank.** `GET /api/auth/invitation`
-returns a `profile` (prefix, first name, last name, phone) read off the `iam.user_account` row the
-invitation points at. It matters most for the organisation approver: the officer typed that
-person's name and telephone into the registration form days earlier, and `ensureApproverAccount()`
-wrote them onto the PENDING account — making them retype it invited a mismatch with the
-registration they are about to sign. ThaiD's claims then overwrite the name fields (the card
-outranks a colleague's typing) while the phone, which ThaiD never sends, survives. The prefix is
-only seeded when it is one of the form's `PREFIXES`; imported values like `นายแพทย์` are not, and
-a `<select>` holding a value that is not an option submits empty without showing anyone.
+**The activation form starts from what is already known, and the name is not the user's to
+type.** `GET /api/auth/invitation` returns a `profile` (prefix, first name, last name, phone)
+read off the `iam.user_account` row the invitation points at, plus a `profileLocked` flag per
+name field. It matters most for the organisation approver: the officer typed that person's name
+and telephone into the registration form days earlier, and `ensureApproverAccount()` wrote them
+onto the PENDING account — making them retype it invited a mismatch with the registration they
+are about to sign.
+
+**The ThaID callback writes the card's claims onto the account**, rather than handing them to
+the browser to send back at the end. That is what makes "prefilled from ThaID, and the user may
+not change it" enforceable: `POST /api/auth/activate` takes each name field from the account
+whenever the account has one and **silently ignores the body's copy**, so `readOnly` on the
+screen is the display of a server-side rule, not the rule itself. `lockedProfile()` in
+`routes/auth.ts` is the one place that decides, and both endpoints call it. A field the system
+has no value for stays editable and required — the prefix is the ordinary case, since ThaID
+sends no `title` claim. A locked prefix renders as a read-only input rather than a `<select>`,
+which also retired the old `PREFIXES` filter: an imported value like `นายแพทย์` used to leave
+the dropdown blank and submit empty without showing anyone.
+
+**Password rules are a table, in two mirrored files.** `PASSWORD_RULES` in
+`backend/src/lib/validation.ts` (twelve characters, upper, lower, digit, symbol — the 2026-09-06
+card) is copied into `frontend/lib/password.ts` for the same reason `organization-form.ts` is a
+copy: the checklist under the field ticks itself as you type, which a round trip per keystroke
+cannot do. Rules are data rather than chained `.refine()` calls so that one submission names
+*every* missing requirement instead of the first. The activation form's second password field is
+checked on both sides — `confirmPassword` is part of `activateSchema`, not a browser nicety.
 
 Activation does **not** touch `organization.status`. An organisation goes `ACTIVE` only when
 its registration request clears `BDI_FINAL_APPROVAL` (Journey B). The Notion card §2.5 says
 otherwise; that was raised and settled on 2026-08-13 in favour of Journey B.
 
-### ThaiD
+### One person, one name — `lib/person-name.ts`
+
+**Nothing reads `iam.user_account.display_name` to put a name on a screen any more.**
+`fullNameTh()` composes it from `prefix_th` + `firstname_th` + `lastname_th`, space-separated
+(`นาย สมชาย ใจดี`) — the form the agreement templates have always used, so there is now one
+shape rather than two. `legal-values.ts` no longer has a name builder of its own; it calls this.
+A prefix on its own does not count as a name, or an account with only `prefix_th` would be
+called `นาย`. Every place that shows a person —
+the timeline actor, the approval stamp, the signature written into A0, the navbar, both list
+tables, the notification e-mails — goes through it. `frontend/lib/types.ts`'s `fullName()` and
+`sessionUserName()` are the deliberate frontend copies, in the same sense as
+`lib/dataset-form.ts`; they must give the same answer.
+
+The column still exists because admin user search reads it, and every write goes through the
+same helper, so it cannot drift again. `npm run backfill:display-name` rewrites it for an
+existing database (`-- --write` to commit; it prints the diff first) and **skips the SYSTEM
+account**, whose name is the literal word `ระบบ` and has no Thai name fields by design.
+
+An account with no Thai name gets an **empty** display name, never its e-mail address: that
+fallback is how an e-mail address reached a signature block. Three callers pick their own
+fallback and say so in a comment — the signature block and the navbar fall back to the e-mail
+because they must render something, and `audit.ts` does because a log entry has to identify a
+person and is never shown on screen. Everyone who has activated has a full Thai name
+(`POST /api/auth/activate` requires it, and ThaID supplies it), so an empty name means an
+account that cannot act yet.
+
+Until 2026-09-06 the navbar composed `firstName + lastName` while stamps composed
+`prefix + firstName + lastName`, so the same person was "สุรชัย ปกครองดี" in the header and
+"นาย สุรชัย ปกครองดี" on the document they had just signed. (The prefix was briefly glued to
+the given name on 2026-09-06 before BDI asked for the space back the same day; the templates
+had been spacing it all along.)
+
+### ThaID
 
 `lib/thaid.ts` talks to DOPA (authorize URL, token exchange, ES256 id_token verification
 against their JWKS, revoke); `lib/thaid-flow.ts` keeps the in-flight state. Both the OAuth
@@ -301,7 +585,7 @@ against their JWKS, revoke); `lib/thaid-flow.ts` keeps the in-flight state. Both
 table — the sheet already designates that table for this, and every attempt, including the
 failures, lands in it for free.
 
-The raw activation key is never sent to ThaiD and never stored: the callback finds its way
+The raw activation key is never sent to ThaID and never stored: the callback finds its way
 back through `subject_id`, which is the `activation_key` row id.
 
 Every authorization request carries a random `nonce` alongside `state`, stored in
@@ -323,18 +607,18 @@ turns identity verification into a button is not something to leave lying in a r
 
 `THAID_SCOPE` defaults to `openid pid given_name family_name given_name_en family_name_en`
 (set 2026-08-24 from the Enhance card; it used to also ask for `title` `middle_name` `name`
-`name_en`). Two consequences. **It contains `pid`, which this project's own client is still
-refused** — a deployment using those credentials must override the env, not the code:
-`THAID_SCOPE=openid given_name family_name given_name_en family_name_en` with
-`THAID_USE_PID=false`. And **there is no `title` claim any more**, so the activation form fills
-first and last name from the card and leaves the prefix for the user to choose; `toIdentity()`
-still reads `title` / `name` / `name_en` in case DOPA sends them unasked.
+`name_en`). **DOPA granted this project's client the `pid` scope**, found by probing on
+2026-09-02, so the default now works as written and `main` runs `THAID_USE_PID=true`. There is
+no `title` claim, so the activation form fills first and last name from the card and leaves the
+prefix for the user to choose; `toIdentity()` still reads `title` / `name` / `name_en` in case
+DOPA sends them unasked.
 
 `THAID_USE_PID` chooses **which claim the CID is read from** — `pid` (the manual's answer,
 needs the `pid` scope) or `sub`. It is not a switch that disables the check: the comparison
-against `user_account.cid` runs either way, and a mismatch revokes the key either way. It
-exists because DOPA has not granted this project's client the `pid` scope, while `sub` comes
-back as the 13-digit national ID.
+against `user_account.cid` runs either way, and a mismatch revokes the key either way. It was
+written when the `pid` scope was refused; it stays as the way back if `pid` does not actually
+arrive in an id_token, since `sub` comes back as the 13-digit national ID. Changing it needs
+only a backend restart, never a rebuild.
 
 Whichever claim it reads, the value must pass the national-ID checksum before it counts
 (`toIdentity()` in `lib/thaid.ts`). A claim that is missing or opaque yields 502
@@ -386,7 +670,7 @@ template has been re-uploaded; `docs/tools/rename-placeholders.py` does the .doc
 to invent one, so the dataset form's signatures live only in `signature_confirmation` /
 `legal_acceptance`. The signature variables still resolve, so adding a block to the template
 later needs no code. Journey C signs at `ORGANIZATION_APPROVAL` and `BDI_FINAL_APPROVAL` only —
-the specialist review and the officer re-check read the document but do not sign.
+the officer review and the specialist review read the document but do not sign.
 
 #### Details that have already cost time
 
@@ -428,11 +712,26 @@ rather than re-rendered, so approved documents do not get a new "พิมพ์
 **The variable catalogue is the contract between documents and code.**
 `TEMPLATE_VARIABLES` in `lib/document-render.ts` is the single source for validation, the admin
 API listing and `docs/18-document-template-variables.md`; `lib/legal-values.ts` fills every entry.
-It covers 53 variables across organisation, org approver, org officer, request, signature, BDI and
-system data — deliberately wider than A0 uses, so a new document can pull data it needs without a
-code change. Adding a *name* still needs code, and upload validation rejects unknown names for
+It covers 74 variables across organisation, org approver, org officer, request, dataset, signature,
+BDI, document-version and system data — deliberately wider than A0 uses, so a new document can pull
+data it needs without a code change. Adding a *name* still needs code, and upload validation rejects unknown names for
 exactly that reason. `bdi.address` / `bdi.directorName` are constants (`OFFICE_DEFAULTS`)
 because no column holds them; they need editing when BDI moves or changes director.
+
+**`document.version` / `document.effectiveDate` belong to the document, not the request.** Every
+other variable is a fact about the organisation or the dataset, so one request yields one set of
+values; these two are read off the `legal.legal_document_version` row being rendered, so two
+documents of the *same* request legitimately print different numbers. That is why
+`renderLegalDocument()` / `renderDatasetDocument()` take `versionNumber` and `effectiveAt` on the
+`document` argument rather than reading them out of the request shape.
+
+**`A1`–`A3` are annex numbers, not content names.** The 2026-08-31 template set renumbered the
+annexes — 1=NDA, 2=DPA, 3=PDPA, from 1=DPA, 2=PDPA, 3=NDA — so each code now carries different
+wording under the same code, published as the next *version* of that row. `legal_acceptance` points
+at a version, so what each signatory accepted is still the file they saw; `legal_document.name_th`
+belongs to the document rather than the version, so old rows are read back under the new name. To
+say what someone accepted, open that version's file, don't read the code. Codes follow the legal
+team's annex numbers on purpose: that is what everyone reading the paper calls them.
 
 **Reading is attested, not measured.** The organisation approver ticks
 "ข้าพเจ้าได้อ่านเอกสารฉบับนี้ครบถ้วนแล้ว" per document before `เห็นชอบ` unlocks, and the tick
@@ -505,18 +804,35 @@ sampled from the `.ai` files in `assets/theme_ci_design/`, not chosen by eye —
 navy `#192768`, coral `#E5775A`. The same values are duplicated as constants in
 `mail.ts` and `pdf.ts` (email clients have no CSS, PDFKit has no CSS); change all three together.
 
-The logo is the real artwork from `assets/theme_ci_design/LOGO/`, not a redrawing.
-`components/brand/Logo.tsx` inlines the SVG paths (navy on `currentColor`, the coral dot on its
-own class, so one file covers every tone); the PDF and email headers use trimmed PNGs in
-`backend/src/assets/brand/` because neither PDFKit nor an email client can render SVG.
-`docs/02-ui-spec.md` §1.6 maps each surface to the source file it came from — regenerate from
-those originals rather than editing path coordinates by hand.
+The logo is the real artwork from `assets/theme_ci_design/LOGO/`, not a redrawing. Every
+surface uses the square lockup with the organisation name under the mark
+(`1x/sqr-logo-normal-with-label.png`, and `-white-` on the dark side of the auth page — not
+`-for-dark-bg-`, which is coral and vanishes into the coral end of `bg-brand-gradient`): the web
+copies both files
+next to `components/brand/Logo.tsx` and static-imports them through `next/image`, and the email
+header attaches the same PNG and references it by `cid:` because mail clients block remote
+images. `docs/02-ui-spec.md` §1.6 maps each surface to the source file it came from — copy from
+those originals rather than exporting your own.
 
 `frontend/lib/dataset-form.ts` is a **deliberate copy** of the code lists and the conditions
 engine in `backend/src/lib/dataset.ts` — the form has to show what a choice forces the moment
 it is made, so it cannot ask the API on every change. The backend re-applies the same rules
 before every write (`normaliseMetadata`), so a stale copy is a UI bug, never a data bug.
 Change both files together, like the CI colors.
+
+`frontend/lib/organization-form.ts` is the same arrangement for Journey B's registration form,
+mirroring `submitSchema` in `backend/src/routes/organizations.ts` and the shared validators in
+`backend/src/lib/validation.ts`. It exists because the form colours each input the moment it is
+typed in — red with the reason, green with a tick — which a round trip per keystroke cannot do.
+The backend is still the decider; the copy only decides what the screen says.
+
+**The organization code is not a form field.** `organization_code` is `@unique`, comes from the
+admin (`POST /api/admin/organizations`) or `nextOrganizationCode()`, and is what A0 uses to name
+the organization — so the registration form shows it `readOnly` and `toRequestData()` does not
+map it into the snapshot at all. `POST /api/organizations` and `PATCH /api/organizations/:id`
+answer 400 when a body carries a *different* code (an equal one passes, so a stale tab still
+saves). Fixing a wrong code is `PATCH /api/admin/organizations/:id`, an admin route.
+`docs/10-admin-prefill-organization.md` §4.1 has the reasoning.
 
 Fonts are self-hosted via `next/font/local` from `frontend/public/fonts/` — no Google Fonts,
 so it works behind a firewall.
@@ -595,18 +911,22 @@ Two API base URLs, and they are not interchangeable:
   it cached and whoever just signed sees a copy without their own name on it. The screen passes
   a `reloadKey` query parameter to bust it. Same class of problem as the `next/image` cache
   further down, different cache.
-- The ThaiD sandbox sits behind a WAF that blocks any user agent containing
+- The ThaID sandbox sits behind a WAF that blocks any user agent containing
   `HeadlessChrome` — it answers with an HTML page saying "Web Page Blocked!" instead of
   redirecting, which reads like a broken client. Screenshot runs must override the user
   agent. Its login page also polls for the QR scan forever, so `waitUntil: "networkidle"`
   never resolves there.
-- The client credentials registered for this project (`assets/thaid/env_dev.txt`) are
-  **not granted the `pid` scope** and are pinned to `http://localhost:3000/auth/callback/thaid`.
-  Asking for `pid` with them returns `invalid_scope` at the authorize step, and no CID means
-  no CID matching. Development therefore runs on DOPA's sandbox demo client, which accepts
-  any `redirect_uri` and grants `pid`. Both gaps are DOPA-side registration changes, not code.
-  Because of the pinned redirect URI, **the project's own credentials can only be exercised
-  from `main`** (it owns port 3000); no dev checkout can be used with them.
+- The client credentials registered for this project (`assets/thaid/env_dev.txt`) are pinned to
+  **`https://bdi.thammasorn.org/auth/callback/thaid` and nothing else** — `localhost:3000`, any
+  other port, and the `http://` form of the public domain all answer
+  `400 invalid_request — redirect url mismatch`. That is the reverse of what was true until
+  2026-08-16, and DOPA changed it without telling anyone: they granted the `pid` scope and
+  swapped the redirect URI in the same edit, found only by probing the authorize endpoint on
+  2026-09-02. So **only `main` can use the project's own credentials**, and every dev checkout
+  must use DOPA's sandbox demo client, which accepts any `redirect_uri` and grants `pid`
+  (`assets/thaid/thaid sandbox.postman_environment.json`). When ThaID behaves oddly, probe
+  `/api/v2/oauth2/auth/` with a deliberately wrong scope, client and redirect first: three 400s
+  are what proves the endpoint is still validating rather than waving everything through.
 - DOPA's `sub` is the 13-digit national ID — verified on both the demo client and the
   project's client, with `scope=openid` and nothing else. So the CID comparison is
   recoverable without the `pid` scope. It is deliberately not wired up yet: OIDC does not
@@ -617,10 +937,12 @@ Two API base URLs, and they are not interchangeable:
   `subject_type_supported: ["public"]`, so the pairwise scenario is off the table there;
   production is still a different system. That document also answers PKCE (not advertised)
   and refresh tokens (the grant is supported) — §4.4 has the whole reading of it.
-- Giving BDI staff a real organisation broke every automatic assignment. `pickAssignee()` was
+- Giving BDI staff a real organisation broke every automatic assignment. The assignee picker was
   called with `organizationId: null` to mean "BDI side, no organisation", which after
   2026-08-16 matches nobody — `POST /:id/submit` answered 503 `no_reviewer` on both journeys
-  while the officers were sitting right there. BDI picks now pass `BDI_ORGANIZATION_ID`.
+  while the officers were sitting right there. Its replacement `roleHolderId()` keeps the same
+  trap: BDI lookups must pass `BDI_ORGANIZATION_ID`, and `undefined` (not `null`) is what means
+  "any organisation".
 - `publicAttachment()` used to return the slot as `attachmentType`, but every screen (and the
   `Attachment` type in `frontend/lib/types.ts`) reads `kind`. `a.kind` was `undefined`
   everywhere, so the preview page never found the generated PDF and **"นำส่งคำขอ" stayed
@@ -647,11 +969,6 @@ Two API base URLs, and they are not interchangeable:
   `PrismaClientInitializationError`, which carries `errorCode` instead. Handling only the first
   looks correct — until the database is down at boot, when the API answers 500 again. Both are
   mapped in `index.ts`, and an initialization failure answers 503 even when it carries no code.
-- The two `BDI_OFFICER_REVIEW` rounds look identical to anything reading `task_type`.
-  Round one goes to the organization for signature, the re-check after signing goes to
-  BDI final approval. Backend and `components/dataset/DetailView.tsx` both decide by
-  whether an `ORGANIZATION_APPROVAL` has completed — a screen keyed on `task_type`
-  alone will show the wrong button and nothing will fail loudly.
 
 
 ## Notion

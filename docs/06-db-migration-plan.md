@@ -171,9 +171,17 @@ role กลายเป็นตาราง master พร้อม `is_active` 
 ไม่มี `task_type` ของตัวเองในแบบใหม่ ให้ใช้ `BDI_OFFICER_REVIEW` + `round_number = 2`
 + `result = CONFIRMED` แทน
 
-การ assign specialist ของเดิม (field เดียวบน request) กลายเป็น
-สร้าง `DATASET_SPECIALIST_REVIEW` task · ถอน assign = `status = CANCELLED` ·
-comment โดยไม่เปลี่ยนสถานะ = `result_comment` + `comment_visibility = BDI_INTERNAL`
+> **2026-08-30** — เอกสารนี้เป็นบันทึกของการย้ายสคีมาเมื่อ 2026-08-13 จึงเก็บข้อความข้างบน
+> ไว้ตามเดิม แต่ **ด่าน Final Check ถูกยกเลิกไปแล้วทั้งหมด** (การ์ด *แก้ flow dataset
+> registration*) เส้นทางชุดข้อมูลปัจจุบันไม่มีด่านเจ้าหน้าที่ BDI รอบสอง — ข้อความนี้ใช้
+> อ่านย้อนหลังว่าข้อมูลเก่าถูกแปลงมาอย่างไรเท่านั้น ไม่ใช่กติกาที่ใช้อยู่
+
+การ assign specialist ของเดิม (field เดียวบน request) เคยกลายเป็นการสร้าง
+`DATASET_SPECIALIST_REVIEW` task — **กลับมาเป็น field บน request อีกครั้งเมื่อ 2026-08-30**
+(`assigned_specialist_id`, การ์ด *Make Data Specialist Review Advisory*) เพราะการขอความเห็น
+ไม่ใช่การย้ายด่าน และหนึ่งคำขอมี active task ได้ตัวเดียว ส่วน comment ยังเป็นแถวใน
+`review_task` เหมือนเดิม (`result = CONFIRMED` · `comment_visibility = BDI_INTERNAL`)
+แต่เป็นแถวที่ปิดตั้งแต่เกิด ไม่เคย active
 
 ### 3.6 `dataset.*` (4 ตาราง) ← `dataset_requests`
 
@@ -344,8 +352,8 @@ review_task และเขียน audit_event"* ดู §4 ข้อ 3
    ว่า *"ไม่มีในดีไซน์ 2026-08-11 — เพิ่มไว้เพราะ ThaID ยังไม่มี client credentials
    และ §A.2 บังคับ 2FA"* เมื่อ ThaID พร้อมค่อยถอดออกทั้งชุด
    สเปกที่รองรับมติข้อนี้: `docs/01-user-journey.md` §A.2 *"ต้องมี two factor authen ด้วย
-   email หรือ ThaiD"* — ดีไซน์รองรับแค่ทางหลัง
-   *ปรับปรุง 2026-08-13:* การ์ด **ThaiD Integration** ยืนยันให้เก็บทั้งคู่ไว้ — Login Step
+   email หรือ ThaID"* — ดีไซน์รองรับแค่ทางหลัง
+   *ปรับปรุง 2026-08-13:* การ์ด **ThaID Integration** ยืนยันให้เก็บทั้งคู่ไว้ — Login Step
    เขียนไว้ตรง ๆ ว่า *"login โดยวิธี password + otp จาก email หรือจะผ่าน ThaID ก็ได้"*
    ทั้งสองอย่างจึงไม่ใช่ส่วนขยายชั่วคราวอีกต่อไป แต่ **ขั้นเปิดใช้งานบัญชีเลิกใช้ OTP แล้ว**
    ใช้ ThaID ทางเดียว
@@ -484,7 +492,7 @@ review_task และเขียน audit_event"* ดู §4 ข้อ 3
 
 - `dataset_registration_request` + `dataset_registration_metadata` (1:1)
 - materialize `dataset` + `dataset_metadata` ตอน `APPROVED` พร้อมออก `dataset_code`
-- specialist assignment → `DATASET_SPECIALIST_REVIEW` task
+- specialist assignment → `DATASET_SPECIALIST_REVIEW` task (ย้อนกลับเมื่อ 2026-08-30 — ดู §3.5)
 - Final Check → `BDI_OFFICER_REVIEW` `round_number = 2`
 - `routes/dataset-requests.ts` (1,122 บรรทัด) เขียนใหม่ราวสองในสาม
 

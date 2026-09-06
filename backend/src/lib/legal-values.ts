@@ -1,15 +1,16 @@
 /**
  * ข้อมูลคำขอลงทะเบียนหน่วยงาน -> ค่าของ placeholder ในเอกสารกฎหมาย
  *
- * เอกสารเป็นภาษาราชการ ตัวเลขในเอกสารราชการไทยเขียนด้วยเลขไทย และปีเป็น พ.ศ.
- * `template A0` เองก็ตั้ง page number เป็น thaiNumbers ไว้ จึงเดินตามนั้นทั้งฉบับ
+ * เอกสารเป็นภาษาราชการ ปีจึงเป็น พ.ศ. แต่ **ตัวเลขเป็นเลขอารบิกทั้งฉบับ** — เดิมทุกค่า
+ * ถูกแปลงเป็นเลขไทยตอน render ตาม page number ที่ template A0 ตั้งไว้ BDI ขอให้เลิกใช้
+ * เมื่อ 2026-09-04 (Feedback 20260904 #2) เพราะเลขบัตรประชาชนกับเบอร์โทรที่เป็นเลขไทย
+ * อ่านยากและคัดลอกไปใช้ต่อไม่ได้ ตัวเลขจึงไม่ผ่านตัวแปลงใด ๆ อีก
  *
  * ค่าที่ยังไม่เกิดขึ้น (ลายมือชื่อที่ยังไม่มีใครลงนาม) ถูกส่งเป็นค่าว่างโดยตั้งใจ
  * ไม่ใช่ขีดเส้นหรือ "-" — ช่องลายมือชื่อที่ว่างคือสิ่งที่บอกว่ายังไม่มีการลงนาม
  */
-import type { TemplateValues } from "./document-render.js";
-
-const THAI_DIGITS = ["๐", "๑", "๒", "๓", "๔", "๕", "๖", "๗", "๘", "๙"];
+import { SYSTEM_NAME, type TemplateValues } from "./document-render.js";
+import { fullNameTh } from "./person-name.js";
 
 const thaiMonth = (month: number) => THAI_MONTHS[month - 1] ?? "";
 
@@ -17,11 +18,6 @@ const THAI_MONTHS = [
   "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
   "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม",
 ];
-
-/** เลขอาหรับทุกตัวในสตริง -> เลขไทย ตัวอักษรอื่นไม่แตะ */
-export function thaiNumerals(value: string): string {
-  return value.replace(/[0-9]/g, (d) => THAI_DIGITS[Number(d)] ?? d);
-}
 
 /** วัน เดือน ปี พ.ศ. แยกช่อง เพราะ template มีสามช่องแยกกัน */
 function bangkokParts(date: Date) {
@@ -36,7 +32,7 @@ function bangkokParts(date: Date) {
   return { day: get("day"), month: get("month"), year: get("year") };
 }
 
-/** เช่น "๑๙ สิงหาคม ๒๕๖๙ ๑๕:๒๗" — วันที่พร้อมเวลาไทย สำหรับบรรทัดที่พิมพ์จากระบบ */
+/** เช่น "19 สิงหาคม 2569 15:27" — วันที่พร้อมเวลาไทย สำหรับบรรทัดที่พิมพ์จากระบบ */
 export function thaiLongDateTime(date: Date): string {
   const time = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Bangkok",
@@ -44,13 +40,13 @@ export function thaiLongDateTime(date: Date): string {
     minute: "2-digit",
     hour12: false,
   }).format(date);
-  return `${thaiLongDate(date)} ${thaiNumerals(time)}`;
+  return `${thaiLongDate(date)} ${time}`;
 }
 
-/** เช่น "๑๙ สิงหาคม ๒๕๖๙" — รูปแบบวันที่ในเอกสารราชการ */
+/** เช่น "19 สิงหาคม 2569" — รูปแบบวันที่ในเอกสารราชการ */
 export function thaiLongDate(date: Date): string {
   const { day, month, year } = bangkokParts(date);
-  return `${thaiNumerals(String(day))} ${thaiMonth(month)} ${thaiNumerals(String(year + 543))}`;
+  return `${day} ${thaiMonth(month)} ${year + 543}`;
 }
 
 /**
@@ -117,9 +113,16 @@ export interface AgreementInput {
   /** คนที่กดสร้างเอกสารครั้งนี้ */
   printedByName: string | null;
   printedAt: Date;
-}
 
-export const SYSTEM_NAME = "ระบบกลางเพื่อการแบ่งปันข้อมูล (Government Datahub Platform)";
+  /**
+   * เวอร์ชันของ **เอกสารฉบับที่กำลัง render** ไม่ใช่ของคำขอ
+   *
+   * คำขอหนึ่งใบมีเอกสารหลายฉบับที่เผยแพร่คนละรอบกัน ค่าคู่นี้จึงต่างกันได้ในคำขอเดียวกัน
+   * และเป็นเหตุผลที่มันมาเป็น argument ต่อการ render ไม่ได้อยู่ในข้อมูลของคำขอ
+   */
+  documentVersionNumber: number | null;
+  documentEffectiveAt: Date | null;
+}
 
 /**
  * ข้อมูลสำนักงานที่ไม่มีช่องเก็บในฐานข้อมูล
@@ -146,9 +149,9 @@ export function agreementValues(input: AgreementInput): TemplateValues {
 
   return {
     // ── วันที่ทำข้อตกลง ──
-    "agreement.day": thaiNumerals(String(day)),
+    "agreement.day": String(day),
     "agreement.month": thaiMonth(month),
-    "agreement.year": thaiNumerals(String(year + 543)),
+    "agreement.year": String(year + 543),
     "agreement.date": thaiLongDate(input.agreementDate),
 
     // ── คำขอ ──
@@ -166,41 +169,41 @@ export function agreementValues(input: AgreementInput): TemplateValues {
     "org.subdistrict": input.subdistrict ?? "",
     "org.district": input.district ?? "",
     "org.province": input.province ?? "",
-    "org.postalCode": thaiNumerals(input.postalCode ?? ""),
+    "org.postalCode": input.postalCode ?? "",
     "org.address": organizationAddress(input),
-    "org.phone": thaiNumerals(input.phone ?? ""),
+    "org.phone": input.phone ?? "",
     "org.email": input.email ?? "",
     "org.website": input.websiteUrl ?? "",
 
     // ── ผู้มีอำนาจกระทำการแทน ──
-    "org_approver.fullName": fullName(
-      input.signatoryPrefix,
-      input.signatoryFirstName,
-      input.signatoryLastName,
-    ),
+    "org_approver.fullName": fullNameTh({
+      prefixTh: input.signatoryPrefix,
+      firstnameTh: input.signatoryFirstName,
+      lastnameTh: input.signatoryLastName,
+    }),
     "org_approver.prefix": input.signatoryPrefix ?? "",
     "org_approver.firstName": input.signatoryFirstName ?? "",
     "org_approver.lastName": input.signatoryLastName ?? "",
     "org_approver.position": input.signatoryPosition ?? "",
     "org_approver.department": input.signatoryDepartment ?? "",
     "org_approver.email": input.signatoryEmail ?? "",
-    "org_approver.phone": thaiNumerals(input.signatoryPhone ?? ""),
-    "org_approver.nationalId": thaiNumerals(formatNationalId(input.signatoryNationalId)),
+    "org_approver.phone": input.signatoryPhone ?? "",
+    "org_approver.nationalId": formatNationalId(input.signatoryNationalId),
 
     // ── ผู้กรอกข้อมูล ──
-    "org_officer.fullName": fullName(
-      input.contactPrefix,
-      input.contactFirstName,
-      input.contactLastName,
-    ),
+    "org_officer.fullName": fullNameTh({
+      prefixTh: input.contactPrefix,
+      firstnameTh: input.contactFirstName,
+      lastnameTh: input.contactLastName,
+    }),
     "org_officer.prefix": input.contactPrefix ?? "",
     "org_officer.firstName": input.contactFirstName ?? "",
     "org_officer.lastName": input.contactLastName ?? "",
     "org_officer.position": input.contactPosition ?? "",
     "org_officer.department": input.contactDepartment ?? "",
     "org_officer.email": input.contactEmail ?? "",
-    "org_officer.phone": thaiNumerals(input.contactPhone ?? ""),
-    "org_officer.nationalId": thaiNumerals(formatNationalId(input.contactNationalId)),
+    "org_officer.phone": input.contactPhone ?? "",
+    "org_officer.nationalId": formatNationalId(input.contactNationalId),
 
     // ── ลายมือชื่อ ──
     "org_approver.signature": input.approverSignedName ?? "",
@@ -217,9 +220,14 @@ export function agreementValues(input: AgreementInput): TemplateValues {
     "bdi.name": input.officeName || OFFICE_DEFAULTS.name,
     "bdi.address": OFFICE_DEFAULTS.address,
     "bdi.email": input.officeEmail ?? "",
-    "bdi.phone": thaiNumerals(input.officePhone ?? ""),
+    "bdi.phone": input.officePhone ?? "",
     "bdi.directorName": OFFICE_DEFAULTS.directorName,
     "bdi.directorPosition": OFFICE_DEFAULTS.directorPosition,
+
+    // ── ตัวเอกสารเอง ──
+    "document.version":
+      input.documentVersionNumber === null ? "" : String(input.documentVersionNumber),
+    "document.effectiveDate": date(input.documentEffectiveAt),
 
     // ── ระบบ ──
     "system.name": SYSTEM_NAME,
@@ -237,14 +245,10 @@ function organizationAddress(input: AgreementInput): string {
     input.subdistrict ? `ตำบล/แขวง${input.subdistrict}` : null,
     input.district ? `อำเภอ/เขต${input.district}` : null,
     input.province ? `จังหวัด${input.province}` : null,
-    thaiNumerals(input.postalCode ?? "") || null,
+    input.postalCode || null,
   ]
     .filter(Boolean)
     .join(" ");
-}
-
-function fullName(prefix?: string | null, first?: string | null, last?: string | null): string {
-  return [prefix, first, last].filter(Boolean).join(" ").trim();
 }
 
 function formatNationalId(id?: string | null): string {

@@ -1,16 +1,16 @@
 /**
- * ThaiD (ระบบพิสูจน์และยืนยันตัวตนทางดิจิทัล กรมการปกครอง) — OAuth 2.0 / OIDC client
+ * ThaID (ระบบพิสูจน์และยืนยันตัวตนทางดิจิทัล กรมการปกครอง) — OAuth 2.0 / OIDC client
  *
  * อ้างอิง `assets/thaid/thaid-spec-sandbox-1.0.0-nocred.pdf` §6 และ Postman collection
- * ในโฟลเดอร์เดียวกัน ไฟล์นี้พูดกับ ThaiD อย่างเดียว ไม่แตะฐานข้อมูล —
+ * ในโฟลเดอร์เดียวกัน ไฟล์นี้พูดกับ ThaID อย่างเดียว ไม่แตะฐานข้อมูล —
  * การผูก state กับคำขอและการเทียบเลขบัตรอยู่ใน `lib/thaid-flow.ts` และ `routes/auth.ts`
  *
  * ลำดับที่ใช้จริง:
- *   1. authorizeUrl()      → พาเบราว์เซอร์ไป /api/v2/oauth2/auth/ (ผู้ใช้ยืนยันในแอป ThaiD)
- *   2. ThaiD redirect กลับ redirect_uri พร้อม ?code=&state=
+ *   1. authorizeUrl()      → พาเบราว์เซอร์ไป /api/v2/oauth2/auth/ (ผู้ใช้ยืนยันในแอป ThaID)
+ *   2. ThaID redirect กลับ redirect_uri พร้อม ?code=&state=
  *   3. exchangeCode()      → POST /api/v2/oauth2/token/ ด้วย Basic client_id:client_secret
  *   4. verifyIdToken()     → ตรวจลายเซ็น ES256 ด้วย JWKS ของกรมการปกครอง แล้วอ่าน pid ออกมา
- *   5. revokeToken()       → คืน token ทิ้ง เพราะระบบนี้ใช้ ThaiD เพื่อ "ยืนยันตัวตน" ครั้งเดียว
+ *   5. revokeToken()       → คืน token ทิ้ง เพราะระบบนี้ใช้ ThaID เพื่อ "ยืนยันตัวตน" ครั้งเดียว
  *                            ไม่ได้เก็บ access token ไว้เรียก API อื่นต่อ
  *
  * id_token มาถึงเราผ่าน back channel (เราเรียก token endpoint เอง ผ่าน TLS) มาตรฐาน OIDC
@@ -24,7 +24,7 @@ import jwt from "jsonwebtoken";
 import { env } from "../env.js";
 import { isValidThaiNationalId } from "./validation.js";
 
-/** ข้อมูลผู้ใช้ที่ ThaiD ส่งกลับมา — เก็บเฉพาะที่ระบบนี้ใช้ */
+/** ข้อมูลผู้ใช้ที่ ThaID ส่งกลับมา — เก็บเฉพาะที่ระบบนี้ใช้ */
 export interface ThaidIdentity {
   /**
    * เลขประจำตัวประชาชน 13 หลักที่ผ่าน checksum แล้ว อ่านจาก claim ที่ `THAID_USE_PID`
@@ -63,7 +63,7 @@ export function thaidConfigured(): boolean {
  * URL ที่พาผู้ใช้ไปยืนยันตัวตน
  *
  * scope คั่นด้วยช่องว่าง (คู่มือ §6.1.1) — URLSearchParams เข้ารหัสเป็น `+`
- * ซึ่ง ThaiD อ่านได้ตามปกติของ application/x-www-form-urlencoded
+ * ซึ่ง ThaID อ่านได้ตามปกติของ application/x-www-form-urlencoded
  */
 export function authorizeUrl(state: string, nonce: string): string {
   const params = new URLSearchParams({
@@ -129,7 +129,7 @@ async function postForm(path: string, body: Record<string, string>): Promise<Res
   } catch (err) {
     throw new ThaidError(
       "network_error",
-      `เชื่อมต่อระบบ ThaiD ไม่ได้: ${err instanceof Error ? err.message : String(err)}`,
+      `เชื่อมต่อระบบ ThaID ไม่ได้: ${err instanceof Error ? err.message : String(err)}`,
     );
   } finally {
     clearTimeout(timer);
@@ -147,7 +147,7 @@ export async function exchangeCode(code: string): Promise<TokenResponse> {
   if (!res.ok) {
     throw new ThaidError(
       payload.error ?? `http_${res.status}`,
-      payload.error_description ?? "แลก authorization code กับ ThaiD ไม่สำเร็จ",
+      payload.error_description ?? "แลก authorization code กับ ThaID ไม่สำเร็จ",
     );
   }
   return payload as unknown as TokenResponse;
@@ -174,7 +174,7 @@ export async function revokeToken(
 }
 
 /**
- * คืน token ทุกใบที่ ThaiD ออกให้รอบนี้
+ * คืน token ทุกใบที่ ThaID ออกให้รอบนี้
  *
  * RFC 7009 §2.1 บอกว่าการเพิกถอน refresh token *ควร* ทำให้ access token ที่ออกจาก
  * ใบเดียวกันตายตามไปด้วย แต่ "ควร" ไม่ใช่ "ต้อง" และเราไม่รู้ว่ากรมการปกครองทำแบบไหน
@@ -209,7 +209,7 @@ async function fetchJwks(force = false): Promise<Jwk[]> {
     return jwksCache.keys;
   }
   const res = await fetch(`${env.thaid.rootUrl}/jwks/`);
-  if (!res.ok) throw new ThaidError("jwks_unavailable", "ดึงกุญแจสาธารณะของ ThaiD ไม่สำเร็จ");
+  if (!res.ok) throw new ThaidError("jwks_unavailable", "ดึงกุญแจสาธารณะของ ThaID ไม่สำเร็จ");
   const body = (await res.json()) as { keys?: Jwk[] };
   jwksCache = { keys: body.keys ?? [], fetchedAt: Date.now() };
   return jwksCache.keys;
@@ -229,7 +229,7 @@ type IdTokenClaims = Record<string, unknown> & { sub?: string; pid?: string; non
 export async function verifyIdToken(idToken: string): Promise<IdTokenClaims> {
   const decoded = jwt.decode(idToken, { complete: true });
   if (!decoded || typeof decoded.payload === "string") {
-    throw new ThaidError("invalid_id_token", "id_token ที่ได้รับจาก ThaiD อ่านไม่ได้");
+    throw new ThaidError("invalid_id_token", "id_token ที่ได้รับจาก ThaID อ่านไม่ได้");
   }
 
   const key = await publicKeyFor(decoded.header.kid);
@@ -300,9 +300,9 @@ function checkNonce(claims: IdTokenClaims, expected: string | null): void {
 
   if (!received) {
     if (env.thaid.requireNonce) {
-      throw new ThaidError("nonce_missing", "id_token จาก ThaiD ไม่มี claim nonce");
+      throw new ThaidError("nonce_missing", "id_token จาก ThaID ไม่มี claim nonce");
     }
-    console.warn("[thaid] id_token ไม่มี claim nonce — ThaiD สะท้อน nonce กลับมาหรือไม่?");
+    console.warn("[thaid] id_token ไม่มี claim nonce — ThaID สะท้อน nonce กลับมาหรือไม่?");
     return;
   }
   if (!expected) {
@@ -316,7 +316,7 @@ function checkNonce(claims: IdTokenClaims, expected: string | null): void {
 }
 
 /**
- * เรียก ThaiD ครบขั้นตอน: code → token → ตรวจ nonce → identity
+ * เรียก ThaID ครบขั้นตอน: code → token → ตรวจ nonce → identity
  * แล้วยกเลิก token ทุกใบที่เขาออกให้ เพราะไม่ได้ใช้ต่อ
  */
 export async function resolveIdentity(
@@ -325,11 +325,11 @@ export async function resolveIdentity(
 ): Promise<ThaidIdentity> {
   const token = await exchangeCode(code);
   if (!token.id_token) {
-    throw new ThaidError("no_id_token", "ThaiD ไม่ได้ส่ง id_token กลับมา (scope openid หายไปหรือไม่?)");
+    throw new ThaidError("no_id_token", "ThaID ไม่ได้ส่ง id_token กลับมา (scope openid หายไปหรือไม่?)");
   }
 
   /**
-   * คำถามที่ยังค้าง: ThaiD ออก refresh_token มาด้วยหรือไม่ — `TokenResponse` ประกาศไว้
+   * คำถามที่ยังค้าง: ThaID ออก refresh_token มาด้วยหรือไม่ — `TokenResponse` ประกาศไว้
    * เป็น optional ตามสเปก แต่ยังไม่เคยเห็นค่าจริง บันทึกไว้ใน log ตอนยิงจริงจะได้รู้
    * (ไม่ log ตัว token — แค่ว่ามีหรือไม่มี)
    */

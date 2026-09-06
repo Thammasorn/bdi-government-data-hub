@@ -9,6 +9,7 @@ import { env } from "./env.js";
 import { DocumentRenderError } from "./lib/document-render.js";
 import { correlationMiddleware } from "./lib/context.js";
 import { adminRouter } from "./routes/admin.js";
+import { adminUserRouter } from "./routes/admin-users.js";
 import { addressRouter } from "./routes/address.js";
 import { authRouter } from "./routes/auth.js";
 import { datasetRequestRouter } from "./routes/dataset-requests.js";
@@ -29,11 +30,12 @@ app.use(cookieParser());
 app.use(correlationMiddleware);
 
 app.get("/", (_req, res) => {
-  res.json({ service: "bdi-datahub-api", version: "0.1.0" });
+  res.json({ service: "d2-api", version: "0.1.0" });
 });
 
 app.use("/health", healthRouter);
 app.use("/api/auth", authRouter);
+app.use("/api/admin/users", adminUserRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/address", addressRouter);
 app.use("/api/organizations", organizationRouter);
@@ -68,6 +70,15 @@ const PRISMA_ERRORS: Record<string, { status: number; error: string; message: st
   P1002: { status: 503, error: "unavailable", message: "ระบบฐานข้อมูลไม่พร้อมใช้งาน กรุณาลองใหม่อีกครั้ง" },
   P1008: { status: 503, error: "unavailable", message: "ระบบฐานข้อมูลตอบช้าเกินกำหนด กรุณาลองใหม่อีกครั้ง" },
   P1017: { status: 503, error: "unavailable", message: "ระบบฐานข้อมูลไม่พร้อมใช้งาน กรุณาลองใหม่อีกครั้ง" },
+  /**
+   * connection pool เต็ม — รอ connection จนหมดเวลา
+   *
+   * เป็นเรื่องของภาระ ไม่ใช่ของคำขอ จึงเป็น 503 เหมือน P1001 ไม่ใช่ 500 เพิ่มเข้ามาเมื่อ
+   * หน้ารายละเอียดคำขอเริ่ม poll สถานะทุก 15 วินาที ซึ่งทำให้จำนวน request พร้อมกันขึ้นกับ
+   * จำนวนคนที่เปิดหน้าค้างไว้ ไม่ใช่จำนวนคนที่กดปุ่มอีกต่อไป — pool ใช้ค่า default ของ
+   * Prisma (`cpus*2+1`) ยังไม่เคยตั้งใน DATABASE_URL
+   */
+  P2024: { status: 503, error: "unavailable", message: "ระบบกำลังมีผู้ใช้งานหนาแน่น กรุณาลองใหม่อีกครั้ง" },
 };
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {

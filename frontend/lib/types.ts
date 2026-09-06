@@ -30,11 +30,70 @@ export interface ReviewTaskEvent {
   status: string;
   result: ReviewResult | null;
   note: string | null;
+  /** ด่านถูกปิดด้วย "ยกเลิกผลการตรวจสอบ" — ผู้กระทำไม่ใช่เจ้าของด่าน */
+  recalled?: boolean;
   actor: { id: string; name: string; email: string } | null;
   assignedAt: string;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
+}
+
+/**
+ * เส้นทางการอนุมัติทั้งเส้น — คำนวณที่ backend (`backend/src/lib/journey-steps.ts`)
+ *
+ * ลอจิกลำดับด่าน **ไม่ถูกคัดลอกมาไว้ฝั่งนี้** ต่างจาก `lib/dataset-form.ts` และ
+ * `lib/organization-form.ts` ที่จงใจ copy เพราะฟอร์มต้องตอบสนองทันทีที่ผู้ใช้พิมพ์
+ * ตัวแสดงขั้นตอนไม่มีข้อบังคับนั้น จึงมีแต่ข้อเสียถ้าสำเนาหลุด sync กับ state machine
+ */
+export type StepState = "DONE" | "CURRENT" | "UPCOMING" | "REJECTED";
+
+export type JourneyPhase =
+  | "DRAFT"
+  | "IN_PROGRESS"
+  | "WAITING_REVISION"
+  | "APPROVED"
+  | "REJECTED"
+  | "CANCELLED";
+
+export interface JourneyStep {
+  key: string;
+  /** null = ขั้นที่ไม่ใช่ด่าน ไม่มีแถวใน review_task — ขั้น "นำส่งคำขอ" เป็นขั้นเดียว */
+  taskType: ReviewTaskType | null;
+  /** เลขที่แสดง; null สำหรับขั้นไม่บังคับ ซึ่งไม่ถูกนับใน totalSteps */
+  order: number | null;
+  optional: boolean;
+  label: string;
+  shortLabel: string;
+  waitingLabel: string;
+  roleCode: string;
+  roleLabel: string;
+  state: StepState;
+  result: ReviewResult | null;
+  completedAt: string | null;
+  roundNumber: number | null;
+}
+
+export interface JourneyProgress {
+  steps: JourneyStep[];
+  totalSteps: number;
+  currentOrder: number | null;
+  currentStep: JourneyStep | null;
+  nextStep: JourneyStep | null;
+  phase: JourneyPhase;
+}
+
+/** ฉบับย่อสำหรับตารางและการ์ด — หน้ารายการไม่ได้รับรายการขั้นทั้งชุด */
+export interface JourneyProgressSummary {
+  totalSteps: number;
+  currentOrder: number | null;
+  /** ช่องที่คำขอค้างอยู่ — คีย์เดียวกับโหนดในแผนภาพ badge อ่านคำจาก currentLabel คู่กัน */
+  currentKey: string | null;
+  /** ชื่อสั้นของช่องปัจจุบัน — badge ใช้ตัวนี้ ชื่อเต็มไปอยู่ใน hover */
+  currentShortLabel: string | null;
+  currentLabel: string | null;
+  nextLabel: string | null;
+  phase: JourneyPhase;
 }
 
 export interface Organization {
@@ -44,6 +103,11 @@ export interface Organization {
   organizationId: string;
   status: RequestStatus;
   currentTaskType: ReviewTaskType | null;
+  /**
+   * ค่าที่ใช้ตอบว่าข้อมูลชุดนี้เก่าหรือยัง — เทียบกับที่ `GET /:id/state` คืนมา
+   * ทั้งสอง endpoint คิดจาก `stateVersionOf()` ตัวเดียวกัน ดู lib/use-request-watch.ts
+   */
+  stateVersion: string;
   /** รหัสหน่วยงาน — เจ้าหน้าที่กรอกไว้ล่วงหน้า ผู้ใช้ยืนยัน/แก้ไขในฟอร์ม */
   organizationCode: string | null;
   name: string;
@@ -86,27 +150,61 @@ export interface Organization {
   } | null;
   attachments: Attachment[];
   events: ReviewTaskEvent[];
+  progress: JourneyProgress;
 }
 
 export interface OrganizationListItem {
   id: string;
-  name: string;
+  /** เลขที่คำขอ — API ส่งมาตั้งแต่แรก แต่ type นี้ไม่เคยประกาศไว้ */
+  requestNumber: string;
+  /**
+   * ชื่อหน่วยงานตามที่กรอกไว้ในคำขอ ว่างได้จริง — `organizationNameTh ?? ชื่อหน่วยงาน ?? null`
+   * ฉบับร่างที่ยังไม่ได้กรอกจึงไม่มีชื่อ ใช้ `organizationTitle()` แทนการอ่านตรง ๆ
+   */
+  name: string | null;
+  /** รหัสที่ใช้อ้างถึงหน่วยงานในเอกสาร — null ได้ถ้ายังไม่ได้ออกรหัสให้ */
+  organizationCode: string | null;
   status: RequestStatus;
   currentTaskType: ReviewTaskType | null;
+  progress: JourneyProgressSummary | null;
   submittedAt: string | null;
   createdAt: string;
-  createdBy: { firstName: string | null; lastName: string | null; email: string };
+  /** เวลาที่แถวนี้ถูกแก้ล่าสุด — กล่องรายละเอียดตอนชี้เมาส์ใช้บอก "อัปเดตล่าสุด" */
+  updatedAt: string;
+  createdBy: {
+    prefix: string | null;
+    firstName: string | null;
+    lastName: string | null;
+    email: string;
+  };
 }
 
+/** ชื่อที่แสดงของคำขอลงทะเบียนหน่วยงาน — คู่กับ datasetTitle() ของเส้นทางชุดข้อมูล */
+export const organizationTitle = (r: { name: string | null; requestNumber: string }) =>
+  r.name?.trim() || `คำขอ ${r.requestNumber}`;
+
+/**
+ * ชื่อคนหนึ่งคนบนหน้าเว็บ — `"นาย สมชาย ใจดี"` เว้นวรรคระหว่างทั้งสามส่วน
+ *
+ * ต้องให้ผลเท่ากับ `fullNameTh()` ที่ `backend/src/lib/person-name.ts` เสมอ เป็นคู่สำเนา
+ * ที่ตั้งใจแบบเดียวกับ `lib/dataset-form.ts` กับ `backend/src/lib/dataset.ts`
+ *
+ * คำนำหน้าอย่างเดียวไม่นับว่าเป็นชื่อ — ไม่งั้นช่องในตารางจะขึ้นคำว่า "นาย" ลอย ๆ แทน "—"
+ *
+ * คืน "—" เมื่อไม่มีชื่อ เพราะผู้เรียกส่วนใหญ่วางลงในช่องของตาราง
+ */
 export const fullName = (
   prefix?: string | null,
   first?: string | null,
   last?: string | null,
-): string => [prefix, first, last].filter(Boolean).join(" ") || "—";
+): string => {
+  if (!first && !last) return "—";
+  return [prefix, first, last].filter(Boolean).join(" ");
+};
 
 export const ATTACHMENT_LABELS: Record<Attachment["kind"], string> = {
   AUTHORIZED_REPRESENTATIVE_APPOINTMENT_ORDER: "คำสั่งแต่งตั้งผู้มีอำนาจกระทำการแทน",
-  POWER_OF_ATTORNEY: "คำสั่งมอบอำนาจ",
+  POWER_OF_ATTORNEY: "คำสั่ง/หนังสือมอบอำนาจ",
   GENERATED_FORM: "แบบฟอร์มที่ระบบสร้าง",
 };
 
@@ -118,14 +216,38 @@ export const ATTACHMENT_LABELS: Record<Attachment["kind"], string> = {
  * จะไม่ตรงกับที่เผยแพร่ และ backend จะให้โหลดหน้าใหม่แทนที่จะรับการลงนามนั้นไว้
  */
 export interface LegalDocument {
+  /**
+   * รหัสภายใน A0–A4 — **หน้าจอไม่พิมพ์ค่านี้ออกมา** ตั้งแต่ 2026-09-06
+   * ยังส่งมาเพราะการข้าม "ไม่เกี่ยวข้อง" เทียบด้วยรหัส และ log ใช้อ้างถึงฉบับ
+   */
   code: string;
   name: string;
+  /** ชื่อสั้นที่ใช้แทนรหัสบนหน้าจอ — null = ฉบับนี้ไม่ได้ตั้งไว้ ให้ตกกลับไปใช้ `name` */
+  shortname: string | null;
+  /** ข้อความเตือนใต้บรรทัด "เอกสารฉบับที่ n จาก m" — null = ไม่มี */
+  legalNotice: string | null;
   versionId: string;
   versionNumber: number;
   /** true = ฉบับที่ระบบเติมข้อมูลของคำขอนี้ลงไป (A0) — ที่เหลือเป็นไฟล์กลางของทุกหน่วยงาน */
   fromRequest: boolean;
   fileUrl: string | null;
   acceptedAt: string | null;
+  /**
+   * false = แอดมินตั้งฉบับนี้เป็นเอกสารไม่บังคับ ผู้มีอำนาจกด "ไม่เกี่ยวข้อง" ข้ามได้
+   * ฉบับที่ถูกข้ามจะไม่ถูกส่งต่อไปให้ฝ่าย BDI เห็นชอบด้วย
+   */
+  isRequired: boolean;
+}
+
+/**
+ * ฉบับที่ผู้มีอำนาจของหน่วยงานกด "ไม่เกี่ยวข้อง" ไปแล้ว
+ *
+ * ไม่อยู่ใน `documents` อีกต่อไป — เหลือไว้เพื่อบอกว่ามันหายไปไหน ไม่ใช่ให้หายไปเฉย ๆ
+ */
+export interface SkippedLegalDocument {
+  code: string;
+  name: string;
+  shortname: string | null;
 }
 
 // ------------------------------------------------------------------ ชุดข้อมูล (Journey C)
@@ -145,6 +267,8 @@ export interface DatasetRequest {
   requestNumber: string;
   status: RequestStatus;
   currentTaskType: ReviewTaskType | null;
+  /** เหมือน Organization.stateVersion — ดู lib/use-request-watch.ts */
+  stateVersion: string;
 
   /**
    * metadata ตามชีท A4_dataset_metadata ของ metadata_mapping.xlsx
@@ -213,11 +337,13 @@ export interface DatasetRequest {
   assignedSpecialist: {
     id: string;
     email: string;
+    prefix: string | null;
     firstName: string | null;
     lastName: string | null;
   } | null;
   attachments: DatasetAttachment[];
   events: ReviewTaskEvent[];
+  progress: JourneyProgress;
 }
 
 export interface DatasetRequestListItem {
@@ -227,13 +353,19 @@ export interface DatasetRequestListItem {
   title: string | null;
   status: RequestStatus;
   currentTaskType: ReviewTaskType | null;
+  progress: JourneyProgressSummary | null;
   submittedAt: string | null;
   createdAt: string;
   /** เวลาที่แถวนี้ถูกแก้ล่าสุด — หน้าแรกแสดงคู่กับวันที่นำข้อมูลเข้ามา */
   updatedAt: string;
   organization: { id: string; name: string };
   createdBy: { firstName: string | null; lastName: string | null; email: string };
-  assignedSpecialist: { id: string; firstName: string | null; lastName: string | null } | null;
+  assignedSpecialist: {
+    id: string;
+    prefix: string | null;
+    firstName: string | null;
+    lastName: string | null;
+  } | null;
   /** แบบฟอร์มที่ระบบสร้าง — ว่างได้ ถ้ายังไม่เคยกดตรวจสอบและสร้าง PDF */
   generatedForm: { id: string; filename: string } | null;
 }

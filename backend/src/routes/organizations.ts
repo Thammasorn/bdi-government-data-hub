@@ -18,6 +18,7 @@ import multer from "multer";
 import { z } from "zod";
 import {
   AccountType,
+  ActivationKeyStatus,
   AttachmentOwnerType,
   AttachmentType,
   OrganizationStatus,
@@ -47,7 +48,15 @@ import {
   LegalDocumentVersionStatus,
 } from "@prisma/client";
 import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
-import { assignRole, issueActivationKey, type RevokedAssignment } from "../lib/iam.js";
+import {
+  activeAssignmentWhere,
+  assignRole,
+  issueActivationKey,
+  revokeRoleAssignments,
+  roleIdByCode,
+  type Db,
+  type RevokedAssignment,
+} from "../lib/iam.js";
 import {
   sendActivated,
   sendFinalApprovalRequest,
@@ -58,6 +67,7 @@ import {
 } from "../lib/mail.js";
 import {
   NotificationType,
+  announceProgress,
   announceRoleReplacement,
   bdiApproverIds,
   bdiOfficerIds,
@@ -72,8 +82,10 @@ import {
   renderPlaceholderDocuments,
 } from "../lib/organization-agreement.js";
 import { DocumentRenderError } from "../lib/document-render.js";
-import { LEGAL_SCOPES, publishedDocuments } from "../lib/legal.js";
+import { LEGAL_SCOPES, requestDocuments } from "../lib/legal.js";
+import { NAME_FIELDS, fullNameTh } from "../lib/person-name.js";
 import { nextOrganizationCode, nextOrganizationRequestNumber } from "../lib/request-number.js";
+import { buildJourneyProgress, summariseMany } from "../lib/journey-steps.js";
 import { REVIEW_TASK_TYPE_LABELS, ROLE_LABELS, isBdiStaff } from "../lib/roles.js";
 import {
   PLACEHOLDER_ORGANIZATION_NAME,
@@ -88,15 +100,32 @@ import {
   formatZodError,
   isUuid,
   nationalIdSchema,
+  normaliseThaiPhone,
+  organizationNameSchema,
   phoneSchema,
 } from "../lib/validation.js";
 import {
+  listOrderBy,
+  myNodeKeys,
+  parseFilterTokens,
+  parsePaging,
+  parseSort,
+  requestIdsAtStage,
+  journeySummary,
+  nodeWhere,
+} from "../lib/queue.js";
+import {
+  TASK_TYPE_ROLES,
+  ACTIVE_STATUSES,
   WorkflowError,
   activeTask,
   completeTask,
   deriveRequestStatus,
   openTask,
   startTask,
+  latestTaskTouch,
+  roleHolderId,
+  stateVersionOf,
   taskHistory,
 } from "../lib/workflow.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -123,17 +152,31 @@ for (const name of ["id", "attachmentId"]) {
 const SUBJECT = SubjectType.ORGANIZATION_REGISTRATION_REQUEST;
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
-const ALLOWED_MIME = new Set(["application/pdf", "image/jpeg", "image/jpg"]);
+const ALLOWED_MIME = new Set(["application/pdf"]);
 
+/**
+ * ไม่ใช้ fileFilter ตรวจชนิดไฟล์ — มันทิ้งไฟล์เงียบ ๆ แล้ว req.file เป็น undefined
+ *
+ * ผลคือคนที่แนบไฟล์ผิดชนิดกับคนที่ลืมแนบไฟล์ได้ข้อความเดียวกัน แยกไม่ออกว่าพลาดตรงไหน
+ * จึงตรวจใน handler แทน แบบเดียวกับ dataset-requests.ts
+ */
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_UPLOAD_BYTES },
-  fileFilter: (_req, file, cb) => {
-    cb(null, ALLOWED_MIME.has(file.mimetype));
-  },
 });
 
 // ---------------------------------------------------------------- schemas
+
+/**
+ * ความยาวสูงสุดของช่องที่อยู่
+ *
+ * เดิม schema จำกัดไว้ 300 ตัวอักษรทั้งที่คอลัมน์รับได้ 500 — ที่อยู่ราชการเต็มรูปแบบ
+ * (ชื่ออาคาร ชั้น เลขห้อง ซอย แขวง พร้อมวงเล็บอธิบายทางเข้า) ชนเพดานนั้นได้จริง และ
+ * เพดานฝั่ง schema ทำให้ผู้ใช้เจอ error ทั้งที่คอลัมน์ยังว่างอยู่อีกมาก ตอนนี้ทั้ง
+ * schema และคอลัมน์เป็น 2000 เท่ากัน (migration 20260829120000_widen_address_line)
+ * ค่านี้ถูกคัดลอกไว้ที่ frontend/lib/organization-form.ts ด้วย — แก้พร้อมกันเสมอ
+ */
+const MAX_ADDRESS_LINE = 2000;
 
 /**
  * ตอนบันทึกร่างยอมให้ว่างได้ ตอนนำส่งต้องครบ — จึงแยกเป็นสองชุด
@@ -143,12 +186,18 @@ const upload = multer({
  * approver_* / user_*) เกิดที่ toRequestData() ข้างล่าง
  */
 const draftSchema = z.object({
-  /** รหัสหน่วยงาน — admin กรอกไว้ล่วงหน้า ผู้ใช้แค่ตรวจและแก้ถ้าไม่ถูก */
+  /**
+   * รหัสหน่วยงาน — **อ่านอย่างเดียว** รับมาเพื่อเทียบว่าตรงกับของเดิมเท่านั้น
+   *
+   * ค่านี้ไม่ได้ถูกแปลงลง snapshot ที่ toRequestData() อีกแล้ว ฟอร์มจึงเขียนทับไม่ได้
+   * แม้จะส่งมา — ดู assertOrganizationCodeUnchanged() ว่าทำไมถึงตอบ 400 แทนที่จะ
+   * เงียบ ๆ เมื่อค่าที่ส่งมาไม่ตรงกับของเดิม
+   */
   organizationCode: z.string().trim().max(64).optional(),
   name: z.string().trim().max(200).optional(),
   nameEn: z.string().trim().max(200).optional(),
   organizationType: z.string().trim().max(64).optional(),
-  addressLine: z.string().trim().max(300).optional(),
+  addressLine: z.string().trim().max(MAX_ADDRESS_LINE).optional(),
   road: z.string().trim().max(255).optional(),
   province: z.string().trim().optional(),
   district: z.string().trim().optional(),
@@ -177,10 +226,15 @@ const draftSchema = z.object({
   contactNationalId: z.string().trim().optional(),
 });
 
-const submitSchema = z.object({
+const submitSchema = z
+  .object({
   organizationCode: z.string().trim().min(1, "กรุณากรอกรหัสหน่วยงาน").max(64),
-  name: z.string().trim().min(3, "ชื่อหน่วยงานต้องมีอย่างน้อย 3 ตัวอักษร").max(200),
-  addressLine: z.string().trim().min(1, "กรุณากรอกที่อยู่"),
+  name: organizationNameSchema,
+  addressLine: z
+    .string()
+    .trim()
+    .min(1, "กรุณากรอกที่อยู่")
+    .max(MAX_ADDRESS_LINE, `ที่อยู่ต้องไม่เกิน ${MAX_ADDRESS_LINE} ตัวอักษร`),
   /**
    * ถนนไม่บังคับ — ที่อยู่ราชการหลายแห่งไม่มีชื่อถนน (ใช้หมู่ที่แทน) บังคับกรอกจะกลายเป็น
    * การให้ผู้ใช้กรอกข้อมูลที่ไม่มีอยู่จริง ช่อง "ถนน" ในเอกสาร A0 จะว่างไว้ตามความจริง
@@ -192,7 +246,12 @@ const submitSchema = z.object({
   postalCode: z.string().trim().regex(/^\d{5}$/, "รหัสไปรษณีย์ต้องเป็นตัวเลข 5 หลัก"),
   email: emailSchema,
 
-  signatoryPrefix: z.string().trim().min(1, "กรุณาเลือกคำนำหน้า"),
+  /**
+   * "ระบุ" ไม่ใช่ "เลือก" — ตัวเลือกของผู้มีอำนาจกระทำการแทนเหลือ นาย/นาง/นางสาว/อื่น ๆ
+   * และถ้าเป็นอื่น ๆ ผู้ใช้พิมพ์เอง ข้อความจึงต้องอ่านรู้เรื่องทั้งใต้ dropdown และใต้ช่องพิมพ์
+   * (คู่ของข้อความนี้อยู่ที่ frontend/lib/organization-form.ts — แก้พร้อมกันเสมอ)
+   */
+  signatoryPrefix: z.string().trim().min(1, "กรุณาระบุคำนำหน้า"),
   signatoryFirstName: z.string().trim().min(1, "กรุณากรอกชื่อ"),
   signatoryLastName: z.string().trim().min(1, "กรุณากรอกนามสกุล"),
   signatoryPosition: z.string().trim().min(1, "กรุณากรอกตำแหน่ง"),
@@ -207,7 +266,48 @@ const submitSchema = z.object({
   contactDepartment: z.string().trim().min(1, "กรุณากรอกฝ่าย/กอง/สำนัก"),
   contactEmail: emailSchema,
   contactPhone: phoneSchema,
-});
+  })
+  /**
+   * อีเมลหน่วยงานต้องไม่ใช่อีเมลของผู้มีอำนาจกระทำการแทน
+   *
+   * สองช่องนี้ทำคนละหน้าที่กัน และระบบใช้ต่างกันจริง ๆ — อีเมลผู้มีอำนาจกระทำการแทน
+   * คือที่อยู่ที่ระบบ **ออกคำเชิญให้เข้ามาลงนาม** (ensureApproverAccount() เปิดบัญชี
+   * ให้ที่อยู่นั้น) ส่วนอีเมลหน่วยงานเป็นช่องทางติดต่อกลางของหน่วยงาน กรอกซ้ำกันแล้ว
+   * หน่วยงานจะเหลือช่องทางติดต่อเดียวที่ผูกกับตัวบุคคล พอคนนั้นย้ายงานก็ติดต่อ
+   * หน่วยงานไม่ได้อีกเลย และอีเมลกลางของหน่วยงานซึ่งมักมีคนดูแลหลายคนจะกลายเป็น
+   * ที่รับลิงก์เปิดใช้งานบัญชีส่วนบุคคล
+   */
+  .superRefine((value, ctx) => {
+    if (value.email && value.email === value.signatoryEmail) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["email"],
+        message:
+          "อีเมลหน่วยงานต้องไม่ใช่อีเมลเดียวกับผู้มีอำนาจกระทำการแทน กรุณากรอกอีเมลกลางของหน่วยงาน",
+      });
+    }
+
+    /**
+     * ผู้ดำเนินการกับผู้มีอำนาจกระทำการแทนต้องเป็นคนละคน — *หนึ่งผู้ใช้ = หนึ่งบทบาท* (2026-09-03)
+     *
+     * ช่องอีเมลผู้ดำเนินการไม่ได้ให้กรอก ระบบเติมจากบัญชีที่นำส่ง (`request.userEmail`)
+     * กฎนี้จึงเท่ากับ "อย่ากรอกอีเมลตัวเองในช่องผู้มีอำนาจฯ" ปล่อยผ่านแล้วคนคนเดียว
+     * จะนำส่งคำขอเอง แล้วลงนามรับรองคำขอของตัวเองที่ด่าน `ORGANIZATION_APPROVAL`
+     *
+     * `approverConflict()` ตอนนำส่งดักเคสนี้ได้อยู่แล้วทางบทบาทที่บัญชีนั้นถืออยู่ แต่ตอบ
+     * เป็นข้อความกลาง ๆ ว่า "มีบทบาทอื่นในระบบอยู่แล้ว" ซึ่งไม่ได้บอกว่าไปชนกับช่องไหน
+     * ที่นี่เทียบสองช่องตรง ๆ จึงชี้ที่ต้นเหตุได้ และเป็นกฎเดียวกับที่ฟอร์มบอกตั้งแต่ตอนกรอก
+     */
+    if (value.contactEmail && value.contactEmail === value.signatoryEmail) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["signatoryEmail"],
+        message:
+          "อีเมลผู้มีอำนาจกระทำการแทนต้องไม่ใช่อีเมลของผู้ดำเนินการ เนื่องจากผู้ใช้หนึ่งคน" +
+          "มีได้บทบาทเดียว กรุณากรอกอีเมลของผู้มีอำนาจกระทำการแทนโดยตรง",
+      });
+    }
+  });
 
 type RequestRow = Prisma.OrganizationRegistrationRequestGetPayload<{
   include: { organization: true };
@@ -225,8 +325,21 @@ async function toRequestData(input: z.infer<typeof draftSchema>) {
       ? (lookupZipcode(input.province, input.district, input.subdistrict) ?? undefined)
       : undefined);
 
+  /**
+   * เก็บเบอร์ในรูปตัวเลขล้วนเสมอ ไม่ว่าผู้ใช้จะพิมพ์ขีดหรือ +66 มา
+   *
+   * เบอร์เดียวกันที่เก็บคนละรูปทำให้ค้นไม่เจอและพิมพ์ลงเอกสาร A0 ไม่เหมือนกันสองใบ
+   * ค่าที่อ่านเป็นเบอร์ไม่ได้เลยปล่อยผ่านตามเดิม เพื่อให้ตอนนำส่ง phoneSchema เป็นคน
+   * บอกว่าผิดตรงไหน แทนที่จะกลายเป็นค่าว่างเงียบ ๆ ระหว่างบันทึกร่าง
+   */
+  const phone = (value?: string) => (value ? (normaliseThaiPhone(value) ?? value) : value);
+
   return {
-    organizationCode: input.organizationCode,
+    /**
+     * ไม่มี organizationCode ที่นี่โดยตั้งใจ — รหัสหน่วยงานแก้ผ่านฟอร์มไม่ได้
+     * ค่าที่ถูกต้องมาจากแถว organization เท่านั้น (prefillFromOrganization ตอนเปิดคำขอ
+     * หรือ nextOrganizationCode ตอนสร้างหน่วยงานใหม่)
+     */
     organizationType: input.organizationType,
     organizationNameTh: input.name,
     organizationNameEn: input.nameEn,
@@ -236,7 +349,7 @@ async function toRequestData(input: z.infer<typeof draftSchema>) {
     organizationDistrictCode: codes.districtCode,
     organizationSubdistrictCode: codes.subDistrictCode,
     organizationPostalCode: postalCode,
-    organizationPhone: input.phone,
+    organizationPhone: phone(input.phone),
     organizationEmail: input.email,
     organizationWebsite: input.websiteUrl,
 
@@ -246,7 +359,7 @@ async function toRequestData(input: z.infer<typeof draftSchema>) {
     approverPositionTh: input.signatoryPosition,
     approverEmail: input.signatoryEmail,
     approverCid: input.signatoryNationalId,
-    approverPhoneNumber: input.signatoryPhone,
+    approverPhoneNumber: phone(input.signatoryPhone),
     approverDepartmentTh: input.signatoryDepartment,
 
     userPrefixTh: input.contactPrefix,
@@ -255,7 +368,7 @@ async function toRequestData(input: z.infer<typeof draftSchema>) {
     userPositionTh: input.contactPosition,
     userDepartmentTh: input.contactDepartment,
     userEmail: input.contactEmail,
-    userPhoneNumber: input.contactPhone,
+    userPhoneNumber: phone(input.contactPhone),
     userCid: input.contactNationalId,
   };
 }
@@ -313,10 +426,95 @@ function providedOnly<T extends object>(value: T): Partial<T> {
 }
 
 /**
+ * รหัสหน่วยงานเป็นของระบบ ไม่ใช่ของผู้กรอก — คืนข้อความผิดพลาดถ้าฟอร์มพยายามเปลี่ยน
+ *
+ * เดิมช่อง "รหัสหน่วยงาน" บนฟอร์มแก้ได้ และค่าที่แก้ไหลลง snapshot ตรง ๆ ผลคือ
+ * เจ้าหน้าที่หน่วยงานเปลี่ยนรหัสของหน่วยงานตัวเองเป็นอะไรก็ได้ ทั้งที่รหัสนี้เป็น
+ * `@unique` ระดับตาราง เป็นสิ่งที่ `POST /api/admin/organizations` กำหนดไว้ล่วงหน้า
+ * หรือ `nextOrganizationCode()` ออกให้ตามลำดับ และเป็นค่าที่เอกสาร A0 กับระบบอื่น
+ * ใช้อ้างถึงหน่วยงานนี้ การให้ผู้ถูกตรวจสอบตั้งรหัสอ้างอิงของตัวเองได้ยังเปิดทางให้
+ * ไปชนรหัสของหน่วยงานอื่น ซึ่งเดิมไปโผล่เป็น error ตอนอนุมัติขั้นสุดท้าย — คนละคน
+ * คนละวันกับคนที่พิมพ์ผิด
+ *
+ * ตอบ 400 พร้อมบอกว่าทำไม แทนที่จะรับค่าแล้วทิ้งเงียบ ๆ เพราะแท็บที่เปิดค้างไว้ก่อน
+ * การเปลี่ยนแปลงนี้ยังส่งช่องนั้นมาได้ และผู้ใช้ที่ตั้งใจแก้ต้องรู้ว่าค่าที่เขาพิมพ์
+ * ไม่ได้ถูกบันทึก ค่าที่ส่งมา **ตรงกับของเดิม** ผ่านได้ตามปกติ ฟอร์มจึงยังส่งทั้งชุดได้
+ */
+function organizationCodeEdit(
+  input: { organizationCode?: string },
+  current: string | null | undefined,
+): string | null {
+  if (!input.organizationCode) return null;
+  if (current && input.organizationCode === current) return null;
+  return "รหัสหน่วยงานแก้ไขไม่ได้ — ระบบกำหนดให้อัตโนมัติ หากไม่ถูกต้องกรุณาแจ้งเจ้าหน้าที่ BDI";
+}
+
+/**
+ * ชื่อหน่วยงานตามที่ระบบมีอยู่ — null แปลว่าระบบยังไม่มีชื่อจริง ฟอร์มจึงเป็นคนกรอก
+ *
+ * ชื่อของหน่วยงานที่ BDI เปิดไว้ให้ล่วงหน้าเป็นข้อมูลของระบบ ไม่ใช่ของผู้กรอก — ฟอร์ม
+ * ต้องแสดงชื่อนั้นและแก้ไม่ได้ (การ์ด "แก้แบบฟอร์ม org registration" ข้อ 1) มีสองกรณีที่
+ * ยัง "ไม่มีชื่อจากระบบ" และผู้กรอกต้องเป็นคนตั้งเอง:
+ *
+ *   1. ผู้กรอกเป็นคนเปิดแถวหน่วยงานนั้นเอง (คำเชิญที่ไม่ผูกหน่วยงาน → POST /) — แถวนั้น
+ *      `created_by` เป็นตัวผู้กรอก ส่วนหน่วยงานที่มาจากฝั่ง admin เป็น SYSTEM_USER_ID
+ *   2. ชื่อยังเป็นชื่อชั่วคราวที่ระบบตั้งให้เอง (`หน่วยงานใหม่`)
+ *
+ * ทั้งสองกรณีตอบ null เหมือนกัน และเป็นเงื่อนไขเดียวกับที่ PATCH ใช้ตัดสินว่าจะให้ชื่อ
+ * บนแถว master ตามฟอร์มไปด้วยหรือไม่ — ถ้าสองที่นี้ไม่ตรงกัน ช่องจะเปลี่ยนเป็นอ่าน
+ * อย่างเดียวกลางคันหลังผู้ใช้กดบันทึกร่างครั้งแรก แล้วพิมพ์ผิดไว้ก็แก้ไม่ได้อีกเลย
+ */
+function systemOrganizationName(request: {
+  createdBy: string;
+  organization: { createdBy: string; nameTh: string };
+}): string | null {
+  if (nameOwnedByForm(request)) return null;
+  return request.organization.nameTh === PLACEHOLDER_ORGANIZATION_NAME
+    ? null
+    : request.organization.nameTh;
+}
+
+/**
+ * ฟอร์มเป็นเจ้าของชื่อหน่วยงานหรือไม่ — จริงเมื่อผู้สร้างคำขอเป็นคนเปิดแถวหน่วยงานนั้นเอง
+ *
+ * เป็นเงื่อนไข**ที่ไม่มีวันเปลี่ยน**ระหว่างที่ร่างถูกแก้ ต่างจาก "ชื่อบนแถว master ยังเป็น
+ * placeholder อยู่ไหม" ซึ่งเปลี่ยนทันทีที่บันทึกร่างครั้งแรก ถ้าใช้อย่างหลังตัดสิน ช่องชื่อ
+ * ของผู้ใช้ที่ได้คำเชิญแบบไม่ระบุหน่วยงาน (หน่วยงานเปล่าที่ระบบสร้างให้) จะกลายเป็นอ่าน
+ * อย่างเดียวหลังกดบันทึกร่างครั้งแรก แล้วพิมพ์ผิดไว้ก็แก้ไม่ได้อีกเลย — เจอตอนทดสอบผ่านหน้าเว็บ
+ *
+ * ผลอีกด้านคือหน่วยงานเปล่าแบบนั้นจะยังชื่อ "หน่วยงานใหม่" บนแถว master จนกว่าคำขอจะได้รับ
+ * อนุมัติขั้นสุดท้าย (ตอนนั้น snapshot จะถูกเขียนทับลง master อยู่แล้ว) — ตารางของเจ้าหน้าที่
+ * อ่านชื่อจาก snapshot ก่อนเสมอ จึงไม่ได้รับผลกระทบ
+ */
+function nameOwnedByForm(request: {
+  createdBy: string;
+  organization: { createdBy: string };
+}): boolean {
+  return request.organization.createdBy === request.createdBy;
+}
+
+/**
+ * ชื่อหน่วยงานที่ระบบมีอยู่แล้วแก้ผ่านฟอร์มไม่ได้ — คืนข้อความผิดพลาดถ้าฟอร์มพยายามเปลี่ยน
+ *
+ * เหตุผลและวิธีตอบเหมือน organizationCodeEdit() ทุกประการ: ค่าที่ส่งมาตรงกับของเดิม
+ * ผ่านได้ตามปกติ (ฟอร์มจึงยังส่งทั้งชุดได้) ค่าที่ต่างออกไปตอบ 400 พร้อมบอกว่าทำไม
+ * แทนที่จะรับแล้วทิ้งเงียบ ๆ
+ */
+function organizationNameEdit(
+  input: { name?: string },
+  current: string | null,
+): string | null {
+  if (!input.name || !current) return null;
+  if (input.name === current) return null;
+  return "ชื่อหน่วยงานแก้ไขไม่ได้ — ระบบดึงจากข้อมูลหน่วยงานที่ลงทะเบียนไว้ หากไม่ถูกต้องกรุณาแจ้งเจ้าหน้าที่ BDI";
+}
+
+/**
  * แปลงกลับเป็นรูปที่ frontend และ zod ชุด submit เข้าใจ
  * คงชื่อฟิลด์เดิมไว้เพื่อไม่ให้ต้องแก้ฟอร์มทั้งหน้า
  */
 async function toApiShape(request: RequestRow) {
+  const systemName = systemOrganizationName(request);
   const names = await resolveAddressNames(prisma, {
     provinceCode: request.organizationProvinceCode,
     districtCode: request.organizationDistrictCode,
@@ -332,7 +530,16 @@ async function toApiShape(request: RequestRow) {
     // snapshot ของคำขอมาก่อน master — ผู้ใช้แก้รหัสในฟอร์มได้ และค่าจะไปทับ master ตอนอนุมัติ
     organizationCode: request.organizationCode ?? request.organization.organizationCode,
 
-    name: request.organizationNameTh,
+    /**
+     * ชื่อหน่วยงานสลับกันกับรหัส: **master มาก่อน snapshot** เมื่อระบบเป็นเจ้าของชื่อ
+     *
+     * ฟอร์มแก้ชื่อไม่ได้แล้ว snapshot ที่ค้างอยู่จึงเป็นได้แค่ค่าที่เก่ากว่า (เช่น admin
+     * แก้ชื่อหน่วยงานให้หลังจากเปิดร่างไว้แล้ว) การให้ค่าที่เก่ากว่าชนะเท่ากับพิมพ์ชื่อผิด
+     * ลงเอกสาร A0 ที่ผู้มีอำนาจกำลังจะลงนาม
+     */
+    name: systemName ?? request.organizationNameTh,
+    /** ช่องชื่อหน่วยงานเป็นแบบอ่านอย่างเดียวหรือไม่ — ฟอร์มใช้ตัดสินว่าจะส่ง `name` กลับมาไหม */
+    nameLocked: systemName !== null,
     nameEn: request.organizationNameEn,
     organizationType: request.organizationType,
     addressLine: request.organizationAddressLine,
@@ -376,44 +583,21 @@ async function toApiShape(request: RequestRow) {
 // ---------------------------------------------------------------- helpers
 
 /**
- * เลือกผู้รับมอบหมายของด่านถัดไป
+ * เปิดด่านนี้ไปแล้วจะมีคนทำไหม
  *
- * sheet มาร์ก review_task.assigned_user_id เป็น Required จึงต้องมีคนรับตั้งแต่สร้าง task
- * เลือกคนที่มี active task น้อยที่สุด เพื่อไม่ให้งานกองที่คนเดียว
- * (docs/01-user-journey.md §4.4 เขียนว่า "BDI Officer ทุกคนเห็นคำขอทั้งหมด" ใครว่างก่อนหยิบก่อน
- *  — ดีไซน์บังคับให้มีเจ้าของ จึงมอบหมายอัตโนมัติแล้วให้ reassign ได้ทีหลังแทน)
+ * เดิมเป็น `pickAssignee()` ที่เลือกคนที่มี active task น้อยที่สุดมาใส่ `assigned_user_id`
+ * ค่านั้นไม่เคยถูกใช้ตัดสินอะไรเลย — `canAction()` ดู role ล้วน ๆ, `lib/queue.ts` กรอง
+ * "งานของฉัน" ด้วย role, และอีเมลแจ้งเตือนก็ส่งหาทุกคนที่ถือ role อยู่แล้ว (`bdiOfficerIds()`)
+ * สิ่งเดียวที่มันทำได้จริงคือทำให้ไทม์ไลน์ขึ้นชื่อคนที่ไม่ได้เป็นคนกด — เกิดจริงบน production
+ * 2026-09-04 จึงเหลือไว้แค่คำถามที่มันตอบได้จริง แล้วตอบด้วยการนับ ไม่ใช่ด้วยการเลือกคน
  *
  * เจ้าหน้าที่ BDI สังกัดหน่วยงาน BDI ตั้งแต่ 2026-08-16 — เดิม organization_id ของพวกเขา
  * เป็น NULL ผู้เรียกจึงส่ง `null` มาเพื่อหมายถึง "ฝั่ง BDI ไม่ผูกหน่วยงาน" ตอนนี้ตัวกรองนั้น
  * ไม่ตรงกับใครเลย ผลคือ submit ตอบ 503 no_reviewer ทั้งที่มีเจ้าหน้าที่อยู่ครบ
  * จึงต้องส่ง BDI_ORGANIZATION_ID มาแทน
  */
-async function pickAssignee(roleCode: RoleCode, organizationId?: string | null): Promise<string | null> {
-  const assignments = await prisma.userRoleAssignment.findMany({
-    where: {
-      role: { code: roleCode, isActive: true },
-      status: "ACTIVE",
-      OR: [{ effectiveUntil: null }, { effectiveUntil: { gt: new Date() } }],
-      userAccount: { status: UserAccountStatus.ACTIVE },
-      ...(organizationId !== undefined ? { organizationId } : {}),
-    },
-    select: { userAccountId: true },
-  });
-
-  const candidates = [...new Set(assignments.map((a) => a.userAccountId))];
-  if (candidates.length === 0) return null;
-
-  const loads = await prisma.reviewTask.groupBy({
-    by: ["assignedUserId"],
-    where: {
-      assignedUserId: { in: candidates },
-      status: { in: [ReviewTaskStatus.PENDING, ReviewTaskStatus.IN_PROGRESS] },
-    },
-    _count: { _all: true },
-  });
-
-  const loadByUser = new Map(loads.map((l) => [l.assignedUserId, l._count._all]));
-  return candidates.sort((a, b) => (loadByUser.get(a) ?? 0) - (loadByUser.get(b) ?? 0))[0] ?? null;
+async function hasRoleHolder(roleCode: RoleCode, organizationId?: string | null): Promise<boolean> {
+  return (await roleHolderId(prisma, roleCode, organizationId)) !== null;
 }
 
 /** คำนำหน้า ชื่อ นามสกุล ที่ต่อกันแล้ว ข้ามช่องที่ยังว่าง */
@@ -422,13 +606,38 @@ function fullName(prefix?: string | null, first?: string | null, last?: string |
 }
 
 /** ผู้ใช้เห็นคำขอนี้ได้ไหม */
+/**
+ * ใครแก้และนำส่งคำขอใบนี้ได้ — **คำขอเป็นของหน่วยงาน ไม่ใช่ของคนที่กดสร้าง**
+ *
+ * เดิมเกณฑ์คือ `request.createdBy === session.sub` ซึ่งทำให้งานติดตัวคนไป: ถ้าผู้ดำเนินการ
+ * ย้ายหน่วยงานหรือถูกปิดบัญชี คำขอที่เขาสร้างไว้จะไม่มีใครแตะได้อีกเลย เพราะ `created_by`
+ * เป็น NOT NULL ล้างไม่ได้ และคนที่ยังอยู่กับหน่วยงานก็ไม่ผ่านเกณฑ์นี้ — ขณะที่คนที่ย้าย
+ * ออกไปแล้วยังแก้ของหน่วยงานเก่าได้อยู่ ซึ่งกลับด้านกับที่ควรเป็นทั้งสองทาง
+ *
+ * เปลี่ยนเป็น "เป็นผู้ดำเนินการที่ใช้งานอยู่ของหน่วยงานเจ้าของคำขอ" — งานจึงอยู่กับ
+ * หน่วยงาน คนใหม่รับช่วงต่อได้ทันที และคนที่ย้ายออกก็หลุดจากงานเก่าโดยอัตโนมัติ
+ * เพราะ `session.organizationId` คำนวณใหม่จาก role assignment ทุก request
+ */
+function canEdit(
+  session: { roles: RoleCode[]; organizationId: string | null },
+  request: { organizationId: string },
+): boolean {
+  return (
+    session.organizationId === request.organizationId &&
+    session.roles.includes(ROLE_CODES.ORGANIZATION_USER)
+  );
+}
+
 function canView(
   session: { sub: string; roles: RoleCode[]; organizationId: string | null; email: string },
   request: { createdBy: string; organizationId: string; approverEmail: string | null },
 ): boolean {
   if (isBdiStaff(session.roles)) return true;
-  if (request.createdBy === session.sub) return true;
   if (session.organizationId === request.organizationId) return true;
+  /**
+   * ผู้มีอำนาจที่ยังไม่มี role — ถูกเชิญมาลงนามแต่ยังไม่ได้เปิดใช้งานบัญชี จึงยังไม่มี
+   * assignment ให้ `session.organizationId` คำนวณจาก อีเมลบนคำขอเป็นทางเดียวที่เหลือ
+   */
   return request.approverEmail?.toLowerCase() === session.email.toLowerCase();
 }
 
@@ -451,69 +660,152 @@ async function syncStatus(
 
 // ---------------------------------------------------------------- list
 
-organizationRouter.get("/", async (req, res) => {
-  const session = req.session!;
-  const { status, q } = req.query as { status?: string; q?: string };
-
-  const where: Prisma.OrganizationRegistrationRequestWhereInput = {};
-
-  if (!isBdiStaff(session.roles)) {
-    where.OR = [
+/**
+ * ขอบเขตที่ผู้ใช้คนนี้มองเห็น — คืนเป็น clause เดียวเสมอ เพื่อให้ผู้เรียกเอาไป push
+ * เข้า AND[] ได้โดยไม่ต้องรู้ว่าข้างในเป็น OR หรือไม่
+ *
+ * เดิม inline อยู่ในตัว handler และเขียนลง `where.OR` ตรง ๆ ซึ่งชนกับ `where.OR`
+ * ของตัวกรองอื่นได้ทันทีที่มีตัวกรองที่สองที่เป็น OR — ซึ่งตัวกรองด่านคือตัวนั้น
+ */
+function visibilityFilter(session: {
+  sub: string;
+  roles: RoleCode[];
+  organizationId: string | null;
+  email: string;
+}): Prisma.OrganizationRegistrationRequestWhereInput {
+  if (isBdiStaff(session.roles)) return {};
+  return {
+    OR: [
       { createdBy: session.sub },
       ...(session.organizationId ? [{ organizationId: session.organizationId }] : []),
       { approverEmail: { equals: session.email, mode: "insensitive" as const } },
-    ];
+    ],
+  };
+}
+
+/** ช่องที่การค้นหาไล่ดู */
+const searchFilter = (search: string): Prisma.OrganizationRegistrationRequestWhereInput => ({
+  OR: [
+    { organizationNameTh: { contains: search, mode: "insensitive" } },
+    { requestNumber: { contains: search, mode: "insensitive" } },
+    { userEmail: { contains: search, mode: "insensitive" } },
+    { approverEmail: { contains: search, mode: "insensitive" } },
+  ],
+});
+
+/**
+ * เงื่อนไขพื้นฐานของทั้งหน้ารายการและตัวเลขสรุป — เห็นอะไรได้ + ค้นหาอะไรอยู่
+ *
+ * ทุกตัวกรองเป็น **หนึ่ง element ของ AND[]** ไม่มีใครเขียนทับ where.OR / where.AND
+ * ของใคร นี่คือกติกาการประกอบเงื่อนไขเพียงข้อเดียวของไฟล์นี้ และเป็นเหตุผลที่
+ * ตัวกรองสองตัวที่ต่างจำกัด `id` (เช่นผู้เชี่ยวชาญที่กดแท็บ "ที่ต้องดำเนินการ")
+ * ตัดกันถูกต้อง แทนที่จะเงียบ ๆ ทิ้งไปข้างหนึ่ง
+ */
+function baseFilters(
+  session: { sub: string; roles: RoleCode[]; organizationId: string | null; email: string },
+  q?: string,
+): Prisma.OrganizationRegistrationRequestWhereInput[] {
+  const and: Prisma.OrganizationRegistrationRequestWhereInput[] = [visibilityFilter(session)];
+  if (q?.trim()) and.push(searchFilter(q.trim()));
+  return and;
+}
+
+organizationRouter.get("/", async (req, res) => {
+  const session = req.session!;
+  const { status, stage, scope, sort, q } = req.query as {
+    status?: string;
+    stage?: string;
+    scope?: string;
+    sort?: string;
+    q?: string;
+  };
+
+  const and = baseFilters(session, q);
+
+  /**
+   * `stage` คือชื่อใหม่ `status` คือชื่อเดิม — รวมเป็นชุดเดียวกันแล้ว OR กัน
+   * ไม่ใช่ AND กัน ลิงก์เก่า `?status=SUBMITTED,UNDER_REVIEW` จึงยังทำงาน และคนที่
+   * มาจากลิงก์นั้นแล้วกดเม็ดกรองใหม่ก็ไม่ได้ผลลัพธ์ศูนย์แถวจากเงื่อนไขที่ขัดกันเอง
+   */
+  const tokens = [...parseFilterTokens(status), ...parseFilterTokens(stage)];
+  const stageClause = await nodeWhere(prisma, SUBJECT, [...new Set(tokens)]);
+  if (stageClause) and.push(stageClause);
+
+  // แท็บ "ที่ต้องดำเนินการ" — ด่านที่ตำแหน่งของผู้เรียกเป็นคนทำ
+  if (scope === "mine") {
+    const mine = await nodeWhere(prisma, SUBJECT, myNodeKeys(SUBJECT, session.roles));
+    /**
+     * ผู้มีอำนาจกระทำการแทนที่ยังไม่ถูกผูก role แต่ถูกระบุชื่อไว้ในคำขอก็ปิดด่าน
+     * ORGANIZATION_APPROVAL ได้ (ดู canAction ใน POST /:id/review) — คิวของเขา
+     * จึงต้องรวมใบนั้นด้วย ไม่งั้นคนที่ถูกเชิญมาเซ็นโดยเฉพาะเปิดมาแล้วเห็นคิวว่าง
+     */
+    const asNamedApprover = {
+      approverEmail: { equals: session.email, mode: "insensitive" as const },
+      id: { in: await requestIdsAtStage(prisma, SUBJECT, ["ORGANIZATION_APPROVAL"]) },
+    };
+    and.push({ OR: mine ? [mine, asNamedApprover] : [asNamedApprover] });
   }
 
-  const statuses = (status ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s): s is RequestStatus => s in RequestStatus);
-  if (statuses.length > 0) where.status = { in: statuses };
+  const where: Prisma.OrganizationRegistrationRequestWhereInput = { AND: and };
+  const paging = parsePaging(req.query);
 
-  if (q?.trim()) {
-    const search = q.trim();
-    where.AND = [
-      {
-        OR: [
-          { organizationNameTh: { contains: search, mode: "insensitive" } },
-          { requestNumber: { contains: search, mode: "insensitive" } },
-          { userEmail: { contains: search, mode: "insensitive" } },
-          { approverEmail: { contains: search, mode: "insensitive" } },
-        ],
+  const [requests, total] = await prisma.$transaction([
+    prisma.organizationRegistrationRequest.findMany({
+      where,
+      orderBy: listOrderBy(parseSort(sort)),
+      skip: paging.skip,
+      take: paging.take,
+      select: {
+        id: true,
+        requestNumber: true,
+        status: true,
+        organizationNameTh: true,
+        userEmail: true,
+        userPrefixTh: true,
+        userFirstnameTh: true,
+        userLastnameTh: true,
+        submittedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        organizationId: true,
+        createdBy: true,
+        organizationCode: true,
+        organization: { select: { organizationCode: true } },
       },
-    ];
-  }
+    }),
+    prisma.organizationRegistrationRequest.count({ where }),
+  ]);
 
-  const requests = await prisma.organizationRegistrationRequest.findMany({
-    where,
-    orderBy: [{ submittedAt: "desc" }, { createdAt: "desc" }],
-    take: 200,
+  /**
+   * ด่านที่แต่ละคำขอค้างอยู่ — badge บนหน้าจอใช้ค่านี้แทน PENDING_* ที่หายไปจาก status
+   *
+   * ดึงประวัติทั้งหมด ไม่ใช่เฉพาะแถวที่ยัง active เพราะคอลัมน์ความคืบหน้าต้องรู้ว่าผ่านมาแล้ว
+   * กี่ด่าน แถวที่ active ก็คัดออกมาจากชุดเดียวกันนี้ ไม่ต้องยิง query เพิ่ม
+   *
+   * คิวรีนี้กับอีกสองอันข้างล่างคีย์ด้วย id ของหน้าปัจจุบัน จึงเล็กลงตาม pageSize เอง
+   */
+  const tasks = await prisma.reviewTask.findMany({
+    where: { subjectType: SUBJECT, subjectId: { in: requests.map((r) => r.id) } },
     select: {
       id: true,
-      requestNumber: true,
+      subjectId: true,
+      taskType: true,
+      sequenceNumber: true,
+      roundNumber: true,
       status: true,
-      organizationNameTh: true,
-      userEmail: true,
-      userFirstnameTh: true,
-      userLastnameTh: true,
-      submittedAt: true,
-      createdAt: true,
-      organizationId: true,
-      createdBy: true,
+      result: true,
+      completedAt: true,
     },
   });
-
-  // ด่านที่แต่ละคำขอค้างอยู่ — badge บนหน้าจอใช้ค่านี้แทน PENDING_* ที่หายไปจาก status
-  const tasks = await prisma.reviewTask.findMany({
-    where: {
-      subjectType: SUBJECT,
-      subjectId: { in: requests.map((r) => r.id) },
-      status: { in: [ReviewTaskStatus.PENDING, ReviewTaskStatus.IN_PROGRESS] },
-    },
-    select: { subjectId: true, taskType: true, roundNumber: true },
-  });
-  const stageBySubject = new Map(tasks.map((t) => [t.subjectId, t]));
+  const stageBySubject = new Map(
+    tasks
+      .filter(
+        (t) =>
+          t.status === ReviewTaskStatus.PENDING || t.status === ReviewTaskStatus.IN_PROGRESS,
+      )
+      .map((t) => [t.subjectId, t]),
+  );
+  const progressBySubject = summariseMany({ subjectType: SUBJECT, requests, tasks });
 
   /**
    * ชื่อหน่วยงานและชื่อผู้ยื่นในตารางต้องไม่ว่าง
@@ -535,7 +827,7 @@ organizationRouter.get("/", async (req, res) => {
     (
       await prisma.userAccount.findMany({
         where: { id: { in: [...new Set(requests.map((r) => r.createdBy))] } },
-        select: { id: true, email: true, firstnameTh: true, lastnameTh: true },
+        select: { id: true, email: true, prefixTh: true, firstnameTh: true, lastnameTh: true },
       })
     ).map((u) => [u.id, u]),
   );
@@ -550,17 +842,70 @@ organizationRouter.get("/", async (req, res) => {
         status: r.status,
         currentTaskType: stageBySubject.get(r.id)?.taskType ?? null,
         currentRound: stageBySubject.get(r.id)?.roundNumber ?? null,
+        progress: progressBySubject.get(r.id) ?? null,
         submittedAt: r.submittedAt,
         createdAt: r.createdAt,
+        // หน้ารายการใช้บอก "อัปเดตล่าสุด" ในกล่องรายละเอียดที่ขึ้นตอนชี้เมาส์
+        updatedAt: r.updatedAt,
         organizationId: r.organizationId,
+        // รหัสของคำขอมาก่อน — คำขอที่ยังไม่อนุมัติอาจถือรหัสที่ต่างจากหน่วยงานตั้งต้น
+        organizationCode: r.organizationCode ?? r.organization?.organizationCode ?? null,
         createdBy: {
           email: r.userEmail ?? creator?.email ?? "",
+          prefix: r.userPrefixTh ?? creator?.prefixTh ?? null,
           firstName: r.userFirstnameTh ?? creator?.firstnameTh ?? null,
           lastName: r.userLastnameTh ?? creator?.lastnameTh ?? null,
         },
       };
     }),
+    page: {
+      page: paging.page,
+      pageSize: paging.pageSize,
+      total,
+      pageCount: Math.max(1, Math.ceil(total / paging.pageSize)),
+    },
   });
+});
+
+/**
+ * ตัวเลขของแถบสรุปและป้ายแท็บ
+ *
+ * แยก endpoint เพราะขอบเขตของมันคือขอบเขตที่ **ไม่เปลี่ยน** ตอนกดเม็ดกรอง เปลี่ยนหน้า
+ * หรือสลับแท็บ — ถ้าคิดรวมมากับรายการ ตัวเลขบนแท็บจะขยับทุกครั้งที่กดอะไรในแท็บนั้น
+ *
+ * ต้องประกาศไว้ **เหนือ GET /:id** ไม่งั้น /summary จะถูกจับเป็น id แล้ว Prisma ตอบ 500
+ */
+organizationRouter.get("/summary", async (req, res) => {
+  const session = req.session!;
+  const { q } = req.query as { q?: string };
+  const where: Prisma.OrganizationRegistrationRequestWhereInput = {
+    AND: baseFilters(session, q),
+  };
+
+  const counts = await journeySummary({
+    db: prisma,
+    subjectType: SUBJECT,
+    roles: session.roles,
+    countAll: () => prisma.organizationRegistrationRequest.count({ where }),
+    groupByStatus: () =>
+      prisma.organizationRegistrationRequest
+        .groupBy({ by: ["status"], where, _count: { _all: true } })
+        .then((rows) => rows.map((r) => ({ status: r.status, _count: r._count }))),
+    inflightIds: () =>
+      prisma.organizationRegistrationRequest
+        .findMany({
+          where: {
+            AND: [
+              where,
+              { status: { in: [RequestStatus.SUBMITTED, RequestStatus.UNDER_REVIEW] } },
+            ],
+          },
+          select: { id: true },
+        })
+        .then((rows) => rows.map((r) => r.id)),
+  });
+
+  res.json(counts);
 });
 
 // ---------------------------------------------------------------- create draft
@@ -617,6 +962,21 @@ organizationRouter.post("/", async (req, res) => {
       return;
     }
 
+    const codeEdit = organizationCodeEdit(parsed.data, organization.organizationCode);
+    if (codeEdit) {
+      res.status(400).json({ error: "validation", fields: { organizationCode: codeEdit } });
+      return;
+    }
+
+    const nameEdit = organizationNameEdit(
+      parsed.data,
+      systemOrganizationName({ createdBy: session.sub, organization }),
+    );
+    if (nameEdit) {
+      res.status(400).json({ error: "validation", fields: { name: nameEdit } });
+      return;
+    }
+
     const account = await prisma.userAccount.findUnique({ where: { id: session.sub } });
     const prefilled = await prisma.organizationRegistrationRequest.create({
       data: {
@@ -624,7 +984,7 @@ organizationRouter.post("/", async (req, res) => {
         organizationId: organization.id,
         status: RequestStatus.DRAFT,
         ...prefillFromOrganization(organization),
-        // ผู้กรอกคือผู้ประสานงานโดยปริยาย เอาจากบัญชีที่ ThaiD ยืนยันมาแล้ว ผู้ใช้แก้ได้
+        // ผู้กรอกคือผู้ประสานงานโดยปริยาย เอาจากบัญชีที่ ThaID ยืนยันมาแล้ว ผู้ใช้แก้ได้
         userPrefixTh: account?.prefixTh ?? undefined,
         userFirstnameTh: account?.firstnameTh ?? undefined,
         userLastnameTh: account?.lastnameTh ?? undefined,
@@ -651,6 +1011,14 @@ organizationRouter.post("/", async (req, res) => {
     });
 
     res.status(201).json({ organization: await toApiShape(prefilled) });
+    return;
+  }
+
+  // หน่วยงานใหม่ยังไม่มีรหัส — รหัสจะออกโดย nextOrganizationCode() ข้างล่าง
+  // ค่าที่ส่งมากับ body จึงเป็นการตั้งรหัสเอง ซึ่งไม่ใช่สิ่งที่ฟอร์มทำได้
+  const newCodeEdit = organizationCodeEdit(parsed.data, null);
+  if (newCodeEdit) {
+    res.status(400).json({ error: "validation", fields: { organizationCode: newCodeEdit } });
     return;
   }
 
@@ -735,6 +1103,64 @@ async function findRequestByRequestOrOrganizationId(id: string) {
   });
 }
 
+/**
+ * สถานะย่อของคำขอ สำหรับหน้าจอที่เปิดค้างไว้ถามเป็นระยะว่า "มีอะไรเปลี่ยนไหม"
+ *
+ * ทุกด่านเปิดให้ทุกคนที่ถือ role นั้นกดได้ เจ้าหน้าที่หลายคนจึงเปิดคำขอใบเดียวกันพร้อมกันได้
+ * และคนที่ไม่ได้กดต้องรู้ว่าคำขอเดินไปแล้ว ไม่ใช่รู้ตอนกดปุ่มแล้วเจอ error
+ *
+ * **แยก endpoint เพราะ `GET /:id` แพงเกินกว่าจะ poll** — ตัวนั้นดึงไทม์ไลน์ทั้งเส้น ไฟล์แนบ
+ * ความคืบหน้า และ (ฝั่งหน่วยงาน) ชื่อจังหวัด/อำเภอ/ตำบล รวมสิบกว่า SELECT ต่อครั้ง
+ * ตัวนี้ตอบเฉพาะสิ่งที่ใช้ตัดสินว่าเปลี่ยนหรือยัง แล้วให้หน้าจอไปโหลดตัวเต็มเองเมื่อเปลี่ยนจริง
+ *
+ * `updatedAt` เอาค่ามากสุดของแถวคำขอกับ review_task ของมัน — `syncStatus()` เขียนแถวคำขอ
+ * ทุกครั้งที่มี transition ก็จริง แต่ความเห็นของผู้เชี่ยวชาญ (`recordAdvisoryNote()`)
+ * เขียนแค่ review_task ถ้าดูแค่แถวคำขอ ไทม์ไลน์จะขยับโดยที่ไม่มีใครรู้
+ */
+organizationRouter.get("/:id/state", async (req, res) => {
+  const session = req.session!;
+  /**
+   * อ่านแถวเดียวแบบ select เจาะจง ไม่ใช่ `findRequestByRequestOrOrganizationId()`
+   *
+   * ตัวนั้นยอมให้ `:id` เป็น id ของหน่วยงานด้วย ซึ่งต้องค้นสองรอบทุกครั้งที่ไม่ตรง —
+   * หน้าจอ poll ด้วย id ของ *คำขอ* ที่ได้จาก payload ตัวเต็มมาแล้ว จึงไม่ต้องเผื่อกรณีนั้น
+   */
+  const request = await prisma.organizationRegistrationRequest.findUnique({
+    where: { id: req.params.id },
+    select: {
+      id: true,
+      status: true,
+      updatedAt: true,
+      createdBy: true,
+      organizationId: true,
+      approverEmail: true,
+    },
+  });
+  if (!request || !canView(session, request)) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
+    return;
+  }
+
+  const [active, tasks] = await Promise.all([
+    prisma.reviewTask.findFirst({
+      where: { subjectType: SUBJECT, subjectId: request.id, status: { in: ACTIVE_STATUSES } },
+      select: { id: true, taskType: true, roundNumber: true },
+    }),
+    prisma.reviewTask.aggregate({
+      where: { subjectType: SUBJECT, subjectId: request.id },
+      _max: { updatedAt: true },
+    }),
+  ]);
+
+  res.json({
+    state: {
+      status: request.status,
+      currentTaskType: active?.taskType ?? null,
+      stateVersion: stateVersionOf(request.updatedAt, tasks._max.updatedAt),
+    },
+  });
+});
+
 organizationRouter.get("/:id", async (req, res) => {
   const session = req.session!;
   const request = await findRequestByRequestOrOrganizationId(req.params.id);
@@ -777,7 +1203,17 @@ organizationRouter.get("/:id", async (req, res) => {
         : null,
       currentTaskType: active?.taskType ?? null,
       currentRound: active?.roundNumber ?? null,
-      currentAssignee: active?.assignedUser?.displayName ?? null,
+      // ค่าเดียวกับที่ GET /:id/state คืน — หน้าจอเทียบสองค่านี้เพื่อรู้ว่าที่ถืออยู่เก่าหรือยัง
+      stateVersion: stateVersionOf(request.updatedAt, latestTaskTouch(tasks)),
+      // เส้นทางทั้งเส้น ไม่ใช่แค่ด่านที่ค้างอยู่ — หน้าจอต้องบอกได้ว่ามีกี่ขั้น
+      // ตอนนี้ขั้นไหน และขั้นต่อไปเป็นหน้าที่ของบทบาทใด
+      progress: buildJourneyProgress({
+        subjectType: SUBJECT,
+        status: request.status,
+        tasks,
+        active,
+        submittedAt: request.submittedAt,
+      }),
       attachments: attachments.map(publicAttachment),
       // timeline มาจาก review_task แทน organization_events เดิม
       events: tasks.map((t) => ({
@@ -788,8 +1224,33 @@ organizationRouter.get("/:id", async (req, res) => {
         status: t.status,
         result: t.result,
         note: t.resultComment,
-        actor: t.assignedUser
-          ? { id: t.assignedUser.id, name: t.assignedUser.displayName, email: t.assignedUser.email }
+        /**
+         * ด่านนี้ถูกปิดด้วย "ยกเลิกผลการตรวจสอบ" ไม่ใช่เจ้าของด่านเป็นคนกด
+         *
+         * ถ้าไม่บอกหน้าจอ `taskEventLabel()` จะเดาผู้กระทำจาก `task_type` แล้วเขียนว่า
+         * "ผู้มีอำนาจอนุมัติของหน่วยงานขอให้ปรับปรุง" ทั้งที่ชื่อผู้กระทำในบรรทัดเดียวกัน
+         * เป็นเจ้าหน้าที่ BDI — ประโยคขัดกับตัวเองอยู่ในบรรทัดเดียว
+         */
+        recalled:
+          typeof t.resultDetailJson === "object" &&
+          t.resultDetailJson !== null &&
+          "recalledBy" in t.resultDetailJson,
+        /**
+         * ชื่อ**คนที่กด** ไม่ใช่ชื่อคนที่ถูกมอบหมาย
+         *
+         * เดิมอ่านจาก `assignedUser` ซึ่งเป็นแค่การเกลี่ยงานตอนเปิด task — ใครก็ตามที่ถือ
+         * role นั้นปิดด่านได้ ชื่อที่ขึ้นจึงเป็นคนละคนกับคนที่ทำได้เสมอ และเป็นคนละคนจริง ๆ
+         * บน production 2026-09-04 ตอนนี้ด่านฝั่ง BDI ไม่มีผู้รับมอบหมายแล้วด้วยซ้ำ
+         *
+         * `completed_by` ว่างได้สองแบบ: task ที่ยังไม่ปิด (ยังไม่มีใครทำ ไม่ควรมีชื่อ) และ
+         * แถวเก่าที่ seed สร้างไว้ ซึ่งไม่มีคนกดจริง — ทั้งสองแบบไม่แสดงชื่อ ถูกต้องทั้งคู่
+         */
+        actor: t.completedByUser
+          ? {
+              id: t.completedByUser.id,
+              name: fullNameTh(t.completedByUser),
+              email: t.completedByUser.email,
+            }
           : null,
         assignedAt: t.assignedAt,
         startedAt: t.startedAt,
@@ -808,7 +1269,7 @@ organizationRouter.patch("/:id", async (req, res) => {
     where: { id: req.params.id },
     include: { organization: true },
   });
-  if (!request || request.createdBy !== session.sub) {
+  if (!request || !canEdit(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
@@ -823,6 +1284,22 @@ organizationRouter.patch("/:id", async (req, res) => {
     return;
   }
 
+  const codeEdit = organizationCodeEdit(
+    parsed.data,
+    request.organizationCode ?? request.organization.organizationCode,
+  );
+  if (codeEdit) {
+    res.status(400).json({ error: "validation", fields: { organizationCode: codeEdit } });
+    return;
+  }
+
+  const systemName = systemOrganizationName(request);
+  const nameEdit = organizationNameEdit(parsed.data, systemName);
+  if (nameEdit) {
+    res.status(400).json({ error: "validation", fields: { name: nameEdit } });
+    return;
+  }
+
   const snapshot = await toRequestData(parsed.data);
 
   const updated = await prisma.$transaction(async (tx) => {
@@ -831,8 +1308,12 @@ organizationRouter.patch("/:id", async (req, res) => {
       data: { ...snapshot, updatedBy: session.sub },
       include: { organization: true },
     });
-    // ชื่อหน่วยงานบน master ตามคำขอไปด้วย ตราบใดที่ยังไม่อนุมัติ
-    if (parsed.data.name) {
+    /**
+     * ชื่อหน่วยงานบน master ตามคำขอไปด้วย ตราบใดที่ยังไม่อนุมัติ — เฉพาะหน่วยงานที่ผู้กรอก
+     * เปิดเอง ไม่ใช่แค่ "ยังไม่ถูกล็อก" เพราะการเขียนทับหน่วยงานที่ระบบเปิดให้จะทำให้
+     * systemOrganizationName() เปลี่ยนคำตอบ แล้วช่องชื่อล็อกตัวเองกลางคัน (ดู nameOwnedByForm)
+     */
+    if (parsed.data.name && nameOwnedByForm(request)) {
       await tx.organization.update({
         where: { id: request.organizationId },
         data: {
@@ -866,9 +1347,13 @@ organizationRouter.post("/:id/attachments", upload.single("file"), async (req, r
     return;
   }
   if (!req.file) {
+    res.status(400).json({ error: "validation", message: "กรุณาเลือกไฟล์" });
+    return;
+  }
+  if (!ALLOWED_MIME.has(req.file.mimetype)) {
     res.status(400).json({
       error: "validation",
-      message: "รองรับเฉพาะไฟล์ PDF หรือ JPG ขนาดไม่เกิน 10 MB",
+      message: "รองรับเฉพาะไฟล์ PDF ขนาดไม่เกิน 10 MB",
     });
     return;
   }
@@ -876,7 +1361,7 @@ organizationRouter.post("/:id/attachments", upload.single("file"), async (req, r
   const request = await prisma.organizationRegistrationRequest.findUnique({
     where: { id: req.params.id },
   });
-  if (!request || request.createdBy !== session.sub) {
+  if (!request || !canEdit(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
@@ -953,7 +1438,7 @@ organizationRouter.post("/:id/generate-form", async (req, res) => {
     where: { id: req.params.id },
     include: { organization: true },
   });
-  if (!request || request.createdBy !== session.sub) {
+  if (!request || !canEdit(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
@@ -1047,7 +1532,16 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
     return;
   }
 
-  const documents = await publishedDocuments(prisma, LEGAL_SCOPES.ORGANIZATION_REGISTRATION);
+  /**
+   * ฉบับที่หน่วยงานกด "ไม่เกี่ยวข้อง" ไม่อยู่ใน `documents` — ด่านตรวจตอนลงนามตัดมันออก
+   * อยู่แล้ว รายการที่แสดงจึงต้องตัดเหมือนกัน ไม่งั้นผู้อนุมัติ BDI จะอ่านเอกสารที่ไม่มีใคร
+   * ฝั่งหน่วยงานยอมรับ แล้วนึกว่าตัวเองลงนามรับรองมันไปด้วย
+   */
+  const { documents, notApplicable } = await requestDocuments(
+    prisma,
+    LEGAL_SCOPES.ORGANIZATION_REGISTRATION,
+    { subjectType: SUBJECT, subjectId: request.id },
+  );
 
   const versions = await prisma.legalDocumentVersion.findMany({
     where: { id: { in: documents.map((d) => d.versionId) } },
@@ -1068,11 +1562,15 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
   const out: Array<{
     code: string;
     name: string;
+    shortname: string | null;
+    legalNotice: string | null;
     versionId: string;
     versionNumber: number;
     fromRequest: boolean;
     fileUrl: string | null;
     acceptedAt: Date | null;
+    /** false = ผู้มีอำนาจกด "ไม่เกี่ยวข้อง" ข้ามฉบับนี้ได้ */
+    isRequired: boolean;
   }> = [];
 
   for (const doc of documents) {
@@ -1084,11 +1582,14 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
       out.push({
         code: doc.code,
         name: doc.nameTh,
+        shortname: doc.shortname,
+        legalNotice: doc.legalNotice,
         versionId: doc.versionId,
         versionNumber: doc.versionNumber,
         fromRequest: false,
         fileUrl: `/api/organizations/${request.id}/legal-documents/${doc.versionId}/file`,
         acceptedAt: acceptedAt.get(doc.versionId) ?? null,
+        isRequired: doc.isRequired,
       });
       continue;
     }
@@ -1134,7 +1635,13 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
       const data = await requestShape();
       const result = await renderLegalDocument(prisma, {
         request: { ...data, submittedAt: request.submittedAt },
-        document: { code: doc.code, nameTh: doc.nameTh, versionId: doc.versionId },
+        document: {
+          code: doc.code,
+          nameTh: doc.nameTh,
+          versionId: doc.versionId,
+          versionNumber: doc.versionNumber,
+          effectiveAt: doc.effectiveAt,
+        },
         printedByName: fullName(data.contactPrefix, data.contactFirstName, data.contactLastName),
         actorId: session.sub,
       });
@@ -1144,6 +1651,8 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
     out.push({
       code: doc.code,
       name: doc.nameTh,
+      shortname: doc.shortname,
+      legalNotice: doc.legalNotice,
       versionId: doc.versionId,
       versionNumber: doc.versionNumber,
       fromRequest: true,
@@ -1151,10 +1660,22 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
         ? `/api/organizations/${request.id}/legal-documents/${doc.versionId}/file`
         : null,
       acceptedAt: acceptedAt.get(doc.versionId) ?? null,
+      isRequired: doc.isRequired,
     });
   }
 
-  res.json({ documents: out });
+  res.json({
+    documents: out,
+    /**
+     * บอกว่าหายไปไหน ไม่ใช่หายไปเฉย ๆ — ทั้งฝั่งหน่วยงานและฝั่ง BDI ควรเห็นว่าหน่วยงาน
+     * ระบุฉบับไหนว่าไม่เกี่ยวข้อง แค่ไม่ต้องเอามาให้อ่านและลงนามอีก
+     */
+    notApplicable: notApplicable.map((doc) => ({
+      code: doc.code,
+      name: doc.nameTh,
+      shortname: doc.shortname,
+    })),
+  });
 });
 
 /**
@@ -1232,7 +1753,7 @@ organizationRouter.post("/:id/submit", async (req, res) => {
     where: { id: req.params.id },
     include: { organization: true },
   });
-  if (!request || request.createdBy !== session.sub) {
+  if (!request || !canEdit(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
@@ -1264,6 +1785,22 @@ organizationRouter.post("/:id/submit", async (req, res) => {
     return;
   }
 
+  /**
+   * ผู้มีอำนาจกระทำการแทนต้องใช้ได้จริงตั้งแต่ตอนนำส่ง ไม่ใช่ไปรู้ตอน BDI กดอนุมัติ
+   *
+   * เช็คตอนนำส่งไม่ได้แปลว่ายังว่างอยู่ตอนอนุมัติ (คนอื่นอาจจับจองไปก่อนได้)
+   * `ensureApproverAccount()` จึงยังเช็คซ้ำอีกครั้งตอนนั้น
+   */
+  const conflict = await approverConflict(prisma, {
+    email: parsed.data.signatoryEmail,
+    cid: parsed.data.signatoryNationalId ?? null,
+    organizationId: request.organizationId,
+  });
+  if (conflict) {
+    res.status(400).json({ error: "validation", fields: { [conflict.field]: conflict.message } });
+    return;
+  }
+
   const form = await activeAttachment(
     prisma,
     AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
@@ -1271,12 +1808,11 @@ organizationRouter.post("/:id/submit", async (req, res) => {
     AttachmentType.GENERATED_FORM,
   );
   if (!form) {
-    res.status(400).json({ error: "no_form", message: "กรุณาสร้างและตรวจสอบ PDF ก่อนนำส่ง" });
+    res.status(400).json({ error: "no_form", message: "กรุณากดตรวจสอบข้อมูลเพื่อสร้างเอกสารก่อนนำส่ง" });
     return;
   }
 
-  const officer = await pickAssignee(ROLE_CODES.BDI_OFFICER, BDI_ORGANIZATION_ID);
-  if (!officer) {
+  if (!(await hasRoleHolder(ROLE_CODES.BDI_OFFICER, BDI_ORGANIZATION_ID))) {
     res.status(503).json({
       error: "no_reviewer",
       message: "ยังไม่มีเจ้าหน้าที่ BDI ในระบบ กรุณาติดต่อผู้ดูแล",
@@ -1293,7 +1829,6 @@ organizationRouter.post("/:id/submit", async (req, res) => {
       subjectType: SUBJECT,
       subjectId: request.id,
       taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
-      assignedUserId: officer,
       assignedRole: ROLE_CODES.BDI_OFFICER,
       actorId: session.sub,
     });
@@ -1317,7 +1852,8 @@ organizationRouter.post("/:id/submit", async (req, res) => {
   await notifyUsers(await bdiOfficerIds(), {
     type: NotificationType.REQUEST_SUBMITTED,
     title: "มีคำขอลงทะเบียนหน่วยงานใหม่",
-    message: `${shape.name} นำส่งคำขอ ${request.requestNumber}`,
+    // เลขคำขอไม่ได้ช่วยให้ผู้อ่านรู้ว่าเรื่องอะไร และลิงก์ในแจ้งเตือนพาไปที่คำขอใบนั้นอยู่แล้ว
+    message: `${shape.name} นำส่งคำขอลงทะเบียนหน่วยงาน`,
     subjectType: SUBJECT,
     subjectId: request.id,
     organizationId: request.organizationId,
@@ -1362,12 +1898,22 @@ const signatureSchema = z.object({
    * ถูกแก้ หลักฐานเก่าต้องไม่เปลี่ยนความหมายตามไปด้วย ฝ่าย BDI ลงนามรวดเดียวโดยไม่มี
    * การยืนยันรายฉบับ (การ์ดข้อ 4) จึงไม่มีค่านี้มา
    */
+  /**
+   * เอกสารที่ผู้มีอำนาจกด "ไม่เกี่ยวข้อง" — ใช้ได้เฉพาะฉบับที่แอดมินตั้งเป็นไม่บังคับ
+   *
+   * แยกจาก `acknowledgements` เพราะความหมายต่างกันคนละเรื่อง: อันบนคือ "อ่านแล้วเห็นชอบ"
+   * ซึ่งลง `legal_acceptance` เป็นหลักฐานว่าหน่วยงานยอมรับเงื่อนไข ส่วนอันนี้คือ
+   * "ฉบับนี้ไม่เกี่ยวกับหน่วยงานเรา" ซึ่งไม่ใช่การยอมรับ จึงไม่ลงตารางนั้น แต่ต้องเก็บไว้
+   * ใน `confirmation_payload_json` ไม่งั้นย้อนหลังจะแยกไม่ออกระหว่าง "ตั้งใจข้าม"
+   * กับ "ตอนนั้นยังไม่มีเอกสารฉบับนี้"
+   */
+  notApplicable: z.array(z.object({ versionId: z.string() })).default([]),
   attestationText: z.string().trim().min(1).max(500).optional(),
   confirmationText: z.string().trim().min(1).max(2000),
 });
 
 const reviewSchema = z.object({
-  action: z.enum(["approve", "request_revision", "reject"]),
+  action: z.enum(["approve", "request_revision", "reject", "recall"]),
   note: z.string().trim().optional(),
   signature: signatureSchema.optional(),
 });
@@ -1420,20 +1966,40 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
     }
 
     // ใครมีสิทธิ์ปิด task นี้ — role ที่ตรงกับด่าน หรือเป็นผู้รับมอบหมายโดยตรง
-    const allowedRoles: Record<ReviewTaskType, RoleCode[]> = {
-      [ReviewTaskType.BDI_OFFICER_REVIEW]: [ROLE_CODES.BDI_OFFICER],
-      [ReviewTaskType.ORGANIZATION_APPROVAL]: [ROLE_CODES.ORGANIZATION_APPROVER],
-      [ReviewTaskType.BDI_FINAL_APPROVAL]: [ROLE_CODES.BDI_FINAL_APPROVER],
-      [ReviewTaskType.DATASET_SPECIALIST_REVIEW]: [ROLE_CODES.BDI_DATASET_SPECIALIST],
-      [ReviewTaskType.ORGANIZATION_REVISION]: [ROLE_CODES.ORGANIZATION_USER],
-    };
-    /** ผู้ใช้คนนี้ปิดด่านชนิดนี้ของคำขอนี้ได้ไหม */
+    // ตารางเดียวกับที่ lib/queue.ts ใช้ตอบว่า "ใบไหนเป็นงานของตำแหน่งฉัน" — เดิมเขียนซ้ำไว้ตรงนี้
+    // ถ้าสองที่ไม่ตรงกัน หน้ารายการจะโชว์ใบที่กดต่อไม่ได้ หรือซ่อนใบที่กดได้
+    const allowedRoles = TASK_TYPE_ROLES;
+    /**
+     * ผู้ใช้คนนี้ปิดด่านชนิดนี้ของคำขอนี้ได้ไหม — **ตัดสินจาก role เท่านั้น**
+     *
+     * เดิมด่าน `ORGANIZATION_APPROVAL` มีทางที่สองต่อท้ายด้วย OR: อีเมลของผู้ใช้ตรงกับ
+     * `request.approverEmail` ที่กรอกไว้ในฟอร์ม ก็ปิดด่านได้โดยไม่ต้องมี role
+     * ผู้ดำเนินการของหน่วยงานจึงกรอกอีเมลตัวเองในช่องผู้มีอำนาจกระทำการแทน แล้วลงนาม
+     * รับรองคำขอที่ตัวเองนำส่งได้ — **โดยไม่ต้องมีบทบาทที่สองด้วยซ้ำ** กฎ
+     * *หนึ่งผู้ใช้ = หนึ่งบทบาท* จึงปิดรูนี้ไม่ได้ ต้องตัดทางที่สองทิ้งคู่กัน (2026-09-03)
+     *
+     * ไม่มีเคสที่ผู้มีอำนาจฯ ตัวจริงเสีย: `ensureApproverAccount()` มอบ
+     * `ORGANIZATION_APPROVER` ให้ตั้งแต่ตอนที่ด่านนี้ถูกเปิด ถ้าบัญชีเขา ACTIVE อยู่แล้ว
+     * หรือออก activation key ให้ แล้ว `completeActivation()` มอบ role ตอนเปิดใช้งาน —
+     * พอถึงเวลาที่กดได้ เขาถือ role นั้นเสมอ อีเมลที่กรอกในฟอร์มไม่ใช่หลักฐานของสิทธิ์
+     */
     const canAction = (taskType: ReviewTaskType) =>
-      session.roles.some((r) => allowedRoles[taskType].includes(r)) ||
-      (taskType === ReviewTaskType.ORGANIZATION_APPROVAL &&
-        request.approverEmail?.toLowerCase() === session.email.toLowerCase());
+      session.roles.some((r) => allowedRoles[taskType].includes(r));
 
-    if (!canAction(task.taskType)) {
+    /**
+     * `recall` — ทางออกเดียวของคำขอที่ค้างอยู่กับผู้มีอำนาจฯ ที่เข้าระบบไม่ได้
+     *
+     * ไม่ได้เพิ่ม `BDI_OFFICER` ลงใน `TASK_TYPE_ROLES` เพราะ `ROLE_TASK_TYPES` คำนวณ
+     * จากตารางนั้นด้วยการกลับด้าน ด่านของผู้มีอำนาจฯ จะไปโผล่ในคิว "งานของฉัน" ของ
+     * เจ้าหน้าที่ BDI ทุกคนทันที ทั้งที่กฎที่ต้องการแคบกว่านั้นมาก — ดู recallRefusal()
+     */
+    if (action === "recall") {
+      const refusal = await recallRefusal(session, task, request);
+      if (refusal) {
+        res.status(refusal.status).json({ error: refusal.error, message: refusal.message });
+        return;
+      }
+    } else if (!canAction(task.taskType)) {
       /**
        * "ไม่มีสิทธิ์" กับ "คำขอเดินไปแล้ว" ไม่ใช่เรื่องเดียวกัน และเดิมตอบเหมือนกันหมด
        *
@@ -1487,6 +2053,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
      */
     const confirmationType = SIGNING_TASKS[task.taskType];
     let signedVersionIds: string[] = [];
+    let notApplicableVersionIds: string[] = [];
 
     if (confirmationType && result === ReviewResult.APPROVED) {
       if (!signature) {
@@ -1497,8 +2064,19 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
         return;
       }
 
-      const published = await publishedDocuments(prisma, LEGAL_SCOPES.ORGANIZATION_REGISTRATION);
-      if (published.length === 0) {
+      /**
+       * ชุดเดียวกับที่หน้าจอเพิ่งแสดงให้เขาอ่าน — ฉบับที่ฝั่งหน่วยงานเคยกด "ไม่เกี่ยวข้อง"
+       * ไม่ถูกถามซ้ำที่ด่านของ BDI เพราะ BDI ต้องเห็นชอบเฉพาะชุดที่หน่วยงานยอมรับจริง
+       *
+       * ตอนที่ผู้มีอำนาจของหน่วยงานเป็นคนกดเอง task ใบนี้ยังเป็น PENDING อยู่ `requestDocuments`
+       * จึงคืนทั้งชุดมาให้เขาเลือกใหม่ ไม่ได้ยึดการกดข้ามของรอบก่อนไว้
+       */
+      const { documents: expected, notApplicable: alreadySkipped } = await requestDocuments(
+        prisma,
+        LEGAL_SCOPES.ORGANIZATION_REGISTRATION,
+        { subjectType: SUBJECT, subjectId: request.id },
+      );
+      if (expected.length + alreadySkipped.length === 0) {
         res.status(503).json({
           error: "no_legal_documents",
           message: "ยังไม่มีเอกสารข้อตกลงที่เผยแพร่ในระบบ กรุณาแจ้งผู้ดูแลระบบ",
@@ -1507,7 +2085,26 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
       }
 
       const acknowledged = new Set(signature.acknowledgements.map((a) => a.versionId));
-      const missing = published.filter((doc) => !acknowledged.has(doc.versionId));
+      const skipped = new Set(signature.notApplicable.map((d) => d.versionId));
+
+      /**
+       * ข้ามได้เฉพาะฉบับที่ไม่บังคับ — ฉบับบังคับที่ถูกส่งมาใน `notApplicable`
+       * ต้องถูกปฏิเสธ ไม่ใช่เงียบ ๆ ยอมรับ ไม่งั้นหน้าเว็บที่ผิดพลาดจะข้ามเอกสารบังคับได้
+       */
+      const skippedRequired = expected.filter((doc) => doc.isRequired && skipped.has(doc.versionId));
+      if (skippedRequired.length > 0) {
+        res.status(400).json({
+          error: "required_document_skipped",
+          message:
+            `เอกสาร ${skippedRequired.map((d) => d.code).join(" ")} เป็นเอกสารบังคับ ` +
+            `จึงกด "ไม่เกี่ยวข้อง" ไม่ได้ ต้องอ่านและเห็นชอบ`,
+        });
+        return;
+      }
+
+      const missing = expected.filter(
+        (doc) => !acknowledged.has(doc.versionId) && !(doc.isRequired === false && skipped.has(doc.versionId)),
+      );
       if (missing.length > 0) {
         res.status(400).json({
           error: "documents_not_acknowledged",
@@ -1518,21 +2115,43 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
         return;
       }
 
-      signedVersionIds = published.map((doc) => doc.versionId);
+      // ลงนามเฉพาะฉบับที่เห็นชอบจริง ฉบับที่ข้ามไม่นับเป็นการยอมรับ
+      signedVersionIds = expected.filter((doc) => !skipped.has(doc.versionId)).map((d) => d.versionId);
+      notApplicableVersionIds = expected
+        .filter((doc) => skipped.has(doc.versionId))
+        .map((d) => d.versionId);
     }
 
     /** ผู้ถือ role เดิมที่เสียสิทธิ์ตอนผูกผู้มีอำนาจ — ประกาศหลัง commit */
     let replacedHolders: RevokedAssignment[] = [];
+    /** ที่นั่งผู้มีอำนาจฯ ที่ recall ปล่อยคืน — เขียน audit หลัง commit */
+    let releasedSeat: ReleasedSeat | null = null;
 
     const outcome = await prisma.$transaction(async (tx) => {
-      await startTask(tx, task.id, session.sub);
+      /**
+       * recall ไม่เรียก `startTask()` — ด่านนี้ไม่เคยมีใครเปิด การประทับ `started_at`
+       * ให้มันตอนที่เจ้าหน้าที่ BDI กดยกเลิก จะทำให้ timeline เล่าว่าผู้มีอำนาจฯ เคยเปิดอ่าน
+       * ทั้งที่เขายังเข้าระบบไม่ได้ด้วยซ้ำ — `completeTask()` ปิด task ที่ยัง PENDING ได้อยู่แล้ว
+       */
+      if (action !== "recall") await startTask(tx, task.id, session.sub);
       await completeTask(tx, {
         taskId: task.id,
         result,
         comment: note ?? null,
         commentVisibility: "ORGANIZATION",
         actorId: session.sub,
+        ...(action === "recall" ? { resultDetail: { recalledBy: ROLE_CODES.BDI_OFFICER } } : {}),
       });
+
+      if (action === "recall") {
+        releasedSeat = await releaseApproverSeat(tx, {
+          email: request.approverEmail,
+          organizationId: request.organizationId,
+          taskId: task.id,
+          actorId: session.sub,
+          reason: note ?? "ยกเลิกผลการตรวจสอบ",
+        });
+      }
 
       /**
        * หลักฐานการลงนาม เขียนใน transaction เดียวกับการปิด task
@@ -1555,17 +2174,22 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
          */
         const account = await tx.userAccount.findUnique({
           where: { id: session.sub },
-          select: { displayName: true, prefixTh: true, firstnameTh: true, lastnameTh: true },
+          select: NAME_FIELDS,
         });
         const isOrgSide = confirmationType === ConfirmationType.ORGANIZATION_APPROVAL;
         const signedFirst = isOrgSide ? request.approverFirstnameTh : (account?.firstnameTh ?? null);
         const signedLast = isOrgSide ? request.approverLastnameTh : (account?.lastnameTh ?? null);
+        // ตกกลับไปที่อีเมลได้ที่นี่ที่เดียว — ลายมือชื่อต้องมีอะไรสักอย่างเสมอ
         const signedName =
-          (isOrgSide
-            ? fullName(request.approverPrefixTh, signedFirst, signedLast)
-            : fullName(account?.prefixTh, signedFirst, signedLast)) ||
-          account?.displayName ||
-          session.email;
+          fullNameTh(
+            isOrgSide
+              ? {
+                  prefixTh: request.approverPrefixTh,
+                  firstnameTh: signedFirst,
+                  lastnameTh: signedLast,
+                }
+              : account,
+          ) || session.email;
         const confirmation = await tx.signatureConfirmation.create({
           data: {
             reviewTaskId: task.id,
@@ -1585,6 +2209,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
               signedFirstName: signedFirst,
               signedLastName: signedLast,
               documentVersionIds: signedVersionIds,
+              notApplicableVersionIds,
             },
             ipAddress: req.ip ?? null,
             userAgent: req.get("user-agent") ?? null,
@@ -1638,8 +2263,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
       }
 
       if (result === ReviewResult.APPROVED && task.taskType === ReviewTaskType.ORGANIZATION_APPROVAL) {
-        const finalApprover = await pickAssignee(ROLE_CODES.BDI_FINAL_APPROVER, BDI_ORGANIZATION_ID);
-        if (!finalApprover) {
+        if (!(await hasRoleHolder(ROLE_CODES.BDI_FINAL_APPROVER, BDI_ORGANIZATION_ID))) {
           throw new WorkflowError(
             "no_reviewer",
             "ยังไม่มีผู้อนุมัติ BDI ในระบบ กรุณาติดต่อผู้ดูแล",
@@ -1650,7 +2274,6 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
           subjectType: SUBJECT,
           subjectId: request.id,
           taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
-          assignedUserId: finalApprover,
           assignedRole: ROLE_CODES.BDI_FINAL_APPROVER,
           assignedById: session.sub,
           actorId: session.sub,
@@ -1722,6 +2345,24 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
       });
     }
 
+    /**
+     * เขียนหลัง commit และเขียนแยกจาก REQUEST_RETURNED ข้างบน — สองเหตุการณ์นี้ตอบ
+     * คนละคำถาม ("คำขอถูกส่งกลับ" กับ "คำเชิญไปหาที่อยู่ไหนและถูกยกเลิกไปแล้ว")
+     * และแถวนี้คือหลักฐานเดียวที่เหลือเมื่อบัญชี PENDING ถูกลบทิ้งไปด้วย
+     */
+    if (releasedSeat) {
+      const seat: ReleasedSeat = releasedSeat;
+      await logAudit({
+        action: AuditAction.APPROVER_INVITATION_RECALLED,
+        subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
+        subjectId: request.id,
+        organizationId: request.organizationId,
+        before: { email: seat.email, cid: seat.cid, displayName: seat.displayName, status: seat.status },
+        after: { accountDeleted: seat.accountDeleted, keptBecause: seat.keptBecause ?? undefined },
+        metadata: { note, recalled_via: "REVIEW_API" },
+      });
+    }
+
     await announceRoleReplacement(replacedHolders);
 
     await dispatchReviewNotifications(request, task.taskType, result, note);
@@ -1777,6 +2418,96 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
  * เป็น NOT NULL — สร้างบัญชี PENDING พร้อม activation key ให้ถ้ายังไม่มี
  * (ขั้นที่ 1–3 ของ "Suggested lifecycle" ใน sheet `activation_key`)
  */
+/**
+ * ผู้มีอำนาจกระทำการแทนที่กรอกมา ใช้กับหน่วยงานนี้ได้หรือไม่
+ *
+ * เดิมกฎพวกนี้อยู่ใน `ensureApproverAccount()` ที่เดียว ซึ่งทำงานตอน **เจ้าหน้าที่ BDI
+ * กด PASSED** — คนละคนและห่างจากตอนกรอกฟอร์มหลายวัน คนที่เห็น error จึงแก้ไม่ได้
+ * และคนที่แก้ได้ก็ไม่เห็น ตอนนี้ย้ายมาเรียกตั้งแต่ตอนนำส่ง (`POST /:id/submit`) ด้วย
+ * โดยยังคงไว้ที่เดิมเป็น backstop เพราะระหว่างนำส่งกับอนุมัติ คนอื่นอาจจับจอง
+ * เลขบัตรหรือ role ไปก่อนได้
+ *
+ * **ข้อความที่ตอบกลับต่างกันสองฝั่ง**: ฝั่งฟอร์ม (ผู้ใช้) บอกแค่ว่าใช้ค่านี้ไม่ได้ ห้าม
+ * เอ่ยชื่อหน่วยงาน อีเมล หรือตัวตนของเจ้าของข้อมูลเดิม เพราะคนกรอกฟอร์มเป็นใครก็ได้
+ * การบอกว่าเลขบัตรนี้เป็นของใครคือการยืนยันข้อมูลส่วนบุคคลให้คนนอก — รายละเอียด
+ * ไปอยู่ใน audit แทน ส่วนฝั่ง admin API ไม่ mask เพราะเรียกได้เฉพาะเจ้าหน้าที่ BDI
+ */
+async function approverConflict(
+  db: Db,
+  params: { email: string; cid: string | null; organizationId: string },
+): Promise<{ field: "signatoryEmail" | "signatoryNationalId"; message: string } | null> {
+  const { email, cid, organizationId } = params;
+
+  const existing = await db.userAccount.findUnique({
+    where: { email },
+    select: { id: true, cid: true },
+  });
+
+  if (!existing) {
+    // อีเมลนี้ยังไม่มีบัญชี — เลขบัตรจึงต้องว่างด้วย ไม่งั้นเป็นของคนอื่น
+    if (cid) {
+      const sameCid = await db.userAccount.findUnique({ where: { cid }, select: { id: true } });
+      if (sameCid) {
+        return {
+          field: "signatoryNationalId",
+          message:
+            "เลขบัตรประชาชนนี้ใช้กับผู้มีอำนาจกระทำการแทนของคำขอนี้ไม่ได้ " +
+            "กรุณาตรวจสอบเลขบัตรและอีเมลให้ตรงกับบุคคลเดียวกัน",
+        };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * อีเมลมีบัญชีอยู่แล้ว แต่เลขบัตรที่กรอกไม่ตรงกับของบัญชีนั้น
+   *
+   * เดิมเคสนี้ผ่านไปเงียบ ๆ เพราะ `existing ?? create` ใช้บัญชีเดิมโดยไม่เคยอ่าน
+   * `approverCid` ที่กรอกมาเลย — กรอกอีเมลของคนหนึ่งกับเลขบัตรของอีกคนจึงผ่าน
+   * แล้วระบบเก็บเลขของเจ้าของอีเมลไว้ ThaID ก็ไปเทียบกับเลขนั้น ทั้งที่ฟอร์มบอกอีกอย่าง
+   */
+  if (cid && existing.cid && existing.cid !== cid) {
+    return {
+      field: "signatoryNationalId",
+      message:
+        "เลขบัตรประชาชนไม่ตรงกับบัญชีที่ใช้อีเมลนี้อยู่ " +
+        "กรุณาตรวจสอบว่าอีเมลและเลขบัตรเป็นของบุคคลเดียวกัน",
+    };
+  }
+
+  /**
+   * หนึ่งบัญชี = หนึ่งหน่วยงาน (2026-08-30) และ **หนึ่งผู้ใช้ = หนึ่งบทบาท** (2026-09-03)
+   *
+   * เงื่อนไขคือ "ถือบทบาทอื่นใดอยู่หรือไม่" ไม่ใช่ "อยู่หน่วยงานอื่นหรือไม่" อีกแล้ว
+   * ของเดิมกันแค่ role ระดับหน่วยงานของ **หน่วยงานอื่น** ซึ่งเปิดช่องไว้สองทาง:
+   * ผู้ดำเนินการของหน่วยงานนี้เองกรอกอีเมลตัวเองในช่องผู้มีอำนาจฯ ได้ (แล้วนำส่งคำขอ
+   * เองและลงนามรับรองคำขอของตัวเอง) และเจ้าหน้าที่ BDI ก็ถูกกรอกได้ เพราะบทบาทฝั่ง
+   * BDI ไม่อยู่ใน ORGANIZATION_SCOPED_ROLES
+   *
+   * ที่ยกเว้นคือผู้มีอำนาจฯ **ของหน่วยงานนี้เอง** — คนเดิมที่ถูกกรอกซ้ำในคำขอถัดไป
+   * ต้องผ่านได้ ไม่งั้นหน่วยงานยื่นคำขอใบที่สองไม่ได้เลย (`assignRole()` มองว่าเป็น no-op)
+   */
+  const approverRoleId = await roleIdByCode(db, ROLE_CODES.ORGANIZATION_APPROVER);
+  const heldElsewhere = await db.userRoleAssignment.findFirst({
+    where: {
+      userAccountId: existing.id,
+      NOT: { roleId: approverRoleId, organizationId },
+      ...activeAssignmentWhere(),
+    },
+    select: { id: true },
+  });
+  if (heldElsewhere) {
+    return {
+      field: "signatoryEmail",
+      message:
+        "อีเมลนี้ใช้เป็นผู้มีอำนาจอนุมัติของหน่วยงานไม่ได้ เนื่องจากมีบทบาทอื่นในระบบอยู่แล้ว " +
+        "และผู้ใช้หนึ่งคนมีได้บทบาทเดียว กรุณากรอกอีเมลของผู้มีอำนาจอนุมัติของหน่วยงานโดยตรง",
+    };
+  }
+
+  return null;
+}
+
 async function ensureApproverAccount(
   tx: Prisma.TransactionClient,
   request: RequestRow,
@@ -1786,10 +2517,16 @@ async function ensureApproverAccount(
     throw new WorkflowError("no_approver", "คำขอนี้ยังไม่ได้ระบุอีเมลผู้มีอำนาจกระทำการแทน");
   }
 
-  const displayName =
-    [request.approverPrefixTh, request.approverFirstnameTh, request.approverLastnameTh]
-      .filter(Boolean)
-      .join(" ") || email;
+  /**
+   * บัญชีที่เพิ่งสร้างให้ผู้มีอำนาจยังไม่ activate — ถ้าฟอร์มไม่ได้กรอกชื่อไทยมา
+   * `display_name` จะเป็นค่าว่าง ไม่ใช่อีเมล เพราะอีเมลไปโผล่บนเอกสารข้อตกลงไม่ได้
+   * (ดู lib/person-name.ts) ชื่อจริงจะถูกเติมตอน activate อยู่แล้ว
+   */
+  const displayName = fullNameTh({
+    prefixTh: request.approverPrefixTh,
+    firstnameTh: request.approverFirstnameTh,
+    lastnameTh: request.approverLastnameTh,
+  });
 
   const existing = await tx.userAccount.findUnique({ where: { email } });
 
@@ -1800,16 +2537,19 @@ async function ensureApproverAccount(
    * เลขบัตรผิดไปตรงกับของคนอื่น ถ้าปล่อยให้ create ชน P2002 คนกรอกฟอร์มจะเห็นแค่
    * ข้อผิดพลาดรวม ๆ ตอนกดนำส่ง โดยไม่รู้ว่าต้องกลับไปแก้ช่องไหน
    */
-  if (!existing && request.approverCid) {
-    const sameCid = await tx.userAccount.findUnique({ where: { cid: request.approverCid } });
-    if (sameCid) {
-      throw new WorkflowError(
-        "approver_cid_exists",
-        `เลขบัตรประชาชนของผู้มีอำนาจกระทำการแทนเป็นของบัญชี ${sameCid.email} อยู่แล้ว ` +
-          `กรุณาตรวจสอบเลขบัตร หรือแก้อีเมลผู้มีอำนาจให้เป็นอีเมลของบัญชีนั้น`,
-        409,
-      );
-    }
+  /**
+   * backstop — กฎเดียวกับที่ `POST /:id/submit` เช็คไปแล้ว
+   *
+   * ห้ามถอดออกแม้จะเช็คตอนนำส่งแล้ว เพราะระหว่างนำส่งกับอนุมัติห่างกันหลายวัน
+   * คนอื่นจับจองเลขบัตรหรือ role ระดับหน่วยงานไปก่อนได้
+   */
+  const conflict = await approverConflict(tx, {
+    email,
+    cid: request.approverCid,
+    organizationId: request.organizationId,
+  });
+  if (conflict) {
+    throw new WorkflowError("approver_conflict", conflict.message, 409);
   }
 
   const account =
@@ -1845,16 +2585,215 @@ async function ensureApproverAccount(
     }));
   } else {
     // ยังไม่มีบัญชีใช้งานได้ — ออก activation key ให้ไปสมัคร
-    const { key } = await issueActivationKey(tx, {
+    const { key, record } = await issueActivationKey(tx, {
       userAccountId: account.id,
       organizationId: request.organizationId,
       roleCode: ROLE_CODES.ORGANIZATION_APPROVER,
     });
     // ส่งอีเมลนอก transaction ไม่ได้เพราะต้องใช้ raw key — ยอมส่งในนี้
-    void sendInvitationEmail(email, key, ROLE_LABELS[ROLE_CODES.ORGANIZATION_APPROVER]);
+    void sendInvitationEmail(email, key, {
+      roleLabel: ROLE_LABELS[ROLE_CODES.ORGANIZATION_APPROVER],
+      // ชื่อที่หน่วยงานกรอกมาในคำขอมาก่อนชื่อในทะเบียน — เป็นชื่อที่ผู้รับเพิ่งเห็นในฟอร์ม
+      organizationName: request.organizationNameTh ?? request.organization.nameTh,
+      expiresAt: record.expiresAt,
+      internal: false,
+    });
   }
 
   return { id: account.id, replaced };
+}
+
+/**
+ * เจ้าหน้าที่ BDI กด "ยกเลิกผลการตรวจสอบ" กับคำขอนี้ได้หรือไม่ — คืนเหตุผลเมื่อไม่ได้
+ *
+ * ทางนี้ปิดด่านของคนอื่นแทนเขา จึงแคบไว้สี่ชั้น ให้เหลือเฉพาะกรณีที่เจ้าของด่านทำเองไม่ได้จริง ๆ:
+ *
+ *   1. ต้องถือ `BDI_OFFICER` — เป็นคนที่กดผ่านจนคำเชิญถูกส่งออกไป จึงเป็นคนที่ถอนคืนได้
+ *   2. ต้องเป็นด่าน `ORGANIZATION_APPROVAL` — ด่านอื่นเจ้าของยังกดเองได้ทั้งหมด
+ *   3. task ต้องยังเป็น `PENDING` — ถ้ามีคนเปิดแล้วแปลว่าเขาเข้าถึงคำขอได้ ให้เขาส่งกลับเอง
+ *   4. บัญชีผู้มีอำนาจฯ ต้องยังไม่ `ACTIVE` — เปิดใช้งานแล้วแปลว่าอีเมลส่งถึงจริงและ ThaID
+ *      ยืนยันเลขบัตรไปแล้ว ข้อมูลสองช่องนั้นจึงไม่ผิด ที่เหลือคือการ "เปลี่ยนตัวคน" ซึ่งเป็น
+ *      การถอดผู้ใช้จริงออกจากหน่วยงาน — คำสั่งของผู้ดูแลระบบ ไม่ใช่ของเจ้าหน้าที่ตรวจสอบ
+ */
+async function recallRefusal(
+  session: { roles: RoleCode[] },
+  task: { taskType: ReviewTaskType; status: ReviewTaskStatus },
+  request: { approverEmail: string | null },
+): Promise<{ status: number; error: string; message: string } | null> {
+  if (!session.roles.includes(ROLE_CODES.BDI_OFFICER)) {
+    return {
+      status: 403,
+      error: "forbidden",
+      message: "เฉพาะเจ้าหน้าที่ BDI เท่านั้นที่ยกเลิกผลการตรวจสอบได้",
+    };
+  }
+
+  if (task.taskType !== ReviewTaskType.ORGANIZATION_APPROVAL) {
+    return {
+      status: 409,
+      error: "invalid_state",
+      message:
+        `ยกเลิกผลการตรวจสอบได้เฉพาะตอนที่คำขอรอผู้มีอำนาจอนุมัติของหน่วยงานลงนาม — ` +
+        `ตอนนี้คำขออยู่ขั้น "${REVIEW_TASK_TYPE_LABELS[task.taskType]}"`,
+    };
+  }
+
+  if (task.status !== ReviewTaskStatus.PENDING) {
+    return {
+      status: 409,
+      error: "already_started",
+      message:
+        "ผู้มีอำนาจอนุมัติของหน่วยงานเปิดคำขอนี้แล้ว จึงยกเลิกผลการตรวจสอบแทนเขาไม่ได้ — " +
+        "ให้เขาเป็นผู้กดส่งกลับแก้ไขเอง",
+    };
+  }
+
+  if (request.approverEmail) {
+    const account = await prisma.userAccount.findUnique({
+      where: { email: request.approverEmail },
+      select: { status: true },
+    });
+    if (account?.status === UserAccountStatus.ACTIVE) {
+      return {
+        status: 409,
+        error: "approver_active",
+        message:
+          "ผู้มีอำนาจอนุมัติของหน่วยงานเปิดใช้งานบัญชีแล้ว อีเมลและเลขบัตรประชาชนจึงยืนยันแล้วว่าถูกต้อง " +
+          "ถ้าชื่อหรือตำแหน่งผิด ให้เขากดส่งกลับแก้ไขเอง และถ้าหน่วยงานต้องการเปลี่ยนตัวผู้มีอำนาจอนุมัติ " +
+          "ให้แจ้งผู้ดูแลระบบ",
+      };
+    }
+  }
+
+  return null;
+}
+
+/** ที่นั่งผู้มีอำนาจฯ ที่ถูกปล่อยคืน — ผู้เรียกเอาไปเขียน audit หลัง commit */
+interface ReleasedSeat {
+  accountId: string;
+  email: string;
+  cid: string | null;
+  displayName: string;
+  status: UserAccountStatus;
+  accountDeleted: boolean;
+  keptBecause: string | null;
+}
+
+/**
+ * ปล่อยที่นั่งผู้มีอำนาจกระทำการแทนที่คำขอใบนี้จองไว้ ให้หน่วยงานกรอกใหม่ได้
+ *
+ * **เพิกถอน activation key อย่างเดียวไม่พอ** บัญชี PENDING ที่ `ensureApproverAccount()`
+ * สร้างขึ้นยึด `email` และ `cid` เอาไว้ ซึ่ง unique ทั้งคู่ ถ้าไม่ลบทิ้ง พอผู้ดำเนินการแก้อีเมล
+ * แล้วนำส่งใหม่ `approverConflict()` จะหาบัญชีจากอีเมลใหม่ไม่เจอ แล้วไปเจอบัญชีนี้จากเลขบัตร
+ * และตอบว่า "เลขบัตรประชาชนนี้ใช้ไม่ได้" ทั้งที่เป็นเลขที่ถูกต้อง — คำขอติดค้างที่เดิมโดยที่
+ * คนกรอกไม่มีทางเดาได้ว่าติดอะไร นี่คือเหตุผลทั้งหมดที่ฟังก์ชันนี้มีอยู่
+ *
+ * `review_task.assigned_user_id` เป็น FK แบบ `Restrict` จึงต้องปลดออกจากด่านที่เพิ่งปิดก่อน
+ * ไม่งั้นลบบัญชีไม่ผ่าน ตัวตนของผู้ถูกเชิญไม่ได้หายไปไหน — `completed_by` บันทึกว่าเจ้าหน้าที่
+ * BDI เป็นคนปิดด่าน และ `APPROVER_INVITATION_RECALLED` เก็บอีเมลกับเลขบัตรไว้ครบ
+ */
+async function releaseApproverSeat(
+  tx: Prisma.TransactionClient,
+  params: {
+    email: string | null;
+    organizationId: string;
+    taskId: string;
+    actorId: string;
+    reason: string;
+  },
+): Promise<ReleasedSeat | null> {
+  const { email, organizationId, taskId, actorId } = params;
+  if (!email) return null;
+
+  const found = await tx.userAccount.findUnique({ where: { email }, select: { id: true } });
+  if (!found) return null;
+
+  // ปลดการมอบหมายออกจากด่านที่เพิ่งปิด **ก่อน** นับว่าบัญชีนี้ยังมีอะไรผูกอยู่บ้าง
+  await tx.reviewTask.updateMany({
+    where: { id: taskId, assignedUserId: found.id },
+    data: { assignedUserId: null, updatedBy: actorId },
+  });
+
+  const account = await tx.userAccount.findUniqueOrThrow({
+    where: { id: found.id },
+    select: {
+      id: true,
+      email: true,
+      cid: true,
+      displayName: true,
+      status: true,
+      _count: {
+        select: {
+          roleAssignments: true,
+          assignedReviewTasks: true,
+          legalAcceptances: true,
+          signatures: true,
+        },
+      },
+    },
+  });
+
+  /**
+   * ตาข่ายของ `recallRefusal()` ข้อ 4 ไม่ใช่ทางเลือกที่นี่ — ลบบัญชีที่เปิดใช้งานแล้วคือ
+   * ลบคนจริงออกจากระบบ ถ้าวันไหนมีผู้เรียกใหม่ที่ลืมเช็ค ให้ล้มทั้ง transaction ดีกว่า
+   */
+  if (account.status === UserAccountStatus.ACTIVE) {
+    throw new WorkflowError(
+      "approver_active",
+      "บัญชีผู้มีอำนาจอนุมัติเปิดใช้งานแล้ว ปล่อยที่นั่งด้วยวิธีนี้ไม่ได้",
+      409,
+    );
+  }
+
+  /**
+   * ลบได้เฉพาะบัญชีที่ "เกิดมาเพราะคำเชิญใบนี้ และยังไม่ได้ทำอะไรเลย" — เงื่อนไขเดียวกับ
+   * `DELETE /api/admin/invitations/:id` บวกอีกข้อ: ต้องไม่มีคำเชิญของหน่วยงานอื่นค้างอยู่
+   * ไม่งั้นการล้างที่นั่งของหน่วยงานนี้จะไปลบคำเชิญของหน่วยงานอื่นทิ้งไปด้วย
+   */
+  const keysElsewhere = await tx.activationKey.count({
+    where: { userAccountId: account.id, NOT: { organizationId } },
+  });
+  const counts = account._count;
+  const keptBecause =
+    keysElsewhere > 0
+      ? "บัญชีนี้มีคำเชิญของหน่วยงานอื่นค้างอยู่"
+      : counts.roleAssignments > 0
+        ? "บัญชีนี้มีสิทธิ์ (role) ผูกอยู่แล้ว"
+        : counts.assignedReviewTasks > 0
+          ? "บัญชีนี้ยังถูกมอบหมายงานอื่นในสายอนุมัติอยู่"
+          : counts.legalAcceptances > 0 || counts.signatures > 0
+            ? "บัญชีนี้มีลายเซ็นหรือการยอมรับเอกสารบันทึกไว้แล้ว"
+            : null;
+
+  const base = {
+    accountId: account.id,
+    email: account.email,
+    cid: account.cid,
+    displayName: account.displayName,
+    status: account.status,
+  };
+
+  if (keptBecause) {
+    /**
+     * ลบไม่ได้ ก็ต้องอย่างน้อยทำให้ลิงก์ที่อยู่ในกล่องจดหมายผิด ๆ นั้นใช้ไม่ได้ —
+     * คนที่ได้เมลไปคือคนที่ไม่ควรได้ ปล่อยคีย์ที่ยังใช้ได้ทิ้งไว้คือปล่อยทางเข้าไว้ให้เขา
+     */
+    await tx.activationKey.updateMany({
+      where: { userAccountId: account.id, organizationId, status: ActivationKeyStatus.ISSUED },
+      data: {
+        status: ActivationKeyStatus.REVOKED,
+        revokedAt: new Date(),
+        revokedBy: actorId,
+        revokedReason: params.reason,
+        updatedBy: actorId,
+      },
+    });
+    return { ...base, accountDeleted: false, keptBecause };
+  }
+
+  // activation_key ตามไปเองด้วย onDelete: Cascade — ไม่ต้องลบแยก
+  await tx.userAccount.delete({ where: { id: account.id } });
+  return { ...base, accountDeleted: true, keptBecause: null };
 }
 
 async function dispatchReviewNotifications(
@@ -1865,6 +2804,19 @@ async function dispatchReviewNotifications(
 ) {
   const name = request.organizationNameTh ?? request.organization.nameTh;
   const members = await organizationMemberIds(request.organizationId);
+
+  /**
+   * ฝั่งหน่วยงานได้ยินทุกครั้งที่คำขอขยับ ไม่ใช่แค่ตอนถูกส่งกลับหรืออนุมัติจบ
+   * announceProgress() เงียบเองเมื่อไม่มีด่านใหม่เปิดขึ้น จึงเรียกก่อนแล้วปล่อยให้
+   * การแจ้ง "คนต่อไปที่ต้องทำ" ด้านล่างทำงานตามเดิม — คนละกลุ่มผู้รับ ไม่ทับกัน
+   */
+  const progress = await announceProgress({
+    subjectType: SUBJECT,
+    subjectId: request.id,
+    organizationId: request.organizationId,
+    createdBy: request.createdBy,
+    subjectLabel: `${name} — ${request.requestNumber}`,
+  });
 
   if (result === ReviewResult.RETURNED) {
     await notifyUsers([...members.users, request.createdBy], {
@@ -1891,7 +2843,7 @@ async function dispatchReviewNotifications(
   }
 
   if (taskType === ReviewTaskType.BDI_OFFICER_REVIEW && request.approverEmail) {
-    await sendSignatoryRequest(request.approverEmail, name, request.id);
+    await sendSignatoryRequest(request.approverEmail, name, request.id, undefined, progress);
     return;
   }
 
@@ -1899,7 +2851,7 @@ async function dispatchReviewNotifications(
     await notifyUsers(await bdiApproverIds(), {
       type: NotificationType.REQUEST_SUBMITTED,
       title: "มีคำขอรออนุมัติขั้นสุดท้าย",
-      message: `${name} — ${request.requestNumber}`,
+      message: name,
       subjectType: SUBJECT,
       subjectId: request.id,
       organizationId: request.organizationId,

@@ -5,11 +5,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 
 import { AuthLayout } from "@/components/AuthLayout";
-import { storeThaidProfile, takeActivationToken, takeNextPath } from "@/components/auth/Thaid";
+import { takeActivationToken, takeNextPath } from "@/components/auth/Thaid";
 import { useSession, type SessionUser } from "@/components/SessionProvider";
 import { Spinner } from "@/components/ui/Spinner";
 import { api, ApiError } from "@/lib/api";
-import { bdiLandingPath, isBdiStaff } from "@/lib/status";
 
 /**
  * redirect_uri ที่ลงทะเบียนไว้กับกรมการปกครอง
@@ -17,7 +16,7 @@ import { bdiLandingPath, isBdiStaff } from "@/lib/status";
  * หน้านี้ไม่ตัดสินอะไรเอง — ส่ง code กับ state ต่อให้ backend แล้วทำตามคำตอบ
  * client secret และการเทียบเลขบัตรอยู่ฝั่ง server ทั้งหมด
  *
- * ThaiD ตอบกลับมาทาง query string เสมอ ทั้งกรณีสำเร็จ (code) และผิดพลาด (error)
+ * ThaID ตอบกลับมาทาง query string เสมอ ทั้งกรณีสำเร็จ (code) และผิดพลาด (error)
  */
 export default function ThaidCallbackPage() {
   return (
@@ -30,7 +29,6 @@ export default function ThaidCallbackPage() {
 interface CallbackResult {
   purpose?: "activate";
   verified?: boolean;
-  profile?: Record<string, string | null>;
   user?: SessionUser;
 }
 
@@ -48,7 +46,7 @@ function ThaidCallback() {
 
     const state = params.get("state") ?? "";
     if (!state) {
-      setError("ไม่พบผลการยืนยันจาก ThaiD กรุณาเริ่มใหม่อีกครั้ง");
+      setError("ไม่พบผลการยืนยันจาก ThaID กรุณาเริ่มใหม่อีกครั้ง");
       return;
     }
 
@@ -63,20 +61,25 @@ function ThaidCallback() {
 
         if (result.user) {
           setUser(result.user);
-          // ปลายทางที่ฝากไว้ก่อนออกไป ThaiD — ผู้ที่มาจากลิงก์ในอีเมลต้องได้กลับ
+          // ปลายทางที่ฝากไว้ก่อนออกไป ThaID — ผู้ที่มาจากลิงก์ในอีเมลต้องได้กลับ
           // ไปหน้าที่ตั้งใจ ไม่ใช่หน้าแรก (เหมือนทางรหัสผ่าน + OTP)
           const next = takeNextPath();
           router.replace(
-            next ?? (isBdiStaff(result.user.roles) ? bdiLandingPath(result.user.roles) : "/"),
+            // ทุก role มีหน้าแรกที่ `/` แล้ว
+            next ?? "/",
           );
           return;
         }
 
-        if (result.profile) storeThaidProfile(result.profile);
+        /**
+         * ชื่อจากบัตรไม่ต้องฝากผ่านเบราว์เซอร์อีกแล้ว — backend เขียนลงแถวบัญชีตั้งแต่
+         * ตอนเทียบเลขบัตรผ่าน หน้า /activate จึงอ่านจาก `GET /invitation` ทางเดียว
+         * ซึ่งเป็นเงื่อนไขที่ทำให้ล็อกช่องชื่อได้จริง (ค่าใน sessionStorage ปลอมได้)
+         */
         const token = takeActivationToken();
         router.replace(token ? `/activate?token=${encodeURIComponent(token)}` : "/activate");
       } catch (err) {
-        setError(err instanceof ApiError ? err.message : "ยืนยันตัวตนกับ ThaiD ไม่สำเร็จ");
+        setError(err instanceof ApiError ? err.message : "ยืนยันตัวตนกับ ThaID ไม่สำเร็จ");
       }
     })();
   }, [params, router, setUser]);
@@ -86,7 +89,7 @@ function ThaidCallback() {
     return (
       <AuthLayout
         title="ยืนยันตัวตนไม่สำเร็จ"
-        description="ระบบไม่สามารถยืนยันตัวตนของคุณกับ ThaiD ได้"
+        description="ระบบไม่สามารถยืนยันตัวตนของคุณกับ ThaID ได้"
         footer={
           <div className="flex flex-col gap-2">
             {token ? (
@@ -111,7 +114,7 @@ function ThaidCallback() {
   }
 
   return (
-    <AuthLayout title="กำลังยืนยันตัวตน" description="ระบบกำลังตรวจสอบผลการยืนยันจาก ThaiD">
+    <AuthLayout title="กำลังยืนยันตัวตน" description="ระบบกำลังตรวจสอบผลการยืนยันจาก ThaID">
       <div className="flex justify-center py-6">
         <Spinner />
       </div>

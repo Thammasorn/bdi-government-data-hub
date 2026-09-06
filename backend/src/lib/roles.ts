@@ -4,12 +4,12 @@ import { ROLE_CODES, type RoleCode } from "./system.js";
 
 /** ชื่อ role ที่แสดงบนหน้าจอ — คู่กับ iam.role.name_th ใน sheet `role` */
 export const ROLE_LABELS: Record<RoleCode, string> = {
-  [ROLE_CODES.ORGANIZATION_USER]: "ผู้ดำเนินการของหน่วยงาน",
-  [ROLE_CODES.ORGANIZATION_APPROVER]: "ผู้มีอำนาจกระทำการแทนของหน่วยงาน",
-  [ROLE_CODES.BDI_OFFICER]: "ผู้ดำเนินการของ BDI",
+  [ROLE_CODES.ORGANIZATION_USER]: "ผู้ประสานงานของหน่วยงาน",
+  [ROLE_CODES.ORGANIZATION_APPROVER]: "ผู้มีอำนาจอนุมัติของหน่วยงาน",
+  [ROLE_CODES.BDI_OFFICER]: "ผู้ประสานงานของ BDI",
   [ROLE_CODES.BDI_DATASET_SPECIALIST]: "ผู้เชี่ยวชาญด้านข้อมูลของ BDI",
-  [ROLE_CODES.BDI_FINAL_APPROVER]: "ผู้มีอำนาจกระทำการแทนของ BDI",
-  [ROLE_CODES.BDI_LEGAL_OFFICER]: "ผู้ดำเนินการทางกฎหมายของ BDI",
+  [ROLE_CODES.BDI_FINAL_APPROVER]: "ผู้มีอำนาจอนุมัติของ BDI",
+  [ROLE_CODES.BDI_LEGAL_OFFICER]: "ผู้เชี่ยวชาญด้านกฎหมายของ BDI",
   [ROLE_CODES.SYSTEM_ADMINISTRATOR]: "ผู้ดูแลระบบ",
 };
 
@@ -36,16 +36,55 @@ export const REQUEST_STATUS_LABELS: Record<RequestStatus, string> = {
 };
 
 /**
+ * ภาษาไทยไม่เว้นวรรคระหว่างคำ — ยกเว้นเมื่อคำก่อนหน้าลงท้ายด้วยอักษรละติน
+ * "ผู้ประสานงานของ BDI" + "ตรวจสอบ" ต่อกันตรง ๆ ได้ "BDIตรวจสอบ" ซึ่งอ่านเป็นคำเดียว
+ */
+export const roleGap = (label: string) => (/[A-Za-z0-9)]$/.test(label) ? " " : "");
+
+/**
+ * ชื่อบทบาท + สิ่งที่บทบาทนั้นทำ — ประโยคบอกด่านทุกประโยคในระบบประกอบจากตรงนี้
+ *
+ * เดิมแต่ละที่เขียนชื่อบทบาทของตัวเอง ("เจ้าหน้าที่ BDI" ที่ badge, "ผู้ประสานงานของ BDI"
+ * ที่อีเมล, "BDI" เฉย ๆ ในแผนภาพ) ผู้ใช้คนเดียวกันจึงเห็นด่านเดียวกันถูกเรียกสามชื่อ
+ * ระหว่างอีเมลที่ได้รับ ตารางที่เปิดอยู่ และหน้ารายละเอียดที่กดเข้าไป
+ */
+export const withRole = (roleCode: RoleCode, action: string) => {
+  const label = ROLE_LABELS[roleCode];
+  return `${label}${roleGap(label)}${action}`;
+};
+
+/** ด่านหนึ่ง = บทบาทหนึ่ง — ที่เดียวที่ผูกสองอย่างนี้เข้าด้วยกัน */
+export const REVIEW_TASK_ROLE: Record<ReviewTaskType, RoleCode> = {
+  [ReviewTaskType.BDI_OFFICER_REVIEW]: ROLE_CODES.BDI_OFFICER,
+  [ReviewTaskType.DATASET_SPECIALIST_REVIEW]: ROLE_CODES.BDI_DATASET_SPECIALIST,
+  [ReviewTaskType.ORGANIZATION_APPROVAL]: ROLE_CODES.ORGANIZATION_APPROVER,
+  [ReviewTaskType.BDI_FINAL_APPROVAL]: ROLE_CODES.BDI_FINAL_APPROVER,
+  [ReviewTaskType.ORGANIZATION_REVISION]: ROLE_CODES.ORGANIZATION_USER,
+};
+
+/** สิ่งที่แต่ละด่านทำ — ต่อท้ายชื่อบทบาทเป็นประโยคเดียว */
+export const REVIEW_TASK_ACTION: Record<ReviewTaskType, string> = {
+  [ReviewTaskType.BDI_OFFICER_REVIEW]: "ตรวจสอบเอกสาร",
+  [ReviewTaskType.DATASET_SPECIALIST_REVIEW]: "พิจารณา",
+  [ReviewTaskType.ORGANIZATION_APPROVAL]: "ลงนามเห็นชอบ",
+  [ReviewTaskType.BDI_FINAL_APPROVAL]: "ดำเนินการอนุมัติ",
+  [ReviewTaskType.ORGANIZATION_REVISION]: "แก้ไข",
+};
+
+/**
  * ด่านที่คำขอกำลังรออยู่ — มาจาก review_task.task_type ของ active task
  * ใช้แทน PENDING_* ที่หายไปจาก status เพื่อให้ badge บนหน้าจอยังบอกได้ว่ารอใคร
  */
-export const REVIEW_TASK_TYPE_LABELS: Record<ReviewTaskType, string> = {
-  [ReviewTaskType.BDI_OFFICER_REVIEW]: "รอเจ้าหน้าที่ BDI ตรวจสอบ",
-  [ReviewTaskType.DATASET_SPECIALIST_REVIEW]: "รอผู้เชี่ยวชาญด้านข้อมูลพิจารณา",
-  [ReviewTaskType.ORGANIZATION_APPROVAL]: "รอผู้มีอำนาจของหน่วยงานลงนาม",
-  [ReviewTaskType.BDI_FINAL_APPROVAL]: "รอ BDI อนุมัติขั้นสุดท้าย",
-  [ReviewTaskType.ORGANIZATION_REVISION]: "รอหน่วยงานแก้ไข",
-};
+export const REVIEW_TASK_TYPE_LABELS: Record<ReviewTaskType, string> = Object.fromEntries(
+  (Object.keys(REVIEW_TASK_ROLE) as ReviewTaskType[]).map((t) => [
+    t,
+    // ด่านผู้เชี่ยวชาญไม่ใช่ด่านที่ "รอ" ใครแล้วตั้งแต่ 2026-08-30 — แถวชนิดนี้เกิดขึ้น
+    // ตอนผู้เชี่ยวชาญบันทึกความเห็น ซึ่งเป็นสิ่งที่จบไปแล้ว ไม่ใช่สิ่งที่ใครกำลังรอ
+    t === ReviewTaskType.DATASET_SPECIALIST_REVIEW
+      ? `ความเห็นของ${ROLE_LABELS[REVIEW_TASK_ROLE[t]]}`
+      : `รอ${withRole(REVIEW_TASK_ROLE[t], REVIEW_TASK_ACTION[t])}`,
+  ]),
+) as Record<ReviewTaskType, string>;
 
 /** role ฝั่ง BDI ทั้งหมด — เห็นคำขอได้ทุกหน่วยงาน */
 export const BDI_ROLES: RoleCode[] = [

@@ -26,10 +26,14 @@ import { randomUUID } from "node:crypto";
 import {
   AttachmentOwnerType,
   AttachmentType,
+  ConfirmationType,
   LegalDocumentStatus,
   LegalDocumentVersionStatus,
+  ReviewTaskStatus,
+  ReviewTaskType,
   type Prisma,
   type PrismaClient,
+  type SubjectType,
 } from "@prisma/client";
 
 import {
@@ -67,13 +71,32 @@ export function variableScopeOf(scope: string): VariableScope {
 export interface PublishedDocument {
   code: string;
   nameTh: string;
+  /**
+   * ชื่อสั้นที่ผู้ใช้เห็นแทนรหัส — null สำหรับฉบับที่ไม่ได้ตั้งไว้ (A4)
+   *
+   * `code` (A0–A4) เป็นรหัสภายใน หน้าจอไม่พิมพ์มันออกมาอีกแล้วตั้งแต่ 2026-09-06
+   * แต่ API ยังส่งไปด้วย เพราะการข้าม "ไม่เกี่ยวข้อง" เทียบด้วยรหัส ไม่ใช่ชื่อ
+   */
+  shortname: string | null;
+  /** ข้อความเตือนใต้บรรทัด "เอกสารฉบับที่ n จาก m" — ไม่ใช่เนื้อเอกสาร */
+  legalNotice: string | null;
   displayOrder: number;
   versionId: string;
   versionNumber: number;
+  /** วันที่เวอร์ชันนี้เริ่มมีผล — เอกสารพิมพ์ค่านี้ได้ผ่าน {{document.effectiveDate}} */
+  effectiveAt: Date | null;
   /** PDF ที่ render ไว้ให้เปิดอ่าน — ผนวกที่ไม่มีช่องให้เติมใช้ไฟล์นี้ได้ตรง ๆ */
   pdfAttachmentId: string | null;
   /** true = เอกสารมี placeholder จึงต้อง render ใหม่ต่อคำขอ ไม่ใช้ไฟล์กลาง */
   hasPlaceholders: boolean;
+  /**
+   * false = ผู้มีอำนาจกดข้าม "ไม่เกี่ยวข้อง" ได้ ไม่ต้องเห็นชอบก็ลงนามผ่าน
+   *
+   * คอลัมน์ `legal_document.is_required` มีมาตั้งแต่ต้นตามดีไซน์ แต่ไม่เคยมีใครอ่าน —
+   * `seed-masters.ts` ตั้งเป็น true ให้ทุกฉบับแล้วจบ ตอนนี้แอดมินสลับได้ผ่าน
+   * `PATCH /api/admin/legal-documents/:code`
+   */
+  isRequired: boolean;
 }
 
 /**
@@ -105,9 +128,13 @@ export async function publishedDocuments(
     out.push({
       code: doc.documentCode,
       nameTh: doc.nameTh,
+      shortname: doc.shortname,
+      legalNotice: doc.legalNotice,
       displayOrder: doc.displayOrder,
+      isRequired: doc.isRequired,
       versionId: version.id,
       versionNumber: version.versionNumber,
+      effectiveAt: version.effectiveAt,
       pdfAttachmentId: pdf?.id ?? null,
       hasPlaceholders: source
         ? assertKnownPlaceholders(await readAttachment(source), variableScopeOf(scope)).length > 0
@@ -115,6 +142,77 @@ export async function publishedDocuments(
     });
   }
   return out;
+}
+
+/** คำขอหนึ่งใบที่เอกสารผูกอยู่ด้วย — review_task, signature_confirmation ใช้คู่นี้ชี้ */
+export interface DocumentSubject {
+  subjectType: SubjectType;
+  subjectId: string;
+}
+
+/**
+ * ฉบับที่หน่วยงานกด "ไม่เกี่ยวข้อง" ไปแล้ว คืนมาเป็นชุดของ**รหัสเอกสาร** ไม่ใช่ version id
+ *
+ * เทียบด้วยรหัสเพราะการตัดสินใจของหน่วยงานเป็นเรื่องของ**ตัวเอกสาร** ไม่ใช่ของเวอร์ชัน —
+ * เขาบอกว่า "A3 ไม่เกี่ยวกับหน่วยงานเรา" ไม่ได้บอกว่า "A3 ฉบับลงวันที่นี้ไม่เกี่ยว"
+ * ถ้าฝ่ายกฎหมายเผยแพร่ A3 เวอร์ชันใหม่หลังจากนั้น มันต้องยังถูกข้ามอยู่ ไม่ใช่โผล่กลับมา
+ */
+async function skippedDocumentCodes(db: Db, subject: DocumentSubject): Promise<Set<string>> {
+  const confirmation = await db.signatureConfirmation.findFirst({
+    where: { ...subject, confirmationType: ConfirmationType.ORGANIZATION_APPROVAL },
+    orderBy: { confirmedAt: "desc" },
+    select: { confirmationPayloadJson: true },
+  });
+
+  // การลงนามที่เกิดก่อนมีฟีเจอร์นี้ไม่มีคีย์นี้ใน payload — ไม่ได้ข้ามอะไรไว้
+  const payload = confirmation?.confirmationPayloadJson as { notApplicableVersionIds?: unknown } | null;
+  const ids = Array.isArray(payload?.notApplicableVersionIds)
+    ? payload.notApplicableVersionIds.filter((v): v is string => typeof v === "string")
+    : [];
+  if (ids.length === 0) return new Set();
+
+  const versions = await db.legalDocumentVersion.findMany({
+    where: { id: { in: ids } },
+    select: { legalDocument: { select: { documentCode: true } } },
+  });
+  return new Set(versions.map((v) => v.legalDocument.documentCode));
+}
+
+/**
+ * ชุดเอกสารของคำขอหนึ่งใบ = ที่เผยแพร่อยู่ ลบฉบับที่หน่วยงานระบุว่าไม่เกี่ยวข้องกับตัวเอง
+ *
+ * มีที่เดียวเพราะสองที่ต้องตอบเท่ากันเสมอ: รายการที่หน้าจอเอาไปแสดงกับด่านตรวจตอนกด
+ * ลงนาม ถ้าแยกกันคำนวณ ด่านหลังจะตัดฉบับที่ถูกข้ามออกเงียบ ๆ ในขณะที่หน้าจอยังโชว์มัน
+ * อยู่ — ผู้อนุมัติ BDI จึงอ่านและนึกว่าตัวเองลงนามฉบับที่ไม่มีใครฝั่งหน่วยงานยอมรับ
+ *
+ * **ระหว่างที่ด่านผู้มีอำนาจของหน่วยงานยังเปิดอยู่ ไม่กรองอะไรทั้งนั้น** — คำขอที่ถูกตีกลับ
+ * มาให้แก้แล้วส่งกลับขึ้นไปใหม่ จะเปิด task ลงนามใบใหม่ให้เขาเลือกทั้งชุดอีกครั้ง ถ้ายึด
+ * การกด "ไม่เกี่ยวข้อง" ของรอบก่อนไว้ เขาจะเปลี่ยนใจกลับมาเห็นชอบฉบับนั้นไม่ได้เลย
+ */
+export async function requestDocuments(
+  db: Db,
+  scope: LegalScope,
+  subject: DocumentSubject,
+): Promise<{ documents: PublishedDocument[]; notApplicable: PublishedDocument[] }> {
+  const published = await publishedDocuments(db, scope);
+
+  const signingNow = await db.reviewTask.findFirst({
+    where: {
+      ...subject,
+      taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
+      status: { in: [ReviewTaskStatus.PENDING, ReviewTaskStatus.IN_PROGRESS] },
+    },
+    select: { id: true },
+  });
+  if (signingNow) return { documents: published, notApplicable: [] };
+
+  const skipped = await skippedDocumentCodes(db, subject);
+  if (skipped.size === 0) return { documents: published, notApplicable: [] };
+
+  return {
+    documents: published.filter((d) => !skipped.has(d.code)),
+    notApplicable: published.filter((d) => skipped.has(d.code)),
+  };
 }
 
 /** .docx ต้นแบบของเวอร์ชันหนึ่ง — สิ่งที่เอาไปเติมค่าแล้ว render */

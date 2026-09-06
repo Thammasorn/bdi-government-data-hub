@@ -23,7 +23,7 @@
 
 | enum | ค่า |
 | --- | --- |
-| `DatasetRequestStatus` | `DRAFT` · `PENDING_OFFICER_REVIEW` · `PENDING_ORG_APPROVER` · `PENDING_OFFICER_FINAL_CHECK` · `PENDING_BDI_APPROVAL` · `NEEDS_REVISION` · `APPROVED` · `REJECTED` |
+| `DatasetRequestStatus` | `DRAFT` · `PENDING_OFFICER_REVIEW` · `PENDING_ORG_APPROVER` · `PENDING_BDI_APPROVAL` · `NEEDS_REVISION` · `APPROVED` · `REJECTED` |
 | `DatasetRequestEventType` | `CREATED` · `SUBMITTED` · `SPECIALIST_ASSIGNED` · `SPECIALIST_UNASSIGNED` · `SPECIALIST_COMMENTED` · `OFFICER_FORWARDED` · `OFFICER_REVISION_REQUESTED` · `ORG_APPROVER_SIGNED` · `ORG_APPROVER_REVISION_REQUESTED` · `OFFICER_CONFIRMED` · `OFFICER_FINAL_REVISION_REQUESTED` · `BDI_APPROVED` · `BDI_REJECTED` · `BDI_REVISION_REQUESTED` |
 | `DatasetAttachmentKind` | `DATA_DICTIONARY` · `EXAMPLE_DATA` · `GENERATED_FORM` |
 | `DatasetType` | `RECORD` · `STATISTIC` · `GEOGRAPHIC` · `MULTIMEDIA` · `OTHER` |
@@ -84,7 +84,7 @@ docker compose exec backend npm run prisma:migrate -- --name dataset_registratio
 | `POST` | `/api/dataset-requests/:id/generate-form` | `ORG_USER` ในหน่วยงาน | validate ครบชุด แล้วสร้าง PDF |
 | `POST` | `/api/dataset-requests/:id/submit` | `ORG_USER` ในหน่วยงาน | นำส่ง → `PENDING_OFFICER_REVIEW` |
 | `POST` | `/api/dataset-requests/:id/review` | ตามสถานะปัจจุบัน | **จุดตัดสินใจเดียวของทุกด่าน** |
-| `POST` | `/api/dataset-requests/:id/assign` | `BDI_OFFICER` | assign / ถอน data specialist |
+| `POST` | `/api/dataset-requests/:id/assign` | `BDI_OFFICER` | ขอความเห็น / ถอน data specialist — **ไม่ย้ายด่าน** (409 ถ้าคำขอไม่ได้อยู่ที่ `BDI_OFFICER_REVIEW`) |
 | `GET` | `/api/dataset-requests/specialists` | `BDI_OFFICER` | รายชื่อ `BDI_DATASET_SPECIALIST` ที่ `ACTIVE` |
 | `GET` | `/api/notifications` | ทุกคนที่ล็อกอิน | 20 รายการล่าสุด + จำนวนที่ยังไม่อ่าน |
 | `POST` | `/api/notifications/:id/read`, `/api/notifications/read-all` | เจ้าของ notification | ทำเครื่องหมายว่าอ่านแล้ว |
@@ -97,17 +97,18 @@ docker compose exec backend npm run prisma:migrate -- --name dataset_registratio
 | --- | --- | --- | --- |
 | `PENDING_OFFICER_REVIEW` | `BDI_OFFICER` | `forward` | `PENDING_ORG_APPROVER` |
 | | | `request_revision` | `NEEDS_REVISION` |
-| | specialist ที่ถูก assign | `comment` | *(ไม่เปลี่ยนสถานะ)* |
-| | | `request_revision` | `NEEDS_REVISION` |
-| `PENDING_ORG_APPROVER` | ผู้มีอำนาจของหน่วยงาน | `approve` (ลงนาม) | `PENDING_OFFICER_FINAL_CHECK` |
-| | | `request_revision` | `NEEDS_REVISION` |
-| `PENDING_OFFICER_FINAL_CHECK` | `BDI_OFFICER` | `confirm` | `PENDING_BDI_APPROVAL` |
+| | specialist ที่ถูกขอความเห็น | `comment` | *(ไม่เปลี่ยนทั้งสถานะและด่าน)* |
+| `PENDING_ORG_APPROVER` | ผู้มีอำนาจของหน่วยงาน | `approve` (ลงนาม) | `PENDING_BDI_APPROVAL` |
 | | | `request_revision` | `NEEDS_REVISION` |
 | `BDI_FINAL_APPROVAL` | `BDI_FINAL_APPROVER` | `approve` | `APPROVED` (+ สร้าง PDF ฉบับอนุมัติ) |
 | | | `reject` | `REJECTED` |
 | | | `request_revision` | `NEEDS_REVISION` |
 
 `request_revision` และ `reject` บังคับ `note` ≥ 10 ตัวอักษร ทุกกรณี
+
+> **แก้ไข 2026-08-30** — เดิมมีอีกหนึ่งแถวคั่นอยู่: `PENDING_OFFICER_FINAL_CHECK` ที่
+> `BDI_OFFICER` กด `confirm` เพื่อไปต่อยัง `PENDING_BDI_APPROVAL` ด่านนั้นถูกยกเลิกทั้งหมด
+> การลงนามของหน่วยงานจึงเปิดด่านอนุมัติโดยตรง
 
 ---
 

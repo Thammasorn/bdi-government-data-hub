@@ -1,27 +1,29 @@
 "use client";
 
+import clsx from "clsx";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState, type FormEvent } from "react";
 
 import { AuthLayout } from "@/components/AuthLayout";
 import { ThaidButton, storeActivationToken } from "@/components/auth/Thaid";
-import { useSession, type SessionUser } from "@/components/SessionProvider";
+import { sessionUserName, useSession, type SessionUser } from "@/components/SessionProvider";
 import { Button } from "@/components/ui/Button";
 import { SelectField, TextField } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
-import { PREFIXES, bdiLandingPath, isBdiStaff } from "@/lib/status";
+import { PASSWORD_RULES, passwordMeetsRules } from "@/lib/password";
+import { PREFIXES } from "@/lib/status";
 
 /**
- * หน้าจอ Account Activation (§2.3–2.5 ของสเปก ThaiD)
+ * หน้าจอ Account Activation (§2.3–2.5 ของสเปก ThaID)
  *
- *   ?token=... มาจากลิงก์ในอีเมล  → ตรวจคีย์ แล้วเข้าขั้นยืนยันตัวตนด้วย ThaiD ทันที
+ *   ?token=... มาจากลิงก์ในอีเมล  → ตรวจคีย์ แล้วเข้าขั้นยืนยันตัวตนด้วย ThaID ทันที
  *   ไม่มี token (เข้ามาจากหน้า login) → ให้กรอก activation key ก่อน แล้วเดินเส้นทางเดียวกัน
  *
  * "ยืนยันตัวตนแล้วหรือยัง" ถามจาก backend เสมอ (`identityVerified`) ไม่ได้จำไว้ในหน้าเว็บ
- * เพราะกลับมาจาก ThaiD คนละ page load กัน และค่าที่เบราว์เซอร์อ้างเองก็เชื่อไม่ได้อยู่ดี
+ * เพราะกลับมาจาก ThaID คนละ page load กัน และค่าที่เบราว์เซอร์อ้างเองก็เชื่อไม่ได้อยู่ดี
  */
 interface InvitationInfo {
   email: string;
@@ -38,6 +40,16 @@ interface InvitationInfo {
     lastName: string | null;
     phone: string | null;
   };
+  /**
+   * ช่องไหนแก้ไม่ได้ — ตัดสินที่ backend (`lockedProfile()` ใน routes/auth.ts) ไม่ใช่
+   * ที่นี่ ค่าที่ล็อกคือชื่อจากบัตรที่ ThaID ส่งมา ตกมาที่ชื่อที่เจ้าหน้าที่กรอกไว้
+   * ตอนเชิญ `POST /activate` ทิ้งค่าใน body ของช่องเหล่านี้อยู่แล้ว หน้าเว็บทำให้เห็น
+   */
+  profileLocked: {
+    prefix: boolean;
+    firstName: boolean;
+    lastName: boolean;
+  };
 }
 
 export default function ActivatePage() {
@@ -52,7 +64,6 @@ function ActivateFlow() {
   const token = useSearchParams().get("token") ?? "";
   const [invitation, setInvitation] = useState<InvitationInfo | null>(null);
   const [invalidReason, setInvalidReason] = useState<string | null>(null);
-
   const load = useCallback(async () => {
     if (!token) return;
     try {
@@ -76,6 +87,49 @@ function ActivateFlow() {
     <AccountCreationStep token={token} invitation={invitation} />
   ) : (
     <IdentityStep token={token} invitation={invitation} />
+  );
+}
+
+/**
+ * เตือนก่อนเริ่ม เมื่อเบราว์เซอร์นี้มีคนล็อกอินค้างอยู่ และไม่ใช่คนในคำเชิญ
+ *
+ * การเปิดใช้งานบัญชีจบด้วย `issueSession()` ซึ่งหมุน cookie ใบเดียวของเบราว์เซอร์ทิ้ง
+ * คนที่ล็อกอินค้างอยู่จึงหลุดออกจากระบบทุกแท็บจริง ๆ — คนที่กดลิงก์มาจากอีเมลแทบไม่มีทาง
+ * เดาได้เอง บอกที่ต้นทางถูกกว่ามาบอกทีหลังว่าเกิดอะไรขึ้นไปแล้ว
+ *
+ * ไม่ปิดทางให้ต้องออกจากระบบก่อน — "เครื่องเดียว หลายคนใช้ต่อกัน" เป็นเคสที่ถูกต้อง
+ */
+function SignedInWarning({ invitationEmail }: { invitationEmail: string }) {
+  const { user, setUser } = useSession();
+  const [busy, setBusy] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
+
+  if (!user || acknowledged) return null;
+  if (user.email.toLowerCase() === invitationEmail.toLowerCase()) return null;
+
+  const name = sessionUserName(user);
+  const logout = async () => {
+    setBusy(true);
+    await api.post("/api/auth/logout").catch(() => undefined);
+    setUser(null);
+    setBusy(false);
+  };
+
+  return (
+    <div className="rounded-xl bg-warning-bg p-5">
+      <p className="text-sm leading-relaxed text-warning">
+        เบราว์เซอร์นี้กำลังเข้าสู่ระบบในชื่อ <span className="font-semibold">{name}</span> —
+        การเปิดใช้งานบัญชี {invitationEmail} จะทำให้ {name} ออกจากระบบทุกแท็บ
+      </p>
+      <div className="mt-4 flex flex-wrap gap-3">
+        <Button variant="secondary" loading={busy} onClick={logout}>
+          ออกจากระบบก่อน
+        </Button>
+        <Button variant="secondary" onClick={() => setAcknowledged(true)}>
+          ดำเนินการต่อ
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -131,24 +185,25 @@ function KeyEntry() {
   );
 }
 
-// ------------------------------------------------------------------ §2.4 ThaiD
+// ------------------------------------------------------------------ §2.4 ThaID
 
 function IdentityStep({ token, invitation }: { token: string; invitation: InvitationInfo }) {
   return (
     <AuthLayout
-      title="ยืนยันตัวตนด้วย ThaiD"
+      title="ยืนยันตัวตนด้วย ThaID"
       description={`เปิดใช้งานบัญชี ${invitation.email} ในสิทธิ์ ${invitation.roleLabel}`}
       footer={
         <p>
-          ยังไม่มีแอปพลิเคชัน ThaiD? ลงทะเบียนได้ที่แอป ThaiD ของกรมการปกครอง
+          ยังไม่มีแอปพลิเคชัน ThaID? ลงทะเบียนได้ที่แอป ThaID ของกรมการปกครอง
           หรือติดต่อเจ้าหน้าที่ BDI ที่เชิญคุณเข้าระบบ
         </p>
       }
     >
       <div className="flex flex-col gap-5">
+        <SignedInWarning invitationEmail={invitation.email} />
         <div className="rounded-xl border border-line bg-canvas p-5">
           <p className="text-sm leading-relaxed text-ink-muted">
-            ระบบจะเปรียบเทียบเลขประจำตัวประชาชนที่ได้จาก ThaiD
+            ระบบจะเปรียบเทียบเลขประจำตัวประชาชนที่ได้จาก ThaID
             กับเลขที่เจ้าหน้าที่บันทึกไว้ตอนสร้างบัญชีของคุณ
             {invitation.cidHint ? (
               <>
@@ -171,7 +226,7 @@ function IdentityStep({ token, invitation }: { token: string; invitation: Invita
           purpose="activate"
           token={token}
           onBeforeRedirect={() => storeActivationToken(token)}
-          label="ยืนยันตัวตนด้วย ThaiD"
+          label="ยืนยันตัวตนด้วย ThaID"
         />
       </div>
     </AuthLayout>
@@ -184,51 +239,35 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
   const router = useRouter();
   const { setUser } = useSession();
   const { show } = useToast();
+  const locked = invitation.profileLocked;
 
   /**
    * ตั้งต้นด้วยสิ่งที่ระบบรู้อยู่แล้ว ไม่ใช่ฟอร์มเปล่า
    *
-   * ผู้มีอำนาจกระทำการแทนถูกเจ้าหน้าที่ของหน่วยงานกรอกชื่อ นามสกุล และเบอร์โทรไว้แล้ว
-   * ตั้งแต่ตอนลงทะเบียนหน่วยงาน — ให้เขาพิมพ์ซ้ำคือให้โอกาสพิมพ์ไม่ตรงกับที่ลงทะเบียนไว้
-   * เติมให้เป็นค่าตั้งต้น แก้ได้ทุกช่อง
+   * คำนำหน้า ชื่อ นามสกุล มาจาก `GET /invitation` ซึ่งอ่านจากแถวบัญชี — callback ของ
+   * ThaID เขียน claim จากบัตรลงไปตั้งแต่ตอนยืนยันตัวตนผ่าน แล้วตกมาที่ชื่อที่เจ้าหน้าที่
+   * กรอกไว้ตอนเชิญเมื่อ ThaID ไม่ได้ส่ง claim นั้นมา ช่องที่มีค่าแล้วจึงถูกล็อก
+   * (การ์ด "แก้ form user registration") ส่วนเบอร์โทร ThaID ไม่มีให้ ยังแก้ได้ตามเดิม
+   *
+   * ไม่ต้องกรอง `PREFIXES` อีกแล้ว: คำนำหน้าที่มีค่าอยู่แล้วแสดงเป็นข้อความอ่านอย่างเดียว
+   * ค่านอกรายการอย่าง "นายแพทย์" จึงไม่ทำให้ dropdown ว่างแล้วส่งค่าว่างไปอย่างเงียบ ๆ
    */
   const [form, setForm] = useState({
-    // คำนำหน้าเป็น dropdown ที่มีตัวเลือกจำกัด ค่าที่ไม่อยู่ในรายการ (เช่น "นายแพทย์"
-    // ที่มาจากข้อมูลนำเข้า) จะทำให้ช่องแสดงเป็นว่างแล้วส่งค่าว่างไปโดยที่คนกรอกไม่ทันเห็น
-    prefix: PREFIXES.includes(invitation.profile.prefix ?? "") ? invitation.profile.prefix! : "",
-    firstName: invitation.profile.firstName ?? "",
-    lastName: invitation.profile.lastName ?? "",
+    prefix: (invitation.profile.prefix ?? "").trim(),
+    firstName: (invitation.profile.firstName ?? "").trim(),
+    lastName: (invitation.profile.lastName ?? "").trim(),
     phone: invitation.profile.phone ?? "",
     password: "",
+    confirmPassword: "",
   });
   const [fields, setFields] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
 
-  /**
-   * ชื่อจาก ThaiD ที่หน้า callback ฝากไว้ ใช้เติมฟอร์มให้ตรงกับบัตร
-   * ไม่มีก็ไม่เป็นไร — ผู้ใช้กรอกเองได้ และฝั่ง server ไม่ได้เชื่อค่านี้อยู่แล้ว
-   *
-   * **ทับค่าที่มาจากคำเชิญ** สำหรับชื่อ นามสกุล และคำนำหน้า — บัตรประชาชนมีน้ำหนักกว่า
-   * สิ่งที่เพื่อนร่วมงานพิมพ์ให้ ส่วนเบอร์โทรไม่มีใน ThaiD จึงเหลือค่าจากคำเชิญไว้อย่างเดิม
-   * ค่าที่ ThaiD ไม่ได้ส่งมา (คำนำหน้าอยู่นอก scope ที่ขอ) ก็ไม่ล้างของเดิมทิ้ง
-   */
-  useEffect(() => {
-    const raw = sessionStorage.getItem("thaid:profile");
-    if (!raw) return;
-    try {
-      const profile = JSON.parse(raw) as Record<string, string | null>;
-      setForm((f) => ({
-        ...f,
-        prefix: PREFIXES.includes(profile.prefix ?? "") ? profile.prefix! : f.prefix,
-        firstName: profile.firstName ?? f.firstName,
-        lastName: profile.lastName ?? f.lastName,
-      }));
-    } catch {
-      /* ค่าเสีย = ไม่เติม */
-    }
-  }, []);
-
   const set = (key: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [key]: v }));
+
+  const passwordOk = passwordMeetsRules(form.password);
+  // ฟ้องเฉพาะเมื่อเริ่มพิมพ์ช่องยืนยันแล้ว — ไม่ใช่ตั้งแต่ตัวอักษรแรกของช่องบน
+  const mismatch = form.confirmPassword.length > 0 && form.confirmPassword !== form.password;
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -236,10 +275,10 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
     setFields({});
     try {
       const data = await api.post<{ user: SessionUser }>("/api/auth/activate", { token, ...form });
-      sessionStorage.removeItem("thaid:profile");
       setUser(data.user);
       show({ tone: "success", title: "เปิดใช้งานบัญชีสำเร็จ" });
-      router.push(isBdiStaff(data.user.roles) ? bdiLandingPath(data.user.roles) : "/");
+      // ทุก role มีหน้าแรกที่ `/` แล้ว
+      router.push("/");
     } catch (err) {
       if (err instanceof ApiError) {
         setFields(err.fields);
@@ -256,48 +295,79 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
   return (
     <AuthLayout
       title="สร้างบัญชีผู้ใช้"
-      description={`ยืนยันตัวตนกับ ThaiD เรียบร้อยแล้ว เหลือเพียงตั้งรหัสผ่านสำหรับ ${invitation.email}`}
+      description={`ยืนยันตัวตนกับ ThaID เรียบร้อยแล้ว เหลือเพียงตั้งรหัสผ่านสำหรับ ${invitation.email}`}
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>
+        <SignedInWarning invitationEmail={invitation.email} />
         <div className="rounded-xl bg-success-bg px-4 py-3 text-[13px] leading-relaxed text-success">
-          ยืนยันตัวตนด้วย ThaiD สำเร็จ — เลขประจำตัวประชาชนตรงกับที่บันทึกไว้ในระบบ
+          ยืนยันตัวตนด้วย ThaID สำเร็จ — เลขประจำตัวประชาชนตรงกับที่บันทึกไว้ในระบบ
         </div>
 
         <TextField label="อีเมล" value={invitation.email} readOnly disabled hint="อีเมลนี้มาจากคำเชิญ แก้ไขไม่ได้" />
 
         <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-3">
-          <SelectField
-            label="คำนำหน้า"
-            required
-            value={form.prefix}
-            onChange={(e) => set("prefix")(e.target.value)}
-            error={fields.prefix}
-          >
-            <option value="">เลือก</option>
-            {PREFIXES.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </SelectField>
-          <TextField
-            label="ชื่อ"
-            required
-            autoComplete="given-name"
-            value={form.firstName}
-            onChange={(e) => set("firstName")(e.target.value)}
-            error={fields.firstName}
-          />
+          {locked.prefix ? (
+            <TextField label="คำนำหน้า" value={form.prefix} readOnly />
+          ) : (
+            <SelectField
+              label="คำนำหน้า"
+              required
+              value={form.prefix}
+              onChange={(e) => set("prefix")(e.target.value)}
+              error={fields.prefix}
+            >
+              <option value="">เลือก</option>
+              {PREFIXES.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </SelectField>
+          )}
+          {locked.firstName ? (
+            <TextField label="ชื่อ" value={form.firstName} readOnly />
+          ) : (
+            <TextField
+              label="ชื่อ"
+              required
+              autoComplete="given-name"
+              value={form.firstName}
+              onChange={(e) => set("firstName")(e.target.value)}
+              error={fields.firstName}
+            />
+          )}
         </div>
 
-        <TextField
-          label="นามสกุล"
-          required
-          autoComplete="family-name"
-          value={form.lastName}
-          onChange={(e) => set("lastName")(e.target.value)}
-          error={fields.lastName}
-        />
+        {locked.lastName ? (
+          <TextField label="นามสกุล" value={form.lastName} readOnly />
+        ) : (
+          <TextField
+            label="นามสกุล"
+            required
+            autoComplete="family-name"
+            value={form.lastName}
+            onChange={(e) => set("lastName")(e.target.value)}
+            error={fields.lastName}
+          />
+        )}
+
+        {/*
+          บอกครั้งเดียวว่าทำไมช่องข้างบนแก้ไม่ได้ แทนที่จะเขียน hint ซ้ำใต้ทุกช่อง —
+          เหตุผลเป็นเรื่องเดียวกันทั้งกลุ่ม และช่องที่ยังไม่ล็อก (คำนำหน้าเป็นปกติ
+          เพราะ ThaID ไม่ส่ง claim นั้นมา) ต้องไม่ถูกอ่านว่าล็อกไปด้วย
+        */}
+        {locked.prefix || locked.firstName || locked.lastName ? (
+          <p className="-mt-2 text-[13px] leading-relaxed text-ink-muted">
+            {locked.prefix && locked.firstName && locked.lastName
+              ? "คำนำหน้า ชื่อ และนามสกุล"
+              : locked.firstName && locked.lastName
+                ? "ชื่อและนามสกุล"
+                : "ข้อมูลที่แสดงไว้แล้ว"}{" "}
+            เป็นข้อมูลที่ระบบได้รับมาแล้ว จึงแก้ไขในหน้านี้ไม่ได้ —
+            หากไม่ตรงกับบัตรประชาชน กรุณาติดต่อเจ้าหน้าที่ BDI ที่เชิญคุณเข้าระบบ
+          </p>
+        ) : null}
+
         <TextField
           label="เบอร์โทรศัพท์"
           required
@@ -308,15 +378,31 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
           onChange={(e) => set("phone")(e.target.value)}
           error={fields.phone}
         />
+
+        <div className="flex flex-col gap-3">
+          <TextField
+            label="ตั้งรหัสผ่าน"
+            type="password"
+            required
+            autoComplete="new-password"
+            value={form.password}
+            onChange={(e) => set("password")(e.target.value)}
+            error={fields.password}
+            valid={passwordOk}
+          />
+          <PasswordRequirements value={form.password} />
+        </div>
+
         <TextField
-          label="ตั้งรหัสผ่าน"
+          label="ยืนยันรหัสผ่าน"
           type="password"
           required
           autoComplete="new-password"
-          value={form.password}
-          onChange={(e) => set("password")(e.target.value)}
-          error={fields.password}
-          hint="อย่างน้อย 8 ตัวอักษร ประกอบด้วยตัวอักษรและตัวเลข"
+          value={form.confirmPassword}
+          onChange={(e) => set("confirmPassword")(e.target.value)}
+          error={mismatch ? "รหัสผ่านทั้งสองช่องไม่ตรงกัน" : fields.confirmPassword}
+          valid={form.confirmPassword.length > 0 && !mismatch && passwordOk}
+          hint="พิมพ์รหัสผ่านเดิมอีกครั้ง เพื่อกันการพิมพ์ผิดโดยไม่รู้ตัว"
         />
 
         <Button type="submit" size="lg" loading={submitting} className="mt-1 w-full">
@@ -324,6 +410,50 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
         </Button>
       </form>
     </AuthLayout>
+  );
+}
+
+/**
+ * ข้อกำหนดรหัสผ่านที่ติ๊กเองระหว่างพิมพ์
+ *
+ * แสดงทั้งห้าข้อตลอดเวลา ไม่ใช่โผล่มาเฉพาะข้อที่ยังไม่ผ่าน — คนตั้งรหัสผ่านต้องเห็น
+ * ข้อกำหนดทั้งชุดก่อนเริ่มพิมพ์ ไม่ใช่ค่อย ๆ รู้ทีละข้อจากข้อความ error
+ *
+ * สถานะไม่ได้บอกด้วยสีอย่างเดียว (docs/02-ui-spec.md): ข้อที่ผ่านแล้วมีเครื่องหมายถูก
+ * ข้อที่ยังไม่ผ่านเป็นวงกลมว่าง และมีข้อความสำหรับโปรแกรมอ่านหน้าจอกำกับทุกข้อ
+ */
+function PasswordRequirements({ value }: { value: string }) {
+  return (
+    <ul className="flex flex-col gap-1.5 rounded-xl bg-canvas px-4 py-3">
+      {PASSWORD_RULES.map((rule) => {
+        const met = rule.test(value);
+        return (
+          <li
+            key={rule.id}
+            className={clsx(
+              "flex items-start gap-2 text-[13px] leading-relaxed",
+              met ? "text-success" : "text-ink-muted",
+            )}
+          >
+            <span aria-hidden="true" className="mt-[3px] shrink-0">
+              {met ? (
+                <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.2">
+                  <path d="m3 8.5 3.2 3.2L13 5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6">
+                  <circle cx="8" cy="8" r="4" />
+                </svg>
+              )}
+            </span>
+            <span>
+              {rule.label}
+              <span className="sr-only">{met ? " — ผ่านแล้ว" : " — ยังไม่ผ่าน"}</span>
+            </span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

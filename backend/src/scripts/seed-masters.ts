@@ -51,15 +51,21 @@ async function seedSystemUser() {
 }
 
 async function seedBdiOrganization() {
+  const bdiNames = {
+    nameTh: "สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)",
+    nameEn: "Big Data Institute (Public Organization)",
+  };
   await prisma.organization.upsert({
     where: { id: BDI_ORGANIZATION_ID },
-    update: {},
+    // ชื่อองค์กรเป็นค่าที่ไปโผล่บนเอกสารที่ลงนาม การ seed ซ้ำจึงต้องแก้ชื่อของแถวเดิมด้วย
+    // ไม่ใช่ปล่อยผ่านเหมือนตอนที่ update เป็นอ็อบเจ็กต์ว่าง มิฉะนั้นฐานข้อมูลที่ตั้งไว้ก่อน
+    // การเปลี่ยนชื่อ (2026-09-05) จะค้างชื่อเก่าไว้ตลอด
+    update: bdiNames,
     create: {
       id: BDI_ORGANIZATION_ID,
       organizationCode: BDI_ORGANIZATION_CODE,
       organizationType: "PUBLIC_ORGANIZATION",
-      nameTh: "สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)",
-      nameEn: "Big Data Institute",
+      ...bdiNames,
       status: OrganizationStatus.ACTIVE,
       activatedAt: new Date(),
       activatedBy: SYSTEM_USER_ID,
@@ -91,8 +97,15 @@ async function seedRoles() {
  * เอกสารทางกฎหมาย A0–A4 — sheet `legal_document`
  *
  * ชื่อของแต่ละฉบับมาจากไฟล์จริงใน assets/document-template ไม่ใช่ชื่อที่เดาไว้ตอนที่
- * ยังไม่ได้ไฟล์ (ของเดิมเขียน A1 ว่า "เงื่อนไขการเชื่อมโยงและแลกเปลี่ยนข้อมูล"
- * ทั้งที่ผนวก 1 คือข้อตกลงการประมวลผลข้อมูล DPA)
+ * ยังไม่ได้ไฟล์
+ *
+ * **ชุด 2026-08-31 สลับลำดับผนวก** จากเดิม 1=DPA 2=PDPA 3=NDA เป็น 1=NDA 2=DPA 3=PDPA
+ * รหัส `A1`–`A3` แปลว่า "ผนวก 1–3" เสมอ รหัสจึงเดินตามเลขผนวกของฝ่ายกฎหมาย ไม่ใช่ตาม
+ * เนื้อหา — ผนวกที่เผยแพร่ใหม่เป็นเวอร์ชันถัดไปของรหัสเดิม
+ *
+ * ผลข้างเคียงที่ต้องรู้: `legal_acceptance` ชี้ที่ `legal_document_version` ไฟล์ที่แต่ละคน
+ * ยอมรับไว้จึงไม่เปลี่ยน แต่ `legal_document.name_th` เป็นของ**ตัวเอกสาร** ไม่ใช่ของเวอร์ชัน
+ * แถวเก่าจึงถูกอ่านใหม่ภายใต้ชื่อใหม่ ถ้าต้องอ้างว่าใครยอมรับ "อะไร" ให้ดูที่ไฟล์ของเวอร์ชัน
  *
  * เวอร์ชัน 1 ถูกเผยแพร่จาก .docx ที่ติดมากับโค้ดใน src/assets/legal-templates/
  * **นั่นเป็นแค่ฉบับตั้งต้น** ของจริงหลังจากนี้คือเวอร์ชันล่าสุดในฐานข้อมูล ซึ่ง BDI
@@ -102,12 +115,15 @@ async function seedRoles() {
  * "Dataset Registration PDF render" ซึ่งทำให้เส้นทางนั้น render เอกสารจาก template
  * เหมือนเส้นทาง B ตัวมันมีช่องติ๊กตามตัวเลือกในแบบฟอร์ม (ดู docs/19)
  */
+const A3_NOTICE =
+  'หากหน่วยงานของท่านไม่มีการแบ่งปันข้อมูลส่วนบุคคล ให้กดปุ่ม "ไม่เกี่ยวข้อง" เพื่อข้ามไปขั้นตอนถัดไป';
+
 const LEGAL_DOCUMENTS = [
-  { code: "A0", type: "DATA_SHARING_AGREEMENT", nameTh: "ข้อตกลงในการบริหารจัดการและการแบ่งปันข้อมูล", scope: "ORGANIZATION_REGISTRATION", order: 1, signature: true, template: "A0.docx" },
-  { code: "A1", type: "DATA_PROCESSING_AGREEMENT", nameTh: "ผนวก 1 ข้อตกลงในการประมวลผลข้อมูล (DPA)", scope: "ORGANIZATION_REGISTRATION", order: 2, signature: true, template: "A1.docx" },
-  { code: "A2", type: "PERSONAL_DATA_PROCESSING_AGREEMENT", nameTh: "ผนวก 2 ข้อตกลงประมวลผลข้อมูลส่วนบุคคล (PDPA)", scope: "ORGANIZATION_REGISTRATION", order: 3, signature: true, template: "A2.docx" },
-  { code: "A3", type: "NON_DISCLOSURE_AGREEMENT", nameTh: "ผนวก 3 ข้อตกลงรักษาความลับ (NDA)", scope: "ORGANIZATION_REGISTRATION", order: 4, signature: true, template: "A3.docx" },
-  { code: "A4", type: "DATA_DELIVERY_FORM", nameTh: "แบบนำส่งข้อมูล", scope: "DATASET_REGISTRATION", order: 1, signature: true, template: "A4.docx" },
+  { code: "A0", type: "DATA_SHARING_AGREEMENT", nameTh: "ข้อตกลงหลักในการบริหารจัดการและการแบ่งปันข้อมูล", shortname: "ข้อตกลงหลักในการบริหารจัดการและการแบ่งปันข้อมูล", notice: null, scope: "ORGANIZATION_REGISTRATION", order: 1, signature: true, template: "A0.docx" },
+  { code: "A1", type: "NON_DISCLOSURE_AGREEMENT", nameTh: "ผนวก 1 สัญญารักษาความลับ (NDA)", shortname: "ผนวก 1", notice: null, scope: "ORGANIZATION_REGISTRATION", order: 2, signature: true, template: "A1.docx" },
+  { code: "A2", type: "DATA_PROCESSING_AGREEMENT", nameTh: "ผนวก 2 ข้อตกลงการประมวลผลข้อมูล (DPA)", shortname: "ผนวก 2", notice: null, scope: "ORGANIZATION_REGISTRATION", order: 3, signature: true, template: "A2.docx" },
+  { code: "A3", type: "PERSONAL_DATA_PROCESSING_AGREEMENT", nameTh: "ผนวก 3 ข้อตกลงประมวลผลข้อมูลส่วนบุคคล (PDPA)", shortname: "ผนวก 3", notice: A3_NOTICE, scope: "ORGANIZATION_REGISTRATION", order: 4, signature: true, template: "A3.docx" },
+  { code: "A4", type: "DATA_DELIVERY_FORM", nameTh: "แบบนำส่งข้อมูล", shortname: null, notice: null, scope: "DATASET_REGISTRATION", order: 1, signature: true, template: "A4.docx" },
 ] as const;
 
 const TEMPLATE_DIR = new URL("../assets/legal-templates/", import.meta.url);
@@ -117,11 +133,21 @@ async function seedLegalDocuments() {
     await prisma.legalDocument.upsert({
       where: { documentCode: doc.code },
       // ชื่อและประเภทถูกแก้ให้ตรงไฟล์จริง ฐานข้อมูลที่ seed ไว้ก่อนหน้าจึงต้องตามมาด้วย
-      update: { documentType: doc.type, nameTh: doc.nameTh, displayOrder: doc.order },
+      // shortname/legalNotice อยู่ใน update ด้วย เพราะเป็นถ้อยคำที่ฝ่ายกฎหมายสั่งเปลี่ยนได้
+      // และฐานข้อมูลที่มีอยู่แล้วต้องได้ค่าใหม่โดยไม่ต้อง reset
+      update: {
+        documentType: doc.type,
+        nameTh: doc.nameTh,
+        shortname: doc.shortname,
+        legalNotice: doc.notice,
+        displayOrder: doc.order,
+      },
       create: {
         documentCode: doc.code,
         documentType: doc.type,
         nameTh: doc.nameTh,
+        shortname: doc.shortname,
+        legalNotice: doc.notice,
         applicationScope: doc.scope,
         displayOrder: doc.order,
         isRequired: true,

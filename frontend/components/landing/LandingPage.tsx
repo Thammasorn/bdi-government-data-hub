@@ -20,7 +20,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
-import { LogoMark } from "@/components/brand/Logo";
+import { LogoImage } from "@/components/brand/Logo";
 
 import diagram from "./d2-platform-diagram.webp";
 import {
@@ -153,7 +153,7 @@ function TopNav({ active }: { active: string }) {
     <header className="sticky top-0 z-30 border-b border-line/70 bg-white/80 frost-12">
       <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3 sm:px-6">
         <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="หน้าแรก D2">
-          <LogoMark className="h-7 w-auto text-navy-800" />
+          <LogoImage className="h-14" />
           <span className="hidden font-heading text-[15px] font-semibold text-navy-800 sm:block">
             D2
           </span>
@@ -686,7 +686,7 @@ function SiteFooter() {
         <div className="flex flex-col gap-8 sm:flex-row sm:items-start sm:justify-between">
           <div className="max-w-md">
             <div className="flex items-center gap-3">
-              <LogoMark className="h-8 w-auto text-white" />
+              <LogoImage tone="white" className="h-12" />
               <span className="font-heading text-[17px] font-semibold text-white">D2</span>
             </div>
             <p className="mt-4 text-[14px] leading-[1.85] text-white/60">
@@ -710,7 +710,7 @@ function SiteFooter() {
 
         <div className="mt-10 flex flex-col gap-3 border-t border-white/10 pt-6 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-[13px] text-white/50">
-            สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) — Big Data Institute
+            สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) — Big Data Institute (Public Organization)
           </p>
           <Link
             href="/login"

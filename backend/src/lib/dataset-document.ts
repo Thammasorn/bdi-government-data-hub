@@ -21,6 +21,7 @@ import { publicAttachment, storeAttachment } from "./attachment.js";
 import { DocumentRenderError, renderTemplateToPdf } from "./document-render.js";
 import { datasetDocumentValues, type DatasetDocumentInput } from "./dataset-values.js";
 import { LEGAL_SCOPES, publishedDocuments, templateDocx } from "./legal.js";
+import { NAME_FIELDS, fullNameTh } from "./person-name.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -40,13 +41,15 @@ export type DatasetDocumentRequest = Omit<
   | "bdiSignedAt"
   | "printedByName"
   | "printedAt"
+  | "documentVersionNumber"
+  | "documentEffectiveAt"
 > & { id: string };
 
 async function signaturesOf(db: Db, requestId: string) {
   const rows = await db.signatureConfirmation.findMany({
     where: { subjectType: SUBJECT, subjectId: requestId },
     orderBy: { confirmedAt: "asc" },
-    include: { userAccount: { select: { displayName: true } } },
+    include: { userAccount: { select: NAME_FIELDS } },
   });
 
   const pick = (type: ConfirmationType) => {
@@ -57,7 +60,7 @@ async function signaturesOf(db: Db, requestId: string) {
       signedFirstName?: string;
       signedLastName?: string;
     } | null;
-    const name = payload?.signedName ?? row.userAccount.displayName;
+    const name = payload?.signedName ?? fullNameTh(row.userAccount);
     const parts = (name ?? "").trim().split(/\s+/).filter(Boolean);
     return {
       name,
@@ -92,7 +95,13 @@ export async function renderDatasetDocument(
   db: Db,
   params: {
     request: DatasetDocumentRequest;
-    document: { code: string; nameTh: string; versionId: string };
+    document: {
+      code: string;
+      nameTh: string;
+      versionId: string;
+      versionNumber: number;
+      effectiveAt: Date | null;
+    };
     printedByName: string | null;
     actorId: string;
   },
@@ -110,6 +119,8 @@ export async function renderDatasetDocument(
     bdiSignedAt: signatures.bdi.at,
     printedByName: params.printedByName,
     printedAt: new Date(),
+    documentVersionNumber: params.document.versionNumber,
+    documentEffectiveAt: params.document.effectiveAt,
   });
 
   const pdf = await renderTemplateToPdf(docx, values, `${params.document.code}.docx`);
@@ -142,7 +153,13 @@ export async function renderDatasetDocuments(
     if (!doc.hasPlaceholders) continue;
     await renderDatasetDocument(db, {
       request: params.request,
-      document: { code: doc.code, nameTh: doc.nameTh, versionId: doc.versionId },
+      document: {
+        code: doc.code,
+        nameTh: doc.nameTh,
+        versionId: doc.versionId,
+        versionNumber: doc.versionNumber,
+        effectiveAt: doc.effectiveAt,
+      },
       printedByName: params.printedByName,
       actorId: params.actorId,
     });

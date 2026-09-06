@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 
+import { LegalNotice } from "@/components/organization/LegalNotice";
 import { PdfViewer } from "@/components/organization/PdfViewer";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { api, ApiError } from "@/lib/api";
+import { documentLabel } from "@/lib/legal-document";
 import type { LegalDocument } from "@/lib/types";
 
 /**
@@ -16,7 +18,7 @@ import type { LegalDocument } from "@/lib/types";
  * ถูกแก้ หลักฐานเก่าจะเปลี่ยนความหมายตามไปด้วย
  */
 export const CONFIRMATION_TEXT =
-  "ข้าพเจ้าได้อ่านและเข้าใจข้อความรายละเอียดของข้อตกลงโดยละเอียดแล้ว จึงได้ลงลายมือชื่อด้วยวิธีการทางอิเล็กทรอนิกส์";
+  "ข้าพเจ้าได้พิจารณาข้อตกลงนี้แล้ว และมีเจตนาลงนามด้วยวิธีอิเล็กทรอนิกส์";
 
 /**
  * คำยืนยันรายฉบับ — ติ๊กก่อนจึงกด "เห็นชอบ" ได้
@@ -74,11 +76,20 @@ export function SigningDialog({
    * แล้วไม่ต้องติ๊กใหม่ และเพื่อส่งเวลาที่ติ๊กจริงของแต่ละฉบับขึ้นไปเป็นหลักฐาน
    */
   const [attested, setAttested] = useState<Record<string, string>>({});
+  /**
+   * ฉบับที่กด "ไม่เกี่ยวข้อง" — เก็บเป็น set ของ version id
+   *
+   * ไม่รวมเข้ากับ `attested` เพราะสองอย่างนี้คนละความหมาย: ติ๊กแล้วคือ "อ่านและเห็นชอบ"
+   * ซึ่งจะกลายเป็น legal_acceptance ส่วนอันนี้คือ "ฉบับนี้ไม่เกี่ยวกับหน่วยงานเรา"
+   * ซึ่งไม่ใช่การยอมรับ จึงไม่ลงตารางนั้น
+   */
+  const [notApplicable, setNotApplicable] = useState<string[]>([]);
 
   const reset = () => {
     setAcknowledged(0);
     setError(null);
     setAttested({});
+    setNotApplicable([]);
   };
 
   const close = () => {
@@ -93,11 +104,14 @@ export function SigningDialog({
       await api.post(`/api/organizations/${requestId}/review`, {
         action: "approve",
         signature: {
-          acknowledgements: documents.map((d) => ({
-            versionId: d.versionId,
-            // ฝ่าย BDI ไม่มีการติ๊กรายฉบับ จึงใช้เวลาที่กดลงนามเป็นเวลายอมรับ
-            attestedAt: attested[d.versionId] ?? new Date().toISOString(),
-          })),
+          acknowledgements: documents
+            .filter((d) => !notApplicable.includes(d.versionId))
+            .map((d) => ({
+              versionId: d.versionId,
+              // ฝ่าย BDI ไม่มีการติ๊กรายฉบับ จึงใช้เวลาที่กดลงนามเป็นเวลายอมรับ
+              attestedAt: attested[d.versionId] ?? new Date().toISOString(),
+            })),
+          notApplicable: notApplicable.map((versionId) => ({ versionId })),
           ...(perDocument ? { attestationText: ATTESTATION_TEXT } : {}),
           confirmationText: CONFIRMATION_TEXT,
         },
@@ -127,13 +141,16 @@ export function SigningDialog({
         open={open}
         onClose={close}
         size="lg"
-        title={`${current.code} · ${current.name}`}
+        title={documentLabel(current)}
         description={`เอกสารฉบับที่ ${acknowledged + 1} จาก ${documents.length} — โปรดอ่านให้ครบก่อนกดเห็นชอบ`}
       >
+        {/* คำเตือนของเอกสารฉบับนี้ — อยู่ใต้บรรทัด "เอกสารฉบับที่ n จาก m" ตามที่ขอไว้
+            แสดงเมื่อฝ่ายกฎหมายตั้งค่าไว้ ไม่เกี่ยวกับว่าฉบับนี้บังคับหรือไม่ */}
+        <LegalNotice document={current} className="mb-4" />
         {current.fileUrl ? (
           <PdfViewer
             url={api.fileUrl(current.fileUrl)}
-            filename={`${current.code} ${current.name}`}
+            filename={documentLabel(current)}
             title={current.name}
           />
         ) : (
@@ -167,12 +184,40 @@ export function SigningDialog({
           <Button variant="secondary" onClick={close}>
             ปิด
           </Button>
-          <Button
-            disabled={!current.fileUrl || !attested[current.versionId]}
-            onClick={() => setAcknowledged(acknowledged + 1)}
-          >
-            เห็นชอบ
-          </Button>
+          <div className="flex gap-3">
+            {/*
+              ฉบับไม่บังคับข้ามได้ — ปุ่มอยู่ซ้ายของ "เห็นชอบ" ตามการ์ด
+              กดแล้วเดินไปฉบับถัดไปเหมือนกัน ต่างกันแค่ฉบับนี้จะไม่ถูกนับเป็นการยอมรับ
+              และจะไม่ถูกส่งต่อไปให้ฝ่าย BDI เห็นชอบ
+            */}
+            {current.isRequired === false ? (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setNotApplicable((prev) =>
+                    prev.includes(current.versionId) ? prev : [...prev, current.versionId],
+                  );
+                  setAttested((prev) => {
+                    const next = { ...prev };
+                    delete next[current.versionId];
+                    return next;
+                  });
+                  setAcknowledged(acknowledged + 1);
+                }}
+              >
+                ไม่เกี่ยวข้อง
+              </Button>
+            ) : null}
+            <Button
+              disabled={!current.fileUrl || !attested[current.versionId]}
+              onClick={() => {
+                setNotApplicable((prev) => prev.filter((id) => id !== current.versionId));
+                setAcknowledged(acknowledged + 1);
+              }}
+            >
+              เห็นชอบ
+            </Button>
+          </div>
         </div>
       </Modal>
     );
@@ -183,10 +228,21 @@ export function SigningDialog({
       <p className="text-center text-[17px] font-semibold leading-relaxed text-navy-800">
         {CONFIRMATION_TEXT}
       </p>
+      {/*
+        ไม่ไล่รหัสเอกสารตรงนี้ — "A0 · A1 · A2 · A3" ไม่ได้สื่ออะไรกับผู้ลงนาม (เขาเพิ่งอ่าน
+        มาทีละฉบับ และการ์ดเอกสารด้านหลังก็มีแท็บบอกอยู่) และมันเคยเป็นต้นเหตุให้ข้อความ
+        ผิดตั้งแต่แรก: ฝั่ง BDI เห็นรหัสของฉบับที่หน่วยงานข้ามไปแล้วรวมอยู่ในบรรทัดนี้ด้วย
+      */}
       <p className="mt-4 text-[13px] leading-relaxed text-ink-muted">
         ระบบจะบันทึกชื่อ เวลา และเอกสารทุกฉบับที่คุณเห็นชอบไว้เป็นหลักฐาน
-        และประทับลายมือชื่อของคุณลงในเอกสาร {documents.map((d) => d.code).join(" · ")}
+        และประทับลายมือชื่อของคุณลงในเอกสารข้อตกลง
       </p>
+      {notApplicable.length > 0 ? (
+        <p className="mt-2 text-[13px] leading-relaxed text-ink-muted">
+          เอกสารที่คุณระบุว่าไม่เกี่ยวข้อง จะไม่ถูกบันทึกเป็นการยอมรับ
+          และจะไม่ถูกส่งต่อให้ BDI พิจารณา
+        </p>
+      ) : null}
       {error ? (
         <p className="mt-4 rounded-xl bg-danger-bg p-4 text-sm leading-relaxed text-danger">{error}</p>
       ) : null}

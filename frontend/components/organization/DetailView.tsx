@@ -7,6 +7,8 @@ import { useEffect, useState } from "react";
 import { LegalDocumentsCard, useLegalDocuments } from "@/components/organization/LegalDocuments";
 import { SigningDialog } from "@/components/organization/SigningDialog";
 import { Timeline } from "@/components/organization/Timeline";
+import { ApprovalSteps } from "@/components/review/ApprovalSteps";
+import { RequestMovedNotice } from "@/components/review/RequestMovedNotice";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader, StatusBadge } from "@/components/ui/Card";
 import { TextAreaField } from "@/components/ui/Field";
@@ -17,30 +19,70 @@ import { api, ApiError } from "@/lib/api";
 import { useRequireAuth } from "@/lib/require-auth";
 import { formatThaiDate } from "@/lib/status";
 import { useOrganizationRegistration } from "@/lib/use-organization-registration";
+import { describeState, movedMessage, useRequestWatch } from "@/lib/use-request-watch";
 import { ATTACHMENT_LABELS, fullName, type Organization } from "@/lib/types";
 
 /** ผู้ใช้ปัจจุบันตัดสินใจกับคำขอนี้ได้หรือไม่ ขึ้นกับสถานะ + role */
-function decideAbility(org: Organization, roles: string[], email: string) {
+/**
+ * ชนิดถูกประกาศไว้ตรง ๆ ไม่ปล่อยให้ TypeScript อนุมานจาก branch ที่คืนคนละรูป —
+ * ทุก branch คืน object คนละชุดคีย์ การเพิ่มคีย์ใหม่ให้ branch เดียวจะทำให้ union
+ * เปลี่ยนรูปและที่เรียกใช้พังเป็นแถบโดยที่ไม่มีอะไรบอกว่าเพราะอะไร
+ */
+interface Ability {
+  can: boolean;
+  approveLabel?: string;
+  hint?: string;
+  signing?: boolean;
+  perDocument?: boolean;
+  /** หัวข้อของการ์ด — ค่าปริยายคือ "รอการพิจารณาของคุณ" ซึ่งไม่จริงสำหรับ recall */
+  title?: string;
+  /** เจ้าหน้าที่ BDI ปลดคำขอที่ค้าง — ปุ่มเดียว ไม่มีอนุมัติ ไม่มีส่งกลับแก้ไขตามปกติ */
+  recall?: boolean;
+}
+
+function decideAbility(org: Organization, roles: string[]): Ability {
   switch (org.currentTaskType) {
     case "BDI_OFFICER_REVIEW":
       return roles.includes("BDI_OFFICER")
-        ? { can: true, approveLabel: "อนุมัติ", hint: "ตรวจสอบข้อมูลและเอกสารก่อนส่งต่อให้ผู้มีอำนาจกระทำการแทน" }
+        ? { can: true, approveLabel: "อนุมัติ", hint: "ตรวจสอบข้อมูลและเอกสารก่อนส่งให้ผู้มีอำนาจอนุมัติของหน่วยงาน" }
         : { can: false };
     /**
      * สองด่านนี้อนุมัติด้วยการลงนามบนเอกสาร ปุ่มจึงเปิด SigningDialog ไม่ใช่ modal ยืนยันสั้น ๆ
      * `signing` บอกว่าต้องเดินขั้นตอนลงนาม และ `perDocument` บอกว่าต้องขึ้นเอกสารทีละฉบับ
      * ให้กดเห็นชอบก่อนหรือไม่ — การ์ดข้อ 4 เขียนไว้ว่าฝ่าย BDI "ไม่ต้องมีขึ้น เห็นชอบ ทีละเอกสาร"
      */
+    /**
+     * ตัดสินจาก role เท่านั้น ไม่ใช่จากอีเมลที่กรอกไว้ในช่องผู้มีอำนาจฯ (2026-09-03)
+     *
+     * ของเดิมเทียบ `signatoryEmail` กับอีเมลของผู้ใช้ ซึ่งทำให้ผู้ดำเนินการที่กรอกอีเมล
+     * ตัวเองลงไป เห็นปุ่มลงนามบนคำขอที่ตัวเองนำส่ง — `POST /:id/review` ฝั่ง backend
+     * ตัดทางนั้นทิ้งแล้ว ถ้าที่นี่ไม่ตัดตาม ปุ่มจะขึ้นแล้วกดไปเจอ 403
+     */
     case "ORGANIZATION_APPROVAL":
-      return org.signatoryEmail?.toLowerCase() === email.toLowerCase()
-        ? {
-            can: true,
-            approveLabel: "ผ่านการตรวจสอบ",
-            hint: "โปรดตรวจสอบเอกสารในฐานะผู้มีอำนาจกระทำการแทน แล้วลงนามอิเล็กทรอนิกส์",
-            signing: true,
-            perDocument: true,
-          }
-        : { can: false };
+      if (roles.includes("ORGANIZATION_APPROVER")) {
+        return {
+          can: true,
+          approveLabel: "ผ่านการตรวจสอบ",
+          hint: "โปรดตรวจสอบเอกสารในฐานะผู้มีอำนาจอนุมัติของหน่วยงาน แล้วลงนามอิเล็กทรอนิกส์",
+          signing: true,
+          perDocument: true,
+        };
+      }
+      /**
+       * เจ้าหน้าที่ BDI ไม่ได้ถือด่านนี้ และไม่ได้อนุมัติแทนใครได้ — แต่เป็นคนเดียวที่ปลด
+       * คำขอซึ่งค้างอยู่กับผู้ที่ถูกเชิญและเข้าระบบไม่ได้ ปุ่มจึงมีทางเดียวคือยกเลิกผลการ
+       * ตรวจสอบของตัวเอง เงื่อนไขที่แท้จริงอยู่ฝั่ง API (recallRefusal) — ที่นี่กว้างกว่า
+       * โดยตั้งใจ ให้เขากดแล้วได้คำอธิบายว่าทำไมทำไม่ได้ ดีกว่าปุ่มหายไปเฉย ๆ
+       */
+      if (roles.includes("BDI_OFFICER")) {
+        return {
+          can: true,
+          recall: true,
+          title: "คำขอรอผู้มีอำนาจอนุมัติของหน่วยงาน",
+          hint: "ถ้าข้อมูลผู้มีอำนาจอนุมัติผิดจนคำเชิญไปไม่ถึง ยกเลิกผลการตรวจสอบเพื่อส่งกลับให้หน่วยงานแก้ไขได้",
+        };
+      }
+      return { can: false };
     case "BDI_FINAL_APPROVAL":
       return roles.includes("BDI_FINAL_APPROVER")
         ? {
@@ -63,10 +105,12 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
 
   const [org, setOrg] = useState<Organization | null>(null);
   const [notFound, setNotFound] = useState(false);
-  const [modal, setModal] = useState<null | "approve" | "revise" | "sign">(null);
+  const [modal, setModal] = useState<null | "approve" | "revise" | "sign" | "recall">(null);
   const [note, setNote] = useState("");
   const [noteError, setNoteError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
+  /** ประกาศว่าคำขอเดินไปแล้วระหว่างที่หน้านี้เปิดค้างอยู่ — ค้างไว้จนกว่าผู้ใช้จะกดรับทราบ */
+  const [movedNotice, setMovedNotice] = useState<string | null>(null);
   const { start: startRegistration, starting } = useOrganizationRegistration();
   /**
    * ผูกกับ `org.id` ไม่ใช่ `id` บน URL
@@ -77,6 +121,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
    */
   const {
     documents: legalDocuments,
+    notApplicable: skippedDocuments,
     error: legalDocumentsError,
     reload: reloadLegalDocuments,
   } = useLegalDocuments(org?.id ?? null);
@@ -106,6 +151,41 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, ready]);
+
+  /**
+   * โหลดใหม่ให้ครบทั้งหน้า
+   *
+   * สามอย่างนี้ต้องไปด้วยกันเสมอ — `load()` ไม่แตะเอกสารกฎหมายซึ่งมี state ของตัวเอง และ
+   * `documentRound` คือตัวทำลาย cache ของ iframe ที่ฝัง PDF ไว้ (URL ของ A0 ไม่เปลี่ยนแม้
+   * ไฟล์จะถูกสร้างใหม่หลังมีคนลงนาม)
+   */
+  const reloadAll = () => {
+    void load();
+    reloadLegalDocuments();
+    setDocumentRound((r) => r + 1);
+  };
+
+  /**
+   * คำขอเดินไปแล้ว — ไม่ว่าจะรู้จากการ poll หรือจาก 409 ตอนกดปุ่ม ก็ลงทางเดียวกัน
+   *
+   * ปิด modal ที่ค้างอยู่ แต่ **ไม่ล้าง `note` ที่พิมพ์ไว้** เปิดใหม่แล้วข้อความยังอยู่ครบ —
+   * การกลืนสิ่งที่ผู้ใช้พิมพ์ไปทั้งย่อหน้าเพราะคนอื่นกดปุ่มก่อนเป็นการลงโทษผิดคน
+   */
+  const handleMoved = (message: string) => {
+    setModal(null);
+    setMovedNotice(message);
+    reloadAll();
+  };
+
+  useRequestWatch({
+    kind: "organizations",
+    // `org.id` เสมอ — พารามิเตอร์บน URL เป็น id ของหน่วยงานได้ ซึ่ง /state ไม่รับ
+    requestId: org?.id ?? null,
+    current: org
+      ? { status: org.status, currentTaskType: org.currentTaskType, stateVersion: org.stateVersion }
+      : null,
+    onChanged: (next) => handleMoved(describeState(next)),
+  });
 
   if (notFound) {
     /**
@@ -163,7 +243,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
 
   if (!org || !user) return <Spinner />;
 
-  const ability = decideAbility(org, user.roles, user.email);
+  const ability = decideAbility(org, user.roles);
   const supporting = org.attachments.filter((a) => a.kind !== "GENERATED_FORM");
   const isOwner = org.createdBy?.id === user.id;
   // เทียบกับ `org.organizationId` ไม่ใช่ `org.id` — `org.id` คือ id ของคำขอ การ์ด
@@ -187,8 +267,8 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
   // "ขอให้ปรับปรุง" = review_task ที่ปิดด้วย result = RETURNED (เหมือนฝั่งชุดข้อมูล)
   const lastRevision = [...org.events].reverse().find((e) => e.result === "RETURNED");
 
-  const act = async (action: "approve" | "request_revision") => {
-    if (action === "request_revision" && note.trim().length < 10) {
+  const act = async (action: "approve" | "request_revision" | "recall") => {
+    if (action !== "approve" && note.trim().length < 10) {
       setNoteError("กรุณาระบุสิ่งที่ต้องแก้ไขอย่างน้อย 10 ตัวอักษร");
       return;
     }
@@ -203,13 +283,31 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
       });
       show({
         tone: "success",
-        title: action === "approve" ? "ดำเนินการเรียบร้อย" : "ส่งกลับให้แก้ไขแล้ว",
-        detail: "ระบบแจ้งผู้เกี่ยวข้องทางอีเมลแล้ว",
+        title:
+          action === "approve"
+            ? "ดำเนินการเรียบร้อย"
+            : action === "recall"
+              ? "ยกเลิกผลการตรวจสอบแล้ว"
+              : "ส่งกลับให้แก้ไขแล้ว",
+        detail:
+          action === "recall"
+            ? "คำเชิญเดิมถูกยกเลิก และคำขอกลับไปให้ผู้ดำเนินการของหน่วยงานแก้ไขแล้ว"
+            : "ระบบแจ้งผู้เกี่ยวข้องทางอีเมลแล้ว",
       });
       setModal(null);
       setNote("");
       await load();
     } catch (err) {
+      /**
+       * "คนอื่นทำไปก่อนแล้ว" ไม่ใช่ความล้มเหลวของผู้ใช้คนนี้ — เป็นผลปกติของการที่ทุกคนที่ถือ
+       * role เดียวกันกดได้ จึงบอกด้วยประกาศที่ค้างไว้พร้อมข้อมูลที่โหลดใหม่แล้ว ไม่ใช่ toast
+       * แดงที่หายไปใน 6 วินาทีโดยที่ปุ่มยังตั้งอยู่เหมือนเดิม
+       */
+      const moved = movedMessage(err);
+      if (moved) {
+        handleMoved(moved);
+        return;
+      }
       show({
         tone: "error",
         title: "ดำเนินการไม่สำเร็จ",
@@ -233,7 +331,11 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         <div className="min-w-0">
           <h1 className="break-words text-[26px] font-semibold text-navy-800">{org.name}</h1>
         </div>
-        <StatusBadge status={org.status} currentTaskType={org.currentTaskType} />
+        <StatusBadge
+          status={org.status}
+          currentTaskType={org.currentTaskType}
+          waitingLabel={org.progress?.currentStep?.waitingLabel}
+        />
       </header>
 
       {/* ฉบับร่างที่ยังไม่ได้นำส่ง — หน้านี้เคยไม่มีทางกลับเข้าฟอร์มเลย ผู้ใช้ที่ปิดแท็บไป
@@ -244,7 +346,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
             <div>
               <p className="font-medium text-navy-800">ฉบับร่าง — ยังไม่ได้นำส่ง</p>
               <p className="mt-0.5 text-sm text-ink-muted">
-                กรอกให้ครบแล้วกด &ldquo;ตรวจสอบและสร้างแบบฟอร์ม&rdquo; เพื่อนำส่งให้ BDI ตรวจสอบ
+                กรอกให้ครบแล้วกด &ldquo;ตรวจสอบข้อมูล&rdquo; เพื่อนำส่งให้ BDI ตรวจสอบ
               </p>
             </div>
             <Button className="shrink-0" onClick={() => router.push(`/organizations/${org.id}/edit`)}>
@@ -252,6 +354,10 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
             </Button>
           </div>
         </Card>
+      ) : null}
+
+      {movedNotice ? (
+        <RequestMovedNotice message={movedNotice} onDismiss={() => setMovedNotice(null)} />
       ) : null}
 
       {org.status === "RETURNED" && org.revisionNote ? (
@@ -278,16 +384,24 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         <Card className="mb-6 border-l-[3px] border-l-coral-500">
           <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="font-medium text-navy-800">รอการพิจารณาของคุณ</p>
+              <p className="font-medium text-navy-800">{ability.title ?? "รอการพิจารณาของคุณ"}</p>
               <p className="mt-0.5 text-sm text-ink-muted">{ability.hint}</p>
             </div>
             <div className="flex shrink-0 gap-3">
-              <Button variant="secondary" onClick={() => setModal("revise")}>
-                ต้องปรับปรุง
-              </Button>
-              <Button onClick={() => setModal(ability.signing ? "sign" : "approve")}>
-                {ability.approveLabel}
-              </Button>
+              {ability.recall ? (
+                <Button variant="secondary" onClick={() => setModal("recall")}>
+                  ยกเลิกผลการตรวจสอบ
+                </Button>
+              ) : (
+                <>
+                  <Button variant="secondary" onClick={() => setModal("revise")}>
+                    ส่งกลับแก้ไข
+                  </Button>
+                  <Button onClick={() => setModal(ability.signing ? "sign" : "approve")}>
+                    {ability.approveLabel}
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         </Card>
@@ -313,7 +427,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         </Card>
 
         <Card>
-          <CardHeader tag="ส่วนที่ 2" title="ผู้มีอำนาจกระทำการแทน" />
+          <CardHeader tag="ส่วนที่ 2" title="ผู้มีอำนาจอนุมัติของหน่วยงาน" />
           <Rows
             rows={[
               ["ชื่อ-นามสกุล", fullName(org.signatoryPrefix, org.signatoryFirstName, org.signatoryLastName)],
@@ -365,15 +479,26 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         {org.status !== "DRAFT" ? (
           <LegalDocumentsCard
             documents={legalDocuments}
+            notApplicable={skippedDocuments}
             reloadKey={documentRound}
             error={legalDocumentsError}
             onRetry={reloadLegalDocuments}
+            regenerateLabel="ตรวจสอบข้อมูล"
           />
         ) : null}
 
         <Card>
+          <CardHeader title="ขั้นตอนการอนุมัติ" />
+          <ApprovalSteps progress={org.progress} />
+        </Card>
+
+        <Card>
           <CardHeader title="ประวัติการดำเนินการ" description={`ยื่นเมื่อ ${formatThaiDate(org.submittedAt ?? org.createdAt)}`} />
-          <Timeline events={org.events} />
+          <Timeline
+            events={org.events}
+            created={{ at: org.createdAt, by: org.createdBy }}
+            submittedAt={org.submittedAt}
+          />
         </Card>
       </div>
 
@@ -392,12 +517,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
             reloadLegalDocuments();
             void load();
           }}
-          onStale={(message) => {
-            setModal(null);
-            show({ tone: "error", title: "คำขอเดินไปขั้นถัดไปแล้ว", detail: message });
-            reloadLegalDocuments();
-            void load();
-          }}
+          onStale={handleMoved}
           requestId={org.id}
           documents={legalDocuments}
           perDocument={ability.perDocument ?? false}
@@ -408,8 +528,8 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
       <Modal
         open={modal === "revise"}
         onClose={() => setModal(null)}
-        title="ระบุสิ่งที่ต้องปรับปรุง"
-        description="ข้อความนี้จะถูกส่งทางอีเมลไปยังเจ้าหน้าที่ของหน่วยงาน"
+        title="ส่งกลับแก้ไข"
+        description="ระบุเนื้อหาหรือข้อความที่ต้องการให้ปรับปรุง ระบบจะแจ้งไปยังผู้ประสานงานของหน่วยงาน"
       >
         <TextAreaField
           label="รายละเอียดที่ต้องแก้ไข"
@@ -420,7 +540,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
             setNote(e.target.value);
             setNoteError(undefined);
           }}
-          placeholder="เช่น เลขบัตรประชาชนของผู้มีอำนาจกระทำการแทนไม่ตรงกับคำสั่งแต่งตั้งที่แนบมา"
+          placeholder="เช่น เลขบัตรประชาชนของผู้มีอำนาจอนุมัติไม่ตรงกับคำสั่งแต่งตั้งที่แนบมา"
         />
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="secondary" onClick={() => setModal(null)}>
@@ -433,13 +553,54 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
       </Modal>
 
       <Modal
+        open={modal === "recall"}
+        onClose={() => setModal(null)}
+        title="ยกเลิกผลการตรวจสอบ"
+        description="ใช้เมื่อข้อมูลผู้มีอำนาจอนุมัติที่หน่วยงานกรอกมาผิด จนผู้ที่ถูกเชิญเข้าระบบไม่ได้"
+      >
+        <div className="rounded-lg bg-navy-50 p-4 text-[15px] leading-relaxed text-ink-muted">
+          <p className="font-medium text-navy-800">เมื่อยืนยันแล้ว ระบบจะ</p>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            <li>
+              ยกเลิกคำเชิญที่ส่งไปยัง{" "}
+              <span className="font-medium text-navy-800">{org.signatoryEmail ?? "ผู้มีอำนาจอนุมัติ"}</span>{" "}
+              — ลิงก์เดิมใช้ไม่ได้อีก
+            </li>
+            <li>คืนอีเมลและเลขบัตรประชาชนให้หน่วยงานกรอกใหม่ได้</li>
+            <li>ส่งคำขอกลับให้ผู้ดำเนินการของหน่วยงานแก้ไขได้ทุกช่อง แล้วนำส่งเข้ามาใหม่</li>
+          </ul>
+        </div>
+        <div className="mt-5">
+          <TextAreaField
+            label="เหตุผล"
+            required
+            value={note}
+            error={noteError}
+            onChange={(e) => {
+              setNote(e.target.value);
+              setNoteError(undefined);
+            }}
+            placeholder="เช่น อีเมลของผู้มีอำนาจอนุมัติสะกดผิด คำเชิญจึงไปไม่ถึงผู้รับ"
+          />
+        </div>
+        <div className="mt-6 flex justify-end gap-3">
+          <Button variant="secondary" onClick={() => setModal(null)}>
+            ยกเลิก
+          </Button>
+          <Button variant="danger" loading={busy} onClick={() => act("recall")}>
+            ยืนยันยกเลิกผลการตรวจสอบ
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
         open={modal === "approve"}
         onClose={() => setModal(null)}
         title={ability.approveLabel ?? "ยืนยัน"}
         description="ยืนยันว่าคุณตรวจสอบข้อมูลและเอกสารทั้งหมดเรียบร้อยแล้ว"
       >
         <p className="text-[15px] leading-relaxed text-ink-muted">
-          ระบบจะบันทึกการตัดสินใจนี้พร้อมชื่อและเวลาของคุณ และแจ้งผู้เกี่ยวข้องในขั้นถัดไปทางอีเมล
+          ระบบจะบันทึกกระบวนการนี้และแจ้งผู้เกี่ยวข้องในขั้นตอนถัดไป
         </p>
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="secondary" onClick={() => setModal(null)}>

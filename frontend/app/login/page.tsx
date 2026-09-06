@@ -9,17 +9,16 @@ import { ThaidButton } from "@/components/auth/Thaid";
 import { useSession } from "@/components/SessionProvider";
 import { Button } from "@/components/ui/Button";
 import { TextField } from "@/components/ui/Field";
+import { nextFromLocation } from "@/lib/require-auth";
 import { OtpInput } from "@/components/ui/OtpInput";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
-import { nextFromLocation } from "@/lib/require-auth";
-import { bdiLandingPath, isBdiStaff } from "@/lib/status";
 import type { SessionUser } from "@/components/SessionProvider";
 
 /**
  * เข้าสู่ระบบสองทาง ตาม "Login Step" ของสเปก
  *   1. รหัสผ่าน + OTP ทางอีเมล  (สองขั้น — /login แล้ว /login/verify-otp)
- *   2. ThaiD                    (จับคู่บัญชีด้วยเลขประจำตัวประชาชน)
+ *   2. ThaID                    (จับคู่บัญชีด้วยเลขประจำตัวประชาชน)
  */
 export default function LoginPage() {
   const [step, setStep] = useState<"credentials" | "otp">("credentials");
@@ -45,7 +44,6 @@ function CredentialsStep({
   const [password, setPassword] = useState("");
   const [fields, setFields] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
-
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
@@ -68,7 +66,7 @@ function CredentialsStep({
   return (
     <AuthLayout
       title="เข้าสู่ระบบ"
-      description="ใช้อีเมลที่ได้รับคำเชิญจากสถาบันข้อมูลขนาดใหญ่"
+      description="ใช้อีเมลที่ได้รับคำเชิญจากสถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)"
       back={{ href: "/", label: "กลับไปหน้าแรก" }}
       footer={
         <div className="flex flex-col gap-2">
@@ -114,9 +112,9 @@ function CredentialsStep({
         <span className="h-px flex-1 bg-line" />
       </div>
 
-      <ThaidButton purpose="login" variant="secondary" label="เข้าสู่ระบบด้วย ThaiD" />
+      <ThaidButton purpose="login" variant="secondary" label="เข้าสู่ระบบด้วย ThaID" />
       <p className="mt-2.5 text-center text-[13px] text-ink-muted">
-        ใช้ได้กับบัญชีที่เปิดใช้งานด้วย ThaiD แล้ว
+        ใช้ได้กับบัญชีที่เปิดใช้งานด้วย ThaID แล้ว
       </p>
     </AuthLayout>
   );
@@ -151,16 +149,26 @@ function OtpStep({ email, onBack }: { email: string; onBack: () => void }) {
         });
         setUser(data.user);
         /**
-         * ลิงก์ในอีเมลชี้ตรงเข้าหน้ารายละเอียด ผู้ที่ยังไม่ล็อกอินจึงถูกพามาที่นี่
-         * พร้อม ?next=<หน้านั้น> — พากลับไปให้ถึงที่ ไม่ใช่ทิ้งไว้ที่หน้าแรกแล้ว
-         * ให้ไปหาคำขอเองในตาราง (สเปกบนการ์ดเขียนไว้ตรง ๆ ว่าต้องพาไปเลย)
+         * มีปลายทางฝากไว้ก็ไปที่นั่น ไม่มีก็ไปหน้าแรก
          *
-         * อ่านจาก window.location ไม่ใช่ useSearchParams() — หน้านี้เป็น client
-         * component ที่ไม่มี <Suspense> ครอบ และตอนนี้คือหลังกดยืนยัน OTP แล้ว
-         * เบราว์เซอร์พร้อมมานานแล้ว
+         * "หลัง login ให้ไปหน้าแรกเสมอ" ถูกอ่านเป็น `router.push("/")` เมื่อ 2026-09-06
+         * ซึ่งตัดลิงก์ในอีเมลทิ้งไปด้วย — อีเมลทุกฉบับชี้ตรงเข้าหน้ารายละเอียด ผู้รับที่ยัง
+         * ไม่ได้ล็อกอินจึงมาถึงที่นี่พร้อม `?next=<หน้านั้น>` แล้วถูกทิ้งไว้ที่หน้าแรกให้ไป
+         * หาคำขอเองในตาราง BDI ยืนยันเมื่อ 2026-09-06 ว่าที่ต้องการคือสองอย่างพร้อมกัน
+         * และบรรทัดนี้ให้ทั้งสองอย่างอยู่แล้ว:
+         *
+         *   ออกจากระบบแล้วล็อกอินใหม่ → ปุ่มออกจากระบบพาไป `/login` เปล่า ๆ ไม่มี `next`
+         *                               (`AppShell` เจตนาไม่ใส่ ดูคอมเมนต์ที่นั่น) → หน้าแรก
+         *   กดจากลิงก์ในอีเมล          → `/login?next=/datasets/…` → หน้านั้นเลย
+         *
+         * `safeNextPath()` กัน open redirect ไว้แล้ว ค่านี้จึงเป็น path ภายในเว็บนี้เสมอ
+         *
+         * อ่านจาก window.location ไม่ใช่ useSearchParams() — หน้านี้เป็น client component
+         * ที่ไม่มี <Suspense> ครอบ และตอนนี้คือหลังกดยืนยัน OTP แล้ว เบราว์เซอร์พร้อมมานานแล้ว
          */
         const next = nextFromLocation();
-        router.push(next ?? (isBdiStaff(data.user.roles) ? bdiLandingPath(data.user.roles) : "/"));
+        // ทุก role มีหน้าแรกที่ `/` แล้ว รวมถึงเจ้าหน้าที่ BDI ที่เคยถูกส่งไปตารางคิวตรง ๆ
+        router.push(next ?? "/");
       } catch (err) {
         setError(err instanceof ApiError ? err.message : "ยืนยันไม่สำเร็จ");
         setCode("");

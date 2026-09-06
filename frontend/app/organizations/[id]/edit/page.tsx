@@ -12,6 +12,11 @@ import { FileUpload, type UploadedFile } from "@/components/ui/FileUpload";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import {
+  MAX_ADDRESS_LINE,
+  validateOrganizationForm,
+  type OrganizationFormValues,
+} from "@/lib/organization-form";
 import { useRequireAuth } from "@/lib/require-auth";
 import { PREFIXES } from "@/lib/status";
 import type { Attachment } from "@/lib/types";
@@ -35,7 +40,22 @@ const ATTACHMENT_KIND = {
 
 type AttachmentSlot = keyof typeof ATTACHMENT_KIND;
 
-const EMPTY = {
+/**
+ * คำนำหน้าของผู้มีอำนาจกระทำการแทน — สามคำนี้กับ "อื่น ๆ" เท่านั้น
+ *
+ * ชื่อผู้มีอำนาจกระทำการแทนคือชื่อที่พิมพ์ลงเอกสาร A0 และเป็นชื่อที่ต้องตรงกับบัตรประชาชน
+ * ของคนที่จะมาลงนาม คำนำหน้าทางวิชาการ (ดร. ผศ.ดร. …) ไม่ได้อยู่บนบัตร การมีให้เลือกจึง
+ * ชวนให้กรอกไม่ตรงบัตร ที่เหลือกรอกเองผ่าน "อื่น ๆ" ได้ทุกคำ รวมถึงยศและคำนำหน้าที่
+ * ลิสต์นี้ไม่มี (การ์ด "แก้แบบฟอร์ม org registration" ข้อ 3)
+ *
+ * ส่วนที่ 3 (ผู้กรอกข้อมูล) ยังใช้ PREFIXES ชุดเต็มตามเดิม — ชื่อนั้นไม่ได้ไปอยู่ในเอกสารที่ลงนาม
+ */
+const SIGNATORY_PREFIXES = ["นาย", "นาง", "นางสาว"];
+
+/** ค่าที่เลือกใน dropdown เพื่อเปิดช่องพิมพ์เอง — ไม่ใช่ค่าที่ถูกบันทึก */
+const PREFIX_OTHER = "อื่น ๆ";
+
+const EMPTY: OrganizationFormValues = {
   organizationCode: "",
   name: "",
   addressLine: "",
@@ -60,7 +80,11 @@ const EMPTY = {
   contactEmail: "",
   contactPhone: "",
 };
-type FormState = typeof EMPTY;
+/**
+ * ชื่อช่องบนฟอร์มต้องตรงกับชุดที่ `lib/organization-form.ts` รู้จักเป๊ะ ๆ
+ * เพิ่มช่องใหม่ที่นี่โดยไม่เพิ่มกฎที่นั่น TypeScript จะฟ้องตั้งแต่บรรทัดนี้
+ */
+type FormState = OrganizationFormValues;
 
 /**
  * สถานะที่ยังแก้ฟอร์มได้ — ตรงกับที่ backend ยอมรับใน PATCH /:id และ POST /:id/submit
@@ -75,19 +99,19 @@ const EDITABLE_STATUSES = new Set(["DRAFT", "RETURNED"]);
 
 const SECTIONS = [
   { id: "section-1", tag: "ส่วนที่ 1", title: "ข้อมูลหน่วยงาน" },
-  { id: "section-2", tag: "ส่วนที่ 2", title: "ผู้มีอำนาจกระทำการแทน" },
+  { id: "section-2", tag: "ส่วนที่ 2", title: "ผู้มีอำนาจอนุมัติของหน่วยงาน" },
   { id: "section-3", tag: "ส่วนที่ 3", title: "ผู้กรอกข้อมูล" },
 ];
 
 /**
- * ช่องที่ไม่บังคับกรอก — ไม่นับตอนติ๊ก "กรอกครบแล้ว"
+ * ช่องไหนบังคับกรอกไม่ได้อยู่ที่นี่แล้ว — `validateOrganizationField()` เป็นคนรู้
  *
- * ต้องตรงกับ `submitSchema` ใน backend/src/routes/organizations.ts ซึ่งเป็นตัวตัดสินจริงว่า
- * นำส่งได้หรือยัง ตอนเพิ่มช่อง "ถนน" เข้ามาใน SECTION_FIELDS แล้วลืมข้อนี้ ส่วนที่ 1 ก็ไม่เคย
- * ขึ้นเครื่องหมายถูกเลยจนกว่าจะกรอกถนน ทั้งที่กรอกช่องบังคับครบแล้วและกดนำส่งได้อยู่แล้ว
- * — เครื่องหมายที่ไม่ตรงกับความจริงทำให้ผู้ใช้ไปหาว่ายังขาดอะไรทั้งที่ไม่ขาด
+ * เดิมหน้านี้มีลิสต์ `OPTIONAL_FIELDS` ของตัวเองไว้ตัดสินว่าจะติ๊ก "กรอกครบแล้ว" ไหม
+ * ซึ่งต้องเดินตาม `submitSchema` ฝั่ง API ด้วยมือ ตอนเพิ่มช่อง "ถนน" แล้วลืมแก้ลิสต์นั้น
+ * ส่วนที่ 1 ก็ไม่เคยขึ้นเครื่องหมายถูกเลยทั้งที่กดนำส่งได้แล้ว — เครื่องหมายที่ไม่ตรงกับ
+ * ความจริงทำให้ผู้ใช้ไปหาว่ายังขาดอะไรทั้งที่ไม่ขาด ตอนนี้ทั้งเครื่องหมายถูก ขอบสีของช่อง
+ * และการกันไม่ให้กดสร้าง PDF อ่านจากกฎชุดเดียวกันหมด จึงขัดกันเองไม่ได้อีก
  */
-const OPTIONAL_FIELDS: ReadonlySet<keyof FormState> = new Set<keyof FormState>(["road"]);
 
 const SECTION_FIELDS: Record<string, Array<keyof FormState>> = {
   "section-1": ["organizationCode", "name", "addressLine", "road", "province", "district", "subdistrict", "postalCode", "email"],
@@ -124,6 +148,22 @@ export default function EditOrganizationPage() {
 
   const [form, setForm] = useState<FormState>(EMPTY);
   const [fields, setFields] = useState<Record<string, string>>({});
+  /**
+   * ช่องที่ผู้ใช้แตะแล้ว — ตัวกำหนดว่าจะ "ระบายสี" ช่องนั้นหรือยัง
+   *
+   * ฟอร์มที่เพิ่งเปิดขึ้นมาต้องไม่แดงทั้งหน้า ทั้งที่ผู้ใช้ยังไม่ได้ทำอะไรผิด แต่พอเริ่ม
+   * พิมพ์ในช่องไหน ช่องนั้นต้องบอกผลทันทีโดยไม่ต้องรอกดปุ่ม (ทั้งแดงตอนผิดและเขียวตอนถูก)
+   * ค่านี้จึงถูกตั้งทั้งตอนพิมพ์และตอนออกจากช่อง — ช่องที่ผู้ใช้เข้าไปแล้วออกมาโดยไม่กรอก
+   * ก็ต้องเตือนเหมือนกัน
+   */
+  const [touched, setTouched] = useState<Partial<Record<keyof FormState, boolean>>>({});
+  /**
+   * ชื่อหน่วยงานมาจากระบบหรือไม่ — API เป็นคนตอบ (`nameLocked` ใน GET /:id)
+   *
+   * หน่วยงานที่ BDI เปิดไว้ให้ล่วงหน้ามีชื่ออยู่แล้ว ฟอร์มจึงแสดงอย่างเดียว ห้ามแก้ ส่วน
+   * หน่วยงานที่ผู้กรอกเปิดเองยังไม่มีชื่อในระบบ ช่องนี้จึงยังเป็นช่องกรอกตามเดิม
+   */
+  const [nameLocked, setNameLocked] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -162,6 +202,9 @@ export default function EditOrganizationPage() {
           if (typeof value === "string") next[key] = value;
         }
         setForm(next);
+        setNameLocked(Boolean(organization.nameLocked));
+        // ค่าที่โหลดมาจากคำขอเดิมยังไม่ใช่สิ่งที่ผู้ใช้เพิ่งพิมพ์ ยังไม่ระบายสีจนกว่าจะแตะ
+        setTouched({});
         setRevisionNote((organization.revisionNote as string | null) ?? null);
         const find = (slot: AttachmentSlot) =>
           organization.attachments.find((a) => a.kind === ATTACHMENT_KIND[slot]) ?? null;
@@ -203,35 +246,89 @@ export default function EditOrganizationPage() {
 
   const set = useCallback(
     (key: keyof FormState, value: string) => {
+      const cleared: Array<keyof FormState> =
+        key === "province"
+          ? ["district", "subdistrict", "postalCode"]
+          : key === "district"
+            ? ["subdistrict", "postalCode"]
+            : [];
+
       setForm((f) => {
         const next = { ...f, [key]: value };
         // เปลี่ยนจังหวัด/อำเภอแล้วต้องล้างระดับที่ลึกกว่า ไม่งั้นได้ที่อยู่ที่ไม่มีจริง
-        if (key === "province") Object.assign(next, { district: "", subdistrict: "", postalCode: "" });
-        if (key === "district") Object.assign(next, { subdistrict: "", postalCode: "" });
+        for (const k of cleared) next[k] = "";
         if (key === "subdistrict") {
           next.postalCode = subdistricts.find((s) => s.name === value)?.zipcode ?? "";
         }
         return next;
       });
       setFields((f) => (f[key] ? { ...f, [key]: "" } : f));
+      // ช่องที่ถูกล้างเพราะเลือกจังหวัดใหม่ไม่ใช่ความผิดของผู้ใช้ อย่าทำให้มันแดงขึ้นมาเอง
+      setTouched((t) => {
+        const next = { ...t, [key]: true };
+        for (const k of cleared) delete next[k];
+        // ตำบลเป็นตัวเติมรหัสไปรษณีย์ให้ เลือกแล้วถือว่ารหัสไปรษณีย์ผ่านการกรอกด้วย
+        if (key === "subdistrict") next.postalCode = true;
+        return next;
+      });
     },
     [subdistricts],
+  );
+
+  /** ช่องนี้ผู้ใช้แตะแล้ว — เรียกตอน blur เพื่อให้ช่องที่เข้าไปแล้วออกมาเปล่า ๆ เตือนด้วย */
+  const touch = useCallback((key: keyof FormState) => {
+    setTouched((t) => (t[key] ? t : { ...t, [key]: true }));
+  }, []);
+
+  /**
+   * ผลตรวจของทุกช่อง คิดใหม่ทุกครั้งที่ฟอร์มเปลี่ยน — ไม่ใช่ทีละช่องตอนที่ค่านั้นเปลี่ยน
+   *
+   * เพราะมีกฎข้ามช่องอยู่: อีเมลหน่วยงานต้องไม่ซ้ำกับอีเมลผู้มีอำนาจกระทำการแทน
+   * แก้ช่องหลังแล้วช่องแรกต้องเปลี่ยนสถานะตามทันที
+   */
+  const clientErrors = useMemo(() => validateOrganizationForm(form), [form]);
+
+  /**
+   * props สถานะของช่องหนึ่ง — ข้อความผิดพลาด ขอบเขียว และการนับว่าแตะแล้ว
+   *
+   * ข้อความจาก API มาก่อนข้อความฝั่งหน้าเว็บเสมอ: มันคือคำตอบของตัวตัดสินจริง และ
+   * บางข้อ (เช่น "รหัสหน่วยงานนี้ถูกใช้กับหน่วยงานอื่นแล้ว") หน้าเว็บไม่มีทางรู้เองได้
+   */
+  const fieldProps = useCallback(
+    (key: keyof FormState) => {
+      const error = fields[key] || (touched[key] ? clientErrors[key] : undefined);
+      return {
+        error,
+        valid: Boolean(touched[key]) && !error && form[key].trim().length > 0,
+        onBlur: () => touch(key),
+      };
+    },
+    [fields, touched, clientErrors, form, touch],
   );
 
   const completion = useMemo(() => {
     const done: Record<string, boolean> = {};
     for (const [id, keys] of Object.entries(SECTION_FIELDS)) {
-      done[id] = keys
-        .filter((k) => !OPTIONAL_FIELDS.has(k))
-        .every((k) => form[k].trim().length > 0);
+      done[id] = keys.every((k) => !clientErrors[k]);
     }
     return done;
-  }, [form]);
+  }, [clientErrors]);
 
   // ---------- actions ----------
   const persist = async () => {
     if (!orgId) return null;
-    const payload = Object.fromEntries(Object.entries(form).filter(([, v]) => v !== ""));
+    /**
+     * ไม่ส่ง `organizationCode` — เป็นช่องอ่านอย่างเดียว และ API ตอบ 400 ถ้าค่าที่ส่งมา
+     * ต่างจากของเดิม การส่งค่าที่เราแสดงอยู่กลับไปทุกครั้งจึงเป็นการเสี่ยงชนกฎนั้นเปล่า ๆ
+     * (เช่นตอนเจ้าหน้าที่ BDI แก้รหัสให้ระหว่างที่ผู้ใช้เปิดฟอร์มค้างไว้)
+     *
+     * ชื่อหน่วยงานที่ระบบเป็นเจ้าของก็ไม่ส่งด้วยเหตุผลเดียวกัน — API ตอบ 400 ถ้าค่าต่างจากเดิม
+     */
+    const payload = Object.fromEntries(
+      Object.entries(form).filter(
+        ([k, v]) => v !== "" && k !== "organizationCode" && !(k === "name" && nameLocked),
+      ),
+    );
     return api.patch<{ organization: unknown }>(`/api/organizations/${orgId}`, payload);
   };
 
@@ -251,6 +348,11 @@ export default function EditOrganizationPage() {
     if (!orgId) return;
     if (file.size > 10 * 1024 * 1024) {
       show({ tone: "error", title: "ไฟล์ใหญ่เกินไป", detail: "ขนาดไฟล์ต้องไม่เกิน 10 MB" });
+      return;
+    }
+    // accept ของ <input> ไม่คุมเส้นทางลากมาวาง — ต้องตรวจเองก่อนยิงขึ้น API
+    if (file.type !== "application/pdf") {
+      show({ tone: "error", title: "ชนิดไฟล์ไม่รองรับ", detail: "แนบได้เฉพาะไฟล์ PDF" });
       return;
     }
     setUploadingKind(kind);
@@ -275,6 +377,15 @@ export default function EditOrganizationPage() {
     }
   };
 
+  /** เลื่อนไปให้เห็นช่องที่ต้องแก้ช่องแรก — ฟอร์มยาวเกินกว่าจะให้ผู้ใช้ไล่หาเอง */
+  const scrollToField = (name: string) => {
+    requestAnimationFrame(() => {
+      formRef.current
+        ?.querySelector<HTMLElement>(`[data-field="${name}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  };
+
   const handleApiError = (err: unknown) => {
     if (!(err instanceof ApiError)) return;
     setFields(err.fields);
@@ -285,19 +396,32 @@ export default function EditOrganizationPage() {
       title: count > 0 ? "ข้อมูลยังไม่ถูกต้อง" : "ดำเนินการไม่สำเร็จ",
       detail: count > 0 ? `กรุณาตรวจสอบ ${count} รายการที่ทำเครื่องหมายไว้` : err.message,
     });
-    if (count > 0) {
-      const first = Object.keys(err.fields)[0];
-      requestAnimationFrame(() => {
-        formRef.current
-          ?.querySelector<HTMLElement>(`[data-field="${first}"]`)
-          ?.scrollIntoView({ behavior: "smooth", block: "center" });
-      });
-    }
+    if (count > 0) scrollToField(Object.keys(err.fields)[0]);
   };
 
   const generateForm = async (e: FormEvent) => {
     e.preventDefault();
     if (!orgId) return;
+
+    /**
+     * ตรวจฝั่งหน้าเว็บให้จบก่อนค่อยยิง API
+     *
+     * กฎชุดเดียวกับที่ API ใช้ ผลลัพธ์จึงเหมือนกัน ต่างแค่ผู้ใช้เห็นทุกช่องที่ต้องแก้
+     * ทันทีแทนที่จะรอเน็ตเวิร์กไปกลับ และร่างยังไม่ถูกบันทึกทับด้วยข้อมูลที่ยังไม่ผ่าน
+     * ปุ่ม "บันทึกแบบร่าง" ไม่ผ่านทางนี้โดยตั้งใจ — ร่างที่ยังกรอกไม่เสร็จต้องบันทึกได้เสมอ
+     */
+    const invalid = Object.keys(clientErrors);
+    if (invalid.length > 0) {
+      setTouched(Object.fromEntries(Object.keys(EMPTY).map((k) => [k, true])));
+      show({
+        tone: "error",
+        title: "ข้อมูลยังไม่ถูกต้อง",
+        detail: `กรุณาตรวจสอบ ${invalid.length} รายการที่ทำเครื่องหมายไว้`,
+      });
+      scrollToField(invalid[0]);
+      return;
+    }
+
     setGenerating(true);
     setFields({});
     try {
@@ -316,9 +440,9 @@ export default function EditOrganizationPage() {
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
       <header className="mb-8">
-        <h1 className="text-[26px] font-semibold text-navy-800">สร้างหน่วยงาน</h1>
+        <h1 className="text-[26px] font-semibold text-navy-800">ลงทะเบียนหน่วยงาน</h1>
         <p className="mt-1.5 text-[15px] text-ink-muted">
-          กรอกข้อมูลให้ครบทั้งสามส่วน ระบบจะสร้างแบบฟอร์ม PDF ให้ตรวจสอบก่อนนำส่ง
+          แบบคำขอลงทะเบียนหน่วยงานเพื่อเข้าใช้งานระบบกลางเพื่อการแบ่งปันข้อมูล
         </p>
       </header>
 
@@ -337,23 +461,36 @@ export default function EditOrganizationPage() {
           <Card id={SECTIONS[0].id} className="scroll-mt-24">
             <CardHeader tag={SECTIONS[0].tag} title={SECTIONS[0].title} description="ข้อมูลทั่วไปและที่ตั้งของหน่วยงาน" />
             <div className="grid gap-5 p-6">
+              {/* รหัสหน่วยงานเป็นค่าที่ระบบออกให้ ไม่ใช่ช่องกรอก
+                  เดิมช่องนี้แก้ได้ และ hint ยังชวนให้แก้ด้วย ("ตรวจสอบและแก้ไขได้หากไม่ถูกต้อง")
+                  ทั้งที่รหัสนี้เป็น unique ระดับตาราง ใช้อ้างถึงหน่วยงานในเอกสาร A0 และมาจาก
+                  เจ้าหน้าที่ BDI หรือ nextOrganizationCode() — ผู้ถูกตรวจสอบตั้งรหัสอ้างอิงของ
+                  ตัวเองไม่ได้ และรหัสที่ไปชนของหน่วยงานอื่นเคยไประเบิดตอนอนุมัติขั้นสุดท้าย
+                  ฝั่ง API ปฏิเสธค่าที่ต่างจากเดิมด้วย ไม่ได้กันแค่ที่หน้าจอ */}
               <Wrap name="organizationCode">
-                <TextField label="รหัสหน่วยงาน" required value={form.organizationCode} onChange={(e) => set("organizationCode", e.target.value)} error={fields.organizationCode} hint="เจ้าหน้าที่กรอกไว้ให้แล้ว ตรวจสอบและแก้ไขได้หากไม่ถูกต้อง" />
+                <TextField label="รหัสหน่วยงาน" readOnly value={form.organizationCode} error={fields.organizationCode} hint="หากรหัสหน่วยงานไม่ถูกต้อง กรุณาแจ้งเจ้าหน้าที่ BDI" />
               </Wrap>
+              {/* ชื่อหน่วยงานที่ BDI บันทึกไว้ล่วงหน้าเป็นข้อมูลของระบบ ไม่ใช่ของผู้กรอก —
+                  แสดงอย่างเดียวเหมือนรหัสหน่วยงาน และ API ปฏิเสธค่าที่ต่างจากเดิม
+                  หน่วยงานที่ยังไม่มีชื่อในระบบ (ผู้กรอกเปิดเอง) ยังกรอกได้ตามเดิม */}
               <Wrap name="name">
-                <TextField label="ชื่อหน่วยงาน" required value={form.name} onChange={(e) => set("name", e.target.value)} error={fields.name} placeholder="เช่น สำนักงานปลัดกระทรวงสาธารณสุข" />
+                {nameLocked ? (
+                  <TextField label="ชื่อหน่วยงาน" readOnly value={form.name} error={fields.name} hint="ระบบดึงจากข้อมูลหน่วยงานที่ลงทะเบียนไว้ หากไม่ถูกต้องกรุณาแจ้งเจ้าหน้าที่ BDI" />
+                ) : (
+                  <TextField label="ชื่อหน่วยงาน" required value={form.name} onChange={(e) => set("name", e.target.value)} {...fieldProps("name")} placeholder="เช่น สำนักงานปลัดกระทรวงสาธารณสุข" />
+                )}
               </Wrap>
               {/* เอกสาร A0 แยกช่อง "ตั้งอยู่เลขที่ ___ ถนน ___" ตามแบบฟอร์มราชการ
                   ฟอร์มจึงต้องแยกสองช่องด้วย ไม่งั้นช่องถนนในข้อตกลงจะว่างตลอดไป */}
               <Wrap name="addressLine">
-                <TextField label="ที่อยู่ (เลขที่ / อาคาร / ซอย)" required value={form.addressLine} onChange={(e) => set("addressLine", e.target.value)} error={fields.addressLine} />
+                <TextField label="ที่อยู่ (เลขที่ / อาคาร / ซอย)" required maxLength={MAX_ADDRESS_LINE} value={form.addressLine} onChange={(e) => set("addressLine", e.target.value)} {...fieldProps("addressLine")} hint="ใส่ชื่ออาคาร ชั้น เลขห้อง และซอยได้ครบ (ไม่เกิน 2,000 ตัวอักษร)" />
               </Wrap>
               <Wrap name="road">
-                <TextField label="ถนน" hint="เว้นว่างได้ถ้าที่อยู่ไม่มีชื่อถนน" value={form.road} onChange={(e) => set("road", e.target.value)} error={fields.road} />
+                <TextField label="ถนน" hint="เว้นว่างได้ถ้าที่อยู่ไม่มีชื่อถนน" value={form.road} onChange={(e) => set("road", e.target.value)} {...fieldProps("road")} />
               </Wrap>
               <div className="grid gap-5 sm:grid-cols-3">
                 <Wrap name="province">
-                  <SelectField label="จังหวัด" required value={form.province} onChange={(e) => set("province", e.target.value)} error={fields.province}>
+                  <SelectField label="จังหวัด" required value={form.province} onChange={(e) => set("province", e.target.value)} {...fieldProps("province")}>
                     <option value="">เลือกจังหวัด</option>
                     {provinces.map((p) => (
                       <option key={p} value={p}>{p}</option>
@@ -361,7 +498,7 @@ export default function EditOrganizationPage() {
                   </SelectField>
                 </Wrap>
                 <Wrap name="district">
-                  <SelectField label="อำเภอ/เขต" required disabled={!form.province} value={form.district} onChange={(e) => set("district", e.target.value)} error={fields.district}>
+                  <SelectField label="อำเภอ/เขต" required disabled={!form.province} value={form.district} onChange={(e) => set("district", e.target.value)} {...fieldProps("district")}>
                     <option value="">{form.province ? "เลือกอำเภอ/เขต" : "เลือกจังหวัดก่อน"}</option>
                     {amphoes.map((a) => (
                       <option key={a} value={a}>{a}</option>
@@ -369,7 +506,7 @@ export default function EditOrganizationPage() {
                   </SelectField>
                 </Wrap>
                 <Wrap name="subdistrict">
-                  <SelectField label="ตำบล/แขวง" required disabled={!form.district} value={form.subdistrict} onChange={(e) => set("subdistrict", e.target.value)} error={fields.subdistrict}>
+                  <SelectField label="ตำบล/แขวง" required disabled={!form.district} value={form.subdistrict} onChange={(e) => set("subdistrict", e.target.value)} {...fieldProps("subdistrict")}>
                     <option value="">{form.district ? "เลือกตำบล/แขวง" : "เลือกอำเภอก่อน"}</option>
                     {subdistricts.map((s) => (
                       <option key={s.name} value={s.name}>{s.name}</option>
@@ -379,10 +516,11 @@ export default function EditOrganizationPage() {
               </div>
               <div className="grid gap-5 sm:grid-cols-2">
                 <Wrap name="postalCode">
-                  <TextField label="รหัสไปรษณีย์" required inputMode="numeric" maxLength={5} value={form.postalCode} onChange={(e) => set("postalCode", e.target.value)} error={fields.postalCode} hint="เติมอัตโนมัติเมื่อเลือกตำบล" />
+                  {/* มาจากตำบลที่เลือก ไม่ใช่ช่องกรอก — แก้เองแล้วจะไม่ตรงกับที่อยู่ที่พิมพ์ลงเอกสาร A0 */}
+                  <TextField label="รหัสไปรษณีย์" required readOnly inputMode="numeric" maxLength={5} value={form.postalCode} error={fields.postalCode} />
                 </Wrap>
                 <Wrap name="email">
-                  <TextField label="อีเมลหน่วยงาน" required type="email" value={form.email} onChange={(e) => set("email", e.target.value)} error={fields.email} placeholder="contact@agency.go.th" />
+                  <TextField label="อีเมลหน่วยงาน" required type="email" value={form.email} onChange={(e) => set("email", e.target.value)} {...fieldProps("email")} placeholder="contact@agency.go.th" hint="อีเมลกลางของหน่วยงาน" />
                 </Wrap>
               </div>
             </div>
@@ -390,30 +528,33 @@ export default function EditOrganizationPage() {
 
           {/* ---------------- ส่วนที่ 2 ---------------- */}
           <Card id={SECTIONS[1].id} className="scroll-mt-24">
-            <CardHeader tag={SECTIONS[1].tag} title={SECTIONS[1].title} description="ผู้ที่จะลงนามรับรองการสร้างหน่วยงานนี้" />
+            <CardHeader tag={SECTIONS[1].tag} title={SECTIONS[1].title} description="ผู้มีอำนาจลงนามรับรองคำขอนี้ ระบบจะส่งคำขอลงนามไปยังอีเมลที่ระบุในส่วนนี้" />
             <div className="grid gap-5 p-6">
-              <PersonFields prefixKey="signatoryPrefix" firstKey="signatoryFirstName" lastKey="signatoryLastName" form={form} fields={fields} set={set} />
+              <p className="text-[13px] text-ink-muted">
+                หมายเหตุ: กรุณากรอกคำนำหน้า ชื่อ และนามสกุลให้ตรงตามบัตรประชาชน
+              </p>
+              <PersonFields prefixKey="signatoryPrefix" firstKey="signatoryFirstName" lastKey="signatoryLastName" form={form} fieldProps={fieldProps} set={set} prefixOptions={SIGNATORY_PREFIXES} allowOtherPrefix />
               <div className="grid gap-5 sm:grid-cols-2">
                 <Wrap name="signatoryPosition">
-                  <TextField label="ตำแหน่ง" required value={form.signatoryPosition} onChange={(e) => set("signatoryPosition", e.target.value)} error={fields.signatoryPosition} />
+                  <TextField label="ตำแหน่ง (ชื่อเต็มภาษาไทย)" required value={form.signatoryPosition} onChange={(e) => set("signatoryPosition", e.target.value)} {...fieldProps("signatoryPosition")} />
                 </Wrap>
                 <Wrap name="signatoryEmail">
-                  <TextField label="อีเมล" required type="email" value={form.signatoryEmail} onChange={(e) => set("signatoryEmail", e.target.value)} error={fields.signatoryEmail} hint="ระบบจะส่งคำขอให้ลงนามไปที่อีเมลนี้" />
+                  <TextField label="อีเมล" required type="email" value={form.signatoryEmail} onChange={(e) => set("signatoryEmail", e.target.value)} {...fieldProps("signatoryEmail")} />
                 </Wrap>
               </div>
               <div className="grid gap-5 sm:grid-cols-2">
                 <Wrap name="signatoryNationalId">
-                  <TextField label="เลขบัตรประชาชน" required inputMode="numeric" maxLength={13} value={form.signatoryNationalId} onChange={(e) => set("signatoryNationalId", e.target.value.replace(/\D/g, ""))} error={fields.signatoryNationalId} hint="ตัวเลข 13 หลัก" />
+                  <TextField label="เลขบัตรประชาชน" required inputMode="numeric" maxLength={13} value={form.signatoryNationalId} onChange={(e) => set("signatoryNationalId", e.target.value.replace(/\D/g, ""))} {...fieldProps("signatoryNationalId")} hint="ตัวเลข 13 หลัก" />
                 </Wrap>
                 <Wrap name="signatoryPhone">
-                  <TextField label="เบอร์โทรศัพท์" required inputMode="tel" value={form.signatoryPhone} onChange={(e) => set("signatoryPhone", e.target.value)} error={fields.signatoryPhone} />
+                  <TextField label="เบอร์โทรศัพท์" required inputMode="tel" maxLength={20} value={form.signatoryPhone} onChange={(e) => set("signatoryPhone", e.target.value)} {...fieldProps("signatoryPhone")} hint="มือถือ 10 หลัก หรือเบอร์ที่ทำงาน 9 หลัก (เช่น 0812345678 หรือ 021234567)" />
                 </Wrap>
               </div>
               <div className="grid gap-5 border-t border-line pt-5 sm:grid-cols-2">
                 <div data-field="APPOINTMENT_ORDER">
                   <FileUpload label="คำสั่งแต่งตั้งผู้มีอำนาจกระทำการแทน" required value={appointment} error={fields.APPOINTMENT_ORDER} uploading={uploadingKind === "APPOINTMENT_ORDER"} onSelect={(f) => uploadFile("APPOINTMENT_ORDER", f)} onRemove={() => setAppointment(null)} />
                 </div>
-                <FileUpload label="คำสั่งมอบอำนาจ (ถ้ามี)" value={powerOfAttorney} uploading={uploadingKind === "POWER_OF_ATTORNEY"} onSelect={(f) => uploadFile("POWER_OF_ATTORNEY", f)} onRemove={() => setPowerOfAttorney(null)} />
+                <FileUpload label="คำสั่ง/หนังสือมอบอำนาจ (ถ้ามี)" value={powerOfAttorney} uploading={uploadingKind === "POWER_OF_ATTORNEY"} onSelect={(f) => uploadFile("POWER_OF_ATTORNEY", f)} onRemove={() => setPowerOfAttorney(null)} />
               </div>
             </div>
           </Card>
@@ -422,21 +563,27 @@ export default function EditOrganizationPage() {
           <Card id={SECTIONS[2].id} className="scroll-mt-24">
             <CardHeader tag={SECTIONS[2].tag} title={SECTIONS[2].title} description="ผู้ประสานงานที่กรอกแบบฟอร์มนี้" />
             <div className="grid gap-5 p-6">
-              <PersonFields prefixKey="contactPrefix" firstKey="contactFirstName" lastKey="contactLastName" form={form} fields={fields} set={set} />
+              {/*
+                ชื่อ นามสกุล อีเมล และเบอร์โทร มาจากบัญชีของผู้กรอกเอง (backend เติมให้ตอน
+                สร้างคำขอ) แก้ที่นี่ได้ก็จะกลายเป็นข้อมูลที่ไม่ตรงกับบัญชีที่ล็อกอินอยู่ และ
+                ชื่อนี้คือชื่อที่ไปพิมพ์อยู่บนเอกสารที่ลงนาม — คำนำหน้ายังแก้ได้ เพราะ ThaID
+                ไม่ส่ง claim `title` มา บัญชีจำนวนหนึ่งจึงยังไม่มีค่านี้
+              */}
+              <PersonFields prefixKey="contactPrefix" firstKey="contactFirstName" lastKey="contactLastName" form={form} fieldProps={fieldProps} set={set} lockName />
               <div className="grid gap-5 sm:grid-cols-2">
                 <Wrap name="contactPosition">
-                  <TextField label="ตำแหน่ง" required value={form.contactPosition} onChange={(e) => set("contactPosition", e.target.value)} error={fields.contactPosition} />
+                  <TextField label="ตำแหน่ง" required value={form.contactPosition} onChange={(e) => set("contactPosition", e.target.value)} {...fieldProps("contactPosition")} />
                 </Wrap>
                 <Wrap name="contactDepartment">
-                  <TextField label="ฝ่าย/กอง/สำนัก" required value={form.contactDepartment} onChange={(e) => set("contactDepartment", e.target.value)} error={fields.contactDepartment} />
+                  <TextField label="ฝ่าย/กอง/สำนัก" required value={form.contactDepartment} onChange={(e) => set("contactDepartment", e.target.value)} {...fieldProps("contactDepartment")} />
                 </Wrap>
               </div>
               <div className="grid gap-5 sm:grid-cols-2">
                 <Wrap name="contactEmail">
-                  <TextField label="อีเมล" required type="email" value={form.contactEmail} onChange={(e) => set("contactEmail", e.target.value)} error={fields.contactEmail} />
+                  <TextField label="อีเมล" required type="email" disabled value={form.contactEmail} error={fields.contactEmail} />
                 </Wrap>
                 <Wrap name="contactPhone">
-                  <TextField label="เบอร์โทรศัพท์" required inputMode="tel" value={form.contactPhone} onChange={(e) => set("contactPhone", e.target.value)} error={fields.contactPhone} />
+                  <TextField label="เบอร์โทรศัพท์" required disabled inputMode="tel" maxLength={20} value={form.contactPhone} error={fields.contactPhone} />
                 </Wrap>
               </div>
             </div>
@@ -448,7 +595,7 @@ export default function EditOrganizationPage() {
               บันทึกแบบร่าง
             </Button>
             <Button type="submit" loading={generating}>
-              ตรวจสอบและสร้าง PDF
+              ตรวจสอบข้อมูล
             </Button>
           </div>
         </form>
@@ -468,32 +615,84 @@ function PersonFields({
   firstKey,
   lastKey,
   form,
-  fields,
+  fieldProps,
   set,
+  lockName = false,
+  prefixOptions = PREFIXES,
+  allowOtherPrefix = false,
 }: {
   prefixKey: keyof FormState;
   firstKey: keyof FormState;
   lastKey: keyof FormState;
   form: FormState;
-  fields: Record<string, string>;
+  fieldProps: (k: keyof FormState) => { error?: string; valid: boolean; onBlur: () => void };
   set: (k: keyof FormState, v: string) => void;
+  /** ชื่อ-นามสกุลมาจากบัญชี ไม่ใช่ช่องกรอก — คำนำหน้ายังเปิดไว้ */
+  lockName?: boolean;
+  /** คำนำหน้าที่มีให้เลือก — ส่วนที่ 2 ใช้ชุดสั้นตามบัตรประชาชน */
+  prefixOptions?: string[];
+  /** เพิ่มตัวเลือก "อื่น ๆ" ที่เปิดช่องพิมพ์คำนำหน้าเอง */
+  allowOtherPrefix?: boolean;
 }) {
+  /**
+   * เลือก "อื่น ๆ" อยู่หรือไม่ — เก็บไว้ที่นี่ เพราะ `form[prefixKey]` เก็บ**คำนำหน้าจริง**
+   * ที่จะไปพิมพ์ในเอกสาร ไม่เคยเก็บคำว่า "อื่น ๆ"
+   *
+   * ค่าตั้งต้นอ่านจากค่าที่โหลดมา: ร่างเก่าที่กรอก "ดร." ไว้ (ตอนที่ลิสต์ยังยาว) ต้องเปิดขึ้นมา
+   * เป็นโหมดพิมพ์เองพร้อมค่าเดิม ไม่ใช่ dropdown ว่างเปล่าที่ทิ้งค่าไปเงียบ ๆ — ฟอร์มจะเรนเดอร์
+   * ก็ต่อเมื่อโหลดคำขอเสร็จแล้ว (หน้าอยู่ที่ <Spinner /> ก่อนหน้านั้น) ค่านี้จึงเชื่อถือได้ตอน mount
+   */
+  const [otherPrefix, setOtherPrefix] = useState(
+    () =>
+      allowOtherPrefix &&
+      form[prefixKey].trim().length > 0 &&
+      !prefixOptions.includes(form[prefixKey]),
+  );
+
+  const prefixState = fieldProps(prefixKey);
+  /**
+   * ตอนพิมพ์เอง ข้อความผิดพลาดกับขอบเขียวเป็นของ**ช่องพิมพ์** ไม่ใช่ของ dropdown
+   * ที่มีค่า "อื่น ๆ" อยู่แล้ว — ไม่งั้นผู้ใช้เห็นเส้นแดงใต้ช่องที่ไม่มีอะไรให้แก้
+   */
+  const selectState = otherPrefix
+    ? { valid: form[prefixKey].trim().length > 0, onBlur: prefixState.onBlur }
+    : prefixState;
+
+  const changePrefix = (value: string) => {
+    if (allowOtherPrefix && value === PREFIX_OTHER) {
+      setOtherPrefix(true);
+      // ล้างค่าเดิมทิ้ง เพื่อให้กฎ "กรุณาระบุคำนำหน้า" บังคับให้พิมพ์จริง ๆ
+      set(prefixKey, "");
+      return;
+    }
+    setOtherPrefix(false);
+    set(prefixKey, value);
+  };
+
   return (
-    <div className="grid gap-5 sm:grid-cols-[7.5rem_minmax(0,1fr)_minmax(0,1fr)]">
-      <Wrap name={prefixKey}>
-        <SelectField label="คำนำหน้า" required value={form[prefixKey]} onChange={(e) => set(prefixKey, e.target.value)} error={fields[prefixKey]}>
-          <option value="">เลือก</option>
-          {PREFIXES.map((p) => (
-            <option key={p} value={p}>{p}</option>
-          ))}
-        </SelectField>
-      </Wrap>
-      <Wrap name={firstKey}>
-        <TextField label="ชื่อ" required value={form[firstKey]} onChange={(e) => set(firstKey, e.target.value)} error={fields[firstKey]} />
-      </Wrap>
-      <Wrap name={lastKey}>
-        <TextField label="นามสกุล" required value={form[lastKey]} onChange={(e) => set(lastKey, e.target.value)} error={fields[lastKey]} />
-      </Wrap>
+    <div className="flex flex-col gap-5">
+      <div className="grid gap-5 sm:grid-cols-[7.5rem_minmax(0,1fr)_minmax(0,1fr)]">
+        <Wrap name={prefixKey}>
+          <SelectField label="คำนำหน้า" required value={otherPrefix ? PREFIX_OTHER : form[prefixKey]} onChange={(e) => changePrefix(e.target.value)} {...selectState}>
+            <option value="">เลือก</option>
+            {prefixOptions.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+            {allowOtherPrefix ? <option value={PREFIX_OTHER}>{PREFIX_OTHER}</option> : null}
+          </SelectField>
+        </Wrap>
+        <Wrap name={firstKey}>
+          <TextField label="ชื่อ" required disabled={lockName} value={form[firstKey]} onChange={(e) => set(firstKey, e.target.value)} {...fieldProps(firstKey)} />
+        </Wrap>
+        <Wrap name={lastKey}>
+          <TextField label="นามสกุล" required disabled={lockName} value={form[lastKey]} onChange={(e) => set(lastKey, e.target.value)} {...fieldProps(lastKey)} />
+        </Wrap>
+      </div>
+      {otherPrefix ? (
+        <div className="sm:max-w-[18rem]">
+          <TextField label="ระบุคำนำหน้า" required value={form[prefixKey]} onChange={(e) => set(prefixKey, e.target.value)} {...prefixState} placeholder="เช่น ว่าที่ร้อยตรี" />
+        </div>
+      ) : null}
     </div>
   );
 }

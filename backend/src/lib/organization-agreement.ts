@@ -32,6 +32,7 @@ import { publicAttachment, storeAttachment } from "./attachment.js";
 import { DocumentRenderError, renderTemplateToPdf } from "./document-render.js";
 import { LEGAL_SCOPES, publishedDocuments, templateDocx } from "./legal.js";
 import { agreementValues, type AgreementInput } from "./legal-values.js";
+import { NAME_FIELDS, fullNameTh } from "./person-name.js";
 import { BDI_ORGANIZATION_ID } from "./system.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -62,6 +63,8 @@ export type AgreementRequest = Omit<
   | "officePhone"
   | "printedByName"
   | "printedAt"
+  | "documentVersionNumber"
+  | "documentEffectiveAt"
 > & { id: string };
 
 /**
@@ -72,7 +75,7 @@ async function signaturesOf(db: Db, requestId: string) {
   const rows = await db.signatureConfirmation.findMany({
     where: { subjectType: SUBJECT, subjectId: requestId },
     orderBy: { confirmedAt: "asc" },
-    include: { userAccount: { select: { displayName: true } } },
+    include: { userAccount: { select: NAME_FIELDS } },
   });
 
   const pick = (type: ConfirmationType) => {
@@ -84,7 +87,7 @@ async function signaturesOf(db: Db, requestId: string) {
       signedLastName?: string;
     } | null;
     // ชื่อที่ snapshot ไว้ใน payload มาก่อน displayName ปัจจุบันของบัญชี
-    const name = payload?.signedName ?? row.userAccount.displayName;
+    const name = payload?.signedName ?? fullNameTh(row.userAccount);
     /**
      * แถวที่ลงนามก่อนจะเริ่มเก็บชื่อ-นามสกุลแยกกัน มีแต่ชื่อเต็ม — แยกจากช่องว่าง
      * แบบดีที่สุดที่ทำได้ (ชื่อเต็มคือ "คำนำหน้า ชื่อ นามสกุล") ไม่ใช่ไปอ่านจากบัญชีสด
@@ -129,7 +132,13 @@ export async function renderLegalDocument(
   params: {
     request: AgreementRequest;
     /** เอกสารที่จะ render — ต้องเป็นเวอร์ชันที่เผยแพร่อยู่ */
-    document: { code: string; nameTh: string; versionId: string };
+    document: {
+      code: string;
+      nameTh: string;
+      versionId: string;
+      versionNumber: number;
+      effectiveAt: Date | null;
+    };
     /** ชื่อคนที่ทำให้เอกสารฉบับนี้ถูกสร้าง — ไปอยู่บรรทัด "พิมพ์จากระบบโดย" */
     printedByName: string | null;
     actorId: string;
@@ -161,6 +170,8 @@ export async function renderLegalDocument(
     officePhone: office?.phone ?? null,
     printedByName: params.printedByName,
     printedAt: now,
+    documentVersionNumber: params.document.versionNumber,
+    documentEffectiveAt: params.document.effectiveAt,
   });
 
   const pdf = await renderTemplateToPdf(docx, values, `${params.document.code}.docx`);
@@ -216,7 +227,13 @@ export async function renderPlaceholderDocuments(
     if (!doc.hasPlaceholders) continue;
     await renderLegalDocument(db, {
       request: params.request,
-      document: { code: doc.code, nameTh: doc.nameTh, versionId: doc.versionId },
+      document: {
+        code: doc.code,
+        nameTh: doc.nameTh,
+        versionId: doc.versionId,
+        versionNumber: doc.versionNumber,
+        effectiveAt: doc.effectiveAt,
+      },
       printedByName: params.printedByName,
       actorId: params.actorId,
     });
