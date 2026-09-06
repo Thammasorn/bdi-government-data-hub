@@ -147,14 +147,77 @@ key ของ blob เหมือนกันทุกตัวอักษร 
 
 ---
 
-## 6. ที่ยังค้าง
+## 6. storage account จริง
 
-- [ ] ยังไม่ได้ยิงกับ storage account จริงสักครั้ง — ทดสอบทั้งหมดรันบน Azurite
-      เส้นทาง `DefaultAzureCredential` (§3.1) จึงยังไม่มีการยืนยันจากของจริง
-      ต้องรอ subscription / resource group ของโครงการก่อน
-- [ ] ยังไม่มีคำตอบว่า storage account จะอยู่ region ไหนและใครเป็นเจ้าของ subscription
-- [ ] soft delete / versioning ของ Azure ยังไม่ได้เปิด ระบบพึ่ง `status = REPLACED` ในฐานข้อมูล
-      อย่างเดียวเหมือนเดิม ถ้าเปิด soft delete จะได้ตาข่ายอีกชั้นโดยไม่ต้องแก้โค้ด
+สร้างเมื่อ **2026-09-07** ด้วย `az cli` บน subscription ที่ล็อกอินอยู่บนเครื่องพัฒนา
+
+| | |
+| --- | --- |
+| Subscription | `Azure subscription 1` · `b1f2fd2e-e3d5-4526-8d1d-ae45a4fbb0b9` (tenant `thammasornhoutlook.onmicrosoft.com`) |
+| Resource group | `bdi-datahub` |
+| Storage account | `bdidatahub` · StorageV2 · Standard_LRS · southeastasia |
+| Blob endpoint | `https://bdidatahub.blob.core.windows.net` |
+| Container | `bdi-uploads` · private |
+| ความปลอดภัย | HTTPS only · TLS 1.2 ขั้นต่ำ · `allowBlobPublicAccess=false` |
+| ตาข่าย | soft delete 30 วัน + blob versioning **เปิดแล้ว** (ไม่ต้องแก้โค้ด) |
+
+```bash
+az group create -n bdi-datahub -l southeastasia
+az storage account create -n bdidatahub -g bdi-datahub -l southeastasia \
+  --sku Standard_LRS --kind StorageV2 \
+  --https-only true --min-tls-version TLS1_2 --allow-blob-public-access false
+az storage container create --account-name bdidatahub -n bdi-uploads --auth-mode login
+az storage account blob-service-properties update -n bdidatahub -g bdi-datahub \
+  --enable-delete-retention true --delete-retention-days 30 --enable-versioning true
+```
+
+**Owner บน subscription ไม่ได้แปลว่าอ่านข้อมูลใน blob ได้** สิทธิ์ระดับข้อมูลเป็นคนละชั้นกับ
+สิทธิ์ระดับ control plane ต้องมอบ role แยกก่อนถึงจะใช้ `--auth-mode login` ได้:
+
+```bash
+az role assignment create --assignee <upn-หรือ-object-id> \
+  --role "Storage Blob Data Contributor" \
+  --scope $(az storage account show -n bdidatahub -g bdi-datahub --query id -o tsv)
+```
+
+ไม่มี role นั้นก็ยังใช้ `--auth-mode key --account-key $(az storage account keys list …)` ได้
+
+### 6.1 ที่ทดสอบไปแล้วกับของจริง (2026-09-07)
+
+รันบน checkout `dev_20260824_migrate-to-azure` ที่ตั้ง `AZURE_STORAGE_CONNECTION_STRING`
+ชี้ไป `bdidatahub` โดย **ไม่ได้สตาร์ต Azurite ให้ backend ใช้เลย**
+
+- `GET /health/ready` → `{"database":"up","storage":"up"}`
+- `npm run typecheck` ผ่าน
+- `seed:masters` อัปโหลด template `.docx` ห้าฉบับและ render กลับมาเป็น PDF ได้ครบ —
+  11 blob อยู่ใน container จริง ทั้งขาเขียนและขาอ่านเป็น Buffer
+- `seed:demo` ผ่าน
+- **ขับเบราว์เซอร์จริง** เข้าสู่ระบบเป็น `user@nso.go.th` (รหัสผ่าน + OTP) → เปิดคำขอ
+  `DS-REG-2026-0001` → อัปโหลดพจนานุกรมข้อมูล `.csv` → blob โผล่ที่
+  `dev/dataset-registration-request/<id>/data-dictionary/<attachment-id>/document.csv`
+  ขนาด 229 ไบต์ `text/csv` → โหลดกลับมา **sha256 ตรงกันทุกไบต์** พร้อม
+  `Content-Disposition: inline; filename*=UTF-8''data-dictionary-sit.csv` → กด
+  “ตรวจสอบคำขอ” ได้ A4 ขนาด 64,148 ไบต์ ขึ้นต้นด้วย `%PDF` สตรีมเข้า `<iframe>` สำเร็จ
+  และปุ่ม “นำส่งคำขอ” ปลดล็อก · ไม่มี console error และไม่มี HTTP ≥ 400
+
+## 7. ที่ยังค้าง
+
+- [ ] **เส้นทาง `AZURE_STORAGE_ACCOUNT_URL` + `DefaultAzureCredential` (§3.1) ยังไม่ได้ยืนยัน**
+      ที่ทดสอบข้างบนทั้งหมดเดินผ่าน connection string เพราะเครื่องพัฒนาไม่มี managed identity
+      และใน container ก็ไม่มี `az` ให้ `AzureCliCredential` ทำงาน วิธียืนยันโดยไม่ต้องรอ ACA
+      คือสร้าง service principal แล้วส่ง `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` /
+      `AZURE_CLIENT_SECRET` เข้า container — `EnvironmentCredential` จะหยิบไปใช้ แล้วเดิน
+      `BlobServiceClient(url, TokenCredential)` เส้นเดียวกับ managed identity เป๊ะ
+      ต่างแค่แหล่งที่มาของตัวตน:
+
+      ```bash
+      az ad sp create-for-rbac -n bdi-datahub-dev \
+        --role "Storage Blob Data Contributor" \
+        --scopes $(az storage account show -n bdidatahub -g bdi-datahub --query id -o tsv)
+      ```
+
+- [ ] subscription ที่ใช้อยู่ผูกกับบัญชี outlook.com ส่วนตัว ไม่ใช่ tenant ขององค์กร
+      ถ้าระบบจะขึ้นจริงต้องย้ายไป subscription ขององค์กร ซึ่งก็คือทำ §6 ซ้ำอีกรอบ
 - [ ] การ deploy ยังเป็น docker compose บนเครื่องเดียว การ์ดชื่อ “Migrate to Azure” แต่
       ขอบเขตที่เขียนไว้บนการ์ดคือ storage อย่างเดียว — ย้าย compute ไป Azure Container Apps
       เป็นงานคนละใบ
