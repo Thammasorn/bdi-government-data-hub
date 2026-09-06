@@ -543,8 +543,11 @@ otherwise; that was raised and settled on 2026-08-13 in favour of Journey B.
 ### One person, one name — `lib/person-name.ts`
 
 **Nothing reads `iam.user_account.display_name` to put a name on a screen any more.**
-`fullNameTh()` composes it from `prefix_th` + `firstname_th` + `lastname_th`, prefix glued to
-the given name the way Thai writes it (`นายสมชาย ใจดี`), and every place that shows a person —
+`fullNameTh()` composes it from `prefix_th` + `firstname_th` + `lastname_th`, space-separated
+(`นาย สมชาย ใจดี`) — the form the agreement templates have always used, so there is now one
+shape rather than two. `legal-values.ts` no longer has a name builder of its own; it calls this.
+A prefix on its own does not count as a name, or an account with only `prefix_th` would be
+called `นาย`. Every place that shows a person —
 the timeline actor, the approval stamp, the signature written into A0, the navbar, both list
 tables, the notification e-mails — goes through it. `frontend/lib/types.ts`'s `fullName()` and
 `sessionUserName()` are the deliberate frontend copies, in the same sense as
@@ -565,7 +568,9 @@ account that cannot act yet.
 
 Until 2026-09-06 the navbar composed `firstName + lastName` while stamps composed
 `prefix + firstName + lastName`, so the same person was "สุรชัย ปกครองดี" in the header and
-"นายสุรชัย ปกครองดี" on the document they had just signed.
+"นาย สุรชัย ปกครองดี" on the document they had just signed. (The prefix was briefly glued to
+the given name on 2026-09-06 before BDI asked for the space back the same day; the templates
+had been spacing it all along.)
 
 ### ThaID
 
