@@ -17,7 +17,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
 import { useRequireAuth } from "@/lib/require-auth";
-import { taskEventLabel, formatThaiDate } from "@/lib/status";
+import { ROLE_LABELS, taskEventLabel, formatThaiDate } from "@/lib/status";
 import { describeState, movedMessage, useRequestWatch } from "@/lib/use-request-watch";
 import {
   DATA_CATEGORY_LABELS,
@@ -279,6 +279,17 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
   // "ขอให้ปรับปรุง" = review_task ที่ปิดด้วย result = RETURNED
   const lastRevision = [...request.events].reverse().find((e) => e.result === "RETURNED");
 
+  /**
+   * ความเห็นล่าสุดของผู้เชี่ยวชาญ — แถวสุดท้ายของด่านนั้นที่**มีข้อความ**
+   *
+   * ผู้เชี่ยวชาญบันทึกความเห็นได้หลายครั้ง แถวไหนไม่มีข้อความก็ไม่มีอะไรให้อ่าน
+   * (backend ตัดความเห็นที่เป็น BDI_INTERNAL ออกให้ฝั่งหน่วยงานไปแล้ว — ที่นี่จึงเห็น
+   * เฉพาะที่ตัวเองมีสิทธิ์เห็นอยู่แล้ว)
+   */
+  const latestSpecialistNote = [...request.events]
+    .reverse()
+    .find((e) => e.taskType === "DATASET_SPECIALIST_REVIEW" && Boolean(e.note?.trim()));
+
   const closeModal = () => {
     setModal(null);
     setNote("");
@@ -491,6 +502,40 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
                 </Button>
               ) : null}
             </div>
+          </div>
+        </Card>
+      ) : null}
+
+      {/*
+        ความเห็นล่าสุดของผู้เชี่ยวชาญ — อยู่บนสุด ใต้แถวปุ่ม (BDI ขอเมื่อ 2026-09-04)
+
+        เดิมความเห็นอยู่ในไทม์ไลน์ล่างสุดของหน้าเท่านั้น เจ้าหน้าที่ที่กำลังตัดสินใจว่าจะ
+        ส่งผ่านหรือส่งกลับต้องเลื่อนผ่านทั้งฟอร์มไปหามัน — ทั้งที่มันคือสิ่งที่เขาขอไว้เอง
+
+        ไม่ต้องยิง API เพิ่ม: `events` คือ `review_task` ทั้งชุดที่หน้านี้โหลดมาอยู่แล้ว และ
+        แถวของผู้เชี่ยวชาญเป็น COMPLETED/CONFIRMED ตั้งแต่เกิด (`recordAdvisoryNote()`)
+        การกรองความเห็นที่เป็น BDI_INTERNAL ออกจากฝั่งหน่วยงานทำที่ backend แล้ว —
+        ที่นี่จึงกรองแค่ "มีข้อความไหม" ไม่ได้ตัดสินใจเรื่องสิทธิ์เอง
+
+        ไม่มีความเห็น = ไม่มีบล็อก ไม่ใช่บล็อกว่าง — บล็อกว่างบอกว่ามีเรื่องต้องรอ ทั้งที่ไม่มี
+        แถวเดิมยังอยู่ในไทม์ไลน์ตามเดิม อันนี้เป็นทางลัด ไม่ใช่การย้าย
+      */}
+      {latestSpecialistNote ? (
+        <Card className="mb-6 border-l-[3px] border-l-navy-500">
+          <div className="p-6">
+            <p className="text-[13px] font-semibold uppercase tracking-wide text-navy-500">
+              {ROLE_LABELS.BDI_DATASET_SPECIALIST}
+            </p>
+            <p className="mt-1 font-medium text-navy-800">ความเห็นล่าสุด</p>
+            <p className="mt-2 whitespace-pre-wrap text-[15px] leading-relaxed text-ink">
+              {latestSpecialistNote.note}
+            </p>
+            <p className="mt-3 text-[13px] text-ink-muted">
+              {latestSpecialistNote.actor?.name || "—"}
+              {latestSpecialistNote.completedAt
+                ? ` · ${formatThaiDate(latestSpecialistNote.completedAt)}`
+                : ""}
+            </p>
           </div>
         </Card>
       ) : null}
