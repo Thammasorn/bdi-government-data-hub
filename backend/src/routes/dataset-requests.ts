@@ -1216,6 +1216,8 @@ datasetRequestRouter.get("/:id/legal-documents", async (req, res) => {
       out.push({
         code: doc.code,
         name: doc.nameTh,
+        shortname: doc.shortname,
+        legalNotice: doc.legalNotice,
         versionId: doc.versionId,
         versionNumber: doc.versionNumber,
         fromRequest: false,
@@ -1254,6 +1256,8 @@ datasetRequestRouter.get("/:id/legal-documents", async (req, res) => {
     out.push({
       code: doc.code,
       name: doc.nameTh,
+      shortname: doc.shortname,
+      legalNotice: doc.legalNotice,
       versionId: doc.versionId,
       versionNumber: doc.versionNumber,
       fromRequest: true,

@@ -6,6 +6,7 @@ import { PdfViewer } from "@/components/organization/PdfViewer";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
+import { documentLabel } from "@/lib/legal-document";
 import { formatThaiDate } from "@/lib/status";
 import type { LegalDocument, SkippedLegalDocument } from "@/lib/types";
 
@@ -123,7 +124,7 @@ export function LegalDocumentsCard({
   const skippedNote =
     notApplicable.length > 0 ? (
       <p className="text-[13px] leading-relaxed text-ink-muted">
-        หน่วยงานระบุว่า &ldquo;{notApplicable.map((doc) => doc.name).join(" · ")}&rdquo;
+        หน่วยงานระบุว่า &ldquo;{notApplicable.map(documentLabel).join(" · ")}&rdquo;
         ไม่เกี่ยวข้องกับหน่วยงาน จึงไม่อยู่ในชุดที่ต้องเห็นชอบและลงนาม
       </p>
     ) : null;
@@ -165,7 +166,7 @@ export function LegalDocumentsCard({
                   : "border-line bg-white text-navy-700 hover:border-navy-300 hover:bg-navy-50"
               }`}
             >
-              {doc.code}
+              {documentLabel(doc)}
               {doc.acceptedAt ? (
                 <>
                   <span aria-hidden="true">✓</span>
@@ -195,7 +196,7 @@ export function LegalDocumentsCard({
              * และผู้ที่เพิ่งลงนามจะเห็นฉบับที่ยังไม่มีลายมือชื่อของตัวเอง
              */
             url={`${api.fileUrl(current.fileUrl)}?v=${reloadKey}`}
-            filename={`${current.code} · ${current.name}`}
+            filename={documentLabel(current)}
             title={current.name}
           />
         ) : (

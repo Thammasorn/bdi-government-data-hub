@@ -6,6 +6,7 @@ import { PdfViewer } from "@/components/organization/PdfViewer";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { api, ApiError } from "@/lib/api";
+import { documentLabel } from "@/lib/legal-document";
 import type { LegalDocument } from "@/lib/types";
 
 /**
@@ -139,13 +140,21 @@ export function SigningDialog({
         open={open}
         onClose={close}
         size="lg"
-        title={`${current.code} · ${current.name}`}
+        title={documentLabel(current)}
         description={`เอกสารฉบับที่ ${acknowledged + 1} จาก ${documents.length} — โปรดอ่านให้ครบก่อนกดเห็นชอบ`}
       >
+        {/* คำเตือนของเอกสารฉบับนี้ ถ้าฝ่ายกฎหมายตั้งไว้ — อยู่ใต้บรรทัด "เอกสารฉบับที่ n จาก m"
+            ตามที่ขอไว้ เพราะมันบอกว่า **ฉบับนี้** ข้ามได้ ไม่ใช่กติกาของทั้งชุด
+            (A3 บอกว่าหน่วยงานที่ไม่แบ่งปันข้อมูลส่วนบุคคลกด "ไม่เกี่ยวข้อง" ได้) */}
+        {current.legalNotice ? (
+          <p className="mb-4 rounded-xl bg-warning-bg p-4 text-[13px] leading-relaxed text-warning">
+            {current.legalNotice}
+          </p>
+        ) : null}
         {current.fileUrl ? (
           <PdfViewer
             url={api.fileUrl(current.fileUrl)}
-            filename={`${current.code} ${current.name}`}
+            filename={documentLabel(current)}
             title={current.name}
           />
         ) : (

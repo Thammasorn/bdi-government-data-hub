@@ -297,7 +297,8 @@ export async function sendInvitationEmail(
 ) {
   const organizationName = escapeHtml(info.organizationName);
   const activateUrl = `${env.appUrl}/activate`;
-  // วันที่แบบ "11 กันยายน 2569" — ไม่ใช้ thaiLongDate() ของเอกสารข้อตกลง ซึ่งให้เลขไทย
+  // วันที่แบบ "11 กันยายน 2569" — อีเมลมีตัวจัดรูปแบบของตัวเอง ไม่พึ่ง thaiLongDate()
+  // ของเอกสารข้อตกลง เพราะอีเมลไม่ควรผูกกับรูปแบบที่ฝ่ายกฎหมายสั่งเปลี่ยนได้
   const expiresOn = new Intl.DateTimeFormat("th-TH", {
     dateStyle: "long",
     timeZone: "Asia/Bangkok",

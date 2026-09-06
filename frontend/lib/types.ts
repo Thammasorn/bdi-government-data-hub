@@ -196,8 +196,16 @@ export const ATTACHMENT_LABELS: Record<Attachment["kind"], string> = {
  * จะไม่ตรงกับที่เผยแพร่ และ backend จะให้โหลดหน้าใหม่แทนที่จะรับการลงนามนั้นไว้
  */
 export interface LegalDocument {
+  /**
+   * รหัสภายใน A0–A4 — **หน้าจอไม่พิมพ์ค่านี้ออกมา** ตั้งแต่ 2026-09-06
+   * ยังส่งมาเพราะการข้าม "ไม่เกี่ยวข้อง" เทียบด้วยรหัส และ log ใช้อ้างถึงฉบับ
+   */
   code: string;
   name: string;
+  /** ชื่อสั้นที่ใช้แทนรหัสบนหน้าจอ — null = ฉบับนี้ไม่ได้ตั้งไว้ ให้ตกกลับไปใช้ `name` */
+  shortname: string | null;
+  /** ข้อความเตือนใต้บรรทัด "เอกสารฉบับที่ n จาก m" — null = ไม่มี */
+  legalNotice: string | null;
   versionId: string;
   versionNumber: number;
   /** true = ฉบับที่ระบบเติมข้อมูลของคำขอนี้ลงไป (A0) — ที่เหลือเป็นไฟล์กลางของทุกหน่วยงาน */
@@ -219,6 +227,7 @@ export interface LegalDocument {
 export interface SkippedLegalDocument {
   code: string;
   name: string;
+  shortname: string | null;
 }
 
 // ------------------------------------------------------------------ ชุดข้อมูล (Journey C)

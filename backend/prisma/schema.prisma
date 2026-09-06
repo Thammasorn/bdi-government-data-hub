@@ -1130,6 +1130,13 @@ model LegalDocument {
   nameTh String  @map("name_th") @db.VarChar(500)
   nameEn String? @map("name_en") @db.VarChar(500)
 
+  /// ชื่อสั้นที่ผู้ใช้เห็นแทนรหัส — "ผนวก 1", "ข้อตกลงหลัก…" รหัส A0–A4 เป็นของภายใน
+  /// เบี่ยงจากดีไซน์: การ์ดขอให้ required แต่ค่าที่ให้มาบอกว่า A4 เป็น null — required
+  /// กับ null พร้อมกันไม่ได้ จึงเป็น nullable ฉบับที่ไม่มีชื่อสั้น (A4) ตกกลับไปใช้ nameTh
+  shortname   String? @unique @map("shortname") @db.VarChar(200)
+  /// ข้อความเตือนที่แสดงใต้บรรทัด "เอกสารฉบับที่ n จาก m" ตอนอ่าน/ลงนาม — ไม่ใช่เนื้อเอกสาร
+  legalNotice String? @map("legal_notice") @db.Text
+
   /// Flow ที่เอกสารนี้นำไปใช้ เช่น ORGANIZATION_REGISTRATION, DATASET_REGISTRATION, DATASET_REQUEST
   applicationScope              String  @map("application_scope") @db.VarChar(64)
   /// ลำดับการแสดงเอกสารภายใน scope

@@ -6,6 +6,7 @@ import { PdfViewer } from "@/components/organization/PdfViewer";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { api, ApiError } from "@/lib/api";
+import { documentLabel } from "@/lib/legal-document";
 import type { LegalDocument } from "@/lib/types";
 
 /**
@@ -155,7 +156,7 @@ export function DatasetSigningDialog({
         <div className="mt-5">
           <PdfViewer
             url={api.fileUrl(current.fileUrl)}
-            filename={`${current.code} ${current.name}`}
+            filename={documentLabel(current)}
             title={current.name}
           />
         </div>

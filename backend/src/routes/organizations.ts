@@ -1430,6 +1430,8 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
   const out: Array<{
     code: string;
     name: string;
+    shortname: string | null;
+    legalNotice: string | null;
     versionId: string;
     versionNumber: number;
     fromRequest: boolean;
@@ -1448,6 +1450,8 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
       out.push({
         code: doc.code,
         name: doc.nameTh,
+        shortname: doc.shortname,
+        legalNotice: doc.legalNotice,
         versionId: doc.versionId,
         versionNumber: doc.versionNumber,
         fromRequest: false,
@@ -1515,6 +1519,8 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
     out.push({
       code: doc.code,
       name: doc.nameTh,
+      shortname: doc.shortname,
+      legalNotice: doc.legalNotice,
       versionId: doc.versionId,
       versionNumber: doc.versionNumber,
       fromRequest: true,
@@ -1532,7 +1538,11 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
      * บอกว่าหายไปไหน ไม่ใช่หายไปเฉย ๆ — ทั้งฝั่งหน่วยงานและฝั่ง BDI ควรเห็นว่าหน่วยงาน
      * ระบุฉบับไหนว่าไม่เกี่ยวข้อง แค่ไม่ต้องเอามาให้อ่านและลงนามอีก
      */
-    notApplicable: notApplicable.map((doc) => ({ code: doc.code, name: doc.nameTh })),
+    notApplicable: notApplicable.map((doc) => ({
+      code: doc.code,
+      name: doc.nameTh,
+      shortname: doc.shortname,
+    })),
   });
 });
 

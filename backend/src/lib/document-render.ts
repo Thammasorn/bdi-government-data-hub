@@ -110,15 +110,15 @@ export const SYSTEM_NAME = "ระบบกลางเพื่อการแ�
  */
 export const TEMPLATE_VARIABLES = {
   // ── วันที่ทำข้อตกลง ────────────────────────────────────────────
-  "agreement.day": { scope: "organization", group: "agreement", description: "วันที่ทำข้อตกลง (เลขไทย)", example: "๑๙" },
+  "agreement.day": { scope: "organization", group: "agreement", description: "วันที่ทำข้อตกลง", example: "19" },
   "agreement.month": { scope: "organization", group: "agreement", description: "เดือนที่ทำข้อตกลง (ชื่อเดือนภาษาไทย)", example: "สิงหาคม" },
-  "agreement.year": { scope: "organization", group: "agreement", description: "ปีที่ทำข้อตกลง (พ.ศ. เลขไทย)", example: "๒๕๖๙" },
-  "agreement.date": { scope: "organization", group: "agreement", description: "วันที่ทำข้อตกลงแบบเต็ม สำหรับเอกสารที่มีช่องเดียว", example: "๑๙ สิงหาคม ๒๕๖๙" },
+  "agreement.year": { scope: "organization", group: "agreement", description: "ปีที่ทำข้อตกลง (พ.ศ.)", example: "2569" },
+  "agreement.date": { scope: "organization", group: "agreement", description: "วันที่ทำข้อตกลงแบบเต็ม สำหรับเอกสารที่มีช่องเดียว", example: "19 สิงหาคม 2569" },
 
   // ── คำขอ ─────────────────────────────────────────────────────
   requestNumber: { group: "request", description: "เลขที่คำขอลงทะเบียนหน่วยงาน", example: "ORG-REG-2026-0009" },
-  "request.submittedDate": { group: "request", description: "วันที่หน่วยงานนำส่งคำขอ — ว่างถ้ายังไม่นำส่ง", example: "๑๘ สิงหาคม ๒๕๖๙" },
-  "request.approvedDate": { group: "request", description: "วันที่คำขอได้รับอนุมัติขั้นสุดท้าย — ว่างถ้ายังไม่อนุมัติ", example: "๑๙ สิงหาคม ๒๕๖๙" },
+  "request.submittedDate": { group: "request", description: "วันที่หน่วยงานนำส่งคำขอ — ว่างถ้ายังไม่นำส่ง", example: "18 สิงหาคม 2569" },
+  "request.approvedDate": { group: "request", description: "วันที่คำขอได้รับอนุมัติขั้นสุดท้าย — ว่างถ้ายังไม่อนุมัติ", example: "19 สิงหาคม 2569" },
 
   // ── หน่วยงานที่ลงทะเบียน ────────────────────────────────────────
   "org.name": { group: "org", description: "ชื่อหน่วยงาน (ภาษาไทย)", example: "กรมส่งเสริมการปกครองท้องถิ่น" },
@@ -130,9 +130,9 @@ export const TEMPLATE_VARIABLES = {
   "org.subdistrict": { group: "org", description: "แขวง/ตำบล", example: "ในเมือง" },
   "org.district": { group: "org", description: "เขต/อำเภอ", example: "เมืองขอนแก่น" },
   "org.province": { group: "org", description: "จังหวัด", example: "ขอนแก่น" },
-  "org.postalCode": { group: "org", description: "รหัสไปรษณีย์ (เลขไทย)", example: "๔๐๐๐๐" },
-  "org.address": { group: "org", description: "ที่อยู่หน่วยงานทั้งบรรทัด ประกอบให้แล้ว สำหรับเอกสารที่มีช่องที่อยู่ช่องเดียว", example: "578 ถนนศรีจันทร์ ตำบลในเมือง อำเภอเมืองขอนแก่น จังหวัดขอนแก่น ๔๐๐๐๐" },
-  "org.phone": { group: "org", description: "เบอร์โทรศัพท์หน่วยงาน", example: "๐๔๓๒๓๖๗๘๙" },
+  "org.postalCode": { group: "org", description: "รหัสไปรษณีย์", example: "40000" },
+  "org.address": { group: "org", description: "ที่อยู่หน่วยงานทั้งบรรทัด ประกอบให้แล้ว สำหรับเอกสารที่มีช่องที่อยู่ช่องเดียว", example: "578 ถนนศรีจันทร์ ตำบลในเมือง อำเภอเมืองขอนแก่น จังหวัดขอนแก่น 40000" },
+  "org.phone": { group: "org", description: "เบอร์โทรศัพท์หน่วยงาน", example: "043236789" },
   "org.email": { group: "org", description: "อีเมลหน่วยงาน", example: "saraban@dla.go.th" },
   "org.website": { group: "org", description: "เว็บไซต์หน่วยงาน — ว่างถ้าไม่ได้กรอก", example: "https://www.dla.go.th" },
 
@@ -144,8 +144,8 @@ export const TEMPLATE_VARIABLES = {
   "org_approver.position": { scope: "organization", group: "org_approver", description: "ตำแหน่งผู้มีอำนาจกระทำการแทน", example: "ผู้อำนวยการ" },
   "org_approver.department": { scope: "organization", group: "org_approver", description: "ฝ่าย/กอง/สำนักของผู้มีอำนาจกระทำการแทน — ว่างถ้าไม่ได้กรอก", example: "สำนักบริหารกลาง" },
   "org_approver.email": { scope: "organization", group: "org_approver", description: "อีเมลผู้มีอำนาจกระทำการแทน", example: "director@dla.go.th" },
-  "org_approver.phone": { scope: "organization", group: "org_approver", description: "เบอร์โทรศัพท์ผู้มีอำนาจกระทำการแทน", example: "๐๘๑๒๓๔๕๖๗๘" },
-  "org_approver.nationalId": { scope: "organization", group: "org_approver", description: "เลขบัตรประชาชนผู้มีอำนาจกระทำการแทน (เลขไทย คั่นด้วยขีด)", example: "๑-๑๐๑๗-๐๐๒๐๗-๐๓-๐" },
+  "org_approver.phone": { scope: "organization", group: "org_approver", description: "เบอร์โทรศัพท์ผู้มีอำนาจกระทำการแทน", example: "0812345678" },
+  "org_approver.nationalId": { scope: "organization", group: "org_approver", description: "เลขบัตรประชาชนผู้มีอำนาจกระทำการแทน (คั่นด้วยขีด)", example: "1-1017-00207-03-0" },
 
   // ── ผู้กรอกข้อมูล ────────────────────────────────────────────
   "org_officer.fullName": { group: "org_officer", description: "ชื่อผู้กรอกข้อมูล (คำนำหน้า ชื่อ นามสกุล)", example: "นางสาว พิมพ์ชนก สังคมดี" },
@@ -155,8 +155,8 @@ export const TEMPLATE_VARIABLES = {
   "org_officer.position": { group: "org_officer", description: "ตำแหน่งผู้กรอกข้อมูล", example: "นักวิเคราะห์นโยบายและแผน" },
   "org_officer.department": { group: "org_officer", description: "ฝ่าย/กอง/สำนักของผู้กรอกข้อมูล", example: "กลุ่มงานข้อมูลสารสนเทศ" },
   "org_officer.email": { group: "org_officer", description: "อีเมลผู้กรอกข้อมูล", example: "user@dla.go.th" },
-  "org_officer.phone": { group: "org_officer", description: "เบอร์โทรศัพท์ผู้กรอกข้อมูล", example: "๐๘๒๐๐๐๐๐๐๐" },
-  "org_officer.nationalId": { group: "org_officer", description: "เลขบัตรประชาชนผู้กรอกข้อมูล (เลขไทย คั่นด้วยขีด)", example: "๑-๑๐๑๗-๐๐๒๐๗-๐๓-๐" },
+  "org_officer.phone": { group: "org_officer", description: "เบอร์โทรศัพท์ผู้กรอกข้อมูล", example: "0820000000" },
+  "org_officer.nationalId": { group: "org_officer", description: "เลขบัตรประชาชนผู้กรอกข้อมูล (คั่นด้วยขีด)", example: "1-1017-00207-03-0" },
 
   // ── ชุดข้อมูลที่ขอลงทะเบียน (เส้นทาง C) ──
   "dataset.title": { scope: "dataset", group: "dataset", description: "ชื่อชุดข้อมูล (ภาษาไทย)", example: "ปริมาณน้ำฝนรายวัน" },
@@ -169,18 +169,18 @@ export const TEMPLATE_VARIABLES = {
   "dataset.dataSource": { scope: "dataset", group: "dataset", description: "แหล่งที่มาของข้อมูล", example: "สถานีตรวจวัดของกรม" },
   "dataset.dataTopicOther": { scope: "dataset", group: "dataset", description: "ประเด็นอื่น ๆ ที่ระบุเอง — ว่างถ้าไม่ได้เลือก \"อื่น ๆ\"", example: "การเกษตร" },
   "dataset.dataFormatOther": { scope: "dataset", group: "dataset", description: "ชื่อระบบเชื่อมโยงข้อมูลอื่น — ว่างถ้าไม่ได้เลือกข้อนั้น", example: "GDX" },
-  "dataset.updateFrequencyInterval": { scope: "dataset", group: "dataset", description: "ค่าความถี่ของการปรับปรุงข้อมูลต้นทาง (เลขไทย)", example: "๑" },
+  "dataset.updateFrequencyInterval": { scope: "dataset", group: "dataset", description: "ค่าความถี่ของการปรับปรุงข้อมูลต้นทาง", example: "1" },
   "dataset.personalDataTypes": { scope: "dataset", group: "dataset", description: "ประเภทของข้อมูลส่วนบุคคล — ว่างถ้าไม่มีข้อมูลส่วนบุคคล", example: "ชื่อ-นามสกุล, เลขบัตรประชาชน" },
   "dataset.dataSubjectCategories": { scope: "dataset", group: "dataset", description: "กลุ่มหรือประเภทของเจ้าของข้อมูลส่วนบุคคล", example: "ประชาชนผู้ขอรับบริการ" },
-  "dataset.personalDataPeriodYear": { scope: "dataset", group: "dataset", description: "ระยะเวลาประมวลผลข้อมูลส่วนบุคคล จำนวนปี (เลขไทย)", example: "๕" },
-  "dataset.personalDataPeriodMonth": { scope: "dataset", group: "dataset", description: "ระยะเวลาประมวลผลข้อมูลส่วนบุคคล จำนวนเดือน (เลขไทย)", example: "๖" },
+  "dataset.personalDataPeriodYear": { scope: "dataset", group: "dataset", description: "ระยะเวลาประมวลผลข้อมูลส่วนบุคคล จำนวนปี", example: "5" },
+  "dataset.personalDataPeriodMonth": { scope: "dataset", group: "dataset", description: "ระยะเวลาประมวลผลข้อมูลส่วนบุคคล จำนวนเดือน", example: "6" },
   "dataset.requestNumber": { scope: "dataset", group: "dataset", description: "เลขที่คำขอลงทะเบียนชุดข้อมูล", example: "DS-REG-2026-0004" },
 
   // ── ลายมือชื่อ ──────────────────────────────────────────────
   "org_approver.signature": { group: "signature", description: "ลายมือชื่อฝ่ายหน่วยงาน — ว่างจนกว่าผู้มีอำนาจจะลงนาม", example: "นาย อนุชา พัฒนา" },
-  "org_approver.signedDate": { group: "signature", description: "วันที่ฝ่ายหน่วยงานลงนาม — ว่างจนกว่าจะลงนาม", example: "๑๙ สิงหาคม ๒๕๖๙" },
+  "org_approver.signedDate": { group: "signature", description: "วันที่ฝ่ายหน่วยงานลงนาม — ว่างจนกว่าจะลงนาม", example: "19 สิงหาคม 2569" },
   "bdi_approver.signature": { group: "signature", description: "ลายมือชื่อฝ่ายสำนักงาน — ว่างจนกว่าผู้อนุมัติ BDI จะลงนาม", example: "นาง สุดารัตน์ อนุมัติ" },
-  "bdi_approver.signedDate": { group: "signature", description: "วันที่ฝ่ายสำนักงานลงนาม — ว่างจนกว่าจะลงนาม", example: "๑๙ สิงหาคม ๒๕๖๙" },
+  "bdi_approver.signedDate": { group: "signature", description: "วันที่ฝ่ายสำนักงานลงนาม — ว่างจนกว่าจะลงนาม", example: "19 สิงหาคม 2569" },
   "bdi_approver.firstName": { group: "signature", description: "ชื่อผู้ลงนามฝ่ายสำนักงาน (ไม่รวมคำนำหน้าและนามสกุล)", example: "สุดารัตน์" },
   "bdi_approver.lastName": { group: "signature", description: "นามสกุลผู้ลงนามฝ่ายสำนักงาน", example: "อนุมัติ" },
   "bdi_approver.endorsement": { group: "signature", description: 'ตราเห็นชอบของสำนักงาน — ว่างจนกว่าจะอนุมัติขั้นสุดท้าย แล้วขึ้นเป็น "เห็นชอบ" พร้อมขึ้นบรรทัดใหม่', example: "เห็นชอบ" },
@@ -189,7 +189,7 @@ export const TEMPLATE_VARIABLES = {
   "bdi.name": { group: "bdi", description: "ชื่อสำนักงาน", example: "สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)" },
   "bdi.address": { group: "bdi", description: "ที่อยู่สำนักงานทั้งบรรทัด", example: "234/432 ซอยลาดพร้าว 12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพมหานคร 10900" },
   "bdi.email": { group: "bdi", description: "อีเมลสำนักงาน — ว่างถ้ายังไม่ได้บันทึกไว้ในระบบ", example: "saraban@bdi.or.th" },
-  "bdi.phone": { group: "bdi", description: "เบอร์โทรศัพท์สำนักงาน — ว่างถ้ายังไม่ได้บันทึกไว้ในระบบ", example: "๐๒๑๔๒๑๔๔๔" },
+  "bdi.phone": { group: "bdi", description: "เบอร์โทรศัพท์สำนักงาน — ว่างถ้ายังไม่ได้บันทึกไว้ในระบบ", example: "021421444" },
   "bdi.directorName": { group: "bdi", description: "ชื่อผู้อำนวยการสถาบัน — เป็นค่าตั้งไว้ในโค้ด ต้องแก้เมื่อเปลี่ยนผู้อำนวยการ", example: "ศาสตราจารย์ธีรณี อจลากุล" },
   "bdi.directorPosition": { group: "bdi", description: "ตำแหน่งผู้ลงนามฝ่ายสำนักงาน", example: "ผู้อำนวยการสถาบันข้อมูลขนาดใหญ่" },
 
@@ -202,14 +202,14 @@ export const TEMPLATE_VARIABLES = {
    * จึงเป็นตัวแปรชุดเดียวที่ **เอกสารคนละฉบับในคำขอเดียวกันได้ค่าไม่เท่ากัน** — ผนวกที่
    * เผยแพร่คนละวันกับข้อตกลงหลักย่อมมีเลขเวอร์ชันของตัวเอง
    */
-  "document.version": { group: "document", description: "เลขเวอร์ชันของเอกสารฉบับนี้ (เลขไทย)", example: "๒" },
-  "document.effectiveDate": { group: "document", description: "วันที่เอกสารเวอร์ชันนี้เริ่มมีผล — ว่างถ้ายังไม่ได้เผยแพร่", example: "๓๑ สิงหาคม ๒๕๖๙" },
+  "document.version": { group: "document", description: "เลขเวอร์ชันของเอกสารฉบับนี้", example: "2" },
+  "document.effectiveDate": { group: "document", description: "วันที่เอกสารเวอร์ชันนี้เริ่มมีผล — ว่างถ้ายังไม่ได้เผยแพร่", example: "31 สิงหาคม 2569" },
 
   // ── ระบบ ────────────────────────────────────────────────────
   "system.name": { group: "system", description: "ชื่อระบบ", example: SYSTEM_NAME },
   printedBy: { group: "system", description: "ชื่อผู้ที่ทำให้เอกสารฉบับนี้ถูกสร้าง", example: "นางสาว พิมพ์ชนก สังคมดี" },
-  printedAt: { group: "system", description: "วันที่พิมพ์เอกสารจากระบบ", example: "๑๙ สิงหาคม ๒๕๖๙" },
-  printedDateTime: { group: "system", description: "วันที่และเวลาที่พิมพ์เอกสารจากระบบ (เวลาไทย)", example: "๑๙ สิงหาคม ๒๕๖๙ ๑๕:๒๗" },
+  printedAt: { group: "system", description: "วันที่พิมพ์เอกสารจากระบบ", example: "19 สิงหาคม 2569" },
+  printedDateTime: { group: "system", description: "วันที่และเวลาที่พิมพ์เอกสารจากระบบ (เวลาไทย)", example: "19 สิงหาคม 2569 15:27" },
 } as const satisfies Record<string, TemplateVariableSpec>;
 
 /**
