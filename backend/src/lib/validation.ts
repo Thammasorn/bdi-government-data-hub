@@ -136,10 +136,45 @@ export function uuidSchema(message: string) {
   return z.string().trim().uuid(message);
 }
 
-export const passwordSchema = z
-  .string()
-  .min(8, "รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร")
-  .refine((v) => /[A-Za-z]/.test(v) && /\d/.test(v), "รหัสผ่านต้องมีทั้งตัวอักษรและตัวเลข");
+/**
+ * ข้อกำหนดรหัสผ่านตามการ์ด "แก้ form user registration"
+ *
+ * เขียนเป็นตารางกฎแทนที่จะเป็น `.refine()` ต่อกันเป็นทอด ๆ ด้วยสองเหตุผล: refine ที่
+ * ต่อกันหยุดที่ข้อแรกที่ไม่ผ่าน คนตั้งรหัสผ่านจึงเห็นทีละข้อและต้องส่งฟอร์มใหม่ห้ารอบ
+ * กว่าจะรู้ครบ และหน้าเว็บต้องบอก "ยังขาดอะไร" สด ๆ ระหว่างพิมพ์ ซึ่งทำได้ต่อเมื่อกฎ
+ * เป็นข้อมูลที่วนอ่านได้ `frontend/lib/password.ts` เป็นสำเนาของตารางนี้โดยตั้งใจ
+ * (ข้อตกลงเดียวกับ `organization-form.ts`) — แก้ที่นี่แล้วต้องแก้ที่นั่นด้วย
+ */
+export const PASSWORD_RULES: { id: string; label: string; test: (value: string) => boolean }[] = [
+  { id: "length", label: "ความยาวอย่างน้อย 12 ตัวอักษร", test: (v) => v.length >= 12 },
+  { id: "upper", label: "ตัวอักษรพิมพ์ใหญ่ (A-Z)", test: (v) => /[A-Z]/.test(v) },
+  { id: "lower", label: "ตัวอักษรพิมพ์เล็ก (a-z)", test: (v) => /[a-z]/.test(v) },
+  { id: "digit", label: "ตัวเลข (0-9)", test: (v) => /[0-9]/.test(v) },
+  {
+    id: "symbol",
+    label: "อักขระหรือสัญลักษณ์พิเศษ เช่น ! @ # $ ^ & * ( ) _ +",
+    /**
+     * อะไรก็ได้ที่ไม่ใช่ตัวอักษรและไม่ใช่ตัวเลข — กว้างกว่ารายการในการ์ดโดยตั้งใจ
+     * (รายการนั้นขึ้นต้นด้วย "เช่น") แต่ **ไม่นับช่องว่าง** ไม่งั้นการเคาะ space
+     * หนึ่งครั้งผ่านข้อนี้ได้ ทั้งที่ไม่มีใครตั้งใจให้เป็นอักขระพิเศษ
+     */
+    test: (v) => /[^A-Za-z0-9\s]/.test(v),
+  },
+];
+
+/** ข้อที่ยังไม่ผ่าน — ใช้ทั้งตอนตรวจและตอนประกอบข้อความบอกผู้ใช้ */
+export function unmetPasswordRules(value: string) {
+  return PASSWORD_RULES.filter((rule) => !rule.test(value));
+}
+
+export const passwordSchema = z.string().superRefine((value, ctx) => {
+  const missing = unmetPasswordRules(value);
+  if (missing.length === 0) return;
+  ctx.addIssue({
+    code: "custom",
+    message: `รหัสผ่านยังขาด: ${missing.map((rule) => rule.label).join(" · ")}`,
+  });
+});
 
 /**
  * ตรวจ snapshot ของคำขอ โดยให้ช่องที่ยังไม่ได้กรอก (`null`) มีความหมายเท่ากับ "กรอกค่าว่าง"

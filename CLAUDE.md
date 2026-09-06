@@ -509,15 +509,32 @@ account answers 409 — deleting a working account is not "removing an invitatio
 is the only record that the invitation ever existed. `docs/09-auth-tokens.md` §2.1 has the
 table.
 
-**The activation form starts from what is already known, not blank.** `GET /api/auth/invitation`
-returns a `profile` (prefix, first name, last name, phone) read off the `iam.user_account` row the
-invitation points at. It matters most for the organisation approver: the officer typed that
-person's name and telephone into the registration form days earlier, and `ensureApproverAccount()`
-wrote them onto the PENDING account — making them retype it invited a mismatch with the
-registration they are about to sign. ThaID's claims then overwrite the name fields (the card
-outranks a colleague's typing) while the phone, which ThaID never sends, survives. The prefix is
-only seeded when it is one of the form's `PREFIXES`; imported values like `นายแพทย์` are not, and
-a `<select>` holding a value that is not an option submits empty without showing anyone.
+**The activation form starts from what is already known, and the name is not the user's to
+type.** `GET /api/auth/invitation` returns a `profile` (prefix, first name, last name, phone)
+read off the `iam.user_account` row the invitation points at, plus a `profileLocked` flag per
+name field. It matters most for the organisation approver: the officer typed that person's name
+and telephone into the registration form days earlier, and `ensureApproverAccount()` wrote them
+onto the PENDING account — making them retype it invited a mismatch with the registration they
+are about to sign.
+
+**The ThaID callback writes the card's claims onto the account**, rather than handing them to
+the browser to send back at the end. That is what makes "prefilled from ThaID, and the user may
+not change it" enforceable: `POST /api/auth/activate` takes each name field from the account
+whenever the account has one and **silently ignores the body's copy**, so `readOnly` on the
+screen is the display of a server-side rule, not the rule itself. `lockedProfile()` in
+`routes/auth.ts` is the one place that decides, and both endpoints call it. A field the system
+has no value for stays editable and required — the prefix is the ordinary case, since ThaID
+sends no `title` claim. A locked prefix renders as a read-only input rather than a `<select>`,
+which also retired the old `PREFIXES` filter: an imported value like `นายแพทย์` used to leave
+the dropdown blank and submit empty without showing anyone.
+
+**Password rules are a table, in two mirrored files.** `PASSWORD_RULES` in
+`backend/src/lib/validation.ts` (twelve characters, upper, lower, digit, symbol — the 2026-09-06
+card) is copied into `frontend/lib/password.ts` for the same reason `organization-form.ts` is a
+copy: the checklist under the field ticks itself as you type, which a round trip per keystroke
+cannot do. Rules are data rather than chained `.refine()` calls so that one submission names
+*every* missing requirement instead of the first. The activation form's second password field is
+checked on both sides — `confirmPassword` is part of `activateSchema`, not a browser nicety.
 
 Activation does **not** touch `organization.status`. An organisation goes `ACTIVE` only when
 its registration request clears `BDI_FINAL_APPROVAL` (Journey B). The Notion card §2.5 says

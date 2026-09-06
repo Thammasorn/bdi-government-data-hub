@@ -90,6 +90,32 @@ function maskCid(cid: string | null): string | null {
   return cid ? `${"•".repeat(9)}${cid.slice(-4)}` : null;
 }
 
+/**
+ * ช่องชื่อที่ระบบมีค่าอยู่แล้ว = ช่องที่เจ้าของบัญชีแก้ไม่ได้
+ *
+ * การ์ด "แก้ form user registration" สั่งว่าคำนำหน้า ชื่อ นามสกุล ให้ดึงจาก ThaID มา
+ * เติมไว้และห้ามผู้ใช้เปลี่ยน บังคับที่ฝั่ง server ไม่ใช่แค่ `readOnly` บนหน้าเว็บ:
+ * `POST /activate` ไม่ยอมให้ค่าใน body ทับค่าที่อยู่บนบัญชีแล้ว
+ *
+ * ค่าที่ "อยู่บนบัญชีแล้ว" มาได้สองทาง — claim จาก ThaID ที่ callback เขียนลงทันที
+ * ที่เทียบเลขบัตรผ่าน และชื่อที่เจ้าหน้าที่กรอกไว้ตอนเชิญ (`ensureApproverAccount()`)
+ * ทั้งสองทางไม่ใช่สิ่งที่เจ้าของบัญชีพิมพ์เอง จึงล็อกได้ด้วยเหตุผลเดียวกัน
+ *
+ * ช่องที่ยังว่างต้องปล่อยให้กรอก มิฉะนั้นเปิดใช้งานบัญชีไม่ได้เลย — **คำนำหน้าเป็น
+ * เคสปกติของเรื่องนี้** เพราะ ThaID ไม่มี claim `title` ใน scope ที่ได้รับ (docs/07 §4.1)
+ */
+function lockedProfile(account: {
+  prefixTh: string | null;
+  firstnameTh: string | null;
+  lastnameTh: string | null;
+}) {
+  return {
+    prefix: Boolean(account.prefixTh?.trim()),
+    firstName: Boolean(account.firstnameTh?.trim()),
+    lastName: Boolean(account.lastnameTh?.trim()),
+  };
+}
+
 // ---------------------------------------------------------------- ตรวจลิงก์เชิญ
 
 authRouter.get("/invitation", async (req, res) => {
@@ -134,6 +160,8 @@ authRouter.get("/invitation", async (req, res) => {
       lastName: key.userAccount.lastnameTh,
       phone: key.userAccount.phoneNumber,
     },
+    /** ช่องไหนล็อก ตัดสินที่นี่ที่เดียว หน้าเว็บแค่แสดงตาม — ดู lockedProfile() */
+    profileLocked: lockedProfile(key.userAccount),
   });
 });
 
@@ -366,25 +394,43 @@ authRouter.post("/thaid/callback", async (req, res) => {
     },
   });
 
+  /**
+   * เขียนชื่อจากบัตรลงบัญชีทันที ไม่ใช่รอให้หน้าเว็บส่งกลับมาตอนตั้งรหัสผ่าน
+   *
+   * การ์ดสั่งว่าผู้ใช้ห้ามเปลี่ยนชื่อที่ได้จาก ThaID — ค่าที่เดินทางผ่านเบราว์เซอร์แล้ว
+   * ส่งกลับมาใน body บังคับแบบนั้นไม่ได้ ใครก็แก้ก่อนส่งได้ พอเก็บลงแถวบัญชีตรงนี้
+   * แล้วให้ `POST /activate` อ่านจากแถวนั้น "ห้ามเปลี่ยน" จึงเป็นจริงทั้งเส้นทาง
+   *
+   * เขียนเฉพาะ claim ที่มาจริง: ThaID ไม่ส่ง `title` มาเลย (docs/07 §4.1) และ claim
+   * ที่ว่างเปล่าต้องไม่ไปล้างชื่อที่เจ้าหน้าที่กรอกไว้ตอนเชิญทิ้ง
+   */
+  const fromCard = {
+    ...(identity.titleTh ? { prefixTh: identity.titleTh } : {}),
+    ...(identity.givenNameTh ? { firstnameTh: identity.givenNameTh } : {}),
+    ...(identity.familyNameTh ? { lastnameTh: identity.familyNameTh } : {}),
+  };
+  if (Object.keys(fromCard).length > 0) {
+    await prisma.userAccount.update({
+      where: { id: key.userAccountId },
+      data: { ...fromCard, updatedBy: key.userAccountId },
+    });
+  }
+
   res.json({
     purpose: "activate",
     verified: true,
     email: key.userAccount.email,
     /**
-     * เอาไว้เติมฟอร์มขั้นสร้างบัญชีให้ตรงกับบัตร ผู้ใช้ยังแก้ได้
+     * สิ่งที่ ThaID ส่งมาในรอบนี้ — หน้าเว็บไม่ได้ใช้แล้ว แต่เก็บไว้ในคำตอบเพราะเป็น
+     * ทางเดียวที่จะเห็นว่า DOPA ส่ง claim ไหนมาบ้างโดยไม่ต้องเปิด log ของ backend
+     * (`fullName` / `firstNameEn` / `lastNameEn` ไม่มีที่เก็บในบัญชี)
+     *
+     * ชื่อที่ฟอร์มใช้จริงมาจาก `GET /invitation` ซึ่งอ่านจากแถวบัญชีที่เพิ่งเขียนไป
+     * ข้างบน — ทางเดียวเท่านั้น มิฉะนั้นล็อกช่องชื่อไม่ได้จริง ดู lockedProfile()
      *
      * `prefix` / `fullName` มาจาก claim `title` / `name` ซึ่งไม่ได้อยู่ใน scope ที่ขอ
-     * จึงเป็น null ตามปกติ — ปล่อยไว้เผื่อกรมการปกครองส่งมาให้เอง
-     */
-    /**
-     * ThaID มาก่อน แล้วตกมาที่ชื่อที่เจ้าหน้าที่กรอกไว้ตอนเชิญ
-     *
-     * `given_name` / `family_name` อยู่ใน scope ที่กรมการปกครองอนุมัติแล้ว เคสปกติจึงได้
-     * ชื่อจากบัตรมาเติมให้ ส่วนที่ตกมาใช้ค่าจากคำเชิญคือเคสที่ ThaID ไม่ได้ทำงาน:
-     * ยังไม่ได้ตั้งค่า ThaID · หรือ DOPA ส่ง claim มาเป็นค่าว่าง
-     *
-     * คำนำหน้าตกมาที่ค่าจากคำเชิญแทบทุกครั้ง เพราะ claim `title` ไม่ได้อยู่ใน scope
-     * ที่ได้รับ (`docs/07` §4.1) — ช่องนี้จึงเป็นช่องที่ค่าจากคำเชิญมีประโยชน์ที่สุด
+     * จึงเป็น null ตามปกติ — ปล่อยไว้เผื่อกรมการปกครองส่งมาให้เอง คำนำหน้าจึงตกมาที่
+     * ค่าที่เจ้าหน้าที่กรอกไว้ตอนเชิญแทบทุกครั้ง (`docs/07` §4.1)
      */
     profile: {
       prefix: identity.titleTh ?? key.userAccount.prefixTh,
@@ -457,14 +503,26 @@ async function thaidLogin(
 
 // ---------------------------------------------------------------- สร้างบัญชี (§2.5)
 
-const activateSchema = z.object({
-  token: z.string().min(1),
-  prefix: z.string().trim().min(1, "กรุณาเลือกคำนำหน้า"),
-  firstName: z.string().trim().min(1, "กรุณากรอกชื่อ"),
-  lastName: z.string().trim().min(1, "กรุณากรอกนามสกุล"),
-  phone: phoneSchema,
-  password: passwordSchema,
-});
+const activateSchema = z
+  .object({
+    token: z.string().min(1),
+    /**
+     * ช่องชื่อเป็น optional เพราะปกติมีอยู่บนบัญชีแล้ว (ดู lockedProfile) — body มีสิทธิ์
+     * เติมได้เฉพาะช่องที่ยังว่าง ค่าที่ส่งมาทับช่องที่ล็อกไว้ถูกทิ้งเงียบ ๆ ไม่ตอบ error
+     * เพราะแท็บที่เปิดค้างไว้ก่อนงานนี้ก็ยังส่งครบทุกช่องมาตามเดิม และค่าที่มันส่งมา
+     * ก็เป็นค่าเดียวกับที่ถูกล็อกอยู่
+     */
+    prefix: z.string().trim().optional(),
+    firstName: z.string().trim().optional(),
+    lastName: z.string().trim().optional(),
+    phone: phoneSchema,
+    password: passwordSchema,
+    confirmPassword: z.string().min(1, "กรุณากรอกรหัสผ่านอีกครั้งเพื่อยืนยัน"),
+  })
+  .refine((value) => value.password === value.confirmPassword, {
+    path: ["confirmPassword"],
+    message: "รหัสผ่านทั้งสองช่องไม่ตรงกัน",
+  });
 
 /**
  * ขั้นสุดท้าย: ตั้งรหัสผ่านแล้วเปิดใช้งานบัญชี
@@ -481,7 +539,7 @@ authRouter.post("/activate", async (req, res) => {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;
   }
-  const { token, prefix, firstName, lastName, phone, password } = parsed.data;
+  const { token, phone, password } = parsed.data;
 
   const { key, reason } = await findUsableActivationKey(token);
   if (!key) {
@@ -499,6 +557,29 @@ authRouter.post("/activate", async (req, res) => {
       error: "identity_required",
       message: "กรุณายืนยันตัวตนด้วย ThaID ก่อนตั้งรหัสผ่าน",
     });
+    return;
+  }
+
+  /**
+   * ชื่อที่บันทึกจริงมาจากบัญชีก่อนเสมอ ค่าจาก body ใช้ได้เฉพาะช่องที่บัญชียังว่าง
+   * — นี่คือจุดที่ "ห้าม user เปลี่ยน" ถูกบังคับ ไม่ใช่ `readOnly` บนหน้าเว็บ
+   */
+  const locked = lockedProfile(key.userAccount);
+  const prefix = locked.prefix ? key.userAccount.prefixTh!.trim() : (parsed.data.prefix ?? "");
+  const firstName = locked.firstName
+    ? key.userAccount.firstnameTh!.trim()
+    : (parsed.data.firstName ?? "");
+  const lastName = locked.lastName
+    ? key.userAccount.lastnameTh!.trim()
+    : (parsed.data.lastName ?? "");
+
+  // ช่องที่ไม่ได้ล็อกยังบังคับกรอก — ข้อความผูกกับช่องเดิมที่หน้าเว็บรู้จักอยู่แล้ว
+  const blank: Record<string, string> = {};
+  if (!prefix) blank.prefix = "กรุณาเลือกคำนำหน้า";
+  if (!firstName) blank.firstName = "กรุณากรอกชื่อ";
+  if (!lastName) blank.lastName = "กรุณากรอกนามสกุล";
+  if (Object.keys(blank).length > 0) {
+    res.status(400).json({ error: "validation", fields: blank });
     return;
   }
 

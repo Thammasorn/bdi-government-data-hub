@@ -1,5 +1,6 @@
 "use client";
 
+import clsx from "clsx";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState, type FormEvent } from "react";
@@ -12,6 +13,7 @@ import { SelectField, TextField } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import { PASSWORD_RULES, passwordMeetsRules } from "@/lib/password";
 import { PREFIXES } from "@/lib/status";
 
 /**
@@ -37,6 +39,16 @@ interface InvitationInfo {
     firstName: string | null;
     lastName: string | null;
     phone: string | null;
+  };
+  /**
+   * ช่องไหนแก้ไม่ได้ — ตัดสินที่ backend (`lockedProfile()` ใน routes/auth.ts) ไม่ใช่
+   * ที่นี่ ค่าที่ล็อกคือชื่อจากบัตรที่ ThaID ส่งมา ตกมาที่ชื่อที่เจ้าหน้าที่กรอกไว้
+   * ตอนเชิญ `POST /activate` ทิ้งค่าใน body ของช่องเหล่านี้อยู่แล้ว หน้าเว็บทำให้เห็น
+   */
+  profileLocked: {
+    prefix: boolean;
+    firstName: boolean;
+    lastName: boolean;
   };
 }
 
@@ -227,51 +239,35 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
   const router = useRouter();
   const { setUser } = useSession();
   const { show } = useToast();
+  const locked = invitation.profileLocked;
 
   /**
    * ตั้งต้นด้วยสิ่งที่ระบบรู้อยู่แล้ว ไม่ใช่ฟอร์มเปล่า
    *
-   * ผู้มีอำนาจกระทำการแทนถูกเจ้าหน้าที่ของหน่วยงานกรอกชื่อ นามสกุล และเบอร์โทรไว้แล้ว
-   * ตั้งแต่ตอนลงทะเบียนหน่วยงาน — ให้เขาพิมพ์ซ้ำคือให้โอกาสพิมพ์ไม่ตรงกับที่ลงทะเบียนไว้
-   * เติมให้เป็นค่าตั้งต้น แก้ได้ทุกช่อง
+   * คำนำหน้า ชื่อ นามสกุล มาจาก `GET /invitation` ซึ่งอ่านจากแถวบัญชี — callback ของ
+   * ThaID เขียน claim จากบัตรลงไปตั้งแต่ตอนยืนยันตัวตนผ่าน แล้วตกมาที่ชื่อที่เจ้าหน้าที่
+   * กรอกไว้ตอนเชิญเมื่อ ThaID ไม่ได้ส่ง claim นั้นมา ช่องที่มีค่าแล้วจึงถูกล็อก
+   * (การ์ด "แก้ form user registration") ส่วนเบอร์โทร ThaID ไม่มีให้ ยังแก้ได้ตามเดิม
+   *
+   * ไม่ต้องกรอง `PREFIXES` อีกแล้ว: คำนำหน้าที่มีค่าอยู่แล้วแสดงเป็นข้อความอ่านอย่างเดียว
+   * ค่านอกรายการอย่าง "นายแพทย์" จึงไม่ทำให้ dropdown ว่างแล้วส่งค่าว่างไปอย่างเงียบ ๆ
    */
   const [form, setForm] = useState({
-    // คำนำหน้าเป็น dropdown ที่มีตัวเลือกจำกัด ค่าที่ไม่อยู่ในรายการ (เช่น "นายแพทย์"
-    // ที่มาจากข้อมูลนำเข้า) จะทำให้ช่องแสดงเป็นว่างแล้วส่งค่าว่างไปโดยที่คนกรอกไม่ทันเห็น
-    prefix: PREFIXES.includes(invitation.profile.prefix ?? "") ? invitation.profile.prefix! : "",
-    firstName: invitation.profile.firstName ?? "",
-    lastName: invitation.profile.lastName ?? "",
+    prefix: (invitation.profile.prefix ?? "").trim(),
+    firstName: (invitation.profile.firstName ?? "").trim(),
+    lastName: (invitation.profile.lastName ?? "").trim(),
     phone: invitation.profile.phone ?? "",
     password: "",
+    confirmPassword: "",
   });
   const [fields, setFields] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
 
-  /**
-   * ชื่อจาก ThaID ที่หน้า callback ฝากไว้ ใช้เติมฟอร์มให้ตรงกับบัตร
-   * ไม่มีก็ไม่เป็นไร — ผู้ใช้กรอกเองได้ และฝั่ง server ไม่ได้เชื่อค่านี้อยู่แล้ว
-   *
-   * **ทับค่าที่มาจากคำเชิญ** สำหรับชื่อ นามสกุล และคำนำหน้า — บัตรประชาชนมีน้ำหนักกว่า
-   * สิ่งที่เพื่อนร่วมงานพิมพ์ให้ ส่วนเบอร์โทรไม่มีใน ThaID จึงเหลือค่าจากคำเชิญไว้อย่างเดิม
-   * ค่าที่ ThaID ไม่ได้ส่งมา (คำนำหน้าอยู่นอก scope ที่ขอ) ก็ไม่ล้างของเดิมทิ้ง
-   */
-  useEffect(() => {
-    const raw = sessionStorage.getItem("thaid:profile");
-    if (!raw) return;
-    try {
-      const profile = JSON.parse(raw) as Record<string, string | null>;
-      setForm((f) => ({
-        ...f,
-        prefix: PREFIXES.includes(profile.prefix ?? "") ? profile.prefix! : f.prefix,
-        firstName: profile.firstName ?? f.firstName,
-        lastName: profile.lastName ?? f.lastName,
-      }));
-    } catch {
-      /* ค่าเสีย = ไม่เติม */
-    }
-  }, []);
-
   const set = (key: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [key]: v }));
+
+  const passwordOk = passwordMeetsRules(form.password);
+  // ฟ้องเฉพาะเมื่อเริ่มพิมพ์ช่องยืนยันแล้ว — ไม่ใช่ตั้งแต่ตัวอักษรแรกของช่องบน
+  const mismatch = form.confirmPassword.length > 0 && form.confirmPassword !== form.password;
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -279,7 +275,6 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
     setFields({});
     try {
       const data = await api.post<{ user: SessionUser }>("/api/auth/activate", { token, ...form });
-      sessionStorage.removeItem("thaid:profile");
       setUser(data.user);
       show({ tone: "success", title: "เปิดใช้งานบัญชีสำเร็จ" });
       // ทุก role มีหน้าแรกที่ `/` แล้ว
@@ -311,38 +306,68 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
         <TextField label="อีเมล" value={invitation.email} readOnly disabled hint="อีเมลนี้มาจากคำเชิญ แก้ไขไม่ได้" />
 
         <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-3">
-          <SelectField
-            label="คำนำหน้า"
-            required
-            value={form.prefix}
-            onChange={(e) => set("prefix")(e.target.value)}
-            error={fields.prefix}
-          >
-            <option value="">เลือก</option>
-            {PREFIXES.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </SelectField>
-          <TextField
-            label="ชื่อ"
-            required
-            autoComplete="given-name"
-            value={form.firstName}
-            onChange={(e) => set("firstName")(e.target.value)}
-            error={fields.firstName}
-          />
+          {locked.prefix ? (
+            <TextField label="คำนำหน้า" value={form.prefix} readOnly />
+          ) : (
+            <SelectField
+              label="คำนำหน้า"
+              required
+              value={form.prefix}
+              onChange={(e) => set("prefix")(e.target.value)}
+              error={fields.prefix}
+            >
+              <option value="">เลือก</option>
+              {PREFIXES.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </SelectField>
+          )}
+          {locked.firstName ? (
+            <TextField label="ชื่อ" value={form.firstName} readOnly />
+          ) : (
+            <TextField
+              label="ชื่อ"
+              required
+              autoComplete="given-name"
+              value={form.firstName}
+              onChange={(e) => set("firstName")(e.target.value)}
+              error={fields.firstName}
+            />
+          )}
         </div>
 
-        <TextField
-          label="นามสกุล"
-          required
-          autoComplete="family-name"
-          value={form.lastName}
-          onChange={(e) => set("lastName")(e.target.value)}
-          error={fields.lastName}
-        />
+        {locked.lastName ? (
+          <TextField label="นามสกุล" value={form.lastName} readOnly />
+        ) : (
+          <TextField
+            label="นามสกุล"
+            required
+            autoComplete="family-name"
+            value={form.lastName}
+            onChange={(e) => set("lastName")(e.target.value)}
+            error={fields.lastName}
+          />
+        )}
+
+        {/*
+          บอกครั้งเดียวว่าทำไมช่องข้างบนแก้ไม่ได้ แทนที่จะเขียน hint ซ้ำใต้ทุกช่อง —
+          เหตุผลเป็นเรื่องเดียวกันทั้งกลุ่ม และช่องที่ยังไม่ล็อก (คำนำหน้าเป็นปกติ
+          เพราะ ThaID ไม่ส่ง claim นั้นมา) ต้องไม่ถูกอ่านว่าล็อกไปด้วย
+        */}
+        {locked.prefix || locked.firstName || locked.lastName ? (
+          <p className="-mt-2 text-[13px] leading-relaxed text-ink-muted">
+            {locked.prefix && locked.firstName && locked.lastName
+              ? "คำนำหน้า ชื่อ และนามสกุล"
+              : locked.firstName && locked.lastName
+                ? "ชื่อและนามสกุล"
+                : "ข้อมูลที่แสดงไว้แล้ว"}{" "}
+            เป็นข้อมูลที่ระบบได้รับมาแล้ว จึงแก้ไขในหน้านี้ไม่ได้ —
+            หากไม่ตรงกับบัตรประชาชน กรุณาติดต่อเจ้าหน้าที่ BDI ที่เชิญคุณเข้าระบบ
+          </p>
+        ) : null}
+
         <TextField
           label="เบอร์โทรศัพท์"
           required
@@ -353,15 +378,31 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
           onChange={(e) => set("phone")(e.target.value)}
           error={fields.phone}
         />
+
+        <div className="flex flex-col gap-3">
+          <TextField
+            label="ตั้งรหัสผ่าน"
+            type="password"
+            required
+            autoComplete="new-password"
+            value={form.password}
+            onChange={(e) => set("password")(e.target.value)}
+            error={fields.password}
+            valid={passwordOk}
+          />
+          <PasswordRequirements value={form.password} />
+        </div>
+
         <TextField
-          label="ตั้งรหัสผ่าน"
+          label="ยืนยันรหัสผ่าน"
           type="password"
           required
           autoComplete="new-password"
-          value={form.password}
-          onChange={(e) => set("password")(e.target.value)}
-          error={fields.password}
-          hint="อย่างน้อย 8 ตัวอักษร ประกอบด้วยตัวอักษรและตัวเลข"
+          value={form.confirmPassword}
+          onChange={(e) => set("confirmPassword")(e.target.value)}
+          error={mismatch ? "รหัสผ่านทั้งสองช่องไม่ตรงกัน" : fields.confirmPassword}
+          valid={form.confirmPassword.length > 0 && !mismatch && passwordOk}
+          hint="พิมพ์รหัสผ่านเดิมอีกครั้ง เพื่อกันการพิมพ์ผิดโดยไม่รู้ตัว"
         />
 
         <Button type="submit" size="lg" loading={submitting} className="mt-1 w-full">
@@ -369,6 +410,50 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
         </Button>
       </form>
     </AuthLayout>
+  );
+}
+
+/**
+ * ข้อกำหนดรหัสผ่านที่ติ๊กเองระหว่างพิมพ์
+ *
+ * แสดงทั้งห้าข้อตลอดเวลา ไม่ใช่โผล่มาเฉพาะข้อที่ยังไม่ผ่าน — คนตั้งรหัสผ่านต้องเห็น
+ * ข้อกำหนดทั้งชุดก่อนเริ่มพิมพ์ ไม่ใช่ค่อย ๆ รู้ทีละข้อจากข้อความ error
+ *
+ * สถานะไม่ได้บอกด้วยสีอย่างเดียว (docs/02-ui-spec.md): ข้อที่ผ่านแล้วมีเครื่องหมายถูก
+ * ข้อที่ยังไม่ผ่านเป็นวงกลมว่าง และมีข้อความสำหรับโปรแกรมอ่านหน้าจอกำกับทุกข้อ
+ */
+function PasswordRequirements({ value }: { value: string }) {
+  return (
+    <ul className="flex flex-col gap-1.5 rounded-xl bg-canvas px-4 py-3">
+      {PASSWORD_RULES.map((rule) => {
+        const met = rule.test(value);
+        return (
+          <li
+            key={rule.id}
+            className={clsx(
+              "flex items-start gap-2 text-[13px] leading-relaxed",
+              met ? "text-success" : "text-ink-muted",
+            )}
+          >
+            <span aria-hidden="true" className="mt-[3px] shrink-0">
+              {met ? (
+                <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.2">
+                  <path d="m3 8.5 3.2 3.2L13 5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6">
+                  <circle cx="8" cy="8" r="4" />
+                </svg>
+              )}
+            </span>
+            <span>
+              {rule.label}
+              <span className="sr-only">{met ? " — ผ่านแล้ว" : " — ยังไม่ผ่าน"}</span>
+            </span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
