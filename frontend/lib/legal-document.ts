@@ -14,3 +14,19 @@ import type { LegalDocument, SkippedLegalDocument } from "@/lib/types";
 export function documentLabel(doc: LegalDocument | SkippedLegalDocument): string {
   return doc.shortname ?? doc.name;
 }
+
+/**
+ * คำเตือนประจำเอกสารฉบับหนึ่ง — **แสดงเมื่อมีค่า จบแค่นั้น**
+ *
+ * `legal_notice` เป็นคุณสมบัติของ**ตัวเอกสาร** ไม่ใช่ของขั้นตอนที่กำลังทำอยู่ และ
+ * **ไม่ผูกกับ `is_required`** ตอนแรกเขียนไว้เฉพาะในกล่องลงนาม พร้อมคอมเมนต์ที่โยงมันเข้ากับ
+ * ปุ่ม "ไม่เกี่ยวข้อง" ซึ่งโผล่เฉพาะฉบับไม่บังคับ — BDI ยืนยันเมื่อ 2026-09-06 ว่าสองเรื่องนี้
+ * ไม่เกี่ยวกัน คำเตือนต้องขึ้นทุกที่ที่เอกสารถูกยื่นให้อ่าน
+ *
+ * ผลที่ตามมาซึ่งตั้งใจ: ผู้กรอกข้อมูลของหน่วยงานเห็นคำเตือนของ A3 ตั้งแต่ตอนเปิดอ่านใน
+ * หน้ารายละเอียด ไม่ต้องรอจนถึงหน้าลงนามของผู้มีอำนาจ ซึ่งเป็นคนละคนกันและคนละวัน
+ */
+export function legalNoticeOf(doc: LegalDocument): string | null {
+  const notice = doc.legalNotice?.trim();
+  return notice ? notice : null;
+}

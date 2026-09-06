@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { LegalNotice } from "@/components/organization/LegalNotice";
 import { PdfViewer } from "@/components/organization/PdfViewer";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
@@ -143,14 +144,9 @@ export function SigningDialog({
         title={documentLabel(current)}
         description={`เอกสารฉบับที่ ${acknowledged + 1} จาก ${documents.length} — โปรดอ่านให้ครบก่อนกดเห็นชอบ`}
       >
-        {/* คำเตือนของเอกสารฉบับนี้ ถ้าฝ่ายกฎหมายตั้งไว้ — อยู่ใต้บรรทัด "เอกสารฉบับที่ n จาก m"
-            ตามที่ขอไว้ เพราะมันบอกว่า **ฉบับนี้** ข้ามได้ ไม่ใช่กติกาของทั้งชุด
-            (A3 บอกว่าหน่วยงานที่ไม่แบ่งปันข้อมูลส่วนบุคคลกด "ไม่เกี่ยวข้อง" ได้) */}
-        {current.legalNotice ? (
-          <p className="mb-4 rounded-xl bg-warning-bg p-4 text-[13px] leading-relaxed text-warning">
-            {current.legalNotice}
-          </p>
-        ) : null}
+        {/* คำเตือนของเอกสารฉบับนี้ — อยู่ใต้บรรทัด "เอกสารฉบับที่ n จาก m" ตามที่ขอไว้
+            แสดงเมื่อฝ่ายกฎหมายตั้งค่าไว้ ไม่เกี่ยวกับว่าฉบับนี้บังคับหรือไม่ */}
+        <LegalNotice document={current} className="mb-4" />
         {current.fileUrl ? (
           <PdfViewer
             url={api.fileUrl(current.fileUrl)}
