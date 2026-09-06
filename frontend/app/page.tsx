@@ -217,7 +217,7 @@ function OrganizationHome({
         onRegister={isApprover || registrationInReview !== false ? undefined : onRegister}
         registering={registering}
         /* การ์ดลงนามด้านล่างบอกเรื่องเดียวกันแต่ตรงกว่าและมีปุ่มให้กด กล่องเตือน
-           "หน่วยงานยังไม่เปิดใช้งาน" จึงกลายเป็นการพูดซ้ำครั้งที่สาม ต่อจาก badge */
+           "หน่วยงานยังไม่ได้ลงทะเบียนใช้งานระบบ" จึงกลายเป็นการพูดซ้ำครั้งที่สาม ต่อจาก badge */
         hideInactiveNotice={Boolean(awaitingSignature)}
       />
 
@@ -337,7 +337,7 @@ function HomeHeader({
   organization: { id: string; name: string; status: string } | null;
   onRegister?: () => void;
   registering?: boolean;
-  /** ซ่อนกล่อง "หน่วยงานยังไม่เปิดใช้งาน" เมื่อมีการ์ดอื่นบอกเรื่องเดียวกันไปแล้ว */
+  /** ซ่อนกล่อง "หน่วยงานยังไม่ได้ลงทะเบียนใช้งานระบบ" เมื่อมีการ์ดอื่นบอกเรื่องเดียวกันไปแล้ว */
   hideInactiveNotice?: boolean;
 }) {
   const status = organization?.status as OrganizationStatus | undefined;
@@ -368,10 +368,9 @@ function HomeHeader({
 
         {status && status !== "ACTIVE" && !hideInactiveNotice ? (
           <div className="mt-5 rounded-xl border-l-[3px] border-warning bg-warning-bg p-5">
-            <p className="text-[13px] font-semibold text-warning">หน่วยงานยังไม่เปิดใช้งาน</p>
+            <p className="text-[13px] font-semibold text-warning">หน่วยงานยังไม่ได้ลงทะเบียนใช้งานระบบ</p>
             <p className="mt-1.5 text-[15px] leading-relaxed text-ink">
               หน่วยงานต้องผ่านการอนุมัติและเปิดใช้งานก่อน จึงจะลงทะเบียนชุดข้อมูลใหม่ได้
-              ระหว่างนี้ยังเปิดดูคำขอเดิมได้ตามปกติ
             </p>
             {/* หน่วยงานที่เจ้าหน้าที่สร้างไว้ล่วงหน้าไม่มีคำขอจดทะเบียนมาด้วย ผู้ใช้จึงต้องมี
                 ปุ่มพาเข้าฟอร์ม — ก่อนหน้านี้ปุ่มนี้อยู่เฉพาะกับผู้ใช้ที่ยังไม่มีหน่วยงาน
