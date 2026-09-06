@@ -24,6 +24,8 @@ export interface OrgEvent {
   result: ReviewResult | null;
   roundNumber: number;
   note: string | null;
+  /** ด่านถูกปิดด้วย "ยกเลิกผลการตรวจสอบ" — ผู้กระทำไม่ใช่เจ้าของด่าน */
+  recalled?: boolean;
   createdAt: string;
   completedAt: string | null;
   actor: { id: string; name: string; email: string } | null;
@@ -102,7 +104,7 @@ export function Timeline({
     if (!e.result) continue;
     rows.push({
       key: e.id,
-      label: taskEventLabel(e.taskType, e.result),
+      label: taskEventLabel(e.taskType, e.result, e.recalled),
       actor: e.actor ? e.actor.name || e.actor.email : null,
       at: e.completedAt ?? e.createdAt,
       note: e.note,
