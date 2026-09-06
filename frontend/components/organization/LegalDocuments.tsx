@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { LegalNotice } from "@/components/organization/LegalNotice";
 import { PdfViewer } from "@/components/organization/PdfViewer";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
@@ -194,6 +195,8 @@ export function LegalDocumentsCard({
             เห็นชอบเมื่อ {formatThaiDate(current.acceptedAt)}
           </p>
         ) : null}
+        {/* คำเตือนของฉบับที่กำลังเปิดอยู่ — ทุกคนที่เปิดอ่านต้องเห็น ไม่ใช่เฉพาะตอนลงนาม */}
+        <LegalNotice document={current} className="mb-4" />
         {current.fileUrl ? (
           <PdfViewer
             /**
