@@ -8,7 +8,7 @@
  * ทุกตัวเลือกยังพิมพ์ออกมาครบ ข้อที่ตรงกับคำขอได้ ✔ ข้อที่ไม่ตรงได้ ☐ ผู้อ่านจึงเห็นว่า
  * ตัวเลือกอื่นมีอะไรและไม่ได้เลือกอะไร ซึ่งเป็นสิ่งที่แบบฟอร์มกระดาษสื่อ
  */
-import { TICK_FIELDS } from "./document-render.js";
+import { SYSTEM_NAME, TICK_FIELDS } from "./document-render.js";
 import { splitTags, type MetadataValues } from "./dataset.js";
 import { thaiLongDate, thaiLongDateTime, thaiNumerals } from "./legal-values.js";
 
@@ -120,7 +120,7 @@ export function datasetDocumentValues(input: DatasetDocumentInput): Record<strin
     "document.effectiveDate": date(input.documentEffectiveAt),
 
     // ── ระบบ ──
-    "system.name": "ระบบกลางเพื่อการแบ่งปันข้อมูล (Government Datahub Platform)",
+    "system.name": SYSTEM_NAME,
     printedBy: input.printedByName ?? "",
     printedAt: thaiLongDate(input.printedAt),
     printedDateTime: thaiLongDateTime(input.printedAt),

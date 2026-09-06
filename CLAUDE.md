@@ -4,8 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Government Datahub Platform for BDI (สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) / Big Data Institute
-(Public Organization)). Government agencies register
+ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2) — Data Integration and Intelligence Platform — ของ BDI
+(สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) / Big Data Institute (Public Organization)). Government agencies register
 themselves, and their registration is approved through a multi-stage workflow.
 
 The spec lives in Notion, not here. `docs/` holds the expanded, buildable version:

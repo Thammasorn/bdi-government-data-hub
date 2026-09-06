@@ -30,7 +30,7 @@ app.use(cookieParser());
 app.use(correlationMiddleware);
 
 app.get("/", (_req, res) => {
-  res.json({ service: "bdi-datahub-api", version: "0.1.0" });
+  res.json({ service: "d2-api", version: "0.1.0" });
 });
 
 app.use("/health", healthRouter);

@@ -1,4 +1,4 @@
-# User Journey — Government Datahub Platform
+# User Journey — ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)
 
 ที่มา: Notion → [Government Datahub Platform](https://app.notion.com/p/3aeee3954ee8800d9468cbb1982655e3)
 → User Journey → *Admin Create New User*, *User จากหน่วยงานสร้าง Organization ของหน่วยงานตนเองในระบบ*
