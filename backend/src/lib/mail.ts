@@ -98,7 +98,7 @@ function layout(opts: {
                    ${button.label}
                  </a>
                  <p style="margin:16px 0 0;font:400 12px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};word-break:break-all;">
-                   หากปุ่มใช้งานไม่ได้ ให้คัดลอกลิงก์นี้ไปวางในเบราว์เซอร์<br>
+                   หากปุ่มด้านบนไม่ทำงาน กรุณาคัดลอกลิงก์ต่อไปนี้และเปิดในเบราว์เซอร์ของคุณ:<br>
                    <span style="color:${NAVY};">${button.url}</span>
                  </p>
                </td></tr>`
@@ -153,9 +153,14 @@ async function send(to: string, subject: string, html: string): Promise<void> {
 export function stepsBlock(progress: JourneyProgress | null | undefined): string {
   if (!progress || progress.steps.length === 0) return "";
 
-  const heading = progress.currentOrder
-    ? `ขั้นที่ ${progress.currentOrder} จาก ${progress.totalSteps}`
-    : `กระบวนการนี้มีทั้งหมด ${progress.totalSteps} ขั้นตอน`;
+  /**
+   * หัวบล็อกบอกทั้งตำแหน่งและสิ่งที่คำขอกำลังรออยู่ — "ขั้นตอนที่ 4 จาก 4" ลอย ๆ
+   * ตอบได้แค่ว่าเดินมาไกลแค่ไหน ไม่ได้ตอบว่าตอนนี้ค้างอยู่ที่ใคร
+   */
+  const heading =
+    progress.currentOrder && progress.currentStep
+      ? `ขั้นตอนที่ ${progress.currentOrder} จาก ${progress.totalSteps} — ${escapeHtml(progress.currentStep.shortLabel)}`
+      : `กระบวนการนี้มีทั้งหมด ${progress.totalSteps} ขั้นตอน`;
 
   const rows = progress.steps
     .map((step) => {
@@ -171,12 +176,15 @@ export function stepsBlock(progress: JourneyProgress | null | undefined): string
       const color = step.state === "UPCOMING" ? MUTED : TEXT;
       const number = step.order ? `${step.order}. ` : "";
       const suffix = step.optional ? " (เมื่อเจ้าหน้าที่มอบหมาย)" : "";
+      // ขั้นที่ยังไม่เกิดขึ้นต้องอ่านว่า "รอ" — เดิมทุกขั้นเขียน "โดย…" เหมือนกันหมด
+      // ขั้นที่คำขอค้างอยู่จึงอ่านเหมือนทำไปแล้ว
+      const doer = step.state === "CURRENT" ? "รอดำเนินการโดย" : "ดำเนินการโดย";
 
       return `<tr>
         <td width="24" valign="top" style="padding:6px 0;font:600 14px/1.6 'Helvetica Neue',Arial,sans-serif;color:${mark.color};">${mark.glyph}</td>
         <td valign="top" style="padding:6px 0;font:${emphasis} 14px/1.6 'Helvetica Neue',Arial,sans-serif;color:${color};">
           ${number}${escapeHtml(step.label)}${suffix}
-          <div style="font:400 12px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">โดย${escapeHtml(step.roleLabel)}</div>
+          <div style="font:400 12px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">${doer}${escapeHtml(step.roleLabel)}</div>
         </td>
       </tr>`;
     })
@@ -188,8 +196,9 @@ export function stepsBlock(progress: JourneyProgress | null | undefined): string
        </div>`
     : "";
 
-  return `<div style="border:1px solid ${BORDER};border-radius:12px;padding:16px;">
-    <div style="font:600 13px/1 'Helvetica Neue',Arial,sans-serif;color:${NAVY};margin-bottom:12px;">${heading}</div>
+  return `<div style="font:600 16px/1.4 'Helvetica Neue',Arial,sans-serif;color:${TEXT};margin-bottom:12px;">สถานะคำขอ</div>
+  <div style="border:1px solid ${BORDER};border-radius:12px;padding:16px;">
+    <div style="font:600 13px/1.5 'Helvetica Neue',Arial,sans-serif;color:${NAVY};margin-bottom:12px;">${heading}</div>
     <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">${rows}</table>
     ${next}
   </div>`;
@@ -506,7 +515,7 @@ export async function sendDatasetSpecialistAssigned(
       body: datasetSummary([
         ["เลขที่คำขอ", info.requestNumber],
         ["ชื่อชุดข้อมูล", info.datasetName],
-        ["หน่วยงาน", info.organizationName],
+        ["หน่วยงานเจ้าของข้อมูล", info.organizationName],
       ]),
       steps: stepsBlock(progress),
       button: { label: "เปิดดูคำขอ", url: bdiLink(info.id) },
@@ -549,17 +558,20 @@ export async function sendDatasetSignedPendingApproval(
 ) {
   await sendMany(
     to,
-    datasetSubject(info.requestNumber, `รออนุมัติชุดข้อมูล: ${info.datasetName}`),
+    datasetSubject(info.requestNumber, `รอการพิจารณาชุดข้อมูล: ${info.datasetName}`),
     layout({
-      title: "มีคำขอรอการอนุมัติ",
-      intro: `ผู้มีอำนาจของ <strong style="color:${TEXT};">${escapeHtml(info.organizationName)}</strong> ลงนามเห็นชอบแล้ว`,
+      title: "มีคำขอลงทะเบียนชุดข้อมูลรอการพิจารณา",
+      intro:
+        `ผู้มีอำนาจของ <strong style="color:${TEXT};">${escapeHtml(info.organizationName)}</strong> ` +
+        `ได้ลงนามเห็นชอบคำขอลงทะเบียนชุดข้อมูลแล้ว และคำขออยู่ระหว่างรอการพิจารณาจาก BDI`,
       body: datasetSummary([
         ["เลขที่คำขอ", info.requestNumber],
         ["ชื่อชุดข้อมูล", info.datasetName],
-        ["ผู้ลงนาม", info.signedBy],
+        ["หน่วยงานเจ้าของข้อมูล", info.organizationName],
+        ["ผู้ลงนามเห็นชอบ", info.signedBy],
       ]),
       steps: stepsBlock(progress),
-      button: { label: "ตรวจสอบและอนุมัติ", url: bdiLink(info.id) },
+      button: { label: "ตรวจสอบคำขอ", url: bdiLink(info.id) },
     }),
   );
 }
@@ -571,17 +583,19 @@ export async function sendDatasetPendingBdiApproval(
 ) {
   await sendMany(
     to,
-    datasetSubject(info.requestNumber, `รออนุมัติชุดข้อมูล: ${info.datasetName}`),
+    datasetSubject(info.requestNumber, `รอการพิจารณาชุดข้อมูล: ${info.datasetName}`),
     layout({
-      title: "มีคำขอรอการอนุมัติ",
-      intro: `คำขอผ่านการตรวจสอบครบทุกด่านแล้ว รอการพิจารณาขั้นสุดท้ายจากผู้อนุมัติ BDI`,
+      title: "มีคำขอลงทะเบียนชุดข้อมูลรอการพิจารณา",
+      intro:
+        "คำขอลงทะเบียนชุดข้อมูลผ่านการตรวจสอบและการลงนามเห็นชอบของหน่วยงานครบแล้ว " +
+        "และอยู่ระหว่างรอการพิจารณาจาก BDI",
       body: datasetSummary([
         ["เลขที่คำขอ", info.requestNumber],
         ["ชื่อชุดข้อมูล", info.datasetName],
-        ["หน่วยงาน", info.organizationName],
+        ["หน่วยงานเจ้าของข้อมูล", info.organizationName],
       ]),
       steps: stepsBlock(progress),
-      button: { label: "ตรวจสอบและอนุมัติ", url: bdiLink(info.id) },
+      button: { label: "ตรวจสอบคำขอ", url: bdiLink(info.id) },
     }),
   );
 }
@@ -599,7 +613,7 @@ export async function sendDatasetApproved(
       intro: `คำขอลงทะเบียนชุดข้อมูล <strong style="color:${TEXT};">${escapeHtml(info.datasetName)}</strong> ผ่านการอนุมัติครบทุกขั้นตอนแล้ว`,
       body: datasetSummary([
         ["เลขที่คำขอ", info.requestNumber],
-        ["หน่วยงาน", info.organizationName],
+        ["หน่วยงานเจ้าของข้อมูล", info.organizationName],
       ]),
       steps: stepsBlock(progress),
       button: { label: "เปิดดูและดาวน์โหลดเอกสาร", url: orgLink(info.id) },

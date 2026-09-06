@@ -62,7 +62,13 @@ export interface JourneyStep {
   /** เลขที่แสดงบนหน้าจอ; null สำหรับขั้นไม่บังคับซึ่งไม่ถูกนับ */
   order: number | null;
   optional: boolean;
-  /** ชื่อกลาง ๆ ใช้ได้ทั้งกับขั้นที่ผ่านไปแล้วและขั้นที่ยังไม่ถึง */
+  /**
+   * ชื่อกลาง ๆ ใช้ได้ทั้งกับขั้นที่ผ่านไปแล้วและขั้นที่ยังไม่ถึง
+   *
+   * **ไม่มีชื่อบทบาทอยู่ในนี้** — ทั้งไทม์ไลน์บนหน้าจอและบล็อกขั้นตอนในอีเมลพิมพ์บทบาท
+   * ไว้บรรทัดใต้ชื่อขั้นอยู่แล้ว ("โดยผู้ดำเนินการของ BDI") ชื่อขั้นที่ขึ้นต้นด้วยบทบาทซ้ำอีก
+   * จึงอ่านเป็น "ผู้ดำเนินการของ BDIตรวจสอบเอกสาร · โดยผู้ดำเนินการของ BDI"
+   */
   label: string;
   /** ชื่อสั้นที่กล่องในแผนภาพและ badge ในแถวใช้ร่วมกัน — ดู StepPlan.shortLabel */
   shortLabel: string;
@@ -107,9 +113,9 @@ export interface StepPlan {
   /**
    * คำบนโหนดของแผนภาพเส้นทาง — สั้นพอจะอยู่ในกล่องเล็ก ๆ ได้
    *
-   * `label` กับ `waitingLabel` เขียนไว้ให้อ่านเป็นประโยคในไทม์ไลน์และในอีเมล ยาวเกินกล่อง
-   * แต่ต้องมาจากตารางเดียวกัน ไม่ใช่ตารางคำใบที่สองฝั่งหน้าเว็บ — โหนดกับ badge เรียกสิ่ง
-   * เดียวกันคนละชื่อคือบั๊กที่เพิ่งกำจัดไปรอบก่อน
+   * `waitingLabel` เขียนไว้ให้อ่านเป็นประโยค ("รอผู้ดำเนินการของ BDIตรวจสอบเอกสาร")
+   * ยาวเกินกล่อง แต่ต้องมาจากตารางเดียวกัน ไม่ใช่ตารางคำใบที่สองฝั่งหน้าเว็บ — โหนดกับ
+   * badge เรียกสิ่งเดียวกันคนละชื่อคือบั๊กที่เพิ่งกำจัดไปรอบก่อน
    */
   shortLabel: string;
   waitingLabel: string;
@@ -134,7 +140,7 @@ const SUBMISSION_STEP: StepPlan = {
   key: "SUBMISSION",
   taskType: null,
   optional: false,
-  label: withRole(ROLE_CODES.ORGANIZATION_USER, "นำส่งคำขอ"),
+  label: "ส่งคำขอลงทะเบียน",
   shortLabel: "รอหน่วยงานนำส่ง",
   waitingLabel: `รอ${withRole(ROLE_CODES.ORGANIZATION_USER, "นำส่งคำขอ")}`,
   roleCode: ROLE_CODES.ORGANIZATION_USER,
@@ -150,7 +156,7 @@ const ORGANIZATION_PLAN: StepPlan[] = [
     key: "OFFICER_REVIEW",
     taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
     optional: false,
-    label: withRole(ROLE_CODES.BDI_OFFICER, "ตรวจสอบเอกสาร"),
+    label: "ตรวจสอบคำขอ",
     shortLabel: "รอ BDI ตรวจสอบ",
     waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.BDI_OFFICER_REVIEW],
     roleCode: ROLE_CODES.BDI_OFFICER,
@@ -159,7 +165,7 @@ const ORGANIZATION_PLAN: StepPlan[] = [
     key: "ORGANIZATION_APPROVAL",
     taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
     optional: false,
-    label: withRole(ROLE_CODES.ORGANIZATION_APPROVER, "ลงนามเห็นชอบ"),
+    label: "ลงนามเห็นชอบ",
     shortLabel: "รอหน่วยงานลงนาม",
     waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.ORGANIZATION_APPROVAL],
     roleCode: ROLE_CODES.ORGANIZATION_APPROVER,
@@ -168,7 +174,7 @@ const ORGANIZATION_PLAN: StepPlan[] = [
     key: "FINAL_APPROVAL",
     taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
     optional: false,
-    label: withRole(ROLE_CODES.BDI_FINAL_APPROVER, "ดำเนินการอนุมัติ"),
+    label: "พิจารณาคำขอ",
     shortLabel: "รอ BDI อนุมัติ",
     waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.BDI_FINAL_APPROVAL],
     roleCode: ROLE_CODES.BDI_FINAL_APPROVER,
@@ -191,7 +197,7 @@ const DATASET_PLAN: StepPlan[] = [
     key: "OFFICER_REVIEW",
     taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
     optional: false,
-    label: withRole(ROLE_CODES.BDI_OFFICER, "ตรวจสอบเอกสาร"),
+    label: "ตรวจสอบคำขอ",
     shortLabel: "รอ BDI ตรวจสอบ",
     waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.BDI_OFFICER_REVIEW],
     roleCode: ROLE_CODES.BDI_OFFICER,
@@ -200,7 +206,7 @@ const DATASET_PLAN: StepPlan[] = [
     key: "ORGANIZATION_APPROVAL",
     taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
     optional: false,
-    label: withRole(ROLE_CODES.ORGANIZATION_APPROVER, "ลงนามเห็นชอบ"),
+    label: "ลงนามเห็นชอบ",
     shortLabel: "รอหน่วยงานลงนาม",
     waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.ORGANIZATION_APPROVAL],
     roleCode: ROLE_CODES.ORGANIZATION_APPROVER,
@@ -209,7 +215,7 @@ const DATASET_PLAN: StepPlan[] = [
     key: "FINAL_APPROVAL",
     taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
     optional: false,
-    label: withRole(ROLE_CODES.BDI_FINAL_APPROVER, "ดำเนินการอนุมัติ"),
+    label: "พิจารณาคำขอ",
     shortLabel: "รอ BDI อนุมัติ",
     waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.BDI_FINAL_APPROVAL],
     roleCode: ROLE_CODES.BDI_FINAL_APPROVER,
