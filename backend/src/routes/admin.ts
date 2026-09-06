@@ -589,7 +589,8 @@ adminRouter.post("/invitations", async (req, res) => {
 
   const organization = await prisma.organization.findUnique({
     where: { id: organizationId },
-    select: { id: true },
+    // ชื่อหน่วยงานขึ้นหัวจดหมายในอีเมลคำเชิญ ("เรียน ผู้ใช้งาน <หน่วยงาน>")
+    select: { id: true, nameTh: true },
   });
   if (!organization) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานที่ระบุ" });
@@ -686,7 +687,12 @@ adminRouter.post("/invitations", async (req, res) => {
     return { account, key, record };
   });
 
-  await sendInvitationEmail(email, result.key, ROLE_LABELS[role]);
+  await sendInvitationEmail(email, result.key, {
+    roleLabel: ROLE_LABELS[role],
+    organizationName: organization.nameTh,
+    expiresAt: result.record.expiresAt,
+    internal: organizationId === BDI_ORGANIZATION_ID,
+  });
 
   /**
    * การออกคำเชิญไม่เคยถูกบันทึกลง audit เลย ทั้งที่มันสร้างบัญชีและออกสิทธิ์เข้าระบบ —
@@ -802,6 +808,7 @@ adminRouter.post("/invitations/:id/resend", async (req, res) => {
     include: {
       userAccount: { select: { id: true, email: true, status: true } },
       role: { select: { code: true } },
+      organization: { select: { nameTh: true } },
     },
   });
   if (!key) {
@@ -829,7 +836,13 @@ adminRouter.post("/invitations/:id/resend", async (req, res) => {
     }),
   );
 
-  await sendInvitationEmail(key.userAccount.email, raw, ROLE_LABELS[roleCode]);
+  await sendInvitationEmail(key.userAccount.email, raw, {
+    roleLabel: ROLE_LABELS[roleCode],
+    organizationName: key.organization.nameTh,
+    // วันหมดอายุของ **คีย์ใบใหม่** ไม่ใช่ของใบที่เพิ่งถูกแทนที่
+    expiresAt: record.expiresAt,
+    internal: key.organizationId === BDI_ORGANIZATION_ID,
+  });
 
   await logAudit({
     action: AuditAction.ACTIVATION_KEY_ISSUED,

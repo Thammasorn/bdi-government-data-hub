@@ -27,6 +27,22 @@ const CORAL = "#E5775A";
 const TEXT = "#141A33";
 const MUTED = "#5B6178";
 const BORDER = "#E2E4EC";
+/** โทนคำเตือน — ค่าเดียวกับ --color-warning / --color-warning-bg ใน globals.css */
+const WARNING = "#B26A00";
+const WARNING_BG = "#FFF3E0";
+
+/**
+ * ช่องทางติดต่อที่ท้ายอีเมลบอกไว้
+ *
+ * เบอร์โทรปล่อยว่างได้ และเมื่อว่าง **ทุกที่ที่พิมพ์มันต้องหายไปทั้งวรรค** ไม่ใช่พิมพ์
+ * "ติดต่อโทรศัพท์  หรืออีเมล …" ทิ้งช่องโหว่ไว้ให้ผู้รับอ่าน
+ */
+const SUPPORT_EMAIL = env.support.email;
+const SUPPORT_PHONE = env.support.phone;
+const contactLine = (lead: string) =>
+  SUPPORT_PHONE
+    ? `${lead}โทรศัพท์ ${escapeHtml(SUPPORT_PHONE)} หรืออีเมล ${SUPPORT_EMAIL}`
+    : `${lead}อีเมล ${SUPPORT_EMAIL}`;
 
 let transporter: Transporter | null = null;
 
@@ -46,6 +62,14 @@ function getTransporter(): Transporter | null {
 interface Button {
   label: string;
   url: string;
+  /**
+   * ลิงก์ที่พิมพ์ให้ตาเห็นใต้ปุ่ม เผื่อปุ่มกดไม่ได้
+   *
+   * ไม่ส่งมา = ใช้ `url` เหมือนเดิม · ส่ง `null` = ไม่ต้องพิมพ์บล็อกนี้เลย ซึ่งอีเมลคำเชิญ
+   * ใช้ เพราะที่อยู่สำหรับลงทะเบียนกับ Activation Key ถูกพิมพ์แยกกันไว้ในเนื้อความแล้ว
+   * และลิงก์ของมันมี token ต่อท้าย — ยาว อ่านไม่รู้เรื่อง และติดไปกับภาพที่ผู้รับแคปหน้าจอ
+   */
+  fallback?: string | null;
 }
 
 /**
@@ -59,9 +83,17 @@ function layout(opts: {
   /** บล็อกขั้นตอนจาก stepsBlock() — วางใต้ body และเหนือปุ่มเสมอ */
   steps?: string;
   button?: Button;
+  /**
+   * ข้อความที่ต้องอยู่ **ใต้ปุ่ม** — คำลงท้ายของหนังสือนำส่ง
+   *
+   * อีเมลคำเชิญเขียนเป็นหนังสือราชการ คำลงท้าย ("จึงเรียนมาเพื่อโปรดดำเนินการ /
+   * ขอแสดงความนับถือ") จึงต้องปิดท้ายจดหมายจริง ๆ ถ้าวางไว้ใน `body` ปุ่มจะไปโผล่
+   * ใต้ลายเซ็น ซึ่งอ่านแล้วเหมือนจดหมายจบไปแล้วแต่ยังมีของต่อท้าย
+   */
+  closing?: string;
   footnote?: string;
 }): string {
-  const { title, intro, body = "", steps = "", button, footnote } = opts;
+  const { title, intro, body = "", steps = "", button, closing, footnote } = opts;
   return `<!doctype html>
 <html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
 <body style="margin:0;padding:0;background:#F6F7FB;">
@@ -97,17 +129,22 @@ function layout(opts: {
                            font:600 15px/1 'Helvetica Neue',Arial,sans-serif;padding:15px 28px;border-radius:999px;">
                    ${button.label}
                  </a>
-                 <p style="margin:16px 0 0;font:400 12px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};word-break:break-all;">
+                 ${
+                   button.fallback === null
+                     ? ""
+                     : `<p style="margin:16px 0 0;font:400 12px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};word-break:break-all;">
                    หากปุ่มด้านบนไม่ทำงาน กรุณาคัดลอกลิงก์ต่อไปนี้และเปิดในเบราว์เซอร์ของคุณ:<br>
-                   <span style="color:${NAVY};">${button.url}</span>
-                 </p>
+                   <span style="color:${NAVY};">${button.fallback ?? button.url}</span>
+                 </p>`
+                 }
                </td></tr>`
             : ""
         }
+        ${closing ? `<tr><td style="padding:24px 32px 0;">${closing}</td></tr>` : ""}
         <tr><td style="padding:32px;">
           <div style="border-top:1px solid ${BORDER};padding-top:16px;
                       font:400 12px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-            ${footnote ?? "อีเมลฉบับนี้ส่งจากระบบอัตโนมัติ กรุณาอย่าตอบกลับ"}<br>
+            ${footnote ?? `อีเมลฉบับนี้ส่งจากระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลฉบับนี้ หากต้องการความช่วยเหลือกรุณาติดต่อ ${SUPPORT_EMAIL}`}<br>
             สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) — Big Data Institute (Public Organization)
           </div>
         </td></tr>
@@ -215,21 +252,115 @@ export async function sendRaw(to: string, title: string, message: string): Promi
   await send(to, title, layout({ title, intro: escapeHtml(message) }));
 }
 
+/**
+ * ตารางสรุป "ป้าย: ค่า" — ใช้ยกข้อมูลที่ผู้อ่านต้องเห็นออกมาจากย่อหน้า
+ *
+ * เกิดมาเพื่ออีเมลของ Journey C แต่ไม่มีอะไรเป็นเรื่องชุดข้อมูลอยู่ในนี้เลย อีเมลคำเชิญ
+ * ใช้ตัวเดียวกันยกบทบาทกับหน่วยงานขึ้นบรรทัดของตัวเอง (เดิมชื่อ `datasetSummary`)
+ */
+function summaryTable(rows: Array<[string, string]>): string {
+  return `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border:1px solid ${BORDER};border-radius:12px;border-collapse:separate;overflow:hidden;">
+    ${rows
+      .map(
+        ([label, value]) => `<tr>
+          <td style="padding:10px 14px;background:#F6F7FB;font:400 13px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};width:38%;">${escapeHtml(label)}</td>
+          <td style="padding:10px 14px;font:600 13px/1.6 'Helvetica Neue',Arial,sans-serif;color:${TEXT};">${escapeHtml(value)}</td>
+        </tr>`,
+      )
+      .join("")}
+  </table>`;
+}
+
 // ------------------------------------------------------------------ อีเมลแต่ละชนิด
 
-export async function sendInvitationEmail(to: string, token: string, roleLabel: string) {
-  const url = `${env.appUrl}/activate?token=${token}`;
+/**
+ * คำเชิญเข้าใช้งานระบบ — ฉบับเดียวที่ถือ Activation Key ตัวจริง
+ *
+ * เขียนใหม่ตามการ์ด "แก้เนื้อหา invitation email" ให้เป็นหนังสือนำส่งอย่างที่หน่วยงานรัฐ
+ * คุ้นเคย ไม่ใช่ข้อความเชิญสั้น ๆ สิ่งที่การ์ดสั่งไว้และมีผลต่อรูปร่างของอีเมลฉบับนี้
+ *
+ * - **URL กับ Activation Key แยกบรรทัด** และ URL ที่พิมพ์ให้อ่านต้องเป็น `/activate` เปล่า ๆ
+ *   ไม่ใช่ลิงก์ที่มี token ต่อท้าย (`fallback: null` จึงตัดบล็อกลิงก์สำรองใต้ปุ่มทิ้ง) —
+ *   หน้า `/activate` มีช่องกรอกคีย์อยู่แล้ว เส้นทาง "เปิด URL แล้วกรอกคีย์" จึงเดินได้จริง
+ *   ส่วนปุ่มยังพา token ไปให้เหมือนเดิม คนที่เปิดอีเมลบนเครื่องตัวเองกดครั้งเดียวจบ
+ * - **ชื่อบทบาทต้องเด่น** เดิมฝังอยู่กลางย่อหน้า ตอนนี้อยู่ในตารางสรุปบรรทัดของตัวเอง
+ * - **วันหมดอายุจริง** ไม่ใช่ "ใช้ได้ 7 วัน" ให้ผู้รับนับเอง ใช้ `expiresAt` ของคีย์ใบนั้น
+ * - **คำเตือนคำเชิญที่ไม่ได้คาดหมาย** ผู้รับที่ไม่รู้จักเรื่องนี้ต้องมีทางไปที่ไม่ใช่การกดลิงก์
+ *
+ * `internal` แยกสำนวนของย่อหน้าเปิด: BDI ไม่ได้ "แจ้งความประสงค์ขอเชื่อมโยงระบบ" กับตัวเอง
+ * ทุกอย่างที่เหลือ (คีย์ วันหมดอายุ บทบาท คำเตือน ท้ายจดหมาย) เหมือนกันทั้งสองฉบับ
+ */
+export async function sendInvitationEmail(
+  to: string,
+  key: string,
+  info: { roleLabel: string; organizationName: string; expiresAt: Date; internal: boolean },
+) {
+  const organizationName = escapeHtml(info.organizationName);
+  const activateUrl = `${env.appUrl}/activate`;
+  // วันที่แบบ "11 กันยายน 2569" — ไม่ใช้ thaiLongDate() ของเอกสารข้อตกลง ซึ่งให้เลขไทย
+  const expiresOn = new Intl.DateTimeFormat("th-TH", {
+    dateStyle: "long",
+    timeZone: "Asia/Bangkok",
+  }).format(info.expiresAt);
+
+  const paragraph = (html: string) =>
+    `<p style="margin:0 0 16px;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">${html}</p>`;
+
+  const opening = info.internal
+    ? `ตามที่ท่านได้รับมอบหมายให้ปฏิบัติหน้าที่ในระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2) นั้น ` +
+      `สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) (สขญ) ขอนำส่ง Activation Key ` +
+      `สำหรับใช้ในการลงทะเบียนเข้าใช้งานระบบ`
+    : `ตามที่ <strong style="color:${TEXT};">${organizationName}</strong> ได้แจ้งความประสงค์` +
+      `ขอเชื่อมโยงระบบสารสนเทศของหน่วยงานกับระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2) นั้น ` +
+      `สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) (สขญ) ขอนำส่ง Activation Key ` +
+      `สำหรับใช้ในการลงทะเบียนเข้าใช้งานระบบ`;
+
   await send(
     to,
     "คำเชิญเข้าใช้งานระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)",
     layout({
-      title: "คุณได้รับเชิญให้เข้าใช้งานระบบ",
-      intro: `สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) เชิญคุณเข้าใช้งานระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2) ในสิทธิ์ <strong style="color:${TEXT};">${roleLabel}</strong>`,
-      body: `<p style="margin:0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-               กดปุ่มด้านล่างเพื่อยืนยันตัวตนด้วย ThaID แล้วตั้งรหัสผ่าน
-               ลิงก์นี้ใช้ได้ ${env.auth.activationKeyTtlDays} วัน
-             </p>`,
-      button: { label: "เปิดใช้งานบัญชี", url },
+      title: "ขอนำส่ง Activation Key สำหรับเข้าใช้งานระบบ",
+      intro: info.internal
+        ? `เรียน เจ้าหน้าที่${organizationName}`
+        : `เรียน ผู้ใช้งาน ${organizationName}`,
+      body: [
+        paragraph(opening),
+        summaryTable([
+          ["หน่วยงาน", info.organizationName],
+          ["บทบาทในระบบ", info.roleLabel],
+        ]),
+        `<div style="margin-top:20px;background:#F6F7FB;border:1px solid ${BORDER};border-radius:12px;padding:20px;">
+           <div style="font:400 13px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">URL สำหรับลงทะเบียน</div>
+           <div style="margin-top:4px;font:600 15px/1.6 'Helvetica Neue',Arial,sans-serif;color:${NAVY};word-break:break-all;">${activateUrl}</div>
+           <div style="margin-top:14px;font:400 13px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">Activation Key</div>
+           <div style="margin-top:4px;font:700 15px/1.6 'Courier New',Courier,monospace;color:${TEXT};word-break:break-all;">${escapeHtml(key)}</div>
+         </div>`,
+        `<p style="margin:20px 0 16px;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
+           ท่านสามารถเริ่มต้นการใช้งานระบบได้จากปุ่มด้านล่าง หรือเปิด URL ข้างต้นแล้วกรอก Activation Key
+           ด้วยตนเอง จากนั้นยืนยันตัวตนด้วย ThaID แล้วตั้งรหัสผ่าน
+         </p>`,
+        paragraph(
+          `ทั้งนี้ ขอให้${info.internal ? "ท่าน" : "หน่วยงาน"}เก็บรักษา Activation Key ไว้เป็นความลับ และโปรดลงทะเบียนภายใน ` +
+            `${env.auth.activationKeyTtlDays} วัน — <strong style="color:${TEXT};">Activation Key นี้ใช้ได้ถึงวันที่ ${expiresOn}</strong>`,
+        ),
+        `<div style="background:${WARNING_BG};border-left:3px solid ${WARNING};border-radius:8px;padding:16px;">
+           <div style="font:400 14px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};">
+             หากท่านไม่ได้คาดหมายว่าจะได้รับคำเชิญนี้ กรุณาอย่ากดลิงก์และอย่าใช้ Activation Key นี้
+             และโปรดแจ้งสถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) ที่ ${SUPPORT_EMAIL}
+           </div>
+         </div>`,
+      ].join(""),
+      button: {
+        label: "เปิดใช้งานบัญชี",
+        url: `${activateUrl}?token=${key}`,
+        fallback: null,
+      },
+      closing: `<p style="margin:0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
+           ${contactLine("หากมีข้อสงสัยหรือประสบปัญหาในการดำเนินการ สามารถติดต่อ")}<br><br>
+           จึงเรียนมาเพื่อโปรดดำเนินการ<br><br>
+           ขอแสดงความนับถือ<br>
+           <span style="color:${TEXT};">สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)</span>
+         </p>`,
     }),
   );
 }
@@ -428,19 +559,6 @@ const bdiLink = (id: string) => `${env.appUrl}/admin/datasets/${id}`;
 /** หัวเรื่องอ้างเลขที่คำขอเสมอ เพื่อให้ผู้รับที่มีหลายคำขอแยกออกจากกันได้ */
 const datasetSubject = (requestNumber: string, text: string) => `[${requestNumber}] ${text}`;
 
-function datasetSummary(rows: Array<[string, string]>): string {
-  return `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border:1px solid ${BORDER};border-radius:12px;border-collapse:separate;overflow:hidden;">
-    ${rows
-      .map(
-        ([label, value]) => `<tr>
-          <td style="padding:10px 14px;background:#F6F7FB;font:400 13px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};width:38%;">${escapeHtml(label)}</td>
-          <td style="padding:10px 14px;font:600 13px/1.6 'Helvetica Neue',Arial,sans-serif;color:${TEXT};">${escapeHtml(value)}</td>
-        </tr>`,
-      )
-      .join("")}
-  </table>`;
-}
-
 export async function sendDatasetSubmitted(
   to: string[],
   info: { requestNumber: string; datasetName: string; organizationName: string; submitter: string; id: string },
@@ -452,7 +570,7 @@ export async function sendDatasetSubmitted(
     layout({
       title: "มีคำขอลงทะเบียนชุดข้อมูลรอตรวจสอบ",
       intro: `<strong style="color:${TEXT};">${escapeHtml(info.organizationName)}</strong> นำส่งคำขอลงทะเบียนชุดข้อมูลเข้ามาในระบบ`,
-      body: datasetSummary([
+      body: summaryTable([
         ["เลขที่คำขอ", info.requestNumber],
         ["ชื่อชุดข้อมูล", info.datasetName],
         ["ผู้นำส่ง", info.submitter],
@@ -512,7 +630,7 @@ export async function sendDatasetSpecialistAssigned(
         "เจ้าหน้าที่ BDI ขอความเห็นของคุณต่อคำขอนี้ในฐานะผู้เชี่ยวชาญด้านข้อมูล " +
         "คุณเปิดดูรายละเอียดและบันทึกความเห็นไว้ให้เจ้าหน้าที่ได้ — การตัดสินผ่านหรือส่งกลับ " +
         "ยังเป็นของเจ้าหน้าที่ BDI ตามเดิม",
-      body: datasetSummary([
+      body: summaryTable([
         ["เลขที่คำขอ", info.requestNumber],
         ["ชื่อชุดข้อมูล", info.datasetName],
         ["หน่วยงานเจ้าของข้อมูล", info.organizationName],
@@ -534,7 +652,7 @@ export async function sendDatasetPendingOrgApprover(
     layout({
       title: "ขอความเห็นชอบในฐานะผู้มีอำนาจกระทำการแทน",
       intro: `คำขอลงทะเบียนชุดข้อมูลของ <strong style="color:${TEXT};">${escapeHtml(info.organizationName)}</strong> ผ่านการตรวจสอบเบื้องต้นจากเจ้าหน้าที่ BDI แล้ว`,
-      body: datasetSummary([
+      body: summaryTable([
         ["เลขที่คำขอ", info.requestNumber],
         ["ชื่อชุดข้อมูล", info.datasetName],
       ]),
@@ -564,7 +682,7 @@ export async function sendDatasetSignedPendingApproval(
       intro:
         `ผู้มีอำนาจของ <strong style="color:${TEXT};">${escapeHtml(info.organizationName)}</strong> ` +
         `ได้ลงนามเห็นชอบคำขอลงทะเบียนชุดข้อมูลแล้ว และคำขออยู่ระหว่างรอการพิจารณาจาก BDI`,
-      body: datasetSummary([
+      body: summaryTable([
         ["เลขที่คำขอ", info.requestNumber],
         ["ชื่อชุดข้อมูล", info.datasetName],
         ["หน่วยงานเจ้าของข้อมูล", info.organizationName],
@@ -589,7 +707,7 @@ export async function sendDatasetPendingBdiApproval(
       intro:
         "คำขอลงทะเบียนชุดข้อมูลผ่านการตรวจสอบและการลงนามเห็นชอบของหน่วยงานครบแล้ว " +
         "และอยู่ระหว่างรอการพิจารณาจาก BDI",
-      body: datasetSummary([
+      body: summaryTable([
         ["เลขที่คำขอ", info.requestNumber],
         ["ชื่อชุดข้อมูล", info.datasetName],
         ["หน่วยงานเจ้าของข้อมูล", info.organizationName],
@@ -611,7 +729,7 @@ export async function sendDatasetApproved(
     layout({
       title: "ชุดข้อมูลได้รับอนุมัติแล้ว",
       intro: `คำขอลงทะเบียนชุดข้อมูล <strong style="color:${TEXT};">${escapeHtml(info.datasetName)}</strong> ผ่านการอนุมัติครบทุกขั้นตอนแล้ว`,
-      body: datasetSummary([
+      body: summaryTable([
         ["เลขที่คำขอ", info.requestNumber],
         ["หน่วยงานเจ้าของข้อมูล", info.organizationName],
       ]),

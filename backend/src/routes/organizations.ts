@@ -2367,13 +2367,19 @@ async function ensureApproverAccount(
     }));
   } else {
     // ยังไม่มีบัญชีใช้งานได้ — ออก activation key ให้ไปสมัคร
-    const { key } = await issueActivationKey(tx, {
+    const { key, record } = await issueActivationKey(tx, {
       userAccountId: account.id,
       organizationId: request.organizationId,
       roleCode: ROLE_CODES.ORGANIZATION_APPROVER,
     });
     // ส่งอีเมลนอก transaction ไม่ได้เพราะต้องใช้ raw key — ยอมส่งในนี้
-    void sendInvitationEmail(email, key, ROLE_LABELS[ROLE_CODES.ORGANIZATION_APPROVER]);
+    void sendInvitationEmail(email, key, {
+      roleLabel: ROLE_LABELS[ROLE_CODES.ORGANIZATION_APPROVER],
+      // ชื่อที่หน่วยงานกรอกมาในคำขอมาก่อนชื่อในทะเบียน — เป็นชื่อที่ผู้รับเพิ่งเห็นในฟอร์ม
+      organizationName: request.organizationNameTh ?? request.organization.nameTh,
+      expiresAt: record.expiresAt,
+      internal: false,
+    });
   }
 
   return { id: account.id, replaced };
