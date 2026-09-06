@@ -10,6 +10,7 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "../db.js";
+import { NAME_FIELDS, fullNameTh } from "../lib/person-name.js";
 import { env } from "../env.js";
 import {
   SESSION_COOKIE,
@@ -597,7 +598,7 @@ authRouter.post("/activate", async (req, res) => {
           prefixTh: prefix,
           firstnameTh: firstName,
           lastnameTh: lastName,
-          displayName: `${prefix}${firstName} ${lastName}`,
+          displayName: fullNameTh({ prefixTh: prefix, firstnameTh: firstName, lastnameTh: lastName }),
           phoneNumber: phone,
           passwordHash: await hashPassword(password),
           externalSubject: verification.externalReference,
@@ -907,7 +908,7 @@ async function removedFromOrganization(userAccountId: string, organizationId: st
       ...activeAssignmentWhere(),
     },
     orderBy: { effectiveFrom: "desc" },
-    select: { userAccount: { select: { displayName: true } } },
+    select: { userAccount: { select: NAME_FIELDS } },
   });
 
   return {
@@ -915,7 +916,7 @@ async function removedFromOrganization(userAccountId: string, organizationId: st
     role: removal.role.code,
     roleLabel: ROLE_LABELS[removal.role.code as RoleCode] ?? removal.role.code,
     removedAt: removal.revokedAt,
-    replacedBy: successor?.userAccount.displayName ?? null,
+    replacedBy: fullNameTh(successor?.userAccount) || null,
   };
 }
 

@@ -27,7 +27,7 @@ function decideAbility(org: Organization, roles: string[]) {
   switch (org.currentTaskType) {
     case "BDI_OFFICER_REVIEW":
       return roles.includes("BDI_OFFICER")
-        ? { can: true, approveLabel: "อนุมัติ", hint: "ตรวจสอบข้อมูลและเอกสารก่อนส่งต่อให้ผู้มีอำนาจกระทำการแทน" }
+        ? { can: true, approveLabel: "อนุมัติ", hint: "ตรวจสอบข้อมูลและเอกสารก่อนส่งให้ผู้มีอำนาจอนุมัติของหน่วยงาน" }
         : { can: false };
     /**
      * สองด่านนี้อนุมัติด้วยการลงนามบนเอกสาร ปุ่มจึงเปิด SigningDialog ไม่ใช่ modal ยืนยันสั้น ๆ
@@ -46,7 +46,7 @@ function decideAbility(org: Organization, roles: string[]) {
         ? {
             can: true,
             approveLabel: "ผ่านการตรวจสอบ",
-            hint: "โปรดตรวจสอบเอกสารในฐานะผู้มีอำนาจกระทำการแทน แล้วลงนามอิเล็กทรอนิกส์",
+            hint: "โปรดตรวจสอบเอกสารในฐานะผู้มีอำนาจอนุมัติของหน่วยงาน แล้วลงนามอิเล็กทรอนิกส์",
             signing: true,
             perDocument: true,
           }
@@ -379,7 +379,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         </Card>
 
         <Card>
-          <CardHeader tag="ส่วนที่ 2" title="ผู้มีอำนาจกระทำการแทน" />
+          <CardHeader tag="ส่วนที่ 2" title="ผู้มีอำนาจอนุมัติของหน่วยงาน" />
           <Rows
             rows={[
               ["ชื่อ-นามสกุล", fullName(org.signatoryPrefix, org.signatoryFirstName, org.signatoryLastName)],
@@ -481,7 +481,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         open={modal === "revise"}
         onClose={() => setModal(null)}
         title="ส่งกลับแก้ไข"
-        description="ระบุเนื้อหาหรือข้อความที่ต้องการให้ปรับปรุง ระบบจะแจ้งไปยังผู้ดำเนินการของหน่วยงาน"
+        description="ระบุเนื้อหาหรือข้อความที่ต้องการให้ปรับปรุง ระบบจะแจ้งไปยังผู้ประสานงานของหน่วยงาน"
       >
         <TextAreaField
           label="รายละเอียดที่ต้องแก้ไข"
@@ -492,7 +492,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
             setNote(e.target.value);
             setNoteError(undefined);
           }}
-          placeholder="เช่น เลขบัตรประชาชนของผู้มีอำนาจกระทำการแทนไม่ตรงกับคำสั่งแต่งตั้งที่แนบมา"
+          placeholder="เช่น เลขบัตรประชาชนของผู้มีอำนาจอนุมัติไม่ตรงกับคำสั่งแต่งตั้งที่แนบมา"
         />
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="secondary" onClick={() => setModal(null)}>
@@ -511,7 +511,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         description="ยืนยันว่าคุณตรวจสอบข้อมูลและเอกสารทั้งหมดเรียบร้อยแล้ว"
       >
         <p className="text-[15px] leading-relaxed text-ink-muted">
-          ระบบจะบันทึกการตัดสินใจนี้พร้อมชื่อและเวลาของคุณ และแจ้งผู้เกี่ยวข้องในขั้นถัดไปทางอีเมล
+          ระบบจะบันทึกกระบวนการนี้และแจ้งผู้เกี่ยวข้องในขั้นตอนถัดไป
         </p>
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="secondary" onClick={() => setModal(null)}>

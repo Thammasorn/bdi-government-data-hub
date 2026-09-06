@@ -89,7 +89,7 @@ export default function DatasetPreviewPage() {
               />
             ) : (
               <p className="rounded-xl bg-warning-bg p-5 text-sm text-warning">
-                ยังไม่มีแบบฟอร์ม กรุณากลับไปกด &ldquo;ตรวจสอบและสร้าง PDF&rdquo; อีกครั้ง
+                ยังไม่มีแบบฟอร์ม กรุณากลับไปกด &ldquo;ตรวจสอบคำขอ&rdquo; อีกครั้ง
               </p>
             )}
           </div>

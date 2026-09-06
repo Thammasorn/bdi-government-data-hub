@@ -61,13 +61,10 @@ function ThaidCallback() {
 
         if (result.user) {
           setUser(result.user);
-          // ปลายทางที่ฝากไว้ก่อนออกไป ThaID — ผู้ที่มาจากลิงก์ในอีเมลต้องได้กลับ
-          // ไปหน้าที่ตั้งใจ ไม่ใช่หน้าแรก (เหมือนทางรหัสผ่าน + OTP)
-          const next = takeNextPath();
-          router.replace(
-            // ทุก role มีหน้าแรกที่ `/` แล้ว
-            next ?? "/",
-          );
+          // ล็อกอินสำเร็จแล้วไปหน้าแรกเสมอ เหมือนทางรหัสผ่าน + OTP (BDI ขอเมื่อ 2026-09-04)
+          // ยังเรียก takeNextPath() อยู่เพื่อ**ล้าง**ปลายทางที่ฝากไว้ ไม่ให้ค้างไปรอบหน้า
+          takeNextPath();
+          router.replace("/");
           return;
         }
 

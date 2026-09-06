@@ -125,6 +125,7 @@ import {
   taskHistory,
 } from "../lib/workflow.js";
 import { requireAuth } from "../middleware/auth.js";
+import { NAME_FIELDS, fullNameTh } from "../lib/person-name.js";
 
 export const datasetRequestRouter = Router();
 datasetRequestRouter.use(requireAuth);
@@ -197,6 +198,7 @@ const publicSpecialist = (r: RequestRow) =>
     ? {
         id: r.assignedSpecialist.id,
         email: r.assignedSpecialist.email,
+        prefix: r.assignedSpecialist.prefixTh,
         firstName: r.assignedSpecialist.firstnameTh,
         lastName: r.assignedSpecialist.lastnameTh,
       }
@@ -205,12 +207,13 @@ const publicSpecialist = (r: RequestRow) =>
 const datasetLabel = (r: RequestRow) =>
   r.metadata?.title?.trim() || r.proposedTitle?.trim() || `คำขอ ${r.requestNumber}`;
 
-async function displayName(userId: string): Promise<string> {
+async function personNameOf(userId: string): Promise<string> {
   const user = await prisma.userAccount.findUnique({
     where: { id: userId },
-    select: { displayName: true, email: true },
+    select: NAME_FIELDS,
   });
-  return user?.displayName || user?.email || "ไม่ทราบชื่อ";
+  // ไม่ตกกลับไปใช้อีเมล — ชื่อนี้ไปโผล่ในอีเมลแจ้งเตือนและบนหน้าจอของคนอื่น
+  return fullNameTh(user) || "ไม่ทราบชื่อ";
 }
 
 /**
@@ -235,7 +238,7 @@ async function prerequisiteError(session: Session): Promise<string | null> {
   const members = await organizationMemberIds(session.organizationId);
   if (members.users.length === 0) return "หน่วยงานต้องมีผู้ใช้ที่เปิดใช้งานแล้วอย่างน้อยหนึ่งคน";
   if (members.approvers.length === 0) {
-    return "หน่วยงานต้องมีผู้มีอำนาจกระทำการแทนที่เปิดใช้งานบัญชีแล้ว จึงจะลงทะเบียนชุดข้อมูลได้";
+    return "หน่วยงานต้องมีผู้มีอำนาจอนุมัติของหน่วยงานที่เปิดใช้งานบัญชีแล้ว จึงจะลงทะเบียนชุดข้อมูลได้";
   }
   return null;
 }
@@ -661,9 +664,9 @@ datasetRequestRouter.get("/:id", async (req, res) => {
     .reverse()
     .find((t) => t.result === ReviewResult.APPROVED || t.result === ReviewResult.REJECTED);
   const approvedByName =
-    decided?.result === ReviewResult.APPROVED ? (decided.completedByUser?.displayName ?? null) : null;
+    decided?.result === ReviewResult.APPROVED ? (fullNameTh(decided.completedByUser) || null) : null;
   const rejectedByName =
-    decided?.result === ReviewResult.REJECTED ? (decided.completedByUser?.displayName ?? null) : null;
+    decided?.result === ReviewResult.REJECTED ? (fullNameTh(decided.completedByUser) || null) : null;
   const rejectionReason =
     decided?.result === ReviewResult.REJECTED ? (decided.resultComment ?? null) : null;
 
@@ -715,7 +718,7 @@ datasetRequestRouter.get("/:id", async (req, res) => {
         actor: t.completedByUser
           ? {
               id: t.completedByUser.id,
-              name: t.completedByUser.displayName,
+              name: fullNameTh(t.completedByUser),
               email: t.completedByUser.email,
             }
           : null,
@@ -957,11 +960,9 @@ function datasetDocumentRequestOf(request: RequestRow) {
 async function submitterNameOf(request: RequestRow): Promise<string | null> {
   const account = await prisma.userAccount.findUnique({
     where: { id: request.createdBy },
-    select: { displayName: true, prefixTh: true, firstnameTh: true, lastnameTh: true },
+    select: NAME_FIELDS,
   });
-  if (!account) return null;
-  const full = [account.prefixTh, account.firstnameTh, account.lastnameTh].filter(Boolean).join(" ").trim();
-  return full || account.displayName;
+  return fullNameTh(account) || null;
 }
 
 
@@ -1029,7 +1030,7 @@ datasetRequestRouter.post("/:id/submit", async (req, res) => {
     requestNumber: request.requestNumber,
     datasetName: datasetLabel(request),
     organizationName: request.organization.nameTh,
-    submitter: await displayName(session.sub),
+    submitter: await personNameOf(session.sub),
     id: request.id,
   };
   await notifyUsers(officers, {
@@ -1216,6 +1217,8 @@ datasetRequestRouter.get("/:id/legal-documents", async (req, res) => {
       out.push({
         code: doc.code,
         name: doc.nameTh,
+        shortname: doc.shortname,
+        legalNotice: doc.legalNotice,
         versionId: doc.versionId,
         versionNumber: doc.versionNumber,
         fromRequest: false,
@@ -1254,6 +1257,8 @@ datasetRequestRouter.get("/:id/legal-documents", async (req, res) => {
     out.push({
       code: doc.code,
       name: doc.nameTh,
+      shortname: doc.shortname,
+      legalNotice: doc.legalNotice,
       versionId: doc.versionId,
       versionNumber: doc.versionNumber,
       fromRequest: true,
@@ -1538,14 +1543,13 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
       if (confirmationType && signature && result === ReviewResult.APPROVED) {
         const account = await tx.userAccount.findUnique({
           where: { id: session.sub },
-          select: { displayName: true, prefixTh: true, firstnameTh: true, lastnameTh: true },
+          select: NAME_FIELDS,
         });
         const signedFirst = account?.firstnameTh ?? null;
         const signedLast = account?.lastnameTh ?? null;
-        const signedName =
-          [account?.prefixTh, signedFirst, signedLast].filter(Boolean).join(" ").trim() ||
-          account?.displayName ||
-          session.email;
+        // ตกกลับไปที่อีเมลได้ที่นี่ที่เดียว — ลายมือชื่อต้องมีอะไรสักอย่างเสมอ และผู้ที่มาถึง
+        // ขั้นลงนามได้ผ่าน activate มาแล้ว จึงมีชื่อไทยครบ ทางนี้จึงเป็นตาข่ายที่ไม่ควรได้ใช้
+        const signedName = fullNameTh(account) || session.email;
 
         const confirmation = await tx.signatureConfirmation.create({
           data: {
@@ -1811,7 +1815,7 @@ async function dispatchDatasetNotifications(
   actorId: string,
 ) {
   const members = await organizationMemberIds(request.organizationId);
-  const actorName = await displayName(actorId);
+  const actorName = await personNameOf(actorId);
   const info = {
     requestNumber: request.requestNumber,
     datasetName: datasetLabel(request),

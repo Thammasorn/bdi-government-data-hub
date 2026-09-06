@@ -151,7 +151,7 @@ function OrganizationHome({
       .then((d) => setOrgRequests(d.rows))
       .catch(() => setOrgRequests([]));
 
-    // ยิงเฉพาะคนที่การ์ดนี้พูดด้วย — ผู้ดำเนินการของหน่วยงานไม่มีการ์ดนี้
+    // ยิงเฉพาะคนที่การ์ดนี้พูดด้วย — ผู้ประสานงานของหน่วยงานไม่มีการ์ดนี้
     if (isApprover) {
       load<DatasetRequestListItem>(
         "/api/dataset-requests?stage=ORGANIZATION_APPROVAL&pageSize=5",
@@ -228,10 +228,9 @@ function OrganizationHome({
           <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
             {/* ไม่ต้องเอ่ยชื่อหน่วยงานซ้ำ — เป็นหัวเรื่องของหน้านี้อยู่แล้ว */}
             <div className="min-w-0">
-              <p className="font-medium text-navy-800">รอคุณเห็นชอบและลงนามคำขอลงทะเบียนหน่วยงาน</p>
+              <p className="font-medium text-navy-800">พิจารณาลงนามข้อตกลงหลักและเอกสารภาคผนวก</p>
               <p className="mt-0.5 text-sm leading-relaxed text-ink-muted">
-                คำขอผ่านการตรวจสอบจากเจ้าหน้าที่ BDI แล้ว และหยุดรอให้คุณอ่านเอกสารข้อตกลง
-                แล้วลงนามในฐานะผู้มีอำนาจกระทำการแทน
+                คำขอของท่านได้รับการตรวจสอบแล้ว โปรดพิจารณาลงนามข้อตกลงหลักและเอกสารภาคผนวก
               </p>
               {/* บอกด้วยว่านี่คือขั้นที่เท่าไรและหลังจากนี้เหลืออะไร — ผู้ลงนามส่วนใหญ่
                   เห็นคำขอครั้งเดียวตรงนี้ และไม่รู้ว่ากดแล้วเรื่องจะไปต่อที่ใคร */}
@@ -363,7 +362,7 @@ function HomeHeader({
           </div>
         ) : (
           <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-ink-muted">
-            คุณเข้าใช้งานในฐานะผู้มีอำนาจกระทำการแทน — ด้านล่างคือคำขอลงทะเบียนชุดข้อมูลของหน่วยงานที่คุณดูแล
+            คุณเข้าใช้งานในฐานะผู้มีอำนาจอนุมัติของหน่วยงาน — ด้านล่างคือคำขอลงทะเบียนชุดข้อมูลของหน่วยงานที่คุณดูแล
           </p>
         )}
 

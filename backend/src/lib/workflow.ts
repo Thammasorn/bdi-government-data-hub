@@ -25,6 +25,7 @@ import {
 } from "@prisma/client";
 
 import type { RoleCode } from "./system.js";
+import { NAME_FIELDS } from "./person-name.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -116,13 +117,17 @@ export class WorkflowError extends Error {
 export const TASK_TAKEN_MESSAGE =
   "มีผู้ใช้ท่านอื่นดำเนินการขั้นตอนนี้ไปแล้ว หน้าจอที่เปิดอยู่เป็นข้อมูลก่อนหน้านั้น กรุณาโหลดหน้าใหม่";
 
-/** field ของคนที่ต้องเอาชื่อไปแสดง — ใช้ร่วมกันทั้งผู้รับมอบหมายและผู้ปิดด่าน */
+/**
+ * field ของคนที่ต้องเอาชื่อไปแสดง — ใช้ร่วมกันทั้งผู้รับมอบหมายและผู้ปิดด่าน
+ *
+ * ดึงสามช่องของชื่อไทยมาครบ เพราะชื่อที่แสดงประกอบขึ้นจากช่องพวกนี้ ไม่ได้อ่าน
+ * `display_name` แล้ว — ดู `lib/person-name.ts`
+ */
 const TASK_PERSON = {
   id: true,
   displayName: true,
   email: true,
-  firstnameTh: true,
-  lastnameTh: true,
+  ...NAME_FIELDS,
 } as const;
 
 /** สถานะของ task ที่ถือว่ายัง "ค้างอยู่" — lib/queue.ts ใช้ชุดเดียวกันนี้ */

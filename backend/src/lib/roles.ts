@@ -4,12 +4,12 @@ import { ROLE_CODES, type RoleCode } from "./system.js";
 
 /** ชื่อ role ที่แสดงบนหน้าจอ — คู่กับ iam.role.name_th ใน sheet `role` */
 export const ROLE_LABELS: Record<RoleCode, string> = {
-  [ROLE_CODES.ORGANIZATION_USER]: "ผู้ดำเนินการของหน่วยงาน",
-  [ROLE_CODES.ORGANIZATION_APPROVER]: "ผู้มีอำนาจกระทำการแทนของหน่วยงาน",
-  [ROLE_CODES.BDI_OFFICER]: "ผู้ดำเนินการของ BDI",
+  [ROLE_CODES.ORGANIZATION_USER]: "ผู้ประสานงานของหน่วยงาน",
+  [ROLE_CODES.ORGANIZATION_APPROVER]: "ผู้มีอำนาจอนุมัติของหน่วยงาน",
+  [ROLE_CODES.BDI_OFFICER]: "ผู้ประสานงานของ BDI",
   [ROLE_CODES.BDI_DATASET_SPECIALIST]: "ผู้เชี่ยวชาญด้านข้อมูลของ BDI",
-  [ROLE_CODES.BDI_FINAL_APPROVER]: "ผู้มีอำนาจอนุมัติฝ่าย BDI",
-  [ROLE_CODES.BDI_LEGAL_OFFICER]: "ผู้ดำเนินการทางกฎหมายของ BDI",
+  [ROLE_CODES.BDI_FINAL_APPROVER]: "ผู้มีอำนาจอนุมัติของ BDI",
+  [ROLE_CODES.BDI_LEGAL_OFFICER]: "ผู้เชี่ยวชาญด้านกฎหมายของ BDI",
   [ROLE_CODES.SYSTEM_ADMINISTRATOR]: "ผู้ดูแลระบบ",
 };
 
@@ -37,14 +37,14 @@ export const REQUEST_STATUS_LABELS: Record<RequestStatus, string> = {
 
 /**
  * ภาษาไทยไม่เว้นวรรคระหว่างคำ — ยกเว้นเมื่อคำก่อนหน้าลงท้ายด้วยอักษรละติน
- * "ผู้ดำเนินการของ BDI" + "ตรวจสอบ" ต่อกันตรง ๆ ได้ "BDIตรวจสอบ" ซึ่งอ่านเป็นคำเดียว
+ * "ผู้ประสานงานของ BDI" + "ตรวจสอบ" ต่อกันตรง ๆ ได้ "BDIตรวจสอบ" ซึ่งอ่านเป็นคำเดียว
  */
 export const roleGap = (label: string) => (/[A-Za-z0-9)]$/.test(label) ? " " : "");
 
 /**
  * ชื่อบทบาท + สิ่งที่บทบาทนั้นทำ — ประโยคบอกด่านทุกประโยคในระบบประกอบจากตรงนี้
  *
- * เดิมแต่ละที่เขียนชื่อบทบาทของตัวเอง ("เจ้าหน้าที่ BDI" ที่ badge, "ผู้ดำเนินการของ BDI"
+ * เดิมแต่ละที่เขียนชื่อบทบาทของตัวเอง ("เจ้าหน้าที่ BDI" ที่ badge, "ผู้ประสานงานของ BDI"
  * ที่อีเมล, "BDI" เฉย ๆ ในแผนภาพ) ผู้ใช้คนเดียวกันจึงเห็นด่านเดียวกันถูกเรียกสามชื่อ
  * ระหว่างอีเมลที่ได้รับ ตารางที่เปิดอยู่ และหน้ารายละเอียดที่กดเข้าไป
  */

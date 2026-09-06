@@ -11,6 +11,7 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "../db.js";
+import { fullNameTh } from "../lib/person-name.js";
 import { uploadedFile } from "../lib/attachment.js";
 import { TEMPLATE_VARIABLES, VARIABLE_GROUPS } from "../lib/document-render.js";
 import { publishVersion } from "../lib/legal.js";
@@ -669,7 +670,7 @@ adminRouter.post("/invitations", async (req, res) => {
          * ประกอบจากสามช่องบน ไม่ได้รับมาตรง ๆ — จะได้ไม่มีทางที่ชื่อที่แสดงกับชื่อจริง
          * ในฐานข้อมูลพูดคนละเรื่องกัน และหน้ารายการคำเชิญอ่านออกตั้งแต่ก่อนเปิดใช้งาน
          */
-        displayName: `${prefixTh ?? ""}${firstnameTh} ${lastnameTh}`,
+        displayName: fullNameTh({ prefixTh, firstnameTh, lastnameTh }),
         accountType: isOrgScoped ? AccountType.ORGANIZATION : AccountType.BDI,
         status: UserAccountStatus.PENDING,
         createdBy: SYSTEM_USER_ID,

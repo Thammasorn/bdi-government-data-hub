@@ -156,7 +156,7 @@ function DatasetRow({
         ) : (
           // ปุ่มยังอยู่แม้กดไม่ได้ พร้อมบอกว่าติดอะไร — ซ่อนแล้วผู้ใช้จะไม่รู้ว่าต้องทำอะไรต่อ
           <span
-            title="ยังไม่มีเอกสาร — จะดาวน์โหลดได้เมื่อกดตรวจสอบและสร้าง PDF แล้ว"
+            title="ยังไม่มีเอกสาร — จะดาวน์โหลดได้เมื่อกดตรวจสอบคำขอแล้ว"
             aria-label="ยังไม่มีเอกสารให้ดาวน์โหลด"
             className="cursor-not-allowed rounded-full border border-line px-3.5 py-1.5 text-[13px] font-medium text-ink-subtle opacity-60"
           >

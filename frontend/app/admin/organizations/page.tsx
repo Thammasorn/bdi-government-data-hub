@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { Suspense, useEffect } from "react";
 
 import { OrganizationRequestTable } from "@/components/organization/RequestTable";
+import { ListPageHeader } from "@/components/list/ListPageHeader";
 import { Spinner } from "@/components/ui/Spinner";
 import { useRequireAuth } from "@/lib/require-auth";
 import { isBdiStaff } from "@/lib/status";
@@ -31,12 +32,12 @@ function AdminOrganizationList() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-      <header className="mb-7">
-        <h1 className="text-[26px] font-semibold text-navy-800">หน่วยงาน</h1>
-        <p className="mt-1.5 text-[15px] text-ink-muted">
-          คำขอลงทะเบียนหน่วยงานทั้งหมดในระบบ
-        </p>
-      </header>
+      <ListPageHeader
+        tone="organization"
+        eyebrow="หน่วยงาน"
+        title="คำขอลงทะเบียนหน่วยงาน"
+        description="คำขอลงทะเบียนหน่วยงานทั้งหมดในระบบ"
+      />
 
       <OrganizationRequestTable basePath="/admin/organizations" />
     </div>

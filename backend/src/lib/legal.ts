@@ -71,6 +71,15 @@ export function variableScopeOf(scope: string): VariableScope {
 export interface PublishedDocument {
   code: string;
   nameTh: string;
+  /**
+   * ชื่อสั้นที่ผู้ใช้เห็นแทนรหัส — null สำหรับฉบับที่ไม่ได้ตั้งไว้ (A4)
+   *
+   * `code` (A0–A4) เป็นรหัสภายใน หน้าจอไม่พิมพ์มันออกมาอีกแล้วตั้งแต่ 2026-09-06
+   * แต่ API ยังส่งไปด้วย เพราะการข้าม "ไม่เกี่ยวข้อง" เทียบด้วยรหัส ไม่ใช่ชื่อ
+   */
+  shortname: string | null;
+  /** ข้อความเตือนใต้บรรทัด "เอกสารฉบับที่ n จาก m" — ไม่ใช่เนื้อเอกสาร */
+  legalNotice: string | null;
   displayOrder: number;
   versionId: string;
   versionNumber: number;
@@ -119,6 +128,8 @@ export async function publishedDocuments(
     out.push({
       code: doc.documentCode,
       nameTh: doc.nameTh,
+      shortname: doc.shortname,
+      legalNotice: doc.legalNotice,
       displayOrder: doc.displayOrder,
       isRequired: doc.isRequired,
       versionId: version.id,

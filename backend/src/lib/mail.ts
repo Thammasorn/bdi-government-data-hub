@@ -297,7 +297,8 @@ export async function sendInvitationEmail(
 ) {
   const organizationName = escapeHtml(info.organizationName);
   const activateUrl = `${env.appUrl}/activate`;
-  // วันที่แบบ "11 กันยายน 2569" — ไม่ใช้ thaiLongDate() ของเอกสารข้อตกลง ซึ่งให้เลขไทย
+  // วันที่แบบ "11 กันยายน 2569" — อีเมลมีตัวจัดรูปแบบของตัวเอง ไม่พึ่ง thaiLongDate()
+  // ของเอกสารข้อตกลง เพราะอีเมลไม่ควรผูกกับรูปแบบที่ฝ่ายกฎหมายสั่งเปลี่ยนได้
   const expiresOn = new Intl.DateTimeFormat("th-TH", {
     dateStyle: "long",
     timeZone: "Asia/Bangkok",
@@ -447,8 +448,8 @@ export async function sendSignatoryRequest(
     to,
     `ขอความเห็นชอบการสร้างหน่วยงาน: ${orgName}`,
     layout({
-      title: "ขอความเห็นชอบในฐานะผู้มีอำนาจกระทำการแทน",
-      intro: `<strong style="color:${TEXT};">${orgName}</strong> ระบุว่าคุณเป็นผู้มีอำนาจกระทำการแทน และคำขอผ่านการตรวจสอบจากเจ้าหน้าที่ BDI แล้ว`,
+      title: "ขอความเห็นชอบในฐานะผู้มีอำนาจอนุมัติของหน่วยงาน",
+      intro: `<strong style="color:${TEXT};">${orgName}</strong> ระบุว่าคุณเป็นผู้มีอำนาจอนุมัติของหน่วยงาน และคำขอผ่านการตรวจสอบจากเจ้าหน้าที่ BDI แล้ว`,
       body: registerToken
         ? `<p style="margin:0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
              คุณยังไม่มีบัญชีในระบบ กรุณาลงทะเบียนเพื่อตรวจสอบเอกสารและให้ความเห็นชอบ
@@ -474,7 +475,7 @@ export async function sendFinalApprovalRequest(
         `รอลงนาม: ${orgName}`,
         layout({
           title: "มีคำขอรอการลงนาม",
-          intro: `ผู้มีอำนาจกระทำการแทนของ <strong style="color:${TEXT};">${orgName}</strong> ให้ความเห็นชอบแล้ว`,
+          intro: `ผู้มีอำนาจอนุมัติของ <strong style="color:${TEXT};">${orgName}</strong> ให้ความเห็นชอบแล้ว`,
           steps: stepsBlock(progress),
           button: { label: "ตรวจสอบและลงนาม", url: `${env.appUrl}/admin/organizations/${orgId}` },
         }),
@@ -650,7 +651,7 @@ export async function sendDatasetPendingOrgApprover(
     to,
     datasetSubject(info.requestNumber, `ขอความเห็นชอบชุดข้อมูล: ${info.datasetName}`),
     layout({
-      title: "ขอความเห็นชอบในฐานะผู้มีอำนาจกระทำการแทน",
+      title: "ขอความเห็นชอบในฐานะผู้มีอำนาจอนุมัติของหน่วยงาน",
       intro: `คำขอลงทะเบียนชุดข้อมูลของ <strong style="color:${TEXT};">${escapeHtml(info.organizationName)}</strong> ผ่านการตรวจสอบเบื้องต้นจากเจ้าหน้าที่ BDI แล้ว`,
       body: summaryTable([
         ["เลขที่คำขอ", info.requestNumber],

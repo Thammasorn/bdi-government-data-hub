@@ -81,18 +81,18 @@ export const isPendingDatasetStatus = (status: RequestStatus) =>
   PENDING_DATASET_STATUSES.includes(status);
 
 export const ROLE_LABELS: Record<Role, string> = {
-  ORGANIZATION_USER: "ผู้ดำเนินการของหน่วยงาน",
-  ORGANIZATION_APPROVER: "ผู้มีอำนาจกระทำการแทนของหน่วยงาน",
-  BDI_OFFICER: "ผู้ดำเนินการของ BDI",
+  ORGANIZATION_USER: "ผู้ประสานงานของหน่วยงาน",
+  ORGANIZATION_APPROVER: "ผู้มีอำนาจอนุมัติของหน่วยงาน",
+  BDI_OFFICER: "ผู้ประสานงานของ BDI",
   BDI_DATASET_SPECIALIST: "ผู้เชี่ยวชาญด้านข้อมูลของ BDI",
-  BDI_FINAL_APPROVER: "ผู้มีอำนาจอนุมัติฝ่าย BDI",
-  BDI_LEGAL_OFFICER: "ผู้ดำเนินการทางกฎหมายของ BDI",
+  BDI_FINAL_APPROVER: "ผู้มีอำนาจอนุมัติของ BDI",
+  BDI_LEGAL_OFFICER: "ผู้เชี่ยวชาญด้านกฎหมายของ BDI",
   SYSTEM_ADMINISTRATOR: "ผู้ดูแลระบบ",
 };
 
 /**
  * ภาษาไทยไม่เว้นวรรคระหว่างคำ — ยกเว้นเมื่อคำก่อนหน้าลงท้ายด้วยอักษรละติน
- * "ผู้ดำเนินการของ BDI" + "ตรวจสอบ" ต่อกันตรง ๆ ได้ "BDIตรวจสอบ" ซึ่งอ่านเป็นคำเดียว
+ * "ผู้ประสานงานของ BDI" + "ตรวจสอบ" ต่อกันตรง ๆ ได้ "BDIตรวจสอบ" ซึ่งอ่านเป็นคำเดียว
  */
 export const roleGap = (label: string) => (/[A-Za-z0-9)]$/.test(label) ? " " : "");
 
@@ -106,7 +106,7 @@ export const withRole = (role: Role, action: string) => {
  * ด่านหนึ่ง = บทบาทหนึ่ง — ใช้ชี้ไปที่ `ROLE_LABELS` แทนที่จะมีคำเรียกของตัวเอง
  *
  * เดิมมีชุดคำเรียกบทบาทอยู่สามชุดในหน้าจอ ("เจ้าหน้าที่ BDI" ที่ timeline, "รอ BDI ตรวจสอบ"
- * ที่ badge ในตาราง, "ผู้ดำเนินการของ BDI" ที่อีเมลและ API) ผู้ใช้คนเดียวกันจึงเห็นด่านเดียวกัน
+ * ที่ badge ในตาราง, "ผู้ประสานงานของ BDI" ที่อีเมลและ API) ผู้ใช้คนเดียวกันจึงเห็นด่านเดียวกัน
  * ถูกเรียกคนละชื่อระหว่างอีเมลที่ได้รับ ตารางที่เปิดอยู่ และหน้ารายละเอียดที่กดเข้าไป
  */
 export const TASK_TYPE_ROLE: Record<ReviewTaskType, Role> = {
