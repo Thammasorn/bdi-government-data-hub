@@ -182,12 +182,12 @@ export const organizationTitle = (r: { name: string | null; requestNumber: strin
   r.name?.trim() || `คำขอ ${r.requestNumber}`;
 
 /**
- * ชื่อคนหนึ่งคนบนหน้าเว็บ — **คำนำหน้าเขียนติดชื่อ ไม่เว้นวรรค** ตามการเขียนชื่อไทย
+ * ชื่อคนหนึ่งคนบนหน้าเว็บ — `"นาย สมชาย ใจดี"` เว้นวรรคระหว่างทั้งสามส่วน
  *
  * ต้องให้ผลเท่ากับ `fullNameTh()` ที่ `backend/src/lib/person-name.ts` เสมอ เป็นคู่สำเนา
- * ที่ตั้งใจแบบเดียวกับ `lib/dataset-form.ts` กับ `backend/src/lib/dataset.ts` — เดิมฝั่งนี้
- * เว้นวรรคหลังคำนำหน้า คนคนเดียวกันจึงเป็น "นาย อนุชา พัฒนา" บนหน้าจอและ
- * "นายอนุชา พัฒนา" บนตราลงนาม (Feedback 20260904 #2 → Bugs ข้อ 1)
+ * ที่ตั้งใจแบบเดียวกับ `lib/dataset-form.ts` กับ `backend/src/lib/dataset.ts`
+ *
+ * คำนำหน้าอย่างเดียวไม่นับว่าเป็นชื่อ — ไม่งั้นช่องในตารางจะขึ้นคำว่า "นาย" ลอย ๆ แทน "—"
  *
  * คืน "—" เมื่อไม่มีชื่อ เพราะผู้เรียกส่วนใหญ่วางลงในช่องของตาราง
  */
@@ -196,9 +196,8 @@ export const fullName = (
   first?: string | null,
   last?: string | null,
 ): string => {
-  const given = [first, last].filter(Boolean).join(" ");
-  if (!given) return "—";
-  return `${prefix ?? ""}${given}`;
+  if (!first && !last) return "—";
+  return [prefix, first, last].filter(Boolean).join(" ");
 };
 
 export const ATTACHMENT_LABELS: Record<Attachment["kind"], string> = {

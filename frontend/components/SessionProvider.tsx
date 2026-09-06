@@ -39,7 +39,7 @@ export interface SessionUser {
 
 /** ชื่อที่เอาไปแสดง — ที่เดียว เพื่อให้กล่องเตือนกับเมนูผู้ใช้เรียกคนเดียวกันเหมือนกัน */
 /**
- * ชื่อที่แถบหัวแสดง — **คำนำหน้าอยู่ด้วย** เขียนติดชื่อตามการเขียนชื่อไทย
+ * ชื่อที่แถบหัวแสดง — `"นาย สมชาย ใจดี"` คำนำหน้าอยู่ด้วย เว้นวรรคระหว่างทั้งสามส่วน
  *
  * เดิมบรรทัดนี้ต่อแค่ชื่อกับนามสกุล ส่วนตราลงนามและเอกสารข้อตกลงต่อคำนำหน้าเข้าไปด้วย
  * คนคนเดียวกันจึงเป็น "สุรชัย ปกครองดี" บนแถบหัวและ "นายสุรชัย ปกครองดี" บนตรา ซึ่งคือ
@@ -52,9 +52,8 @@ export interface SessionUser {
  * ผ่าน activate มาแล้ว จึงมีชื่อไทยครบ ทางนี้จึงเป็นตาข่ายที่ไม่ควรได้ใช้
  */
 export function sessionUserName(user: SessionUser): string {
-  const given = [user.firstName, user.lastName].filter(Boolean).join(" ");
-  if (!given) return user.email;
-  return `${user.prefix ?? ""}${given}`;
+  if (!user.firstName && !user.lastName) return user.email;
+  return [user.prefix, user.firstName, user.lastName].filter(Boolean).join(" ");
 }
 
 /**

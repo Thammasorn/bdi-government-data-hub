@@ -10,6 +10,7 @@
  * ไม่ใช่ขีดเส้นหรือ "-" — ช่องลายมือชื่อที่ว่างคือสิ่งที่บอกว่ายังไม่มีการลงนาม
  */
 import { SYSTEM_NAME, type TemplateValues } from "./document-render.js";
+import { fullNameTh } from "./person-name.js";
 
 const thaiMonth = (month: number) => THAI_MONTHS[month - 1] ?? "";
 
@@ -175,11 +176,11 @@ export function agreementValues(input: AgreementInput): TemplateValues {
     "org.website": input.websiteUrl ?? "",
 
     // ── ผู้มีอำนาจกระทำการแทน ──
-    "org_approver.fullName": fullName(
-      input.signatoryPrefix,
-      input.signatoryFirstName,
-      input.signatoryLastName,
-    ),
+    "org_approver.fullName": fullNameTh({
+      prefixTh: input.signatoryPrefix,
+      firstnameTh: input.signatoryFirstName,
+      lastnameTh: input.signatoryLastName,
+    }),
     "org_approver.prefix": input.signatoryPrefix ?? "",
     "org_approver.firstName": input.signatoryFirstName ?? "",
     "org_approver.lastName": input.signatoryLastName ?? "",
@@ -190,11 +191,11 @@ export function agreementValues(input: AgreementInput): TemplateValues {
     "org_approver.nationalId": formatNationalId(input.signatoryNationalId),
 
     // ── ผู้กรอกข้อมูล ──
-    "org_officer.fullName": fullName(
-      input.contactPrefix,
-      input.contactFirstName,
-      input.contactLastName,
-    ),
+    "org_officer.fullName": fullNameTh({
+      prefixTh: input.contactPrefix,
+      firstnameTh: input.contactFirstName,
+      lastnameTh: input.contactLastName,
+    }),
     "org_officer.prefix": input.contactPrefix ?? "",
     "org_officer.firstName": input.contactFirstName ?? "",
     "org_officer.lastName": input.contactLastName ?? "",
@@ -248,10 +249,6 @@ function organizationAddress(input: AgreementInput): string {
   ]
     .filter(Boolean)
     .join(" ");
-}
-
-function fullName(prefix?: string | null, first?: string | null, last?: string | null): string {
-  return [prefix, first, last].filter(Boolean).join(" ").trim();
 }
 
 function formatNationalId(id?: string | null): string {
