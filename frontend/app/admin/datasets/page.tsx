@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { Suspense, useEffect } from "react";
 
 import { DatasetRequestTable } from "@/components/dataset/RequestTable";
+import { ListPageHeader } from "@/components/list/ListPageHeader";
 import { Spinner } from "@/components/ui/Spinner";
 import { useRequireAuth } from "@/lib/require-auth";
 import { isBdiStaff } from "@/lib/status";
@@ -34,14 +35,16 @@ function AdminDatasetList() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-      <header className="mb-7">
-        <h1 className="text-[26px] font-semibold text-navy-800">คำขอลงทะเบียนชุดข้อมูล</h1>
-        <p className="mt-1.5 text-[15px] text-ink-muted">
-          {isSpecialistOnly
+      <ListPageHeader
+        tone="dataset"
+        eyebrow="ชุดข้อมูล"
+        title="คำขอส่งชุดข้อมูล"
+        description={
+          isSpecialistOnly
             ? "คำขอที่เจ้าหน้าที่ BDI ขอความเห็นของคุณในฐานะผู้เชี่ยวชาญด้านข้อมูล"
-            : "คำขอทั้งหมดในระบบ กรองตามขั้นตอนที่คำขอค้างอยู่ หรือค้นหาจากชื่อชุดข้อมูล เลขที่คำขอ และหน่วยงาน"}
-        </p>
-      </header>
+            : "คำขอทั้งหมดในระบบ กรองตามขั้นตอนที่คำขอค้างอยู่ หรือค้นหาจากชื่อชุดข้อมูล เลขที่คำขอ และหน่วยงาน"
+        }
+      />
 
       <DatasetRequestTable
         basePath="/admin/datasets"

@@ -10,7 +10,7 @@ import { NotificationBell } from "@/components/NotificationBell";
 import { SessionChangedDialog } from "@/components/SessionChangedDialog";
 import { announceSignOut, sessionUserName, useSession } from "@/components/SessionProvider";
 import { api } from "@/lib/api";
-import { ROLE_LABELS, isBdiStaff, isSpecialistOnly } from "@/lib/status";
+import { ROLE_LABELS, isBdiStaff, isSpecialistOnly, type Role } from "@/lib/status";
 
 /** หน้าที่ไม่ต้องมี header/footer — เต็มจอเพื่อให้โฟกัสกับงานตรงหน้า */
 const BARE_ROUTES = ["/login", "/register"];
@@ -38,6 +38,16 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * ชื่อเมนูสองช่องที่ทุก role ใช้ร่วมกัน
+ *
+ * เดิมเขียนว่า "หน่วยงาน" กับ "ชุดข้อมูล" ซึ่งอ่านเหมือนทะเบียนของสิ่งนั้น ทั้งที่ปลายทาง
+ * เป็น**คิวของคำขอ** BDI ขอให้เรียกตามสิ่งที่อยู่ในนั้นจริง ๆ เมื่อ 2026-09-04 และให้ใช้
+ * คำเดียวกันทุก role รวมถึงช่องที่เคยชื่อ "หน่วยงานของฉัน" ของผู้ใช้ฝั่งหน่วยงาน
+ */
+const ORGANIZATION_LABEL = "คำขอลงทะเบียนหน่วยงาน";
+const DATASET_LABEL = "คำขอส่งชุดข้อมูล";
+
 /** เมนูหนึ่งช่อง — `disabledReason` ไม่ null = เห็นได้แต่กดไม่ได้ พร้อมเหตุผล */
 interface NavItem {
   href: string;
@@ -60,7 +70,7 @@ function navItems(
     if (isSpecialistOnly(roles)) {
       return [
         { href: "/", label: "หน้าแรก" },
-        { href: "/admin/datasets", label: "ชุดข้อมูล" },
+        { href: "/admin/datasets", label: DATASET_LABEL },
       ];
     }
 
@@ -69,8 +79,8 @@ function navItems(
     // "ที่ต้องดำเนินการ" ของตำแหน่งผู้ใช้เองอยู่แล้ว เมนูนั้นจึงพาไปที่เดิมกับเมนูแรก
     return [
       { href: "/", label: "หน้าแรก" },
-      { href: "/admin/organizations", label: "หน่วยงาน" },
-      { href: "/admin/datasets", label: "ชุดข้อมูล" },
+      { href: "/admin/organizations", label: ORGANIZATION_LABEL },
+      { href: "/admin/datasets", label: DATASET_LABEL },
     ];
   }
   // ผู้มีอำนาจกระทำการแทนที่ถูกเชิญเข้ามาทีหลังยังไม่ถูกผูก organizationId
@@ -78,7 +88,7 @@ function navItems(
   if (roles.includes("ORGANIZATION_APPROVER") && !hasOrganization) {
     return [
       { href: "/", label: "หน้าแรก" },
-      { href: "/datasets", label: "ชุดข้อมูล" },
+      { href: "/datasets", label: DATASET_LABEL },
     ];
   }
 
@@ -96,10 +106,10 @@ function navItems(
   return hasOrganization
     ? [
         { href: "/", label: "หน้าแรก" },
-        { href: `/organizations/${organizationId}`, label: "หน่วยงานของฉัน" },
+        { href: `/organizations/${organizationId}`, label: ORGANIZATION_LABEL },
         {
           href: "/datasets",
-          label: "ชุดข้อมูล",
+          label: DATASET_LABEL,
           ...(datasetsLocked
             ? { disabledReason: "ใช้งานได้เมื่อหน่วยงานของคุณได้รับอนุมัติแล้ว" }
             : {}),
@@ -195,6 +205,14 @@ function UserMenu() {
 
   if (!user) return null;
   const name = sessionUserName(user);
+  /**
+   * บทบาทที่ขึ้นใต้ชื่อ — บัญชีเดียวถือได้หลายบทบาท จึงขึ้นอันแรกแล้วบอกจำนวนที่เหลือ
+   * รายชื่อครบอยู่ในเมนูที่กดเปิด
+   */
+  const first = user.roles[0];
+  const roleLabel = first
+    ? `${ROLE_LABELS[first as Role] ?? first}${user.roles.length > 1 ? ` +${user.roles.length - 1}` : ""}`
+    : null;
 
   /**
    * ออกจากระบบแล้วต้องจบที่ `/login` เปล่า ๆ — ไม่ใช่ `/login?next=<หน้าที่เพิ่งอยู่>`
@@ -225,9 +243,25 @@ function UserMenu() {
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-haspopup="menu"
-        className="flex items-center gap-2 rounded-full px-3 py-2 transition-colors hover:bg-navy-50"
+        className="flex items-center gap-2 rounded-full px-3 py-1.5 transition-colors hover:bg-navy-50"
       >
-        <span className="text-sm font-medium text-ink">{name}</span>
+        {/*
+          ชื่อกับบทบาทอยู่ด้วยกัน ไม่ต้องเปิดเมนูถึงจะรู้ว่าตอนนี้เป็นใคร (BDI ขอเมื่อ 2026-09-04)
+
+          บทบาทที่แสดงคือ **ชื่อบทบาทในระบบ** จาก ROLE_LABELS ไม่ใช่ตำแหน่งที่ผู้ใช้พิมพ์เอง
+          (`positionTh`) — อันหลังเป็นช่องไม่บังคับและว่างในหลายบัญชี ส่วนบทบาทมีเสมอ และเป็น
+          คำชุดเดียวกับที่ timeline กับอีเมลเรียกด่านของเขา
+
+          บัญชีที่ถือหลายบทบาทขึ้นบทบาทแรกแล้ว +n — เมนูข้างล่างยังแสดงครบทุกอัน
+          ซ่อนทั้งบล็อกต่ำกว่า sm เพราะชื่อบทบาทยาวกว่าชื่อคนเกือบเท่าตัว
+        */}
+        <span className="hidden min-w-0 flex-col items-end leading-tight sm:flex">
+          <span className="max-w-[16rem] truncate text-sm font-medium text-ink">{name}</span>
+          {roleLabel ? (
+            <span className="max-w-[16rem] truncate text-[11px] text-ink-muted">{roleLabel}</span>
+          ) : null}
+        </span>
+        <span className="text-sm font-medium text-ink sm:hidden">{name}</span>
         <svg viewBox="0 0 20 20" className="h-4 w-4 text-ink-subtle" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
           <path d="m5 8 5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>

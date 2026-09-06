@@ -18,8 +18,16 @@ import type { LegalDocument } from "@/lib/types";
  * ส่งขึ้นไปเก็บที่ signature_confirmation.confirmation_text ด้วย — หลักฐานต้องบอกได้ว่า
  * เขายืนยันข้อความอะไร ไม่ใช่แค่ว่ากดยืนยันแล้ว
  */
-export const DATASET_CONFIRMATION_TEXT =
-  "ยืนยันส่งแบบนำส่งข้อมูล ตามระเบียบสำนักนายกรัฐมนตรีว่าด้วยการแบ่งปันข้อมูลดิจิทัล พ.ศ. 2569";
+export const DATASET_CONFIRMATION_TEXT = "ยืนยันส่งแบบนำส่งข้อมูล";
+
+/**
+ * ฝั่ง BDI ยืนยันด้วยคำเดียว — กล่องมีแต่หัวข้อ "อนุมัติ" ไม่มีประโยคกลางกล่องแล้ว
+ *
+ * แยกค่าคงที่ออกมาเพราะ `confirmation_text` คือหลักฐานว่า**เขายืนยันข้อความอะไร**
+ * ถ้าปล่อยให้ทั้งสองฝั่งส่งข้อความเดียวกัน หลักฐานของฝั่ง BDI จะอ้างประโยคที่กล่องของเขา
+ * ไม่ได้แสดงเลย (BDI ขอตัดออกเมื่อ 2026-09-04)
+ */
+export const DATASET_APPROVAL_TEXT = "อนุมัติ";
 
 /** คำยืนยันว่าอ่านเอกสารครบ — ติ๊กก่อนจึงกดยืนยันได้ (แบบเดียวกับเส้นทางหน่วยงาน) */
 export const DATASET_ATTESTATION_TEXT = "ข้าพเจ้าได้อ่านเอกสารฉบับนี้ครบถ้วนแล้ว";
@@ -90,7 +98,7 @@ export function DatasetSigningDialog({
            * ซึ่งไม่มีช่องติ๊กส่งค่านี้ไปด้วย มันจะกลายเป็นหลักฐานของการกระทำที่ไม่ได้เกิดขึ้น
            */
           ...(perDocument ? { attestationText: DATASET_ATTESTATION_TEXT } : {}),
-          confirmationText: DATASET_CONFIRMATION_TEXT,
+          confirmationText: perDocument ? DATASET_CONFIRMATION_TEXT : DATASET_APPROVAL_TEXT,
         },
       });
       setAttested({});
@@ -122,10 +130,8 @@ export function DatasetSigningDialog({
   if (!perDocument) {
     return (
       <Modal open={open} onClose={close} title={title}>
-        <p className="text-center text-[17px] font-semibold leading-relaxed text-navy-800">
-          {DATASET_CONFIRMATION_TEXT}
-        </p>
-        <p className="mt-4 text-[13px] leading-relaxed text-ink-muted">
+        {/* ไม่มีประโยคกลางกล่องแล้ว — หัวข้อ "อนุมัติ" พูดแทนทั้งหมด (BDI ขอเมื่อ 2026-09-04) */}
+        <p className="text-[13px] leading-relaxed text-ink-muted">
           ระบบจะบันทึกชื่อ เวลา และแบบนำส่งข้อมูลที่คุณเห็นชอบไว้เป็นหลักฐาน
           แล้วแจ้งผู้เกี่ยวข้องในขั้นถัดไป
         </p>

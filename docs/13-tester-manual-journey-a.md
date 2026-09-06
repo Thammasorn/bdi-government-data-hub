@@ -132,7 +132,7 @@ curl -s -X POST $API/api/admin/invitations \
 ```json
 {"activationKeyId":"c517f24a-…","userAccountId":"06d5c8b2-…",
  "email":"somchai.tester@mot.go.th","role":"ORGANIZATION_USER",
- "roleLabel":"ผู้ดำเนินการของหน่วยงาน","organizationId":"8dfc51f7-…",
+ "roleLabel":"ผู้ประสานงานของหน่วยงาน","organizationId":"8dfc51f7-…",
  "expiresAt":"2026-08-24T16:32:52.176Z"}
 ```
 

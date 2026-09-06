@@ -45,13 +45,13 @@ export type RoleCode = (typeof ROLE_CODES)[keyof typeof ROLE_CODES];
 
 /** ชื่อ role ภาษาไทย/อังกฤษ ตามที่ sheet `role` เขียนไว้ทุกตัวอักษร */
 export const ROLE_DEFINITIONS: { code: RoleCode; nameTh: string; nameEn: string }[] = [
-  { code: ROLE_CODES.ORGANIZATION_USER, nameTh: "ผู้ดำเนินการของหน่วยงาน", nameEn: "Organization User" },
+  { code: ROLE_CODES.ORGANIZATION_USER, nameTh: "ผู้ประสานงานของหน่วยงาน", nameEn: "Organization User" },
   {
     code: ROLE_CODES.ORGANIZATION_APPROVER,
-    nameTh: "ผู้มีอำนาจกระทำการแทนของหน่วยงาน",
+    nameTh: "ผู้มีอำนาจอนุมัติของหน่วยงาน",
     nameEn: "Organization Approver",
   },
-  { code: ROLE_CODES.BDI_OFFICER, nameTh: "ผู้ดำเนินการของ BDI", nameEn: "BDI Officer" },
+  { code: ROLE_CODES.BDI_OFFICER, nameTh: "ผู้ประสานงานของ BDI", nameEn: "BDI Officer" },
   {
     code: ROLE_CODES.BDI_DATASET_SPECIALIST,
     nameTh: "ผู้เชี่ยวชาญด้านข้อมูลของ BDI",
@@ -59,12 +59,12 @@ export const ROLE_DEFINITIONS: { code: RoleCode; nameTh: string; nameEn: string 
   },
   {
     code: ROLE_CODES.BDI_FINAL_APPROVER,
-    nameTh: "ผู้มีอำนาจกระทำการแทนของ BDI",
+    nameTh: "ผู้มีอำนาจอนุมัติของ BDI",
     nameEn: "BDI Final Approver",
   },
   {
     code: ROLE_CODES.BDI_LEGAL_OFFICER,
-    nameTh: "ผู้ดำเนินการทางกฎหมายของ BDI",
+    nameTh: "ผู้เชี่ยวชาญด้านกฎหมายของ BDI",
     nameEn: "BDI Legal Officer",
   },
   { code: ROLE_CODES.SYSTEM_ADMINISTRATOR, nameTh: "ผู้ดูแลระบบ", nameEn: "System Administrator" },

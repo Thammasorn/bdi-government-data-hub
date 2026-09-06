@@ -84,7 +84,7 @@ const EDITABLE_STATUSES = new Set(["DRAFT", "RETURNED"]);
 
 const SECTIONS = [
   { id: "section-1", tag: "ส่วนที่ 1", title: "ข้อมูลหน่วยงาน" },
-  { id: "section-2", tag: "ส่วนที่ 2", title: "ผู้มีอำนาจกระทำการแทน" },
+  { id: "section-2", tag: "ส่วนที่ 2", title: "ผู้มีอำนาจอนุมัติของหน่วยงาน" },
   { id: "section-3", tag: "ส่วนที่ 3", title: "ผู้กรอกข้อมูล" },
 ];
 

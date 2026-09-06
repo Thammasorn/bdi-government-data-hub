@@ -94,12 +94,12 @@ curl https://bdi-api.thammasorn.org/api/admin/legal-documents -H "x-admin-token:
 ## 3.1 · ชื่อตัวแปรชุดเดิม (เปลี่ยนเมื่อ 24 สิงหาคม 2569)
 
 ชื่อชุดเดิมบอกไม่ตรงกับบทบาทจริงในระบบ — `signatory` กับ `approver` เป็น **คนเดียวกัน**
-(ผู้มีอำนาจกระทำการแทนของหน่วยงาน) ส่วน `bdi` ถูกใช้ปนกันทั้งกับผู้ลงนามฝ่ายสำนักงาน
+(ผู้มีอำนาจอนุมัติของหน่วยงาน) ส่วน `bdi` ถูกใช้ปนกันทั้งกับผู้ลงนามฝ่ายสำนักงาน
 และกับตัวสำนักงานเอง ชื่อใหม่แยกสองเรื่องนี้ออกจากกัน
 
 | ชื่อเดิม | ชื่อใหม่ | คือใคร |
 |---|---|---|
-| `{{signatory.*}}` | `{{org_approver.*}}` | ผู้มีอำนาจกระทำการแทนของหน่วยงาน |
+| `{{signatory.*}}` | `{{org_approver.*}}` | ผู้มีอำนาจอนุมัติของหน่วยงาน |
 | `{{approver.signature}}` `{{approver.signedDate}}` | `{{org_approver.signature}}` `{{org_approver.signedDate}}` | คนเดียวกับข้างบน ตอนลงนาม |
 | `{{contact.*}}` | `{{org_officer.*}}` | เจ้าหน้าที่ของหน่วยงานที่กรอกฟอร์ม |
 | `{{bdi.signature}}` `{{bdi.signedDate}}` `{{bdi.firstName}}` `{{bdi.lastName}}` `{{bdi.endorsement}}` | `{{bdi_approver.*}}` | ผู้อนุมัติฝ่ายสำนักงาน |

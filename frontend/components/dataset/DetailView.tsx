@@ -95,7 +95,7 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string,
         ? {
             title: "รอการพิจารณาของคุณ",
             advanceLabel: "เห็นชอบ",
-            hint: "ตรวจแบบนำส่งข้อมูลในฐานะผู้มีอำนาจกระทำการแทน แล้วยืนยันส่งเอกสาร",
+            hint: "ตรวจแบบนำส่งข้อมูลในฐานะผู้มีอำนาจอนุมัติของหน่วยงาน แล้วยืนยันส่งเอกสาร",
             /** ด่านนี้ยืนยันเอกสาร จึงเปิดกล่องยืนยันแทน modal ยืนยันสั้น ๆ */
             signing: true,
             /** ฝั่งหน่วยงานเป็นคนยอมรับเอกสาร จึงต้องอ่านในกล่องแล้วติ๊กยืนยันก่อน */
@@ -497,7 +497,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
 
       <div className="flex flex-col gap-6">
         <Card>
-          <CardHeader tag="ส่วนที่ 1" title="ประเภทและชื่อชุดข้อมูล" />
+          <CardHeader tag="ส่วนที่ 1" title="ข้อมูลทั่วไปของชุดข้อมูล" />
           <Rows
             rows={[
               ["ประเภทข้อมูล", pick(DATA_TYPE_LABELS, request.dataType)],
@@ -518,7 +518,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         </Card>
 
         <Card>
-          <CardHeader tag="ส่วนที่ 2" title="ความถี่ ขอบเขต และรูปแบบการนำส่ง" />
+          <CardHeader tag="ส่วนที่ 2" title="แหล่งที่มา การปรับปรุง และการนำส่ง" />
           <Rows
             rows={[
               [
@@ -540,7 +540,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         </Card>
 
         <Card>
-          <CardHeader tag="ส่วนที่ 3" title="หมวดหมู่ ระดับชั้น และสัญญาอนุญาต" />
+          <CardHeader tag="ส่วนที่ 3" title="การจัดประเภทและระดับชั้นข้อมูล" />
           <Rows
             rows={[
               ["หมวดหมู่ข้อมูลตามธรรมาภิบาลภาครัฐ", pick(DATA_CATEGORY_LABELS, request.dataCategory)],
@@ -571,7 +571,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         </Card>
 
         <Card>
-          <CardHeader tag="ส่วนที่ 4" title="การจัดเก็บและส่งต่อข้อมูล" />
+          <CardHeader tag="ส่วนที่ 4" title="เงื่อนไขการจัดเก็บและการส่งต่อ" />
           <Rows
             rows={[
               [
@@ -703,7 +703,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         open={modal === "revise"}
         onClose={closeModal}
         title="ส่งกลับแก้ไข"
-        description="ระบุเนื้อหาหรือข้อความที่ต้องการให้ปรับปรุง ระบบจะแจ้งไปยังผู้ดำเนินการของหน่วยงาน"
+        description="ระบุเนื้อหาหรือข้อความที่ต้องการให้ปรับปรุง ระบบจะแจ้งไปยังผู้ประสานงานของหน่วยงาน"
       >
         <TextAreaField
           label="รายละเอียดที่ต้องแก้ไข"
@@ -838,7 +838,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         description="ยืนยันว่าคุณตรวจสอบข้อมูลและเอกสารทั้งหมดเรียบร้อยแล้ว"
       >
         <p className="text-[15px] leading-relaxed text-ink-muted">
-          ระบบจะบันทึกการตัดสินใจนี้พร้อมชื่อและเวลาของคุณ และแจ้งผู้เกี่ยวข้องในขั้นถัดไป
+          ระบบจะบันทึกกระบวนการนี้และแจ้งผู้เกี่ยวข้องในขั้นตอนถัดไป
         </p>
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="secondary" onClick={closeModal}>

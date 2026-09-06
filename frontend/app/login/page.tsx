@@ -12,7 +12,6 @@ import { TextField } from "@/components/ui/Field";
 import { OtpInput } from "@/components/ui/OtpInput";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
-import { nextFromLocation } from "@/lib/require-auth";
 import type { SessionUser } from "@/components/SessionProvider";
 
 /**
@@ -149,17 +148,17 @@ function OtpStep({ email, onBack }: { email: string; onBack: () => void }) {
         });
         setUser(data.user);
         /**
-         * ลิงก์ในอีเมลชี้ตรงเข้าหน้ารายละเอียด ผู้ที่ยังไม่ล็อกอินจึงถูกพามาที่นี่
-         * พร้อม ?next=<หน้านั้น> — พากลับไปให้ถึงที่ ไม่ใช่ทิ้งไว้ที่หน้าแรกแล้ว
-         * ให้ไปหาคำขอเองในตาราง (สเปกบนการ์ดเขียนไว้ตรง ๆ ว่าต้องพาไปเลย)
+         * ล็อกอินสำเร็จแล้วไป **หน้าแรกเสมอ** ไม่ว่าจะมาจากไหน (BDI ขอเมื่อ 2026-09-04)
          *
-         * อ่านจาก window.location ไม่ใช่ useSearchParams() — หน้านี้เป็น client
-         * component ที่ไม่มี <Suspense> ครอบ และตอนนี้คือหลังกดยืนยัน OTP แล้ว
-         * เบราว์เซอร์พร้อมมานานแล้ว
+         * เดิมอ่าน `?next=` แล้วพากลับไปหน้าที่ตั้งใจ ซึ่งลิงก์ในอีเมลทุกฉบับพึ่งอยู่ —
+         * ผลของการเปลี่ยนนี้คือ **ลิงก์ในอีเมลพาไปได้แค่ถึงหน้าแรก** ผู้ใช้ต้องกดหาคำขอ
+         * ต่อเองในตาราง แลกกับการที่ทุกคนเห็นภาพรวมของตัวเองก่อนเสมอ
+         *
+         * `?next=` ยังถูกใส่ไว้บน URL โดย `requireAuth` เหมือนเดิม เพราะมันคือบันทึกว่า
+         * ผู้ใช้ถูกเด้งมาจากหน้าไหน — ตอนนี้แค่ไม่มีใครเดินตามมันแล้ว ถ้าจะเอาพฤติกรรมเดิม
+         * กลับมา แก้ที่บรรทัดเดียวนี้กับที่ callback ของ ThaID
          */
-        const next = nextFromLocation();
-        // ทุก role มีหน้าแรกที่ `/` แล้ว รวมถึงเจ้าหน้าที่ BDI ที่เคยถูกส่งไปตารางคิวตรง ๆ
-        router.push(next ?? "/");
+        router.push("/");
       } catch (err) {
         setError(err instanceof ApiError ? err.message : "ยืนยันไม่สำเร็จ");
         setCode("");

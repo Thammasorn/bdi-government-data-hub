@@ -235,7 +235,7 @@ async function prerequisiteError(session: Session): Promise<string | null> {
   const members = await organizationMemberIds(session.organizationId);
   if (members.users.length === 0) return "หน่วยงานต้องมีผู้ใช้ที่เปิดใช้งานแล้วอย่างน้อยหนึ่งคน";
   if (members.approvers.length === 0) {
-    return "หน่วยงานต้องมีผู้มีอำนาจกระทำการแทนที่เปิดใช้งานบัญชีแล้ว จึงจะลงทะเบียนชุดข้อมูลได้";
+    return "หน่วยงานต้องมีผู้มีอำนาจอนุมัติของหน่วยงานที่เปิดใช้งานบัญชีแล้ว จึงจะลงทะเบียนชุดข้อมูลได้";
   }
   return null;
 }
