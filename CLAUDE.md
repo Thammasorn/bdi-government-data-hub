@@ -820,6 +820,17 @@ answer 400 when a body carries a *different* code (an equal one passes, so a sta
 saves). Fixing a wrong code is `PATCH /api/admin/organizations/:id`, an admin route.
 `docs/10-admin-prefill-organization.md` §4.1 has the reasoning.
 
+**Neither is "ผู้กรอกข้อมูล" (section 3 of that form).** The person filling it in is the account
+that opened the request, so prefix, first name, last name, e-mail and telephone come off
+`iam.user_account` and the form only displays them — the same arrangement `/activate` uses, and
+enforced the same way: `toApiShape()` prefers the **account** over the request snapshot (as the
+organisation name prefers master), and `POST /api/organizations` / `PATCH /:id` write the account's
+values over whatever the body carried, silently, so a direct API call with a forged name answers
+200 and changes nothing. `contactFromAccount()` is the one place that decides, and the `contactLocked`
+map it feeds into the response is what greys the inputs — the page holds no copy of the rule. A field
+the **account** has no value for stays editable and required, which is the ordinary case for the
+prefix, since ThaID sends no `title` claim. Position, division and national ID are still typed in.
+
 Fonts are self-hosted via `next/font/local` from `frontend/public/fonts/` — no Google Fonts,
 so it works behind a firewall.
 

@@ -48,12 +48,20 @@ type AttachmentSlot = keyof typeof ATTACHMENT_KIND;
  * ชวนให้กรอกไม่ตรงบัตร ที่เหลือกรอกเองผ่าน "อื่น ๆ" ได้ทุกคำ รวมถึงยศและคำนำหน้าที่
  * ลิสต์นี้ไม่มี (การ์ด "แก้แบบฟอร์ม org registration" ข้อ 3)
  *
- * ส่วนที่ 3 (ผู้กรอกข้อมูล) ยังใช้ PREFIXES ชุดเต็มตามเดิม — ชื่อนั้นไม่ได้ไปอยู่ในเอกสารที่ลงนาม
+ * ส่วนที่ 3 (ผู้กรอกข้อมูล) ไม่ได้ใช้ลิสต์นี้เลยเมื่อบัญชีมีคำนำหน้าอยู่แล้ว — ค่านั้นมาจากบัญชี
+ * และแสดงเป็นข้อความอ่านอย่างเดียว (ดู `contactLocked`) เหลือใช้ `PREFIXES` ชุดเต็มเฉพาะบัญชี
+ * ที่ยังไม่มีคำนำหน้า ซึ่งต้องกรอกเองจึงจะนำส่งได้
  */
 const SIGNATORY_PREFIXES = ["นาย", "นาง", "นางสาว"];
 
 /** ค่าที่เลือกใน dropdown เพื่อเปิดช่องพิมพ์เอง — ไม่ใช่ค่าที่ถูกบันทึก */
 const PREFIX_OTHER = "อื่น ๆ";
+
+/**
+ * ช่องของ "ผู้กรอกข้อมูล" ที่ระบบเป็นเจ้าของค่า — ตรงกับ `contactLocked` ที่ API ส่งมา
+ * ช่องที่ไม่ได้อยู่ในนี้ (หรือเป็น false) คือช่องที่บัญชียังไม่มีค่าให้ ผู้ใช้จึงต้องกรอกเอง
+ */
+type ContactLocked = Partial<Record<"prefix" | "firstName" | "lastName" | "email" | "phone", boolean>>;
 
 const EMPTY: OrganizationFormValues = {
   organizationCode: "",
@@ -164,6 +172,15 @@ export default function EditOrganizationPage() {
    * หน่วยงานที่ผู้กรอกเปิดเองยังไม่มีชื่อในระบบ ช่องนี้จึงยังเป็นช่องกรอกตามเดิม
    */
   const [nameLocked, setNameLocked] = useState(false);
+  /**
+   * ช่องไหนในส่วนที่ 3 เป็นของบัญชีผู้กรอก ไม่ใช่ของฟอร์ม — API เป็นคนตอบ
+   * (`contactLocked` ใน GET /:id) หน้านี้ไม่มีสำเนาของกฎนั้น
+   *
+   * ตั้งต้นเป็น "ยังไม่ล็อก" ไม่ใช่ "ล็อกไว้ก่อน": ถ้าเดาผิดไปทางล็อก ผู้ใช้ที่บัญชียังไม่มี
+   * คำนำหน้าจะเจอช่องเทาว่างเปล่าที่กรอกไม่ได้ และนำส่งคำขอไม่ได้เลย ส่วนเดาผิดไปทางเปิด
+   * อย่างมากก็พิมพ์ค่าที่ API เขียนทับให้ทีหลัง — ตัวบังคับจริงอยู่ฝั่ง API ไม่ใช่ที่นี่
+   */
+  const [contactLocked, setContactLocked] = useState<ContactLocked>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -203,6 +220,7 @@ export default function EditOrganizationPage() {
         }
         setForm(next);
         setNameLocked(Boolean(organization.nameLocked));
+        setContactLocked((organization.contactLocked as ContactLocked | undefined) ?? {});
         // ค่าที่โหลดมาจากคำขอเดิมยังไม่ใช่สิ่งที่ผู้ใช้เพิ่งพิมพ์ ยังไม่ระบายสีจนกว่าจะแตะ
         setTouched({});
         setRevisionNote((organization.revisionNote as string | null) ?? null);
@@ -564,12 +582,13 @@ export default function EditOrganizationPage() {
             <CardHeader tag={SECTIONS[2].tag} title={SECTIONS[2].title} description="ผู้ประสานงานที่กรอกแบบฟอร์มนี้" />
             <div className="grid gap-5 p-6">
               {/*
-                ชื่อ นามสกุล อีเมล และเบอร์โทร มาจากบัญชีของผู้กรอกเอง (backend เติมให้ตอน
-                สร้างคำขอ) แก้ที่นี่ได้ก็จะกลายเป็นข้อมูลที่ไม่ตรงกับบัญชีที่ล็อกอินอยู่ และ
-                ชื่อนี้คือชื่อที่ไปพิมพ์อยู่บนเอกสารที่ลงนาม — คำนำหน้ายังแก้ได้ เพราะ ThaID
-                ไม่ส่ง claim `title` มา บัญชีจำนวนหนึ่งจึงยังไม่มีค่านี้
+                ผู้กรอกคือเจ้าของบัญชีที่ล็อกอินอยู่ ระบบรู้จักเขาอยู่แล้ว — คำนำหน้า ชื่อ
+                นามสกุลมาจาก ThaID กับคำเชิญ ส่วนอีเมลคือตัวบัญชีเอง ทุกช่องที่บัญชีมีค่าให้
+                จึงเป็นแบบอ่านอย่างเดียว (`contactLocked` มาจาก API ไม่ใช่กฎที่เขียนซ้ำตรงนี้)
+                ช่องที่บัญชียังไม่มีค่ายังกรอกได้และยังบังคับกรอก — คำนำหน้าเป็นเคสปกติของ
+                เรื่องนี้ เพราะ ThaID ไม่ส่ง claim `title` มา
               */}
-              <PersonFields prefixKey="contactPrefix" firstKey="contactFirstName" lastKey="contactLastName" form={form} fieldProps={fieldProps} set={set} lockName />
+              <PersonFields prefixKey="contactPrefix" firstKey="contactFirstName" lastKey="contactLastName" form={form} fieldProps={fieldProps} set={set} locked={contactLocked} />
               <div className="grid gap-5 sm:grid-cols-2">
                 <Wrap name="contactPosition">
                   <TextField label="ตำแหน่ง" required value={form.contactPosition} onChange={(e) => set("contactPosition", e.target.value)} {...fieldProps("contactPosition")} />
@@ -580,12 +599,30 @@ export default function EditOrganizationPage() {
               </div>
               <div className="grid gap-5 sm:grid-cols-2">
                 <Wrap name="contactEmail">
-                  <TextField label="อีเมล" required type="email" disabled value={form.contactEmail} error={fields.contactEmail} />
+                  {contactLocked.email ? (
+                    <TextField label="อีเมล" required readOnly value={form.contactEmail} error={fields.contactEmail} />
+                  ) : (
+                    <TextField label="อีเมล" required type="email" value={form.contactEmail} onChange={(e) => set("contactEmail", e.target.value)} {...fieldProps("contactEmail")} />
+                  )}
                 </Wrap>
                 <Wrap name="contactPhone">
-                  <TextField label="เบอร์โทรศัพท์" required disabled inputMode="tel" maxLength={20} value={form.contactPhone} error={fields.contactPhone} />
+                  {contactLocked.phone ? (
+                    <TextField label="เบอร์โทรศัพท์" required readOnly value={form.contactPhone} error={fields.contactPhone} />
+                  ) : (
+                    <TextField label="เบอร์โทรศัพท์" required inputMode="tel" maxLength={20} value={form.contactPhone} onChange={(e) => set("contactPhone", e.target.value)} {...fieldProps("contactPhone")} />
+                  )}
                 </Wrap>
               </div>
+              {/*
+                บอกครั้งเดียวว่าทำไมช่องข้างบนแก้ไม่ได้ แทนที่จะเขียน hint ซ้ำใต้ทุกช่อง —
+                เหตุผลเป็นเรื่องเดียวกันทั้งกลุ่ม และช่องที่ยังไม่ล็อกต้องไม่ถูกอ่านว่าล็อกไปด้วย
+              */}
+              {Object.values(contactLocked).some(Boolean) ? (
+                <p className="text-[13px] leading-relaxed text-ink-muted">
+                  ช่องที่เป็นสีเทาระบบดึงจากบัญชีผู้ใช้ที่คุณเข้าสู่ระบบอยู่ จึงแก้ไขที่นี่ไม่ได้
+                  หากข้อมูลไม่ถูกต้องกรุณาแจ้งเจ้าหน้าที่ BDI
+                </p>
+              ) : null}
             </div>
           </Card>
 
@@ -617,7 +654,7 @@ function PersonFields({
   form,
   fieldProps,
   set,
-  lockName = false,
+  locked = {},
   prefixOptions = PREFIXES,
   allowOtherPrefix = false,
 }: {
@@ -627,8 +664,11 @@ function PersonFields({
   form: FormState;
   fieldProps: (k: keyof FormState) => { error?: string; valid: boolean; onBlur: () => void };
   set: (k: keyof FormState, v: string) => void;
-  /** ชื่อ-นามสกุลมาจากบัญชี ไม่ใช่ช่องกรอก — คำนำหน้ายังเปิดไว้ */
-  lockName?: boolean;
+  /**
+   * ช่องที่ระบบเป็นเจ้าของค่า แสดงอย่างเดียว — ส่วนที่ 3 ส่ง `contactLocked` จาก API มา
+   * ส่วนที่ 2 ไม่ส่งอะไรเลย เพราะผู้มีอำนาจกระทำการแทนเป็นคนอื่น ระบบไม่มีข้อมูลของเขา
+   */
+  locked?: ContactLocked;
   /** คำนำหน้าที่มีให้เลือก — ส่วนที่ 2 ใช้ชุดสั้นตามบัตรประชาชน */
   prefixOptions?: string[];
   /** เพิ่มตัวเลือก "อื่น ๆ" ที่เปิดช่องพิมพ์คำนำหน้าเอง */
@@ -673,22 +713,39 @@ function PersonFields({
     <div className="flex flex-col gap-5">
       <div className="grid gap-5 sm:grid-cols-[7.5rem_minmax(0,1fr)_minmax(0,1fr)]">
         <Wrap name={prefixKey}>
-          <SelectField label="คำนำหน้า" required value={otherPrefix ? PREFIX_OTHER : form[prefixKey]} onChange={(e) => changePrefix(e.target.value)} {...selectState}>
-            <option value="">เลือก</option>
-            {prefixOptions.map((p) => (
-              <option key={p} value={p}>{p}</option>
-            ))}
-            {allowOtherPrefix ? <option value={PREFIX_OTHER}>{PREFIX_OTHER}</option> : null}
-          </SelectField>
+          {/*
+            คำนำหน้าที่มาจากบัญชีแสดงเป็นข้อความ ไม่ใช่ dropdown ที่ปิดไว้ — ค่าอย่าง
+            "ว่าที่ร้อยตรีหญิง" หรือ "นายแพทย์" ไม่มีอยู่ในลิสต์ ถ้ายังเป็น <select>
+            ช่องจะว่างเปล่าแล้วส่งค่าว่างไปโดยไม่มีใครเห็น (เจอมาแล้วที่หน้า /activate)
+          */}
+          {locked.prefix ? (
+            <TextField label="คำนำหน้า" required readOnly value={form[prefixKey]} error={prefixState.error} />
+          ) : (
+            <SelectField label="คำนำหน้า" required value={otherPrefix ? PREFIX_OTHER : form[prefixKey]} onChange={(e) => changePrefix(e.target.value)} {...selectState}>
+              <option value="">เลือก</option>
+              {prefixOptions.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+              {allowOtherPrefix ? <option value={PREFIX_OTHER}>{PREFIX_OTHER}</option> : null}
+            </SelectField>
+          )}
         </Wrap>
         <Wrap name={firstKey}>
-          <TextField label="ชื่อ" required disabled={lockName} value={form[firstKey]} onChange={(e) => set(firstKey, e.target.value)} {...fieldProps(firstKey)} />
+          {locked.firstName ? (
+            <TextField label="ชื่อ" required readOnly value={form[firstKey]} error={fieldProps(firstKey).error} />
+          ) : (
+            <TextField label="ชื่อ" required value={form[firstKey]} onChange={(e) => set(firstKey, e.target.value)} {...fieldProps(firstKey)} />
+          )}
         </Wrap>
         <Wrap name={lastKey}>
-          <TextField label="นามสกุล" required disabled={lockName} value={form[lastKey]} onChange={(e) => set(lastKey, e.target.value)} {...fieldProps(lastKey)} />
+          {locked.lastName ? (
+            <TextField label="นามสกุล" required readOnly value={form[lastKey]} error={fieldProps(lastKey).error} />
+          ) : (
+            <TextField label="นามสกุล" required value={form[lastKey]} onChange={(e) => set(lastKey, e.target.value)} {...fieldProps(lastKey)} />
+          )}
         </Wrap>
       </div>
-      {otherPrefix ? (
+      {otherPrefix && !locked.prefix ? (
         <div className="sm:max-w-[18rem]">
           <TextField label="ระบุคำนำหน้า" required value={form[prefixKey]} onChange={(e) => set(prefixKey, e.target.value)} {...prefixState} placeholder="เช่น ว่าที่ร้อยตรี" />
         </div>
