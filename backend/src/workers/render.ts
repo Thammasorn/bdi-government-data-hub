@@ -39,6 +39,7 @@ import {
 } from "../lib/mail.js";
 import { buildJourneyProgress, type JourneyProgress } from "../lib/journey-steps.js";
 import { NotificationType, linkFor } from "../lib/notify.js";
+import { NAME_FIELDS, fullNameTh } from "../lib/person-name.js";
 import { ROLE_LABELS } from "../lib/roles.js";
 import { type RoleCode } from "../lib/system.js";
 
@@ -210,14 +211,14 @@ export async function renderAndSend(
               OR: [{ effectiveUntil: null }, { effectiveUntil: { gt: new Date() } }],
             },
             orderBy: { effectiveFrom: "desc" },
-            select: { userAccount: { select: { displayName: true } } },
+            select: { userAccount: { select: NAME_FIELDS } },
           })
         : null;
 
       await sendRoleRemoved(destination, {
         organizationName: assignment.organization?.nameTh ?? "หน่วยงานเดิมของคุณ",
         roleLabel: ROLE_LABELS[assignment.role.code as RoleCode] ?? assignment.role.code,
-        successorName: successor?.userAccount.displayName ?? null,
+        successorName: fullNameTh(successor?.userAccount) || null,
         removedAt: assignment.revokedAt,
       });
       return;

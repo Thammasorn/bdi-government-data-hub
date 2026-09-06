@@ -16,7 +16,7 @@ import { Card, DatasetStatusBadge } from "@/components/ui/Card";
 import { SkeletonRows } from "@/components/ui/Spinner";
 import { formatThaiDate } from "@/lib/status";
 import { hasOwnQueue } from "@/lib/stage";
-import { datasetTitle, type DatasetRequestListItem } from "@/lib/types";
+import { datasetTitle, fullName, type DatasetRequestListItem } from "@/lib/types";
 import { useRequestList } from "@/lib/use-request-list";
 
 /**
@@ -141,7 +141,7 @@ export function DatasetRequestTable({
                       <span className="block truncate text-[13px] text-ink-muted">
                         {row.requestNumber}
                         {row.assignedSpecialist
-                          ? ` · ผู้เชี่ยวชาญ ${[row.assignedSpecialist.firstName, row.assignedSpecialist.lastName].filter(Boolean).join(" ")}`
+                          ? ` · ผู้เชี่ยวชาญ ${fullName(row.assignedSpecialist.prefix, row.assignedSpecialist.firstName, row.assignedSpecialist.lastName)}`
                           : ""}
                       </span>
                     </span>

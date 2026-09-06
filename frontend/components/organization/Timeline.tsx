@@ -5,6 +5,7 @@ import {
   type ReviewResult,
   type ReviewTaskType,
 } from "@/lib/status";
+import { fullName } from "@/lib/types";
 
 /**
  * หนึ่งบรรทัดของ timeline = หนึ่งแถวใน review.review_task
@@ -30,6 +31,7 @@ export interface OrgEvent {
 
 /** ผู้ยื่นคำขอ — รูปแบบเดียวกันทั้งสองเส้นทาง */
 export interface TimelineCreator {
+  prefix: string | null;
   firstName: string | null;
   lastName: string | null;
   email: string;
@@ -70,9 +72,9 @@ export function Timeline({
   const rows: HistoryRow[] = [];
 
   if (created) {
-    const name = created.by
-      ? [created.by.firstName, created.by.lastName].filter(Boolean).join(" ") || created.by.email
-      : null;
+    // ประกอบด้วย fullName() ตัวเดียวกับที่อื่น — ชื่อบนไทม์ไลน์ต้องตรงกับชื่อบนแถบหัว
+    const composed = created.by ? fullName(created.by.prefix, created.by.firstName, created.by.lastName) : null;
+    const name = composed === "—" ? (created.by?.email ?? null) : composed;
     rows.push({
       key: "created",
       label: `${ROLE_LABELS.ORGANIZATION_USER}สร้างคำขอ`,

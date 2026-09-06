@@ -669,7 +669,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
                 [
                   "ชื่อ",
                   fullName(
-                    null,
+                    request.assignedSpecialist.prefix,
                     request.assignedSpecialist.firstName,
                     request.assignedSpecialist.lastName,
                   ),

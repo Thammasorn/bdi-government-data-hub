@@ -44,6 +44,7 @@ import {
   type RoleCode,
 } from "../lib/system.js";
 import { nextDatasetCode } from "../lib/request-number.js";
+import { fullNameTh } from "../lib/person-name.js";
 import { ensureBucket } from "../storage.js";
 
 const prisma = new PrismaClient();
@@ -74,7 +75,7 @@ async function makeUser(opts: {
   organizationId?: string | null;
   status?: UserAccountStatus;
 }) {
-  const displayName = `${opts.prefix}${opts.firstName} ${opts.lastName}`;
+  const displayName = fullNameTh({ prefixTh: opts.prefix, firstnameTh: opts.firstName, lastnameTh: opts.lastName });
   const status = opts.status ?? UserAccountStatus.ACTIVE;
 
   const user = await prisma.userAccount.create({

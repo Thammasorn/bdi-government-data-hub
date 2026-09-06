@@ -169,18 +169,37 @@ export interface OrganizationListItem {
   createdAt: string;
   /** เวลาที่แถวนี้ถูกแก้ล่าสุด — กล่องรายละเอียดตอนชี้เมาส์ใช้บอก "อัปเดตล่าสุด" */
   updatedAt: string;
-  createdBy: { firstName: string | null; lastName: string | null; email: string };
+  createdBy: {
+    prefix: string | null;
+    firstName: string | null;
+    lastName: string | null;
+    email: string;
+  };
 }
 
 /** ชื่อที่แสดงของคำขอลงทะเบียนหน่วยงาน — คู่กับ datasetTitle() ของเส้นทางชุดข้อมูล */
 export const organizationTitle = (r: { name: string | null; requestNumber: string }) =>
   r.name?.trim() || `คำขอ ${r.requestNumber}`;
 
+/**
+ * ชื่อคนหนึ่งคนบนหน้าเว็บ — **คำนำหน้าเขียนติดชื่อ ไม่เว้นวรรค** ตามการเขียนชื่อไทย
+ *
+ * ต้องให้ผลเท่ากับ `fullNameTh()` ที่ `backend/src/lib/person-name.ts` เสมอ เป็นคู่สำเนา
+ * ที่ตั้งใจแบบเดียวกับ `lib/dataset-form.ts` กับ `backend/src/lib/dataset.ts` — เดิมฝั่งนี้
+ * เว้นวรรคหลังคำนำหน้า คนคนเดียวกันจึงเป็น "นาย อนุชา พัฒนา" บนหน้าจอและ
+ * "นายอนุชา พัฒนา" บนตราลงนาม (Feedback 20260904 #2 → Bugs ข้อ 1)
+ *
+ * คืน "—" เมื่อไม่มีชื่อ เพราะผู้เรียกส่วนใหญ่วางลงในช่องของตาราง
+ */
 export const fullName = (
   prefix?: string | null,
   first?: string | null,
   last?: string | null,
-): string => [prefix, first, last].filter(Boolean).join(" ") || "—";
+): string => {
+  const given = [first, last].filter(Boolean).join(" ");
+  if (!given) return "—";
+  return `${prefix ?? ""}${given}`;
+};
 
 export const ATTACHMENT_LABELS: Record<Attachment["kind"], string> = {
   AUTHORIZED_REPRESENTATIVE_APPOINTMENT_ORDER: "คำสั่งแต่งตั้งผู้มีอำนาจกระทำการแทน",
@@ -317,6 +336,7 @@ export interface DatasetRequest {
   assignedSpecialist: {
     id: string;
     email: string;
+    prefix: string | null;
     firstName: string | null;
     lastName: string | null;
   } | null;
@@ -339,7 +359,12 @@ export interface DatasetRequestListItem {
   updatedAt: string;
   organization: { id: string; name: string };
   createdBy: { firstName: string | null; lastName: string | null; email: string };
-  assignedSpecialist: { id: string; firstName: string | null; lastName: string | null } | null;
+  assignedSpecialist: {
+    id: string;
+    prefix: string | null;
+    firstName: string | null;
+    lastName: string | null;
+  } | null;
   /** แบบฟอร์มที่ระบบสร้าง — ว่างได้ ถ้ายังไม่เคยกดตรวจสอบและสร้าง PDF */
   generatedForm: { id: string; filename: string } | null;
 }

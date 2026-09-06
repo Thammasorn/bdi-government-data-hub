@@ -38,8 +38,23 @@ export interface SessionUser {
 }
 
 /** ชื่อที่เอาไปแสดง — ที่เดียว เพื่อให้กล่องเตือนกับเมนูผู้ใช้เรียกคนเดียวกันเหมือนกัน */
+/**
+ * ชื่อที่แถบหัวแสดง — **คำนำหน้าอยู่ด้วย** เขียนติดชื่อตามการเขียนชื่อไทย
+ *
+ * เดิมบรรทัดนี้ต่อแค่ชื่อกับนามสกุล ส่วนตราลงนามและเอกสารข้อตกลงต่อคำนำหน้าเข้าไปด้วย
+ * คนคนเดียวกันจึงเป็น "สุรชัย ปกครองดี" บนแถบหัวและ "นายสุรชัย ปกครองดี" บนตรา ซึ่งคือ
+ * สิ่งที่ผู้ใช้แจ้งมาเมื่อ 2026-09-04 ว่า "ชื่อตรงประวัติไม่ตรงกับชื่อที่เห็นบน Navbar"
+ *
+ * ต้องให้ผลเท่ากับ `fullNameTh()` ที่ `backend/src/lib/person-name.ts` เสมอ — แก้ทีละที่
+ * ไม่ได้ เป็นคู่สำเนาที่ตั้งใจเหมือน `lib/dataset-form.ts` กับ `backend/src/lib/dataset.ts`
+ *
+ * ตกกลับไปใช้อีเมลได้เฉพาะที่นี่ เพราะแถบหัวต้องมีอะไรให้อ่านเสมอ — และผู้ที่ล็อกอินได้
+ * ผ่าน activate มาแล้ว จึงมีชื่อไทยครบ ทางนี้จึงเป็นตาข่ายที่ไม่ควรได้ใช้
+ */
 export function sessionUserName(user: SessionUser): string {
-  return [user.firstName, user.lastName].filter(Boolean).join(" ") || user.email;
+  const given = [user.firstName, user.lastName].filter(Boolean).join(" ");
+  if (!given) return user.email;
+  return `${user.prefix ?? ""}${given}`;
 }
 
 /**

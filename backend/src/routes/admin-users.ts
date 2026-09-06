@@ -41,6 +41,7 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "../db.js";
+import { NAME_FIELDS, fullNameTh } from "../lib/person-name.js";
 import { AuditAction, AuditSubject, diffFields, logAudit } from "../lib/audit.js";
 import {
   activeAssignmentWhere,
@@ -1212,7 +1213,7 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
       type: NotificationType.ROLE_ASSIGNMENT_CHANGED,
       title: "ผู้รับผิดชอบของหน่วยงานย้ายออก",
       message:
-        `${account.displayName || account.email} ย้ายไปหน่วยงานอื่นแล้ว` +
+        `${fullNameTh(account) || account.email} ย้ายไปหน่วยงานอื่นแล้ว` +
         (back.length > 0
           ? ` และคำขอ ${back.join(" ")} ถูกปรับกลับเป็นฉบับร่างให้หน่วยงานดำเนินการต่อ` +
             ` กรุณาตรวจสอบข้อมูลผู้มีอำนาจอนุมัติของหน่วยงานแล้วนำส่งใหม่`

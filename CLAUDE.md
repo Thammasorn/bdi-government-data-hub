@@ -490,6 +490,33 @@ Activation does **not** touch `organization.status`. An organisation goes `ACTIV
 its registration request clears `BDI_FINAL_APPROVAL` (Journey B). The Notion card §2.5 says
 otherwise; that was raised and settled on 2026-08-13 in favour of Journey B.
 
+### One person, one name — `lib/person-name.ts`
+
+**Nothing reads `iam.user_account.display_name` to put a name on a screen any more.**
+`fullNameTh()` composes it from `prefix_th` + `firstname_th` + `lastname_th`, prefix glued to
+the given name the way Thai writes it (`นายสมชาย ใจดี`), and every place that shows a person —
+the timeline actor, the approval stamp, the signature written into A0, the navbar, both list
+tables, the notification e-mails — goes through it. `frontend/lib/types.ts`'s `fullName()` and
+`sessionUserName()` are the deliberate frontend copies, in the same sense as
+`lib/dataset-form.ts`; they must give the same answer.
+
+The column still exists because admin user search reads it, and every write goes through the
+same helper, so it cannot drift again. `npm run backfill:display-name` rewrites it for an
+existing database (`-- --write` to commit; it prints the diff first) and **skips the SYSTEM
+account**, whose name is the literal word `ระบบ` and has no Thai name fields by design.
+
+An account with no Thai name gets an **empty** display name, never its e-mail address: that
+fallback is how an e-mail address reached a signature block. Three callers pick their own
+fallback and say so in a comment — the signature block and the navbar fall back to the e-mail
+because they must render something, and `audit.ts` does because a log entry has to identify a
+person and is never shown on screen. Everyone who has activated has a full Thai name
+(`POST /api/auth/activate` requires it, and ThaID supplies it), so an empty name means an
+account that cannot act yet.
+
+Until 2026-09-06 the navbar composed `firstName + lastName` while stamps composed
+`prefix + firstName + lastName`, so the same person was "สุรชัย ปกครองดี" in the header and
+"นายสุรชัย ปกครองดี" on the document they had just signed.
+
 ### ThaID
 
 `lib/thaid.ts` talks to DOPA (authorize URL, token exchange, ES256 id_token verification

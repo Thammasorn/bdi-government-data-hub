@@ -80,6 +80,7 @@ import {
 } from "../lib/organization-agreement.js";
 import { DocumentRenderError } from "../lib/document-render.js";
 import { LEGAL_SCOPES, requestDocuments } from "../lib/legal.js";
+import { NAME_FIELDS, fullNameTh } from "../lib/person-name.js";
 import { nextOrganizationCode, nextOrganizationRequestNumber } from "../lib/request-number.js";
 import { buildJourneyProgress, summariseMany } from "../lib/journey-steps.js";
 import { REVIEW_TASK_TYPE_LABELS, ROLE_LABELS, isBdiStaff } from "../lib/roles.js";
@@ -662,6 +663,7 @@ organizationRouter.get("/", async (req, res) => {
         status: true,
         organizationNameTh: true,
         userEmail: true,
+        userPrefixTh: true,
         userFirstnameTh: true,
         userLastnameTh: true,
         submittedAt: true,
@@ -727,7 +729,7 @@ organizationRouter.get("/", async (req, res) => {
     (
       await prisma.userAccount.findMany({
         where: { id: { in: [...new Set(requests.map((r) => r.createdBy))] } },
-        select: { id: true, email: true, firstnameTh: true, lastnameTh: true },
+        select: { id: true, email: true, prefixTh: true, firstnameTh: true, lastnameTh: true },
       })
     ).map((u) => [u.id, u]),
   );
@@ -752,6 +754,7 @@ organizationRouter.get("/", async (req, res) => {
         organizationCode: r.organizationCode ?? r.organization?.organizationCode ?? null,
         createdBy: {
           email: r.userEmail ?? creator?.email ?? "",
+          prefix: r.userPrefixTh ?? creator?.prefixTh ?? null,
           firstName: r.userFirstnameTh ?? creator?.firstnameTh ?? null,
           lastName: r.userLastnameTh ?? creator?.lastnameTh ?? null,
         },
@@ -1127,7 +1130,7 @@ organizationRouter.get("/:id", async (req, res) => {
         actor: t.completedByUser
           ? {
               id: t.completedByUser.id,
-              name: t.completedByUser.displayName,
+              name: fullNameTh(t.completedByUser),
               email: t.completedByUser.email,
             }
           : null,
@@ -2000,17 +2003,22 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
          */
         const account = await tx.userAccount.findUnique({
           where: { id: session.sub },
-          select: { displayName: true, prefixTh: true, firstnameTh: true, lastnameTh: true },
+          select: NAME_FIELDS,
         });
         const isOrgSide = confirmationType === ConfirmationType.ORGANIZATION_APPROVAL;
         const signedFirst = isOrgSide ? request.approverFirstnameTh : (account?.firstnameTh ?? null);
         const signedLast = isOrgSide ? request.approverLastnameTh : (account?.lastnameTh ?? null);
+        // ตกกลับไปที่อีเมลได้ที่นี่ที่เดียว — ลายมือชื่อต้องมีอะไรสักอย่างเสมอ
         const signedName =
-          (isOrgSide
-            ? fullName(request.approverPrefixTh, signedFirst, signedLast)
-            : fullName(account?.prefixTh, signedFirst, signedLast)) ||
-          account?.displayName ||
-          session.email;
+          fullNameTh(
+            isOrgSide
+              ? {
+                  prefixTh: request.approverPrefixTh,
+                  firstnameTh: signedFirst,
+                  lastnameTh: signedLast,
+                }
+              : account,
+          ) || session.email;
         const confirmation = await tx.signatureConfirmation.create({
           data: {
             reviewTaskId: task.id,
@@ -2315,10 +2323,16 @@ async function ensureApproverAccount(
     throw new WorkflowError("no_approver", "คำขอนี้ยังไม่ได้ระบุอีเมลผู้มีอำนาจกระทำการแทน");
   }
 
-  const displayName =
-    [request.approverPrefixTh, request.approverFirstnameTh, request.approverLastnameTh]
-      .filter(Boolean)
-      .join(" ") || email;
+  /**
+   * บัญชีที่เพิ่งสร้างให้ผู้มีอำนาจยังไม่ activate — ถ้าฟอร์มไม่ได้กรอกชื่อไทยมา
+   * `display_name` จะเป็นค่าว่าง ไม่ใช่อีเมล เพราะอีเมลไปโผล่บนเอกสารข้อตกลงไม่ได้
+   * (ดู lib/person-name.ts) ชื่อจริงจะถูกเติมตอน activate อยู่แล้ว
+   */
+  const displayName = fullNameTh({
+    prefixTh: request.approverPrefixTh,
+    firstnameTh: request.approverFirstnameTh,
+    lastnameTh: request.approverLastnameTh,
+  });
 
   const existing = await tx.userAccount.findUnique({ where: { email } });
 

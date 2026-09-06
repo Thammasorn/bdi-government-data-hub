@@ -14,7 +14,7 @@ import { Card, StatusBadge } from "@/components/ui/Card";
 import { SkeletonRows } from "@/components/ui/Spinner";
 import { formatThaiDate } from "@/lib/status";
 import { hasOwnQueue } from "@/lib/stage";
-import { organizationTitle, type OrganizationListItem } from "@/lib/types";
+import { organizationTitle, fullName, type OrganizationListItem } from "@/lib/types";
 import { useRequestList } from "@/lib/use-request-list";
 
 /**
@@ -114,7 +114,7 @@ export function OrganizationRequestTable({ basePath }: { basePath: string }) {
                     </span>
                     <span className="min-w-0">
                       <span className="block truncate text-sm text-ink">
-                        {[row.createdBy.firstName, row.createdBy.lastName].filter(Boolean).join(" ") || "—"}
+                        {fullName(row.createdBy.prefix, row.createdBy.firstName, row.createdBy.lastName)}
                       </span>
                       <span className="block truncate text-[13px] text-ink-muted">{row.createdBy.email}</span>
                     </span>

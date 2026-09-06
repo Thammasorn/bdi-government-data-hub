@@ -21,6 +21,7 @@ import { publicAttachment, storeAttachment } from "./attachment.js";
 import { DocumentRenderError, renderTemplateToPdf } from "./document-render.js";
 import { datasetDocumentValues, type DatasetDocumentInput } from "./dataset-values.js";
 import { LEGAL_SCOPES, publishedDocuments, templateDocx } from "./legal.js";
+import { NAME_FIELDS, fullNameTh } from "./person-name.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -48,7 +49,7 @@ async function signaturesOf(db: Db, requestId: string) {
   const rows = await db.signatureConfirmation.findMany({
     where: { subjectType: SUBJECT, subjectId: requestId },
     orderBy: { confirmedAt: "asc" },
-    include: { userAccount: { select: { displayName: true } } },
+    include: { userAccount: { select: NAME_FIELDS } },
   });
 
   const pick = (type: ConfirmationType) => {
@@ -59,7 +60,7 @@ async function signaturesOf(db: Db, requestId: string) {
       signedFirstName?: string;
       signedLastName?: string;
     } | null;
-    const name = payload?.signedName ?? row.userAccount.displayName;
+    const name = payload?.signedName ?? fullNameTh(row.userAccount);
     const parts = (name ?? "").trim().split(/\s+/).filter(Boolean);
     return {
       name,
