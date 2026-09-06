@@ -387,6 +387,39 @@ carries `removedFromOrganization` so the home page can say what happened instead
 duplicate registration. The rule itself is unchanged and still contradicts
 `docs/01-user-journey.md` §1.
 
+**One user is one role** — settled 2026-09-03, and a different rule from the one above. Nothing
+enforced it: `assignRole` caps *one holder per role per organisation*, `organizationClash()` in
+`routes/admin-users.ts` caps *one organisation per account* and returns early for the BDI
+organisation, so the operator of an organisation could take that same organisation's approver
+role (same organisation, no clash) and one BDI officer could hold `BDI_OFFICER` +
+`BDI_FINAL_APPROVER`. Roles here are approval gates (`TASK_TYPE_ROLES` in `lib/workflow.ts`),
+so two roles means walking one request through two of its own gates — submit the registration
+and then sign it at `ORGANIZATION_APPROVAL`, or review at step 2 and approve at step 4.
+**BDI staff are not exempt this time**, which is the part that changes how the BDI team works.
+
+It is enforced in `assignRole`, which every granting path runs through (activation, `POST
+/api/admin/users/:id/roles`, `POST /users/:id/transfer`, Journey B's `ensureApproverAccount()`,
+`seed:demo`); it throws `RoleConflictError` so a caller that skipped its own check gets a 409
+rather than a 500 mid-transaction. It **refuses the newcomer** instead of revoking what is held
+— the opposite of the rule above — because here the existing role belongs to the same person,
+and dropping it silently would change their job with nobody asking. `transfer` is the intended
+way to change one: it now revokes *every* assignment before granting (not just the source
+organisation's, which would leave a BDI role behind for `assignRole` to trip over) and answers
+`already_there` only when organisation **and** role both match, so it also covers a role change
+within one organisation. `20260903120000_one_active_role_per_user` adds the net that this rule
+*can* express as an index — `user_account_id where status = 'ACTIVE'`, no `role.id` to name —
+for the concurrent writes the application layer cannot see.
+
+Closing that rule alone would not have closed the hole. `POST /organizations/:id/review` let
+anyone whose email matched `request.approverEmail` close `ORGANIZATION_APPROVAL` **without
+holding the role at all**, and both detail views drew the button from the same email test; all
+three now go by role only, which is safe because `ensureApproverAccount()` grants
+`ORGANIZATION_APPROVER` when the gate opens. `approverConflict()` widened from "holds an
+organisation-scoped role elsewhere" to "holds any other role", so the signatory email is
+rejected at `POST /:id/submit` rather than days later at officer approval, and
+`submitSchema` plus `frontend/lib/organization-form.ts` reject a signatory email equal to the
+operator's own — the read-only contact email — while the form is still being filled.
+
 `Invitation` is replaced by `iam.activation_key`, following the lifecycle in that sheet: create
 the `user_account` as `PENDING` first, then issue a key for (account, organisation, role).
 The key is hashed with **HMAC-SHA-256** (`ACTIVATION_KEY_SECRET`), not bare SHA-256, so a
