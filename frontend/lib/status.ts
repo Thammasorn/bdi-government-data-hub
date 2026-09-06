@@ -218,7 +218,22 @@ export function stageMeta(
  * บรรทัด timeline — ประกอบจาก review_task ไม่ใช่ตาราง event เดิม
  * ("ผู้เชี่ยวชาญบันทึกความเห็น" = DATASET_SPECIALIST_REVIEW ที่ result = CONFIRMED)
  */
-export function taskEventLabel(taskType: ReviewTaskType, result?: ReviewResult | null): string {
+export function taskEventLabel(
+  taskType: ReviewTaskType,
+  result?: ReviewResult | null,
+  recalled?: boolean,
+): string {
+  /**
+   * ปกติผู้กระทำเดาจาก `task_type` ได้ เพราะด่านหนึ่งมีเจ้าของคนเดียว — ยกเว้นด่านที่ถูก
+   * เจ้าหน้าที่ BDI ยกเลิกผลการตรวจสอบของตัวเอง ซึ่งปิดด่านของ **คนอื่น** แทนเขา
+   * แถวนี้แสดงชื่อผู้กดจาก `completed_by` อยู่แล้ว ถ้าประโยคยังเดาจาก task_type
+   * มันจะเรียกเจ้าหน้าที่ BDI ว่าผู้มีอำนาจอนุมัติของหน่วยงานในบรรทัดเดียวกัน
+   */
+  if (recalled) {
+    const officer = ROLE_LABELS.BDI_OFFICER;
+    return `${officer}${roleGap(officer)}ยกเลิกผลการตรวจสอบ`;
+  }
+
   const actor = ROLE_LABELS[TASK_TYPE_ROLE[taskType]];
   const gap = roleGap(actor);
 

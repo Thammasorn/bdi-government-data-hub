@@ -30,6 +30,8 @@ export interface ReviewTaskEvent {
   status: string;
   result: ReviewResult | null;
   note: string | null;
+  /** ด่านถูกปิดด้วย "ยกเลิกผลการตรวจสอบ" — ผู้กระทำไม่ใช่เจ้าของด่าน */
+  recalled?: boolean;
   actor: { id: string; name: string; email: string } | null;
   assignedAt: string;
   startedAt: string | null;
