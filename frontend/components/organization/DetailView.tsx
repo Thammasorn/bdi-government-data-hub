@@ -23,7 +23,7 @@ import { describeState, movedMessage, useRequestWatch } from "@/lib/use-request-
 import { ATTACHMENT_LABELS, fullName, type Organization } from "@/lib/types";
 
 /** ผู้ใช้ปัจจุบันตัดสินใจกับคำขอนี้ได้หรือไม่ ขึ้นกับสถานะ + role */
-function decideAbility(org: Organization, roles: string[], email: string) {
+function decideAbility(org: Organization, roles: string[]) {
   switch (org.currentTaskType) {
     case "BDI_OFFICER_REVIEW":
       return roles.includes("BDI_OFFICER")
@@ -34,8 +34,15 @@ function decideAbility(org: Organization, roles: string[], email: string) {
      * `signing` บอกว่าต้องเดินขั้นตอนลงนาม และ `perDocument` บอกว่าต้องขึ้นเอกสารทีละฉบับ
      * ให้กดเห็นชอบก่อนหรือไม่ — การ์ดข้อ 4 เขียนไว้ว่าฝ่าย BDI "ไม่ต้องมีขึ้น เห็นชอบ ทีละเอกสาร"
      */
+    /**
+     * ตัดสินจาก role เท่านั้น ไม่ใช่จากอีเมลที่กรอกไว้ในช่องผู้มีอำนาจฯ (2026-09-03)
+     *
+     * ของเดิมเทียบ `signatoryEmail` กับอีเมลของผู้ใช้ ซึ่งทำให้ผู้ดำเนินการที่กรอกอีเมล
+     * ตัวเองลงไป เห็นปุ่มลงนามบนคำขอที่ตัวเองนำส่ง — `POST /:id/review` ฝั่ง backend
+     * ตัดทางนั้นทิ้งแล้ว ถ้าที่นี่ไม่ตัดตาม ปุ่มจะขึ้นแล้วกดไปเจอ 403
+     */
     case "ORGANIZATION_APPROVAL":
-      return org.signatoryEmail?.toLowerCase() === email.toLowerCase()
+      return roles.includes("ORGANIZATION_APPROVER")
         ? {
             can: true,
             approveLabel: "ผ่านการตรวจสอบ",
@@ -204,7 +211,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
 
   if (!org || !user) return <Spinner />;
 
-  const ability = decideAbility(org, user.roles, user.email);
+  const ability = decideAbility(org, user.roles);
   const supporting = org.attachments.filter((a) => a.kind !== "GENERATED_FORM");
   const isOwner = org.createdBy?.id === user.id;
   // เทียบกับ `org.organizationId` ไม่ใช่ `org.id` — `org.id` คือ id ของคำขอ การ์ด

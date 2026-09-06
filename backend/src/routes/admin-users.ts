@@ -149,6 +149,34 @@ async function organizationClash(db: Db, userAccountId: string, organizationId: 
 }
 
 /**
+ * กฎ *หนึ่งผู้ใช้ = หนึ่งบทบาท* — ครอบทุก role ทั้งฝั่งหน่วยงานและฝั่ง BDI (2026-09-03)
+ *
+ * `organizationClash()` ข้างบนตอบคนละคำถาม (คนนี้อยู่หน่วยงานอื่นอยู่ไหม) และปล่อย
+ * หน่วยงาน BDI ผ่านเสมอ ตัวนี้จึงกว้างกว่าและไม่มีข้อยกเว้น — คู่ (role, หน่วยงาน)
+ * ที่กำลังจะมอบเท่านั้นที่ไม่นับ เพราะมอบซ้ำของเดิมยังเป็น no-op เหมือนเดิม
+ *
+ * ตรวจที่นี่เพื่อให้ได้ 409 พร้อมชื่อบทบาทและทางออก แทนที่จะไปโดน `RoleConflictError`
+ * ที่ `assignRole()` โยนกลางทรานแซกชัน (ซึ่งยังคงไว้เป็นตาข่ายชั้นสุดท้าย)
+ */
+async function roleClash(
+  db: Db,
+  userAccountId: string,
+  roleCode: RoleCode,
+  organizationId: string,
+) {
+  const roleId = await roleIdByCode(db, roleCode);
+  return db.userRoleAssignment.findFirst({
+    where: { userAccountId, NOT: { roleId, organizationId }, ...activeAssignmentWhere() },
+    select: {
+      id: true,
+      organizationId: true,
+      role: { select: { code: true } },
+      organization: { select: { nameTh: true } },
+    },
+  });
+}
+
+/**
  * กันไม่ให้ระงับ/ปิดเจ้าหน้าที่ BDI คนสุดท้ายของ role นั้น
  *
  * ถ้าไม่เหลือ `BDI_FINAL_APPROVER` เลยสักคน คำขอทุกใบที่เดินมาถึงด่านสุดท้ายจะค้าง
@@ -986,6 +1014,24 @@ adminUserRouter.post("/:id/roles", async (req, res) => {
     return;
   }
 
+  const held = await roleClash(prisma, account.id, role, organization.id);
+  if (held) {
+    const heldRole = held.role.code as RoleCode;
+    res.status(409).json({
+      error: "role_clash",
+      message:
+        `บัญชีนี้ถือบทบาท "${ROLE_LABELS[heldRole]}" ` +
+        `${held.organization ? `ของหน่วยงาน "${held.organization.nameTh}" ` : ""}อยู่แล้ว — ` +
+        `ผู้ใช้หนึ่งคนมีได้บทบาทเดียว ถ้าเป็นการย้ายหน่วยงานหรือเปลี่ยนบทบาทระดับหน่วยงาน ` +
+        `ใช้ POST /api/admin/users/:id/transfer ซึ่งถอนของเดิมและมอบของใหม่ในคำสั่งเดียว ` +
+        `ถ้าเป็นบทบาทฝั่ง BDI ให้ถอนของเดิมด้วย DELETE /api/admin/users/:id/roles/:assignmentId ก่อน`,
+      currentAssignmentId: held.id,
+      currentRole: heldRole,
+      currentOrganizationId: held.organizationId,
+    });
+    return;
+  }
+
   const { replaced } = await prisma.$transaction((tx) =>
     assignRole(tx, {
       userAccountId: account.id,
@@ -1078,7 +1124,10 @@ const transferSchema = z.object({
 });
 
 /**
- * ย้ายหน่วยงาน — ถอนของเดิมและมอบของใหม่ในคำสั่งเดียว
+ * ย้ายหน่วยงาน หรือเปลี่ยนบทบาทระดับหน่วยงานอยู่กับที่ — ถอนของเดิมและมอบของใหม่ในคำสั่งเดียว
+ *
+ * ตั้งแต่มีกฎ *หนึ่งผู้ใช้ = หนึ่งบทบาท* (2026-09-03) คำสั่งนี้จบลงที่ "บัญชีนี้เหลือบทบาท
+ * เดียวตามที่ระบุ" เสมอ จึงเป็นทางเดียวที่เปลี่ยนบทบาทให้คนที่อยู่หน่วยงานนั้นอยู่แล้วได้
  *
  * ต้องเป็นคำสั่งเดียว ไม่ใช่ให้แอดมินเรียก DELETE แล้ว POST เอง เพราะกฎ
  * *หนึ่งบัญชี = หนึ่งหน่วยงาน* จะปฏิเสธถ้ามอบก่อนถอน และถ้าแยกสองคำสั่งแล้วคำสั่ง
@@ -1130,10 +1179,17 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
   const sourceIds = [...new Set(current.map((a) => a.organizationId))].filter(
     (id): id is string => Boolean(id) && id !== target.id,
   );
-  if (sourceIds.length === 0 && current.some((a) => a.organizationId === target.id)) {
+  /**
+   * "อยู่ที่นั่นอยู่แล้ว" ต้องหมายถึงบทบาทเดียวกันด้วย ไม่ใช่แค่หน่วยงานเดียวกัน
+   *
+   * ตั้งแต่มีกฎ *หนึ่งผู้ใช้ = หนึ่งบทบาท* endpoint นี้เป็นทางเดียวที่เปลี่ยนบทบาท
+   * ระดับหน่วยงานให้คนที่อยู่หน่วยงานนั้นอยู่แล้วได้ (ผู้ดำเนินการ → ผู้มีอำนาจฯ ของ
+   * หน่วยงานเดิม) ถ้ายังตัดจบแค่ "หน่วยงานตรงกัน" การเปลี่ยนบทบาทในที่เดิมจะทำไม่ได้เลย
+   */
+  if (current.some((a) => a.organizationId === target.id && a.role.code === role)) {
     res.status(409).json({
       error: "already_there",
-      message: `บัญชีนี้อยู่กับหน่วยงาน ${target.nameTh} อยู่แล้ว`,
+      message: `บัญชีนี้เป็น "${ROLE_LABELS[role]}" ของหน่วยงาน ${target.nameTh} อยู่แล้ว`,
     });
     return;
   }
@@ -1152,14 +1208,19 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
       reason: `ผู้รับผิดชอบย้ายไปหน่วยงานอื่น — ${reason}`,
     });
 
-    for (const sourceId of sourceIds) {
-      await revokeRoleAssignments(tx, {
-        userAccountId: account.id,
-        organizationId: sourceId,
-        actorId: SYSTEM_USER_ID,
-        reason,
-      });
-    }
+    /**
+     * ถอน **ทุก** บทบาทที่ถืออยู่ ไม่ใช่เฉพาะของหน่วยงานต้นทาง
+     *
+     * กฎ *หนึ่งผู้ใช้ = หนึ่งบทบาท* แปลว่าคำสั่งนี้ต้องจบลงที่ "บัญชีนี้เหลือบทบาทเดียว
+     * ตามที่ระบุ" ถ้าถอนแค่ของหน่วยงานต้นทาง บทบาทฝั่ง BDI หรือบทบาทอื่นในหน่วยงาน
+     * ปลายทางเองจะค้างอยู่ แล้ว `assignRole()` ข้างล่างจะโยน RoleConflictError
+     * กลางทรานแซกชัน — ผู้เรียกจะได้ 500 แทนที่จะได้การย้ายที่สำเร็จ
+     */
+    await revokeRoleAssignments(tx, {
+      userAccountId: account.id,
+      actorId: SYSTEM_USER_ID,
+      reason,
+    });
 
     const { replaced } = await assignRole(tx, {
       userAccountId: account.id,
@@ -1192,12 +1253,16 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
     },
   });
 
+  // ไม่มีหน่วยงานต้นทาง = เปลี่ยนบทบาทอยู่กับที่ ไม่ใช่การย้าย — อย่าบอกเขาว่าถูกย้าย
+  const movedOrganization = sourceIds.length > 0;
   await notifyUsers([account.id], {
     type: NotificationType.ROLE_ASSIGNMENT_CHANGED,
-    title: "คุณถูกย้ายหน่วยงาน",
-    message:
-      `คุณถูกย้ายมาอยู่หน่วยงาน ${target.nameTh} ในบทบาท "${ROLE_LABELS[role]}" — ${reason} ` +
-      `งานที่ค้างอยู่กับหน่วยงานเดิมไม่ได้ย้ายตามมาด้วย`,
+    title: movedOrganization ? "คุณถูกย้ายหน่วยงาน" : "บทบาทของคุณถูกเปลี่ยน",
+    message: movedOrganization
+      ? `คุณถูกย้ายมาอยู่หน่วยงาน ${target.nameTh} ในบทบาท "${ROLE_LABELS[role]}" — ${reason} ` +
+        `งานที่ค้างอยู่กับหน่วยงานเดิมไม่ได้ย้ายตามมาด้วย`
+      : `บทบาทของคุณในหน่วยงาน ${target.nameTh} ถูกเปลี่ยนเป็น "${ROLE_LABELS[role]}" — ${reason} ` +
+        `งานที่ค้างอยู่ที่ด่านของบทบาทเดิมไม่ได้ตามมาด้วย`,
     organizationId: target.id,
   });
 
@@ -1237,7 +1302,10 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
     replacedUserAccountIds: outcome.replaced.map((r) => r.userAccountId),
     organizationsLeftWithoutStaff: vacancies,
     message:
-      `ย้ายไปหน่วยงาน ${target.nameTh} แล้ว` +
+      // เหตุผลเดียวกับ title ของ notification ข้างบน — ไม่มีหน่วยงานต้นทางคือเปลี่ยนบทบาทอยู่กับที่
+      (movedOrganization
+        ? `ย้ายไปหน่วยงาน ${target.nameTh} แล้ว`
+        : `เปลี่ยนบทบาทในหน่วยงาน ${target.nameTh} เป็น "${ROLE_LABELS[role]}" แล้ว`) +
       (outcome.reverted.length > 0
         ? ` · คำขอ ${outcome.reverted.length} ใบถูกปรับกลับเป็นฉบับร่างและแจ้งหน่วยงานเดิมแล้ว`
         : "") +

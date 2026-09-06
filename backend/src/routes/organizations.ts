@@ -51,6 +51,7 @@ import {
   activeAssignmentWhere,
   assignRole,
   issueActivationKey,
+  roleIdByCode,
   type Db,
   type RevokedAssignment,
 } from "../lib/iam.js";
@@ -86,7 +87,6 @@ import { REVIEW_TASK_TYPE_LABELS, ROLE_LABELS, isBdiStaff } from "../lib/roles.j
 import {
   PLACEHOLDER_ORGANIZATION_NAME,
   BDI_ORGANIZATION_ID,
-  ORGANIZATION_SCOPED_ROLES,
   ROLE_CODES,
   SYSTEM_USER_ID,
   type RoleCode,
@@ -276,6 +276,27 @@ const submitSchema = z
         path: ["email"],
         message:
           "อีเมลหน่วยงานต้องไม่ใช่อีเมลเดียวกับผู้มีอำนาจกระทำการแทน กรุณากรอกอีเมลกลางของหน่วยงาน",
+      });
+    }
+
+    /**
+     * ผู้ดำเนินการกับผู้มีอำนาจกระทำการแทนต้องเป็นคนละคน — *หนึ่งผู้ใช้ = หนึ่งบทบาท* (2026-09-03)
+     *
+     * ช่องอีเมลผู้ดำเนินการไม่ได้ให้กรอก ระบบเติมจากบัญชีที่นำส่ง (`request.userEmail`)
+     * กฎนี้จึงเท่ากับ "อย่ากรอกอีเมลตัวเองในช่องผู้มีอำนาจฯ" ปล่อยผ่านแล้วคนคนเดียว
+     * จะนำส่งคำขอเอง แล้วลงนามรับรองคำขอของตัวเองที่ด่าน `ORGANIZATION_APPROVAL`
+     *
+     * `approverConflict()` ตอนนำส่งดักเคสนี้ได้อยู่แล้วทางบทบาทที่บัญชีนั้นถืออยู่ แต่ตอบ
+     * เป็นข้อความกลาง ๆ ว่า "มีบทบาทอื่นในระบบอยู่แล้ว" ซึ่งไม่ได้บอกว่าไปชนกับช่องไหน
+     * ที่นี่เทียบสองช่องตรง ๆ จึงชี้ที่ต้นเหตุได้ และเป็นกฎเดียวกับที่ฟอร์มบอกตั้งแต่ตอนกรอก
+     */
+    if (value.contactEmail && value.contactEmail === value.signatoryEmail) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["signatoryEmail"],
+        message:
+          "อีเมลผู้มีอำนาจกระทำการแทนต้องไม่ใช่อีเมลของผู้ดำเนินการ เนื่องจากผู้ใช้หนึ่งคน" +
+          "มีได้บทบาทเดียว กรุณากรอกอีเมลของผู้มีอำนาจกระทำการแทนโดยตรง",
       });
     }
   });
@@ -1827,11 +1848,22 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
     // ตารางเดียวกับที่ lib/queue.ts ใช้ตอบว่า "ใบไหนเป็นงานของตำแหน่งฉัน" — เดิมเขียนซ้ำไว้ตรงนี้
     // ถ้าสองที่ไม่ตรงกัน หน้ารายการจะโชว์ใบที่กดต่อไม่ได้ หรือซ่อนใบที่กดได้
     const allowedRoles = TASK_TYPE_ROLES;
-    /** ผู้ใช้คนนี้ปิดด่านชนิดนี้ของคำขอนี้ได้ไหม */
+    /**
+     * ผู้ใช้คนนี้ปิดด่านชนิดนี้ของคำขอนี้ได้ไหม — **ตัดสินจาก role เท่านั้น**
+     *
+     * เดิมด่าน `ORGANIZATION_APPROVAL` มีทางที่สองต่อท้ายด้วย OR: อีเมลของผู้ใช้ตรงกับ
+     * `request.approverEmail` ที่กรอกไว้ในฟอร์ม ก็ปิดด่านได้โดยไม่ต้องมี role
+     * ผู้ดำเนินการของหน่วยงานจึงกรอกอีเมลตัวเองในช่องผู้มีอำนาจกระทำการแทน แล้วลงนาม
+     * รับรองคำขอที่ตัวเองนำส่งได้ — **โดยไม่ต้องมีบทบาทที่สองด้วยซ้ำ** กฎ
+     * *หนึ่งผู้ใช้ = หนึ่งบทบาท* จึงปิดรูนี้ไม่ได้ ต้องตัดทางที่สองทิ้งคู่กัน (2026-09-03)
+     *
+     * ไม่มีเคสที่ผู้มีอำนาจฯ ตัวจริงเสีย: `ensureApproverAccount()` มอบ
+     * `ORGANIZATION_APPROVER` ให้ตั้งแต่ตอนที่ด่านนี้ถูกเปิด ถ้าบัญชีเขา ACTIVE อยู่แล้ว
+     * หรือออก activation key ให้ แล้ว `completeActivation()` มอบ role ตอนเปิดใช้งาน —
+     * พอถึงเวลาที่กดได้ เขาถือ role นั้นเสมอ อีเมลที่กรอกในฟอร์มไม่ใช่หลักฐานของสิทธิ์
+     */
     const canAction = (taskType: ReviewTaskType) =>
-      session.roles.some((r) => allowedRoles[taskType].includes(r)) ||
-      (taskType === ReviewTaskType.ORGANIZATION_APPROVAL &&
-        request.approverEmail?.toLowerCase() === session.email.toLowerCase());
+      session.roles.some((r) => allowedRoles[taskType].includes(r));
 
     if (!canAction(task.taskType)) {
       /**
@@ -2269,27 +2301,32 @@ async function approverConflict(
   }
 
   /**
-   * หนึ่งบัญชี = หนึ่งหน่วยงาน (ตัดสินใจ 2026-08-30) — ครอบทั้งสอง role และข้ามบทบาท
+   * หนึ่งบัญชี = หนึ่งหน่วยงาน (2026-08-30) และ **หนึ่งผู้ใช้ = หนึ่งบทบาท** (2026-09-03)
    *
-   * `assignRole()` บังคับแค่ทางเดียวคือ "หนึ่งหน่วยงานมีคนเดียวต่อ role" ส่วนทางกลับ
-   * ไม่เคยมีอะไรกันไว้ ผลคือผู้มีอำนาจของหน่วยงาน A ที่ถูกกรอกในคำขอของหน่วยงาน B
-   * จะได้สิทธิ์ของ B เพิ่มโดยที่ของ A ยังอยู่ — เป็นสองหน่วยงานพร้อมกันเงียบ ๆ
+   * เงื่อนไขคือ "ถือบทบาทอื่นใดอยู่หรือไม่" ไม่ใช่ "อยู่หน่วยงานอื่นหรือไม่" อีกแล้ว
+   * ของเดิมกันแค่ role ระดับหน่วยงานของ **หน่วยงานอื่น** ซึ่งเปิดช่องไว้สองทาง:
+   * ผู้ดำเนินการของหน่วยงานนี้เองกรอกอีเมลตัวเองในช่องผู้มีอำนาจฯ ได้ (แล้วนำส่งคำขอ
+   * เองและลงนามรับรองคำขอของตัวเอง) และเจ้าหน้าที่ BDI ก็ถูกกรอกได้ เพราะบทบาทฝั่ง
+   * BDI ไม่อยู่ใน ORGANIZATION_SCOPED_ROLES
+   *
+   * ที่ยกเว้นคือผู้มีอำนาจฯ **ของหน่วยงานนี้เอง** — คนเดิมที่ถูกกรอกซ้ำในคำขอถัดไป
+   * ต้องผ่านได้ ไม่งั้นหน่วยงานยื่นคำขอใบที่สองไม่ได้เลย (`assignRole()` มองว่าเป็น no-op)
    */
-  const elsewhere = await db.userRoleAssignment.findFirst({
+  const approverRoleId = await roleIdByCode(db, ROLE_CODES.ORGANIZATION_APPROVER);
+  const heldElsewhere = await db.userRoleAssignment.findFirst({
     where: {
       userAccountId: existing.id,
-      organizationId: { not: organizationId },
-      role: { code: { in: [...ORGANIZATION_SCOPED_ROLES] } },
+      NOT: { roleId: approverRoleId, organizationId },
       ...activeAssignmentWhere(),
     },
     select: { id: true },
   });
-  if (elsewhere) {
+  if (heldElsewhere) {
     return {
       field: "signatoryEmail",
       message:
-        "อีเมลนี้ใช้เป็นผู้มีอำนาจกระทำการแทนของหน่วยงานนี้ไม่ได้ " +
-        "เนื่องจากผูกอยู่กับหน่วยงานอื่นในระบบแล้ว กรุณาใช้อีเมลอื่น",
+        "อีเมลนี้ใช้เป็นผู้มีอำนาจกระทำการแทนไม่ได้ เนื่องจากมีบทบาทอื่นในระบบอยู่แล้ว " +
+        "และผู้ใช้หนึ่งคนมีได้บทบาทเดียว กรุณากรอกอีเมลของผู้มีอำนาจกระทำการแทนโดยตรง",
     };
   }
 

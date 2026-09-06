@@ -43,12 +43,11 @@ import {
 } from "@/lib/types";
 
 /** สิ่งที่ผู้ใช้ปัจจุบันทำได้กับคำขอนี้ — สะท้อน decide() ใน backend/src/routes/dataset-requests.ts */
-function decideAbility(request: DatasetRequest, roles: string[], userId: string, email: string) {
+function decideAbility(request: DatasetRequest, roles: string[], userId: string) {
   const isOfficer = roles.includes("BDI_OFFICER");
   const isSpecialist = request.assignedSpecialist?.id === userId;
-  const isOrgApprover =
-    request.organization.signatoryEmail?.toLowerCase() === email.toLowerCase() ||
-    roles.includes("ORGANIZATION_APPROVER");
+  // role เท่านั้น — อีเมลที่กรอกในช่องผู้มีอำนาจฯ ไม่ใช่หลักฐานของสิทธิ์ (2026-09-03)
+  const isOrgApprover = roles.includes("ORGANIZATION_APPROVER");
 
   switch (request.currentTaskType) {
     /**
@@ -264,7 +263,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
 
   if (!request || !user) return <Spinner />;
 
-  const ability = decideAbility(request, user.roles, user.id, user.email);
+  const ability = decideAbility(request, user.roles, user.id);
   // ชีท conditions ตัดสินว่าช่องไหนถูกถามจริง — หน้ารายละเอียดจึงไม่ขึ้นหัวข้อที่ระบบไม่ได้ถาม
   // (เช่น รายละเอียดข้อมูลส่วนบุคคล เมื่อชุดข้อมูลตอบว่าไม่มีข้อมูลส่วนบุคคล)
   const rules = formRules(toFormState(request as unknown as Record<string, unknown>));
