@@ -1,4 +1,4 @@
-// Government Datahub Platform — data model
+// ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2) — data model
 //
 // ต้นทางของสคีมานี้คือ assets/db_schema/draft_db_design_downloaded_on_2026-08-11.xlsx
 // (21 sheet — _index + 20 ตาราง + ภาพประกอบในแต่ละ sheet)

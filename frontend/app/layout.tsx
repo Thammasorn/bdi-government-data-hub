@@ -10,8 +10,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "Government Datahub Platform",
-    template: "%s · Government Datahub",
+    default: "ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)",
+    template: "%s · D2",
   },
   description: "แพลตฟอร์มรวบรวมข้อมูลจากหน่วยงานรัฐ โดยสถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)",
 };

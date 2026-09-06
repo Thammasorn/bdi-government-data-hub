@@ -115,7 +115,7 @@ services:
       SMTP_SECURE: ${SMTP_SECURE:-false}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
-      SMTP_FROM: ${SMTP_FROM:-BDI Datahub <no-reply@bdi.or.th>}
+      SMTP_FROM: ${SMTP_FROM:-ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล <no-reply@bdi.or.th>}
       THAID_ROOT_URL: ${THAID_ROOT_URL:-}
       THAID_CLIENT_ID: ${THAID_CLIENT_ID:-}
       THAID_CLIENT_SECRET: ${THAID_CLIENT_SECRET:-}
@@ -164,7 +164,7 @@ services:
       SMTP_SECURE: ${SMTP_SECURE:-false}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
-      SMTP_FROM: ${SMTP_FROM:-BDI Datahub <no-reply@bdi.or.th>}
+      SMTP_FROM: ${SMTP_FROM:-ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล <no-reply@bdi.or.th>}
       DELIVERY_POLL_INTERVAL_MS: ${DELIVERY_POLL_INTERVAL_MS:-15000}
       DELIVERY_MAX_ATTEMPTS: ${DELIVERY_MAX_ATTEMPTS:-5}
     volumes:

@@ -82,7 +82,7 @@ docker compose logs -f backend | grep --line-buffered 'mail:dry-run'
 
 ```
 [mail:dry-run] ถึง: user.cmi@moph.go.th
-[mail:dry-run] เรื่อง: คำเชิญเข้าใช้งาน Government Datahub Platform
+[mail:dry-run] เรื่อง: คำเชิญเข้าใช้งานระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)
 [mail:dry-run] ลิงก์: https://bdi.thammasorn.org/activate?token=xxxxxxxx
 [mail:dry-run] รหัส OTP: 048213
 ```
@@ -100,7 +100,7 @@ SMTP_PASS=<App Password 16 หลัก ลบช่องว่างออก>
 
 1. เปิด 2-Step Verification ที่ <https://myaccount.google.com/security>
 2. สร้าง App Password ที่ <https://myaccount.google.com/apppasswords>
-   เลือก Mail → Other → ตั้งชื่อเช่น "BDI Datahub"
+   เลือก Mail → Other → ตั้งชื่อเช่น "D2"
 3. คัดลอกรหัส 16 หลัก **ลบช่องว่างออกให้หมด** แล้ววางใน `SMTP_PASS`
 
 รีสตาร์ตให้ค่าใหม่มีผล:

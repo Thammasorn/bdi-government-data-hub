@@ -54,19 +54,29 @@ export function LogoImage({
 
 export function Logo({
   className,
-  subtitle = "Government Datahub",
+  subtitle = "ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)",
+  subtitleClassName,
   tone = "navy",
 }: {
   className?: string;
   subtitle?: string | null;
+  /**
+   * คลาสของ "เส้นคั่น + ชื่อระบบ" — แถบหัวในระบบใช้ซ่อนชื่อระบบบนจอแคบ
+   *
+   * ชื่อระบบใหม่ยาวกว่าชื่อเดิม (`Government Datahub`) ราวเท่าตัว พอถึง `md` ที่เมนู
+   * เริ่มโผล่ ป้ายเมนูจะถูกบีบจนตัดเป็นสองบรรทัด ที่ `lg` ขึ้นไปมีที่พอทั้งคู่
+   */
+  subtitleClassName?: string;
   tone?: "navy" | "white";
 }) {
   const white = tone === "white";
   return (
     <span className={clsx("inline-flex items-center gap-3", className)}>
       <LogoImage tone={tone} />
+      {/* คลาส display มาจาก subtitleClassName ทั้งก้อน ไม่งั้น `inline-flex` ที่ตั้งไว้ตรงนี้
+          กับ `hidden` ที่ส่งเข้ามาจะเป็นคลาสเดี่ยวเท่ากัน แล้วแพ้ชนะกันตามลำดับใน stylesheet */}
       {subtitle ? (
-        <>
+        <span className={clsx("items-center gap-3", subtitleClassName ?? "inline-flex")}>
           <span aria-hidden="true" className={clsx("h-6 w-px", white ? "bg-white/30" : "bg-line")} />
           <span
             className={clsx(
@@ -76,7 +86,7 @@ export function Logo({
           >
             {subtitle}
           </span>
-        </>
+        </span>
       ) : null}
     </span>
   );

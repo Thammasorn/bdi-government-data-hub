@@ -123,8 +123,8 @@ function Header() {
       <div className="bg-brand-gradient h-[3px]" />
       <div className="border-b border-line">
         <div className="mx-auto flex h-20 max-w-6xl items-center gap-6 px-4 sm:px-6">
-          <Link href="/" className="shrink-0" aria-label="หน้าแรก Government Datahub">
-            <Logo />
+          <Link href="/" className="shrink-0" aria-label="หน้าแรก ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)">
+            <Logo subtitleClassName="hidden lg:inline-flex" />
           </Link>
 
           <nav className="hidden flex-1 items-center gap-1 md:flex">

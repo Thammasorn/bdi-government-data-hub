@@ -80,7 +80,7 @@ function layout(opts: {
                  </div>`
           }
           <div style="margin-top:10px;font:600 14px/1.3 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-            Government Datahub
+            ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)
           </div>
         </td></tr>
         <tr><td style="padding:24px 32px 0;">
@@ -221,10 +221,10 @@ export async function sendInvitationEmail(to: string, token: string, roleLabel: 
   const url = `${env.appUrl}/activate?token=${token}`;
   await send(
     to,
-    "คำเชิญเข้าใช้งาน Government Datahub Platform",
+    "คำเชิญเข้าใช้งานระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)",
     layout({
       title: "คุณได้รับเชิญให้เข้าใช้งานระบบ",
-      intro: `สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) เชิญคุณเข้าใช้งาน Government Datahub Platform ในสิทธิ์ <strong style="color:${TEXT};">${roleLabel}</strong>`,
+      intro: `สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) เชิญคุณเข้าใช้งานระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2) ในสิทธิ์ <strong style="color:${TEXT};">${roleLabel}</strong>`,
       body: `<p style="margin:0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
                กดปุ่มด้านล่างเพื่อยืนยันตัวตนด้วย ThaID แล้วตั้งรหัสผ่าน
                ลิงก์นี้ใช้ได้ ${env.auth.activationKeyTtlDays} วัน
@@ -237,7 +237,7 @@ export async function sendInvitationEmail(to: string, token: string, roleLabel: 
 export async function sendOtpEmail(to: string, code: string) {
   await send(
     to,
-    `รหัสยืนยันตัวตน ${code} — BDI Datahub`,
+    `รหัสยืนยันตัวตน ${code} — ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)`,
     layout({
       title: "รหัสยืนยันตัวตน",
       intro: "ใช้รหัสนี้เพื่อยืนยันตัวตนในระบบ:",

@@ -85,6 +85,16 @@ export interface TemplateVariableSpec {
 }
 
 /**
+ * ชื่อระบบที่เอกสารทุกฉบับพิมพ์ออกมา — เปลี่ยนที่นี่ที่เดียว
+ *
+ * ตั้งชื่อไว้ที่โมดูลนี้เพราะมันเป็นเจ้าของรายการตัวแปรของ template ทั้งชุด ทั้ง
+ * legal-values (เส้นทางหน่วยงาน) และ dataset-values (เส้นทางชุดข้อมูล) จึงหยิบตัวเดียวกันไปเติม
+ * ค่าให้ `{{system.name}}` และตัวอย่างในตารางข้างล่างก็เป็นค่าจริงเสมอ ก่อนหน้านี้ชื่อระบบถูก
+ * พิมพ์ซ้ำไว้สามที่และเริ่มไม่ตรงกัน (การ์ด "แก้ชื่อระบบ" 2026-09-06)
+ */
+export const SYSTEM_NAME = "ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)";
+
+/**
  * ชื่อตัวแปรทั้งหมดที่ template เรียกใช้ได้ — **สัญญาระหว่างเอกสารกับระบบ**
  *
  * นี่คือเส้นแบ่งของ "แก้ได้โดยไม่ต้องแก้โค้ด": ผู้ดูแลเอกสารย้าย ลบ หรือใช้ placeholder
@@ -196,7 +206,7 @@ export const TEMPLATE_VARIABLES = {
   "document.effectiveDate": { group: "document", description: "วันที่เอกสารเวอร์ชันนี้เริ่มมีผล — ว่างถ้ายังไม่ได้เผยแพร่", example: "๓๑ สิงหาคม ๒๕๖๙" },
 
   // ── ระบบ ────────────────────────────────────────────────────
-  "system.name": { group: "system", description: "ชื่อระบบ", example: "ระบบกลางเพื่อการแบ่งปันข้อมูล (Government Datahub Platform)" },
+  "system.name": { group: "system", description: "ชื่อระบบ", example: SYSTEM_NAME },
   printedBy: { group: "system", description: "ชื่อผู้ที่ทำให้เอกสารฉบับนี้ถูกสร้าง", example: "นางสาว พิมพ์ชนก สังคมดี" },
   printedAt: { group: "system", description: "วันที่พิมพ์เอกสารจากระบบ", example: "๑๙ สิงหาคม ๒๕๖๙" },
   printedDateTime: { group: "system", description: "วันที่และเวลาที่พิมพ์เอกสารจากระบบ (เวลาไทย)", example: "๑๙ สิงหาคม ๒๕๖๙ ๑๕:๒๗" },

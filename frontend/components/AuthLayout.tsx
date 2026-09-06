@@ -36,10 +36,13 @@ export function AuthLayout({
         <LogoImage tone="white" className="relative h-28 self-start" />
 
         <div className="relative max-w-md">
-          <h2 className="text-[32px] font-semibold leading-tight text-white">
-            แพลตฟอร์มข้อมูลกลาง
+          <p className="text-[14px] font-medium uppercase tracking-wide text-white/60">
+            Data Integration and Intelligence Platform (D2)
+          </p>
+          <h2 className="mt-3 text-[32px] font-semibold leading-tight text-white">
+            ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล
             <br />
-            ของหน่วยงานภาครัฐ
+            ของประเทศ
           </h2>
           <p className="mt-4 text-[15px] leading-relaxed text-white/75">
             รวบรวม เชื่อมโยง และกำกับดูแลข้อมูลจากหน่วยงานรัฐทั่วประเทศ

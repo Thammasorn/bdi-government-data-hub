@@ -7,7 +7,7 @@
  * ค่าที่ยังไม่เกิดขึ้น (ลายมือชื่อที่ยังไม่มีใครลงนาม) ถูกส่งเป็นค่าว่างโดยตั้งใจ
  * ไม่ใช่ขีดเส้นหรือ "-" — ช่องลายมือชื่อที่ว่างคือสิ่งที่บอกว่ายังไม่มีการลงนาม
  */
-import type { TemplateValues } from "./document-render.js";
+import { SYSTEM_NAME, type TemplateValues } from "./document-render.js";
 
 const THAI_DIGITS = ["๐", "๑", "๒", "๓", "๔", "๕", "๖", "๗", "๘", "๙"];
 
@@ -127,8 +127,6 @@ export interface AgreementInput {
   documentVersionNumber: number | null;
   documentEffectiveAt: Date | null;
 }
-
-export const SYSTEM_NAME = "ระบบกลางเพื่อการแบ่งปันข้อมูล (Government Datahub Platform)";
 
 /**
  * ข้อมูลสำนักงานที่ไม่มีช่องเก็บในฐานข้อมูล

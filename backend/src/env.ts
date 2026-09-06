@@ -183,7 +183,7 @@ export const env = {
     secure: optional("SMTP_SECURE", "false") === "true",
     user: optional("SMTP_USER", ""),
     pass: optional("SMTP_PASS", ""),
-    from: optional("SMTP_FROM", "BDI Datahub <no-reply@bdi.or.th>"),
+    from: optional("SMTP_FROM", "ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล <no-reply@bdi.or.th>"),
     /** ไม่ตั้ง SMTP_USER = พิมพ์อีเมลลง log แทนการส่งจริง (สะดวกตอน dev) */
     enabled: Boolean(optional("SMTP_USER", "")),
   },
