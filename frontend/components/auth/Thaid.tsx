@@ -15,7 +15,6 @@ import { nextFromLocation, safeNextPath } from "@/lib/require-auth";
  * รู้จักคือหน้าเว็บของเรา ไม่ใช่ API
  */
 const TOKEN_KEY = "thaid:activation-token";
-const PROFILE_KEY = "thaid:profile";
 const NEXT_KEY = "thaid:next";
 
 /**
@@ -32,10 +31,6 @@ export function storeActivationToken(token: string) {
 
 export function takeActivationToken(): string | null {
   return sessionStorage.getItem(TOKEN_KEY);
-}
-
-export function storeThaidProfile(profile: unknown) {
-  sessionStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
 }
 
 /**

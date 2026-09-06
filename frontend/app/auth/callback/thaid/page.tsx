@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 
 import { AuthLayout } from "@/components/AuthLayout";
-import { storeThaidProfile, takeActivationToken, takeNextPath } from "@/components/auth/Thaid";
+import { takeActivationToken, takeNextPath } from "@/components/auth/Thaid";
 import { useSession, type SessionUser } from "@/components/SessionProvider";
 import { Spinner } from "@/components/ui/Spinner";
 import { api, ApiError } from "@/lib/api";
@@ -29,7 +29,6 @@ export default function ThaidCallbackPage() {
 interface CallbackResult {
   purpose?: "activate";
   verified?: boolean;
-  profile?: Record<string, string | null>;
   user?: SessionUser;
 }
 
@@ -72,7 +71,11 @@ function ThaidCallback() {
           return;
         }
 
-        if (result.profile) storeThaidProfile(result.profile);
+        /**
+         * ชื่อจากบัตรไม่ต้องฝากผ่านเบราว์เซอร์อีกแล้ว — backend เขียนลงแถวบัญชีตั้งแต่
+         * ตอนเทียบเลขบัตรผ่าน หน้า /activate จึงอ่านจาก `GET /invitation` ทางเดียว
+         * ซึ่งเป็นเงื่อนไขที่ทำให้ล็อกช่องชื่อได้จริง (ค่าใน sessionStorage ปลอมได้)
+         */
         const token = takeActivationToken();
         router.replace(token ? `/activate?token=${encodeURIComponent(token)}` : "/activate");
       } catch (err) {
