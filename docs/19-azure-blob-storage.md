@@ -129,21 +129,44 @@ account name/key ของ Azurite (`devstoreaccount1` / `Eby8vdM02xNOcqFlqUwJPL
 
 ---
 
-## 5. ไฟล์ที่มีอยู่แล้วใน MinIO
+## 5. ไฟล์ที่มีอยู่แล้วใน MinIO — ย้ายแล้ว (2026-09-07)
 
-**ยังไม่ได้ย้าย และ branch นี้ไม่ได้ย้ายให้** — ทุก deployment ที่มีข้อมูลจริงจะเห็นไฟล์เก่า
-หายไปทันทีที่สลับ เพราะแถวใน `attachment` ชี้ไปที่ container ที่ยังว่างเปล่า
+หัวข้อนี้เคยเขียนว่า “ยังไม่ได้ย้าย และทางที่ถูกที่สุดคือ seed ใหม่ เพราะ `main` เป็น deployment
+แบบใช้แล้วทิ้ง” **ข้อนั้นไม่จริง** ตอนจะสลับจริง `main` มีไฟล์แนบอยู่ **162 ไฟล์ / 39 MB**
+สลับโดยไม่ย้ายก่อน = 162 แถวใน `attachment.attachment` ชี้ไป blob ที่ไม่มีอยู่ ทุกปุ่มดาวน์โหลด
+บนเว็บทดสอบตาย
 
-`main` เป็น deployment แบบใช้แล้วทิ้ง (ดู `CLAUDE.md` หัวข้อ Commands เรื่อง `down -v`) ทางที่
-ถูกที่สุดคือ **seed ใหม่** ไม่ใช่ย้ายไฟล์ ถ้าวันหนึ่งข้อมูลมีค่า ให้คัดลอกด้วย `azcopy` ซึ่ง
-รับ S3 เป็นต้นทางได้ตรง ๆ:
+`azcopy` ไม่จำเป็น — `mc` ติดมากับ image ของ MinIO อยู่แล้วและตั้ง alias `local` ไว้ให้
+จึงดัมป์ออกมาได้โดยไม่ต้องจับ credential เลย:
 
 ```bash
-azcopy copy 'https://<minio-host>/bdi-uploads/*' \
-            'https://<account>.blob.core.windows.net/bdi-uploads' --recursive
+cd /hdd1tb/bdi-project/main
+docker compose exec -T minio mc mirror --quiet local/bdi-uploads /tmp/dump
+docker cp "$(docker compose ps -q minio)":/tmp/dump/. <ปลายทาง>/
+
+cd <ปลายทาง>
+az storage blob upload-batch -d bdi-uploads -s . --account-name bdidatahub \
+  --auth-mode key --account-key "$(az storage account keys list -n bdidatahub \
+  -g bdi-datahub --query '[0].value' -o tsv)" --overwrite false
 ```
 
-key ของ blob เหมือนกันทุกตัวอักษร จึงไม่ต้องแตะฐานข้อมูลเลยหลังคัดลอกเสร็จ
+path ใต้ไดเรกทอรีที่ดัมป์ = storage key ทุกตัวอักษร **ฐานข้อมูลจึงไม่ต้องแตะเลย**
+`Content-Type` ที่ az เดาจากนามสกุลไม่สำคัญ — `streamAttachment()` ตั้ง header จากคอลัมน์
+`attachment.mime_type` ไม่ได้อ่านจาก blob
+
+**ตรวจว่าย้ายครบก่อนจะเชื่อ** เทียบ key ตัวต่อตัว ไม่ใช่แค่นับจำนวน:
+
+```bash
+docker compose exec -T postgres psql -U bdi -d bdi -t -A \
+  -c "select storage_key from attachment.attachment order by 1;" | sort > db-keys.txt
+az storage blob list -c bdi-uploads --account-name bdidatahub --auth-mode login \
+  --prefix prod/ --query "[].name" -o tsv | sort > blob-keys.txt
+comm -23 db-keys.txt blob-keys.txt      # ต้องไม่มีบรรทัดไหนออกมา
+```
+
+ของ `main` ออกมา 162 = 162 ขาดศูนย์ และอ่านกลับผ่าน container production จริงแล้วครบไบต์
+ต้นฉบับที่ดัมป์ไว้ยังอยู่ที่ `sit-evidence/minio-dump-20260907/` และ volume
+`bdi-main_minio-data` ยังไม่ได้ลบ — เป็นตาข่ายสองชั้น ลบได้เมื่อเปิดไฟล์เก่าผ่านหน้าจอครบแล้ว
 
 ---
 
@@ -200,21 +223,60 @@ az role assignment create --assignee <upn-หรือ-object-id> \
   “ตรวจสอบคำขอ” ได้ A4 ขนาด 64,148 ไบต์ ขึ้นต้นด้วย `%PDF` สตรีมเข้า `<iframe>` สำเร็จ
   และปุ่ม “นำส่งคำขอ” ปลดล็อก · ไม่มี console error และไม่มี HTTP ≥ 400
 
-## 7. ที่ยังค้าง
+## 7. เส้นทาง managed identity — ยืนยันแล้ว (2026-09-07)
 
-- [ ] **เส้นทาง `AZURE_STORAGE_ACCOUNT_URL` + `DefaultAzureCredential` (§3.1) ยังไม่ได้ยืนยัน**
-      ที่ทดสอบข้างบนทั้งหมดเดินผ่าน connection string เพราะเครื่องพัฒนาไม่มี managed identity
-      และใน container ก็ไม่มี `az` ให้ `AzureCliCredential` ทำงาน วิธียืนยันโดยไม่ต้องรอ ACA
-      คือสร้าง service principal แล้วส่ง `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` /
-      `AZURE_CLIENT_SECRET` เข้า container — `EnvironmentCredential` จะหยิบไปใช้ แล้วเดิน
-      `BlobServiceClient(url, TokenCredential)` เส้นเดียวกับ managed identity เป๊ะ
-      ต่างแค่แหล่งที่มาของตัวตน:
+§3.1 เคยเป็นข้อเดียวที่ไม่มีใครเคยเดินจริง ตอนนี้เดินแล้วด้วย **service principal** ซึ่งพิสูจน์
+โค้ดเส้นเดียวกับ managed identity: `EnvironmentCredential` เป็นตัวแรกในสาย
+`DefaultAzureCredential` และปลายทางคือ `BlobServiceClient(url, TokenCredential)` ตัวเดียวกัน
+ต่างกันแค่ที่มาของตัวตน — บน ACA คือ managed identity ของ container app ที่นี่คือ SP
 
-      ```bash
-      az ad sp create-for-rbac -n bdi-datahub-dev \
-        --role "Storage Blob Data Contributor" \
-        --scopes $(az storage account show -n bdidatahub -g bdi-datahub --query id -o tsv)
-      ```
+```bash
+az ad sp create-for-rbac -n bdi-datahub-dev \
+  --role "Storage Blob Data Contributor" \
+  --scopes $(az storage account show -n bdidatahub -g bdi-datahub --query id -o tsv)
+```
+
+แล้วส่ง `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` เข้า container
+(`docker-compose.yml` ไม่ประกาศสามตัวนี้โดยตั้งใจ — บน Azure จริงไม่ต้องใช้ ใส่ผ่าน
+`docker-compose.override.yml` ของ checkout ที่จะทดสอบแทน)
+
+### 7.1 กับดัก: ตั้ง `AZURE_STORAGE_CONNECTION_STRING=` ว่างใน `.env` ไม่พอ
+
+`docker-compose.yml` เขียนไว้ว่า `${AZURE_STORAGE_CONNECTION_STRING:-<connection string ของ
+Azurite>}` และ **`:-` ถือว่าค่าว่างเท่ากับไม่ได้ตั้ง** ปล่อยบรรทัดนั้นว่างใน `.env` จึงได้
+container ที่ชี้ **Azurite** ทั้งที่ `.env` บอกว่าใช้ account จริง — และการทดสอบ
+`DefaultAzureCredential` จะ “ผ่าน” โดยไม่เคยเรียก Azure สักครั้ง ไม่มีอะไรบอกให้รู้เลย
+
+ต้องทับเป็นค่าว่างที่ชั้น compose แทน:
+
+```yaml
+services:
+  backend:
+    environment:
+      AZURE_STORAGE_CONNECTION_STRING: ""
+```
+
+เช็คก่อนเชื่อผลทุกครั้ง — ค่าที่อยู่ใน `.env` ไม่ใช่ค่าที่อยู่ใน container:
+
+```bash
+docker compose exec backend sh -c 'echo "[$AZURE_STORAGE_CONNECTION_STRING]"'
+```
+
+(กับดักชั้นเดียวกับ `optional()` ใน `env.ts` ที่ `CLAUDE.md` บันทึกไว้ — ค่าว่างแปลว่า
+“ไม่ได้ตั้ง” คนละชั้นกันเท่านั้น)
+
+### 7.2 ที่ยืนยันไปแล้ว
+
+container ที่ **ไม่มี account key อยู่เลย** (`env.azure.connectionString` เป็น `""`) ทำได้ทั้งหมดนี้:
+
+- `GET /health/ready` → `storage: up` (`pingStorage()` เรียก `containerOf().exists()`)
+- อ่าน blob ของ `main` ที่ prefix `prod/` ได้ครบ 40,111 ไบต์ ขึ้นต้น `%PDF` — **blob นี้มีอยู่บน
+  storage account จริงเท่านั้น Azurite ของ checkout ไม่มี** จึงเป็นหลักฐานว่าคุยกับ Azure จริง
+- `putObject()` + `getObjectStream()` เขียนแล้วอ่านกลับตรงกันทุกไบต์
+- เดิน UI จริงซ้ำ: อัปโหลดพจนานุกรมข้อมูลผ่านฟอร์ม → `POST /attachments` ตอบ 201 → โหลดกลับมา
+  sha256 ตรงกันทุกไบต์ ไม่มี console error
+
+## 8. ที่ยังค้าง
 
 - [ ] subscription ที่ใช้อยู่ผูกกับบัญชี outlook.com ส่วนตัว ไม่ใช่ tenant ขององค์กร
       ถ้าระบบจะขึ้นจริงต้องย้ายไป subscription ขององค์กร ซึ่งก็คือทำ §6 ซ้ำอีกรอบ
