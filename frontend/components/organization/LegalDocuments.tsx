@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 
-import { LegalNotice } from "@/components/organization/LegalNotice";
 import { PdfViewer } from "@/components/organization/PdfViewer";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
@@ -195,8 +194,12 @@ export function LegalDocumentsCard({
             เห็นชอบเมื่อ {formatThaiDate(current.acceptedAt)}
           </p>
         ) : null}
-        {/* คำเตือนของฉบับที่กำลังเปิดอยู่ — ทุกคนที่เปิดอ่านต้องเห็น ไม่ใช่เฉพาะตอนลงนาม */}
-        <LegalNotice document={current} className="mb-4" />
+        {/*
+          การ์ดนี้ไม่แสดง `legal_notice` — ที่นี่เป็นตัวอ่าน ไม่ใช่ขั้นตอนที่ทำอะไรกับเอกสารได้
+          คำเตือนที่มีอยู่ฉบับเดียวคือของผนวก 3 ซึ่งสั่งให้กดปุ่ม "ไม่เกี่ยวข้อง" — ปุ่มนั้นอยู่ใน
+          กล่องลงนามของผู้มีอำนาจเท่านั้น (`SigningDialog`) การ์ดนี้ถูก mount ที่หน้าตรวจสอบ
+          ก่อนนำส่ง หน้ารายละเอียดหน่วยงาน และหน้ารายละเอียดชุดข้อมูล ซึ่งไม่มีปุ่มนั้นสักหน้า
+        */}
         {current.fileUrl ? (
           <PdfViewer
             /**
