@@ -554,7 +554,7 @@ export default function EditOrganizationPage() {
               <PersonFields prefixKey="signatoryPrefix" firstKey="signatoryFirstName" lastKey="signatoryLastName" form={form} fieldProps={fieldProps} set={set} prefixOptions={SIGNATORY_PREFIXES} allowOtherPrefix />
               <div className="grid gap-5 sm:grid-cols-2">
                 <Wrap name="signatoryPosition">
-                  <TextField label="ตำแหน่ง (ชื่อเต็มภาษาไทย)" required value={form.signatoryPosition} onChange={(e) => set("signatoryPosition", e.target.value)} {...fieldProps("signatoryPosition")} />
+                  <TextField label="ตำแหน่ง (ชื่อเต็มภาษาไทย)" required value={form.signatoryPosition} onChange={(e) => set("signatoryPosition", e.target.value)} {...fieldProps("signatoryPosition")} hint="ชื่อตำแหน่งเต็มเป็นภาษาไทย ตำแหน่งนี้จะถูกพิมพ์ลงเอกสารข้อตกลง (มีตัวย่อภาษาอังกฤษปนได้)" />
                 </Wrap>
                 <Wrap name="signatoryEmail">
                   <TextField label="อีเมล" required type="email" value={form.signatoryEmail} onChange={(e) => set("signatoryEmail", e.target.value)} {...fieldProps("signatoryEmail")} />

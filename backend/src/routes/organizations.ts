@@ -103,6 +103,7 @@ import {
   normaliseThaiPhone,
   organizationNameSchema,
   phoneSchema,
+  signatoryPositionSchema,
 } from "../lib/validation.js";
 import {
   listOrderBy,
@@ -254,7 +255,7 @@ const submitSchema = z
   signatoryPrefix: z.string().trim().min(1, "กรุณาระบุคำนำหน้า"),
   signatoryFirstName: z.string().trim().min(1, "กรุณากรอกชื่อ"),
   signatoryLastName: z.string().trim().min(1, "กรุณากรอกนามสกุล"),
-  signatoryPosition: z.string().trim().min(1, "กรุณากรอกตำแหน่ง"),
+  signatoryPosition: signatoryPositionSchema,
   signatoryEmail: emailSchema,
   signatoryNationalId: nationalIdSchema,
   signatoryPhone: phoneSchema,
