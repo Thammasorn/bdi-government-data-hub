@@ -643,8 +643,8 @@ export default function EditOrganizationPage() {
 
 // ------------------------------------------------------------------ ส่วนย่อย
 
-function Wrap({ name, children }: { name: string; children: React.ReactNode }) {
-  return <div data-field={name}>{children}</div>;
+function Wrap({ name, className, children }: { name: string; className?: string; children: React.ReactNode }) {
+  return <div data-field={name} className={className}>{children}</div>;
 }
 
 function PersonFields({
@@ -709,47 +709,69 @@ function PersonFields({
     set(prefixKey, value);
   };
 
+  /**
+   * ช่อง "ระบุคำนำหน้า" ยืนอยู่บรรทัดเดียวกับคำนำหน้า/ชื่อ/นามสกุล และ**ติดตั้งไว้ตลอด**
+   * ในส่วนที่เปิดตัวเลือก "อื่น ๆ" ได้ ไม่ใช่ค่อย mount ตอนเลือก — กล่องต้องมีอยู่ก่อน
+   * เบราว์เซอร์ถึงจะ transition ความกว้างจาก 0 ได้ ตอนหุบจึงต้องสั่ง `inert` ด้วย
+   * ไม่งั้นแป้น Tab ยังวิ่งเข้าช่องที่มองไม่เห็น และโปรแกรมอ่านหน้าจอยังอ่านมันอยู่
+   */
+  const canSpecifyPrefix = allowOtherPrefix && !locked.prefix;
+  const specifying = canSpecifyPrefix && otherPrefix;
+
+  /*
+    แถวนี้เป็น flex ไม่ใช่ grid เพราะสิ่งที่ต้องหายไปพร้อมช่องที่หุบคือ**ช่องไฟระหว่างช่อง**
+    ด้วย: ใน flex ระยะขอบติดลบหักกับ `gap` ได้จริง (ตัวถัดไปเลื่อนซ้ายมาชิด) แต่ใน grid
+    ระยะขอบของลูกไม่มีผลต่อความกว้างของคอลัมน์หรือช่องไฟ ช่องไฟจะค้างไว้ 1 ช่องเสมอ
+  */
   return (
-    <div className="flex flex-col gap-5">
-      <div className="grid gap-5 sm:grid-cols-[7.5rem_minmax(0,1fr)_minmax(0,1fr)]">
-        <Wrap name={prefixKey}>
-          {/*
-            คำนำหน้าที่มาจากบัญชีแสดงเป็นข้อความ ไม่ใช่ dropdown ที่ปิดไว้ — ค่าอย่าง
-            "ว่าที่ร้อยตรีหญิง" หรือ "นายแพทย์" ไม่มีอยู่ในลิสต์ ถ้ายังเป็น <select>
-            ช่องจะว่างเปล่าแล้วส่งค่าว่างไปโดยไม่มีใครเห็น (เจอมาแล้วที่หน้า /activate)
-          */}
-          {locked.prefix ? (
-            <TextField label="คำนำหน้า" required readOnly value={form[prefixKey]} error={prefixState.error} />
-          ) : (
-            <SelectField label="คำนำหน้า" required value={otherPrefix ? PREFIX_OTHER : form[prefixKey]} onChange={(e) => changePrefix(e.target.value)} {...selectState}>
-              <option value="">เลือก</option>
-              {prefixOptions.map((p) => (
-                <option key={p} value={p}>{p}</option>
-              ))}
-              {allowOtherPrefix ? <option value={PREFIX_OTHER}>{PREFIX_OTHER}</option> : null}
-            </SelectField>
+    <div className="flex flex-col gap-5 sm:flex-row sm:items-start">
+      <Wrap name={prefixKey} className="sm:w-30 sm:shrink-0">
+        {/*
+          คำนำหน้าที่มาจากบัญชีแสดงเป็นข้อความ ไม่ใช่ dropdown ที่ปิดไว้ — ค่าอย่าง
+          "ว่าที่ร้อยตรีหญิง" หรือ "นายแพทย์" ไม่มีอยู่ในลิสต์ ถ้ายังเป็น <select>
+          ช่องจะว่างเปล่าแล้วส่งค่าว่างไปโดยไม่มีใครเห็น (เจอมาแล้วที่หน้า /activate)
+        */}
+        {locked.prefix ? (
+          <TextField label="คำนำหน้า" required readOnly value={form[prefixKey]} error={prefixState.error} />
+        ) : (
+          <SelectField label="คำนำหน้า" required value={otherPrefix ? PREFIX_OTHER : form[prefixKey]} onChange={(e) => changePrefix(e.target.value)} {...selectState}>
+            <option value="">เลือก</option>
+            {prefixOptions.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+            {allowOtherPrefix ? <option value={PREFIX_OTHER}>{PREFIX_OTHER}</option> : null}
+          </SelectField>
+        )}
+      </Wrap>
+      {canSpecifyPrefix ? (
+        <div
+          inert={!specifying}
+          className={clsx(
+            "min-w-0 overflow-hidden transition-all duration-300 ease-out motion-reduce:transition-none",
+            /*
+              จอเล็กแถวนี้เรียงลงมาเป็นแนวตั้งอยู่แล้ว ตอนหุบจึงเอาออกไปเลย (`hidden`)
+              ไม่ต้องยุบความสูงให้เป็นศูนย์ — ที่ต้องคลี่ข้าง ๆ คือจอ sm ขึ้นไปเท่านั้น
+            */
+            specifying ? "sm:w-44" : "hidden sm:block sm:w-0 sm:-ml-5 sm:opacity-0",
           )}
-        </Wrap>
-        <Wrap name={firstKey}>
-          {locked.firstName ? (
-            <TextField label="ชื่อ" required readOnly value={form[firstKey]} error={fieldProps(firstKey).error} />
-          ) : (
-            <TextField label="ชื่อ" required value={form[firstKey]} onChange={(e) => set(firstKey, e.target.value)} {...fieldProps(firstKey)} />
-          )}
-        </Wrap>
-        <Wrap name={lastKey}>
-          {locked.lastName ? (
-            <TextField label="นามสกุล" required readOnly value={form[lastKey]} error={fieldProps(lastKey).error} />
-          ) : (
-            <TextField label="นามสกุล" required value={form[lastKey]} onChange={(e) => set(lastKey, e.target.value)} {...fieldProps(lastKey)} />
-          )}
-        </Wrap>
-      </div>
-      {otherPrefix && !locked.prefix ? (
-        <div className="sm:max-w-[18rem]">
+        >
           <TextField label="ระบุคำนำหน้า" required value={form[prefixKey]} onChange={(e) => set(prefixKey, e.target.value)} {...prefixState} placeholder="เช่น ว่าที่ร้อยตรี" />
         </div>
       ) : null}
+      <Wrap name={firstKey} className="min-w-0 sm:flex-1">
+        {locked.firstName ? (
+          <TextField label="ชื่อ" required readOnly value={form[firstKey]} error={fieldProps(firstKey).error} />
+        ) : (
+          <TextField label="ชื่อ" required value={form[firstKey]} onChange={(e) => set(firstKey, e.target.value)} {...fieldProps(firstKey)} />
+        )}
+      </Wrap>
+      <Wrap name={lastKey} className="min-w-0 sm:flex-1">
+        {locked.lastName ? (
+          <TextField label="นามสกุล" required readOnly value={form[lastKey]} error={fieldProps(lastKey).error} />
+        ) : (
+          <TextField label="นามสกุล" required value={form[lastKey]} onChange={(e) => set(lastKey, e.target.value)} {...fieldProps(lastKey)} />
+        )}
+      </Wrap>
     </div>
   );
 }
