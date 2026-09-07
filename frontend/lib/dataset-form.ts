@@ -117,6 +117,30 @@ export const GRANT_LABELS = { Y: "อนุญาต", N: "ไม่อนุญ
 export const ASSIGN_LABELS = { Y: "มอบหมาย", N: "ไม่มอบหมาย" } as const;
 export const HAVE_LABELS = { Y: "มี", N: "ไม่มี" } as const;
 
+/**
+ * ลำดับตัวเลือกบนหน้าจอ — คำตอบสุดท้ายของ optionsFor()
+ *
+ * ลำดับที่เขียนไว้ในอ็อบเจ็กต์ข้างบนเชื่อไม่ได้ JS ยกคีย์ที่เป็น "เลขจำนวนเต็มพอดี"
+ * ("10" "11" "98" "99") ขึ้นก่อนเสมอและเรียงตามค่าตัวเลข ส่วนคีย์ที่มีศูนย์นำ
+ * ("00" "01") นับเป็นสตริงจึงไปต่อท้าย กล่อง "ประเด็น" เลยขึ้น "อื่น ๆ" เป็นตัวแรก
+ * และ "ความละเอียดเชิงภูมิศาสตร์" ขึ้น "องค์กรปกครองส่วนท้องถิ่น" ก่อน "โลก"
+ *
+ * ตารางนี้จึงเรียงเอง ไล่ตามลำดับชั้นจริงจากหยาบไปละเอียด แล้วปิดท้ายด้วยตัวเลือก
+ * ที่ไม่ใช่ระดับใดระดับหนึ่ง — "ไม่มี" "ไม่ทราบ" "อื่น ๆ"
+ *
+ * มีเฉพาะชุดที่ลำดับคีย์ผิด ชุดที่เหลือใช้ลำดับที่ประกาศไว้ตามเดิม รหัสที่ไม่ได้เอ่ยถึง
+ * ในตารางจะถูกต่อท้ายให้ — เพิ่มรหัสใหม่แล้วตัวเลือกไม่หาย แต่ต้องมาเรียงเอง
+ *
+ * นี่เป็นเรื่องของหน้าจอล้วน ๆ `backend/src/lib/dataset.ts` จึงไม่มีตารางนี้
+ */
+const CHOICE_ORDER = new Map<Record<string, string>, readonly string[]>([
+  [DATA_TOPIC_LABELS, ["01", "02", "03", "04", "05", "06", "07", "99"]],
+  [
+    GEO_COVERAGE_LABELS,
+    ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "00", "98", "99"],
+  ],
+]);
+
 // ------------------------------------------------------------------ รูปของฟอร์ม
 
 /** ค่าที่เก็บใน state ของฟอร์ม — ทุกช่องเป็นสตริงเพราะมาจาก <input> โดยตรง */
@@ -453,10 +477,17 @@ export const splitTags = (value: string | null | undefined): string[] =>
     .map((t) => t.trim())
     .filter(Boolean);
 
-/** ตัวช่วยทำ <option> เฉพาะรหัสที่เงื่อนไขยังอนุญาต โดยคงลำดับที่ประกาศไว้ */
+/** ตัวช่วยทำ <option> เฉพาะรหัสที่เงื่อนไขยังอนุญาต เรียงตาม CHOICE_ORDER */
 export function optionsFor(
   labels: Record<string, string>,
   allowed?: string[],
 ): Array<[string, string]> {
-  return Object.entries(labels).filter(([code]) => !allowed || allowed.includes(code));
+  const order = CHOICE_ORDER.get(labels) ?? [];
+  const codes = [
+    ...order.filter((code) => code in labels),
+    ...Object.keys(labels).filter((code) => !order.includes(code)),
+  ];
+  return codes
+    .filter((code) => !allowed || allowed.includes(code))
+    .map((code): [string, string] => [code, labels[code]!]);
 }
