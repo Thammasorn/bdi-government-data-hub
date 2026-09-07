@@ -591,7 +591,7 @@ export default function EditOrganizationPage() {
               <PersonFields prefixKey="contactPrefix" firstKey="contactFirstName" lastKey="contactLastName" form={form} fieldProps={fieldProps} set={set} locked={contactLocked} />
               <div className="grid gap-5 sm:grid-cols-2">
                 <Wrap name="contactPosition">
-                  <TextField label="ตำแหน่ง" required value={form.contactPosition} onChange={(e) => set("contactPosition", e.target.value)} {...fieldProps("contactPosition")} />
+                  <TextField label="ตำแหน่ง (ชื่อเต็มภาษาไทย)" required value={form.contactPosition} onChange={(e) => set("contactPosition", e.target.value)} {...fieldProps("contactPosition")} hint="ชื่อตำแหน่งเต็มเป็นภาษาไทย (มีตัวย่อภาษาอังกฤษปนได้)" />
                 </Wrap>
                 <Wrap name="contactDepartment">
                   <TextField label="ฝ่าย/กอง/สำนัก" required value={form.contactDepartment} onChange={(e) => set("contactDepartment", e.target.value)} {...fieldProps("contactDepartment")} />

@@ -103,7 +103,7 @@ import {
   normaliseThaiPhone,
   organizationNameSchema,
   phoneSchema,
-  signatoryPositionSchema,
+  positionSchema,
 } from "../lib/validation.js";
 import {
   listOrderBy,
@@ -255,7 +255,7 @@ const submitSchema = z
   signatoryPrefix: z.string().trim().min(1, "กรุณาระบุคำนำหน้า"),
   signatoryFirstName: z.string().trim().min(1, "กรุณากรอกชื่อ"),
   signatoryLastName: z.string().trim().min(1, "กรุณากรอกนามสกุล"),
-  signatoryPosition: signatoryPositionSchema,
+  signatoryPosition: positionSchema,
   signatoryEmail: emailSchema,
   signatoryNationalId: nationalIdSchema,
   signatoryPhone: phoneSchema,
@@ -263,7 +263,7 @@ const submitSchema = z
   contactPrefix: z.string().trim().min(1, "กรุณาเลือกคำนำหน้า"),
   contactFirstName: z.string().trim().min(1, "กรุณากรอกชื่อ"),
   contactLastName: z.string().trim().min(1, "กรุณากรอกนามสกุล"),
-  contactPosition: z.string().trim().min(1, "กรุณากรอกตำแหน่ง"),
+  contactPosition: positionSchema,
   contactDepartment: z.string().trim().min(1, "กรุณากรอกฝ่าย/กอง/สำนัก"),
   contactEmail: emailSchema,
   contactPhone: phoneSchema,
