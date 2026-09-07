@@ -414,6 +414,9 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
           <CardHeader tag="ส่วนที่ 1" title="ข้อมูลหน่วยงาน" />
           <Rows
             rows={[
+              /* รหัสหน่วยงานมาก่อนชื่อ เหมือนลำดับช่องในฟอร์ม — และเป็นค่าที่เอกสารกับอีเมล
+                 ใช้อ้างถึงหน่วยงานนี้ คนอ่านหน้านี้จึงต้องคัดลอกไปใช้ได้จากที่เดียวกัน */
+              ["รหัสหน่วยงาน", org.organizationCode],
               ["ชื่อหน่วยงาน", org.name],
               ["ที่อยู่", org.addressLine],
               ["ถนน", org.road],

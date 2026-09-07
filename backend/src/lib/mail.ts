@@ -59,6 +59,19 @@ function getTransporter(): Transporter | null {
   return transporter;
 }
 
+/**
+ * หน่วยงานที่อีเมลฉบับหนึ่งพูดถึง — ชื่อกับรหัสเดินทางด้วยกันเสมอ
+ *
+ * แยกเป็นชนิดเดียวเพราะทุกฉบับของ Journey B ต้องพิมพ์ทั้งคู่ ถ้าปล่อยเป็นพารามิเตอร์
+ * `orgName` เดี่ยว ๆ เหมือนเดิม การเพิ่มรหัสจะกลายเป็นการเติมอาร์กิวเมนต์ที่ห้าให้ทุกฟังก์ชัน
+ * และที่เรียกใช้ลืมได้ทีละที่ · `code` เป็น null ได้จริง — คำขอที่ยังไม่ได้ออกรหัสให้
+ */
+export interface OrgIdentity {
+  name: string;
+  /** รหัสหน่วยงาน — null ได้ ถ้าคำขอใบนั้นยังไม่มีรหัส */
+  code: string | null;
+}
+
 interface Button {
   label: string;
   url: string;
@@ -79,6 +92,13 @@ interface Button {
 function layout(opts: {
   title: string;
   intro: string;
+  /**
+   * รหัสหน่วยงานที่เรื่องนี้เกี่ยวข้อง — พิมพ์ใต้ย่อหน้าเปิดเสมอ ไม่ว่าจะเป็นอีเมลฉบับไหน
+   *
+   * อยู่ที่ layout ไม่ใช่ที่ template แต่ละฉบับ เพื่อให้ตำแหน่งบนหน้าจดหมายเป็นที่เดียวกันหมด
+   * ผู้รับที่ดูแลหลายหน่วยงาน (เจ้าหน้าที่ BDI ทุกคน) จึงกวาดตาหาที่เดิมได้โดยไม่ต้องอ่านทั้งฉบับ
+   */
+  orgCode?: string | null;
   body?: string;
   /** บล็อกขั้นตอนจาก stepsBlock() — วางใต้ body และเหนือปุ่มเสมอ */
   steps?: string;
@@ -93,7 +113,7 @@ function layout(opts: {
   closing?: string;
   footnote?: string;
 }): string {
-  const { title, intro, body = "", steps = "", button, closing, footnote } = opts;
+  const { title, intro, orgCode, body = "", steps = "", button, closing, footnote } = opts;
   return `<!doctype html>
 <html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
 <body style="margin:0;padding:0;background:#F6F7FB;">
@@ -118,6 +138,7 @@ function layout(opts: {
         <tr><td style="padding:24px 32px 0;">
           <h1 style="margin:0 0 12px;font:600 22px/1.4 'Helvetica Neue',Arial,sans-serif;color:${TEXT};">${title}</h1>
           <p style="margin:0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">${intro}</p>
+          ${orgCodeLine(orgCode)}
         </td></tr>
         ${body ? `<tr><td style="padding:20px 32px 0;">${body}</td></tr>` : ""}
         ${steps ? `<tr><td style="padding:20px 32px 0;">${steps}</td></tr>` : ""}
@@ -152,6 +173,19 @@ function layout(opts: {
     </td></tr>
   </table>
 </body></html>`;
+}
+
+/**
+ * บรรทัด "รหัสหน่วยงาน" ใต้ย่อหน้าเปิด
+ *
+ * คืนสตริงว่างเมื่อไม่มีรหัส — ป้ายเปล่า ๆ ที่ตามด้วยความว่างอ่านเหมือนระบบทำข้อมูลหาย
+ * ส่วนอีเมลที่ไม่ได้พูดถึงหน่วยงานใดเลย (OTP, สิ่งที่ตกมาที่ sendRaw) ไม่ส่งค่านี้มาตั้งแต่แรก
+ */
+function orgCodeLine(code: string | null | undefined): string {
+  if (!code) return "";
+  return `<p style="margin:10px 0 0;font:400 13px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
+            รหัสหน่วยงาน <strong style="color:${TEXT};">${escapeHtml(code)}</strong>
+          </p>`;
 }
 
 async function send(to: string, subject: string, html: string): Promise<void> {
@@ -389,20 +423,22 @@ export async function sendOtpEmail(to: string, code: string) {
 
 export async function sendSubmittedToOfficers(
   to: string[],
-  orgName: string,
+  org: OrgIdentity,
   submitter: string,
   orgId: string,
   progress?: JourneyProgress | null,
 ) {
   if (to.length === 0) return;
+  const orgName = escapeHtml(org.name);
   await Promise.all(
     to.map((addr) =>
       send(
         addr,
-        `มีคำขอสร้างหน่วยงานใหม่: ${orgName}`,
+        `มีคำขอสร้างหน่วยงานใหม่: ${org.name}`,
         layout({
           title: "มีคำขอสร้างหน่วยงานรอตรวจสอบ",
-          intro: `<strong style="color:${TEXT};">${orgName}</strong> ยื่นคำขอเข้ามาในระบบ โดย ${submitter}`,
+          intro: `<strong style="color:${TEXT};">${orgName}</strong> ยื่นคำขอเข้ามาในระบบ โดย ${escapeHtml(submitter)}`,
+          orgCode: org.code,
           steps: stepsBlock(progress),
           button: { label: "เปิดดูคำขอ", url: `${env.appUrl}/admin/organizations/${orgId}` },
         }),
@@ -413,17 +449,18 @@ export async function sendSubmittedToOfficers(
 
 export async function sendRevisionRequested(
   to: string,
-  orgName: string,
+  org: OrgIdentity,
   note: string,
   orgId: string,
   progress?: JourneyProgress | null,
 ) {
   await send(
     to,
-    `ต้องปรับปรุงข้อมูลหน่วยงาน: ${orgName}`,
+    `ต้องปรับปรุงข้อมูลหน่วยงาน: ${org.name}`,
     layout({
       title: "คำขอของคุณต้องปรับปรุง",
-      intro: `ผู้ตรวจสอบขอให้แก้ไขข้อมูลของ <strong style="color:${TEXT};">${orgName}</strong> ก่อนดำเนินการต่อ`,
+      intro: `ผู้ตรวจสอบขอให้แก้ไขข้อมูลของ <strong style="color:${TEXT};">${escapeHtml(org.name)}</strong> ก่อนดำเนินการต่อ`,
+      orgCode: org.code,
       body: `<div style="background:#FDECEA;border-left:3px solid #B3261E;border-radius:8px;padding:16px;">
                <div style="font:600 13px/1 'Helvetica Neue',Arial,sans-serif;color:#B3261E;margin-bottom:8px;">สิ่งที่ต้องแก้ไข</div>
                <div style="font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};white-space:pre-wrap;">${escapeHtml(note)}</div>
@@ -436,7 +473,7 @@ export async function sendRevisionRequested(
 
 export async function sendSignatoryRequest(
   to: string,
-  orgName: string,
+  org: OrgIdentity,
   orgId: string,
   registerToken?: string,
   progress?: JourneyProgress | null,
@@ -446,10 +483,11 @@ export async function sendSignatoryRequest(
     : `${env.appUrl}/organizations/${orgId}`;
   await send(
     to,
-    `ขอความเห็นชอบการสร้างหน่วยงาน: ${orgName}`,
+    `ขอความเห็นชอบการสร้างหน่วยงาน: ${org.name}`,
     layout({
       title: "ขอความเห็นชอบในฐานะผู้มีอำนาจอนุมัติของหน่วยงาน",
-      intro: `<strong style="color:${TEXT};">${orgName}</strong> ระบุว่าคุณเป็นผู้มีอำนาจอนุมัติของหน่วยงาน และคำขอผ่านการตรวจสอบจากเจ้าหน้าที่ BDI แล้ว`,
+      intro: `<strong style="color:${TEXT};">${escapeHtml(org.name)}</strong> ระบุว่าคุณเป็นผู้มีอำนาจอนุมัติของหน่วยงาน และคำขอผ่านการตรวจสอบจากเจ้าหน้าที่ BDI แล้ว`,
+      orgCode: org.code,
       body: registerToken
         ? `<p style="margin:0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
              คุณยังไม่มีบัญชีในระบบ กรุณาลงทะเบียนเพื่อตรวจสอบเอกสารและให้ความเห็นชอบ
@@ -463,19 +501,21 @@ export async function sendSignatoryRequest(
 
 export async function sendFinalApprovalRequest(
   to: string[],
-  orgName: string,
+  org: OrgIdentity,
   orgId: string,
   progress?: JourneyProgress | null,
 ) {
   if (to.length === 0) return;
+  const orgName = escapeHtml(org.name);
   await Promise.all(
     to.map((addr) =>
       send(
         addr,
-        `รอลงนาม: ${orgName}`,
+        `รอลงนาม: ${org.name}`,
         layout({
           title: "มีคำขอรอการลงนาม",
           intro: `ผู้มีอำนาจอนุมัติของ <strong style="color:${TEXT};">${orgName}</strong> ให้ความเห็นชอบแล้ว`,
+          orgCode: org.code,
           steps: stepsBlock(progress),
           button: { label: "ตรวจสอบและลงนาม", url: `${env.appUrl}/admin/organizations/${orgId}` },
         }),
@@ -486,20 +526,22 @@ export async function sendFinalApprovalRequest(
 
 export async function sendActivated(
   to: string[],
-  orgName: string,
+  org: OrgIdentity,
   orgId: string,
   progress?: JourneyProgress | null,
 ) {
   const unique = [...new Set(to.filter(Boolean))];
   if (unique.length === 0) return;
+  const orgName = escapeHtml(org.name);
   await Promise.all(
     unique.map((addr) =>
       send(
         addr,
-        `หน่วยงาน ${orgName} เปิดใช้งานแล้ว`,
+        `หน่วยงาน ${org.name} เปิดใช้งานแล้ว`,
         layout({
           title: "หน่วยงานของคุณเปิดใช้งานแล้ว",
           intro: `<strong style="color:${TEXT};">${orgName}</strong> ผ่านการอนุมัติครบทุกขั้นตอนและพร้อมใช้งานบนแพลตฟอร์มแล้ว`,
+          orgCode: org.code,
           steps: stepsBlock(progress),
           button: { label: "เข้าสู่ระบบ", url: `${env.appUrl}/organizations/${orgId}` },
         }),
@@ -562,7 +604,14 @@ const datasetSubject = (requestNumber: string, text: string) => `[${requestNumbe
 
 export async function sendDatasetSubmitted(
   to: string[],
-  info: { requestNumber: string; datasetName: string; organizationName: string; submitter: string; id: string },
+  info: {
+    requestNumber: string;
+    organizationCode: string | null;
+    datasetName: string;
+    organizationName: string;
+    submitter: string;
+    id: string;
+  },
   progress?: JourneyProgress | null,
 ) {
   await sendMany(
@@ -570,6 +619,7 @@ export async function sendDatasetSubmitted(
     datasetSubject(info.requestNumber, `มีคำขอลงทะเบียนชุดข้อมูลรอตรวจสอบ: ${info.datasetName}`),
     layout({
       title: "มีคำขอลงทะเบียนชุดข้อมูลรอตรวจสอบ",
+      orgCode: info.organizationCode,
       intro: `<strong style="color:${TEXT};">${escapeHtml(info.organizationName)}</strong> นำส่งคำขอลงทะเบียนชุดข้อมูลเข้ามาในระบบ`,
       body: summaryTable([
         ["เลขที่คำขอ", info.requestNumber],
@@ -584,7 +634,15 @@ export async function sendDatasetSubmitted(
 
 export async function sendDatasetRevisionRequested(
   to: string[],
-  info: { requestNumber: string; datasetName: string; note: string; byName: string; at: Date; id: string },
+  info: {
+    requestNumber: string;
+    organizationCode: string | null;
+    datasetName: string;
+    note: string;
+    byName: string;
+    at: Date;
+    id: string;
+  },
   progress?: JourneyProgress | null,
 ) {
   const when = new Intl.DateTimeFormat("th-TH", {
@@ -598,6 +656,7 @@ export async function sendDatasetRevisionRequested(
     datasetSubject(info.requestNumber, `ต้องปรับปรุงคำขอลงทะเบียนชุดข้อมูล: ${info.datasetName}`),
     layout({
       title: "คำขอของคุณต้องปรับปรุง",
+      orgCode: info.organizationCode,
       intro: `ผู้ตรวจสอบขอให้แก้ไขคำขอ <strong style="color:${TEXT};">${escapeHtml(info.datasetName)}</strong> ก่อนดำเนินการต่อ`,
       // สเปกกำหนดว่าต้องบอกให้ครบว่า "แก้เรื่องอะไร โดยใคร เมื่อไหร่"
       body: `<div style="background:#FDECEA;border-left:3px solid #B3261E;border-radius:8px;padding:16px;">
@@ -615,7 +674,13 @@ export async function sendDatasetRevisionRequested(
 
 export async function sendDatasetSpecialistAssigned(
   to: string,
-  info: { requestNumber: string; datasetName: string; organizationName: string; id: string },
+  info: {
+    requestNumber: string;
+    organizationCode: string | null;
+    datasetName: string;
+    organizationName: string;
+    id: string;
+  },
   progress?: JourneyProgress | null,
 ) {
   await sendMany(
@@ -623,6 +688,7 @@ export async function sendDatasetSpecialistAssigned(
     datasetSubject(info.requestNumber, `ขอความเห็นต่อชุดข้อมูล: ${info.datasetName}`),
     layout({
       title: "เจ้าหน้าที่ BDI ขอความเห็นของคุณ",
+      orgCode: info.organizationCode,
       /**
        * ถ้อยคำต้องไม่ทำให้เข้าใจว่าคำขอมารอเขาอยู่ — มันยังอยู่ที่เจ้าหน้าที่ BDI และ
        * เจ้าหน้าที่จะกดผ่านหรือส่งกลับเมื่อไรก็ได้ ไม่ว่าความเห็นจะมาแล้วหรือยัง
@@ -644,7 +710,13 @@ export async function sendDatasetSpecialistAssigned(
 
 export async function sendDatasetPendingOrgApprover(
   to: string[],
-  info: { requestNumber: string; datasetName: string; organizationName: string; id: string },
+  info: {
+    requestNumber: string;
+    organizationCode: string | null;
+    datasetName: string;
+    organizationName: string;
+    id: string;
+  },
   progress?: JourneyProgress | null,
 ) {
   await sendMany(
@@ -652,6 +724,7 @@ export async function sendDatasetPendingOrgApprover(
     datasetSubject(info.requestNumber, `ขอความเห็นชอบชุดข้อมูล: ${info.datasetName}`),
     layout({
       title: "ขอความเห็นชอบในฐานะผู้มีอำนาจอนุมัติของหน่วยงาน",
+      orgCode: info.organizationCode,
       intro: `คำขอลงทะเบียนชุดข้อมูลของ <strong style="color:${TEXT};">${escapeHtml(info.organizationName)}</strong> ผ่านการตรวจสอบเบื้องต้นจากเจ้าหน้าที่ BDI แล้ว`,
       body: summaryTable([
         ["เลขที่คำขอ", info.requestNumber],
@@ -672,7 +745,14 @@ export async function sendDatasetPendingOrgApprover(
  */
 export async function sendDatasetSignedPendingApproval(
   to: string[],
-  info: { requestNumber: string; datasetName: string; organizationName: string; signedBy: string; id: string },
+  info: {
+    requestNumber: string;
+    organizationCode: string | null;
+    datasetName: string;
+    organizationName: string;
+    signedBy: string;
+    id: string;
+  },
   progress?: JourneyProgress | null,
 ) {
   await sendMany(
@@ -680,6 +760,7 @@ export async function sendDatasetSignedPendingApproval(
     datasetSubject(info.requestNumber, `รอการพิจารณาชุดข้อมูล: ${info.datasetName}`),
     layout({
       title: "มีคำขอลงทะเบียนชุดข้อมูลรอการพิจารณา",
+      orgCode: info.organizationCode,
       intro:
         `ผู้มีอำนาจของ <strong style="color:${TEXT};">${escapeHtml(info.organizationName)}</strong> ` +
         `ได้ลงนามเห็นชอบคำขอลงทะเบียนชุดข้อมูลแล้ว และคำขออยู่ระหว่างรอการพิจารณาจาก BDI`,
@@ -697,7 +778,13 @@ export async function sendDatasetSignedPendingApproval(
 
 export async function sendDatasetPendingBdiApproval(
   to: string[],
-  info: { requestNumber: string; datasetName: string; organizationName: string; id: string },
+  info: {
+    requestNumber: string;
+    organizationCode: string | null;
+    datasetName: string;
+    organizationName: string;
+    id: string;
+  },
   progress?: JourneyProgress | null,
 ) {
   await sendMany(
@@ -705,6 +792,7 @@ export async function sendDatasetPendingBdiApproval(
     datasetSubject(info.requestNumber, `รอการพิจารณาชุดข้อมูล: ${info.datasetName}`),
     layout({
       title: "มีคำขอลงทะเบียนชุดข้อมูลรอการพิจารณา",
+      orgCode: info.organizationCode,
       intro:
         "คำขอลงทะเบียนชุดข้อมูลผ่านการตรวจสอบและการลงนามเห็นชอบของหน่วยงานครบแล้ว " +
         "และอยู่ระหว่างรอการพิจารณาจาก BDI",
@@ -721,7 +809,13 @@ export async function sendDatasetPendingBdiApproval(
 
 export async function sendDatasetApproved(
   to: string[],
-  info: { requestNumber: string; datasetName: string; organizationName: string; id: string },
+  info: {
+    requestNumber: string;
+    organizationCode: string | null;
+    datasetName: string;
+    organizationName: string;
+    id: string;
+  },
   progress?: JourneyProgress | null,
 ) {
   await sendMany(
@@ -729,6 +823,7 @@ export async function sendDatasetApproved(
     datasetSubject(info.requestNumber, `อนุมัติชุดข้อมูลแล้ว: ${info.datasetName}`),
     layout({
       title: "ชุดข้อมูลได้รับอนุมัติแล้ว",
+      orgCode: info.organizationCode,
       intro: `คำขอลงทะเบียนชุดข้อมูล <strong style="color:${TEXT};">${escapeHtml(info.datasetName)}</strong> ผ่านการอนุมัติครบทุกขั้นตอนแล้ว`,
       body: summaryTable([
         ["เลขที่คำขอ", info.requestNumber],
@@ -742,7 +837,13 @@ export async function sendDatasetApproved(
 
 export async function sendDatasetRejected(
   to: string[],
-  info: { requestNumber: string; datasetName: string; reason: string; id: string },
+  info: {
+    requestNumber: string;
+    organizationCode: string | null;
+    datasetName: string;
+    reason: string;
+    id: string;
+  },
   progress?: JourneyProgress | null,
 ) {
   await sendMany(
@@ -750,6 +851,7 @@ export async function sendDatasetRejected(
     datasetSubject(info.requestNumber, `ไม่อนุมัติชุดข้อมูล: ${info.datasetName}`),
     layout({
       title: "คำขอลงทะเบียนชุดข้อมูลไม่ได้รับอนุมัติ",
+      orgCode: info.organizationCode,
       intro: `คำขอ <strong style="color:${TEXT};">${escapeHtml(info.datasetName)}</strong> สิ้นสุดกระบวนการโดยไม่ได้รับอนุมัติ`,
       body: `<div style="background:#FDECEA;border-left:3px solid #B3261E;border-radius:8px;padding:16px;">
                <div style="font:600 13px/1 'Helvetica Neue',Arial,sans-serif;color:#B3261E;margin-bottom:8px;">เหตุผล</div>
@@ -771,7 +873,7 @@ export async function sendDatasetRejected(
 export async function sendRequestProgressed(
   to: string,
   /** `path` คือ path ภายในแอปจาก linkFor() — โดเมนต่อให้ที่นี่ เพราะ appUrl เปลี่ยนได้ */
-  info: { title: string; message: string; path: string },
+  info: { title: string; message: string; path: string; orgCode: string | null },
   progress?: JourneyProgress | null,
 ): Promise<void> {
   await send(
@@ -780,6 +882,7 @@ export async function sendRequestProgressed(
     layout({
       title: info.title,
       intro: escapeHtml(info.message),
+      orgCode: info.orgCode,
       steps: stepsBlock(progress),
       button: { label: "เปิดดูคำขอ", url: `${env.appUrl}${info.path}` },
       footnote: "อีเมลฉบับนี้แจ้งความคืบหน้าเท่านั้น ยังไม่มีสิ่งที่คุณต้องดำเนินการ",

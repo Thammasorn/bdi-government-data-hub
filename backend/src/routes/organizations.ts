@@ -2896,6 +2896,8 @@ async function dispatchReviewNotifications(
   note: string | undefined,
 ) {
   const name = request.organizationNameTh ?? request.organization.nameTh;
+  /** ชื่อกับรหัสเดินทางไปกับอีเมลด้วยกันเสมอ — snapshot ของคำขอมาก่อน แล้วค่อยถอยไปที่หน่วยงาน */
+  const org = { name, code: request.organizationCode ?? request.organization.organizationCode };
   const members = await organizationMemberIds(request.organizationId);
 
   /**
@@ -2936,7 +2938,7 @@ async function dispatchReviewNotifications(
   }
 
   if (taskType === ReviewTaskType.BDI_OFFICER_REVIEW && request.approverEmail) {
-    await sendSignatoryRequest(request.approverEmail, name, request.id, undefined, progress);
+    await sendSignatoryRequest(request.approverEmail, org, request.id, undefined, progress);
     return;
   }
 
