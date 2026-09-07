@@ -2610,17 +2610,6 @@ async function ensureApproverAccount(
     throw new WorkflowError("no_approver", "คำขอนี้ยังไม่ได้ระบุอีเมลผู้มีอำนาจกระทำการแทน");
   }
 
-  /**
-   * บัญชีที่เพิ่งสร้างให้ผู้มีอำนาจยังไม่ activate — ถ้าฟอร์มไม่ได้กรอกชื่อไทยมา
-   * `display_name` จะเป็นค่าว่าง ไม่ใช่อีเมล เพราะอีเมลไปโผล่บนเอกสารข้อตกลงไม่ได้
-   * (ดู lib/person-name.ts) ชื่อจริงจะถูกเติมตอน activate อยู่แล้ว
-   */
-  const displayName = fullNameTh({
-    prefixTh: request.approverPrefixTh,
-    firstnameTh: request.approverFirstnameTh,
-    lastnameTh: request.approverLastnameTh,
-  });
-
   const existing = await tx.userAccount.findUnique({ where: { email } });
 
   /**
@@ -2645,19 +2634,35 @@ async function ensureApproverAccount(
     throw new WorkflowError("approver_conflict", conflict.message, 409);
   }
 
+  /**
+   * **บัญชีใหม่ได้แค่อีเมลกับเลขบัตร ไม่ได้อะไรจากฟอร์มอีก** (การ์ด "ใช้ title จาก thaid")
+   *
+   * เดิมคัดลอกคำนำหน้า ชื่อ นามสกุล เบอร์โทร ตำแหน่ง ฝ่าย/กอง/สำนัก ของผู้มีอำนาจฯ
+   * จากคำขอลงมาด้วย เพื่อให้เขาไม่ต้องพิมพ์ซ้ำตอนเปิดใช้งานบัญชี ปัญหาคือค่าพวกนั้น
+   * **เจ้าหน้าที่ของหน่วยงานเป็นคนกรอกแทนเขา** ไม่ใช่ตัวเขาเอง พอถูกเขียนลงบัญชีแล้ว
+   * `lockedProfile()` ก็ล็อกมันไว้ในฐานะ "ค่าที่ระบบได้รับมาแล้ว" — คำนำหน้าที่เจ้าหน้าที่
+   * เดาผิด (นาย/นาง/นางสาว หรือยศที่ไม่มีในลิสต์) จึงติดอยู่บนบัญชีโดยที่เจ้าตัวแก้ไม่ได้
+   * และไม่มีใครรู้ว่าผิดจนกว่าจะเห็นเอกสาร
+   *
+   * อีเมลกับเลขบัตรคนละเรื่องกัน: อีเมลคือที่อยู่ที่ส่งคำเชิญไป และเลขบัตรคือค่าที่
+   * `POST /api/auth/thaid/callback` เอาไปเทียบกับบัตรจริง — ทั้งคู่เป็นกุญแจของคำเชิญ
+   * ไม่ใช่คำบอกเล่าเรื่องตัวเขา ส่วนคำนำหน้า ชื่อ นามสกุล มาจาก ThaID ตอนยืนยันตัวตน
+   * และเบอร์โทรเขากรอกเองในฟอร์มเดียวกันนั้น
+   *
+   * ค่าที่เจ้าหน้าที่กรอกไม่ได้หายไปจากระบบ — ยังอยู่บนคำขอและยังเป็นชื่อที่ปรากฏใน
+   * ย่อหน้าคู่สัญญาของเอกสาร A0–A3 ตามเดิม (ดู `POST /:id/review`) เปลี่ยนแค่ว่ามัน
+   * ไม่ไหลลงบัญชีของคนอื่นอีกแล้ว
+   *
+   * `display_name` จึงเป็นค่าว่างจนกว่าจะ activate ไม่ใช่อีเมล — อีเมลไปโผล่บนเอกสาร
+   * ข้อตกลงในฐานะ "ชื่อผู้ลงนาม" ไม่ได้ (ดู lib/person-name.ts)
+   */
   const account =
     existing ??
     (await tx.userAccount.create({
       data: {
         email,
         cid: request.approverCid,
-        prefixTh: request.approverPrefixTh,
-        firstnameTh: request.approverFirstnameTh,
-        lastnameTh: request.approverLastnameTh,
-        phoneNumber: request.approverPhoneNumber,
-        positionTh: request.approverPositionTh,
-        departmentTh: request.approverDepartmentTh,
-        displayName,
+        displayName: "",
         accountType: AccountType.ORGANIZATION,
         status: UserAccountStatus.PENDING,
         createdBy: SYSTEM_USER_ID,

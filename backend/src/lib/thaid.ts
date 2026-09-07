@@ -34,8 +34,9 @@ export interface ThaidIdentity {
   /** sub ของ id_token — ลงคอลัมน์ user_account.external_subject */
   subject: string;
   /**
-   * คำนำหน้า — มาจาก claim `title` ซึ่ง **ไม่ได้อยู่ใน scope ที่ขอ** จึงเป็น null
-   * ตามปกติ เก็บไว้อ่านเผื่อกรมการปกครองส่งมาให้เอง
+   * คำนำหน้า — มาจาก claim `title` ซึ่งอยู่ใน scope ที่ขอตั้งแต่ 2026-09-07
+   * (การ์ด "ใช้ title จาก thaid") เป็น null เมื่อกรมการปกครองไม่ส่ง claim นั้นมา
+   * ปลายทางจะปล่อยให้ผู้ใช้เลือกคำนำหน้าเองเฉพาะกรณีนั้น
    */
   titleTh: string | null;
   givenNameTh: string | null;

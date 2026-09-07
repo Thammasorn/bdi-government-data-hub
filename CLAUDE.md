@@ -605,13 +605,21 @@ credentials answers 501 `not_configured` at `POST /api/auth/thaid/start` rather 
 the user through. A previous `THAID_MOCK` did the latter and was removed — a switch that
 turns identity verification into a button is not something to leave lying in a repo.
 
-`THAID_SCOPE` defaults to `openid pid given_name family_name given_name_en family_name_en`
-(set 2026-08-24 from the Enhance card; it used to also ask for `title` `middle_name` `name`
-`name_en`). **DOPA granted this project's client the `pid` scope**, found by probing on
-2026-09-02, so the default now works as written and `main` runs `THAID_USE_PID=true`. There is
-no `title` claim, so the activation form fills first and last name from the card and leaves the
-prefix for the user to choose; `toIdentity()` still reads `title` / `name` / `name_en` in case
-DOPA sends them unasked.
+`THAID_SCOPE` defaults to `openid pid given_name family_name given_name_en family_name_en
+title`. **DOPA granted this project's client the `pid` scope**, found by probing on 2026-09-02,
+so the default works as written and `main` runs `THAID_USE_PID=true`. `title` was added on
+2026-09-07 by the card "ใช้ title จาก thaid" after probing the same client: the scope above
+returns 302, while `openid nonsense_scope_zzz` still returns 400 `invalid_scope`, so the 302 is
+a grant and not a rubber stamp. The activation form therefore fills **prefix, first and last
+name** from the card and locks all three; the prefix dropdown only appears when DOPA sends no
+`title` claim. `toIdentity()` still reads `name` / `name_en` in case DOPA sends them unasked.
+
+**Nothing the organisation's officer types about the approver reaches the approver's account.**
+`ensureApproverAccount()` creates it with the email and the CID only — those two are the keys of
+the invitation (where it is sent, and what the card is compared against), not hearsay about
+someone else. Prefix, first name and last name arrive from ThaID; the phone number they
+type themselves on `/activate`. What the officer typed stays on the request and is still the name
+printed in the parties paragraph of A0–A3.
 
 `THAID_USE_PID` chooses **which claim the CID is read from** — `pid` (the manual's answer,
 needs the `pid` scope) or `sub`. It is not a switch that disables the check: the comparison
