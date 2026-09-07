@@ -128,6 +128,7 @@ import {
   roleHolderId,
   stateVersionOf,
   taskHistory,
+  taskOpeners,
 } from "../lib/workflow.js";
 import { requireAuth } from "../middleware/auth.js";
 
@@ -1262,6 +1263,9 @@ organizationRouter.get("/:id", async (req, res) => {
     }),
   ]);
 
+  // ชื่อผู้ที่เปิดแต่ละด่าน — ของ BDI_OFFICER_REVIEW คือผู้ที่กดนำส่งคำขอในรอบนั้น
+  const openers = await taskOpeners(prisma, tasks);
+
   // เหตุผลที่ผู้ตรวจส่งกลับ — หน้าฟอร์มมีกล่องแดงรออ่านช่องนี้อยู่ แต่ไม่เคยมีใครส่งให้
   // (ปัญหาเดียวกันกับฝั่งชุดข้อมูล) ผู้ใช้ที่ถูกส่งกลับจึงไม่เห็นว่าต้องแก้อะไร
   const lastReturned = [...tasks].reverse().find((t) => t.result === ReviewResult.RETURNED);
@@ -1351,6 +1355,13 @@ organizationRouter.get("/:id", async (req, res) => {
               email: t.completedByUser.email,
             }
           : null,
+        /**
+         * ผู้ที่ทำให้ด่านนี้ถูกเปิด ไม่ใช่ผู้ที่ปิดมัน
+         *
+         * ไทม์ไลน์วาดบรรทัด "นำส่งคำขอ" จากแถว `BDI_OFFICER_REVIEW` — หนึ่งแถวคือการนำส่ง
+         * หนึ่งครั้ง ค่านี้จึงเป็นชื่อผู้ประสานงานที่กดนำส่งในรอบนั้น (ดู `taskOpeners()`)
+         */
+        openedBy: openers.get(t.id) ?? null,
         assignedAt: t.assignedAt,
         startedAt: t.startedAt,
         completedAt: t.completedAt,
