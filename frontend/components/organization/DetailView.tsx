@@ -38,6 +38,8 @@ interface Ability {
   title?: string;
   /** เจ้าหน้าที่ BDI ปลดคำขอที่ค้าง — ปุ่มเดียว ไม่มีอนุมัติ ไม่มีส่งกลับแก้ไขตามปกติ */
   recall?: boolean;
+  /** ปุ่มนั้นกดไม่ได้ และนี่คือเหตุผลที่ API ให้มา — `hint` ถูกแทนด้วยข้อความนี้ */
+  blocked?: string | null;
 }
 
 function decideAbility(org: Organization, roles: string[]): Ability {
@@ -71,15 +73,24 @@ function decideAbility(org: Organization, roles: string[]): Ability {
       /**
        * เจ้าหน้าที่ BDI ไม่ได้ถือด่านนี้ และไม่ได้อนุมัติแทนใครได้ — แต่เป็นคนเดียวที่ปลด
        * คำขอซึ่งค้างอยู่กับผู้ที่ถูกเชิญและเข้าระบบไม่ได้ ปุ่มจึงมีทางเดียวคือยกเลิกผลการ
-       * ตรวจสอบของตัวเอง เงื่อนไขที่แท้จริงอยู่ฝั่ง API (recallRefusal) — ที่นี่กว้างกว่า
-       * โดยตั้งใจ ให้เขากดแล้วได้คำอธิบายว่าทำไมทำไม่ได้ ดีกว่าปุ่มหายไปเฉย ๆ
+       * ตรวจสอบของตัวเอง
+       *
+       * **การ์ดยังขึ้นเสมอ ปุ่มต่างหากที่ดับ** เงื่อนไขว่ากดได้ไหมอยู่ฝั่ง API ที่เดียว
+       * (`recallRefusal()`) และเดินทางมาเป็น `recallBlockedReason` — ที่นี่ไม่ตัดสินซ้ำ
+       * เดิมปุ่มกดได้เสมอแล้วค่อยเด้ง toast ว่าทำไมไม่ได้ ซึ่งอ่านเหมือนระบบพัง ทั้งที่เป็น
+       * กฎที่ตั้งใจ ตอนนี้เหตุผลอยู่บนการ์ดตั้งแต่แรกแทนคำชี้แจงที่ทำไม่ได้จริง — ปุ่มไม่ได้
+       * หายไปเฉย ๆ ซึ่งเป็นสิ่งที่ต้องเลี่ยงมาแต่แรก
        */
       if (roles.includes("BDI_OFFICER")) {
+        const blocked = org.recallBlockedReason;
         return {
           can: true,
           recall: true,
+          blocked,
           title: "คำขอรอผู้มีอำนาจอนุมัติของหน่วยงาน",
-          hint: "ถ้าข้อมูลผู้มีอำนาจอนุมัติผิดจนคำเชิญไปไม่ถึง ยกเลิกผลการตรวจสอบเพื่อส่งกลับให้หน่วยงานแก้ไขได้",
+          hint:
+            blocked ??
+            "ถ้าข้อมูลผู้มีอำนาจอนุมัติผิดจนคำเชิญไปไม่ถึง ยกเลิกผลการตรวจสอบเพื่อส่งกลับให้หน่วยงานแก้ไขได้",
         };
       }
       return { can: false };
@@ -389,7 +400,11 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
             </div>
             <div className="flex shrink-0 gap-3">
               {ability.recall ? (
-                <Button variant="secondary" onClick={() => setModal("recall")}>
+                <Button
+                  variant="secondary"
+                  disabled={Boolean(ability.blocked)}
+                  onClick={() => setModal("recall")}
+                >
                   ยกเลิกผลการตรวจสอบ
                 </Button>
               ) : (

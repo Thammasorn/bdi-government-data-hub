@@ -1268,6 +1268,22 @@ organizationRouter.get("/:id", async (req, res) => {
   const revisionNote =
     request.status === RequestStatus.RETURNED ? (lastReturned?.resultComment ?? null) : null;
 
+  /**
+   * ปุ่ม "ยกเลิกผลการตรวจสอบ" ของเจ้าหน้าที่ BDI กดไม่ได้เพราะอะไร — null คือกดได้
+   *
+   * ถามฟังก์ชันเดียวกับที่ `POST /:id/review` ใช้ปฏิเสธจริง ไม่ใช่กฎที่หน้าจอเขียนซ้ำเอง
+   * ถ้าคัดลอกเงื่อนไขไปไว้ฝั่ง frontend สองที่จะหลุดกันวันที่กฎเปลี่ยน แล้วปุ่มจะกดได้ทั้งที่
+   * API ปฏิเสธ (หรือหายไปทั้งที่ยังกดได้) — แบบเดียวกับ `progress` ที่หน้าจอ "ถูกบอก"
+   * ลำดับด่านมา ไม่ได้รู้เอง
+   *
+   * ผู้ใช้ที่ไม่ได้ถือ `BDI_OFFICER` ก็ได้ข้อความติดมาด้วย แต่ไม่มีหน้าจอไหนแสดงมัน — การ์ด
+   * ที่มีปุ่มนี้ขึ้นเฉพาะเจ้าหน้าที่ BDI ที่ด่าน `ORGANIZATION_APPROVAL` และสองข้อแรกของ
+   * `recallRefusal()` ตัดจบก่อนแตะฐานข้อมูล คนอื่นจึงไม่จ่ายค่า query เพิ่มสักครั้ง
+   */
+  const recallBlockedReason = active
+    ? ((await recallRefusal(session, active, request))?.message ?? null)
+    : null;
+
   res.json({
     organization: {
       ...(await toApiShape(request)),
@@ -1285,6 +1301,7 @@ organizationRouter.get("/:id", async (req, res) => {
         : null,
       currentTaskType: active?.taskType ?? null,
       currentRound: active?.roundNumber ?? null,
+      recallBlockedReason,
       // ค่าเดียวกับที่ GET /:id/state คืน — หน้าจอเทียบสองค่านี้เพื่อรู้ว่าที่ถืออยู่เก่าหรือยัง
       stateVersion: stateVersionOf(request.updatedAt, latestTaskTouch(tasks)),
       // เส้นทางทั้งเส้น ไม่ใช่แค่ด่านที่ค้างอยู่ — หน้าจอต้องบอกได้ว่ามีกี่ขั้น

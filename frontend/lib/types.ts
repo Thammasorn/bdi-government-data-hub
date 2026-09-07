@@ -104,6 +104,14 @@ export interface Organization {
   status: RequestStatus;
   currentTaskType: ReviewTaskType | null;
   /**
+   * เหตุผลที่ปุ่ม "ยกเลิกผลการตรวจสอบ" กดไม่ได้ — null คือกดได้
+   *
+   * มาจาก `recallRefusal()` ฝั่ง API ตัวเดียวกับที่ปฏิเสธคำสั่งจริง เหตุผลเดียวกับ `progress`
+   * ด้านล่าง: หน้าจอถูก "บอก" กฎมา ไม่ได้เขียนกฎซ้ำเอง ที่นี่สำคัญกว่าด้วยซ้ำ เพราะเงื่อนไข
+   * ข้อสุดท้ายคือสถานะบัญชีของผู้มีอำนาจฯ ซึ่ง frontend ไม่มีทางรู้จากคำขอใบนี้เลย
+   */
+  recallBlockedReason: string | null;
+  /**
    * ค่าที่ใช้ตอบว่าข้อมูลชุดนี้เก่าหรือยัง — เทียบกับที่ `GET /:id/state` คืนมา
    * ทั้งสอง endpoint คิดจาก `stateVersionOf()` ตัวเดียวกัน ดู lib/use-request-watch.ts
    */
