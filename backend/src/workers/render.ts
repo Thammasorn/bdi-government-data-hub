@@ -97,7 +97,7 @@ async function datasetInfo(prisma: PrismaClient, subjectId: string) {
     where: { id: subjectId },
     include: {
       metadata: { select: { title: true } },
-      organization: { select: { nameTh: true } },
+      organization: { select: { nameTh: true, organizationCode: true } },
     },
   });
   if (!request) return null;
@@ -105,6 +105,7 @@ async function datasetInfo(prisma: PrismaClient, subjectId: string) {
     requestNumber: request.requestNumber,
     datasetName: request.metadata?.title || request.proposedTitle || `คำขอ ${request.requestNumber}`,
     organizationName: request.organization.nameTh,
+    organizationCode: request.organization.organizationCode,
     id: request.id,
     status: request.status,
   };
@@ -173,6 +174,7 @@ export async function renderAndSend(
               title: n.title,
               message: n.message,
               path: linkFor(n.subjectType, n.subjectId) ?? "/",
+              orgCode: info.organizationCode,
             },
             progress,
           );
@@ -232,13 +234,22 @@ export async function renderAndSend(
         id: true,
         status: true,
         organizationNameTh: true,
+        organizationCode: true,
         userFirstnameTh: true,
         userLastnameTh: true,
-        organization: { select: { nameTh: true } },
+        organization: { select: { nameTh: true, organizationCode: true } },
       },
     });
     if (request) {
-      const orgName = request.organizationNameTh ?? request.organization.nameTh;
+      /**
+       * รหัสของคำขอมาก่อนของหน่วยงาน ด้วยเหตุผลเดียวกับชื่อ — snapshot บนคำขอคือสิ่งที่
+       * ผู้ยื่นเห็นตอนกรอก ส่วนแถวหน่วยงานเป็นค่าปัจจุบันซึ่งผู้ดูแลระบบแก้ได้ระหว่างทาง
+       * (เหมือน toApiShape() ใน routes/organizations.ts)
+       */
+      const org = {
+        name: request.organizationNameTh ?? request.organization.nameTh,
+        code: request.organizationCode ?? request.organization.organizationCode,
+      };
       const progress = await journeyProgress(
         prisma,
         SubjectType.ORGANIZATION_REGISTRATION_REQUEST,
@@ -256,12 +267,12 @@ export async function renderAndSend(
             select: { taskType: true },
           });
           if (active?.taskType === ReviewTaskType.BDI_FINAL_APPROVAL) {
-            await sendFinalApprovalRequest(to, orgName, request.id, progress);
+            await sendFinalApprovalRequest(to, org, request.id, progress);
             return;
           }
           await sendSubmittedToOfficers(
             to,
-            orgName,
+            org,
             [request.userFirstnameTh, request.userLastnameTh].filter(Boolean).join(" ") || "ผู้ใช้จากหน่วยงาน",
             request.id,
             progress,
@@ -269,10 +280,10 @@ export async function renderAndSend(
           return;
         }
         case NotificationType.REQUEST_RETURNED:
-          await sendRevisionRequested(destination, orgName, n.message, request.id, progress);
+          await sendRevisionRequested(destination, org, n.message, request.id, progress);
           return;
         case NotificationType.REQUEST_APPROVED:
-          await sendActivated(to, orgName, request.id, progress);
+          await sendActivated(to, org, request.id, progress);
           return;
         case NotificationType.REQUEST_PROGRESSED:
           await sendRequestProgressed(
@@ -281,6 +292,7 @@ export async function renderAndSend(
               title: n.title,
               message: n.message,
               path: linkFor(n.subjectType, n.subjectId) ?? "/",
+              orgCode: org.code,
             },
             progress,
           );

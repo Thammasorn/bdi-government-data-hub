@@ -160,7 +160,7 @@ const upload = multer({
 
 const requestInclude = {
   metadata: true,
-  organization: { select: { id: true, nameTh: true, status: true } },
+  organization: { select: { id: true, nameTh: true, organizationCode: true, status: true } },
   // ผู้เชี่ยวชาญที่ถูกขอความเห็น — คอลัมน์บนคำขอ ไม่ใช่ด่านใน review_task (ดู POST /:id/assign)
   assignedSpecialist: {
     select: { id: true, email: true, prefixTh: true, firstnameTh: true, lastnameTh: true },
@@ -1030,6 +1030,7 @@ datasetRequestRouter.post("/:id/submit", async (req, res) => {
     requestNumber: request.requestNumber,
     datasetName: datasetLabel(request),
     organizationName: request.organization.nameTh,
+    organizationCode: request.organization.organizationCode,
     submitter: await personNameOf(session.sub),
     id: request.id,
   };
@@ -1159,6 +1160,7 @@ datasetRequestRouter.post("/:id/assign", async (req, res, next) => {
           requestNumber: request.requestNumber,
           datasetName: datasetLabel(request),
           organizationName: request.organization.nameTh,
+          organizationCode: request.organization.organizationCode,
           id: request.id,
         });
       }
@@ -1820,6 +1822,7 @@ async function dispatchDatasetNotifications(
     requestNumber: request.requestNumber,
     datasetName: datasetLabel(request),
     organizationName: request.organization.nameTh,
+    organizationCode: request.organization.organizationCode,
     id: request.id,
   };
 
