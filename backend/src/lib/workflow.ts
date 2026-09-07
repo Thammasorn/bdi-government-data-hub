@@ -25,7 +25,9 @@ import {
 } from "@prisma/client";
 
 import type { RoleCode } from "./system.js";
-import { NAME_FIELDS } from "./person-name.js";
+import { SYSTEM_USER_ID } from "./system.js";
+import { NAME_FIELDS, fullNameTh } from "./person-name.js";
+import type { ThaiName } from "./person-name.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -156,6 +158,35 @@ export async function taskHistory(db: Db, subjectType: SubjectType, subjectId: s
       completedByUser: { select: TASK_PERSON },
     },
   });
+}
+
+/** รูปคนหนึ่งคนตามที่ไทม์ไลน์ฝั่งหน้าจอรอรับ — `name` ว่างได้ หน้าจอตกไปใช้อีเมลเอง */
+export function taskPerson(person: (ThaiName & { id: string; email: string }) | null | undefined) {
+  return person ? { id: person.id, name: fullNameTh(person), email: person.email } : null;
+}
+
+/**
+ * ชื่อของคนที่ทำให้แต่ละด่าน **ถูกเปิด** — คีย์เป็น `review_task.id`
+ *
+ * `created_by` คือคนที่กดจนด่านนี้เกิดขึ้น (`openTask()` เขียนจาก `actorId`) ซึ่งคนละคำถาม
+ * กับ `completed_by` ที่ตอบว่าใครปิดด่าน ค่านี้สำคัญกับ `BDI_OFFICER_REVIEW` เป็นพิเศษ:
+ * ด่านนั้นถูกเปิดจาก `POST /:id/submit` ที่เดียวทั้งสองเส้นทาง **หนึ่งแถวจึงเท่ากับการนำส่ง
+ * หนึ่งครั้ง** และ `created_by` ของมันคือผู้ประสานงานที่กดปุ่มนำส่งในรอบนั้น — ข้อเท็จจริงที่
+ * ไทม์ไลน์เคยตอบไม่ได้ เพราะไปอ่าน `submitted_at` ซึ่งเป็นคอลัมน์เดี่ยวที่ถูกเขียนทับทุกรอบ
+ *
+ * `created_by` เป็นคอลัมน์ uuid เปล่า ไม่ใช่ relation (เหมือน `cancelled_by`) จึงต้องอ่านชื่อ
+ * แยกเอง และ `SYSTEM_USER_ID` ไม่ถูกอ่าน — แถวที่ระบบสร้างไม่มีคนกด และคำว่า "ระบบ"
+ * ไม่ใช่ชื่อผู้ทำ
+ */
+export async function taskOpeners(db: Db, tasks: { id: string; createdBy: string }[]) {
+  const ids = [...new Set(tasks.map((t) => t.createdBy))].filter((id) => id !== SYSTEM_USER_ID);
+  const opened = new Map<string, ReturnType<typeof taskPerson>>();
+  if (ids.length === 0) return opened;
+
+  const people = await db.userAccount.findMany({ where: { id: { in: ids } }, select: TASK_PERSON });
+  const byId = new Map(people.map((p) => [p.id, p]));
+  for (const task of tasks) opened.set(task.id, taskPerson(byId.get(task.createdBy)));
+  return opened;
 }
 
 /**

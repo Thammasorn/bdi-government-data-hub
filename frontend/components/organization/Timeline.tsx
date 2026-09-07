@@ -29,6 +29,8 @@ export interface OrgEvent {
   createdAt: string;
   completedAt: string | null;
   actor: { id: string; name: string; email: string } | null;
+  /** ผู้ที่ทำให้ด่านนี้ถูกเปิด — ของ BDI_OFFICER_REVIEW คือผู้ที่กดนำส่งคำขอรอบนั้น */
+  openedBy?: { id: string; name: string; email: string } | null;
 }
 
 /** ผู้ยื่นคำขอ — รูปแบบเดียวกันทั้งสองเส้นทาง */
@@ -60,6 +62,16 @@ interface HistoryRow {
  *
  * task ที่ยังไม่มี `result` จึงไม่ถูกวาดเลย และ `buildJourneyProgress()` ซึ่งเป็นตัวติดตาม
  * ขั้นตอนอยู่แล้ว เป็นที่เดียวที่บอกว่ากำลังรออะไรอยู่
+ *
+ * **บรรทัด "นำส่งคำขอ" ก็มาจาก `review_task` เหมือนบรรทัดอื่น** ไม่ได้มาจาก `submitted_at`
+ * เดิมมันมาจากคอลัมน์นั้น ซึ่งเป็น timestamp เดี่ยวที่ `POST /:id/submit` เขียนทับทุกครั้ง
+ * ผลคือผิดสามอย่างพร้อมกัน: ไม่มีชื่อผู้นำส่ง (คอลัมน์ไม่ได้เก็บไว้), การนำส่งรอบที่สอง
+ * หลังถูกส่งกลับแก้ไขไม่มีบรรทัดของตัวเอง (คอลัมน์เก็บได้ค่าเดียว) และบรรทัดนั้นถูกวาด
+ * เป็นแถวที่สองเสมอทั้งที่ถือเวลาของรอบล่าสุด จึงใหม่กว่าบรรทัดที่อยู่ข้างล่างมัน
+ *
+ * แถว `BDI_OFFICER_REVIEW` ตอบได้ครบทั้งสาม — ด่านนั้นถูกเปิดจาก `POST /:id/submit` ที่เดียว
+ * ทั้งสองเส้นทาง **หนึ่งแถวจึงเท่ากับการนำส่งหนึ่งครั้ง** พร้อมเวลา (`assignedAt`) ผู้กด
+ * (`openedBy` มาจาก `created_by`) และรอบที่ (`roundNumber`) ครบในแถวเดียว
  */
 export function Timeline({
   events,
@@ -85,21 +97,37 @@ export function Timeline({
     });
   }
 
-  if (submittedAt) {
+  /**
+   * ทางสำรองสำหรับคำขอที่นำส่งไปแล้วแต่ไม่มีแถวของด่านเจ้าหน้าที่เลย — ข้อมูลเก่าหรือ
+   * ข้อมูล seed เท่านั้น ของจริงมีเสมอ บรรทัดนี้ไม่มีชื่อและไม่มีรอบ เพราะ `submitted_at`
+   * ไม่ได้เก็บทั้งสองอย่างไว้ ตรงนั้นคือทั้งหมดที่รู้จริง
+   */
+  if (submittedAt && !events.some((e) => e.taskType === "BDI_OFFICER_REVIEW")) {
     rows.push({
       key: "submitted",
       label: `${ROLE_LABELS.ORGANIZATION_USER}นำส่งคำขอ`,
-      /**
-       * ไม่ขึ้นชื่อ — ไม่มีคอลัมน์ `submitted_by` และ `updated_by` ก็เชื่อไม่ได้เพราะ
-       * `syncStatus()` เขียนทับด้วย SYSTEM_USER_ID ผู้กรอกกับผู้กดนำส่งเป็นคนละคนได้
-       * ทั้งคู่อยู่ในหน่วยงานเดียวกัน เดาเอาจากผู้สร้างจึงเป็นการเดา ไม่ใช่การบันทึก
-       */
       actor: null,
       at: submittedAt,
     });
   }
 
   for (const e of events) {
+    /**
+     * ด่านเจ้าหน้าที่ BDI ถูกเปิดด้วยการกดนำส่ง — วาดการนำส่งรอบนั้นก่อนผลการตรวจของมัน
+     *
+     * อยู่นอก `if (!e.result)` ข้างล่างโดยตั้งใจ: การนำส่ง**เกิดขึ้นแล้ว**ตั้งแต่แถวถูกสร้าง
+     * ต่อให้เจ้าหน้าที่ยังไม่ได้ตรวจ ประวัติจึงต้องมีบรรทัดนี้ระหว่างที่ยังรออยู่
+     */
+    if (e.taskType === "BDI_OFFICER_REVIEW") {
+      rows.push({
+        key: `${e.id}-submitted`,
+        label: `${ROLE_LABELS.ORGANIZATION_USER}นำส่งคำขอ`,
+        actor: e.openedBy ? e.openedBy.name || e.openedBy.email : null,
+        at: e.assignedAt ?? e.createdAt,
+        round: e.roundNumber,
+      });
+    }
+
     // ยังไม่มีผล = ยังไม่เกิดขึ้น — เป็นเรื่องของตัวติดตามขั้นตอน ไม่ใช่ของประวัติ
     if (!e.result) continue;
     rows.push({

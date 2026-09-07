@@ -123,6 +123,7 @@ import {
   roleHolderId,
   stateVersionOf,
   taskHistory,
+  taskOpeners,
 } from "../lib/workflow.js";
 import { requireAuth } from "../middleware/auth.js";
 import { NAME_FIELDS, fullNameTh } from "../lib/person-name.js";
@@ -638,6 +639,9 @@ datasetRequestRouter.get("/:id", async (req, res) => {
     }),
   ]);
 
+  // ชื่อผู้ที่เปิดแต่ละด่าน — ของ BDI_OFFICER_REVIEW คือผู้ที่กดนำส่งคำขอในรอบนั้น
+  const openers = await taskOpeners(prisma, tasks);
+
   const isOrgSide = !isBdiStaff(session.roles);
 
   /**
@@ -722,6 +726,10 @@ datasetRequestRouter.get("/:id", async (req, res) => {
               email: t.completedByUser.email,
             }
           : null,
+        /**
+         * ผู้ที่ทำให้ด่านนี้ถูกเปิด ไม่ใช่ผู้ที่ปิดมัน — เหตุผลเดียวกับใน organizations.ts
+         */
+        openedBy: openers.get(t.id) ?? null,
         assignedAt: t.assignedAt,
         startedAt: t.startedAt,
         completedAt: t.completedAt,

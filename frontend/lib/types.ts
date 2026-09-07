@@ -33,6 +33,13 @@ export interface ReviewTaskEvent {
   /** ด่านถูกปิดด้วย "ยกเลิกผลการตรวจสอบ" — ผู้กระทำไม่ใช่เจ้าของด่าน */
   recalled?: boolean;
   actor: { id: string; name: string; email: string } | null;
+  /**
+   * ผู้ที่ทำให้ด่านนี้ถูกเปิด — คนละคำถามกับ `actor` ซึ่งคือผู้ที่ปิดด่าน
+   *
+   * ของ `BDI_OFFICER_REVIEW` คือผู้ประสานงานที่กดนำส่งคำขอในรอบนั้น (ด่านนั้นถูกเปิด
+   * จาก `POST /:id/submit` ที่เดียว) — ไทม์ไลน์ใช้ค่านี้วาดบรรทัด "นำส่งคำขอ" ทีละรอบ
+   */
+  openedBy: { id: string; name: string; email: string } | null;
   assignedAt: string;
   startedAt: string | null;
   completedAt: string | null;

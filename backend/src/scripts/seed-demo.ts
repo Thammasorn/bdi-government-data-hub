@@ -128,6 +128,10 @@ const assigneeOf = (role: RoleCode, userId: string) =>
  *
  * `userId` คือ **คนที่ลงมือ** ลงไปที่ `completed_by` เสมอ ส่วน `assigned_user_id` ลงเฉพาะ
  * ด่านที่ยังมีเจ้าของ
+ *
+ * `openedById` คือคนที่ทำให้ด่านนี้ถูกเปิด ลงไปที่ `created_by` — ของ `BDI_OFFICER_REVIEW`
+ * คือผู้ประสานงานที่กดนำส่ง เพราะไทม์ไลน์วาดบรรทัด "นำส่งคำขอ" จากแถวนั้น ปล่อยว่างไว้
+ * เท่ากับบอกว่าระบบสร้างเอง ซึ่งจริงกับด่านที่เปิดต่อจากการอนุมัติ ไม่จริงกับการนำส่ง
  */
 async function closedTask(params: {
   subjectType: SubjectType;
@@ -136,6 +140,7 @@ async function closedTask(params: {
   sequenceNumber: number;
   roundNumber?: number;
   userId: string;
+  openedById?: string;
   assignedRole: RoleCode;
   result: ReviewResult;
   comment?: string | null;
@@ -159,7 +164,7 @@ async function closedTask(params: {
       assignedAt: params.at,
       startedAt: params.at,
       completedAt: params.at,
-      createdBy: SYSTEM_USER_ID,
+      createdBy: params.openedById ?? SYSTEM_USER_ID,
       updatedBy: SYSTEM_USER_ID,
     },
   });
@@ -173,6 +178,7 @@ async function openTaskRow(params: {
   sequenceNumber: number;
   roundNumber?: number;
   userId: string;
+  openedById?: string;
   assignedRole: RoleCode;
   status?: ReviewTaskStatus;
   at: Date;
@@ -190,7 +196,7 @@ async function openTaskRow(params: {
       status: params.status ?? ReviewTaskStatus.PENDING,
       startedAt: params.status === ReviewTaskStatus.IN_PROGRESS ? params.at : null,
       assignedAt: params.at,
-      createdBy: SYSTEM_USER_ID,
+      createdBy: params.openedById ?? SYSTEM_USER_ID,
       updatedBy: SYSTEM_USER_ID,
     },
   });
@@ -468,6 +474,7 @@ async function main() {
         taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
         sequenceNumber: seq++,
         userId: officer.id,
+        openedById: orgUser.id,
         assignedRole: ROLE_CODES.BDI_OFFICER,
         result: ReviewResult.RETURNED,
         comment: "เอกสารคำสั่งแต่งตั้งไม่ชัดเจน กรุณาแนบฉบับที่อ่านออกได้ทั้งหน้า",
@@ -480,6 +487,7 @@ async function main() {
         taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
         sequenceNumber: seq++,
         userId: officer.id,
+        openedById: orgUser.id,
         assignedRole: ROLE_CODES.BDI_OFFICER,
         at: t(1),
       });
@@ -491,6 +499,7 @@ async function main() {
         taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
         sequenceNumber: seq++,
         userId: officer.id,
+        openedById: orgUser.id,
         assignedRole: ROLE_CODES.BDI_OFFICER,
         result: ReviewResult.PASSED,
         at: t(1),
@@ -785,6 +794,7 @@ async function main() {
         taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
         sequenceNumber: seq++,
         userId: officer.id,
+        openedById: nso.userId,
         assignedRole: ROLE_CODES.BDI_OFFICER,
         result: ReviewResult.RETURNED,
         comment: "กรุณาระบุฐานอำนาจตามกฎหมายและแนบตัวอย่างข้อมูลเพิ่มเติม",
@@ -798,6 +808,7 @@ async function main() {
         sequenceNumber: seq++,
         roundNumber: spec.specialist ? 2 : 1,
         userId: officer.id,
+        openedById: nso.userId,
         assignedRole: ROLE_CODES.BDI_OFFICER,
         at: t(2),
       });
@@ -808,6 +819,7 @@ async function main() {
         taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
         sequenceNumber: seq++,
         userId: officer.id,
+        openedById: nso.userId,
         assignedRole: ROLE_CODES.BDI_OFFICER,
         result: ReviewResult.PASSED,
         at: t(2),
