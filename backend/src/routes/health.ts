@@ -21,7 +21,7 @@ async function check(fn: () => Promise<unknown>): Promise<CheckResult> {
   }
 }
 
-/** Readiness: can we actually serve traffic? Checks Postgres and MinIO. */
+/** Readiness: can we actually serve traffic? Checks Postgres and Azure Blob Storage. */
 healthRouter.get("/ready", async (_req, res) => {
   const [database, storage] = await Promise.all([check(pingDatabase), check(pingStorage)]);
 

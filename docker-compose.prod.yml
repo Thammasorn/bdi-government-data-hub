@@ -44,6 +44,18 @@ services:
     command: ["node", "dist/workers/delivery.js"]
     volumes: !reset []
 
+  # Azurite เป็น **emulator** — บน Azure จริงไม่ต้องรันบริการนี้ แต่การ deploy ของโครงการ
+  # ตอนนี้ยังเป็น docker compose บนเครื่องเดียว ไม่ใช่บน Azure จึงยังรันไว้ และไฟล์ยังอยู่ครบ
+  #
+  # วันที่ย้ายไป storage account จริง: ตั้ง AZURE_STORAGE_ACCOUNT_URL (หรือ
+  # AZURE_STORAGE_CONNECTION_STRING) ใน .env ให้ชี้ของจริง แล้วเอา `azurite` ออกจาก
+  # depends_on ของ backend — บริการนี้จะไม่มีใครเรียกอีกเลย
+  #
+  # เขียนไว้ที่นี่แม้ไม่มีอะไรต่างจาก dev เพราะบริการที่ไม่ปรากฏในไฟล์นี้เลยคือสิ่งที่ทำให้
+  # เคยรันคำสั่ง dev อยู่บน production โดยไม่มีใครเห็น (เหตุผลเดียวกับ gotenberg ข้างล่าง)
+  azurite:
+    restart: unless-stopped
+
   # gotenberg ไม่มีอะไรต่างระหว่าง dev กับ production — image เดียวกัน ไม่ bind-mount
   # source ไม่มี dev command ให้ทับ เขียนไว้ที่นี่เพราะบริการที่ไม่ปรากฏใน
   # ไฟล์นี้เลยคือสิ่งที่ทำให้เคยรันคำสั่ง dev อยู่บน production โดยไม่มีใครเห็น

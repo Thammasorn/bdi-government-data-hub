@@ -4,8 +4,8 @@
  *
  * สองเรื่องที่เปลี่ยนพฤติกรรมจากของเดิม และทั้งคู่มาจาก sheet `attachment` ตรง ๆ:
  *
- * 1. **อัปโหลดทับไม่ลบ object เดิมอีกต่อไป** ของเดิมเรียก minio.removeObject() แล้ว
- *    ลบแถวทิ้ง แบบใหม่แถวเดิมเปลี่ยนเป็น status = REPLACED และไฟล์ยังอยู่ใน MinIO
+ * 1. **อัปโหลดทับไม่ลบ object เดิมอีกต่อไป** ของเดิมเรียก removeObject() แล้ว
+ *    ลบแถวทิ้ง แบบใหม่แถวเดิมเปลี่ยนเป็น status = REPLACED และไฟล์ยังอยู่ใน object storage
  *    ไฟล์ใหม่ชี้กลับด้วย replaced_attachment_id — ทำให้ย้อนดูของเดิมได้
  *
  * 2. **storage key มี attachment_id อยู่ใน path** จึงไม่มีวันเขียนทับ object เดิม
@@ -24,7 +24,7 @@ import {
 } from "@prisma/client";
 
 import { env } from "../env.js";
-import { BUCKET, minio } from "../storage.js";
+import { CONTAINER, getObjectBuffer, getObjectStream, putObject } from "../storage.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -131,9 +131,7 @@ export async function storeAttachment(
     storedFileName: storedFileName(extension),
   });
 
-  await minio.putObject(BUCKET, storageKey, params.file.buffer, params.file.size, {
-    "Content-Type": params.file.mimetype,
-  });
+  await putObject(storageKey, params.file.buffer, params.file.mimetype);
 
   const previous = await db.attachment.findFirst({
     where: {
@@ -161,7 +159,7 @@ export async function storeAttachment(
       ownerId: params.ownerId,
       attachmentType: params.attachmentType,
       originalFileName,
-      storageBucket: BUCKET,
+      storageBucket: CONTAINER,
       storageKey,
       mimeType: params.file.mimetype,
       fileExtension: extension,
@@ -261,7 +259,7 @@ export async function streamAttachment(
   attachment: { storageBucket: string; storageKey: string; mimeType: string; originalFileName: string },
   disposition: "inline" | "attachment" = "inline",
 ) {
-  const stream = await minio.getObject(attachment.storageBucket, attachment.storageKey);
+  const stream = await getObjectStream(attachment.storageBucket, attachment.storageKey);
   res.setHeader("Content-Type", attachment.mimeType);
   res.setHeader(
     "Content-Disposition",
@@ -280,10 +278,7 @@ export async function readAttachment(attachment: {
   storageBucket: string;
   storageKey: string;
 }): Promise<Buffer> {
-  const stream = await minio.getObject(attachment.storageBucket, attachment.storageKey);
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks);
+  return getObjectBuffer(attachment.storageBucket, attachment.storageKey);
 }
 
 /**

@@ -156,7 +156,7 @@ from audit.audit_event order by occurred_at desc limit 50;
 - **อย่าลบหรือแก้ `public._prisma_migrations`** Prisma เทียบแถวในตารางนี้กับไฟล์ใน
   `backend/prisma/migrations` ถ้าไม่ตรง `migrate deploy` จะปฏิเสธการบูตทั้งหมด
   (เคยเจอมาแล้ว — `CLAUDE.md` หัวข้อ Commands)
-- **อย่าลบแถว `attachment.attachment` เพื่อลบไฟล์** ไฟล์จริงอยู่ใน MinIO การลบแถวทิ้ง
+- **อย่าลบแถว `attachment.attachment` เพื่อลบไฟล์** ไฟล์จริงอยู่ใน Azure Blob Storage การลบแถวทิ้ง
   ทำให้ object ค้างอยู่โดยไม่มีใครอ้างถึง ระบบออกแบบให้ไฟล์เก่าเป็น `REPLACED` ไม่ใช่ถูกลบ
 - **อย่าแก้ `audit.audit_event`** มันคือบันทึกว่าเกิดอะไรขึ้น ไม่ใช่ข้อมูลที่แก้ได้
 - **อย่าเพิ่ม/ลบ index หรือ constraint ด้วยมือ** — เกิดขึ้นแล้วครั้งหนึ่ง: ฐานข้อมูลของ `main`
