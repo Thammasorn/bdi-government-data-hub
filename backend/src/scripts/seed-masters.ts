@@ -114,16 +114,21 @@ async function seedRoles() {
  * A4 (แบบนำส่งข้อมูล) เป็นเอกสารของ Journey C — เผยแพร่ตั้งแต่การ์ด
  * "Dataset Registration PDF render" ซึ่งทำให้เส้นทางนั้น render เอกสารจาก template
  * เหมือนเส้นทาง B ตัวมันมีช่องติ๊กตามตัวเลือกในแบบฟอร์ม (ดู docs/19)
+ *
+ * **`required: false` ของ A3 คือการตัดสินเชิงนโยบาย** (BDI, 2026-09-07) หน่วยงานที่ไม่มีการ
+ * แบ่งปันข้อมูลส่วนบุคคลข้ามผนวก 3 ได้ ซึ่งเป็นสิ่งที่ `legal_notice` ของฉบับนั้นบอกไว้อยู่แล้ว
+ * ก่อนหน้านี้ทุกฉบับถูกตั้ง `true` ปุ่ม "ไม่เกี่ยวข้อง" จึงไม่เคยโผล่ และคำเตือนสั่งให้กดปุ่มที่
+ * ไม่มีอยู่จริง
  */
 const A3_NOTICE =
   'หากหน่วยงานของท่านไม่มีการแบ่งปันข้อมูลส่วนบุคคล ให้กดปุ่ม "ไม่เกี่ยวข้อง" เพื่อข้ามไปขั้นตอนถัดไป';
 
 const LEGAL_DOCUMENTS = [
-  { code: "A0", type: "DATA_SHARING_AGREEMENT", nameTh: "ข้อตกลงหลักในการบริหารจัดการและการแบ่งปันข้อมูล", shortname: "ข้อตกลงหลักในการบริหารจัดการและการแบ่งปันข้อมูล", notice: null, scope: "ORGANIZATION_REGISTRATION", order: 1, signature: true, template: "A0.docx" },
-  { code: "A1", type: "NON_DISCLOSURE_AGREEMENT", nameTh: "ผนวก 1 สัญญารักษาความลับ (NDA)", shortname: "ผนวก 1", notice: null, scope: "ORGANIZATION_REGISTRATION", order: 2, signature: true, template: "A1.docx" },
-  { code: "A2", type: "DATA_PROCESSING_AGREEMENT", nameTh: "ผนวก 2 ข้อตกลงการประมวลผลข้อมูล (DPA)", shortname: "ผนวก 2", notice: null, scope: "ORGANIZATION_REGISTRATION", order: 3, signature: true, template: "A2.docx" },
-  { code: "A3", type: "PERSONAL_DATA_PROCESSING_AGREEMENT", nameTh: "ผนวก 3 ข้อตกลงประมวลผลข้อมูลส่วนบุคคล (PDPA)", shortname: "ผนวก 3", notice: A3_NOTICE, scope: "ORGANIZATION_REGISTRATION", order: 4, signature: true, template: "A3.docx" },
-  { code: "A4", type: "DATA_DELIVERY_FORM", nameTh: "แบบนำส่งข้อมูล", shortname: null, notice: null, scope: "DATASET_REGISTRATION", order: 1, signature: true, template: "A4.docx" },
+  { code: "A0", type: "DATA_SHARING_AGREEMENT", nameTh: "ข้อตกลงหลักในการบริหารจัดการและการแบ่งปันข้อมูล", shortname: "ข้อตกลงหลักในการบริหารจัดการและการแบ่งปันข้อมูล", notice: null, required: true, scope: "ORGANIZATION_REGISTRATION", order: 1, signature: true, template: "A0.docx" },
+  { code: "A1", type: "NON_DISCLOSURE_AGREEMENT", nameTh: "ผนวก 1 สัญญารักษาความลับ (NDA)", shortname: "ผนวก 1", notice: null, required: true, scope: "ORGANIZATION_REGISTRATION", order: 2, signature: true, template: "A1.docx" },
+  { code: "A2", type: "DATA_PROCESSING_AGREEMENT", nameTh: "ผนวก 2 ข้อตกลงการประมวลผลข้อมูล (DPA)", shortname: "ผนวก 2", notice: null, required: true, scope: "ORGANIZATION_REGISTRATION", order: 3, signature: true, template: "A2.docx" },
+  { code: "A3", type: "PERSONAL_DATA_PROCESSING_AGREEMENT", nameTh: "ผนวก 3 ข้อตกลงประมวลผลข้อมูลส่วนบุคคล (PDPA)", shortname: "ผนวก 3", notice: A3_NOTICE, required: false, scope: "ORGANIZATION_REGISTRATION", order: 4, signature: true, template: "A3.docx" },
+  { code: "A4", type: "DATA_DELIVERY_FORM", nameTh: "แบบนำส่งข้อมูล", shortname: null, notice: null, required: true, scope: "DATASET_REGISTRATION", order: 1, signature: true, template: "A4.docx" },
 ] as const;
 
 const TEMPLATE_DIR = new URL("../assets/legal-templates/", import.meta.url);
@@ -135,6 +140,10 @@ async function seedLegalDocuments() {
       // ชื่อและประเภทถูกแก้ให้ตรงไฟล์จริง ฐานข้อมูลที่ seed ไว้ก่อนหน้าจึงต้องตามมาด้วย
       // shortname/legalNotice อยู่ใน update ด้วย เพราะเป็นถ้อยคำที่ฝ่ายกฎหมายสั่งเปลี่ยนได้
       // และฐานข้อมูลที่มีอยู่แล้วต้องได้ค่าใหม่โดยไม่ต้อง reset
+      //
+      // isRequired อยู่ใน create เท่านั้น โดยตั้งใจ — แอดมินสลับค่านี้เองได้ผ่าน
+      // PATCH /api/admin/legal-documents/:code ถ้าใส่ไว้ใน update ด้วย การรัน seed:masters
+      // รอบถัดไปจะล้างสิ่งที่แอดมินตั้งไว้เงียบ ๆ ฐานข้อมูลที่มีอยู่แล้วจึงต้องยิง PATCH เอง
       update: {
         documentType: doc.type,
         nameTh: doc.nameTh,
@@ -150,7 +159,7 @@ async function seedLegalDocuments() {
         legalNotice: doc.notice,
         applicationScope: doc.scope,
         displayOrder: doc.order,
-        isRequired: true,
+        isRequired: doc.required,
         requiresSignatureConfirmation: doc.signature,
         status: LegalDocumentStatus.DRAFT,
         createdBy: SYSTEM_USER_ID,
