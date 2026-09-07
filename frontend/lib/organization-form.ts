@@ -223,22 +223,18 @@ export function validateOrganizationField(
     case "contactLastName":
       return required(value, "กรุณากรอกนามสกุล");
     /**
-     * ตำแหน่งของผู้มีอำนาจกระทำการแทนต้องมีภาษาไทย — ค่านี้ถูกพิมพ์ลงเอกสารข้อตกลง A0
-     * ตรง ๆ ผ่าน `org_approver.position` ซึ่งเป็นเอกสารราชการภาษาไทยที่มีการลงนาม
-     * ป้ายกำกับของช่องเขียนว่า "ตำแหน่ง (ชื่อเต็มภาษาไทย)" อยู่แล้ว กฎนี้คือการบังคับตามนั้น
-     * (คู่ของกฎนี้คือ `signatoryPositionSchema` ฝั่ง API — แก้พร้อมกันเสมอ)
-     *
-     * ตำแหน่งของผู้กรอกข้อมูลไม่ใช้กฎนี้ — ชื่อผู้กรอกไม่ได้ไปอยู่ในเอกสารที่ลงนาม
+     * ตำแหน่งของทั้งสองคนต้องมีภาษาไทย — ป้ายกำกับของทั้งคู่เขียนว่า
+     * "ตำแหน่ง (ชื่อเต็มภาษาไทย)" กฎนี้คือการบังคับตามป้าย
+     * (คู่ของกฎนี้คือ `positionSchema` ฝั่ง API — แก้พร้อมกันเสมอ)
      */
-    case "signatoryPosition": {
+    case "signatoryPosition":
+    case "contactPosition": {
       const empty = required(value, "กรุณากรอกตำแหน่ง");
       if (empty) return empty;
       if (!containsThai(trimmed))
         return "ตำแหน่งต้องเป็นชื่อเต็มภาษาไทย (มีภาษาอังกฤษปนได้ เช่น ผู้อำนวยการศูนย์เทคโนโลยีสารสนเทศและการสื่อสาร (ICT))";
       return null;
     }
-    case "contactPosition":
-      return required(value, "กรุณากรอกตำแหน่ง");
     case "contactDepartment":
       return required(value, "กรุณากรอกฝ่าย/กอง/สำนัก");
 
