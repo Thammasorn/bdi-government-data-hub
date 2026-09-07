@@ -212,7 +212,7 @@ export const env = {
    * ดีกว่าส่ง [หมายเลขโทรศัพท์] ออกไปถึงผู้รับจริง ๆ ตั้งค่าแล้วรีสตาร์ต backend ก็ขึ้นทันที
    */
   support: {
-    email: optional("SUPPORT_EMAIL", "d2-support@bdi.or.th"),
+    email: optional("SUPPORT_EMAIL", "d2s-support@bdi.or.th"),
     phone: optional("SUPPORT_PHONE", ""),
   },
 } as const;

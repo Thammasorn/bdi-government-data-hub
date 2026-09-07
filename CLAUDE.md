@@ -868,6 +868,14 @@ Two API base URLs, and they are not interchangeable:
 
 ## Traps that have already cost time
 
+- Pointing a checkout at a real storage account needs the connection string blanked **at the
+  compose layer**, not in `.env`. `docker-compose.yml` carries
+  `${AZURE_STORAGE_CONNECTION_STRING:-<Azurite's connection string>}`, and `:-` treats an empty
+  value as unset — so leaving that line empty in `.env` silently hands the backend **Azurite**
+  while `.env` says otherwise, and a test of the managed-identity path passes without ever
+  reaching Azure. Override it to `""` in `docker-compose.override.yml` and confirm with
+  `docker compose exec backend sh -c 'echo "[$AZURE_STORAGE_CONNECTION_STRING]"'` before
+  believing any result. Same class as the `optional()` trap below, one layer up.
 - Azurite has to be started with `--skipApiVersionCheck`. `@azure/storage-blob` v12 sends
   `x-ms-version: 2026-06-06` and the emulator's latest image knows only up to 2025-11-05, so
   without the flag **every** storage call answers "The API version … is not supported by
