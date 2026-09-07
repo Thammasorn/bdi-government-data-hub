@@ -182,6 +182,16 @@ function OrganizationHome({
    */
   const registrationInReview = orgRequests === null ? undefined : orgRequests.length > 0;
 
+  /**
+   * ใบที่กำลังเดินอยู่ — หน่วยงานหนึ่งมีได้ใบเดียว (ดูย่อหน้าบน) จึงหยิบแถวแรกได้เลย
+   * กล่องบนหัวหน้าใช้ใบนี้บอกว่าคำขอไปค้างอยู่ที่ด่านไหน แทนที่จะบอกแค่ว่าหน่วยงาน
+   * ยังไม่เปิดใช้งาน ซึ่งเป็นสิ่งที่ผู้ใช้รู้อยู่แล้วตั้งแต่ก่อนกดส่ง
+   *
+   * `undefined` ระหว่างที่ยังโหลดรายการไม่เสร็จ ด้วยเหตุผลเดียวกับปุ่มข้างล่าง — ไม่งั้น
+   * คนที่ยื่นไปแล้วจะเห็นประโยค "ยังไม่ได้ลงทะเบียน" แวบหนึ่งก่อนที่มันจะเปลี่ยนเป็นด่านจริง
+   */
+  const pendingRegistration = orgRequests === null ? undefined : (orgRequests[0] ?? null);
+
   const counts = useMemo(
     () => ({
       // ยังเดินอยู่ = ทั้งหมด ลบปลายทางทั้งห้า — อ่านจากโหนดที่ server ส่งมา ไม่ไล่ชื่อด่านเอง
@@ -216,8 +226,9 @@ function OrganizationHome({
            ปุ่มจะโผล่มาแวบหนึ่งแล้วหายไปเมื่อรู้ว่ามีคำขอค้างอยู่ */
         onRegister={isApprover || registrationInReview !== false ? undefined : onRegister}
         registering={registering}
-        /* การ์ดลงนามด้านล่างบอกเรื่องเดียวกันแต่ตรงกว่าและมีปุ่มให้กด กล่องเตือน
-           "หน่วยงานยังไม่ได้ลงทะเบียนใช้งานระบบ" จึงกลายเป็นการพูดซ้ำครั้งที่สาม ต่อจาก badge */
+        registration={pendingRegistration}
+        /* การ์ดลงนามด้านล่างบอกเรื่องเดียวกันแต่ตรงกว่าและมีปุ่มให้กด กล่องเตือนบนหัว
+           จึงกลายเป็นการพูดซ้ำครั้งที่สาม ต่อจาก badge */
         hideInactiveNotice={Boolean(awaitingSignature)}
       />
 
@@ -331,13 +342,19 @@ function HomeHeader({
   organization,
   onRegister,
   registering,
+  registration,
   hideInactiveNotice = false,
 }: {
   name: string;
   organization: { id: string; name: string; status: string } | null;
   onRegister?: () => void;
   registering?: boolean;
-  /** ซ่อนกล่อง "หน่วยงานยังไม่ได้ลงทะเบียนใช้งานระบบ" เมื่อมีการ์ดอื่นบอกเรื่องเดียวกันไปแล้ว */
+  /**
+   * คำขอลงทะเบียนหน่วยงานที่นำส่งไปแล้วและยังเดินอยู่ — `null` ถ้าไม่มีใบไหนเดินอยู่
+   * และ `undefined` ถ้ายังตอบไม่ได้ ซึ่งกล่องจะยังไม่ขึ้นจนกว่าจะรู้คำตอบ
+   */
+  registration?: OrganizationListItem | null;
+  /** ซ่อนกล่องบอกสถานะหน่วยงาน เมื่อมีการ์ดอื่นบอกเรื่องเดียวกันไปแล้ว */
   hideInactiveNotice?: boolean;
 }) {
   const status = organization?.status as OrganizationStatus | undefined;
@@ -366,21 +383,52 @@ function HomeHeader({
           </p>
         )}
 
-        {status && status !== "ACTIVE" && !hideInactiveNotice ? (
+        {status && status !== "ACTIVE" && !hideInactiveNotice && registration !== undefined ? (
           <div className="mt-5 rounded-xl border-l-[3px] border-warning bg-warning-bg p-5">
-            <p className="text-[13px] font-semibold text-warning">หน่วยงานยังไม่ได้ลงทะเบียนใช้งานระบบ</p>
-            <p className="mt-1.5 text-[15px] leading-relaxed text-ink">
-              หน่วยงานต้องผ่านการอนุมัติและเปิดใช้งานก่อน จึงจะลงทะเบียนชุดข้อมูลใหม่ได้
-            </p>
-            {/* หน่วยงานที่เจ้าหน้าที่สร้างไว้ล่วงหน้าไม่มีคำขอจดทะเบียนมาด้วย ผู้ใช้จึงต้องมี
-                ปุ่มพาเข้าฟอร์ม — ก่อนหน้านี้ปุ่มนี้อยู่เฉพาะกับผู้ใช้ที่ยังไม่มีหน่วยงาน
-                คนที่ถูกผูกหน่วยงานไว้ให้จึงเริ่มเส้นทาง B จากหน้าจอไม่ได้เลย
-                กดซ้ำได้ปลอดภัย: ถ้ามีคำขออยู่แล้วระบบพากลับเข้าใบเดิม ไม่ได้เปิดใบใหม่ */}
-            {onRegister ? (
-              <Button size="sm" className="mt-4" loading={registering} onClick={onRegister}>
-                กรอกแบบฟอร์มลงทะเบียนหน่วยงาน
-              </Button>
-            ) : null}
+            {/**
+             * ยื่นคำขอไปแล้วกับยังไม่ได้ยื่น เป็นคนละเรื่องกัน
+             *
+             * กล่องนี้เคยพูดประโยคเดียวกับทั้งสองกลุ่มว่า "หน่วยงานยังไม่ได้ลงทะเบียนใช้งานระบบ"
+             * ซึ่งกับคนที่เพิ่งกดนำส่งคำขอเสร็จ อ่านได้ว่าใบที่ส่งไปหายไปไหนแล้วไม่รู้ —
+             * มันไม่ตอบสิ่งเดียวที่เขากลับมาหน้าแรกเพื่อถาม คือคำขอเดินไปถึงไหนแล้ว
+             * และตอนนี้กำลังรอใครอยู่ ตรงนี้จึงพูดจากด่านที่คำขอค้างอยู่จริงแทน
+             */}
+            {registration ? (
+              <>
+                <p className="text-[13px] font-semibold text-warning">
+                  คำขอลงทะเบียนหน่วยงานอยู่ระหว่างดำเนินการ
+                </p>
+                <p className="mt-1.5 text-[15px] leading-relaxed text-ink">
+                  {/* คำบอกด่านมาจาก progress ของคำขอใบนี้ ไม่ได้เขียนชื่อด่านทิ้งไว้ตรงนี้ —
+                      เส้นทางเพิ่มหรือสลับด่านเมื่อไร ประโยคนี้ตามไปเอง */}
+                  {registration.progress?.currentLabel
+                    ? `ขณะนี้${registration.progress.currentLabel}`
+                    : "นำส่งคำขอแล้ว อยู่ระหว่างการตรวจสอบ"}{" "}
+                  — หน่วยงานจะลงทะเบียนชุดข้อมูลได้เมื่อคำขอผ่านครบทุกขั้นและเปิดใช้งานแล้ว
+                </p>
+                {registration.progress ? (
+                  <ApprovalStepsCompact className="mt-3" progress={registration.progress} />
+                ) : null}
+              </>
+            ) : (
+              <>
+                <p className="text-[13px] font-semibold text-warning">
+                  หน่วยงานยังไม่ได้ลงทะเบียนใช้งานระบบ
+                </p>
+                <p className="mt-1.5 text-[15px] leading-relaxed text-ink">
+                  หน่วยงานต้องผ่านการอนุมัติและเปิดใช้งานก่อน จึงจะลงทะเบียนชุดข้อมูลใหม่ได้
+                </p>
+                {/* หน่วยงานที่เจ้าหน้าที่สร้างไว้ล่วงหน้าไม่มีคำขอจดทะเบียนมาด้วย ผู้ใช้จึงต้องมี
+                    ปุ่มพาเข้าฟอร์ม — ก่อนหน้านี้ปุ่มนี้อยู่เฉพาะกับผู้ใช้ที่ยังไม่มีหน่วยงาน
+                    คนที่ถูกผูกหน่วยงานไว้ให้จึงเริ่มเส้นทาง B จากหน้าจอไม่ได้เลย
+                    กดซ้ำได้ปลอดภัย: ถ้ามีคำขออยู่แล้วระบบพากลับเข้าใบเดิม ไม่ได้เปิดใบใหม่ */}
+                {onRegister ? (
+                  <Button size="sm" className="mt-4" loading={registering} onClick={onRegister}>
+                    กรอกแบบฟอร์มลงทะเบียนหน่วยงาน
+                  </Button>
+                ) : null}
+              </>
+            )}
           </div>
         ) : null}
       </div>
