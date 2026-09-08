@@ -111,9 +111,33 @@ function layout(opts: {
    * ใต้ลายเซ็น ซึ่งอ่านแล้วเหมือนจดหมายจบไปแล้วแต่ยังมีของต่อท้าย
    */
   closing?: string;
+  /**
+   * บรรทัดหมายเหตุบรรทัดแรกของท้ายอีเมล — แทนที่ "ส่งจากระบบอัตโนมัติ กรุณาอย่าตอบกลับ"
+   *
+   * **ไม่ใช่ที่อยู่ของช่องทางติดต่อ** ช่องทางติดต่อพิมพ์ต่อจากบรรทัดนี้เสมอ ตอนที่ทั้งสองอย่าง
+   * ยังรวมกันอยู่ อีเมลทุกฉบับที่ส่ง footnote ของตัวเองมา (OTP, ถอดสิทธิ์, คำขอไม่ผ่าน,
+   * แจ้งความคืบหน้า) จึงไม่มีช่องทางติดต่อเลยสักช่องทางเดียว
+   */
   footnote?: string;
+  /**
+   * พิมพ์ช่องทางติดต่อที่ท้ายอีเมลหรือไม่ — ปิดเฉพาะฉบับที่พิมพ์ไว้ในเนื้อจดหมายแล้ว
+   *
+   * อีเมลคำเชิญเขียนเป็นหนังสือนำส่ง ช่องทางติดต่อจึงอยู่เหนือคำลงท้ายตามรูปแบบหนังสือ
+   * ถ้าท้ายอีเมลพิมพ์ซ้ำอีกที ผู้รับจะเห็นเบอร์กับอีเมลชุดเดิมสองรอบห่างกันไม่กี่บรรทัด
+   */
+  contact?: boolean;
 }): string {
-  const { title, intro, orgCode, body = "", steps = "", button, closing, footnote } = opts;
+  const {
+    title,
+    intro,
+    orgCode,
+    body = "",
+    steps = "",
+    button,
+    closing,
+    footnote,
+    contact = true,
+  } = opts;
   return `<!doctype html>
 <html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
 <body style="margin:0;padding:0;background:#F6F7FB;">
@@ -165,7 +189,8 @@ function layout(opts: {
         <tr><td style="padding:32px;">
           <div style="border-top:1px solid ${BORDER};padding-top:16px;
                       font:400 12px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-            ${footnote ?? `อีเมลฉบับนี้ส่งจากระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลฉบับนี้ หากต้องการความช่วยเหลือกรุณาติดต่อ ${SUPPORT_EMAIL}`}<br>
+            ${footnote ?? "อีเมลฉบับนี้ส่งจากระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลฉบับนี้"}<br>
+            ${contact ? `${contactLine("หากมีข้อสงสัยหรือประสบปัญหาในการดำเนินการ สามารถติดต่อ")}<br>` : ""}
             สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) — Big Data Institute (Public Organization)
           </div>
         </td></tr>
@@ -381,7 +406,7 @@ export async function sendInvitationEmail(
         `<div style="background:${WARNING_BG};border-left:3px solid ${WARNING};border-radius:8px;padding:16px;">
            <div style="font:400 14px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};">
              หากท่านไม่ได้คาดหมายว่าจะได้รับคำเชิญนี้ กรุณาอย่ากดลิงก์และอย่าใช้ Activation Key นี้
-             และโปรดแจ้งสถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) ที่ ${SUPPORT_EMAIL}
+             ${contactLine("และโปรดแจ้งสถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) ที่")}
            </div>
          </div>`,
       ].join(""),
@@ -396,6 +421,7 @@ export async function sendInvitationEmail(
            ขอแสดงความนับถือ<br>
            <span style="color:${TEXT};">สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)</span>
          </p>`,
+      contact: false,
     }),
   );
 }
