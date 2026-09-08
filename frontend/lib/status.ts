@@ -82,7 +82,7 @@ export const isPendingDatasetStatus = (status: RequestStatus) =>
 
 export const ROLE_LABELS: Record<Role, string> = {
   ORGANIZATION_USER: "ผู้ประสานงานของหน่วยงาน",
-  ORGANIZATION_APPROVER: "ผู้มีอำนาจอนุมัติของหน่วยงาน",
+  ORGANIZATION_APPROVER: "ผู้มีอำนาจกระทำการแทนของหน่วยงาน",
   BDI_OFFICER: "ผู้ประสานงานของ BDI",
   BDI_DATASET_SPECIALIST: "ผู้เชี่ยวชาญด้านข้อมูลของ BDI",
   BDI_FINAL_APPROVER: "ผู้มีอำนาจอนุมัติของ BDI",
@@ -227,7 +227,7 @@ export function taskEventLabel(
    * ปกติผู้กระทำเดาจาก `task_type` ได้ เพราะด่านหนึ่งมีเจ้าของคนเดียว — ยกเว้นด่านที่ถูก
    * เจ้าหน้าที่ BDI ยกเลิกผลการตรวจสอบของตัวเอง ซึ่งปิดด่านของ **คนอื่น** แทนเขา
    * แถวนี้แสดงชื่อผู้กดจาก `completed_by` อยู่แล้ว ถ้าประโยคยังเดาจาก task_type
-   * มันจะเรียกเจ้าหน้าที่ BDI ว่าผู้มีอำนาจอนุมัติของหน่วยงานในบรรทัดเดียวกัน
+   * มันจะเรียกเจ้าหน้าที่ BDI ว่าผู้มีอำนาจกระทำการแทนของหน่วยงานในบรรทัดเดียวกัน
    */
   if (recalled) {
     const officer = ROLE_LABELS.BDI_OFFICER;

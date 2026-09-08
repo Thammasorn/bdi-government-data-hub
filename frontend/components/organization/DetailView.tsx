@@ -46,7 +46,7 @@ function decideAbility(org: Organization, roles: string[]): Ability {
   switch (org.currentTaskType) {
     case "BDI_OFFICER_REVIEW":
       return roles.includes("BDI_OFFICER")
-        ? { can: true, approveLabel: "อนุมัติ", hint: "ตรวจสอบข้อมูลและเอกสารก่อนส่งให้ผู้มีอำนาจอนุมัติของหน่วยงาน" }
+        ? { can: true, approveLabel: "อนุมัติ", hint: "ตรวจสอบข้อมูลและเอกสารก่อนส่งให้ผู้มีอำนาจกระทำการแทนของหน่วยงาน" }
         : { can: false };
     /**
      * สองด่านนี้อนุมัติด้วยการลงนามบนเอกสาร ปุ่มจึงเปิด SigningDialog ไม่ใช่ modal ยืนยันสั้น ๆ
@@ -65,7 +65,7 @@ function decideAbility(org: Organization, roles: string[]): Ability {
         return {
           can: true,
           approveLabel: "ผ่านการตรวจสอบ",
-          hint: "โปรดตรวจสอบเอกสารในฐานะผู้มีอำนาจอนุมัติของหน่วยงาน แล้วลงนามอิเล็กทรอนิกส์",
+          hint: "โปรดตรวจสอบเอกสารในฐานะผู้มีอำนาจกระทำการแทนของหน่วยงาน แล้วลงนามอิเล็กทรอนิกส์",
           signing: true,
           perDocument: true,
         };
@@ -87,10 +87,10 @@ function decideAbility(org: Organization, roles: string[]): Ability {
           can: true,
           recall: true,
           blocked,
-          title: "คำขอรอผู้มีอำนาจอนุมัติของหน่วยงาน",
+          title: "คำขอรอผู้มีอำนาจกระทำการแทนของหน่วยงาน",
           hint:
             blocked ??
-            "ถ้าข้อมูลผู้มีอำนาจอนุมัติผิดจนคำเชิญไปไม่ถึง ยกเลิกผลการตรวจสอบเพื่อส่งกลับให้หน่วยงานแก้ไขได้",
+            "ถ้าข้อมูลผู้มีอำนาจกระทำการแทนผิดจนคำเชิญไปไม่ถึง ยกเลิกผลการตรวจสอบเพื่อส่งกลับให้หน่วยงานแก้ไขได้",
         };
       }
       return { can: false };
@@ -445,7 +445,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         </Card>
 
         <Card>
-          <CardHeader tag="ส่วนที่ 2" title="ผู้มีอำนาจอนุมัติของหน่วยงาน" />
+          <CardHeader tag="ส่วนที่ 2" title="ผู้มีอำนาจกระทำการแทนของหน่วยงาน" />
           <Rows
             rows={[
               ["ชื่อ-นามสกุล", fullName(org.signatoryPrefix, org.signatoryFirstName, org.signatoryLastName)],
@@ -558,7 +558,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
             setNote(e.target.value);
             setNoteError(undefined);
           }}
-          placeholder="เช่น เลขบัตรประชาชนของผู้มีอำนาจอนุมัติไม่ตรงกับคำสั่งแต่งตั้งที่แนบมา"
+          placeholder="เช่น เลขบัตรประชาชนของผู้มีอำนาจกระทำการแทนไม่ตรงกับคำสั่งแต่งตั้งที่แนบมา"
         />
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="secondary" onClick={() => setModal(null)}>
@@ -574,14 +574,14 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         open={modal === "recall"}
         onClose={() => setModal(null)}
         title="ยกเลิกผลการตรวจสอบ"
-        description="ใช้เมื่อข้อมูลผู้มีอำนาจอนุมัติที่หน่วยงานกรอกมาผิด จนผู้ที่ถูกเชิญเข้าระบบไม่ได้"
+        description="ใช้เมื่อข้อมูลผู้มีอำนาจกระทำการแทนที่หน่วยงานกรอกมาผิด จนผู้ที่ถูกเชิญเข้าระบบไม่ได้"
       >
         <div className="rounded-lg bg-navy-50 p-4 text-[15px] leading-relaxed text-ink-muted">
           <p className="font-medium text-navy-800">เมื่อยืนยันแล้ว ระบบจะ</p>
           <ul className="mt-2 list-disc space-y-1 pl-5">
             <li>
               ยกเลิกคำเชิญที่ส่งไปยัง{" "}
-              <span className="font-medium text-navy-800">{org.signatoryEmail ?? "ผู้มีอำนาจอนุมัติ"}</span>{" "}
+              <span className="font-medium text-navy-800">{org.signatoryEmail ?? "ผู้มีอำนาจกระทำการแทน"}</span>{" "}
               — ลิงก์เดิมใช้ไม่ได้อีก
             </li>
             <li>คืนอีเมลและเลขบัตรประชาชนให้หน่วยงานกรอกใหม่ได้</li>
@@ -598,7 +598,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
               setNote(e.target.value);
               setNoteError(undefined);
             }}
-            placeholder="เช่น อีเมลของผู้มีอำนาจอนุมัติสะกดผิด คำเชิญจึงไปไม่ถึงผู้รับ"
+            placeholder="เช่น อีเมลของผู้มีอำนาจกระทำการแทนสะกดผิด คำเชิญจึงไปไม่ถึงผู้รับ"
           />
         </div>
         <div className="mt-6 flex justify-end gap-3">

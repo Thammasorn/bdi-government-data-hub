@@ -48,7 +48,7 @@ export const ROLE_DEFINITIONS: { code: RoleCode; nameTh: string; nameEn: string 
   { code: ROLE_CODES.ORGANIZATION_USER, nameTh: "ผู้ประสานงานของหน่วยงาน", nameEn: "Organization User" },
   {
     code: ROLE_CODES.ORGANIZATION_APPROVER,
-    nameTh: "ผู้มีอำนาจอนุมัติของหน่วยงาน",
+    nameTh: "ผู้มีอำนาจกระทำการแทนของหน่วยงาน",
     nameEn: "Organization Approver",
   },
   { code: ROLE_CODES.BDI_OFFICER, nameTh: "ผู้ประสานงานของ BDI", nameEn: "BDI Officer" },

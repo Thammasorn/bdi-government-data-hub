@@ -5,7 +5,7 @@ import { ROLE_CODES, type RoleCode } from "./system.js";
 /** ชื่อ role ที่แสดงบนหน้าจอ — คู่กับ iam.role.name_th ใน sheet `role` */
 export const ROLE_LABELS: Record<RoleCode, string> = {
   [ROLE_CODES.ORGANIZATION_USER]: "ผู้ประสานงานของหน่วยงาน",
-  [ROLE_CODES.ORGANIZATION_APPROVER]: "ผู้มีอำนาจอนุมัติของหน่วยงาน",
+  [ROLE_CODES.ORGANIZATION_APPROVER]: "ผู้มีอำนาจกระทำการแทนของหน่วยงาน",
   [ROLE_CODES.BDI_OFFICER]: "ผู้ประสานงานของ BDI",
   [ROLE_CODES.BDI_DATASET_SPECIALIST]: "ผู้เชี่ยวชาญด้านข้อมูลของ BDI",
   [ROLE_CODES.BDI_FINAL_APPROVER]: "ผู้มีอำนาจอนุมัติของ BDI",
