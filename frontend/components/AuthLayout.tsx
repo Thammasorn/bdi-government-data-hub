@@ -51,7 +51,7 @@ export function AuthLayout({
         </div>
 
         <p className="relative text-[13px] text-white/55">
-          © {new Date().getFullYear()} Big Data Institute (Public Organization)
+          Big Data Institute (Public Organization)
         </p>
       </aside>
 
