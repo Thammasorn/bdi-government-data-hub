@@ -341,11 +341,7 @@ export default function EditDatasetRequestPage() {
                   />
                 </Wrap>
               </div>
-              <ReadOnlyField
-                label="องค์กร"
-                value={organizationName}
-                hint="ชุดข้อมูลเป็นของหน่วยงานที่ท่านสังกัด ระบบกรอกให้อัตโนมัติ"
-              />
+              <ReadOnlyField label="องค์กร" value={organizationName} />
               <div className="grid gap-5 sm:grid-cols-2">
                 <Wrap name="maintainer">
                   <TextField
@@ -983,14 +979,13 @@ function YesNo({
 }
 
 /** ช่องที่ระบบกรอกให้และผู้ใช้แก้ไม่ได้ — แสดงเหมือนช่องอื่นเพื่อให้อ่านฟอร์มได้ต่อเนื่อง */
-function ReadOnlyField({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function ReadOnlyField({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-1.5">
       <span className="text-sm font-medium text-ink">{label}</span>
       <p className="flex h-11 items-center rounded-[10px] border border-line bg-navy-50/60 px-3.5 text-[15px] text-ink-muted">
         {value || "—"}
       </p>
-      {hint ? <p className="text-[13px] text-ink-muted">{hint}</p> : null}
     </div>
   );
 }
