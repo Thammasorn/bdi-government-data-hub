@@ -456,6 +456,58 @@ export function toPayload(f: FormState): Record<string, unknown> {
   return body;
 }
 
+// ------------------------------------------------------------------ การตรวจข้อมูล
+
+/**
+ * ช่วง U+0E01–U+0E5B คือบล็อกภาษาไทยทั้งบล็อก — คู่แฝดของ containsThai()
+ * ใน `backend/src/lib/validation.ts` และสำเนาเดียวกับใน `organization-form.ts`
+ */
+export function containsThai(value: string): boolean {
+  return /[ก-๛]/.test(value);
+}
+
+/** นับแค่ a–z A–Z ไม่รวมอักษรละตินที่มีเครื่องหมายเสริม — ช่องนี้ขอภาษาอังกฤษ ไม่ใช่อักษรละตินทั้งบล็อก */
+export function containsEnglish(value: string): boolean {
+  return /[A-Za-z]/.test(value);
+}
+
+/**
+ * ข้อความเดียวกับที่ `datasetSubmitSchema` ตอบกลับมา — ช่องเดียวกันต้องไม่พูดคนละอย่างสองรอบ
+ * แล้วแต่ว่าผู้ใช้เห็นของฝั่งไหนก่อน
+ */
+export const TITLE_LANGUAGE_MESSAGE =
+  "ชื่อชุดข้อมูลภาษาไทยต้องมีอักษรไทย (มีภาษาอังกฤษปนได้ เช่น สถิติผู้ป่วยนอกรายเดือน (OPD))";
+export const NAME_LANGUAGE_MESSAGE =
+  "ชื่อชุดข้อมูลภาษาอังกฤษต้องมีอักษรภาษาอังกฤษ (มีตัวเลขและอักษรไทยปนได้ เช่น Monthly Outpatient Statistics)";
+
+/**
+ * ผลตรวจฝั่งหน้าเว็บของทั้งฟอร์ม — คืนแต่ช่องที่ผิด
+ *
+ * **ตัวตัดสินจริงยังเป็น `datasetSubmitSchema` ฝั่ง API** ซึ่งตรวจซ้ำทุกครั้งตอนกด
+ * "ตรวจสอบคำขอ" และตอนนำส่ง ที่นี่มีไว้ให้ฟอร์มเตือนได้ทันทีที่ผู้ใช้ออกจากช่อง
+ * ไม่ต้องกรอกจนจบแล้วค่อยรู้ว่าพิมพ์ผิดช่อง — เหมือนที่ `organization-form.ts` ทำ
+ * **กฎที่นี่ต้องตรงกับฝั่ง API เสมอ แก้ที่หนึ่งต้องแก้อีกที่ด้วย**
+ *
+ * วันนี้มีอยู่สองช่อง คือชื่อชุดข้อมูลไทยกับอังกฤษ ที่หน้าเว็บตัดสินเองได้จากค่าในช่องเดียว
+ * ความครบถ้วนของช่องบังคับอื่น ๆ ไม่ได้อยู่ที่นี่ เพราะแถบความคืบหน้าด้านซ้ายบอกอยู่แล้ว
+ * ว่าส่วนไหนยังไม่ครบ (ดู REQUIRED_BY_SECTION ในหน้าฟอร์ม) การขึ้น error แดงใต้ทุกช่อง
+ * ที่ยังไม่ได้กรอกจะกลายเป็นหน้าจอแดงทั้งหน้าตั้งแต่เพิ่งเปิดฟอร์ม
+ *
+ * ช่องที่ยัง **ว่าง** คืน null ทุกช่อง — "ยังไม่ได้กรอก" ไม่ใช่ "กรอกผิดภาษา" และข้อความ
+ * "กรุณากรอก…" เป็นของฝั่ง API ตอนนำส่ง
+ */
+export function validateDatasetForm(f: FormState): Partial<Record<FormField, string>> {
+  const errors: Partial<Record<FormField, string>> = {};
+
+  const title = f.title.trim();
+  if (title && !containsThai(title)) errors.title = TITLE_LANGUAGE_MESSAGE;
+
+  const name = f.name.trim();
+  if (name && !containsEnglish(name)) errors.name = NAME_LANGUAGE_MESSAGE;
+
+  return errors;
+}
+
 // ------------------------------------------------------------------ การแสดงผล
 
 /** 9.1 + 9.2 อ่านคู่กันเสมอ — "ทุก 2 ปี" ไม่ใช่ "ปี" กับ "2" คนละบรรทัด */

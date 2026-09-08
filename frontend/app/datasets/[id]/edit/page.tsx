@@ -33,6 +33,7 @@ import {
   splitTags,
   toFormState,
   toPayload,
+  validateDatasetForm,
   type FormField,
   type FormState,
 } from "@/lib/dataset-form";
@@ -83,6 +84,8 @@ export default function EditDatasetRequestPage() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [legalAccepted, setLegalAccepted] = useState(false);
   const [fields, setFields] = useState<Record<string, string>>({});
+  /** ช่องที่ผู้ใช้เข้าไปแล้วออกมา — ก่อนนั้นไม่เตือน ไม่งั้นขอบแดงขึ้นระหว่างพิมพ์ตัวแรก */
+  const [touched, setTouched] = useState<Partial<Record<FormField, boolean>>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -128,7 +131,30 @@ export default function EditDatasetRequestPage() {
   /** ล้าง error ของช่องที่เพิ่งแก้ ไม่งั้นขอบแดงค้างทั้งที่ผู้ใช้แก้ให้ถูกแล้ว */
   const clearError = (key: string) => setFields((f) => (f[key] ? { ...f, [key]: "" } : f));
 
+  const touch = (key: FormField) => setTouched((t) => (t[key] ? t : { ...t, [key]: true }));
+
   const rules = useMemo(() => formRules(form), [form]);
+
+  /**
+   * ผลตรวจฝั่งหน้าเว็บ คิดใหม่ทุกครั้งที่ฟอร์มเปลี่ยน — พิมพ์แก้ให้ถูกแล้วข้อความหายเอง
+   * ไม่ต้องรอ blur อีกรอบ
+   */
+  const clientErrors = useMemo(() => validateDatasetForm(form), [form]);
+
+  /**
+   * ข้อความของช่องหนึ่ง — **ของ API มาก่อนของหน้าเว็บเสมอ** มันคือคำตอบของตัวตัดสินจริง
+   * และมีข้อที่หน้าเว็บรู้เองไม่ได้ · ของหน้าเว็บขึ้นเฉพาะช่องที่ผู้ใช้แตะแล้ว
+   */
+  const errorOf = (key: FormField) => fields[key] || (touched[key] ? clientErrors[key] : undefined);
+
+  /**
+   * ไม่ส่ง `valid` ต่อ — ฟอร์มนี้ไม่มีขอบเขียวและเครื่องหมายถูกที่ช่องไหนเลย ให้แค่สองช่อง
+   * ที่มีกฎฝั่งหน้าเว็บอ่านได้ว่าเป็นสองช่องเดียวที่ระบบตรวจ ทั้งที่ทุกช่องถูกตรวจตอนนำส่ง
+   */
+  const fieldProps = (key: FormField) => ({
+    error: errorOf(key),
+    onBlur: () => touch(key),
+  });
 
   const completion = useMemo(() => {
     const conditional: Record<string, FormField[]> = {
@@ -325,8 +351,8 @@ export default function EditDatasetRequestPage() {
                     maxLength={150}
                     value={form.title}
                     onChange={(e) => set("title", e.target.value)}
-                    error={fields.title}
                     placeholder="เช่น สถิติผู้ป่วยนอกรายเดือน"
+                    {...fieldProps("title")}
                   />
                 </Wrap>
                 <Wrap name="name">
@@ -336,8 +362,8 @@ export default function EditDatasetRequestPage() {
                     maxLength={150}
                     value={form.name}
                     onChange={(e) => set("name", e.target.value)}
-                    error={fields.name}
                     placeholder="เช่น Monthly Outpatient Statistics"
+                    {...fieldProps("name")}
                   />
                 </Wrap>
               </div>
