@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { DocumentStack } from "@/components/organization/DocumentStack";
 import { PdfViewer } from "@/components/organization/PdfViewer";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
@@ -37,7 +38,7 @@ export const DATASET_ATTESTATION_TEXT = "ข้าพเจ้าได้อ่
  *
  * ต่างกันที่ `perDocument` เหมือนเส้นทางจดทะเบียนหน่วยงาน:
  *   true  — ฝั่งหน่วยงาน อ่านแบบนำส่งข้อมูลในกล่องนี้ ติ๊กยืนยันว่าอ่านครบ แล้วกดยืนยัน
- *   false — ฝั่ง BDI อ่านเอกสารจากการ์ดในหน้ารายละเอียดแล้วยืนยันทีเดียว
+ *   false — ฝั่ง BDI อ่านเอกสารทั้งชุดในกล่องนี้เหมือนกัน แต่ไม่ต้องติ๊ก และมีปุ่มไม่อนุมัติด้วย
  *
  * เส้นทางนี้มีเอกสารฉบับเดียว จึงไม่มีการเดินอ่านทีละฉบับแบบเส้นทางหน่วยงาน — `perDocument`
  * ที่นี่จึงหมายถึง "ต้องติ๊กว่าอ่านครบก่อนไหม" ไม่ใช่ "เดินทีละฉบับไหม"
@@ -52,6 +53,7 @@ export function DatasetSigningDialog({
   title,
   action,
   perDocument,
+  onReject,
 }: {
   open: boolean;
   onClose: () => void;
@@ -64,6 +66,14 @@ export function DatasetSigningDialog({
   action: "approve";
   /** true = ต้องอ่านเอกสารในกล่องนี้และติ๊กยืนยันก่อน (ฝั่งหน่วยงาน) */
   perDocument: boolean;
+  /**
+   * ผู้อนุมัติ BDI กด "ไม่อนุมัติ" — พาไปกรอกเหตุผล
+   *
+   * ปุ่มย้ายเข้ามาอยู่ในกล่องนี้ (การ์ด 2026-09-09 ข้อ 2) แต่**ตัวขั้นตอนไม่ได้ย้ายตามมา**
+   * การกรอกเหตุผลกับกฎ 10 ตัวอักษรยังเป็นของ `DetailView` ที่เดียวเหมือนเดิม กล่องนี้แค่
+   * ปิดตัวเองแล้วส่งต่อ — เขียนขั้นตอนนั้นซ้ำที่นี่คือมีกฎเดียวกันอยู่สองที่ให้ไม่ตรงกันทีหลัง
+   */
+  onReject?: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -117,21 +127,29 @@ export function DatasetSigningDialog({
   };
 
   /**
-   * ฝั่ง BDI — กดอนุมัติแล้วยืนยันจบ เท่ากับด่านเดียวกันของเส้นทางจดทะเบียนหน่วยงาน
+   * ฝั่ง BDI — อ่านเอกสารทั้งชุดในกล่องนี้ แล้วตัดสินในกล่องเดียวกัน
    *
-   * ช่องติ๊กมีไว้เป็นหลักฐานว่า**หน่วยงาน**อ่านเอกสารแล้วจึงยอมรับ ซึ่งลงเป็นแถวใน
-   * `legal_acceptance` แต่ backend ไม่เคยเขียนตารางนั้นให้ฝั่ง BDI เลย — การอนุมัติของ
-   * BDI เป็นการเห็นชอบของสำนักงาน ไม่ใช่การยอมรับเงื่อนไข ค่าที่ติ๊กจึงถูกโยนทิ้ง
-   * ประตูที่ไม่ได้สร้างหลักฐานอะไรขึ้นมาเลย มีค่าเท่ากับความหน่วง
+   * เดิมกล่องนี้มีแต่ประโยคยืนยัน เอกสารต้องไปเปิดอ่านจากการ์ดในหน้ารายละเอียดก่อน
+   * แล้วค่อยกลับมากด และปุ่ม "ไม่อนุมัติ" อยู่บนการ์ดข้างบนคนละที่กับปุ่มอนุมัติ
+   * BDI ขอให้ทั้งเอกสารและทั้งสองทางเลือกมาอยู่ตรงหน้าตอนตัดสิน (2026-09-09)
    *
-   * เอกสารยังอ่านได้จากการ์ด "เอกสารข้อตกลง" ในหน้ารายละเอียด เหมือนที่ฝั่ง BDI ของ
-   * เส้นทางจดทะเบียนหน่วยงานอ่าน
+   * **ยังไม่มีช่องติ๊ก** ช่องติ๊กเป็นหลักฐานว่า**หน่วยงาน**อ่านแล้วจึงยอมรับ ซึ่งลงเป็นแถวใน
+   * `legal_acceptance` — backend ไม่เคยเขียนตารางนั้นให้ฝั่ง BDI เลย เพราะการอนุมัติของ
+   * BDI เป็นการเห็นชอบของสำนักงาน ไม่ใช่การยอมรับเงื่อนไข ประตูที่ไม่ได้สร้างหลักฐาน
+   * อะไรขึ้นมาเลยมีค่าเท่ากับความหน่วง
    */
   if (!perDocument) {
     return (
-      <Modal open={open} onClose={close} title={title}>
+      <Modal
+        open={open}
+        onClose={close}
+        size="lg"
+        title={title}
+        description="ตรวจแบบนำส่งข้อมูลให้ครบก่อนตัดสิน"
+      >
+        <DocumentStack documents={documents} />
         {/* ไม่มีประโยคกลางกล่องแล้ว — หัวข้อ "อนุมัติ" พูดแทนทั้งหมด (BDI ขอเมื่อ 2026-09-04) */}
-        <p className="text-[13px] leading-relaxed text-ink-muted">
+        <p className="mt-5 text-[13px] leading-relaxed text-ink-muted">
           ระบบจะบันทึกชื่อ เวลา และแบบนำส่งข้อมูลที่คุณเห็นชอบไว้เป็นหลักฐาน
           แล้วแจ้งผู้เกี่ยวข้องในขั้นถัดไป
         </p>
@@ -140,13 +158,27 @@ export function DatasetSigningDialog({
             {error}
           </p>
         ) : null}
-        <div className="mt-6 flex justify-between gap-3">
+        <div className="mt-6 flex flex-wrap justify-between gap-3">
           <Button variant="secondary" onClick={close}>
             ปิด
           </Button>
-          <Button loading={busy} onClick={submit}>
-            ยืนยัน
-          </Button>
+          <div className="flex flex-wrap gap-3">
+            {onReject ? (
+              <Button
+                variant="danger"
+                disabled={busy}
+                onClick={() => {
+                  close();
+                  onReject();
+                }}
+              >
+                ไม่อนุมัติ
+              </Button>
+            ) : null}
+            <Button loading={busy} onClick={submit}>
+              {title}
+            </Button>
+          </div>
         </div>
       </Modal>
     );

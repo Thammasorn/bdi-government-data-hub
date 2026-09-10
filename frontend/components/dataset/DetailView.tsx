@@ -502,11 +502,12 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
                   ส่งกลับแก้ไข
                 </Button>
               ) : null}
-              {ability.canReject ? (
-                <Button variant="danger" onClick={() => setModal("reject")}>
-                  ไม่อนุมัติ
-                </Button>
-              ) : null}
+              {/*
+                ปุ่ม "ไม่อนุมัติ" ย้ายเข้าไปอยู่ในกล่องอนุมัติแล้ว (การ์ด 2026-09-09 ข้อ 2)
+                ทั้งสองทางเลือกเป็นการตัดสินเรื่องเดียวกัน และต้องอ่านเอกสารก่อนเหมือนกัน
+                การวางไว้บนการ์ดนี้ทำให้กดไม่อนุมัติได้โดยไม่ต้องเปิดเอกสารเลยสักฉบับ
+                — ต่างจาก "ส่งกลับแก้ไข" ที่เป็นคนละการตัดสินและไม่ต้องอ่านเอกสารก่อน
+              */}
               {ability.advanceLabel ? (
                 <Button onClick={() => setModal(ability.signing ? "sign" : "advance")}>
                   {ability.advanceLabel}
@@ -884,6 +885,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
           title={ability?.advanceLabel ?? "ยืนยัน"}
           action="approve"
           perDocument={ability?.perDocument ?? false}
+          onReject={ability?.canReject ? () => setModal("reject") : undefined}
         />
       ) : null}
 

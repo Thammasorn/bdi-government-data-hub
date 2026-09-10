@@ -29,7 +29,19 @@ export function Modal({
     // กันหน้าเลื่อนอยู่ข้างหลัง modal
     const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    ref.current?.querySelector<HTMLElement>("textarea,input,button")?.focus();
+    /**
+     * โฟกัสช่องกรอกช่องแรก ถ้าไม่มีก็โฟกัสตัวกล่องเอง — **ไม่โฟกัสปุ่ม**
+     *
+     * เบราว์เซอร์เลื่อนสิ่งที่เพิ่งโฟกัสให้เข้ามาในจอเสมอ กล่องที่เนื้อในยาวกว่าจอและมีปุ่ม
+     * อยู่ท้ายสุด (กล่องอนุมัติของผู้อนุมัติ BDI ที่มีเอกสารสี่ฉบับเรียงกัน) จึงเปิดมาแล้ว
+     * เลื่อนไปอยู่ท้ายเอกสารฉบับสุดท้ายทันที ผู้อ่านไม่เห็นฉบับแรกเลย
+     *
+     * กล่องที่มีช่องกรอกยังโฟกัสช่องนั้นเหมือนเดิม — เป็นสิ่งที่ผู้ใช้กำลังจะพิมพ์อยู่แล้ว
+     * และมันอยู่ต้นกล่อง ไม่ได้พาเลื่อนไปไหน
+     */
+    const field = ref.current?.querySelector<HTMLElement>("textarea,input");
+    if (field) field.focus();
+    else ref.current?.focus();
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = previous;
@@ -63,6 +75,8 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
+        /** โฟกัสได้ด้วยโปรแกรมเมื่อไม่มีช่องกรอกให้โฟกัส แต่ไม่อยู่ในลำดับ Tab */
+        tabIndex={-1}
         className={`animate-in-up relative flex max-h-[calc(100vh_-_2rem)] w-full flex-col overflow-hidden rounded-2xl bg-white shadow-pop ${
           size === "lg" ? "max-w-3xl" : "max-w-lg"
         }`}

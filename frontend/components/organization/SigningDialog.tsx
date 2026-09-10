@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { DocumentStack } from "@/components/organization/DocumentStack";
 import { LegalNotice } from "@/components/organization/LegalNotice";
 import { PdfViewer } from "@/components/organization/PdfViewer";
 import { Button } from "@/components/ui/Button";
@@ -39,8 +40,9 @@ export const ATTESTATION_TEXT = "ข้าพเจ้าได้อ่าน�
  *
  * ต่างกันที่ `perDocument`:
  *   true  — ขึ้นเอกสารทีละฉบับให้กด "เห็นชอบ" หรือ "ปิด" แล้วจบด้วยหน้าลงนาม
- *   false — BDI อ่านเอกสารทั้งชุดจากหน้าหลักแล้วลงนามทีเดียว การ์ดเขียนไว้ชัดว่า
- *           "ไม่ต้องมีขึ้น เห็นชอบ ทีละเอกสาร"
+ *   false — BDI อ่านเอกสารทั้งชุดในกล่องนี้เอง (ต่อกันลงมา) แล้วลงนามทีเดียว การ์ดชุดเดิม
+ *           เขียนไว้ชัดว่า "ไม่ต้องมีขึ้น เห็นชอบ ทีละเอกสาร" — คือไม่ต้องติ๊กรายฉบับ
+ *           ไม่ได้แปลว่าไม่ต้องเห็นเอกสาร (2026-09-09)
  *
  * กด "ปิด" กลับไปหน้าที่มีปุ่มส่งผลการตรวจสอบ ตามที่การ์ดกำหนด — และการเห็นชอบที่กดค้าง
  * ไว้จะถูกล้าง ไม่ใช่เก็บไว้ครึ่งทาง เพราะยังไม่มีการลงนามเกิดขึ้นเลย
@@ -220,6 +222,49 @@ export function SigningDialog({
               เห็นชอบ
             </Button>
           </div>
+        </div>
+      </Modal>
+    );
+  }
+
+  /**
+   * ฝั่ง BDI — อ่านเอกสารทั้งชุดในกล่องนี้ก่อน แล้วกดอนุมัติทีเดียว
+   *
+   * เดิมกล่องนี้มีแต่ประโยคยืนยัน เอกสารต้องไปเปิดอ่านจากการ์ดในหน้ารายละเอียดก่อนแล้ว
+   * ค่อยกลับมากด — BDI ขอให้เห็นเอกสารที่กำลังจะอนุมัติอยู่ตรงหน้าตอนกด (2026-09-09)
+   *
+   * ยังไม่มีการติ๊กรายฉบับ ตามที่การ์ดชุดเดิมเขียนไว้ว่าฝั่ง BDI "ไม่ต้องมีขึ้น เห็นชอบ
+   * ทีละเอกสาร" — `legal_acceptance` เป็นตารางของฝั่งหน่วยงาน backend ไม่เคยเขียนให้ BDI
+   */
+  if (!perDocument) {
+    return (
+      <Modal
+        open={open}
+        onClose={close}
+        size="lg"
+        title={signLabel}
+        description="ตรวจเอกสารทุกฉบับให้ครบก่อนอนุมัติ"
+      >
+        <DocumentStack documents={documents} />
+        <p className="mt-5 text-center text-[17px] font-semibold leading-relaxed text-navy-800">
+          {CONFIRMATION_TEXT}
+        </p>
+        <p className="mt-4 text-[13px] leading-relaxed text-ink-muted">
+          ระบบจะบันทึกชื่อ เวลา และเอกสารทุกฉบับที่คุณเห็นชอบไว้เป็นหลักฐาน
+          และประทับลายมือชื่อของคุณลงในเอกสารข้อตกลง
+        </p>
+        {error ? (
+          <p className="mt-4 rounded-xl bg-danger-bg p-4 text-sm leading-relaxed text-danger">
+            {error}
+          </p>
+        ) : null}
+        <div className="mt-6 flex justify-between gap-3">
+          <Button variant="secondary" onClick={close}>
+            ปิด
+          </Button>
+          <Button loading={busy} onClick={sign}>
+            {signLabel}
+          </Button>
         </div>
       </Modal>
     );
