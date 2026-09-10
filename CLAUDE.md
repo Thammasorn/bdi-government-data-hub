@@ -707,7 +707,24 @@ row per `(owner_type, owner_id, attachment_type)`, so a request could hold exact
 PDF. The index now includes `COALESCE(legal_document_version_id, '000…0')` — the COALESCE matters,
 because plain NULLs are distinct in Postgres and would have quietly let user-uploaded attachments
 have several ACTIVE rows per slot. A0 rows predating the column keep `NULL` and are left alone
-rather than re-rendered, so approved documents do not get a new "พิมพ์จากระบบ" line.
+rather than re-rendered.
+
+**Reading a document renders it again; the stored file is evidence, not the copy you read.**
+`GET /:id/legal-documents/:versionId/file` on both journeys re-renders any document that has a
+per-request file, filling `{{printedBy}}` with the **reader** and `{{printedAt}}` /
+`{{printedDateTime}}` with now, and answers `Cache-Control: no-store`. `agreementPdf()` /
+`datasetPdf()` are the split-out halves that build the PDF without storing it; the
+`render*Document()` wrappers still store, and they are what submitting and signing call.
+Documents with no placeholders (A1–A3 today) still stream straight from storage.
+
+Nothing overwrites the stored attachment on a read, and that is the point: it is what
+`legal_acceptance` and `signature_confirmation` were written against, one ACTIVE row per slot is
+all the index allows, and two people opening the same page would otherwise race to replace each
+other's file. It is also what the documents say about themselves — "สิ่งที่พิมพ์ออกจากระบบถือเป็น
+สำเนา โดยให้ถือว่าเอกสารอิเล็กทรอนิกส์ฉบับล่าสุดในระบบเป็นฉบับอ้างอิง". Measured on a dev
+checkout: A0 ~320 ms rendered, A1–A3 ~75 ms streamed, A4 ~470 ms. Because that cost is now paid
+per view, `LegalDocumentsCard` lists the documents and renders one only when the reader presses
+**ดูเอกสาร**, instead of embedding an `<iframe>` in the page.
 
 **The variable catalogue is the contract between documents and code.**
 `TEMPLATE_VARIABLES` in `lib/document-render.ts` is the single source for validation, the admin

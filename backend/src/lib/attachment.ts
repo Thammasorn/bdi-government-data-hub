@@ -269,6 +269,32 @@ export async function streamAttachment(
 }
 
 /**
+ * ส่ง PDF ที่เพิ่ง render ในหน่วยความจำ โดยไม่ต้องเก็บเป็นไฟล์ก่อน
+ *
+ * ใช้กับเอกสารที่ประทับชื่อผู้เปิดอ่านและเวลาที่เปิด (การ์ด "Document Print Date") —
+ * หัวเรื่องต้องเหมือน streamAttachment() ทุกประการ เพราะหน้าจอเดียวกันเรียกทั้งสองทาง
+ * ผ่าน URL เดียวกัน และจะบอกไม่ได้ว่าฉบับที่ได้มาจากทางไหน
+ *
+ * `no-store` เป็นส่วนสำคัญ ไม่ใช่ของแถม: ฉบับที่ประทับชื่อคนหนึ่งไว้ต้องไม่ถูก cache
+ * แล้วเสิร์ฟให้อีกคน และวันที่พิมพ์ก็ต้องเป็นวันนี้เสมอ
+ */
+export function sendRenderedPdf(
+  res: import("express").Response,
+  pdf: Buffer,
+  filename: string,
+  disposition: "inline" | "attachment" = "inline",
+) {
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader(
+    "Content-Disposition",
+    `${disposition}; filename*=UTF-8''${encodeURIComponent(filename)}`,
+  );
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Content-Length", String(pdf.length));
+  res.end(pdf);
+}
+
+/**
  * อ่านไฟล์กลับมาเป็น Buffer
  *
  * ใช้กับ template .docx ของเอกสารกฎหมาย ซึ่งต้องเอามาเติมค่าแล้วแปลงเป็น PDF —

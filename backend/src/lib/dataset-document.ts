@@ -90,22 +90,31 @@ export async function datasetFormVersion(db: Db) {
   return form;
 }
 
-/** เติมข้อมูลของคำขอลงในเอกสารฉบับหนึ่ง แล้วเก็บเป็นไฟล์ของคำขอ */
-export async function renderDatasetDocument(
+/** เอกสารหนึ่งฉบับที่จะ render — ต้องเป็นเวอร์ชันที่เผยแพร่อยู่ */
+export interface DatasetDocumentVersion {
+  code: string;
+  nameTh: string;
+  versionId: string;
+  versionNumber: number;
+  effectiveAt: Date | null;
+}
+
+/**
+ * เติมข้อมูลของคำขอลงในเอกสารแล้วคืนเป็น PDF — **ไม่เก็บเป็นไฟล์ของคำขอ**
+ *
+ * คู่แฝดของ `agreementPdf()` ในเส้นทางลงทะเบียนหน่วยงาน แยกออกมาด้วยเหตุผลเดียวกัน:
+ * ตอนเปิดอ่านต้องได้ PDF ที่ประทับชื่อคนที่กำลังเปิด ไม่ใช่ไฟล์ที่เก็บไว้เป็นหลักฐาน
+ */
+export async function datasetPdf(
   db: Db,
   params: {
     request: DatasetDocumentRequest;
-    document: {
-      code: string;
-      nameTh: string;
-      versionId: string;
-      versionNumber: number;
-      effectiveAt: Date | null;
-    };
+    document: DatasetDocumentVersion;
     printedByName: string | null;
-    actorId: string;
+    /** เวลาที่พิมพ์ — ค่าปริยายคือตอนนี้ */
+    printedAt?: Date;
   },
-) {
+): Promise<Buffer> {
   const docx = await templateDocx(db, params.document.versionId);
   const signatures = await signaturesOf(db, params.request.id);
 
@@ -118,12 +127,25 @@ export async function renderDatasetDocument(
     bdiSignedLastName: signatures.bdi.lastName,
     bdiSignedAt: signatures.bdi.at,
     printedByName: params.printedByName,
-    printedAt: new Date(),
+    printedAt: params.printedAt ?? new Date(),
     documentVersionNumber: params.document.versionNumber,
     documentEffectiveAt: params.document.effectiveAt,
   });
 
-  const pdf = await renderTemplateToPdf(docx, values, `${params.document.code}.docx`);
+  return renderTemplateToPdf(docx, values, `${params.document.code}.docx`);
+}
+
+/** เติมข้อมูลของคำขอลงในเอกสารฉบับหนึ่ง แล้วเก็บเป็นไฟล์ของคำขอ */
+export async function renderDatasetDocument(
+  db: Db,
+  params: {
+    request: DatasetDocumentRequest;
+    document: DatasetDocumentVersion;
+    printedByName: string | null;
+    actorId: string;
+  },
+) {
+  const pdf = await datasetPdf(db, params);
 
   const attachment = await storeAttachment(db, {
     ownerType: OWNER,

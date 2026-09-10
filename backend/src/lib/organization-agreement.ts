@@ -122,28 +122,33 @@ export async function agreementVersion(db: Db) {
   return agreement;
 }
 
+/** เอกสารหนึ่งฉบับที่จะ render — ต้องเป็นเวอร์ชันที่เผยแพร่อยู่ */
+export interface AgreementDocumentVersion {
+  code: string;
+  nameTh: string;
+  versionId: string;
+  versionNumber: number;
+  effectiveAt: Date | null;
+}
+
 /**
- * เติมข้อมูลของคำขอลงในเอกสารฉบับหนึ่ง แล้วเก็บเป็นไฟล์ของคำขอ
+ * เติมข้อมูลของคำขอลงในเอกสารแล้วคืนเป็น PDF — **ไม่เก็บเป็นไฟล์ของคำขอ**
  *
- * คืน attachment ในรูปที่ส่งออก API ได้เลย พร้อม id ของเวอร์ชันที่ใช้ render
+ * แยกออกมาจาก `renderLegalDocument()` เพราะมีผู้เรียกสองแบบที่ต้องการคนละอย่าง:
+ * ตอนนำส่ง/ลงนามต้องได้ไฟล์ที่เก็บไว้เป็นหลักฐาน ส่วนตอน**เปิดอ่าน**ต้องได้แค่ PDF
+ * ที่ประทับชื่อคนที่กำลังเปิดกับเวลาที่เปิด แล้วทิ้งไป (การ์ด "Document Print Date")
  */
-export async function renderLegalDocument(
+export async function agreementPdf(
   db: Db,
   params: {
     request: AgreementRequest;
-    /** เอกสารที่จะ render — ต้องเป็นเวอร์ชันที่เผยแพร่อยู่ */
-    document: {
-      code: string;
-      nameTh: string;
-      versionId: string;
-      versionNumber: number;
-      effectiveAt: Date | null;
-    };
-    /** ชื่อคนที่ทำให้เอกสารฉบับนี้ถูกสร้าง — ไปอยู่บรรทัด "พิมพ์จากระบบโดย" */
+    document: AgreementDocumentVersion;
+    /** ชื่อที่จะไปอยู่บรรทัด "พิมพ์จากระบบโดย" */
     printedByName: string | null;
-    actorId: string;
+    /** เวลาที่พิมพ์ — ค่าปริยายคือตอนนี้ */
+    printedAt?: Date;
   },
-) {
+): Promise<Buffer> {
   const docx = await templateDocx(db, params.document.versionId);
   const signatures = await signaturesOf(db, params.request.id);
   // ข้อมูลสำนักงานมาจากแถว organization ของ BDI เอง ไม่ได้ hardcode ทั้งชุด —
@@ -169,12 +174,30 @@ export async function renderLegalDocument(
     officeEmail: office?.email ?? null,
     officePhone: office?.phone ?? null,
     printedByName: params.printedByName,
-    printedAt: now,
+    printedAt: params.printedAt ?? now,
     documentVersionNumber: params.document.versionNumber,
     documentEffectiveAt: params.document.effectiveAt,
   });
 
-  const pdf = await renderTemplateToPdf(docx, values, `${params.document.code}.docx`);
+  return renderTemplateToPdf(docx, values, `${params.document.code}.docx`);
+}
+
+/**
+ * เติมข้อมูลของคำขอลงในเอกสารฉบับหนึ่ง แล้วเก็บเป็นไฟล์ของคำขอ
+ *
+ * คืน attachment ในรูปที่ส่งออก API ได้เลย พร้อม id ของเวอร์ชันที่ใช้ render
+ */
+export async function renderLegalDocument(
+  db: Db,
+  params: {
+    request: AgreementRequest;
+    document: AgreementDocumentVersion;
+    /** ชื่อคนที่ทำให้เอกสารฉบับนี้ถูกสร้าง — ไปอยู่บรรทัด "พิมพ์จากระบบโดย" */
+    printedByName: string | null;
+    actorId: string;
+  },
+) {
+  const pdf = await agreementPdf(db, params);
 
   /**
    * A0 ที่ถูกสร้างก่อนมีคอลัมน์ legal_document_version_id เก็บไว้ที่ slot เดียวกันแต่

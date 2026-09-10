@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 
 import { PdfViewer } from "@/components/organization/PdfViewer";
+import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
+import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
 import { documentLabel } from "@/lib/legal-document";
@@ -56,10 +58,18 @@ export function useLegalDocuments(
 }
 
 /**
- * เอกสารข้อตกลงทั้งชุด พร้อมแท็บสลับฉบับ
+ * เอกสารข้อตกลงทั้งชุด — รายชื่อฉบับ พร้อมปุ่มเปิดอ่านทีละฉบับใน modal
  *
- * ทำเป็นแท็บไม่ใช่วางต่อกันลงมา เพราะรวมกันสิบเจ็ดหน้า — หน้าที่ต้องเลื่อนผ่านเอกสาร
- * ทั้งชุดเพื่อไปหาปุ่มนำส่งคือหน้าที่ไม่มีใครอ่านเอกสารเลย
+ * **ไม่ฝังตัวอ่าน PDF ไว้ในหน้า** (BDI ขอเมื่อ 2026-09-10) เดิมการ์ดนี้เป็นแท็บสลับฉบับ
+ * โดยมี `<iframe>` ของฉบับที่เลือกฝังอยู่ตลอด ทุกครั้งที่เปิดหน้ารายละเอียดจึงมีการโหลด
+ * เอกสารหนึ่งฉบับเสมอ ไม่ว่าคนเปิดหน้าจะตั้งใจอ่านเอกสารหรือไม่
+ *
+ * ราคานั้นเพิ่งแพงขึ้นมาก: เอกสารที่มี placeholder ถูก **render สดทุกครั้งที่เปิดอ่าน**
+ * เพื่อประทับชื่อผู้เปิดกับวันที่ (การ์ด "Document Print Date") ซึ่งเป็นงานของ LibreOffice
+ * ระดับวินาที การฝังไว้เฉย ๆ จึงเท่ากับให้ทุกคนที่เปิดหน้ารายละเอียดจ่ายค่านั้นฟรี
+ *
+ * กดแล้วค่อยโหลดยังตอบโจทย์เดิมของแท็บด้วย — เอกสารทั้งชุดรวมกันสิบเจ็ดหน้า หน้าที่ต้อง
+ * เลื่อนผ่านเอกสารทั้งชุดเพื่อไปหาปุ่มนำส่งคือหน้าที่ไม่มีใครอ่านเอกสารเลย
  */
 export function LegalDocumentsCard({
   documents,
@@ -85,7 +95,8 @@ export function LegalDocumentsCard({
    */
   regenerateLabel?: string;
 }) {
-  const [active, setActive] = useState(0);
+  /** ฉบับที่เปิดอ่านอยู่ — null คือยังไม่ได้กดเปิดฉบับไหน จึงยังไม่มีการ render */
+  const [open, setOpen] = useState<LegalDocument | null>(null);
 
   // โหลดไม่สำเร็จต้องบอกและให้ลองใหม่ได้ ไม่ใช่หมุนค้างไว้เฉย ๆ
   if (error) {
@@ -122,7 +133,7 @@ export function LegalDocumentsCard({
   }
 
   /**
-   * ฉบับที่ถูกข้ามหายไปจากแท็บ จึงต้องมีบรรทัดบอกว่ามันหายไปไหน
+   * ฉบับที่ถูกข้ามหายไปจากรายการ จึงต้องมีบรรทัดบอกว่ามันหายไปไหน
    *
    * ผู้อนุมัติ BDI เห็นบรรทัดนี้ด้วย — เขาควรรู้ว่าหน่วยงานระบุฉบับไหนว่าไม่เกี่ยวข้อง
    * เขาแค่ไม่ต้องอ่านและลงนามรับรองมัน
@@ -150,73 +161,67 @@ export function LegalDocumentsCard({
     );
   }
 
-  const current = documents[Math.min(active, documents.length - 1)]!;
-
   return (
     <Card>
       <CardHeader title="เอกสารข้อตกลง" description={description} />
-      {/* แถบเลือกเอกสารเป็นแถวของตัวเอง มี padding บนล่างเท่ากัน — เดิมมีแต่ pb
-          ปุ่มจึงไปชิดกับเส้นใต้หัวการ์ดจนดูเหมือนหลุดจากกริด */}
-      <div className="border-b border-line bg-canvas px-6 py-4">
-        <div role="tablist" aria-label="เลือกเอกสารข้อตกลง" className="flex flex-wrap gap-2">
-          {documents.map((doc, index) => (
-            <button
-              key={doc.versionId}
-              type="button"
-              role="tab"
-              aria-selected={index === active}
-              onClick={() => setActive(index)}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-4 py-1.5 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy-700 focus-visible:ring-offset-2 ${
-                index === active
-                  ? "border-navy-700 bg-navy-700 text-white"
-                  : "border-line bg-white text-navy-700 hover:border-navy-300 hover:bg-navy-50"
-              }`}
-            >
-              {documentLabel(doc)}
+      <ul className="divide-y divide-line">
+        {documents.map((doc) => (
+          <li
+            key={doc.versionId}
+            className="flex flex-wrap items-center justify-between gap-3 px-6 py-4"
+          >
+            <div className="min-w-0">
+              <p className="text-[15px] font-medium text-navy-800">{documentLabel(doc)}</p>
               {doc.acceptedAt ? (
-                <>
-                  <span aria-hidden="true">✓</span>
-                  <span className="sr-only">เห็นชอบแล้ว</span>
-                </>
+                <p className="mt-0.5 text-[13px] text-ink-muted">
+                  เห็นชอบเมื่อ {formatThaiDate(doc.acceptedAt)}
+                </p>
               ) : null}
-            </button>
-          ))}
-        </div>
-        {skippedNote ? <div className="mt-3">{skippedNote}</div> : null}
-      </div>
-      <div className="p-6">
-        {/* ไม่พิมพ์ชื่อเอกสารซ้ำเหนือตัวอ่าน — หัวของ PdfViewer แสดงชื่อเดียวกันอยู่แล้ว
-            และแท็บที่เลือกก็บอกรหัสอยู่ เหลือไว้เฉพาะสิ่งที่ผู้ใช้ทำเอง คือการเห็นชอบ
-            (เลขเวอร์ชันของ template ไม่ได้บอกอะไรกับเขา ระบบบันทึกไว้ในฐานข้อมูลแล้วว่า
-            ลงนามรับเอกสารเวอร์ชันใด) */}
-        {current.acceptedAt ? (
-          <p className="mb-4 text-[13px] text-ink-muted">
-            เห็นชอบเมื่อ {formatThaiDate(current.acceptedAt)}
-          </p>
-        ) : null}
-        {/*
-          การ์ดนี้ไม่แสดง `legal_notice` — ที่นี่เป็นตัวอ่าน ไม่ใช่ขั้นตอนที่ทำอะไรกับเอกสารได้
-          คำเตือนที่มีอยู่ฉบับเดียวคือของผนวก 3 ซึ่งสั่งให้กดปุ่ม "ไม่เกี่ยวข้อง" — ปุ่มนั้นอยู่ใน
-          กล่องลงนามของผู้มีอำนาจเท่านั้น (`SigningDialog`) การ์ดนี้ถูก mount ที่หน้าตรวจสอบ
-          ก่อนนำส่ง หน้ารายละเอียดหน่วยงาน และหน้ารายละเอียดชุดข้อมูล ซึ่งไม่มีปุ่มนั้นสักหน้า
-        */}
-        {current.fileUrl ? (
+            </div>
+            {doc.fileUrl ? (
+              <Button size="sm" variant="secondary" onClick={() => setOpen(doc)}>
+                ดูเอกสาร
+              </Button>
+            ) : (
+              /* ปุ่มที่กดแล้วไม่มีอะไรให้อ่านแย่กว่าไม่มีปุ่ม — บอกวิธีทำให้มีไฟล์แทน */
+              <p className="text-[13px] text-warning">
+                ยังไม่ได้สร้างเอกสารฉบับนี้ — กด &ldquo;{regenerateLabel}&rdquo; อีกครั้ง
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+      {skippedNote ? <div className="border-t border-line px-6 py-4">{skippedNote}</div> : null}
+
+      {/*
+        การ์ดนี้เป็นตัวอ่านอย่างเดียว ไม่มีปุ่ม "ไม่เกี่ยวข้อง" และไม่แสดง `legal_notice` —
+        คำเตือนของผนวก 3 สั่งให้กดปุ่มนั้น ซึ่งมีอยู่ในกล่องลงนามของผู้มีอำนาจเท่านั้น
+      */}
+      <Modal
+        open={open !== null}
+        onClose={() => setOpen(null)}
+        size="lg"
+        title={open ? documentLabel(open) : ""}
+        description={open?.name}
+      >
+        {open?.fileUrl ? (
           <PdfViewer
             /**
              * `reloadKey` เกาะกับรอบที่โหลดรายการ — URL ของ A0 ไม่เปลี่ยนเมื่อไฟล์ถูกสร้างทับ
-             * (attachment id ใหม่แต่ path เดิมของคำขอ) เบราว์เซอร์จึงเสิร์ฟ PDF ที่ cache ไว้
-             * และผู้ที่เพิ่งลงนามจะเห็นฉบับที่ยังไม่มีลายมือชื่อของตัวเอง
+             * ฉบับที่ render สดส่ง `Cache-Control: no-store` มาเองอยู่แล้ว แต่ผนวกที่ไม่มี
+             * placeholder ยังเสิร์ฟจากที่เก็บและ cache ได้ตามปกติ จึงยังต้องมีตัวนี้
              */
-            url={`${api.fileUrl(current.fileUrl)}?v=${reloadKey}`}
-            filename={documentLabel(current)}
-            title={current.name}
+            url={`${api.fileUrl(open.fileUrl)}?v=${reloadKey}`}
+            filename={documentLabel(open)}
+            title={open.name}
           />
-        ) : (
-          <p className="rounded-xl bg-warning-bg p-5 text-sm text-warning">
-            ยังไม่ได้สร้างเอกสารฉบับนี้ กรุณากลับไปกด &ldquo;{regenerateLabel}&rdquo; อีกครั้ง
-          </p>
-        )}
-      </div>
+        ) : null}
+        <div className="mt-5 flex justify-end">
+          <Button variant="secondary" onClick={() => setOpen(null)}>
+            ปิด
+          </Button>
+        </div>
+      </Modal>
     </Card>
   );
 }
