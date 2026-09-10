@@ -563,6 +563,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
                 : []),
               ["ชื่อชุดข้อมูล (ภาษาไทย)", request.title],
               ["ชื่อชุดข้อมูล (ภาษาอังกฤษ)", request.name],
+              ["รายการข้อมูล (ฟิลด์ข้อมูล) ที่ประสงค์จะนำส่ง", request.dataFields],
               ["องค์กร", request.organization.name],
               ["ชื่อผู้ติดต่อ", request.maintainer],
               ["อีเมลผู้ติดต่อ", request.maintainerEmail],
@@ -586,6 +587,9 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
                 pick(DELIVERY_FREQUENCY_LABELS, request.deliveryFrequency),
               ],
               ["ความละเอียดเชิงภูมิศาสตร์", pick(GEO_COVERAGE_LABELS, request.geoCoverage)],
+              ...(rules.geoCoverageOther.visible
+                ? ([["ระบุความละเอียดเชิงภูมิศาสตร์อื่น ๆ", request.geoCoverageOther]] as DetailRow[])
+                : []),
               ["แหล่งที่มาของข้อมูล", request.dataSource],
               ["รูปแบบการนำส่งข้อมูล", pick(DATA_FORMAT_LABELS, request.dataFormat)],
               ...(rules.dataFormatOther.visible
@@ -642,24 +646,21 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
                 "ส่งต่อข้อมูลดิบแปลงสภาพไปยังระบบเชื่อมโยงข้อมูลอื่น",
                 grant(request.allowTransformedRawDataSharing),
               ],
-              ...(rules.transformedRawDataRecipients.visible
-                ? ([["หน่วยงานปลายทางที่อนุญาต", request.transformedRawDataRecipients]] as DetailRow[])
+              /* เว้นว่างได้ตามป้ายของช่อง — บรรทัดนี้จึงบอกความหมายของค่าว่างแทนขีดกลาง */
+              ...(rules.allowTransformedRawDataSharingSpecifiedPlatforms.visible
+                ? ([
+                    [
+                      "ระบบเชื่อมโยงข้อมูลที่อนุญาต",
+                      request.allowTransformedRawDataSharingSpecifiedPlatforms ||
+                        "ไม่ได้ระบุ — อนุญาตให้ส่งต่อได้ทุกระบบ",
+                    ],
+                  ] as DetailRow[])
                 : []),
               [
                 "ส่งต่อข้อมูลดิบแปลงสภาพไปยัง GDX",
                 grant(request.allowTransformedRawDataGdxSharing),
               ],
-              ...(rules.transformedRawDataGdxRecipients.visible
-                ? ([
-                    ["หน่วยงานที่อนุญาตให้รับข้อมูลผ่าน GDX", request.transformedRawDataGdxRecipients],
-                  ] as DetailRow[])
-                : []),
               ["ส่งต่อข้อมูลรวม (aggregated data)", grant(request.allowAggregatedDataSharing)],
-              ...(rules.aggregatedDataRecipients.visible
-                ? ([
-                    ["หน่วยงานปลายทางที่อนุญาตให้รับข้อมูลรวม", request.aggregatedDataRecipients],
-                  ] as DetailRow[])
-                : []),
               ...(rules.authorizePersonalDataAnonymization.visible
                 ? ([
                     [

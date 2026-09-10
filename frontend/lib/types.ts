@@ -295,6 +295,7 @@ export interface DatasetRequest {
   dataTopicOther: string | null;
   title: string | null;
   name: string | null;
+  dataFields: string | null;
   maintainer: string | null;
   maintainerEmail: string | null;
   tagString: string | null;
@@ -304,6 +305,7 @@ export interface DatasetRequest {
   updateFrequencyInterval: number | null;
   deliveryFrequency: string | null;
   geoCoverage: string | null;
+  geoCoverageOther: string | null;
   dataSource: string | null;
   dataFormat: string | null;
   dataFormatOther: string | null;
@@ -322,9 +324,7 @@ export interface DatasetRequest {
   allowTransformedRawDataGdxSharing: boolean | null;
   allowAggregatedDataSharing: boolean | null;
   authorizePersonalDataAnonymization: boolean | null;
-  transformedRawDataRecipients: string | null;
-  transformedRawDataGdxRecipients: string | null;
-  aggregatedDataRecipients: string | null;
+  allowTransformedRawDataSharingSpecifiedPlatforms: string | null;
 
   legalAcceptedAt: string | null;
 

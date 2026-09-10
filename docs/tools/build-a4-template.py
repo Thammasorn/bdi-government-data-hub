@@ -34,46 +34,65 @@ def group(start: int, field: str, codes: list[str]) -> None:
         TICKS[start + offset] = (field, code)
 
 
-group(7, "dataType", ["1", "2", "3", "9"])
-group(12, "dataTopic", ["01", "02", "03", "04", "05", "06", "07", "99"])
-# เอกสารไม่มีตัวเลือก B (วันทำการ) ที่รหัสมี — ไม่ต้องมีช่องติ๊กให้
-group(33, "updateFrequencyUnit", ["A", "S", "Q", "M", "W", "D", "H", "N", "R", "O", "U"])
+group(5, "dataType", ["1", "2", "3", "9"])
+group(10, "dataTopic", ["01", "02", "03", "04", "05", "06", "07", "99"])
+group(32, "updateFrequencyUnit",
+      ["A", "S", "Q", "M", "W", "D", "B", "H", "N", "R", "O", "U"])
 group(46, "deliveryFrequency", ["1", "2", "3", "4", "5"])
-# 64 = "อื่น ๆ (ระบุ)" -> 99, 65 = "ไม่ทราบ" -> 98 (สลับกับลำดับรหัส)
 group(52, "geoCoverage",
-      ["00", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "99", "98"])
+      ["00", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "98", "99"])
 group(68, "dataFormat", ["1", "2", "3", "4"])
 group(74, "dataCategory", ["a", "b", "c", "d"])
 group(79, "containsPersonalData", ["true", "false"])
-group(85, "personalDataProcessingPeriod", ["a", "b"])
-group(88, "dataClassification", ["01", "02", "03", "04", "05"])
-group(94, "licenseId", ["G0", "G2", "G5"])
-group(99, "allowOriginalRawDataRetention", ["true", "false"])
-group(102, "allowOriginalRawDataSharing", ["true", "false"])
-group(106, "allowTransformedRawDataSharing", ["true", "false"])
-group(109, "allowTransformedRawDataGdxSharing", ["true", "false"])
-group(112, "allowAggregatedDataSharing", ["true", "false"])
-group(115, "authorizePersonalDataAnonymization", ["true", "false"])
+group(86, "personalDataProcessingPeriod", ["a", "b"])
+group(89, "dataClassification", ["01", "02", "03", "04", "05"])
+group(95, "licenseId", ["G0", "G2", "G5"])
+group(100, "allowOriginalRawDataRetention", ["true", "false"])
+group(103, "allowOriginalRawDataSharing", ["true", "false"])
+# 16.1 มีบรรทัด "ระบุระบบเชื่อมโยงข้อมูลที่อนุญาต" คั่นระหว่าง อนุญาต กับ ไม่อนุญาต
+# สองตัวเลือกจึงไม่ติดกัน — group() ใช้ไม่ได้ ต้องเขียนทีละข้อ
+TICKS[107] = ("allowTransformedRawDataSharing", "true")
+TICKS[109] = ("allowTransformedRawDataSharing", "false")
+group(111, "allowTransformedRawDataGdxSharing", ["true", "false"])
+group(114, "allowAggregatedDataSharing", ["true", "false"])
+group(117, "authorizePersonalDataAnonymization", ["true", "false"])
+
+# ── ย่อหน้าที่เป็น bullet ในต้นฉบับแต่ **ไม่ใช่ตัวเลือก** ───────────────────
+#
+# ข้อ 16.1 มีบรรทัด "ระบุระบบเชื่อมโยงข้อมูลที่อนุญาต…" อยู่ใต้ตัวเลือก "อนุญาต" และถูกจัดเป็น
+# bullet ระดับเดียวกัน ถ้าปล่อยไว้ วงกลมหน้าบรรทัดจะอ่านเป็นตัวเลือกที่สาม ทั้งที่เป็นช่องกรอก
+DEBULLET: set[int] = {108}
 
 # ── ช่องกรอก: ดัชนีย่อหน้า -> (ข้อความเดิมที่ต้องแทน, placeholder) ─────────
 # ข้อความเดิมคือเครื่องหมายช่องกรอกบนกระดาษ (เส้นประ / คำว่า text / number)
 FIELDS: list[tuple[int, str, str]] = [
-    (19, "อื่นๆ", "{{tick.dataTopic.99}} อื่น ๆ {{dataset.dataTopicOther}}"),
-    (22, "DOTS", "{{dataset.title}}"),
-    (24, "DOTS", "{{dataset.nameEn}}"),
-    (25, "MARKER", "{{org.name}}"),
-    (26, "MARKER", "{{dataset.maintainer}}"),
-    (27, "MARKER", "{{dataset.maintainerEmail}}"),
-    (28, "MARKER", "{{dataset.tags}}"),
-    (29, "MARKER", "{{dataset.notes}}"),
-    (30, "MARKER", "{{dataset.objective}}"),
+    (17, "WHOLE", "{{tick.dataTopic.99}} อื่น ๆ {{dataset.dataTopicOther}}"),
+    (20, "DOTS", "{{dataset.title}}"),
+    (22, "DOTS", "{{dataset.nameEn}}"),
+    (23, "MARKER", "{{dataset.dataFields}}"),
+    (24, "WHOLE", "องค์กร {{org.name}}"),
+    (25, "MARKER", "{{dataset.maintainer}}"),
+    (26, "MARKER", "{{dataset.maintainerEmail}}"),
+    (27, "MARKER", "{{dataset.tags}}"),
+    (28, "MARKER", "{{dataset.notes}}"),
+    (29, "MARKER", "{{dataset.objective}}"),
     (44, "MARKER", "{{dataset.updateFrequencyInterval}}"),
+    (65, "WHOLE", "{{tick.geoCoverage.99}} อื่น ๆ {{dataset.geoCoverageOther}}"),
     (66, "MARKER", "{{dataset.dataSource}}"),
     (71, "ANGLE", "{{dataset.dataFormatOther}}"),
-    (81, "TAIL", " {{dataset.personalDataTypes}}"),
-    (83, "DOTS", "{{dataset.dataSubjectCategories}}"),
-    (86, "PERIOD", "{{tick.personalDataProcessingPeriod.b}} อื่น ๆ ระบุ ระยะเวลา "
-                   "{{dataset.personalDataPeriodYear}} ปี {{dataset.personalDataPeriodMonth}} เดือน"),
+    (82, "MARKER", "{{dataset.personalDataTypes}}"),
+    (84, "MARKER", "{{dataset.dataSubjectCategories}}"),
+    (87, "WHOLE", "{{tick.personalDataProcessingPeriod.b}} อื่น ๆ ระบุ ระยะเวลา "
+                  "{{dataset.personalDataPeriodYear}} ปี {{dataset.personalDataPeriodMonth}} เดือน"),
+    (108, "MARKER", "{{dataset.transformedSharingPlatforms}}"),
+    # ── ท้ายเอกสาร — ชุด 2026-09-09 เพิ่มบล็อกนี้เข้ามา ฉบับ 2026-08-12 ไม่มี ──
+    (122, "TAIL", " {{org.name}}"),
+    (124, "DOTS", "{{org_approver.signature}}"),
+    (125, "DOTS", "{{org_approver.signedDate}}"),
+    (128, "DOTS", "{{printedBy}}"),
+    (129, "DOTS", "{{printedDateTime}}"),
+    (130, "DOTS", "{{document.version}}"),
+    (131, "DOTS", "{{document.effectiveDate}}"),
 ]
 
 PARAGRAPH = re.compile(r"<w:p(?: [^>]*)?>.*?</w:p>", re.S)
@@ -104,12 +123,18 @@ def set_text(seg: str, new_full: str) -> str:
     return out if n else seg
 
 
-def tick(seg: str, field: str, code: str) -> str:
-    """ใส่ช่องติ๊กหน้าข้อความ และถอด bullet ของ Word ออก"""
+def debullet(seg: str) -> str:
+    """ถอด bullet ของ Word ออก โดยคงระยะย่อหน้าที่ bullet เคยให้ไว้"""
     seg = NUMPR.sub("", seg)
     # ไม่มี numPr แล้ว ระยะย่อหน้าจะยุบไปชิดขอบ — ตั้ง indent ให้เท่าที่ bullet เคยให้
     if "<w:ind " not in seg:
         seg = PPR.sub(lambda m: m.group(1) + m.group(2) + '<w:ind w:left="1440"/>' + m.group(3), seg, count=1)
+    return seg
+
+
+def tick(seg: str, field: str, code: str) -> str:
+    """ใส่ช่องติ๊กหน้าข้อความ และถอด bullet ของ Word ออก"""
+    seg = debullet(seg)
     text = paragraph_text(seg)
     return set_text(seg, "{{tick." + field + "." + code + "}} " + text.strip())
 
@@ -117,14 +142,16 @@ def tick(seg: str, field: str, code: str) -> str:
 def field(seg: str, kind: str, replacement: str) -> str:
     text = paragraph_text(seg)
     if kind == "DOTS":
-        new = DOTS.sub(replacement, text, count=1) if DOTS.search(text) else text + replacement
+        # เส้นประกินช่องว่างหน้ามันไปด้วย ถ้าแทนตรง ๆ ค่าจะไปติดกับป้าย เช่น
+        # "วันที่นำส่ง22 สิงหาคม 2569" — คืนช่องว่างหนึ่งช่องเสมอ
+        new = DOTS.sub(" " + replacement, text, count=1) if DOTS.search(text) else text + " " + replacement
     elif kind == "MARKER":
         new = MARKER.sub(" " + replacement, text, count=1) if MARKER.search(text) else text + " " + replacement
     elif kind == "ANGLE":
         new = ANGLE.sub(" " + replacement, text, count=1) if ANGLE.search(text) else text + " " + replacement
     elif kind == "TAIL":
         new = text.rstrip() + replacement
-    elif kind in ("PERIOD", "อื่นๆ"):
+    elif kind == "WHOLE":
         new = replacement
     else:
         raise SystemExit(f"ไม่รู้จักชนิดช่องกรอก {kind}")
@@ -147,6 +174,9 @@ def main() -> None:
         if idx >= len(paras):
             sys.exit(f"ย่อหน้า {idx} ไม่มีในเอกสาร — โครงเอกสารเปลี่ยนไปจากที่ตารางนี้อ้างอิง")
         edits[idx] = tick(paras[idx][2], field_name, code)
+
+    for idx in DEBULLET:
+        edits[idx] = debullet(edits.get(idx, paras[idx][2]))
 
     for idx, kind, replacement in FIELDS:
         base = edits.get(idx, paras[idx][2])

@@ -161,6 +161,7 @@ export const TEMPLATE_VARIABLES = {
   // ── ชุดข้อมูลที่ขอลงทะเบียน (เส้นทาง C) ──
   "dataset.title": { scope: "dataset", group: "dataset", description: "ชื่อชุดข้อมูล (ภาษาไทย)", example: "ปริมาณน้ำฝนรายวัน" },
   "dataset.nameEn": { scope: "dataset", group: "dataset", description: "ชื่อชุดข้อมูล (ภาษาอังกฤษ)", example: "Daily Rainfall" },
+  "dataset.dataFields": { scope: "dataset", group: "dataset", description: "รายการข้อมูล (ฟิลด์ข้อมูล) ที่ประสงค์จะนำส่ง", example: "รหัสสถานี, วันที่ตรวจวัด, ปริมาณน้ำฝน (มม.), พิกัดละติจูด, พิกัดลองจิจูด" },
   "dataset.maintainer": { scope: "dataset", group: "dataset", description: "ชื่อผู้ติดต่อของชุดข้อมูล", example: "กลุ่มงานข้อมูลสารสนเทศ" },
   "dataset.maintainerEmail": { scope: "dataset", group: "dataset", description: "อีเมลผู้ติดต่อของชุดข้อมูล", example: "data@dla.go.th" },
   "dataset.tags": { scope: "dataset", group: "dataset", description: "คำสำคัญหรือคำค้น คั่นด้วยจุดกลาง", example: "น้ำฝน · อุทกภัย" },
@@ -169,6 +170,8 @@ export const TEMPLATE_VARIABLES = {
   "dataset.dataSource": { scope: "dataset", group: "dataset", description: "แหล่งที่มาของข้อมูล", example: "สถานีตรวจวัดของกรม" },
   "dataset.dataTopicOther": { scope: "dataset", group: "dataset", description: "ประเด็นอื่น ๆ ที่ระบุเอง — ว่างถ้าไม่ได้เลือก \"อื่น ๆ\"", example: "การเกษตร" },
   "dataset.dataFormatOther": { scope: "dataset", group: "dataset", description: "ชื่อระบบเชื่อมโยงข้อมูลอื่น — ว่างถ้าไม่ได้เลือกข้อนั้น", example: "GDX" },
+  "dataset.geoCoverageOther": { scope: "dataset", group: "dataset", description: "ความละเอียดเชิงภูมิศาสตร์ที่ระบุเอง — ว่างถ้าไม่ได้เลือก \"อื่น ๆ\"", example: "ลุ่มน้ำ" },
+  "dataset.transformedSharingPlatforms": { scope: "dataset", group: "dataset", description: "ระบบเชื่อมโยงข้อมูลที่อนุญาตให้ส่งต่อข้อมูลดิบแปลงสภาพไป (ข้อ 16.1) — ว่างแปลว่าอนุญาตทุกระบบ", example: "Linkage Center, data.go.th" },
   "dataset.updateFrequencyInterval": { scope: "dataset", group: "dataset", description: "ค่าความถี่ของการปรับปรุงข้อมูลต้นทาง", example: "1" },
   "dataset.personalDataTypes": { scope: "dataset", group: "dataset", description: "ประเภทของข้อมูลส่วนบุคคล — ว่างถ้าไม่มีข้อมูลส่วนบุคคล", example: "ชื่อ-นามสกุล, เลขบัตรประชาชน" },
   "dataset.dataSubjectCategories": { scope: "dataset", group: "dataset", description: "กลุ่มหรือประเภทของเจ้าของข้อมูลส่วนบุคคล", example: "ประชาชนผู้ขอรับบริการ" },
