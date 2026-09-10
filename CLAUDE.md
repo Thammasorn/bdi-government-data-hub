@@ -119,7 +119,13 @@ typecheck + production build + driving the real API. If you add tests, wire them
 model, **except for `dataset_registration_metadata` and `dataset_metadata`, which follow the
 2026-08-16 download** of the same workbook — those two tables were re-cut to match the metadata
 registration form (`docs/11-metadata-registration-form.md`). Everything else is unchanged
-between the two files. Together: 20 tables across 10 Postgres schemas (`iam`, `organization`, `dataset`, `review`,
+between the two files. Those two tables took three more columns from the **2026-09-09** download
+of `metadata_mapping.xlsx` (`data_fields`, `geo_coverage_other`,
+`allow_transformed_raw_data_sharing_specified_platforms`); the same sheet retired the three
+"ระบุหน่วยงานปลายทาง" answers, so `EXTRA_METADATA_KEYS` in `lib/dataset.ts` is now **empty** —
+kept, not deleted, because the sheet can add another column-less field at any time, and
+`toMetadataColumns()` still passes a row's existing `additional_metadata_json` through untouched
+so what old requests answered stays readable. `docs/11` §2 has the whole of it. Together: 20 tables across 10 Postgres schemas (`iam`, `organization`, `dataset`, `review`,
 `legal`, `signature`, `attachment`, `notification`, `integration`, `audit`) plus an
 `administration` schema for the address masters. Where it contradicts `docs/01-user-journey.md`,
 **the Excel wins**; every deliberate deviation carries a `เบี่ยงจากดีไซน์:` comment in
@@ -185,6 +191,18 @@ can ever match returns the *unfiltered* list, silently), and `journeyGraph()` dr
 — the existing `ฉบับร่าง` node carries its number instead. Its state comes from `status`: CURRENT
 while `DRAFT` or `RETURNED`, DONE otherwise. Don't give it a row by opening `ORGANIZATION_REVISION`
 as a task; the one-active-task index would start colliding with real gates.
+
+**A gate whose round was thrown away is `RETURNED`, not `DONE` and not `UPCOMING`.** `StepState`
+has a fifth value, shown as a grey "ส่งกลับแก้ไข" beside "ยังไม่เริ่ม". A step earns it two ways:
+its own task closed with `RETURNED`, or the request as a whole is in `WAITING_REVISION` and the
+step has a task at all. The second test has to read the phase, because a gate that passed cleanly
+cannot tell from its own row that the round it belongs to has since been voided — which is how a
+recalled request showed a green "เสร็จสิ้น" on the officer's step while sitting back with the
+organisation (reported from production 2026-09-10). Steps never reached keep "ยังไม่เริ่ม", and
+no date is printed on a `RETURNED` step because `completedAt` belongs to the discarded round.
+
+`currentStep` is still found by `state === "CURRENT"` alone, so `currentOrder`, `nextStep`, the
+steps block in every journey email and `announceProgress()` are untouched by that value.
 
 So a `RETURNED` request *does* have a current step now — step 1, waiting to be resubmitted, which
 is what the screens said in words before. Anything asking "has this moved forward?" must therefore
@@ -285,6 +303,14 @@ reads `stageMeta()` only, and it is no longer `whitespace-nowrap`: the full word
 must be allowed to wrap in a fixed column rather than paint over its neighbour. `shortLabel`
 survives for the diagram alone, where every node has to stay inside `min-h-[4.5rem]` or the CSS
 connectors stop lining up.
+
+**The button that closes a gate says what the gate is, and there are only two words.** The BDI
+officer checks, so his button is `ผ่านการตรวจสอบ`; everyone who approves — the organisation's own
+signatory included — presses `อนุมัติ` (BDI settled it on 2026-09-10, and the signatory being an
+"approver" was the part that had to be asked). Before that the three gates carried four different
+words between them and two were the wrong way round: the officer pressed "อนุมัติ" while the
+signatory pressed "ผ่านการตรวจสอบ". The per-document `เห็นชอบ` inside `SigningDialog` is not one
+of these — it attests to one annexe and becomes a `legal_acceptance` row.
 
 Those names all come from `ROLE_LABELS` now, through `REVIEW_TASK_ROLE` + `REVIEW_TASK_ACTION` in
 `lib/roles.ts` (and the mirror of both in `frontend/lib/status.ts`). Before that, one role had
@@ -642,11 +668,14 @@ mirror each other file for file — `lib/organization-agreement.ts` / `lib/datas
 
 **A4 has tick boxes, which is what makes Journey C different.** It is a paper form with option
 lists, so the template carries `{{tick.<field>.<code>}}` before each option and the renderer
-prints ✔ on the option matching the request and ☐ on the rest — every option still prints, so the
-reader sees what was not chosen. Neither mark exists in TH SarabunPSK, so both come from the
-converter's fallback — which is why `gotenberg/` rejects the colour-emoji font (see
-`docs/17` §2); without that the tick renders as a colour bitmap two and a half times the line
-height. Tick names are generated from the code lists in `lib/dataset.ts`
+prints ● on the option matching the request and ○ on the rest — every option still prints, so the
+reader sees what was not chosen. Circles rather than boxes since 2026-09-09: the paper form the
+legal team drew uses circular bullets, and ✔/☐ read as a different form. Neither mark exists in
+TH SarabunPSK, so both come from the converter's fallback — which is why `gotenberg/` rejects the
+colour-emoji font (see `docs/17` §2); without that the tick renders as a colour bitmap two and a
+half times the line height. **Changing either character means measuring a converted PDF again**;
+✓ (U+2713) once landed in DejaVu Math and drew 68pt tall on an 18.6pt line, which is why ✔
+(U+2714) was picked in August and why ● (U+25CF) / ○ (U+25CB) were measured before this swap. Tick names are generated from the code lists in `lib/dataset.ts`
 (`TICK_FIELDS`), never hand-listed, so adding a code list value makes a new tick usable with no
 change here. A document may omit ticks for codes it has no line for.
 
@@ -750,6 +779,22 @@ belongs to the document rather than the version, so old rows are read back under
 say what someone accepted, open that version's file, don't read the code. Codes follow the legal
 team's annex numbers on purpose: that is what everyone reading the paper calls them.
 
+**The 2026-09-09 set replaced A0 and A4**, annexes unchanged. Both arrived marked up with
+database column names in angle brackets, so both are produced by a script rather than by hand —
+`docs/tools/convert-field-tags.py` for A0 (it also fills back the blanks that draft did not mark,
+`{{system.name}}` and `{{bdi_approver.endorsement}}`, and strips the drafting highlight) and
+`docs/tools/build-a4-template.py` for A4, whose tables are paragraph indices and therefore have
+to be re-derived whenever the legal team moves anything. Neither template is edited by hand; run
+the script and publish what it writes.
+
+**Production carries exactly one version per document, numbered 1** — reset on 2026-09-10 once
+the 9 September set was published. The versions removed were superseded drafts from August; the
+twelve `legal_acceptance` rows that pointed at them were **repointed to the surviving version,
+not deleted**, so the demo requests that had been signed still read as signed. That is the only
+time this has been done, and it is a pre-launch tidy-up rather than a routine: once a real
+organisation has signed, deleting the version it accepted destroys the only record of what it
+accepted. `backups/bdi-main-20260910-before-version-reset.sql` is the state before it.
+
 **Reading is attested, not measured.** The organisation approver ticks
 "ข้าพเจ้าได้อ่านเอกสารฉบับนี้ครบถ้วนแล้ว" per document before `เห็นชอบ` unlocks, and the tick
 is stored (`acceptance_method = CHECKBOX`, the per-document tick time in `accepted_at`, the
@@ -760,6 +805,25 @@ here (268,400 opaque pixels, zero non-white; `disableFontFace` did not help). A 
 "they read it" on top of a renderer that can silently show nothing is worse than no gate.
 `docs/17-legal-document-rendering.md` §6.1 has the full reasoning and the server-side-page-image
 route if it ever has to be measured for real.
+
+**The BDI approver reads the documents inside the dialog that approves them.** Both journeys'
+final-approval dialogs stack the request's documents (`components/organization/DocumentStack.tsx`,
+shared) with the decision underneath — stacked rather than tabbed, because three of four hidden
+behind a click reads as optional and this box exists to say they are not. Still no per-document
+tick on the BDI side: that tick is the organisation's acceptance and becomes a `legal_acceptance`
+row, which the backend has never written for BDI. On the dataset journey `ไม่อนุมัติ` lives in that
+dialog too, beside `อนุมัติ` — two answers to one question, both needing the document read first —
+but it only closes the dialog and hands back to the reason modal `DetailView` owns, so the
+ten-character rule stays in one place. `ส่งกลับแก้ไข` stays on the card: different decision, and it
+does not wait on reading. The organisation journey has no reject button and was deliberately not
+given one.
+
+**`Modal` focuses a field, or the dialog — never a button.** Browsers scroll whatever gains focus
+into view, so a dialog taller than the screen whose only control is a footer button opened
+scrolled past everything to the bottom. That is exactly the approver's dialog, which opened at the
+end of the fourth document. Reason-entry dialogs still land in their textarea because a
+`textarea`/`input` is preferred; everything else focuses the dialog element (`tabIndex={-1}`) and
+stays at the top.
 
 **Signing is data, not a drawing.** `POST /:id/review` carries a `signature` payload at
 `ORGANIZATION_APPROVAL` and `BDI_FINAL_APPROVAL`; the record is
