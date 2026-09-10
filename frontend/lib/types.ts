@@ -53,7 +53,7 @@ export interface ReviewTaskEvent {
  * `lib/organization-form.ts` ที่จงใจ copy เพราะฟอร์มต้องตอบสนองทันทีที่ผู้ใช้พิมพ์
  * ตัวแสดงขั้นตอนไม่มีข้อบังคับนั้น จึงมีแต่ข้อเสียถ้าสำเนาหลุด sync กับ state machine
  */
-export type StepState = "DONE" | "CURRENT" | "UPCOMING" | "REJECTED";
+export type StepState = "DONE" | "CURRENT" | "UPCOMING" | "REJECTED" | "RETURNED";
 
 export type JourneyPhase =
   | "DRAFT"

@@ -81,6 +81,12 @@ function StepState({ step }: { step: JourneyStep }) {
     CURRENT: { label: "รอดำเนินการ", className: "bg-warning-bg text-warning" },
     UPCOMING: { label: "ยังไม่เริ่ม", className: "bg-navy-50 text-ink-muted" },
     REJECTED: { label: "ไม่อนุมัติ", className: "bg-danger-bg text-danger" },
+    /**
+     * สีเทาชุดเดียวกับ "ยังไม่เริ่ม" ตามที่ BDI ขอมาในการ์ด — และตรงกับความหมายด้วย
+     * ด่านนี้จะถูกทำใหม่ทั้งด่านเมื่อหน่วยงานนำส่งอีกครั้ง จึงไม่ใช่สิ่งที่ทำเสร็จแล้ว
+     * ไม่ใช้แดงเพราะไม่ใช่การปฏิเสธ — "ไม่อนุมัติ" คือจุดจบ ส่วนอันนี้คือการวนกลับ
+     */
+    RETURNED: { label: "ส่งกลับแก้ไข", className: "bg-navy-50 text-ink-muted" },
   };
   const { label, className } = meta[step.state];
   return (
@@ -147,7 +153,8 @@ export function ApprovalSteps({ progress }: { progress: JourneyProgress }) {
                   <p
                     className={clsx(
                       "text-sm",
-                      step.state === "UPCOMING"
+                      // ขั้นที่ถูกส่งกลับอ่านเหมือนขั้นที่ยังไม่ถึง เพราะทั้งคู่คือ "ยังไม่มีผล"
+                      step.state === "UPCOMING" || step.state === "RETURNED"
                         ? "text-ink-muted"
                         : "font-medium text-ink",
                     )}
