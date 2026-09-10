@@ -34,7 +34,7 @@ export default function GlobalError({ reset }: { error: Error; reset: () => void
           </h1>
           <p style={{ fontSize: 15, lineHeight: 1.7, color: "#5b6178", margin: "0 0 28px" }}>
             ระบบทำงานผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้ง
-            หากยังพบปัญหาให้ติดต่อเจ้าหน้าที่ BDI
+            หากยังพบปัญหาให้ติดต่อผู้ประสานงานของ BDI
           </p>
           <button
             type="button"

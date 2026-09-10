@@ -12,10 +12,10 @@
  *   BDI_OFFICER_REVIEW → ORGANIZATION_APPROVAL → BDI_FINAL_APPROVAL
  *
  * เท่ากับเส้นทางหน่วยงานทุกด่าน หลังการยกเลิกสองอย่างเมื่อ 2026-08-30:
- * ด่าน "ตรวจซ้ำ" ของเจ้าหน้าที่ BDI หลังการลงนาม (ลงนามแล้วส่งให้ผู้อนุมัติ BDI ทันที) และ
+ * ด่าน "ตรวจซ้ำ" ของผู้ประสานงานของ BDI หลังการลงนาม (ลงนามแล้วส่งให้ผู้อนุมัติ BDI ทันที) และ
  * **ด่านของผู้เชี่ยวชาญด้านข้อมูล** ซึ่งกลายเป็นการ "ขอความเห็น" ที่ไม่ย้ายด่าน — ชื่อ
  * ผู้เชี่ยวชาญอยู่ในคอลัมน์ `assigned_specialist_id` ของคำขอ ไม่ใช่ใน review_task และ
- * เจ้าหน้าที่ BDI เป็นผู้ตัดสิน "ผ่าน/ส่งกลับ" อยู่คนเดียวตลอดด่านนั้น (ดู POST /:id/assign)
+ * ผู้ประสานงานของ BDI เป็นผู้ตัดสิน "ผ่าน/ส่งกลับ" อยู่คนเดียวตลอดด่านนั้น (ดู POST /:id/assign)
  */
 import { Router } from "../lib/async-route.js";
 import multer from "multer";
@@ -489,7 +489,7 @@ datasetRequestRouter.get("/eligibility", async (req, res) => {
 datasetRequestRouter.get("/specialists", async (req, res) => {
   const session = req.session! as Session;
   if (!session.roles.includes(ROLE_CODES.BDI_OFFICER)) {
-    res.status(403).json({ error: "forbidden", message: "เฉพาะเจ้าหน้าที่ BDI เท่านั้น" });
+    res.status(403).json({ error: "forbidden", message: "เฉพาะผู้ประสานงานของ BDI เท่านั้น" });
     return;
   }
   const assignments = await prisma.userRoleAssignment.findMany({
@@ -1016,7 +1016,7 @@ datasetRequestRouter.post("/:id/submit", async (req, res) => {
   if (!(await roleHolderId(prisma, ROLE_CODES.BDI_OFFICER, BDI_ORGANIZATION_ID))) {
     res
       .status(503)
-      .json({ error: "no_reviewer", message: "ยังไม่มีเจ้าหน้าที่ BDI ในระบบ กรุณาติดต่อผู้ดูแล" });
+      .json({ error: "no_reviewer", message: "ยังไม่มีผู้ประสานงานของ BDI ในระบบ กรุณาติดต่อผู้ดูแล" });
     return;
   }
 
@@ -1076,7 +1076,7 @@ const assignSchema = z.object({ specialistId: z.string().uuid().nullable() });
 /**
  * ขอความเห็นจากผู้เชี่ยวชาญด้านข้อมูล / ถอนการขอ (§4.4 ข้อ 2 — ไม่บังคับ)
  *
- * **การมอบหมายไม่ใช่ด่าน** — คำขอยังค้างอยู่ที่ `BDI_OFFICER_REVIEW` ตลอด เจ้าหน้าที่ BDI
+ * **การมอบหมายไม่ใช่ด่าน** — คำขอยังค้างอยู่ที่ `BDI_OFFICER_REVIEW` ตลอด ผู้ประสานงานของ BDI
  * กด "ส่งต่อ" หรือ "ต้องปรับปรุง" ได้ตลอดเวลาโดยไม่ต้องรอผู้เชี่ยวชาญและไม่ต้องถอนก่อน
  * ผู้เชี่ยวชาญเข้ามาอ่านข้อมูล คุยกับเจ้าหน้าที่นอกระบบ และบันทึกความเห็นไว้ในไทม์ไลน์ได้
  * เท่านั้น (ตัดสินใจ 2026-08-30 — การ์ด Make Data Specialist Review Advisory)
@@ -1089,7 +1089,7 @@ datasetRequestRouter.post("/:id/assign", async (req, res, next) => {
   try {
     const session = req.session! as Session;
     if (!session.roles.includes(ROLE_CODES.BDI_OFFICER)) {
-      res.status(403).json({ error: "forbidden", message: "เฉพาะเจ้าหน้าที่ BDI เท่านั้น" });
+      res.status(403).json({ error: "forbidden", message: "เฉพาะผู้ประสานงานของ BDI เท่านั้น" });
       return;
     }
     const parsed = assignSchema.safeParse(req.body ?? {});
@@ -1108,14 +1108,14 @@ datasetRequestRouter.post("/:id/assign", async (req, res, next) => {
     }
 
     /**
-     * ขอความเห็นได้เฉพาะช่วงที่คำขออยู่ในมือเจ้าหน้าที่ BDI — หลังส่งต่อไปแล้วการเพิ่มชื่อ
+     * ขอความเห็นได้เฉพาะช่วงที่คำขออยู่ในมือผู้ประสานงานของ BDI — หลังส่งต่อไปแล้วการเพิ่มชื่อ
      * ผู้เชี่ยวชาญไม่มีความหมาย เพราะไม่มีใครที่ฝั่ง BDI ต้องตัดสินใจอะไรอีกในรอบนั้น
      */
     const current = await activeTask(prisma, SUBJECT, request.id);
     if (current?.taskType !== ReviewTaskType.BDI_OFFICER_REVIEW) {
       res.status(409).json({
         error: "invalid_state",
-        message: "มอบหมายผู้เชี่ยวชาญได้เฉพาะช่วงที่คำขออยู่ระหว่างการตรวจสอบของเจ้าหน้าที่ BDI",
+        message: "มอบหมายผู้เชี่ยวชาญได้เฉพาะช่วงที่คำขออยู่ระหว่างการตรวจสอบของผู้ประสานงานของ BDI",
       });
       return;
     }
@@ -1435,7 +1435,7 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
      * บันทึกความเห็นโดยไม่แตะด่าน — ผู้เชี่ยวชาญที่ถูกขอความเห็นกับคำขอใบนี้เท่านั้น
      *
      * ตรวจก่อนตารางสิทธิ์ข้างล่างโดยตั้งใจ: ตั้งแต่ 2026-08-30 ผู้เชี่ยวชาญไม่ได้ถือ task
-     * ไหนอยู่เลย ด่านที่ค้างอยู่เป็นของเจ้าหน้าที่ BDI เสมอ เขาจึงไม่มีวันผ่าน
+     * ไหนอยู่เลย ด่านที่ค้างอยู่เป็นของผู้ประสานงานของ BDI เสมอ เขาจึงไม่มีวันผ่าน
      * TASK_TYPE_ROLES ได้ และสิทธิ์ของเขามาจากคอลัมน์ `assigned_specialist_id` แทน
      */
     if (action === "comment") {
@@ -1449,7 +1449,7 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
       if (task.taskType !== ReviewTaskType.BDI_OFFICER_REVIEW) {
         res.status(409).json({
           error: "invalid_state",
-          message: "บันทึกความเห็นได้เฉพาะช่วงที่คำขออยู่ระหว่างการตรวจสอบของเจ้าหน้าที่ BDI",
+          message: "บันทึกความเห็นได้เฉพาะช่วงที่คำขออยู่ระหว่างการตรวจสอบของผู้ประสานงานของ BDI",
         });
         return;
       }

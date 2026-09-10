@@ -926,7 +926,7 @@ answer 400 when a body carries a *different* code (an equal one passes, so a sta
 saves). Fixing a wrong code is `PATCH /api/admin/organizations/:id`, an admin route.
 `docs/10-admin-prefill-organization.md` §4.1 has the reasoning.
 
-**Neither is "ผู้กรอกข้อมูล" (section 3 of that form).** The person filling it in is the account
+**Neither is "ผู้ประสานงานของหน่วยงาน" (section 3 of that form).** The person filling it in is the account
 that opened the request, so prefix, first name, last name, e-mail and telephone come off
 `iam.user_account` and the form only displays them — the same arrangement `/activate` uses, and
 enforced the same way: `toApiShape()` prefers the **account** over the request snapshot (as the

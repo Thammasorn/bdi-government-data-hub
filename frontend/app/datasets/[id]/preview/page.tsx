@@ -44,7 +44,7 @@ export default function DatasetPreviewPage() {
       show({
         tone: "success",
         title: "นำส่งคำขอเรียบร้อย",
-        detail: "ระบบแจ้งเจ้าหน้าที่ BDI ให้เข้ามาตรวจสอบแล้ว",
+        detail: "ระบบแจ้งผู้ประสานงานของ BDI ให้เข้ามาตรวจสอบแล้ว",
       });
       router.push(`/datasets/${id}`);
     } catch (err) {

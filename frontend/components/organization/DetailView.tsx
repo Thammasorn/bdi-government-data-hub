@@ -36,7 +36,7 @@ interface Ability {
   perDocument?: boolean;
   /** หัวข้อของการ์ด — ค่าปริยายคือ "รอการพิจารณาของคุณ" ซึ่งไม่จริงสำหรับ recall */
   title?: string;
-  /** เจ้าหน้าที่ BDI ปลดคำขอที่ค้าง — ปุ่มเดียว ไม่มีอนุมัติ ไม่มีส่งกลับแก้ไขตามปกติ */
+  /** ผู้ประสานงานของ BDI ปลดคำขอที่ค้าง — ปุ่มเดียว ไม่มีอนุมัติ ไม่มีส่งกลับแก้ไขตามปกติ */
   recall?: boolean;
   /** ปุ่มนั้นกดไม่ได้ และนี่คือเหตุผลที่ API ให้มา — `hint` ถูกแทนด้วยข้อความนี้ */
   blocked?: string | null;
@@ -71,7 +71,7 @@ function decideAbility(org: Organization, roles: string[]): Ability {
         };
       }
       /**
-       * เจ้าหน้าที่ BDI ไม่ได้ถือด่านนี้ และไม่ได้อนุมัติแทนใครได้ — แต่เป็นคนเดียวที่ปลด
+       * ผู้ประสานงานของ BDI ไม่ได้ถือด่านนี้ และไม่ได้อนุมัติแทนใครได้ — แต่เป็นคนเดียวที่ปลด
        * คำขอซึ่งค้างอยู่กับผู้ที่ถูกเชิญและเข้าระบบไม่ได้ ปุ่มจึงมีทางเดียวคือยกเลิกผลการ
        * ตรวจสอบของตัวเอง
        *
@@ -208,11 +208,9 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
     if (ownOrganization) {
       return (
         <div className="mx-auto max-w-2xl px-4 py-20 text-center sm:px-6">
-          <h1 className="text-[26px] font-semibold text-navy-800">ยังไม่ได้เริ่มลงทะเบียนหน่วยงาน</h1>
+          <h1 className="text-[26px] font-semibold text-navy-800">ลงทะเบียนหน่วยงาน</h1>
           <p className="mx-auto mt-3 max-w-md text-[15px] leading-relaxed text-ink-muted">
-            {user?.organization?.name ?? "หน่วยงานของคุณ"} ถูกสร้างไว้ในระบบแล้ว
-            แต่ยังไม่มีแบบฟอร์มลงทะเบียนที่กรอกค้างไว้ กดปุ่มด้านล่างเพื่อเริ่มกรอก
-            ระบบจะเติมข้อมูลที่เจ้าหน้าที่บันทึกไว้ให้เป็นค่าตั้งต้น
+            ดำเนินการสร้างคำขอลงทะเบียนหน่วยงาน {user?.organization?.name ?? "หน่วยงานของคุณ"} เพื่อใช้งานระบบ
           </p>
           <Button size="lg" className="mt-8" loading={starting} onClick={startRegistration}>
             กรอกแบบฟอร์มลงทะเบียนหน่วยงาน
@@ -338,7 +336,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
       ) : null}
 
       <header className="mb-7 mt-4 flex flex-wrap items-start justify-between gap-4">
-        {/* ชื่อผู้ยื่นและอีเมลอยู่ในการ์ด "ผู้กรอกข้อมูล" ด้านล่างอยู่แล้ว บรรทัดนี้พูดซ้ำ */}
+        {/* ชื่อผู้ยื่นและอีเมลอยู่ในการ์ด "ผู้ประสานงานของหน่วยงาน" ด้านล่างอยู่แล้ว บรรทัดนี้พูดซ้ำ */}
         <div className="min-w-0">
           <h1 className="break-words text-[26px] font-semibold text-navy-800">{org.name}</h1>
         </div>
@@ -458,7 +456,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         </Card>
 
         <Card>
-          <CardHeader tag="ส่วนที่ 3" title="ผู้กรอกข้อมูล" />
+          <CardHeader tag="ส่วนที่ 3" title="ผู้ประสานงานของหน่วยงาน" />
           <Rows
             rows={[
               ["ชื่อ-นามสกุล", fullName(org.contactPrefix, org.contactFirstName, org.contactLastName)],

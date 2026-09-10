@@ -190,7 +190,7 @@ export function agreementValues(input: AgreementInput): TemplateValues {
     "org_approver.phone": input.signatoryPhone ?? "",
     "org_approver.nationalId": formatNationalId(input.signatoryNationalId),
 
-    // ── ผู้กรอกข้อมูล ──
+    // ── ผู้ประสานงานของหน่วยงาน ──
     "org_officer.fullName": fullNameTh({
       prefixTh: input.contactPrefix,
       firstnameTh: input.contactFirstName,

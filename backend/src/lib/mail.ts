@@ -271,7 +271,7 @@ export function stepsBlock(progress: JourneyProgress | null | undefined): string
       const emphasis = step.state === "CURRENT" ? 600 : 400;
       const color = step.state === "UPCOMING" ? MUTED : TEXT;
       const number = step.order ? `${step.order}. ` : "";
-      const suffix = step.optional ? " (เมื่อเจ้าหน้าที่มอบหมาย)" : "";
+      const suffix = step.optional ? " (เมื่อผู้ประสานงานของ BDI มอบหมาย)" : "";
       // ขั้นที่ยังไม่เกิดขึ้นต้องอ่านว่า "รอ" — เดิมทุกขั้นเขียน "โดย…" เหมือนกันหมด
       // ขั้นที่คำขอค้างอยู่จึงอ่านเหมือนทำไปแล้ว
       const doer = step.state === "CURRENT" ? "รอดำเนินการโดย" : "ดำเนินการโดย";
@@ -512,7 +512,7 @@ export async function sendSignatoryRequest(
     `ขอความเห็นชอบการสร้างหน่วยงาน: ${org.name}`,
     layout({
       title: "ขอความเห็นชอบในฐานะผู้มีอำนาจอนุมัติของหน่วยงาน",
-      intro: `<strong style="color:${TEXT};">${escapeHtml(org.name)}</strong> ระบุว่าคุณเป็นผู้มีอำนาจอนุมัติของหน่วยงาน และคำขอผ่านการตรวจสอบจากเจ้าหน้าที่ BDI แล้ว`,
+      intro: `<strong style="color:${TEXT};">${escapeHtml(org.name)}</strong> ระบุว่าคุณเป็นผู้มีอำนาจอนุมัติของหน่วยงาน และคำขอผ่านการตรวจสอบจากผู้ประสานงานของ BDI แล้ว`,
       orgCode: org.code,
       body: registerToken
         ? `<p style="margin:0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
@@ -592,7 +592,7 @@ export async function sendRoleRemoved(
   // ชื่อหน่วยงานและชื่อคนมาจากฐานข้อมูล ผู้ใช้พิมพ์เองได้ จึง escape ก่อนวางลง HTML เสมอ
   const organizationName = escapeHtml(info.organizationName);
   const roleLabel = escapeHtml(info.roleLabel);
-  const successor = escapeHtml(info.successorName ?? "เจ้าหน้าที่คนใหม่");
+  const successor = escapeHtml(info.successorName ?? "ผู้ใช้รายใหม่");
 
   await send(
     to,
@@ -713,16 +713,16 @@ export async function sendDatasetSpecialistAssigned(
     [to],
     datasetSubject(info.requestNumber, `ขอความเห็นต่อชุดข้อมูล: ${info.datasetName}`),
     layout({
-      title: "เจ้าหน้าที่ BDI ขอความเห็นของคุณ",
+      title: "ผู้ประสานงานของ BDI ขอความเห็นของคุณ",
       orgCode: info.organizationCode,
       /**
-       * ถ้อยคำต้องไม่ทำให้เข้าใจว่าคำขอมารอเขาอยู่ — มันยังอยู่ที่เจ้าหน้าที่ BDI และ
+       * ถ้อยคำต้องไม่ทำให้เข้าใจว่าคำขอมารอเขาอยู่ — มันยังอยู่ที่ผู้ประสานงานของ BDI และ
        * เจ้าหน้าที่จะกดผ่านหรือส่งกลับเมื่อไรก็ได้ ไม่ว่าความเห็นจะมาแล้วหรือยัง
        */
       intro:
-        "เจ้าหน้าที่ BDI ขอความเห็นของคุณต่อคำขอนี้ในฐานะผู้เชี่ยวชาญด้านข้อมูล " +
-        "คุณเปิดดูรายละเอียดและบันทึกความเห็นไว้ให้เจ้าหน้าที่ได้ — การตัดสินผ่านหรือส่งกลับ " +
-        "ยังเป็นของเจ้าหน้าที่ BDI ตามเดิม",
+        "ผู้ประสานงานของ BDI ขอความเห็นของคุณต่อคำขอนี้ในฐานะผู้เชี่ยวชาญด้านข้อมูล " +
+        "คุณเปิดดูรายละเอียดและบันทึกความเห็นไว้ให้ผู้ประสานงานของ BDI ได้ — การตัดสินผ่านหรือส่งกลับ " +
+        "ยังเป็นของผู้ประสานงานของ BDI ตามเดิม",
       body: summaryTable([
         ["เลขที่คำขอ", info.requestNumber],
         ["ชื่อชุดข้อมูล", info.datasetName],
@@ -751,7 +751,7 @@ export async function sendDatasetPendingOrgApprover(
     layout({
       title: "ขอความเห็นชอบในฐานะผู้มีอำนาจอนุมัติของหน่วยงาน",
       orgCode: info.organizationCode,
-      intro: `คำขอลงทะเบียนชุดข้อมูลของ <strong style="color:${TEXT};">${escapeHtml(info.organizationName)}</strong> ผ่านการตรวจสอบเบื้องต้นจากเจ้าหน้าที่ BDI แล้ว`,
+      intro: `คำขอลงทะเบียนชุดข้อมูลของ <strong style="color:${TEXT};">${escapeHtml(info.organizationName)}</strong> ผ่านการตรวจสอบเบื้องต้นจากผู้ประสานงานของ BDI แล้ว`,
       body: summaryTable([
         ["เลขที่คำขอ", info.requestNumber],
         ["ชื่อชุดข้อมูล", info.datasetName],

@@ -120,7 +120,7 @@ docker compose exec backend npm run prisma:migrate -- --name dataset_registratio
 | `/datasets/[id]` | รายละเอียด + timeline + ปุ่มตามสิทธิ์ |
 | `/datasets/[id]/edit` | ฟอร์ม 4 ส่วน + stepper (โครงเดียวกับฟอร์มหน่วยงาน) |
 | `/datasets/[id]/preview` | ตรวจ PDF ก่อนนำส่ง |
-| `/admin/datasets` | รายการทั้งระบบสำหรับเจ้าหน้าที่ BDI (specialist เห็นเฉพาะที่ถูก assign) |
+| `/admin/datasets` | รายการทั้งระบบสำหรับผู้ประสานงานของ BDI (specialist เห็นเฉพาะที่ถูก assign) |
 | `/admin/datasets/[id]` | หน้าตรวจสอบของฝั่ง BDI |
 
 - `components/dataset/DetailView.tsx` ใช้ร่วมกันทั้งสองฝั่ง ต่างกันแค่ `backHref`

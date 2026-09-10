@@ -241,7 +241,7 @@ async function main() {
   await roleIdByCode(prisma, ROLE_CODES.BDI_OFFICER);
 
   // ---------------------------------------------------------- เจ้าหน้าที่ BDI
-  console.log("สร้างบัญชีเจ้าหน้าที่ BDI…");
+  console.log("สร้างบัญชีฝั่ง BDI…");
   const officer = await makeUser({
     email: "officer@bdi.or.th",
     prefix: "นาย",

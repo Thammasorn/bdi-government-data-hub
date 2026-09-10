@@ -167,7 +167,7 @@ export function JourneyFlow({
                   highlighted={highlightMine && branch.mine}
                   disabled={disabledOf(branch.key)}
                   onSelect={() => pick(branch.key)}
-                  hint="ทางแยก — เจ้าหน้าที่เลือกเปิด ไม่ใช่ด่านที่ทุกคำขอต้องผ่าน"
+                  hint="ทางแยก — ผู้ประสานงานของ BDI เลือกเปิด ไม่ใช่ด่านที่ทุกคำขอต้องผ่าน"
                 />
               </div>
             );

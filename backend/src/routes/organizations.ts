@@ -446,7 +446,7 @@ const CONTACT_ACCOUNT_SELECT = {
 } as const;
 
 /**
- * ตัวตนของ "ผู้กรอกข้อมูล" (ส่วนที่ 3) เป็นของบัญชีที่เปิดคำขอใบนี้ ไม่ใช่ของฟอร์ม
+ * ตัวตนของ "ผู้ประสานงานของหน่วยงาน" (ส่วนที่ 3) เป็นของบัญชีที่เปิดคำขอใบนี้ ไม่ใช่ของฟอร์ม
  *
  * ผู้กรอกคือคนที่ล็อกอินอยู่ ระบบรู้จักเขาอยู่แล้ว — คำนำหน้า ชื่อ นามสกุลผ่าน ThaID
  * และคำเชิญ ส่วนอีเมลคือตัวบัญชีเอง ให้กรอกใหม่ในฟอร์มมีแต่ทางเสีย: ได้ชื่อที่ไม่ตรงกับ
@@ -472,7 +472,7 @@ function contactFromAccount(account: ContactAccount | null) {
   });
 }
 
-/** บัญชีของคนที่เปิดคำขอใบนี้ — ผู้กรอกข้อมูลคือคนนั้นเสมอ */
+/** บัญชีของคนที่เปิดคำขอใบนี้ — ผู้ประสานงานของหน่วยงานคือคนนั้นเสมอ */
 function contactAccount(request: { createdBy: string }) {
   return prisma.userAccount.findUnique({
     where: { id: request.createdBy },
@@ -501,7 +501,7 @@ function organizationCodeEdit(
 ): string | null {
   if (!input.organizationCode) return null;
   if (current && input.organizationCode === current) return null;
-  return "รหัสหน่วยงานแก้ไขไม่ได้ — ระบบกำหนดให้อัตโนมัติ หากไม่ถูกต้องกรุณาแจ้งเจ้าหน้าที่ BDI";
+  return "รหัสหน่วยงานแก้ไขไม่ได้ — ระบบกำหนดให้อัตโนมัติ หากไม่ถูกต้องกรุณาแจ้งผู้ประสานงานของ BDI";
 }
 
 /**
@@ -561,7 +561,7 @@ function organizationNameEdit(
 ): string | null {
   if (!input.name || !current) return null;
   if (input.name === current) return null;
-  return "ชื่อหน่วยงานแก้ไขไม่ได้ — ระบบดึงจากข้อมูลหน่วยงานที่ลงทะเบียนไว้ หากไม่ถูกต้องกรุณาแจ้งเจ้าหน้าที่ BDI";
+  return "ชื่อหน่วยงานแก้ไขไม่ได้ — ระบบดึงจากข้อมูลหน่วยงานที่ลงทะเบียนไว้ หากไม่ถูกต้องกรุณาแจ้งผู้ประสานงานของ BDI";
 }
 
 /**
@@ -988,7 +988,7 @@ organizationRouter.get("/summary", async (req, res) => {
 organizationRouter.post("/", async (req, res) => {
   const session = req.session!;
   if (isBdiStaff(session.roles)) {
-    res.status(403).json({ error: "forbidden", message: "เจ้าหน้าที่ BDI ไม่สามารถสร้างหน่วยงานได้" });
+    res.status(403).json({ error: "forbidden", message: "บัญชีฝั่ง BDI ไม่สามารถสร้างหน่วยงานได้" });
     return;
   }
 
@@ -1275,7 +1275,7 @@ organizationRouter.get("/:id", async (req, res) => {
     request.status === RequestStatus.RETURNED ? (lastReturned?.resultComment ?? null) : null;
 
   /**
-   * ปุ่ม "ยกเลิกผลการตรวจสอบ" ของเจ้าหน้าที่ BDI กดไม่ได้เพราะอะไร — null คือกดได้
+   * ปุ่ม "ยกเลิกผลการตรวจสอบ" ของผู้ประสานงานของ BDI กดไม่ได้เพราะอะไร — null คือกดได้
    *
    * ถามฟังก์ชันเดียวกับที่ `POST /:id/review` ใช้ปฏิเสธจริง ไม่ใช่กฎที่หน้าจอเขียนซ้ำเอง
    * ถ้าคัดลอกเงื่อนไขไปไว้ฝั่ง frontend สองที่จะหลุดกันวันที่กฎเปลี่ยน แล้วปุ่มจะกดได้ทั้งที่
@@ -1283,7 +1283,7 @@ organizationRouter.get("/:id", async (req, res) => {
    * ลำดับด่านมา ไม่ได้รู้เอง
    *
    * ผู้ใช้ที่ไม่ได้ถือ `BDI_OFFICER` ก็ได้ข้อความติดมาด้วย แต่ไม่มีหน้าจอไหนแสดงมัน — การ์ด
-   * ที่มีปุ่มนี้ขึ้นเฉพาะเจ้าหน้าที่ BDI ที่ด่าน `ORGANIZATION_APPROVAL` และสองข้อแรกของ
+   * ที่มีปุ่มนี้ขึ้นเฉพาะผู้ประสานงานของ BDI ที่ด่าน `ORGANIZATION_APPROVAL` และสองข้อแรกของ
    * `recallRefusal()` ตัดจบก่อนแตะฐานข้อมูล คนอื่นจึงไม่จ่ายค่า query เพิ่มสักครั้ง
    */
   const recallBlockedReason = active
@@ -1334,7 +1334,7 @@ organizationRouter.get("/:id", async (req, res) => {
          *
          * ถ้าไม่บอกหน้าจอ `taskEventLabel()` จะเดาผู้กระทำจาก `task_type` แล้วเขียนว่า
          * "ผู้มีอำนาจอนุมัติของหน่วยงานขอให้ปรับปรุง" ทั้งที่ชื่อผู้กระทำในบรรทัดเดียวกัน
-         * เป็นเจ้าหน้าที่ BDI — ประโยคขัดกับตัวเองอยู่ในบรรทัดเดียว
+         * เป็นผู้ประสานงานของ BDI — ประโยคขัดกับตัวเองอยู่ในบรรทัดเดียว
          */
         recalled:
           typeof t.resultDetailJson === "object" &&
@@ -1593,7 +1593,7 @@ organizationRouter.post("/:id/generate-form", async (req, res) => {
   if (!appointment) {
     res.status(400).json({
       error: "validation",
-      fields: { APPOINTMENT_ORDER: "กรุณาแนบคำสั่งแต่งตั้งผู้มีอำนาจกระทำการแทน" },
+      fields: { APPOINTMENT_ORDER: "กรุณาแนบคำสั่งแต่งตั้งผู้มีอำนาจอนุมัติของหน่วยงาน" },
     });
     return;
   }
@@ -1982,7 +1982,7 @@ organizationRouter.post("/:id/submit", async (req, res) => {
   if (!(await hasRoleHolder(ROLE_CODES.BDI_OFFICER, BDI_ORGANIZATION_ID))) {
     res.status(503).json({
       error: "no_reviewer",
-      message: "ยังไม่มีเจ้าหน้าที่ BDI ในระบบ กรุณาติดต่อผู้ดูแล",
+      message: "ยังไม่มีผู้ประสานงานของ BDI ในระบบ กรุณาติดต่อผู้ดูแล",
     });
     return;
   }
@@ -2158,7 +2158,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
      *
      * ไม่ได้เพิ่ม `BDI_OFFICER` ลงใน `TASK_TYPE_ROLES` เพราะ `ROLE_TASK_TYPES` คำนวณ
      * จากตารางนั้นด้วยการกลับด้าน ด่านของผู้มีอำนาจฯ จะไปโผล่ในคิว "งานของฉัน" ของ
-     * เจ้าหน้าที่ BDI ทุกคนทันที ทั้งที่กฎที่ต้องการแคบกว่านั้นมาก — ดู recallRefusal()
+     * ผู้ประสานงานของ BDI ทุกคนทันที ทั้งที่กฎที่ต้องการแคบกว่านั้นมาก — ดู recallRefusal()
      */
     if (action === "recall") {
       const refusal = await recallRefusal(session, task, request);
@@ -2297,7 +2297,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
     const outcome = await prisma.$transaction(async (tx) => {
       /**
        * recall ไม่เรียก `startTask()` — ด่านนี้ไม่เคยมีใครเปิด การประทับ `started_at`
-       * ให้มันตอนที่เจ้าหน้าที่ BDI กดยกเลิก จะทำให้ timeline เล่าว่าผู้มีอำนาจฯ เคยเปิดอ่าน
+       * ให้มันตอนที่ผู้ประสานงานของ BDI กดยกเลิก จะทำให้ timeline เล่าว่าผู้มีอำนาจฯ เคยเปิดอ่าน
        * ทั้งที่เขายังเข้าระบบไม่ได้ด้วยซ้ำ — `completeTask()` ปิด task ที่ยัง PENDING ได้อยู่แล้ว
        */
       if (action !== "recall") await startTask(tx, task.id, session.sub);
@@ -2588,7 +2588,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
 /**
  * ผู้มีอำนาจกระทำการแทนที่กรอกมา ใช้กับหน่วยงานนี้ได้หรือไม่
  *
- * เดิมกฎพวกนี้อยู่ใน `ensureApproverAccount()` ที่เดียว ซึ่งทำงานตอน **เจ้าหน้าที่ BDI
+ * เดิมกฎพวกนี้อยู่ใน `ensureApproverAccount()` ที่เดียว ซึ่งทำงานตอน **ผู้ประสานงานของ BDI
  * กด PASSED** — คนละคนและห่างจากตอนกรอกฟอร์มหลายวัน คนที่เห็น error จึงแก้ไม่ได้
  * และคนที่แก้ได้ก็ไม่เห็น ตอนนี้ย้ายมาเรียกตั้งแต่ตอนนำส่ง (`POST /:id/submit`) ด้วย
  * โดยยังคงไว้ที่เดิมเป็น backstop เพราะระหว่างนำส่งกับอนุมัติ คนอื่นอาจจับจอง
@@ -2597,7 +2597,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
  * **ข้อความที่ตอบกลับต่างกันสองฝั่ง**: ฝั่งฟอร์ม (ผู้ใช้) บอกแค่ว่าใช้ค่านี้ไม่ได้ ห้าม
  * เอ่ยชื่อหน่วยงาน อีเมล หรือตัวตนของเจ้าของข้อมูลเดิม เพราะคนกรอกฟอร์มเป็นใครก็ได้
  * การบอกว่าเลขบัตรนี้เป็นของใครคือการยืนยันข้อมูลส่วนบุคคลให้คนนอก — รายละเอียด
- * ไปอยู่ใน audit แทน ส่วนฝั่ง admin API ไม่ mask เพราะเรียกได้เฉพาะเจ้าหน้าที่ BDI
+ * ไปอยู่ใน audit แทน ส่วนฝั่ง admin API ไม่ mask เพราะเรียกได้เฉพาะผู้ประสานงานของ BDI
  */
 async function approverConflict(
   db: Db,
@@ -2648,7 +2648,7 @@ async function approverConflict(
    * เงื่อนไขคือ "ถือบทบาทอื่นใดอยู่หรือไม่" ไม่ใช่ "อยู่หน่วยงานอื่นหรือไม่" อีกแล้ว
    * ของเดิมกันแค่ role ระดับหน่วยงานของ **หน่วยงานอื่น** ซึ่งเปิดช่องไว้สองทาง:
    * ผู้ดำเนินการของหน่วยงานนี้เองกรอกอีเมลตัวเองในช่องผู้มีอำนาจฯ ได้ (แล้วนำส่งคำขอ
-   * เองและลงนามรับรองคำขอของตัวเอง) และเจ้าหน้าที่ BDI ก็ถูกกรอกได้ เพราะบทบาทฝั่ง
+   * เองและลงนามรับรองคำขอของตัวเอง) และผู้ประสานงานของ BDI ก็ถูกกรอกได้ เพราะบทบาทฝั่ง
    * BDI ไม่อยู่ใน ORGANIZATION_SCOPED_ROLES
    *
    * ที่ยกเว้นคือผู้มีอำนาจฯ **ของหน่วยงานนี้เอง** — คนเดิมที่ถูกกรอกซ้ำในคำขอถัดไป
@@ -2771,7 +2771,7 @@ async function ensureApproverAccount(
 }
 
 /**
- * เจ้าหน้าที่ BDI กด "ยกเลิกผลการตรวจสอบ" กับคำขอนี้ได้หรือไม่ — คืนเหตุผลเมื่อไม่ได้
+ * ผู้ประสานงานของ BDI กด "ยกเลิกผลการตรวจสอบ" กับคำขอนี้ได้หรือไม่ — คืนเหตุผลเมื่อไม่ได้
  *
  * ทางนี้ปิดด่านของคนอื่นแทนเขา จึงแคบไว้สี่ชั้น ให้เหลือเฉพาะกรณีที่เจ้าของด่านทำเองไม่ได้จริง ๆ:
  *
@@ -2791,7 +2791,7 @@ async function recallRefusal(
     return {
       status: 403,
       error: "forbidden",
-      message: "เฉพาะเจ้าหน้าที่ BDI เท่านั้นที่ยกเลิกผลการตรวจสอบได้",
+      message: "เฉพาะผู้ประสานงานของ BDI เท่านั้นที่ยกเลิกผลการตรวจสอบได้",
     };
   }
 

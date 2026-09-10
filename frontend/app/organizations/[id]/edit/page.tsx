@@ -48,7 +48,7 @@ type AttachmentSlot = keyof typeof ATTACHMENT_KIND;
  * ชวนให้กรอกไม่ตรงบัตร ที่เหลือกรอกเองผ่าน "อื่น ๆ" ได้ทุกคำ รวมถึงยศและคำนำหน้าที่
  * ลิสต์นี้ไม่มี (การ์ด "แก้แบบฟอร์ม org registration" ข้อ 3)
  *
- * ส่วนที่ 3 (ผู้กรอกข้อมูล) ไม่ได้ใช้ลิสต์นี้เลยเมื่อบัญชีมีคำนำหน้าอยู่แล้ว — ค่านั้นมาจากบัญชี
+ * ส่วนที่ 3 (ผู้ประสานงานของหน่วยงาน) ไม่ได้ใช้ลิสต์นี้เลยเมื่อบัญชีมีคำนำหน้าอยู่แล้ว — ค่านั้นมาจากบัญชี
  * และแสดงเป็นข้อความอ่านอย่างเดียว (ดู `contactLocked`) เหลือใช้ `PREFIXES` ชุดเต็มเฉพาะบัญชี
  * ที่ยังไม่มีคำนำหน้า ซึ่งต้องกรอกเองจึงจะนำส่งได้
  */
@@ -58,7 +58,7 @@ const SIGNATORY_PREFIXES = ["นาย", "นาง", "นางสาว"];
 const PREFIX_OTHER = "อื่น ๆ";
 
 /**
- * ช่องของ "ผู้กรอกข้อมูล" ที่ระบบเป็นเจ้าของค่า — ตรงกับ `contactLocked` ที่ API ส่งมา
+ * ช่องของ "ผู้ประสานงานของหน่วยงาน" ที่ระบบเป็นเจ้าของค่า — ตรงกับ `contactLocked` ที่ API ส่งมา
  * ช่องที่ไม่ได้อยู่ในนี้ (หรือเป็น false) คือช่องที่บัญชียังไม่มีค่าให้ ผู้ใช้จึงต้องกรอกเอง
  */
 type ContactLocked = Partial<Record<"prefix" | "firstName" | "lastName" | "email" | "phone", boolean>>;
@@ -108,7 +108,7 @@ const EDITABLE_STATUSES = new Set(["DRAFT", "RETURNED"]);
 const SECTIONS = [
   { id: "section-1", tag: "ส่วนที่ 1", title: "ข้อมูลหน่วยงาน" },
   { id: "section-2", tag: "ส่วนที่ 2", title: "ผู้มีอำนาจอนุมัติของหน่วยงาน" },
-  { id: "section-3", tag: "ส่วนที่ 3", title: "ผู้กรอกข้อมูล" },
+  { id: "section-3", tag: "ส่วนที่ 3", title: "ผู้ประสานงานของหน่วยงาน" },
 ];
 
 /**
@@ -338,7 +338,7 @@ export default function EditOrganizationPage() {
     /**
      * ไม่ส่ง `organizationCode` — เป็นช่องอ่านอย่างเดียว และ API ตอบ 400 ถ้าค่าที่ส่งมา
      * ต่างจากของเดิม การส่งค่าที่เราแสดงอยู่กลับไปทุกครั้งจึงเป็นการเสี่ยงชนกฎนั้นเปล่า ๆ
-     * (เช่นตอนเจ้าหน้าที่ BDI แก้รหัสให้ระหว่างที่ผู้ใช้เปิดฟอร์มค้างไว้)
+     * (เช่นตอนผู้ประสานงานของ BDI แก้รหัสให้ระหว่างที่ผู้ใช้เปิดฟอร์มค้างไว้)
      *
      * ชื่อหน่วยงานที่ระบบเป็นเจ้าของก็ไม่ส่งด้วยเหตุผลเดียวกัน — API ตอบ 400 ถ้าค่าต่างจากเดิม
      */
@@ -482,18 +482,18 @@ export default function EditOrganizationPage() {
               {/* รหัสหน่วยงานเป็นค่าที่ระบบออกให้ ไม่ใช่ช่องกรอก
                   เดิมช่องนี้แก้ได้ และ hint ยังชวนให้แก้ด้วย ("ตรวจสอบและแก้ไขได้หากไม่ถูกต้อง")
                   ทั้งที่รหัสนี้เป็น unique ระดับตาราง ใช้อ้างถึงหน่วยงานในเอกสาร A0 และมาจาก
-                  เจ้าหน้าที่ BDI หรือ nextOrganizationCode() — ผู้ถูกตรวจสอบตั้งรหัสอ้างอิงของ
+                  ผู้ประสานงานของ BDI หรือ nextOrganizationCode() — ผู้ถูกตรวจสอบตั้งรหัสอ้างอิงของ
                   ตัวเองไม่ได้ และรหัสที่ไปชนของหน่วยงานอื่นเคยไประเบิดตอนอนุมัติขั้นสุดท้าย
                   ฝั่ง API ปฏิเสธค่าที่ต่างจากเดิมด้วย ไม่ได้กันแค่ที่หน้าจอ */}
               <Wrap name="organizationCode">
-                <TextField label="รหัสหน่วยงาน" readOnly value={form.organizationCode} error={fields.organizationCode} hint="หากรหัสหน่วยงานไม่ถูกต้อง กรุณาแจ้งเจ้าหน้าที่ BDI" />
+                <TextField label="รหัสหน่วยงาน" readOnly value={form.organizationCode} error={fields.organizationCode} hint="หากรหัสหน่วยงานไม่ถูกต้อง กรุณาแจ้งผู้ประสานงานของ BDI" />
               </Wrap>
               {/* ชื่อหน่วยงานที่ BDI บันทึกไว้ล่วงหน้าเป็นข้อมูลของระบบ ไม่ใช่ของผู้กรอก —
                   แสดงอย่างเดียวเหมือนรหัสหน่วยงาน และ API ปฏิเสธค่าที่ต่างจากเดิม
                   หน่วยงานที่ยังไม่มีชื่อในระบบ (ผู้กรอกเปิดเอง) ยังกรอกได้ตามเดิม */}
               <Wrap name="name">
                 {nameLocked ? (
-                  <TextField label="ชื่อหน่วยงาน" readOnly value={form.name} error={fields.name} hint="ระบบดึงจากข้อมูลหน่วยงานที่ลงทะเบียนไว้ หากไม่ถูกต้องกรุณาแจ้งเจ้าหน้าที่ BDI" />
+                  <TextField label="ชื่อหน่วยงาน" readOnly value={form.name} error={fields.name} hint="หากชื่อหน่วยงานไม่ถูกต้อง กรุณาแจ้งผู้ประสานงานของ BDI" />
                 ) : (
                   <TextField label="ชื่อหน่วยงาน" required value={form.name} onChange={(e) => set("name", e.target.value)} {...fieldProps("name")} placeholder="เช่น สำนักงานปลัดกระทรวงสาธารณสุข" />
                 )}
@@ -501,10 +501,10 @@ export default function EditOrganizationPage() {
               {/* เอกสาร A0 แยกช่อง "ตั้งอยู่เลขที่ ___ ถนน ___" ตามแบบฟอร์มราชการ
                   ฟอร์มจึงต้องแยกสองช่องด้วย ไม่งั้นช่องถนนในข้อตกลงจะว่างตลอดไป */}
               <Wrap name="addressLine">
-                <TextField label="ที่อยู่ (เลขที่ / อาคาร / ซอย)" required maxLength={MAX_ADDRESS_LINE} value={form.addressLine} onChange={(e) => set("addressLine", e.target.value)} {...fieldProps("addressLine")} hint="ใส่ชื่ออาคาร ชั้น เลขห้อง และซอยได้ครบ (ไม่เกิน 2,000 ตัวอักษร)" />
+                <TextField label="ที่อยู่ (เลขที่ / อาคาร / ซอย)" required maxLength={MAX_ADDRESS_LINE} value={form.addressLine} onChange={(e) => set("addressLine", e.target.value)} {...fieldProps("addressLine")} hint="ไม่เกิน 2,000 ตัวอักษร" />
               </Wrap>
               <Wrap name="road">
-                <TextField label="ถนน" hint="เว้นว่างได้ถ้าที่อยู่ไม่มีชื่อถนน" value={form.road} onChange={(e) => set("road", e.target.value)} {...fieldProps("road")} />
+                <TextField label="ถนน" hint="ให้เว้นว่างหากไม่มีชื่อถนน" value={form.road} onChange={(e) => set("road", e.target.value)} {...fieldProps("road")} />
               </Wrap>
               <div className="grid gap-5 sm:grid-cols-3">
                 <Wrap name="province">
@@ -554,7 +554,7 @@ export default function EditOrganizationPage() {
               <PersonFields prefixKey="signatoryPrefix" firstKey="signatoryFirstName" lastKey="signatoryLastName" form={form} fieldProps={fieldProps} set={set} prefixOptions={SIGNATORY_PREFIXES} allowOtherPrefix />
               <div className="grid gap-5 sm:grid-cols-2">
                 <Wrap name="signatoryPosition">
-                  <TextField label="ตำแหน่ง (ชื่อเต็มภาษาไทย)" required value={form.signatoryPosition} onChange={(e) => set("signatoryPosition", e.target.value)} {...fieldProps("signatoryPosition")} hint="ชื่อตำแหน่งเต็มเป็นภาษาไทย ตำแหน่งนี้จะถูกพิมพ์ลงเอกสารข้อตกลง (มีตัวย่อภาษาอังกฤษปนได้)" />
+                  <TextField label="ตำแหน่ง (ชื่อเต็มภาษาไทย)" required value={form.signatoryPosition} onChange={(e) => set("signatoryPosition", e.target.value)} {...fieldProps("signatoryPosition")} hint="ชื่อตำแหน่งเต็มเป็นภาษาไทย ตำแหน่งนี้จะถูกพิมพ์ลงเอกสารข้อตกลง" />
                 </Wrap>
                 <Wrap name="signatoryEmail">
                   <TextField label="อีเมล" required type="email" value={form.signatoryEmail} onChange={(e) => set("signatoryEmail", e.target.value)} {...fieldProps("signatoryEmail")} />
@@ -565,12 +565,12 @@ export default function EditOrganizationPage() {
                   <TextField label="เลขบัตรประชาชน" required inputMode="numeric" maxLength={13} value={form.signatoryNationalId} onChange={(e) => set("signatoryNationalId", e.target.value.replace(/\D/g, ""))} {...fieldProps("signatoryNationalId")} hint="ตัวเลข 13 หลัก" />
                 </Wrap>
                 <Wrap name="signatoryPhone">
-                  <TextField label="เบอร์โทรศัพท์" required inputMode="tel" maxLength={20} value={form.signatoryPhone} onChange={(e) => set("signatoryPhone", e.target.value)} {...fieldProps("signatoryPhone")} hint="มือถือ 10 หลัก หรือเบอร์ที่ทำงาน 9 หลัก (เช่น 0812345678 หรือ 021234567)" />
+                  <TextField label="เบอร์โทรศัพท์" required inputMode="tel" maxLength={20} value={form.signatoryPhone} onChange={(e) => set("signatoryPhone", e.target.value)} {...fieldProps("signatoryPhone")} hint="มือถือ 10 หลัก หรือเบอร์ที่ทำงาน 9 หลัก" />
                 </Wrap>
               </div>
               <div className="grid gap-5 border-t border-line pt-5 sm:grid-cols-2">
                 <div data-field="APPOINTMENT_ORDER">
-                  <FileUpload label="คำสั่งแต่งตั้งผู้มีอำนาจกระทำการแทน" required value={appointment} error={fields.APPOINTMENT_ORDER} uploading={uploadingKind === "APPOINTMENT_ORDER"} onSelect={(f) => uploadFile("APPOINTMENT_ORDER", f)} onRemove={() => setAppointment(null)} />
+                  <FileUpload label="คำสั่งแต่งตั้งผู้มีอำนาจอนุมัติของหน่วยงาน" required value={appointment} error={fields.APPOINTMENT_ORDER} uploading={uploadingKind === "APPOINTMENT_ORDER"} onSelect={(f) => uploadFile("APPOINTMENT_ORDER", f)} onRemove={() => setAppointment(null)} />
                 </div>
                 <FileUpload label="คำสั่ง/หนังสือมอบอำนาจ (ถ้ามี)" value={powerOfAttorney} uploading={uploadingKind === "POWER_OF_ATTORNEY"} onSelect={(f) => uploadFile("POWER_OF_ATTORNEY", f)} onRemove={() => setPowerOfAttorney(null)} />
               </div>
@@ -591,7 +591,7 @@ export default function EditOrganizationPage() {
               <PersonFields prefixKey="contactPrefix" firstKey="contactFirstName" lastKey="contactLastName" form={form} fieldProps={fieldProps} set={set} locked={contactLocked} />
               <div className="grid gap-5 sm:grid-cols-2">
                 <Wrap name="contactPosition">
-                  <TextField label="ตำแหน่ง (ชื่อเต็มภาษาไทย)" required value={form.contactPosition} onChange={(e) => set("contactPosition", e.target.value)} {...fieldProps("contactPosition")} hint="ชื่อตำแหน่งเต็มเป็นภาษาไทย (มีตัวย่อภาษาอังกฤษปนได้)" />
+                  <TextField label="ตำแหน่ง (ชื่อเต็มภาษาไทย)" required value={form.contactPosition} onChange={(e) => set("contactPosition", e.target.value)} {...fieldProps("contactPosition")} hint="ชื่อตำแหน่งเต็มเป็นภาษาไทย" />
                 </Wrap>
                 <Wrap name="contactDepartment">
                   <TextField label="ฝ่าย/กอง/สำนัก" required value={form.contactDepartment} onChange={(e) => set("contactDepartment", e.target.value)} {...fieldProps("contactDepartment")} />
@@ -620,7 +620,7 @@ export default function EditOrganizationPage() {
               {Object.values(contactLocked).some(Boolean) ? (
                 <p className="text-[13px] leading-relaxed text-ink-muted">
                   ช่องที่เป็นสีเทาระบบดึงจากบัญชีผู้ใช้ที่คุณเข้าสู่ระบบอยู่ จึงแก้ไขที่นี่ไม่ได้
-                  หากข้อมูลไม่ถูกต้องกรุณาแจ้งเจ้าหน้าที่ BDI
+                  หากข้อมูลไม่ถูกต้องกรุณาแจ้งผู้ประสานงานของ BDI
                 </p>
               ) : null}
             </div>

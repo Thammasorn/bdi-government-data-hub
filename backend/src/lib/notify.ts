@@ -175,7 +175,7 @@ export async function announceRoleReplacement(replaced: RevokedAssignment[]): Pr
       type: NotificationType.ROLE_ASSIGNMENT_CHANGED,
       title: "บัญชีของคุณถูกถอดออกจากหน่วยงาน",
       message:
-        `ผู้ดูแลระบบได้มอบหน้าที่ ${roleLabel} ของ ${organizationName} ให้เจ้าหน้าที่คนใหม่แทน ` +
+        `ผู้ดูแลระบบได้มอบหน้าที่ ${roleLabel} ของ ${organizationName} ให้ผู้ใช้รายใหม่แทน ` +
         `บัญชีของคุณจึงไม่ได้สังกัดหน่วยงานใดในระบบขณะนี้ ` +
         `หากคิดว่าไม่ถูกต้อง โปรดติดต่อผู้ดูแลระบบ BDI เพื่อขอสิทธิ์ในหน่วยงานเดิมคืน`,
       subjectType: AuditSubject.USER_ROLE_ASSIGNMENT,

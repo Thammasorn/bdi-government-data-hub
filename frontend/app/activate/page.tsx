@@ -195,7 +195,7 @@ function IdentityStep({ token, invitation }: { token: string; invitation: Invita
       footer={
         <p>
           ยังไม่มีแอปพลิเคชัน ThaID? ลงทะเบียนได้ที่แอป ThaID ของกรมการปกครอง
-          หรือติดต่อเจ้าหน้าที่ BDI ที่เชิญคุณเข้าระบบ
+          หรือติดต่อผู้ประสานงานของ BDI ที่เชิญคุณเข้าระบบ
         </p>
       }
     >
@@ -204,7 +204,7 @@ function IdentityStep({ token, invitation }: { token: string; invitation: Invita
         <div className="rounded-xl border border-line bg-canvas p-5">
           <p className="text-sm leading-relaxed text-ink-muted">
             ระบบจะเปรียบเทียบเลขประจำตัวประชาชนที่ได้จาก ThaID
-            กับเลขที่เจ้าหน้าที่บันทึกไว้ตอนสร้างบัญชีของคุณ
+            กับเลขที่ผู้ประสานงานของ BDI บันทึกไว้ตอนสร้างบัญชีของคุณ
             {invitation.cidHint ? (
               <>
                 {" "}
@@ -218,7 +218,7 @@ function IdentityStep({ token, invitation }: { token: string; invitation: Invita
           </p>
           <p className="mt-3 text-[13px] leading-relaxed text-ink-subtle">
             หากเลขไม่ตรงกัน ลิงก์เปิดใช้งานนี้จะถูกยกเลิกทันทีเพื่อความปลอดภัย
-            และต้องขอลิงก์ใหม่จากเจ้าหน้าที่
+            และต้องขอลิงก์ใหม่จากผู้ประสานงานของ BDI
           </p>
         </div>
 
@@ -364,7 +364,7 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
                 ? "ชื่อและนามสกุล"
                 : "ข้อมูลที่แสดงไว้แล้ว"}{" "}
             เป็นข้อมูลที่ระบบได้รับมาแล้ว จึงแก้ไขในหน้านี้ไม่ได้ —
-            หากไม่ตรงกับบัตรประชาชน กรุณาติดต่อเจ้าหน้าที่ BDI ที่เชิญคุณเข้าระบบ
+            หากไม่ตรงกับบัตรประชาชน กรุณาติดต่อผู้ประสานงานของ BDI ที่เชิญคุณเข้าระบบ
           </p>
         ) : null}
 
@@ -470,7 +470,7 @@ function InvalidLink({ reason }: { reason: string }) {
     >
       <div className="rounded-xl bg-danger-bg p-5">
         <p className="text-sm leading-relaxed text-danger">
-          หากคุณคิดว่านี่เป็นข้อผิดพลาด กรุณาติดต่อเจ้าหน้าที่ BDI ที่เชิญคุณเข้าระบบ
+          หากคุณคิดว่านี่เป็นข้อผิดพลาด กรุณาติดต่อผู้ประสานงานของ BDI ที่เชิญคุณเข้าระบบ
           เพื่อขอลิงก์คำเชิญใหม่
         </p>
       </div>

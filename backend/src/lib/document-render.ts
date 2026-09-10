@@ -57,7 +57,7 @@ export const VARIABLE_GROUPS = {
   request: "คำขอลงทะเบียน",
   org: "หน่วยงานที่ลงทะเบียน",
   org_approver: "ผู้มีอำนาจอนุมัติของหน่วยงาน",
-  org_officer: "ผู้กรอกข้อมูลของหน่วยงาน",
+  org_officer: "ผู้ประสานงานของหน่วยงาน",
   signature: "ลายมือชื่อและตราเห็นชอบ",
   bdi: "สำนักงาน (BDI)",
   document: "ตัวเอกสารและเวอร์ชัน",
@@ -147,16 +147,16 @@ export const TEMPLATE_VARIABLES = {
   "org_approver.phone": { scope: "organization", group: "org_approver", description: "เบอร์โทรศัพท์ผู้มีอำนาจกระทำการแทน", example: "0812345678" },
   "org_approver.nationalId": { scope: "organization", group: "org_approver", description: "เลขบัตรประชาชนผู้มีอำนาจกระทำการแทน (คั่นด้วยขีด)", example: "1-1017-00207-03-0" },
 
-  // ── ผู้กรอกข้อมูล ────────────────────────────────────────────
-  "org_officer.fullName": { group: "org_officer", description: "ชื่อผู้กรอกข้อมูล (คำนำหน้า ชื่อ นามสกุล)", example: "นางสาว พิมพ์ชนก สังคมดี" },
-  "org_officer.prefix": { group: "org_officer", description: "คำนำหน้าชื่อผู้กรอกข้อมูล", example: "นางสาว" },
-  "org_officer.firstName": { group: "org_officer", description: "ชื่อผู้กรอกข้อมูล", example: "พิมพ์ชนก" },
-  "org_officer.lastName": { group: "org_officer", description: "นามสกุลผู้กรอกข้อมูล", example: "สังคมดี" },
-  "org_officer.position": { group: "org_officer", description: "ตำแหน่งผู้กรอกข้อมูล", example: "นักวิเคราะห์นโยบายและแผน" },
-  "org_officer.department": { group: "org_officer", description: "ฝ่าย/กอง/สำนักของผู้กรอกข้อมูล", example: "กลุ่มงานข้อมูลสารสนเทศ" },
-  "org_officer.email": { group: "org_officer", description: "อีเมลผู้กรอกข้อมูล", example: "user@dla.go.th" },
-  "org_officer.phone": { group: "org_officer", description: "เบอร์โทรศัพท์ผู้กรอกข้อมูล", example: "0820000000" },
-  "org_officer.nationalId": { group: "org_officer", description: "เลขบัตรประชาชนผู้กรอกข้อมูล (คั่นด้วยขีด)", example: "1-1017-00207-03-0" },
+  // ── ผู้ประสานงานของหน่วยงาน ───────────────────────────────────
+  "org_officer.fullName": { group: "org_officer", description: "ชื่อผู้ประสานงานของหน่วยงาน (คำนำหน้า ชื่อ นามสกุล)", example: "นางสาว พิมพ์ชนก สังคมดี" },
+  "org_officer.prefix": { group: "org_officer", description: "คำนำหน้าชื่อผู้ประสานงานของหน่วยงาน", example: "นางสาว" },
+  "org_officer.firstName": { group: "org_officer", description: "ชื่อผู้ประสานงานของหน่วยงาน", example: "พิมพ์ชนก" },
+  "org_officer.lastName": { group: "org_officer", description: "นามสกุลผู้ประสานงานของหน่วยงาน", example: "สังคมดี" },
+  "org_officer.position": { group: "org_officer", description: "ตำแหน่งผู้ประสานงานของหน่วยงาน", example: "นักวิเคราะห์นโยบายและแผน" },
+  "org_officer.department": { group: "org_officer", description: "ฝ่าย/กอง/สำนักของผู้ประสานงานของหน่วยงาน", example: "กลุ่มงานข้อมูลสารสนเทศ" },
+  "org_officer.email": { group: "org_officer", description: "อีเมลผู้ประสานงานของหน่วยงาน", example: "user@dla.go.th" },
+  "org_officer.phone": { group: "org_officer", description: "เบอร์โทรศัพท์ผู้ประสานงานของหน่วยงาน", example: "0820000000" },
+  "org_officer.nationalId": { group: "org_officer", description: "เลขบัตรประชาชนผู้ประสานงานของหน่วยงาน (คั่นด้วยขีด)", example: "1-1017-00207-03-0" },
 
   // ── ชุดข้อมูลที่ขอลงทะเบียน (เส้นทาง C) ──
   "dataset.title": { scope: "dataset", group: "dataset", description: "ชื่อชุดข้อมูล (ภาษาไทย)", example: "ปริมาณน้ำฝนรายวัน" },

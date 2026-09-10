@@ -76,7 +76,7 @@ function CredentialsStep({
               กรอก Activation Key
             </Link>
           </p>
-          <p>ยังไม่มีบัญชี? ระบบนี้เปิดใช้งานด้วยคำเชิญเท่านั้น กรุณาติดต่อเจ้าหน้าที่ BDI</p>
+          <p>ยังไม่มีบัญชี? ระบบนี้เปิดใช้งานด้วยคำเชิญเท่านั้น กรุณาติดต่อผู้ประสานงานของ BDI</p>
         </div>
       }
     >
@@ -167,7 +167,7 @@ function OtpStep({ email, onBack }: { email: string; onBack: () => void }) {
          * ที่ไม่มี <Suspense> ครอบ และตอนนี้คือหลังกดยืนยัน OTP แล้ว เบราว์เซอร์พร้อมมานานแล้ว
          */
         const next = nextFromLocation();
-        // ทุก role มีหน้าแรกที่ `/` แล้ว รวมถึงเจ้าหน้าที่ BDI ที่เคยถูกส่งไปตารางคิวตรง ๆ
+        // ทุก role มีหน้าแรกที่ `/` แล้ว รวมถึงผู้ประสานงานของ BDI ที่เคยถูกส่งไปตารางคิวตรง ๆ
         router.push(next ?? "/");
       } catch (err) {
         setError(err instanceof ApiError ? err.message : "ยืนยันไม่สำเร็จ");

@@ -25,7 +25,7 @@
  * ### ไม่ mask ข้อมูล
  *
  * ทุก endpoint ในไฟล์นี้ตอบข้อมูลจริงโดยไม่ปิดบัง ต่างจากฝั่งฟอร์มจดทะเบียนที่ปิด
- * เพราะที่นั่นคนกรอกเป็นใครก็ได้ ส่วน `x-admin-token` อยู่ใน `.env` เจ้าหน้าที่ BDI
+ * เพราะที่นั่นคนกรอกเป็นใครก็ได้ ส่วน `x-admin-token` อยู่ใน `.env` ผู้ประสานงานของ BDI
  * เท่านั้นที่เรียกได้ และเขาต้องรู้ว่าต้องไปแก้ที่บัญชีใบไหน
  */
 import { Router } from "../lib/async-route.js";
@@ -584,7 +584,7 @@ adminUserRouter.post("/:id/suspend", async (req, res) => {
     res.status(409).json({
       error: "last_holder",
       message:
-        `บัญชีนี้เป็นเจ้าหน้าที่ ${ROLE_LABELS[stranded as RoleCode] ?? stranded} คนสุดท้ายที่ใช้งานอยู่ — ` +
+        `บัญชีนี้เป็น${ROLE_LABELS[stranded as RoleCode] ?? stranded} คนสุดท้ายที่ใช้งานอยู่ — ` +
         `ระงับแล้วจะไม่มีใครปิดงานในด่านนั้นได้เลย กรุณาเปิดใช้งานบัญชีอื่นในบทบาทนี้ก่อน`,
       roleCode: stranded,
     });
@@ -692,7 +692,7 @@ adminUserRouter.post("/:id/deactivate", async (req, res) => {
     res.status(409).json({
       error: "last_holder",
       message:
-        `บัญชีนี้เป็นเจ้าหน้าที่ ${ROLE_LABELS[stranded as RoleCode] ?? stranded} คนสุดท้ายที่ใช้งานอยู่ — ` +
+        `บัญชีนี้เป็น${ROLE_LABELS[stranded as RoleCode] ?? stranded} คนสุดท้ายที่ใช้งานอยู่ — ` +
         `ปิดแล้วจะไม่มีใครปิดงานในด่านนั้นได้เลย กรุณาเปิดใช้งานบัญชีอื่นในบทบาทนี้ก่อน`,
       roleCode: stranded,
     });
