@@ -40,6 +40,13 @@ TAG_MAP = {
     "org_approver.firstname_th": "org_approver.firstName",
     "org_approver.lastname_th": "org_approver.lastName",
     "org_approver.position_th": "org_approver.position",
+    # ชุด 2026-09-09 สะกดผู้มีอำนาจฯ ในย่อหน้าคู่สัญญาด้วยขีดล่างล้วน และตัดคำว่า `org_`
+    # ออกจากสองตัวแรก ทั้งที่บล็อกลงนามของไฟล์เดียวกันยังใช้จุดแบบเดิม — รับทั้งสองแบบ
+    # ไว้ตรงนี้ ดีกว่าไปแก้การสะกดในเอกสารของฝ่ายกฎหมายให้เหมือนกัน
+    "approver_prefix_th": "org_approver.prefix",
+    "approver_firstname_th": "org_approver.firstName",
+    "org_approver_lastname_th": "org_approver.lastName",
+    "org_approver_position_th": "org_approver.position",
     "bdi_approver.firstname_th": "bdi_approver.firstName",
     "bdi_approver.lastname_th": "bdi_approver.lastName",
     "user.firstname_th": "org_officer.firstName",
