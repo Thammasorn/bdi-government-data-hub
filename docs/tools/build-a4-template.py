@@ -6,15 +6,23 @@
 
     python3 docs/tools/build-a4-template.py <ต้นฉบับ.docx> <ปลายทาง.docx>
 
-**ช่องติ๊ก** ตัวเลือกทุกข้อยังพิมพ์ออกมาครบ ข้อที่ตรงกับข้อมูลในคำขอจะได้เครื่องหมาย ✔
-ข้อที่ไม่ตรงได้ ☐ (ผู้อ่านจึงเห็นด้วยว่าตัวเลือกอื่นมีอะไร ไม่ใช่เห็นแต่ข้อที่เลือก)
-bullet เดิมถูกถอดออกเพราะจะกลายเป็น "o ✔ ..." สองเครื่องหมายซ้อนกัน
+**ช่องติ๊ก** ตัวเลือกทุกข้อยังพิมพ์ออกมาครบ ข้อที่ตรงกับข้อมูลในคำขอจะได้เครื่องหมายถูก
+ข้อที่ไม่ตรงได้วงกลมว่าง (ผู้อ่านจึงเห็นด้วยว่าตัวเลือกอื่นมีอะไร ไม่ใช่เห็นแต่ข้อที่เลือก)
+bullet เดิมถูกถอดออกเพราะจะกลายเป็นสองเครื่องหมายซ้อนกัน
 
-ตัวเครื่องหมายเป็นเรื่องของ backend ไม่ใช่ของ template — สคริปต์นี้ใส่แค่ placeholder
-เปลี่ยนเครื่องหมายจึงไม่ต้องสร้าง template ใหม่หรือเผยแพร่เวอร์ชันใหม่
+*ตัวอักษร*ที่ใช้เป็นเครื่องหมายเป็นเรื่องของ backend (`lib/dataset-values.ts`) เปลี่ยนตัวอักษร
+จึงไม่ต้องสร้าง template ใหม่ — แต่ **ฟอนต์กับขนาดของมันเป็นเรื่องของที่นี่**
 
-**ไม่ลบไฮไลต์ ตัวอักษรสีแดง หรือคอมเมนต์** ต่างจาก A0 — ตัดสินไว้ 2026-08-20 ว่าให้คง
-ไฟล์ตามที่ฝ่ายกฎหมายร่างมา เอกสารที่ render จึงยังมีแถบไฮไลต์และตัวหนังสือสีแดงติดมาด้วย
+สคริปต์วางเครื่องหมายไว้ใน `<w:r>` ของตัวเอง ที่ระบุ DejaVu Sans และขนาดตายตัว ไม่ปล่อยให้
+มันไปอยู่ใน run ของข้อความตัวเลือก: ต้นฉบับตั้งฟอนต์ไว้ไม่เหมือนกันทุกบรรทัด พอ TH SarabunPSK
+ไม่มี glyph ของวงกลม fontconfig ก็เลือกฟอนต์แทนคนละตัวในแต่ละบรรทัด — บางบรรทัดได้ Tahoma
+บางบรรทัดได้ DejaVu Sans **วงกลมจึงโตไม่เท่ากันทั้งหน้า** (BDI แจ้ง 2026-09-10 · `pdffonts`
+บน PDF ที่ออกมาลิสต์ทั้งสองฟอนต์จริง) ระบุฟอนต์เองที่ run นี้ที่เดียวก็หมดปัญหา โดยไม่ไปแตะ
+ฟอนต์ของข้อความที่ฝ่ายกฎหมายจัดไว้
+
+**ลบไฮไลต์เหลืองที่ใช้ทำเครื่องหมายช่องกรอกตอนร่าง** (BDI ขอเมื่อ 2026-09-10) — กลับคำ
+ตัดสินเมื่อ 2026-08-20 ที่ให้คงไฟล์ไว้ตามที่ร่างมา ค่าที่ระบบเติมเข้าไปมีแถบเหลืองคาดอยู่ใน
+เอกสารที่หน่วยงานต้องลงนาม ซึ่งอ่านเหมือนแบบฟอร์มที่ยังทำไม่เสร็จ
 
 รหัสในชื่อ placeholder คือรหัสที่เก็บในฐานข้อมูลจริง (`lib/dataset.ts`) ไม่ใช่ข้อความบนฟอร์ม
 ลำดับตัวเลือกในเอกสารกับในรหัสไม่ตรงกันทุกข้อ เช่น ข้อ 10 เอกสารเรียง "อื่น ๆ" ก่อน "ไม่ทราบ"
@@ -66,7 +74,7 @@ DEBULLET: set[int] = {108}
 # ── ช่องกรอก: ดัชนีย่อหน้า -> (ข้อความเดิมที่ต้องแทน, placeholder) ─────────
 # ข้อความเดิมคือเครื่องหมายช่องกรอกบนกระดาษ (เส้นประ / คำว่า text / number)
 FIELDS: list[tuple[int, str, str]] = [
-    (17, "WHOLE", "{{tick.dataTopic.99}} อื่น ๆ {{dataset.dataTopicOther}}"),
+    (17, "WHOLE", "อื่น ๆ {{dataset.dataTopicOther}}"),
     (20, "DOTS", "{{dataset.title}}"),
     (22, "DOTS", "{{dataset.nameEn}}"),
     (23, "MARKER", "{{dataset.dataFields}}"),
@@ -77,12 +85,12 @@ FIELDS: list[tuple[int, str, str]] = [
     (28, "MARKER", "{{dataset.notes}}"),
     (29, "MARKER", "{{dataset.objective}}"),
     (44, "MARKER", "{{dataset.updateFrequencyInterval}}"),
-    (65, "WHOLE", "{{tick.geoCoverage.99}} อื่น ๆ {{dataset.geoCoverageOther}}"),
+    (65, "WHOLE", "อื่น ๆ {{dataset.geoCoverageOther}}"),
     (66, "MARKER", "{{dataset.dataSource}}"),
     (71, "ANGLE", "{{dataset.dataFormatOther}}"),
     (82, "MARKER", "{{dataset.personalDataTypes}}"),
     (84, "MARKER", "{{dataset.dataSubjectCategories}}"),
-    (87, "WHOLE", "{{tick.personalDataProcessingPeriod.b}} อื่น ๆ ระบุ ระยะเวลา "
+    (87, "WHOLE", "อื่น ๆ ระบุ ระยะเวลา "
                   "{{dataset.personalDataPeriodYear}} ปี {{dataset.personalDataPeriodMonth}} เดือน"),
     (108, "MARKER", "{{dataset.transformedSharingPlatforms}}"),
     # ── ท้ายเอกสาร — ชุด 2026-09-09 เพิ่มบล็อกนี้เข้ามา ฉบับ 2026-08-12 ไม่มี ──
@@ -94,6 +102,17 @@ FIELDS: list[tuple[int, str, str]] = [
     (130, "DOTS", "{{document.version}}"),
     (131, "DOTS", "{{document.effectiveDate}}"),
 ]
+
+# เครื่องหมายอยู่ใน run ของตัวเอง ฟอนต์และขนาดตายตัว — ดูเหตุผลในหัวไฟล์
+# 28 = 14pt ครึ่งพอยต์ตามที่ Word นับ ซึ่งพอดีกับข้อความตัวเลือกที่ตั้งไว้ 32 (16pt)
+# วงกลมของ DejaVu Sans สูงกว่าตัวอักษรไทยที่ขนาดเท่ากัน
+TICK_RUN = (
+    "<w:r><w:rPr>"
+    '<w:rFonts w:ascii="DejaVu Sans" w:hAnsi="DejaVu Sans" w:cs="DejaVu Sans"/>'
+    '<w:sz w:val="28"/><w:szCs w:val="28"/>'
+    "</w:rPr>"
+    '<w:t xml:space="preserve">{mark} </w:t></w:r>'
+)
 
 PARAGRAPH = re.compile(r"<w:p(?: [^>]*)?>.*?</w:p>", re.S)
 TEXT_NODE = re.compile(r"(<w:t(?: [^>]*)?>)(.*?)(</w:t>)", re.S)
@@ -123,6 +142,9 @@ def set_text(seg: str, new_full: str) -> str:
     return out if n else seg
 
 
+HIGHLIGHT = re.compile(r'<w:highlight w:val="[^"]*"/>')
+
+
 def debullet(seg: str) -> str:
     """ถอด bullet ของ Word ออก โดยคงระยะย่อหน้าที่ bullet เคยให้ไว้"""
     seg = NUMPR.sub("", seg)
@@ -133,10 +155,21 @@ def debullet(seg: str) -> str:
 
 
 def tick(seg: str, field: str, code: str) -> str:
-    """ใส่ช่องติ๊กหน้าข้อความ และถอด bullet ของ Word ออก"""
+    """แทรก run ของเครื่องหมายไว้หน้าสุดของย่อหน้า และถอด bullet ของ Word ออก
+
+    **แทรกเป็น run ใหม่ ไม่ใช่เติมข้อความเข้าไปใน run เดิม** — run เดิมเป็นของข้อความ
+    ตัวเลือกซึ่งฝ่ายกฎหมายตั้งฟอนต์ไว้ไม่เหมือนกันทุกบรรทัด ถ้าเครื่องหมายไปอาศัยอยู่ในนั้น
+    ขนาดที่ออกมาจะไม่เท่ากันทั้งหน้า (ดูหัวไฟล์)
+    """
     seg = debullet(seg)
-    text = paragraph_text(seg)
-    return set_text(seg, "{{tick." + field + "." + code + "}} " + text.strip())
+    run = TICK_RUN.format(mark="{{tick." + field + "." + code + "}}")
+    # หลัง </w:pPr> ถ้ามี ไม่งั้นหลังแท็กเปิดย่อหน้า — run ต้องมาหลัง pPr เสมอตามสคีมา
+    close = seg.find("</w:pPr>")
+    if close != -1:
+        at = close + len("</w:pPr>")
+    else:
+        at = seg.index(">") + 1
+    return seg[:at] + run + seg[at:]
 
 
 def field(seg: str, kind: str, replacement: str) -> str:
@@ -170,21 +203,26 @@ def main() -> None:
     paras = [(m.start(), m.end(), m.group(0)) for m in PARAGRAPH.finditer(xml)]
     edits: dict[int, str] = {}
 
-    for idx, (field_name, code) in TICKS.items():
-        if idx >= len(paras):
-            sys.exit(f"ย่อหน้า {idx} ไม่มีในเอกสาร — โครงเอกสารเปลี่ยนไปจากที่ตารางนี้อ้างอิง")
-        edits[idx] = tick(paras[idx][2], field_name, code)
+    # **ช่องกรอกก่อน ช่องติ๊กทีหลัง** — `field()` เขียนข้อความทั้งย่อหน้าลง <w:t> ชิ้นแรก
+    # ถ้าแทรก run ของเครื่องหมายไปก่อน มันจะกลายเป็นชิ้นแรกแล้วถูกเขียนทับ
+    for idx, kind, replacement in FIELDS:
+        edits[idx] = field(paras[idx][2], kind, replacement)
 
     for idx in DEBULLET:
         edits[idx] = debullet(edits.get(idx, paras[idx][2]))
 
-    for idx, kind, replacement in FIELDS:
-        base = edits.get(idx, paras[idx][2])
-        edits[idx] = field(base, kind, replacement)
+    for idx, (field_name, code) in TICKS.items():
+        if idx >= len(paras):
+            sys.exit(f"ย่อหน้า {idx} ไม่มีในเอกสาร — โครงเอกสารเปลี่ยนไปจากที่ตารางนี้อ้างอิง")
+        edits[idx] = tick(edits.get(idx, paras[idx][2]), field_name, code)
 
     for idx in sorted(edits, reverse=True):
         start, end, _ = paras[idx]
         xml = xml[:start] + edits[idx] + xml[end:]
+
+    # ไฮไลต์เหลืองที่ใช้ทำเครื่องหมายช่องกรอกตอนร่าง — ลบทั้งไฟล์ ไม่ใช่เฉพาะย่อหน้าที่แก้
+    # เพราะฝ่ายกฎหมายทาไว้คร่อมทั้งบรรทัดบ้าง ทั้งหัวข้อบ้าง (BDI ขอเมื่อ 2026-09-10)
+    xml, highlights = HIGHLIGHT.subn("", xml)
 
     blobs["word/document.xml"] = xml.encode("utf-8")
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -195,6 +233,7 @@ def main() -> None:
     ph = sorted(set(re.findall(r"\{\{([^}]+)\}\}", xml)))
     print(f"เขียน {out}")
     print(f"  ช่องติ๊ก {len(TICKS)} ช่อง · ช่องกรอก {len(FIELDS)} ช่อง · placeholder ทั้งหมด {len(ph)}")
+    print(f"  ลบไฮไลต์ {highlights} จุด")
 
 
 if __name__ == "__main__":
