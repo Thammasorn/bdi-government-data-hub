@@ -668,14 +668,25 @@ mirror each other file for file — `lib/organization-agreement.ts` / `lib/datas
 
 **A4 has tick boxes, which is what makes Journey C different.** It is a paper form with option
 lists, so the template carries `{{tick.<field>.<code>}}` before each option and the renderer
-prints ● on the option matching the request and ○ on the rest — every option still prints, so the
-reader sees what was not chosen. Circles rather than boxes since 2026-09-09: the paper form the
-legal team drew uses circular bullets, and ✔/☐ read as a different form. Neither mark exists in
-TH SarabunPSK, so both come from the converter's fallback — which is why `gotenberg/` rejects the
+prints ✔ on the option matching the request and ○ on the rest — every option still prints, so the
+reader sees what was not chosen. The empty shape is a circle rather than a box since 2026-09-09,
+because that is what the paper form draws; the chosen one stayed a tick, after a filled circle was
+tried on 2026-09-09 and read as a dot rather than as an answer. Neither mark exists in TH
+SarabunPSK, so both come from the converter's fallback — which is why `gotenberg/` rejects the
 colour-emoji font (see `docs/17` §2); without that the tick renders as a colour bitmap two and a
 half times the line height. **Changing either character means measuring a converted PDF again**;
 ✓ (U+2713) once landed in DejaVu Math and drew 68pt tall on an 18.6pt line, which is why ✔
-(U+2714) was picked in August and why ● (U+25CF) / ○ (U+25CB) were measured before this swap. Tick names are generated from the code lists in `lib/dataset.ts`
+(U+2714) was picked in August.
+
+**The mark gets a `<w:r>` of its own, naming DejaVu Sans at a fixed size.** Letting it inherit the
+option line's run meant fontconfig resolved the missing glyph per run, and the legal team's runs do
+not all name the same font — so some lines drew their circle in Tahoma and others in DejaVu Sans,
+and the marks came out visibly different sizes down the page (`pdffonts` listed both). That also
+fixes the order inside `build-a4-template.py`: `field()` rewrites a paragraph into its first
+`<w:t>`, so the tick run must be inserted *after* the field pass or it is overwritten.
+`build-a4-template.py` also strips the drafting highlight now, reversing the 2026-08-20 decision to
+keep A4 exactly as drafted — the values the system fills in were coming out with a yellow bar
+behind them, which reads as an unfinished form on a document somebody has to sign. Tick names are generated from the code lists in `lib/dataset.ts`
 (`TICK_FIELDS`), never hand-listed, so adding a code list value makes a new tick usable with no
 change here. A document may omit ticks for codes it has no line for.
 
