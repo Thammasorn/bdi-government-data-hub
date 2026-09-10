@@ -46,7 +46,7 @@ function decideAbility(org: Organization, roles: string[]): Ability {
   switch (org.currentTaskType) {
     case "BDI_OFFICER_REVIEW":
       return roles.includes("BDI_OFFICER")
-        ? { can: true, approveLabel: "อนุมัติ", hint: "ตรวจสอบข้อมูลและเอกสารก่อนส่งให้ผู้มีอำนาจอนุมัติของหน่วยงาน" }
+        ? { can: true, approveLabel: "ผ่านการตรวจสอบ", hint: "ตรวจสอบข้อมูลและเอกสารก่อนส่งให้ผู้มีอำนาจอนุมัติของหน่วยงาน" }
         : { can: false };
     /**
      * สองด่านนี้อนุมัติด้วยการลงนามบนเอกสาร ปุ่มจึงเปิด SigningDialog ไม่ใช่ modal ยืนยันสั้น ๆ
@@ -64,7 +64,7 @@ function decideAbility(org: Organization, roles: string[]): Ability {
       if (roles.includes("ORGANIZATION_APPROVER")) {
         return {
           can: true,
-          approveLabel: "ผ่านการตรวจสอบ",
+          approveLabel: "อนุมัติ",
           hint: "โปรดตรวจสอบเอกสารในฐานะผู้มีอำนาจอนุมัติของหน่วยงาน แล้วลงนามอิเล็กทรอนิกส์",
           signing: true,
           perDocument: true,
@@ -98,7 +98,7 @@ function decideAbility(org: Organization, roles: string[]): Ability {
       return roles.includes("BDI_FINAL_APPROVER")
         ? {
             can: true,
-            approveLabel: "เห็นชอบและลงนาม",
+            approveLabel: "อนุมัติ",
             hint: "ขั้นตอนสุดท้าย เมื่อลงนามแล้วหน่วยงานจะเปิดใช้งานทันที",
             signing: true,
             perDocument: false,

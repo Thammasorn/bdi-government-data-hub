@@ -93,7 +93,7 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string)
       return isOrgApprover
         ? {
             title: "รอการพิจารณาของคุณ",
-            advanceLabel: "เห็นชอบ",
+            advanceLabel: "อนุมัติ",
             hint: "ตรวจแบบนำส่งข้อมูลในฐานะผู้มีอำนาจอนุมัติของหน่วยงาน แล้วยืนยันส่งเอกสาร",
             /** ด่านนี้ยืนยันเอกสาร จึงเปิดกล่องยืนยันแทน modal ยืนยันสั้น ๆ */
             signing: true,
