@@ -46,6 +46,7 @@ import {
   activeRenderedDocument,
   publicAttachment,
   storeAttachment,
+  sendRenderedPdf,
   streamAttachment,
   uploadedFile,
 } from "../lib/attachment.js";
@@ -84,6 +85,7 @@ import {
 import {
   DATASET_FORM_CODE,
   datasetFormVersion,
+  datasetPdf,
   renderDatasetDocument,
   renderDatasetDocuments,
 } from "../lib/dataset-document.js";
@@ -126,7 +128,7 @@ import {
   taskOpeners,
 } from "../lib/workflow.js";
 import { requireAuth } from "../middleware/auth.js";
-import { NAME_FIELDS, fullNameTh } from "../lib/person-name.js";
+import { NAME_FIELDS, accountNameTh, fullNameTh } from "../lib/person-name.js";
 
 export const datasetRequestRouter = Router();
 datasetRequestRouter.use(requireAuth);
@@ -1300,6 +1302,41 @@ datasetRequestRouter.get("/:id/legal-documents/:versionId/file", async (req, res
   }
 
   let file = await activeRenderedDocument(prisma, OWNER, request.id, versionId);
+
+  /**
+   * มีไฟล์ของคำขอนี้อยู่ = เอกสารฉบับนี้มี placeholder → **render สดทุกครั้งที่เปิดอ่าน**
+   * เพื่อประทับชื่อคนที่กำลังเปิดกับเวลาที่เปิด — เหตุผลทั้งชุดอยู่ในเส้นทางเดียวกันของ
+   * `routes/organizations.ts` สองที่นี้ต้องทำเหมือนกันเสมอ
+   */
+  if (file) {
+    const version = await prisma.legalDocumentVersion.findUnique({
+      where: { id: versionId },
+      include: { legalDocument: { select: { documentCode: true, nameTh: true } } },
+    });
+    if (version) {
+      await logAudit({
+        action: AuditAction.DOCUMENT_DOWNLOADED,
+        subjectType: AuditSubject.ATTACHMENT,
+        subjectId: file.id,
+        organizationId: request.organizationId,
+        after: { filename: file.originalFileName, legalDocumentVersionId: versionId },
+      });
+      const pdf = await datasetPdf(prisma, {
+        request: datasetDocumentRequestOf(request),
+        document: {
+          code: version.legalDocument.documentCode,
+          nameTh: version.legalDocument.nameTh,
+          versionId: version.id,
+          versionNumber: version.versionNumber,
+          effectiveAt: version.effectiveAt,
+        },
+        printedByName: await accountNameTh(prisma, session.sub),
+      });
+      sendRenderedPdf(res, pdf, file.originalFileName);
+      return;
+    }
+  }
+
   file ??= await activeAttachment(
     prisma,
     AttachmentOwnerType.LEGAL_DOCUMENT_VERSION,

@@ -39,6 +39,7 @@ import {
   activeRenderedDocument,
   publicAttachment,
   storeAttachment,
+  sendRenderedPdf,
   streamAttachment,
   uploadedFile,
 } from "../lib/attachment.js";
@@ -78,12 +79,13 @@ import {
 import {
   AGREEMENT_CODE,
   agreementVersion,
+  agreementPdf,
   renderLegalDocument,
   renderPlaceholderDocuments,
 } from "../lib/organization-agreement.js";
 import { DocumentRenderError } from "../lib/document-render.js";
 import { LEGAL_SCOPES, requestDocuments } from "../lib/legal.js";
-import { NAME_FIELDS, fullNameTh } from "../lib/person-name.js";
+import { NAME_FIELDS, accountNameTh, fullNameTh } from "../lib/person-name.js";
 import { nextOrganizationCode, nextOrganizationRequestNumber } from "../lib/request-number.js";
 import { buildJourneyProgress, summariseMany } from "../lib/journey-steps.js";
 import { REVIEW_TASK_TYPE_LABELS, ROLE_LABELS, isBdiStaff } from "../lib/roles.js";
@@ -1842,7 +1844,51 @@ organizationRouter.get("/:id/legal-documents/:versionId/file", async (req, res) 
     }
   }
 
-  // ไฟล์กลางของเวอร์ชัน — ฉบับที่ไม่มี placeholder ใช้ตัวนี้
+  /**
+   * มีไฟล์ของคำขอนี้อยู่ = เอกสารฉบับนี้มี placeholder → **render สดทุกครั้งที่เปิดอ่าน**
+   *
+   * บรรทัด "พิมพ์จากระบบโดย" กับ "วันที่" ต้องเป็นชื่อคนที่กำลังเปิดและเวลาที่เปิด ไม่ใช่
+   * คนที่ทำให้ไฟล์ถูกสร้างเมื่อหลายวันก่อน (การ์ด "Document Print Date" 2026-09-09)
+   *
+   * **ไม่เขียนทับไฟล์ที่เก็บไว้** ด้วยสามเหตุผล: ไฟล์นั้นคู่กับ legal_acceptance และ
+   * signature_confirmation ในฐานะหลักฐาน ถ้าเปลี่ยนทุกครั้งที่มีคนเปิด หลักฐานจะเปลี่ยน
+   * ตัวตนไปเรื่อย ๆ · `uq_active_attachment_per_slot` ยอมให้มี ACTIVE ใบเดียวต่อ slot
+   * สองคนที่เปิดอ่านพร้อมกันจึงจะชนกันโดยไม่มีเหตุ · และท้ายเอกสารเขียนไว้เองว่าสิ่งที่
+   * พิมพ์ออกจากระบบคือ "สำเนา" ส่วนฉบับอ้างอิงคือฉบับในระบบ
+   *
+   * ตัวไฟล์ที่เก็บไว้ยังมีประโยชน์อยู่: มันคือคำตอบว่าเอกสารฉบับนี้ "มีให้เปิดแล้วหรือยัง"
+   * และเป็นที่มาของชื่อไฟล์ที่ผู้ใช้เห็นตอนดาวน์โหลด
+   */
+  if (file) {
+    const version = await prisma.legalDocumentVersion.findUnique({
+      where: { id: versionId },
+      include: { legalDocument: { select: { documentCode: true, nameTh: true } } },
+    });
+    if (version) {
+      await logAudit({
+        action: AuditAction.DOCUMENT_DOWNLOADED,
+        subjectType: AuditSubject.ATTACHMENT,
+        subjectId: file.id,
+        organizationId: request.organizationId,
+        after: { filename: file.originalFileName, legalDocumentVersionId: versionId },
+      });
+      const pdf = await agreementPdf(prisma, {
+        request: await toApiShape(request),
+        document: {
+          code: version.legalDocument.documentCode,
+          nameTh: version.legalDocument.nameTh,
+          versionId: version.id,
+          versionNumber: version.versionNumber,
+          effectiveAt: version.effectiveAt,
+        },
+        printedByName: await accountNameTh(prisma, session.sub),
+      });
+      sendRenderedPdf(res, pdf, file.originalFileName);
+      return;
+    }
+  }
+
+  // ไฟล์กลางของเวอร์ชัน — ฉบับที่ไม่มี placeholder ใช้ตัวนี้ และไม่มีอะไรให้ประทับ
   file ??= await activeAttachment(
     prisma,
     AttachmentOwnerType.LEGAL_DOCUMENT_VERSION,

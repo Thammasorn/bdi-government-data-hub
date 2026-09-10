@@ -1,3 +1,5 @@
+import type { Prisma, PrismaClient } from "@prisma/client";
+
 /**
  * ชื่อคนหนึ่งคน ประกอบจากช่องภาษาไทย — ที่เดียวในระบบที่ตัดสินว่า "ชื่อ" คืออะไร
  *
@@ -52,4 +54,22 @@ export function fullNameTh(person: ThaiName | null | undefined): string {
   if (!first && !last) return "";
   const prefix = person.prefixTh?.trim() ?? "";
   return [prefix, first, last].filter(Boolean).join(" ");
+}
+
+/**
+ * ชื่อไทยเต็มของบัญชีหนึ่ง อ่านสดจากฐานข้อมูล — ใช้ตอนต้องประทับว่า "ตอนนี้ใครเป็นคนทำ"
+ *
+ * session ถือแค่ id กับอีเมล (ตั้งใจให้เบา) ชื่อจึงต้องอ่านทุกครั้ง คืนสตริงว่างเมื่อบัญชี
+ * ยังไม่มีชื่อไทย — **ไม่ตกไปใช้อีเมลแทน** ตามกฎของไฟล์นี้ บัญชีที่ยังไม่มีชื่อคือบัญชีที่
+ * ยังเปิดใช้งานไม่เสร็จ ซึ่งเปิดอ่านเอกสารไม่ได้อยู่แล้ว
+ */
+export async function accountNameTh(
+  db: Pick<PrismaClient, "userAccount"> | Prisma.TransactionClient,
+  userId: string,
+): Promise<string> {
+  const account = await db.userAccount.findUnique({
+    where: { id: userId },
+    select: NAME_FIELDS,
+  });
+  return fullNameTh(account);
 }

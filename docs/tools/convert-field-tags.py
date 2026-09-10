@@ -49,8 +49,18 @@ TAG_MAP = {
     "org_approver_position_th": "org_approver.position",
     "bdi_approver.firstname_th": "bdi_approver.firstName",
     "bdi_approver.lastname_th": "bdi_approver.lastName",
-    "user.firstname_th": "org_officer.firstName",
-    "user.lastname_th": "org_officer.lastName",
+    # `user.*` ปรากฏที่เดียวในเอกสารทุกชุดที่ได้มา คือบรรทัด "พิมพ์จากระบบโดย" ซึ่งหมายถึง
+    # **คนที่กำลังเปิดอ่าน** ไม่ใช่ผู้กรอกข้อมูลของหน่วยงาน ระบบมีตัวแปรตรงตัวคือ
+    # {{printedBy}} ที่ประทับชื่อคนที่เรียกดูเอกสารกับเวลาที่เรียก (การ์ด "Document Print Date")
+    #
+    # เดิมชี้ไปที่ {{org_officer.*}} ซึ่งคือคนกรอกฟอร์มเมื่อหลายวันก่อน — อ่านผิดความหมาย
+    # ของบรรทัดนั้น และเป็นสิ่งที่ A0 บน production พิมพ์อยู่จนถึงวันนี้
+    #
+    # {{printedBy}} เป็นชื่อเต็ม (คำนำหน้า ชื่อ นามสกุล) ตัวเดียว ไม่ได้แยกชื่อ/นามสกุล
+    # สองแท็กจึงชี้ไปที่ตัวเดียวกัน แล้ว GAP_FILLS ยุบ "{{printedBy}} {{printedBy}}"
+    # ที่ได้ออกมาให้เหลือตัวเดียว
+    "user.firstname_th": "printedBy",
+    "user.lastname_th": "printedBy",
     "download_datetime": "printedDateTime",
     "legal_document_version.version_number": "document.version",
     "legal_document_version.effective_at": "document.effectiveDate",
@@ -83,6 +93,8 @@ GAP_FILLS = [
     ),
     # ชื่อระบบที่หน่วยงานลงทะเบียนไว้
     ("ลงทะเบียนไว้กับระบบ.....", "ลงทะเบียนไว้กับระบบ {{system.name}}"),
+    # `<user.firstname_th> <user.lastname_th>` แปลงเป็น {{printedBy}} ทั้งคู่ — ดู TAG_MAP
+    ("{{printedBy}} {{printedBy}}", "{{printedBy}}"),
     # ต้นฉบับวาง <org_approver.firstname_th><org_approver.lastname_th> ติดกันไม่มีช่องว่าง
     # ค่าที่เติมจะกลายเป็น "ธนิทลุพ" ติดกันเป็นคำเดียว
     (
