@@ -160,6 +160,8 @@ const LICENSES = codes(LICENSE_LABELS);
 
 /** รหัสที่บอกว่าต้องกรอกช่อง "อื่น ๆ" ต่อ */
 export const DATA_TOPIC_OTHER_CODE = "99";
+/** ข้อ 10 รหัส "อื่น ๆ" — บังเอิญเป็น 99 เท่ากับข้อ 1.2 แต่คนละรายการรหัส อย่ายุบเป็นตัวเดียว */
+export const GEO_COVERAGE_OTHER_CODE = "99";
 
 // ------------------------------------------------------------------ ไฟล์แนบ
 
@@ -205,6 +207,8 @@ export interface MetadataValues {
   dataTopicOther: string | null;
   title: string | null;
   name: string | null;
+  /** 2.3 รายการข้อมูล (ฟิลด์ข้อมูล) ที่ประสงค์จะนำส่ง — ชีทฉบับ 2026-09-09 */
+  dataFields: string | null;
   maintainer: string | null;
   maintainerEmail: string | null;
   tagString: string | null;
@@ -214,6 +218,7 @@ export interface MetadataValues {
   updateFrequencyInterval: number | null;
   deliveryFrequency: string | null;
   geoCoverage: string | null;
+  geoCoverageOther: string | null;
   dataSource: string | null;
   dataFormat: string | null;
   dataFormatOther: string | null;
@@ -232,11 +237,8 @@ export interface MetadataValues {
   allowTransformedRawDataGdxSharing: boolean | null;
   allowAggregatedDataSharing: boolean | null;
   authorizePersonalDataAnonymization: boolean | null;
-
-  /** ── ไม่มีคอลัมน์ในดีไซน์ เก็บใน additional_metadata_json ── */
-  transformedRawDataRecipients: string | null;
-  transformedRawDataGdxRecipients: string | null;
-  aggregatedDataRecipients: string | null;
+  /** 16.1 ระบบเชื่อมโยงข้อมูลที่อนุญาตให้ส่งต่อ — ถามต่อเมื่อ 16.1 = อนุญาต */
+  allowTransformedRawDataSharingSpecifiedPlatforms: string | null;
 }
 
 export const EMPTY_METADATA: MetadataValues = {
@@ -245,6 +247,7 @@ export const EMPTY_METADATA: MetadataValues = {
   dataTopicOther: null,
   title: null,
   name: null,
+  dataFields: null,
   maintainer: null,
   maintainerEmail: null,
   tagString: null,
@@ -254,6 +257,7 @@ export const EMPTY_METADATA: MetadataValues = {
   updateFrequencyInterval: null,
   deliveryFrequency: null,
   geoCoverage: null,
+  geoCoverageOther: null,
   dataSource: null,
   dataFormat: null,
   dataFormatOther: null,
@@ -272,17 +276,20 @@ export const EMPTY_METADATA: MetadataValues = {
   allowTransformedRawDataGdxSharing: null,
   allowAggregatedDataSharing: null,
   authorizePersonalDataAnonymization: null,
-  transformedRawDataRecipients: null,
-  transformedRawDataGdxRecipients: null,
-  aggregatedDataRecipients: null,
+  allowTransformedRawDataSharingSpecifiedPlatforms: null,
 };
 
-/** ฟิลด์ที่ดีไซน์ไม่มีคอลัมน์ให้ — เก็บรวมใน additional_metadata_json */
-export const EXTRA_METADATA_KEYS = [
-  "transformedRawDataRecipients",
-  "transformedRawDataGdxRecipients",
-  "aggregatedDataRecipients",
-] as const;
+/**
+ * ฟิลด์ที่ดีไซน์ไม่มีคอลัมน์ให้ — เก็บรวมใน additional_metadata_json
+ *
+ * **ว่างตั้งแต่ 2026-09-09** ช่อง "ระบุหน่วยงานปลายทาง" สามช่องที่เคยอยู่ตรงนี้หมดหน้าที่ไป
+ * พร้อมกัน: ของข้อ 16.1 ถูกยกขึ้นเป็นคอลัมน์จริงในชีทฉบับใหม่ ส่วนของข้อ 16.2 กับ 17 ถูกยกเลิก
+ *
+ * กลไกยังอยู่ ไม่ได้ถอดออก — ชีทเพิ่มช่องที่ดีไซน์ไม่มีคอลัมน์ให้ได้อีกเมื่อไรก็ได้ และ
+ * `toMetadataColumns()` ยังส่งค่า JSON เดิมของแถวผ่านไปโดยไม่แตะ ค่าที่คำขอเก่าเคยกรอกไว้
+ * จึงยังอ่านย้อนหลังได้จากฐานข้อมูล
+ */
+export const EXTRA_METADATA_KEYS = [] as const satisfies readonly (keyof MetadataValues)[];
 
 // ------------------------------------------------------------------ ชีท conditions
 
@@ -316,9 +323,10 @@ export interface MetadataRules {
   allowTransformedRawDataGdxSharing: FieldRule<boolean>;
   allowAggregatedDataSharing: FieldRule<boolean>;
   authorizePersonalDataAnonymization: FieldRule<boolean>;
-  transformedRawDataRecipients: FieldRule<never>;
-  transformedRawDataGdxRecipients: FieldRule<never>;
-  aggregatedDataRecipients: FieldRule<never>;
+  /** 16.1 ระบุระบบเชื่อมโยงข้อมูลที่อนุญาต — ถามต่อเมื่ออนุญาต และไม่บังคับกรอก */
+  allowTransformedRawDataSharingSpecifiedPlatforms: FieldRule<never>;
+  /** 10 ระบุความละเอียดเชิงภูมิศาสตร์อื่น ๆ */
+  geoCoverageOther: FieldRule<never>;
   dataTopicOther: FieldRule<never>;
   dataFormatOther: FieldRule<never>;
   updateFrequencyInterval: FieldRule<never>;
@@ -338,6 +346,7 @@ export type MetadataRuleInput = Partial<
     | "dataClassification"
     | "dataTopic"
     | "dataFormat"
+    | "geoCoverage"
     | "updateFrequencyUnit"
     | "personalDataProcessingPeriod"
     | "allowOriginalRawDataRetention"
@@ -396,7 +405,14 @@ export function metadataRules(v: MetadataRuleInput): MetadataRules {
       ? false
       : null;
 
-  const recipients = (allowed: boolean | null | undefined): FieldRule<never> => ({
+  /**
+   * ชีท conditions ให้ถาม "ระบุระบบเชื่อมโยงข้อมูลที่อนุญาต" ต่อจากข้อ 16.1 เมื่อตอบว่าอนุญาต
+   * และเฉพาะชุดข้อมูลที่มีข้อมูลส่วนบุคคล (หมายเหตุอยู่ในบล็อก C = Y เท่านั้น)
+   *
+   * ฉบับ 2026-09-09 ย้ายหมายเหตุนี้ให้เหลือคอลัมน์ L (ข้อ 16.1) ที่เดียว — เดิมอยู่ที่
+   * 16.2 กับ 17 ด้วย ซึ่งเป็นที่มาของช่อง "ระบุหน่วยงาน" อีกสองช่องที่ถูกยกเลิกไปพร้อมกัน
+   */
+  const specifiedPlatforms = (allowed: boolean | null | undefined): FieldRule<never> => ({
     visible: personal === true && allowed === true,
     forced: null,
   });
@@ -424,13 +440,10 @@ export function metadataRules(v: MetadataRuleInput): MetadataRules {
     allowAggregatedDataSharing: { visible: true, forced: derivedForced },
     // 18 ถามเฉพาะชุดข้อมูลที่มีข้อมูลส่วนบุคคล
     authorizePersonalDataAnonymization: { visible: personal === true, forced: null },
-    transformedRawDataRecipients: recipients(
+    allowTransformedRawDataSharingSpecifiedPlatforms: specifiedPlatforms(
       derivedForced ?? v.allowTransformedRawDataSharing,
     ),
-    transformedRawDataGdxRecipients: recipients(
-      derivedForced ?? v.allowTransformedRawDataGdxSharing,
-    ),
-    aggregatedDataRecipients: recipients(derivedForced ?? v.allowAggregatedDataSharing),
+    geoCoverageOther: free(v.geoCoverage === GEO_COVERAGE_OTHER_CODE),
     dataTopicOther: free(v.dataTopic === DATA_TOPIC_OTHER_CODE),
     dataFormatOther: free(v.dataFormat === DATA_FORMAT_OTHER_CODE),
     updateFrequencyInterval: free(
@@ -496,9 +509,10 @@ export function normaliseMetadata(input: MetadataValues): MetadataValues {
   if (!rules.dataTopicOther.visible) v.dataTopicOther = null;
   if (!rules.dataFormatOther.visible) v.dataFormatOther = null;
   if (!rules.updateFrequencyInterval.visible) v.updateFrequencyInterval = null;
-  if (!rules.transformedRawDataRecipients.visible) v.transformedRawDataRecipients = null;
-  if (!rules.transformedRawDataGdxRecipients.visible) v.transformedRawDataGdxRecipients = null;
-  if (!rules.aggregatedDataRecipients.visible) v.aggregatedDataRecipients = null;
+  if (!rules.geoCoverageOther.visible) v.geoCoverageOther = null;
+  if (!rules.allowTransformedRawDataSharingSpecifiedPlatforms.visible) {
+    v.allowTransformedRawDataSharingSpecifiedPlatforms = null;
+  }
 
   return v;
 }
@@ -531,6 +545,7 @@ export const datasetDraftSchema = z.object({
   dataTopicOther: optionalText(150),
   title: optionalText(150),
   name: optionalText(150),
+  dataFields: optionalText(1000),
   maintainer: optionalText(150),
   maintainerEmail: optionalText(50),
   tagString: optionalText(200),
@@ -540,6 +555,7 @@ export const datasetDraftSchema = z.object({
   updateFrequencyInterval: optionalCount(),
   deliveryFrequency: optionalCode(DELIVERY_FREQUENCIES),
   geoCoverage: optionalCode(GEO_COVERAGES),
+  geoCoverageOther: optionalText(300),
   dataSource: optionalText(200),
   dataFormat: optionalCode(DATA_FORMATS),
   dataFormatOther: optionalText(150),
@@ -558,9 +574,7 @@ export const datasetDraftSchema = z.object({
   allowTransformedRawDataGdxSharing: optionalFlag,
   allowAggregatedDataSharing: optionalFlag,
   authorizePersonalDataAnonymization: optionalFlag,
-  transformedRawDataRecipients: optionalText(500),
-  transformedRawDataGdxRecipients: optionalText(500),
-  aggregatedDataRecipients: optionalText(500),
+  allowTransformedRawDataSharingSpecifiedPlatforms: optionalText(1000),
 
   legalAccepted: z.boolean().optional(),
 });
@@ -647,6 +661,10 @@ export const datasetSubmitSchema = z
         containsEnglish,
         "ชื่อชุดข้อมูลภาษาอังกฤษต้องมีอักษรภาษาอังกฤษ (มีตัวเลขและอักษรไทยปนได้ เช่น Monthly Outpatient Statistics)",
       ),
+    dataFields: required("กรุณาระบุรายการข้อมูล (ฟิลด์ข้อมูล) ที่ประสงค์จะนำส่ง").max(
+      1000,
+      "รายการข้อมูลต้องยาวไม่เกิน 1,000 ตัวอักษร",
+    ),
     maintainer: required("กรุณากรอกชื่อผู้ติดต่อ (กอง สำนัก หรือฝ่ายที่รับผิดชอบข้อมูล)"),
     maintainerEmail: requiredEmail("กรุณากรอกอีเมลผู้ติดต่อ"),
     tagString: required("กรุณาระบุคำสำคัญอย่างน้อย 1 คำ").max(200, "คำสำคัญรวมกันต้องยาวไม่เกิน 200 ตัวอักษร"),
@@ -666,6 +684,7 @@ export const datasetSubmitSchema = z
       "กรุณาเลือกความถี่ของการนำส่งข้อมูลเข้าสู่ระบบกลาง",
     ),
     geoCoverage: requiredCode(GEO_COVERAGES, "กรุณาเลือกความละเอียดเชิงภูมิศาสตร์"),
+    geoCoverageOther: optionalText(300),
     dataSource: required("กรุณาระบุแหล่งที่มาของข้อมูล").max(200, "แหล่งที่มาต้องยาวไม่เกิน 200 ตัวอักษร"),
     dataFormat: requiredCode(DATA_FORMATS, "กรุณาเลือกรูปแบบการนำส่งข้อมูล"),
     dataFormatOther: optionalText(150),
@@ -692,9 +711,8 @@ export const datasetSubmitSchema = z
     ),
     allowAggregatedDataSharing: requiredFlag("กรุณาระบุว่าอนุญาตให้ส่งต่อข้อมูลรวมหรือไม่"),
     authorizePersonalDataAnonymization: optionalFlag,
-    transformedRawDataRecipients: optionalText(500),
-    transformedRawDataGdxRecipients: optionalText(500),
-    aggregatedDataRecipients: optionalText(500),
+    // ป้ายของช่องนี้บอกเองว่า "หากไม่ระบุถือว่าอนุญาตให้ส่งต่อได้ทุกระบบ" — ไม่บังคับกรอก
+    allowTransformedRawDataSharingSpecifiedPlatforms: optionalText(1000),
   })
   .superRefine((value, ctx) => {
     const rules = metadataRules(value);
@@ -741,13 +759,14 @@ export const datasetSubmitSchema = z
         );
       }
     }
-    const recipientChecks: Array<[keyof MetadataRules & keyof MetadataValues, string]> = [
-      ["transformedRawDataRecipients", "กรุณาระบุหน่วยงานที่อนุญาตให้ส่งต่อข้อมูลดิบแปลงสภาพ"],
-      ["transformedRawDataGdxRecipients", "กรุณาระบุหน่วยงานที่อนุญาตให้รับข้อมูลผ่าน GDX"],
-      ["aggregatedDataRecipients", "กรุณาระบุหน่วยงานที่อนุญาตให้ส่งต่อข้อมูลรวม"],
-    ];
-    for (const [key, message] of recipientChecks) {
-      if (rules[key].visible && !value[key]) missing(key, message);
+    /**
+     * ช่อง "ระบุระบบเชื่อมโยงข้อมูลที่อนุญาต" ของข้อ 16.1 **ไม่บังคับกรอก** ต่างจากช่อง
+     * "ระบุหน่วยงาน" สามช่องที่มันมาแทน ซึ่งบังคับทั้งสามช่อง — ป้ายของช่องใหม่บอกความหมาย
+     * ของการเว้นว่างไว้เอง ("หากไม่ระบุถือว่าอนุญาตให้ส่งต่อได้ทุกระบบ") การบังคับกรอกจึงเป็น
+     * การขอให้ผู้ใช้พิมพ์สิ่งที่ระบบตีความให้แล้ว
+     */
+    if (rules.geoCoverageOther.visible && !value.geoCoverageOther) {
+      missing("geoCoverageOther", "กรุณาระบุความละเอียดเชิงภูมิศาสตร์ที่เลือกเป็นอื่น ๆ");
     }
   });
 

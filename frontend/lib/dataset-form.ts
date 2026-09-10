@@ -83,6 +83,8 @@ export const DATA_FORMAT_LABELS = {
 
 export const DATA_FORMAT_OTHER_CODE = "4";
 export const DATA_TOPIC_OTHER_CODE = "99";
+/** ข้อ 10 รหัส "อื่น ๆ" — คนละรายการรหัสกับข้อ 1.2 ถึงจะเลขเท่ากัน */
+export const GEO_COVERAGE_OTHER_CODE = "99";
 
 export const DATA_CATEGORY_LABELS = {
   a: "ข้อมูลสาธารณะ",
@@ -150,6 +152,7 @@ export interface FormState {
   dataTopicOther: string;
   title: string;
   name: string;
+  dataFields: string;
   maintainer: string;
   maintainerEmail: string;
   tagString: string;
@@ -159,6 +162,7 @@ export interface FormState {
   updateFrequencyInterval: string;
   deliveryFrequency: string;
   geoCoverage: string;
+  geoCoverageOther: string;
   dataSource: string;
   dataFormat: string;
   dataFormatOther: string;
@@ -178,9 +182,7 @@ export interface FormState {
   allowTransformedRawDataGdxSharing: string;
   allowAggregatedDataSharing: string;
   authorizePersonalDataAnonymization: string;
-  transformedRawDataRecipients: string;
-  transformedRawDataGdxRecipients: string;
-  aggregatedDataRecipients: string;
+  allowTransformedRawDataSharingSpecifiedPlatforms: string;
 }
 
 export type FormField = keyof FormState;
@@ -191,6 +193,7 @@ export const EMPTY_FORM: FormState = {
   dataTopicOther: "",
   title: "",
   name: "",
+  dataFields: "",
   maintainer: "",
   maintainerEmail: "",
   tagString: "",
@@ -200,6 +203,7 @@ export const EMPTY_FORM: FormState = {
   updateFrequencyInterval: "",
   deliveryFrequency: "",
   geoCoverage: "",
+  geoCoverageOther: "",
   dataSource: "",
   dataFormat: "",
   dataFormatOther: "",
@@ -218,9 +222,7 @@ export const EMPTY_FORM: FormState = {
   allowTransformedRawDataGdxSharing: "",
   allowAggregatedDataSharing: "",
   authorizePersonalDataAnonymization: "",
-  transformedRawDataRecipients: "",
-  transformedRawDataGdxRecipients: "",
-  aggregatedDataRecipients: "",
+  allowTransformedRawDataSharingSpecifiedPlatforms: "",
 };
 
 /** ช่องที่เป็นตัวเลข — ส่งขึ้น API เป็น number ไม่ใช่สตริง */
@@ -269,9 +271,8 @@ export interface FormRules {
   allowTransformedRawDataGdxSharing: FieldRule;
   allowAggregatedDataSharing: FieldRule;
   authorizePersonalDataAnonymization: FieldRule;
-  transformedRawDataRecipients: FieldRule;
-  transformedRawDataGdxRecipients: FieldRule;
-  aggregatedDataRecipients: FieldRule;
+  allowTransformedRawDataSharingSpecifiedPlatforms: FieldRule;
+  geoCoverageOther: FieldRule;
   dataTopicOther: FieldRule;
   dataFormatOther: FieldRule;
   updateFrequencyInterval: FieldRule;
@@ -318,7 +319,8 @@ export function formRules(f: FormState): FormRules {
       ? "N"
       : "";
 
-  const recipients = (value: string): FieldRule => ({
+  /** 16.1 ถามต่อว่า "ระบบไหนบ้าง" เมื่ออนุญาต และเฉพาะชุดข้อมูลที่มีข้อมูลส่วนบุคคล */
+  const specifiedPlatforms = (value: string): FieldRule => ({
     visible: personal === true && (derivedForced || value) === "Y",
     forced: "",
   });
@@ -345,9 +347,10 @@ export function formRules(f: FormState): FormRules {
     allowTransformedRawDataGdxSharing: { visible: true, forced: derivedForced },
     allowAggregatedDataSharing: { visible: true, forced: derivedForced },
     authorizePersonalDataAnonymization: { visible: personal === true, forced: "" },
-    transformedRawDataRecipients: recipients(f.allowTransformedRawDataSharing),
-    transformedRawDataGdxRecipients: recipients(f.allowTransformedRawDataGdxSharing),
-    aggregatedDataRecipients: recipients(f.allowAggregatedDataSharing),
+    allowTransformedRawDataSharingSpecifiedPlatforms: specifiedPlatforms(
+      f.allowTransformedRawDataSharing,
+    ),
+    geoCoverageOther: free(f.geoCoverage === GEO_COVERAGE_OTHER_CODE),
     dataTopicOther: free(f.dataTopic === DATA_TOPIC_OTHER_CODE),
     dataFormatOther: free(f.dataFormat === DATA_FORMAT_OTHER_CODE),
     updateFrequencyInterval: free(
@@ -423,9 +426,10 @@ export function applyRules(input: FormState, previous?: FormState): FormState {
   if (!rules.dataTopicOther.visible) f.dataTopicOther = "";
   if (!rules.dataFormatOther.visible) f.dataFormatOther = "";
   if (!rules.updateFrequencyInterval.visible) f.updateFrequencyInterval = "";
-  if (!rules.transformedRawDataRecipients.visible) f.transformedRawDataRecipients = "";
-  if (!rules.transformedRawDataGdxRecipients.visible) f.transformedRawDataGdxRecipients = "";
-  if (!rules.aggregatedDataRecipients.visible) f.aggregatedDataRecipients = "";
+  if (!rules.geoCoverageOther.visible) f.geoCoverageOther = "";
+  if (!rules.allowTransformedRawDataSharingSpecifiedPlatforms.visible) {
+    f.allowTransformedRawDataSharingSpecifiedPlatforms = "";
+  }
 
   return f;
 }

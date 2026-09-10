@@ -892,6 +892,12 @@ model DatasetRegistrationMetadata {
   /// 2.1 / 2.2 ชื่อชุดข้อมูลไทย-อังกฤษ — ชีทเรียกว่า title / name
   title String? @db.VarChar(150)
   name  String? @db.VarChar(150)
+  /// 2.3 รายการข้อมูล (ฟิลด์ข้อมูล) ที่ประสงค์จะนำส่ง — เพิ่มในชีทฉบับ 2026-09-09
+  ///
+  /// เบี่ยงจากดีไซน์: ชีทเว้นช่อง field_name ไว้ว่าง ชื่อคอลัมน์นี้จึงตั้งตามแบบที่ชีทใช้กับ
+  /// ช่องอื่น (data_topic_other, geo_coverage_other) — ถ้า BDI มีชื่อที่ต้องการ ต้องแก้ก่อน
+  /// เผยแพร่ ไม่งั้นต้อง migrate เปลี่ยนชื่อทีหลัง
+  dataFields String? @map("data_fields") @db.VarChar(1000)
 
   /// 3 องค์กรเจ้าของชุดข้อมูล — ชีทเขียนว่า fixed เป็นหน่วยงานที่กรอกข้อมูล
   /// จึงคัดลอกมาจากคำขอ ไม่ใช่ช่องที่ผู้ใช้เลือกเอง
@@ -916,9 +922,11 @@ model DatasetRegistrationMetadata {
   deliveryFrequency       String? @map("delivery_frequency") @db.VarChar(8)
 
   /// 10 ความละเอียดเชิงภูมิศาสตร์ — 00–11 · 98 ไม่ทราบ · 99 อื่น ๆ
-  geoCoverage String? @map("geo_coverage") @db.VarChar(8)
+  geoCoverage      String? @map("geo_coverage") @db.VarChar(8)
+  /// 10 กรณีเลือก 99 อื่น ๆ ให้ระบุเอง — เพิ่มในชีทฉบับ 2026-09-09 คู่กันกับ data_topic_other
+  geoCoverageOther String? @map("geo_coverage_other") @db.VarChar(300)
   /// 11 แหล่งที่มาของข้อมูล
-  dataSource  String? @map("data_source")
+  dataSource       String? @map("data_source")
 
   /// 12.1 รูปแบบการนำส่งข้อมูล — 1 วางไฟล์ · 2 database sync · 3 batch API · 4 ระบบอื่น
   dataFormat      String? @map("data_format") @db.VarChar(8)
@@ -955,8 +963,19 @@ model DatasetRegistrationMetadata {
   /// ที่มีข้อมูลส่วนบุคคล จึงเป็น Optional ในดีไซน์ ต่างจาก 15–17
   authorizePersonalDataAnonymization Boolean? @map("authorize_personal_data_anonymization")
 
-  /// Optional non-core metadata — ที่พักของรายชื่อหน่วยงานปลายทางที่ชีท conditions
-  /// สั่งให้ถามเพิ่มเมื่อเป็นข้อมูลส่วนบุคคลและอนุญาตให้ส่งต่อ (ดีไซน์ไม่มีคอลัมน์ให้)
+  /// 16.1 ระบบเชื่อมโยงข้อมูลที่อนุญาตให้ส่งต่อข้อมูลดิบแปลงสภาพไป — ถามต่อเมื่อ 16.1 = อนุญาต
+  ///
+  /// ชีทฉบับ 2026-09-09 ยกช่องนี้ขึ้นมาเป็นแถวของตัวเองพร้อมชื่อและขนาด จากเดิมที่เป็นแค่
+  /// หมายเหตุ "if Y เพิ่มให้ระบุ…" ในชีท conditions จึงย้ายจาก additional_metadata_json
+  /// มาเป็นคอลัมน์จริง — และความหมายเปลี่ยนจาก "หน่วยงานปลายทาง" เป็น "ระบบเชื่อมโยง"
+  /// ค่าเดิมใน JSON จึงไม่ถูกย้ายมา
+  allowTransformedRawDataSharingSpecifiedPlatforms String? @map("allow_transformed_raw_data_sharing_specified_platforms") @db.VarChar(1000)
+
+  /// Optional non-core metadata — ที่พักของช่องที่ดีไซน์ไม่มีคอลัมน์ให้
+  ///
+  /// ว่างสำหรับคำขอใหม่ตั้งแต่ 2026-09-09: ช่อง "ระบุหน่วยงานปลายทาง" ของข้อ 16.2 กับ 17
+  /// ถูกยกเลิกตามชีทฉบับใหม่ และของข้อ 16.1 กลายเป็นคอลัมน์ **แถวเก่ายังเก็บค่าไว้ตามเดิม**
+  /// ไม่ได้ลบทิ้ง — คำขอที่ลงนามไปแล้วต้องอ่านย้อนหลังได้ว่าตอนนั้นกรอกอะไรไว้
   additionalMetadataJson Json? @map("additional_metadata_json")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -1034,6 +1053,9 @@ model DatasetMetadata {
 
   title String? @db.VarChar(150)
   name  String? @db.VarChar(150)
+  /// 2.3 รายการข้อมูล (ฟิลด์ข้อมูล) ที่ประสงค์จะนำส่ง — ดูหมายเหตุที่ชื่อคอลัมน์ใน
+  /// DatasetRegistrationMetadata สองตารางนี้ต้องมีชุดคอลัมน์เดียวกันเสมอ
+  dataFields String? @map("data_fields") @db.VarChar(1000)
 
   ownerOrgId String?       @map("owner_org") @db.Uuid
   ownerOrg   Organization? @relation("DatasetMetadataOwner", fields: [ownerOrgId], references: [id], onDelete: SetNull)
@@ -1049,8 +1071,9 @@ model DatasetMetadata {
   updateFrequencyInterval Int?    @map("update_frequency_interval")
   deliveryFrequency       String? @map("delivery_frequency") @db.VarChar(8)
 
-  geoCoverage String? @map("geo_coverage") @db.VarChar(8)
-  dataSource  String? @map("data_source")
+  geoCoverage      String? @map("geo_coverage") @db.VarChar(8)
+  geoCoverageOther String? @map("geo_coverage_other") @db.VarChar(300)
+  dataSource       String? @map("data_source")
 
   dataFormat      String? @map("data_format") @db.VarChar(8)
   dataFormatOther String? @map("data_format_other") @db.VarChar(150)
@@ -1074,6 +1097,9 @@ model DatasetMetadata {
   allowTransformedRawDataGdxSharing  Boolean? @map("allow_transformed_raw_data_gdx_sharing")
   allowAggregatedDataSharing         Boolean? @map("allow_aggregated_data_sharing")
   authorizePersonalDataAnonymization Boolean? @map("authorize_personal_data_anonymization")
+
+  /// 16.1 ระบบเชื่อมโยงข้อมูลที่อนุญาตให้ส่งต่อ — ดูหมายเหตุใน DatasetRegistrationMetadata
+  allowTransformedRawDataSharingSpecifiedPlatforms String? @map("allow_transformed_raw_data_sharing_specified_platforms") @db.VarChar(1000)
 
   additionalMetadataJson Json? @map("additional_metadata_json")
 

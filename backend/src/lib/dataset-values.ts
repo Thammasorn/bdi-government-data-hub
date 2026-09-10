@@ -13,18 +13,23 @@ import { splitTags, type MetadataValues } from "./dataset.js";
 import { thaiLongDate, thaiLongDateTime } from "./legal-values.js";
 
 /**
- * ✔ ติ๊กแล้ว · ☐ ยังไม่ติ๊ก
+ * ● เลือกข้อนี้ · ○ ไม่ได้เลือก
+ *
+ * **วงกลม ไม่ใช่กล่องติ๊ก** ตั้งแต่ 2026-09-09 ตามที่ BDI ขอให้ตรงกับต้นฉบับ: แบบฟอร์ม
+ * กระดาษที่ฝ่ายกฎหมายร่างวาดตัวเลือกเป็น bullet วงกลม (Word list level ที่ใช้ Courier New
+ * ตัว `o`) ไม่ใช่กล่องสี่เหลี่ยม ของเดิมเป็น ✔ กับ ☐ ซึ่งอ่านเป็นแบบฟอร์มคนละใบ
  *
  * TH SarabunPSK **ไม่มี** อักขระสองตัวนี้ ตัวแปลงจึงต้องไปหยิบจากฟอนต์อื่นตามลำดับของ
  * fontconfig — ซึ่งเป็นเหตุผลที่ image ของตัวแปลงตัดฟอนต์อีโมจิสีออก (ดู
- * gotenberg/fontconfig/99-no-colour-emoji.conf) ทั้งคู่จึงมาจาก DejaVu Sans สูงพอดี
- * บรรทัดเท่ากับข้อความรอบข้าง
+ * gotenberg/fontconfig/99-no-colour-emoji.conf)
  *
- * ทำไม ✔ (U+2714) ไม่ใช่ ✓ (U+2713): ✓ ตกไปที่ DejaVu Math ที่วาดสูง 68pt บนบรรทัด
- * 18.6pt ส่วน ✔ อยู่ใน DejaVu Sans ตรง ๆ — วัดจากไฟล์ที่แปลงออกมาจริง 2026-08-20
+ * เรื่องขนาดคืออันตรายจริง ไม่ใช่ความกังวลลอย ๆ — ✓ (U+2713) เคยตกไปที่ DejaVu Math ที่วาด
+ * สูง 68pt บนบรรทัด 18.6pt จึงต้องเลือก ✔ (U+2714) แทนเมื่อ 2026-08-20 คู่ปัจจุบันคือ
+ * ● (U+25CF) กับ ○ (U+25CB) ซึ่งวัดจากไฟล์ที่แปลงออกมาจริงแล้วว่าอยู่ใน DejaVu Sans
+ * ทั้งคู่และสูงพอดีบรรทัด **เปลี่ยนอักขระเมื่อไร ต้องวัดจาก PDF จริงใหม่ทุกครั้ง**
  */
-const TICKED = "✔";
-const UNTICKED = "☐";
+const TICKED = "●";
+const UNTICKED = "○";
 
 export interface DatasetDocumentInput extends MetadataValues {
   requestNumber: string | null;
@@ -79,6 +84,7 @@ export function datasetDocumentValues(input: DatasetDocumentInput): Record<strin
     // ── ชุดข้อมูล ──
     "dataset.title": input.title ?? "",
     "dataset.nameEn": input.name ?? "",
+    "dataset.dataFields": input.dataFields ?? "",
     "dataset.maintainer": input.maintainer ?? "",
     "dataset.maintainerEmail": input.maintainerEmail ?? "",
     "dataset.tags": splitTags(input.tagString).join(" · "),
@@ -87,6 +93,9 @@ export function datasetDocumentValues(input: DatasetDocumentInput): Record<strin
     "dataset.dataSource": input.dataSource ?? "",
     "dataset.dataTopicOther": input.dataTopicOther ?? "",
     "dataset.dataFormatOther": input.dataFormatOther ?? "",
+    "dataset.geoCoverageOther": input.geoCoverageOther ?? "",
+    "dataset.transformedSharingPlatforms":
+      input.allowTransformedRawDataSharingSpecifiedPlatforms ?? "",
     "dataset.updateFrequencyInterval": num(input.updateFrequencyInterval),
     "dataset.personalDataTypes": input.personalDataTypes ?? "",
     "dataset.dataSubjectCategories": input.dataSubjectCategories ?? "",

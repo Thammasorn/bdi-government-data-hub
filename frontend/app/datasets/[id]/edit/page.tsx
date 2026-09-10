@@ -58,6 +58,7 @@ const REQUIRED_BY_SECTION: Record<string, FormField[]> = {
     "dataTopic",
     "title",
     "name",
+    "dataFields",
     "maintainer",
     "maintainerEmail",
     "tagString",
@@ -161,6 +162,7 @@ export default function EditDatasetRequestPage() {
       "section-1": rules.dataTopicOther.visible ? ["dataTopicOther"] : [],
       "section-2": [
         ...(rules.updateFrequencyInterval.visible ? (["updateFrequencyInterval"] as FormField[]) : []),
+        ...(rules.geoCoverageOther.visible ? (["geoCoverageOther"] as FormField[]) : []),
         ...(rules.dataFormatOther.visible ? (["dataFormatOther"] as FormField[]) : []),
       ],
       "section-3": rules.personalDataDetail.visible
@@ -174,15 +176,7 @@ export default function EditDatasetRequestPage() {
         ...(rules.authorizePersonalDataAnonymization.visible
           ? (["authorizePersonalDataAnonymization"] as FormField[])
           : []),
-        ...(rules.transformedRawDataRecipients.visible
-          ? (["transformedRawDataRecipients"] as FormField[])
-          : []),
-        ...(rules.transformedRawDataGdxRecipients.visible
-          ? (["transformedRawDataGdxRecipients"] as FormField[])
-          : []),
-        ...(rules.aggregatedDataRecipients.visible
-          ? (["aggregatedDataRecipients"] as FormField[])
-          : []),
+        /* ช่อง "ระบุระบบเชื่อมโยงข้อมูลที่อนุญาต" ของข้อ 16.1 ไม่บังคับกรอก จึงไม่นับ */
       ],
     };
 
@@ -367,6 +361,17 @@ export default function EditDatasetRequestPage() {
                   />
                 </Wrap>
               </div>
+              <Wrap name="dataFields">
+                <TextAreaField
+                  label="รายการข้อมูล (ฟิลด์ข้อมูล) ที่ประสงค์จะนำส่ง"
+                  required
+                  maxLength={1000}
+                  value={form.dataFields}
+                  onChange={(e) => set("dataFields", e.target.value)}
+                  error={fields.dataFields}
+                  hint="ไล่ชื่อฟิลด์ที่จะนำส่ง คั่นด้วยจุลภาค เช่น ข้อมูลพิกัด, ข้อมูลประเภทที่ตั้ง, ข้อมูลหน่วยให้บริการ"
+                />
+              </Wrap>
               <ReadOnlyField label="องค์กร" value={organizationName} />
               <div className="grid gap-5 sm:grid-cols-2">
                 <Wrap name="maintainer">
@@ -495,6 +500,18 @@ export default function EditDatasetRequestPage() {
                   />
                 </Wrap>
               </div>
+              {rules.geoCoverageOther.visible ? (
+                <Wrap name="geoCoverageOther">
+                  <TextField
+                    label="ระบุความละเอียดเชิงภูมิศาสตร์อื่น ๆ"
+                    required
+                    maxLength={300}
+                    value={form.geoCoverageOther}
+                    onChange={(e) => set("geoCoverageOther", e.target.value)}
+                    error={fields.geoCoverageOther}
+                  />
+                </Wrap>
+              ) : null}
               <Wrap name="dataSource">
                 <TextField
                   label="แหล่งที่มาของข้อมูล"
@@ -720,16 +737,17 @@ export default function EditDatasetRequestPage() {
                   forcedHint="ข้อมูลระดับนี้ส่งต่อข้อมูลแปลงสภาพได้โดยอัตโนมัติ"
                 />
               </Wrap>
-              {rules.transformedRawDataRecipients.visible ? (
-                <Wrap name="transformedRawDataRecipients">
+              {rules.allowTransformedRawDataSharingSpecifiedPlatforms.visible ? (
+                <Wrap name="allowTransformedRawDataSharingSpecifiedPlatforms">
                   <TextAreaField
-                    label="หน่วยงานปลายทางที่อนุญาตให้ส่งต่อข้อมูลดิบแปลงสภาพ"
-                    required
-                    maxLength={500}
-                    value={form.transformedRawDataRecipients}
-                    onChange={(e) => set("transformedRawDataRecipients", e.target.value)}
-                    error={fields.transformedRawDataRecipients}
-                    hint="ชุดข้อมูลมีข้อมูลส่วนบุคคล จึงต้องระบุว่าอนุญาตให้ส่งต่อไปยังหน่วยงานใดบ้าง"
+                    label="ระบุระบบเชื่อมโยงข้อมูลที่อนุญาต (หากไม่ระบุถือว่าอนุญาตให้ส่งต่อได้ทุกระบบ)"
+                    maxLength={1000}
+                    value={form.allowTransformedRawDataSharingSpecifiedPlatforms}
+                    onChange={(e) =>
+                      set("allowTransformedRawDataSharingSpecifiedPlatforms", e.target.value)
+                    }
+                    error={fields.allowTransformedRawDataSharingSpecifiedPlatforms}
+                    hint="เว้นว่างได้ — เว้นไว้แปลว่าอนุญาตให้ส่งต่อไปยังระบบเชื่อมโยงข้อมูลใดก็ได้"
                   />
                 </Wrap>
               ) : null}
@@ -745,18 +763,6 @@ export default function EditDatasetRequestPage() {
                   forcedHint="ข้อมูลระดับนี้ส่งต่อข้อมูลแปลงสภาพได้โดยอัตโนมัติ"
                 />
               </Wrap>
-              {rules.transformedRawDataGdxRecipients.visible ? (
-                <Wrap name="transformedRawDataGdxRecipients">
-                  <TextAreaField
-                    label="หน่วยงานที่อนุญาตให้รับข้อมูลผ่าน GDX"
-                    required
-                    maxLength={500}
-                    value={form.transformedRawDataGdxRecipients}
-                    onChange={(e) => set("transformedRawDataGdxRecipients", e.target.value)}
-                    error={fields.transformedRawDataGdxRecipients}
-                  />
-                </Wrap>
-              ) : null}
               <Wrap name="allowAggregatedDataSharing">
                 <YesNo
                   label="ท่านอนุญาตให้สำนักงานส่งต่อข้อมูลรวม (aggregated data) ที่สร้างจากข้อมูลดิบต้นฉบับของท่านหรือไม่"
@@ -769,18 +775,6 @@ export default function EditDatasetRequestPage() {
                   forcedHint="ข้อมูลระดับนี้ส่งต่อข้อมูลรวมได้โดยอัตโนมัติ"
                 />
               </Wrap>
-              {rules.aggregatedDataRecipients.visible ? (
-                <Wrap name="aggregatedDataRecipients">
-                  <TextAreaField
-                    label="หน่วยงานปลายทางที่อนุญาตให้รับข้อมูลรวม"
-                    required
-                    maxLength={500}
-                    value={form.aggregatedDataRecipients}
-                    onChange={(e) => set("aggregatedDataRecipients", e.target.value)}
-                    error={fields.aggregatedDataRecipients}
-                  />
-                </Wrap>
-              ) : null}
               {rules.authorizePersonalDataAnonymization.visible ? (
                 <Wrap name="authorizePersonalDataAnonymization">
                   <YesNo
