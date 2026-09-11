@@ -5,6 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { useSession } from "@/components/SessionProvider";
+import { useLegalDocuments } from "@/components/organization/LegalDocuments";
+import { DocumentWalkthrough } from "@/components/review/DocumentWalkthrough";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SelectField, TextField } from "@/components/ui/Field";
@@ -185,6 +187,14 @@ export default function EditOrganizationPage() {
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [revisionNote, setRevisionNote] = useState<string | null>(null);
+  /**
+   * ข้อมูลผู้มีอำนาจอนุมัติของหน่วยงานชนกับบัญชีที่มีอยู่ — ข้อความค้างไว้จนกว่าจะแก้
+   *
+   * ไม่ใช้ toast เพราะมันหายไปเองก่อนคนอ่านทัน (การ์ด "org officer กรอก invalid
+   * email/cid org approver") กล่องนี้อยู่หัวส่วนที่ 2 ซึ่งเป็นที่ที่ทั้งสองช่องอยู่ และ
+   * `scrollToField()` พาไปหยุดตรงนั้นพอดี
+   */
+  const [approverNotice, setApproverNotice] = useState<string | null>(null);
 
   const [appointment, setAppointment] = useState<UploadedFile | null>(null);
   const [powerOfAttorney, setPowerOfAttorney] = useState<UploadedFile | null>(null);
@@ -195,6 +205,14 @@ export default function EditOrganizationPage() {
   const [subdistricts, setSubdistricts] = useState<Array<{ name: string; zipcode: string }>>([]);
 
   const formRef = useRef<HTMLFormElement>(null);
+
+  /** เอกสารพร้อมให้ตรวจก่อนนำส่งแล้ว — เปิดกล่องอ่านทีละฉบับ ไม่ใช่พาไปหน้าใหม่ */
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const { documents, error: documentsError, reload: reloadDocuments } = useLegalDocuments(orgId);
+  /** ขยับทุกครั้งที่สร้างเอกสารใหม่ — ใช้ทำลาย cache ของ iframe ที่ฝัง PDF ไว้ */
+  const [documentRound, setDocumentRound] = useState(0);
 
   // ---------- โหลดข้อมูลเดิม ----------
   useEffect(() => {
@@ -281,6 +299,8 @@ export default function EditOrganizationPage() {
         return next;
       });
       setFields((f) => (f[key] ? { ...f, [key]: "" } : f));
+      // แก้ช่องใดช่องหนึ่งของคู่นี้ = กำลังตอบคำเตือนอยู่ ปิดกล่องเตือนไปพร้อมกัน
+      if (key === "signatoryEmail" || key === "signatoryNationalId") setApproverNotice(null);
       // ช่องที่ถูกล้างเพราะเลือกจังหวัดใหม่ไม่ใช่ความผิดของผู้ใช้ อย่าทำให้มันแดงขึ้นมาเอง
       setTouched((t) => {
         const next = { ...t, [key]: true };
@@ -407,6 +427,7 @@ export default function EditOrganizationPage() {
   const handleApiError = (err: unknown) => {
     if (!(err instanceof ApiError)) return;
     setFields(err.fields);
+    if (err.code === "approver_conflict") setApproverNotice(err.message);
     const count = Object.keys(err.fields).length;
     // สเปก: ถ้าข้อมูลที่กรอกไม่ถูกต้อง จะมี toast เตือน
     show({
@@ -442,14 +463,54 @@ export default function EditOrganizationPage() {
 
     setGenerating(true);
     setFields({});
+    setApproverNotice(null);
     try {
       await persist();
       await api.post(`/api/organizations/${orgId}/generate-form`);
       await refresh();
-      router.push(`/organizations/${orgId}/preview`);
+      /**
+       * เอกสารเพิ่งถูกสร้างใหม่ ต้องโหลดรายการใหม่ก่อนเปิดกล่อง ไม่งั้นกล่องจะอ่าน
+       * ฉบับของรอบก่อน (หรือว่างเปล่าในรอบแรก) — `documentRound` ไล่ cache ของ iframe ด้วย
+       */
+      reloadDocuments();
+      setDocumentRound((r) => r + 1);
+      setSubmitError(null);
+      setPreviewOpen(true);
     } catch (err) {
       handleApiError(err);
+    } finally {
       setGenerating(false);
+    }
+  };
+
+  /**
+   * นำส่งจากในกล่อง — ไม่มีหน้าตรวจสอบแยกอีกแล้ว (การ์ด "organization registration
+   * preview modal": "ไม่เอา [หน้าใหม่] และให้ขึ้น modal เหมือนคนอื่น ๆ")
+   *
+   * ข้อผิดพลาดที่ระบุช่องได้ถูกส่งกลับไปที่ฟอร์มซึ่งอยู่ข้างหลังกล่องพอดี แทนที่จะค้าง
+   * อยู่ในกล่องที่ไม่มีช่องให้แก้ — เคสที่เกิดจริงคือมีคนจับจองอีเมลหรือเลขบัตรของผู้มี
+   * อำนาจฯ ไปในช่วงระหว่างกดตรวจสอบข้อมูลกับกดนำส่ง
+   */
+  const submit = async () => {
+    if (!orgId) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      await api.post(`/api/organizations/${orgId}/submit`);
+      show({
+        tone: "success",
+        title: "นำส่งคำขอเรียบร้อย",
+        detail: "ระบบแจ้งผู้ประสานงานของ BDI ให้เข้ามาตรวจสอบแล้ว",
+      });
+      router.push(`/organizations/${orgId}`);
+    } catch (err) {
+      setSubmitting(false);
+      if (err instanceof ApiError && Object.keys(err.fields).length > 0) {
+        setPreviewOpen(false);
+        handleApiError(err);
+        return;
+      }
+      setSubmitError(err instanceof ApiError ? err.message : "นำส่งไม่สำเร็จ");
     }
   };
 
@@ -548,6 +609,14 @@ export default function EditOrganizationPage() {
           <Card id={SECTIONS[1].id} className="scroll-mt-24">
             <CardHeader tag={SECTIONS[1].tag} title={SECTIONS[1].title} description="ผู้มีอำนาจลงนามรับรองคำขอนี้ ระบบจะส่งคำขอลงนามไปยังอีเมลที่ระบุในส่วนนี้" />
             <div className="grid gap-5 p-6">
+              {approverNotice ? (
+                <p
+                  role="alert"
+                  className="rounded-xl border-l-[3px] border-danger bg-danger-bg p-4 text-sm leading-relaxed text-danger"
+                >
+                  {approverNotice}
+                </p>
+              ) : null}
               <p className="text-[13px] text-ink-muted">
                 หมายเหตุ: กรุณากรอกคำนำหน้า ชื่อ และนามสกุลให้ตรงตามบัตรประชาชน
               </p>
@@ -637,6 +706,25 @@ export default function EditOrganizationPage() {
           </div>
         </form>
       </div>
+
+      <DocumentWalkthrough
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        documents={documents ?? []}
+        reloadKey={documentRound}
+        confirmTitle="นำส่งคำขอลงทะเบียนหน่วยงาน"
+        confirmDescription="ตรวจเอกสารครบทุกฉบับแล้ว เหลือขั้นตอนสุดท้าย"
+        confirmBody={
+          <p className="text-[15px] leading-relaxed text-ink-muted">
+            ระบบจะส่งคำขอนี้ให้ผู้ประสานงานของ BDI ตรวจสอบ
+            เมื่อนำส่งแล้วจะแก้ไขไม่ได้จนกว่าผู้ตรวจสอบจะส่งกลับ
+          </p>
+        }
+        confirmLabel="นำส่งคำขอ"
+        busy={submitting}
+        error={submitError ?? documentsError}
+        onConfirm={submit}
+      />
     </div>
   );
 }

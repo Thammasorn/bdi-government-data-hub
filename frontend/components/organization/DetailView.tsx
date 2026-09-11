@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { DocumentStack } from "@/components/organization/DocumentStack";
 import { LegalDocumentsCard, useLegalDocuments } from "@/components/organization/LegalDocuments";
 import { SigningDialog } from "@/components/organization/SigningDialog";
+import { DocumentWalkthrough } from "@/components/review/DocumentWalkthrough";
 import { Timeline } from "@/components/organization/Timeline";
 import { ApprovalSteps } from "@/components/review/ApprovalSteps";
 import { RequestMovedNotice } from "@/components/review/RequestMovedNotice";
@@ -610,37 +610,26 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         </div>
       </Modal>
 
-      <Modal
+      {/*
+        ด่านของผู้ประสานงานของ BDI — อ่านเอกสารทีละฉบับก่อน แล้วจึงยืนยัน
+        เหตุผลและที่มาอยู่ที่กล่องเดียวกันของเส้นทางชุดข้อมูล (`dataset/DetailView.tsx`)
+      */}
+      <DocumentWalkthrough
         open={modal === "approve"}
         onClose={() => setModal(null)}
-        size={legalDocuments && legalDocuments.length > 0 ? "lg" : "md"}
-        title={ability.approveLabel ?? "ยืนยัน"}
-        description="ยืนยันว่าคุณตรวจสอบข้อมูลและเอกสารทั้งหมดเรียบร้อยแล้ว"
-      >
-        {/*
-          เอกสารอยู่ในกล่องยืนยันด้วย (การ์ด "BDI officer ตรวจสอบเอกสาร")
-
-          ด่านของผู้ประสานงานของ BDI เป็นด่านเดียวของเส้นทางนี้ที่ไม่ได้เปิด SigningDialog
-          จึงเป็นด่านเดียวที่กดผ่านได้โดยไม่เคยเห็นเอกสาร — ใช้ `DocumentStack` ตัวเดียว
-          กับที่กล่องลงนามใช้ ไม่ใช่ของใหม่
-        */}
-        {legalDocuments && legalDocuments.length > 0 ? (
-          <div className="mb-6">
-            <DocumentStack documents={legalDocuments} reloadKey={documentRound} />
-          </div>
-        ) : null}
-        <p className="text-[15px] leading-relaxed text-ink-muted">
-          ระบบจะบันทึกกระบวนการนี้และแจ้งผู้เกี่ยวข้องในขั้นตอนถัดไป
-        </p>
-        <div className="mt-6 flex justify-end gap-3">
-          <Button variant="secondary" onClick={() => setModal(null)}>
-            ยกเลิก
-          </Button>
-          <Button loading={busy} onClick={() => act("approve")}>
-            {ability.approveLabel}
-          </Button>
-        </div>
-      </Modal>
+        documents={legalDocuments ?? []}
+        reloadKey={documentRound}
+        confirmTitle={ability.approveLabel ?? "ยืนยัน"}
+        confirmDescription="ยืนยันว่าคุณตรวจสอบข้อมูลและเอกสารทั้งหมดเรียบร้อยแล้ว"
+        confirmBody={
+          <p className="text-[15px] leading-relaxed text-ink-muted">
+            ระบบจะบันทึกกระบวนการนี้และแจ้งผู้เกี่ยวข้องในขั้นตอนถัดไป
+          </p>
+        }
+        confirmLabel={ability.approveLabel ?? "ยืนยัน"}
+        busy={busy}
+        onConfirm={() => act("approve")}
+      />
     </div>
   );
 }

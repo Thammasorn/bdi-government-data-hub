@@ -1584,6 +1584,31 @@ organizationRouter.post("/:id/generate-form", async (req, res) => {
     return;
   }
 
+  /**
+   * ผู้มีอำนาจอนุมัติของหน่วยงานต้องใช้ได้จริง **ตั้งแต่กดตรวจสอบข้อมูล**
+   *
+   * เดิมกฎนี้เริ่มทำงานที่ `POST /:id/submit` ซึ่งเป็นปุ่มบนหน้าถัดไป คนกรอกจึงออกจาก
+   * ฟอร์มไปแล้วตอนได้ยินว่าอีเมลหรือเลขบัตรใช้ไม่ได้ — ไม่มีช่องให้ทำเครื่องหมาย เหลือแต่
+   * ข้อความชั่วคราวที่หายไปเอง (การ์ด "org officer กรอก invalid email/cid org approver":
+   * "ไม่เอาขึ้น modal เพราะมันหายไป คนอ่านไม่ทัน ให้ validate ตั้งแต่ตอนกดตรวจสอบข้อมูล")
+   *
+   * ย้ายมาที่นี่แล้วยังต้องเช็คที่ submit และตอนอนุมัติเหมือนเดิม — ระหว่างสามจังหวะนั้น
+   * คนอื่นจับจองอีเมล เลขบัตร หรือบทบาทไปก่อนได้
+   */
+  const conflict = await approverConflict(prisma, {
+    email: parsed.data.signatoryEmail,
+    cid: parsed.data.signatoryNationalId ?? null,
+    organizationId: request.organizationId,
+  });
+  if (conflict) {
+    res.status(400).json({
+      error: "approver_conflict",
+      message: `${conflict.reason} ${APPROVER_CONFLICT_CONTACT}`,
+      fields: conflict.fields,
+    });
+    return;
+  }
+
   const appointment = await activeAttachment(
     prisma,
     AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
@@ -1964,7 +1989,11 @@ organizationRouter.post("/:id/submit", async (req, res) => {
     organizationId: request.organizationId,
   });
   if (conflict) {
-    res.status(400).json({ error: "validation", fields: { [conflict.field]: conflict.message } });
+    res.status(400).json({
+      error: "approver_conflict",
+      message: `${conflict.reason} ${APPROVER_CONFLICT_CONTACT}`,
+      fields: conflict.fields,
+    });
     return;
   }
 
@@ -2599,10 +2628,36 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
  * การบอกว่าเลขบัตรนี้เป็นของใครคือการยืนยันข้อมูลส่วนบุคคลให้คนนอก — รายละเอียด
  * ไปอยู่ใน audit แทน ส่วนฝั่ง admin API ไม่ mask เพราะเรียกได้เฉพาะผู้ประสานงานของ BDI
  */
+/**
+ * ประโยคปิดท้ายของทุกเคส — ทางออกเมื่อผู้กรอกแก้เองไม่ได้
+ *
+ * ข้อความฝั่งฟอร์มบอกได้แค่ว่า "ค่านี้ใช้ไม่ได้" ห้ามบอกว่าเป็นของใคร (ดูคอมเมนต์ของ
+ * `approverConflict()`) ผู้กรอกจึงมีโอกาสเจอทางตัน เช่นผู้มีอำนาจฯ คนเดิมถูกผูกไว้กับ
+ * หน่วยงานอื่นด้วยความเข้าใจผิด — คนที่แก้ได้คือผู้ประสานงานของ BDI ซึ่งเห็นข้อมูล
+ * ที่ไม่ mask ผ่าน admin API การ์ด "org officer กรอก invalid email/cid org approver"
+ * สั่งให้บอกทางนั้นไว้ทุกครั้ง
+ */
+const APPROVER_CONFLICT_CONTACT =
+  "หากตรวจสอบแล้วยังดำเนินการต่อไม่ได้ กรุณาติดต่อผู้ประสานงานของ BDI";
+
+interface ApproverConflict {
+  /** ข้อความใต้ **ทั้งสองช่อง** — ปัญหาเป็นเรื่องของคู่อีเมล/เลขบัตร แก้ได้ทั้งสองทาง */
+  fields: { signatoryEmail: string; signatoryNationalId: string };
+  /** สรุปเหตุผลหนึ่งประโยค ใช้เป็นหัวเรื่องของกล่องเตือนบนฟอร์ม และของ WorkflowError */
+  reason: string;
+}
+
+function conflictOf(
+  reason: string,
+  fields: { signatoryEmail: string; signatoryNationalId: string },
+): ApproverConflict {
+  return { reason, fields };
+}
+
 async function approverConflict(
   db: Db,
   params: { email: string; cid: string | null; organizationId: string },
-): Promise<{ field: "signatoryEmail" | "signatoryNationalId"; message: string } | null> {
+): Promise<ApproverConflict | null> {
   const { email, cid, organizationId } = params;
 
   const existing = await db.userAccount.findUnique({
@@ -2615,12 +2670,13 @@ async function approverConflict(
     if (cid) {
       const sameCid = await db.userAccount.findUnique({ where: { cid }, select: { id: true } });
       if (sameCid) {
-        return {
-          field: "signatoryNationalId",
-          message:
-            "เลขบัตรประชาชนนี้ใช้กับผู้มีอำนาจกระทำการแทนของคำขอนี้ไม่ได้ " +
-            "กรุณาตรวจสอบเลขบัตรและอีเมลให้ตรงกับบุคคลเดียวกัน",
-        };
+        return conflictOf(
+          "เลขบัตรประชาชนนี้มีบัญชีอื่นในระบบใช้อยู่แล้ว แต่อีเมลที่กรอกยังไม่มีบัญชี จึงไม่ใช่คนเดียวกัน",
+          {
+            signatoryNationalId: "เลขบัตรประชาชนนี้มีบัญชีอื่นในระบบใช้อยู่แล้ว",
+            signatoryEmail: "อีเมลนี้ยังไม่มีบัญชีในระบบ จึงไม่ใช่เจ้าของเลขบัตรที่กรอก",
+          },
+        );
       }
     }
     return null;
@@ -2634,12 +2690,13 @@ async function approverConflict(
    * แล้วระบบเก็บเลขของเจ้าของอีเมลไว้ ThaID ก็ไปเทียบกับเลขนั้น ทั้งที่ฟอร์มบอกอีกอย่าง
    */
   if (cid && existing.cid && existing.cid !== cid) {
-    return {
-      field: "signatoryNationalId",
-      message:
-        "เลขบัตรประชาชนไม่ตรงกับบัญชีที่ใช้อีเมลนี้อยู่ " +
-        "กรุณาตรวจสอบว่าอีเมลและเลขบัตรเป็นของบุคคลเดียวกัน",
-    };
+    return conflictOf(
+      "อีเมลนี้มีบัญชีในระบบอยู่แล้ว และบัญชีนั้นผูกกับเลขบัตรประชาชนคนละเลขกับที่กรอก",
+      {
+        signatoryEmail: "อีเมลนี้ผูกกับเลขบัตรประชาชนคนละเลขกับที่กรอก",
+        signatoryNationalId: "เลขบัตรประชาชนไม่ตรงกับบัญชีที่ใช้อีเมลนี้",
+      },
+    );
   }
 
   /**
@@ -2664,12 +2721,15 @@ async function approverConflict(
     select: { id: true },
   });
   if (heldElsewhere) {
-    return {
-      field: "signatoryEmail",
-      message:
-        "อีเมลนี้ใช้เป็นผู้มีอำนาจอนุมัติของหน่วยงานไม่ได้ เนื่องจากมีบทบาทอื่นในระบบอยู่แล้ว " +
-        "และผู้ใช้หนึ่งคนมีได้บทบาทเดียว กรุณากรอกอีเมลของผู้มีอำนาจอนุมัติของหน่วยงานโดยตรง",
-    };
+    return conflictOf(
+      "อีเมลนี้มีบทบาทอื่นในระบบอยู่แล้ว และผู้ใช้หนึ่งคนมีได้บทบาทเดียว",
+      {
+        signatoryEmail:
+          "อีเมลนี้มีบทบาทอื่นในระบบอยู่แล้ว ใช้เป็นผู้มีอำนาจอนุมัติของหน่วยงานไม่ได้",
+        signatoryNationalId:
+          "หากแก้อีเมล กรุณากรอกเลขบัตรประชาชนของบุคคลเดียวกันให้ตรงกันด้วย",
+      },
+    );
   }
 
   return null;
@@ -2716,7 +2776,7 @@ async function ensureApproverAccount(
     organizationId: request.organizationId,
   });
   if (conflict) {
-    throw new WorkflowError("approver_conflict", conflict.message, 409);
+    throw new WorkflowError("approver_conflict", conflict.reason, 409);
   }
 
   const account =
