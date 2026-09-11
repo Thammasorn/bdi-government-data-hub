@@ -267,29 +267,11 @@ async function syncStatus(
   });
 }
 
-/**
- * เวลาที่ผู้ยื่นติ๊กยอมรับเงื่อนไขการนำส่งข้อมูล
- *
- * **ยังไม่ได้เก็บใน legal.legal_acceptance** ตารางนั้นบังคับทั้ง legal_document_version_id
- * และ review_task_id ซึ่งตอนกรอกร่างยังไม่มีทั้งคู่ (task เปิดตอนนำส่ง และเอกสารกฎหมาย
- * ที่ seed ไว้ยังเป็น DRAFT ไม่มีเนื้อหาจริง) จึงพักไว้ที่ additional_metadata_json ก่อน
- * ของเดิมไม่ได้เก็บที่ไหนเลย ช่องนี้ในแบบฟอร์ม PDF จึงพิมพ์ "—" ทั้งที่ผู้ใช้ติ๊กแล้ว
- */
-const LEGAL_ACCEPTED_AT = "legalAcceptedAt";
-
-function legalAcceptedAtOf(row: { additionalMetadataJson?: unknown } | null): string | null {
-  const extra = row?.additionalMetadataJson;
-  if (typeof extra !== "object" || extra === null) return null;
-  const value = (extra as Record<string, unknown>)[LEGAL_ACCEPTED_AT];
-  return typeof value === "string" ? value : null;
-}
-
 /** รูปข้อมูลที่ frontend และ zod ชุด submit ใช้ */
 function toApiShape(request: RequestRow, extra?: Record<string, unknown>) {
   const metadata = fromMetadataRow(request.metadata);
 
   return {
-    legalAcceptedAt: legalAcceptedAtOf(request.metadata),
     id: request.id,
     requestNumber: request.requestNumber,
     status: request.status,
@@ -768,12 +750,6 @@ datasetRequestRouter.patch("/:id", async (req, res) => {
   // ไม่ใช่เฉพาะช่องที่เพิ่งแก้ (เปลี่ยนหมวดหมู่ข้อมูลอย่างเดียวก็เปลี่ยนค่าอีกหกช่องได้)
   const values = mergeMetadata(fromMetadataRow(request.metadata), parsed.data);
   const { columns, extra } = toMetadataColumns(values, request.metadata?.additionalMetadataJson);
-  if (parsed.data.legalAccepted !== undefined) {
-    extra[LEGAL_ACCEPTED_AT] = parsed.data.legalAccepted
-      ? (legalAcceptedAtOf(request.metadata) ?? new Date().toISOString())
-      : null;
-  }
-
   const updated = await prisma.$transaction(async (tx) => {
     await tx.datasetRegistrationMetadata.upsert({
       where: { datasetRegistrationRequestId: request.id },
@@ -916,15 +892,6 @@ datasetRequestRouter.post("/:id/generate-form", async (req, res) => {
     });
     return;
   }
-  // เอกสารที่หน่วยงานลงนามต้องมีการยืนยันของผู้ยื่นกำกับ ไม่ใช่ช่องติ๊กที่หน้าเว็บบังคับฝ่ายเดียว
-  if (!legalAcceptedAtOf(request.metadata)) {
-    res.status(400).json({
-      error: "validation",
-      fields: { legalAcceptedAt: "กรุณายืนยันความถูกต้องของข้อมูลก่อนสร้างแบบฟอร์ม" },
-    });
-    return;
-  }
-
   /**
    * เอกสารที่สร้างคือ A4 (แบบนำส่งข้อมูล) ฉบับจริงจาก template ของฝ่ายกฎหมาย
    *

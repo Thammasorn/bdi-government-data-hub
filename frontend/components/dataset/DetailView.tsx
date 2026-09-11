@@ -674,10 +674,6 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
                     ],
                   ] as DetailRow[])
                 : []),
-              [
-                "ยอมรับเงื่อนไขการนำส่งข้อมูล",
-                request.legalAcceptedAt ? `ยอมรับเมื่อ ${formatThaiDate(request.legalAcceptedAt)}` : null,
-              ],
             ]}
           />
         </Card>

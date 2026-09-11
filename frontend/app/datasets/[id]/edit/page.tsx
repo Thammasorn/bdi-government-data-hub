@@ -83,7 +83,6 @@ export default function EditDatasetRequestPage() {
   const { ready } = useRequireAuth();
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
-  const [legalAccepted, setLegalAccepted] = useState(false);
   const [fields, setFields] = useState<Record<string, string>>({});
   /** ช่องที่ผู้ใช้เข้าไปแล้วออกมา — ก่อนนั้นไม่เตือน ไม่งั้นขอบแดงขึ้นระหว่างพิมพ์ตัวแรก */
   const [touched, setTouched] = useState<Partial<Record<FormField, boolean>>>({});
@@ -108,7 +107,6 @@ export default function EditDatasetRequestPage() {
       .get<{ request: DatasetRequest }>(`/api/dataset-requests/${id}`)
       .then(({ request }) => {
         setForm(toFormState(request as unknown as Partial<Record<FormField, unknown>>));
-        setLegalAccepted(Boolean(request.legalAcceptedAt));
         setRevisionNote(request.revisionNote);
         setRequestNumber(request.requestNumber);
         setOrganizationName(request.organization?.name ?? "");
@@ -191,17 +189,13 @@ export default function EditDatasetRequestPage() {
       const months = Number(form.personalDataProcessingPeriodMonth || 0);
       done["section-3"] = Boolean(done["section-3"]) && years + months > 0;
     }
-    done["section-4"] = Boolean(done["section-4"]) && legalAccepted;
     done["section-5"] = dictionary !== null;
     return done;
-  }, [form, rules, legalAccepted, dictionary]);
+  }, [form, rules, dictionary]);
 
   // ---------- actions ----------
   const persist = () =>
-    api.patch<{ request: DatasetRequest }>(`/api/dataset-requests/${id}`, {
-      ...toPayload(form),
-      legalAccepted,
-    });
+    api.patch<{ request: DatasetRequest }>(`/api/dataset-requests/${id}`, toPayload(form));
 
   const saveDraft = async () => {
     setSaving(true);
@@ -789,29 +783,6 @@ export default function EditDatasetRequestPage() {
                   />
                 </Wrap>
               ) : null}
-
-              <div data-field="legalAcceptedAt" className="rounded-xl bg-canvas p-4">
-                <label className="flex items-start gap-3">
-                  <input
-                    type="checkbox"
-                    checked={legalAccepted}
-                    onChange={(e) => {
-                      setLegalAccepted(e.target.checked);
-                      clearError("legalAcceptedAt");
-                    }}
-                    className="mt-1 h-4 w-4 shrink-0 rounded border-line text-coral-500 focus:ring-2 focus:ring-navy-100"
-                  />
-                  <span className="text-[15px] leading-relaxed text-ink">
-                    ข้าพเจ้ายืนยันว่าข้อมูลที่นำส่งถูกต้อง และหน่วยงานมีอำนาจนำส่งข้อมูลชุดนี้ตามที่ระบุไว้
-                    <span className="ml-1 text-coral-500">*</span>
-                  </span>
-                </label>
-                {fields.legalAcceptedAt ? (
-                  <p className="mt-2 text-[13px] text-danger" role="alert">
-                    {fields.legalAcceptedAt}
-                  </p>
-                ) : null}
-              </div>
             </div>
           </Card>
 
