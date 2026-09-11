@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { DatasetSigningDialog } from "@/components/dataset/DatasetSigningDialog";
+import { DocumentStack } from "@/components/organization/DocumentStack";
 import { LegalDocumentsCard, useLegalDocuments } from "@/components/organization/LegalDocuments";
 import { Timeline } from "@/components/organization/Timeline";
 import { ApprovalSteps } from "@/components/review/ApprovalSteps";
@@ -957,13 +958,27 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         />
       ) : null}
 
+      {/*
+        เอกสารอยู่ในกล่อง ไม่ใช่อยู่ที่การ์ดกลางหน้า (การ์ด "BDI officer ตรวจสอบเอกสาร")
+
+        ด่านของผู้ประสานงานของ BDI เป็นด่านเดียวที่เหลืออยู่ซึ่งกดผ่านได้โดยไม่เคยเปิดเอกสาร
+        เลยสักฉบับ — สองด่านที่เหลือของเส้นทางนี้เปิด SigningDialog ซึ่งเรียงเอกสารไว้ในกล่อง
+        ตั้งแต่การ์ด "BDI approver preview before approve" (2026-09-09) แล้ว ที่นี่จึงใช้
+        `DocumentStack` ตัวเดียวกัน ไม่ใช่คอมโพเนนต์ใหม่ที่ต้องดูแลอีกตัว
+      */}
       <Modal
         open={modal === "advance"}
         onClose={closeModal}
+        size={legalDocuments && legalDocuments.length > 0 ? "lg" : "md"}
         // กล่องยืนยันใช้คำว่า "ยืนยัน" เสมอ — ชื่อการกระทำอยู่ที่ปุ่มที่เพิ่งกดไปแล้ว
         title="ยืนยัน"
         description="ยืนยันว่าคุณตรวจสอบข้อมูลและเอกสารทั้งหมดเรียบร้อยแล้ว"
       >
+        {legalDocuments && legalDocuments.length > 0 ? (
+          <div className="mb-6">
+            <DocumentStack documents={legalDocuments} reloadKey={documentRound} />
+          </div>
+        ) : null}
         <p className="text-[15px] leading-relaxed text-ink-muted">
           ระบบจะบันทึกกระบวนการนี้และแจ้งผู้เกี่ยวข้องในขั้นตอนถัดไป
         </p>
