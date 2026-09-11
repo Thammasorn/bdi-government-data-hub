@@ -133,7 +133,11 @@ function Header() {
       <div className="bg-brand-gradient h-[3px]" />
       <div className="border-b border-line">
         <div className="mx-auto flex h-20 max-w-6xl items-center gap-6 px-4 sm:px-6">
-          <Link href="/" className="shrink-0" aria-label="หน้าแรก ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)">
+          {/* `flex` ไม่ใช่ block: <Logo> เป็น inline-flex ถ้าปล่อยให้มันอยู่ใน line box ของลิงก์
+              ลิงก์จะสูงกว่าโลโก้ราว 7px (ที่ว่างใต้เส้นฐานของบรรทัด) แล้ว items-center ของแถบหัว
+              จะจัดกึ่งกลางให้ "ลิงก์" ไม่ใช่ "โลโก้" — ตัวโลโก้กับชื่อระบบจึงลอยสูงกว่าป้ายเมนู
+              ราว 3.6px ซึ่งคือสิ่งที่การ์ด "UI Navbar ไม่ตรง" รายงานมา */}
+          <Link href="/" className="flex shrink-0" aria-label="หน้าแรก ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)">
             <Logo subtitleClassName="hidden lg:inline-flex" />
           </Link>
 
