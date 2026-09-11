@@ -158,23 +158,33 @@ export function DatasetSigningDialog({
             {error}
           </p>
         ) : null}
-        <div className="mt-6 flex flex-wrap justify-between gap-3">
-          <Button variant="secondary" onClick={close}>
-            ปิด
-          </Button>
-          <div className="flex flex-wrap gap-3">
-            {onReject ? (
-              <Button
-                variant="danger"
-                disabled={busy}
-                onClick={() => {
-                  close();
-                  onReject();
-                }}
-              >
-                ไม่อนุมัติ
-              </Button>
-            ) : null}
+        {/*
+          "ไม่อนุมัติ" อยู่คนละฝั่งกับ "อนุมัติ" (การ์ด "BDI APPROVER UI")
+
+          เดิมสองปุ่มนี้ติดกันที่มุมขวา ห่างกัน 12px และเป็นคำตอบคนละทางของคำถามเดียวกัน
+          บนมือถือหรือไอแพดจึงกดพลาดข้ามปุ่มได้ง่าย ตอนนี้ "ปิด" ซึ่งไม่ตัดสินอะไรเลย
+          มาคั่นไว้ และ gap-x-6 ทำให้ระยะห่างมากกว่าช่องไฟระหว่างปุ่มปกติเท่าตัว
+
+          พอจอแคบจนต้องขึ้นบรรทัดใหม่ "ไม่อนุมัติ" ไปอยู่บรรทัดบนฝั่งซ้าย ส่วน "ปิด"
+          กับ "อนุมัติ" อยู่บรรทัดล่าง — สองปุ่มที่ตัดสินจึงไม่เคยอยู่ติดกันไม่ว่าจอกว้างเท่าไร
+        */}
+        <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-3">
+          {onReject ? (
+            <Button
+              variant="danger"
+              disabled={busy}
+              onClick={() => {
+                close();
+                onReject();
+              }}
+            >
+              ไม่อนุมัติ
+            </Button>
+          ) : null}
+          <div className="ml-auto flex flex-wrap gap-3">
+            <Button variant="secondary" onClick={close}>
+              ปิด
+            </Button>
             <Button loading={busy} onClick={submit}>
               {title}
             </Button>
