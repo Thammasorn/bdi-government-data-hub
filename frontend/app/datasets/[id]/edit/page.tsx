@@ -4,6 +4,8 @@ import clsx from "clsx";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 
+import { useLegalDocuments } from "@/components/organization/LegalDocuments";
+import { DocumentWalkthrough } from "@/components/review/DocumentWalkthrough";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SelectField, TextAreaField, TextField } from "@/components/ui/Field";
@@ -98,6 +100,17 @@ export default function EditDatasetRequestPage() {
   const [uploadingKind, setUploadingKind] = useState<string | null>(null);
 
   const formRef = useRef<HTMLFormElement>(null);
+
+  /** เอกสารพร้อมให้ตรวจก่อนนำส่งแล้ว — เปิดกล่องอ่านทีละฉบับ ไม่ใช่พาไปหน้าใหม่ */
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [documentRound, setDocumentRound] = useState(0);
+  const {
+    documents,
+    error: documentsError,
+    reload: reloadDocuments,
+  } = useLegalDocuments(id ?? null, "dataset-requests");
 
   useEffect(() => {
     // ยังไม่ล็อกอิน = API ตอบได้แค่ 401 แล้วฟอร์มจะขึ้นมาเปล่า ๆ
@@ -260,10 +273,42 @@ export default function EditDatasetRequestPage() {
     try {
       await persist();
       await api.post(`/api/dataset-requests/${id}/generate-form`);
-      router.push(`/datasets/${id}/preview`);
+      // เอกสารเพิ่งถูกสร้างใหม่ ต้องโหลดรายการใหม่ก่อนเปิดกล่อง ไม่งั้นกล่องจะอ่านฉบับของรอบก่อน
+      reloadDocuments();
+      setDocumentRound((r) => r + 1);
+      setSubmitError(null);
+      setPreviewOpen(true);
     } catch (err) {
       handleApiError(err);
+    } finally {
       setGenerating(false);
+    }
+  };
+
+  /**
+   * นำส่งจากในกล่อง — เส้นทางชุดข้อมูลเดินตามเส้นทางจดทะเบียนหน่วยงาน
+   * (การ์ด "organization registration preview modal": "ตรวจสอบหน้าประมาณนี้ของคนอื่น
+   * ด้วย อยากให้ขึ้น UI ให้เหมือนกัน")
+   */
+  const submit = async () => {
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      await api.post(`/api/dataset-requests/${id}/submit`);
+      show({
+        tone: "success",
+        title: "นำส่งคำขอเรียบร้อย",
+        detail: "ระบบแจ้งผู้ประสานงานของ BDI ให้เข้ามาตรวจสอบแล้ว",
+      });
+      router.push(`/datasets/${id}`);
+    } catch (err) {
+      setSubmitting(false);
+      if (err instanceof ApiError && Object.keys(err.fields).length > 0) {
+        setPreviewOpen(false);
+        handleApiError(err);
+        return;
+      }
+      setSubmitError(err instanceof ApiError ? err.message : "นำส่งไม่สำเร็จ");
     }
   };
 
@@ -832,6 +877,41 @@ export default function EditDatasetRequestPage() {
           </div>
         </form>
       </div>
+
+      <DocumentWalkthrough
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        documents={documents ?? []}
+        reloadKey={documentRound}
+        confirmTitle="นำส่งคำขอลงทะเบียนชุดข้อมูล"
+        confirmDescription="ตรวจเอกสารครบทุกฉบับแล้ว เหลือขั้นตอนสุดท้าย"
+        confirmBody={
+          <div className="flex flex-col gap-4">
+            <p className="text-[15px] leading-relaxed text-ink-muted">
+              ระบบจะส่งคำขอนี้ให้ผู้ประสานงานของ BDI ตรวจสอบ
+              เมื่อนำส่งแล้วจะแก้ไขไม่ได้จนกว่าผู้ตรวจสอบจะส่งกลับ
+            </p>
+            {/* เอกสารแนบไม่ได้อยู่ในชุดที่เดินทีละฉบับ เพราะเป็นไฟล์ที่ผู้กรอกอัปโหลดเอง
+                ไม่ใช่เอกสารที่ระบบสร้าง — ยกมาไว้ตรงนี้ให้ตรวจว่าแนบครบและเป็นฉบับล่าสุด */}
+            {dictionary || example ? (
+              <div className="rounded-xl bg-canvas p-4">
+                <p className="text-[13px] font-medium text-ink-muted">เอกสารแนบที่จะส่งไปด้วย</p>
+                <ul className="mt-2 flex flex-col gap-1">
+                  {[dictionary, example].filter(Boolean).map((file) => (
+                    <li key={file!.id} className="truncate text-sm text-ink">
+                      {file!.filename}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        }
+        confirmLabel="นำส่งคำขอ"
+        busy={submitting}
+        error={submitError ?? documentsError}
+        onConfirm={submit}
+      />
     </div>
   );
 }
