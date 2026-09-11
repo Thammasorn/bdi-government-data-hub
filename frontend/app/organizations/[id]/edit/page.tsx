@@ -185,6 +185,14 @@ export default function EditOrganizationPage() {
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [revisionNote, setRevisionNote] = useState<string | null>(null);
+  /**
+   * ข้อมูลผู้มีอำนาจอนุมัติของหน่วยงานชนกับบัญชีที่มีอยู่ — ข้อความค้างไว้จนกว่าจะแก้
+   *
+   * ไม่ใช้ toast เพราะมันหายไปเองก่อนคนอ่านทัน (การ์ด "org officer กรอก invalid
+   * email/cid org approver") กล่องนี้อยู่หัวส่วนที่ 2 ซึ่งเป็นที่ที่ทั้งสองช่องอยู่ และ
+   * `scrollToField()` พาไปหยุดตรงนั้นพอดี
+   */
+  const [approverNotice, setApproverNotice] = useState<string | null>(null);
 
   const [appointment, setAppointment] = useState<UploadedFile | null>(null);
   const [powerOfAttorney, setPowerOfAttorney] = useState<UploadedFile | null>(null);
@@ -281,6 +289,8 @@ export default function EditOrganizationPage() {
         return next;
       });
       setFields((f) => (f[key] ? { ...f, [key]: "" } : f));
+      // แก้ช่องใดช่องหนึ่งของคู่นี้ = กำลังตอบคำเตือนอยู่ ปิดกล่องเตือนไปพร้อมกัน
+      if (key === "signatoryEmail" || key === "signatoryNationalId") setApproverNotice(null);
       // ช่องที่ถูกล้างเพราะเลือกจังหวัดใหม่ไม่ใช่ความผิดของผู้ใช้ อย่าทำให้มันแดงขึ้นมาเอง
       setTouched((t) => {
         const next = { ...t, [key]: true };
@@ -407,6 +417,7 @@ export default function EditOrganizationPage() {
   const handleApiError = (err: unknown) => {
     if (!(err instanceof ApiError)) return;
     setFields(err.fields);
+    if (err.code === "approver_conflict") setApproverNotice(err.message);
     const count = Object.keys(err.fields).length;
     // สเปก: ถ้าข้อมูลที่กรอกไม่ถูกต้อง จะมี toast เตือน
     show({
@@ -548,6 +559,14 @@ export default function EditOrganizationPage() {
           <Card id={SECTIONS[1].id} className="scroll-mt-24">
             <CardHeader tag={SECTIONS[1].tag} title={SECTIONS[1].title} description="ผู้มีอำนาจลงนามรับรองคำขอนี้ ระบบจะส่งคำขอลงนามไปยังอีเมลที่ระบุในส่วนนี้" />
             <div className="grid gap-5 p-6">
+              {approverNotice ? (
+                <p
+                  role="alert"
+                  className="rounded-xl border-l-[3px] border-danger bg-danger-bg p-4 text-sm leading-relaxed text-danger"
+                >
+                  {approverNotice}
+                </p>
+              ) : null}
               <p className="text-[13px] text-ink-muted">
                 หมายเหตุ: กรุณากรอกคำนำหน้า ชื่อ และนามสกุลให้ตรงตามบัตรประชาชน
               </p>
