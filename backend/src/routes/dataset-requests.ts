@@ -1123,6 +1123,15 @@ datasetRequestRouter.post("/:id/assign", async (req, res, next) => {
 
     // แจ้งเฉพาะตอนที่ชื่อเปลี่ยนจริง — กดบันทึกซ้ำคนเดิมไม่ควรส่งอีเมลซ้ำ
     if (specialistId && changed) {
+      /**
+       * `email: false` — อีเมลฉบับจริงถูกส่งอินไลน์ข้างล่าง ไม่ใช่ผ่าน outbox
+       *
+       * worker ไม่มี branch สำหรับ SPECIALIST_ASSIGNED จึงตกลง `default:` แล้วประกอบ
+       * อีเมลกลางจาก title/message ของ notification ได้เป็นฉบับที่หัวเรื่องซ้ำกับฉบับจริง
+       * และเนื้อความมีแค่ชื่อชุดข้อมูลลอย ๆ ผู้เชี่ยวชาญจึงได้อีเมลสองฉบับต่อการมอบหมาย
+       * หนึ่งครั้ง (การ์ด "Data specialist got Double notification email") — แถว
+       * notification ยังต้องเขียนตามเดิม เพราะกระดิ่งในระบบอ่านจากตารางนั้นโดยตรง
+       */
       await notifyUsers([specialistId], {
         type: NotificationType.SPECIALIST_ASSIGNED,
         title: "ขอความเห็นของคุณต่อชุดข้อมูล",
@@ -1130,6 +1139,7 @@ datasetRequestRouter.post("/:id/assign", async (req, res, next) => {
         subjectType: SUBJECT,
         subjectId: request.id,
         organizationId: request.organizationId,
+        email: false,
       });
       const [specialistEmail] = await emailsOf([specialistId]);
       if (specialistEmail) {
