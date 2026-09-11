@@ -3,7 +3,7 @@
 import clsx from "clsx";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useState, type FormEvent } from "react";
+import { Suspense, useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 
 import { AuthLayout } from "@/components/AuthLayout";
 import { ThaidButton, storeActivationToken } from "@/components/auth/Thaid";
@@ -83,53 +83,81 @@ function ActivateFlow() {
   if (invalidReason) return <InvalidLink reason={invalidReason} />;
   if (!invitation) return <Spinner className="min-h-screen" />;
 
-  return invitation.identityVerified ? (
-    <AccountCreationStep token={token} invitation={invitation} />
-  ) : (
-    <IdentityStep token={token} invitation={invitation} />
+  return (
+    <SignedInGate invitationEmail={invitation.email}>
+      {invitation.identityVerified ? (
+        <AccountCreationStep token={token} invitation={invitation} />
+      ) : (
+        <IdentityStep token={token} invitation={invitation} />
+      )}
+    </SignedInGate>
   );
 }
 
 /**
- * เตือนก่อนเริ่ม เมื่อเบราว์เซอร์นี้มีคนล็อกอินค้างอยู่ และไม่ใช่คนในคำเชิญ
+ * ปิดทางเปิดใช้งานบัญชี ตราบใดที่เบราว์เซอร์นี้ยังมีคนอื่นล็อกอินค้างอยู่
  *
  * การเปิดใช้งานบัญชีจบด้วย `issueSession()` ซึ่งหมุน cookie ใบเดียวของเบราว์เซอร์ทิ้ง
- * คนที่ล็อกอินค้างอยู่จึงหลุดออกจากระบบทุกแท็บจริง ๆ — คนที่กดลิงก์มาจากอีเมลแทบไม่มีทาง
- * เดาได้เอง บอกที่ต้นทางถูกกว่ามาบอกทีหลังว่าเกิดอะไรขึ้นไปแล้ว
+ * คนที่ล็อกอินค้างอยู่จึงหลุดออกจากระบบทุกแท็บจริง ๆ โดยไม่เคยกดอะไรเลย
  *
- * ไม่ปิดทางให้ต้องออกจากระบบก่อน — "เครื่องเดียว หลายคนใช้ต่อกัน" เป็นเคสที่ถูกต้อง
+ * เดิมตรงนี้เป็นเพียงกล่องเตือน มีปุ่ม "ดำเนินการต่อ" ให้กดผ่านไปได้ทั้งที่ session เดิม
+ * ยังอยู่ — ปุ่มนั้นไม่ได้ทำอะไรนอกจากซ่อนคำเตือน ปลายทางก็ยังเตะคนเดิมออกอยู่ดี
+ * (การ์ด "Have current Session while activate new account") ทางที่ตรงกับสิ่งที่เกิดขึ้นจริง
+ * คือให้ออกจากระบบเสียก่อน แล้วค่อยเริ่ม — เจ้าของ session เดิมจึงได้เลือกเองว่าจะออกเมื่อไร
+ * ไม่ใช่รู้ตัวอีกทีตอนถูกเตะออกไปแล้ว "เครื่องเดียว หลายคนใช้ต่อกัน" ยังทำได้ตามเดิม
+ * เพียงแต่ต้องออกจากระบบก่อนหนึ่งครั้ง
  */
-function SignedInWarning({ invitationEmail }: { invitationEmail: string }) {
-  const { user, setUser } = useSession();
+function SignedInGate({
+  invitationEmail,
+  children,
+}: {
+  invitationEmail: string;
+  children: ReactNode;
+}) {
+  const { user, loading, setUser } = useSession();
   const [busy, setBusy] = useState(false);
-  const [acknowledged, setAcknowledged] = useState(false);
 
-  if (!user || acknowledged) return null;
-  if (user.email.toLowerCase() === invitationEmail.toLowerCase()) return null;
+  // ยังไม่รู้ว่าใครล็อกอินอยู่ — อย่าเพิ่งวาดอะไรทั้งสองทาง ไม่งั้นหน้าจะกะพริบสลับกัน
+  if (loading) return <Spinner className="min-h-screen" />;
+  if (!user) return <>{children}</>;
+  if (user.email.toLowerCase() === invitationEmail.toLowerCase()) return <>{children}</>;
 
   const name = sessionUserName(user);
   const logout = async () => {
     setBusy(true);
     await api.post("/api/auth/logout").catch(() => undefined);
+    // ไม่ต้องประกาศให้แท็บอื่นรู้เอง — effect ใน SessionProvider ที่เฝ้า `user` ทำให้แล้ว
     setUser(null);
     setBusy(false);
   };
 
   return (
-    <div className="rounded-xl bg-warning-bg p-5">
-      <p className="text-sm leading-relaxed text-warning">
-        เบราว์เซอร์นี้กำลังเข้าสู่ระบบในชื่อ <span className="font-semibold">{name}</span> —
-        การเปิดใช้งานบัญชี {invitationEmail} จะทำให้ {name} ออกจากระบบทุกแท็บ
-      </p>
-      <div className="mt-4 flex flex-wrap gap-3">
-        <Button variant="secondary" loading={busy} onClick={logout}>
-          ออกจากระบบก่อน
-        </Button>
-        <Button variant="secondary" onClick={() => setAcknowledged(true)}>
-          ดำเนินการต่อ
+    <AuthLayout
+      title="ต้องออกจากระบบก่อน"
+      description={`เบราว์เซอร์นี้กำลังเข้าสู่ระบบในชื่อ ${name}`}
+      footer={
+        <Link href="/" className="font-medium text-navy-700 hover:underline">
+          ← กลับไปหน้าแรก
+        </Link>
+      }
+    >
+      <div className="flex flex-col gap-5">
+        <div className="rounded-xl bg-warning-bg p-5">
+          <p className="text-sm leading-relaxed text-warning">
+            การเปิดใช้งานบัญชี <span className="font-semibold">{invitationEmail}</span>{" "}
+            จะทำให้ <span className="font-semibold">{name}</span> ออกจากระบบทุกแท็บ
+            จึงต้องออกจากระบบให้เรียบร้อยก่อน แล้วจึงเริ่มเปิดใช้งานบัญชีใหม่ได้
+          </p>
+          <p className="mt-3 text-[13px] leading-relaxed text-warning">
+            ถ้ายังมีงานค้างอยู่ในอีกแท็บหนึ่ง ให้บันทึกงานนั้นก่อน
+            ลิงก์เปิดใช้งานนี้ยังใช้ได้อยู่ กลับมากดใหม่ได้ตลอด
+          </p>
+        </div>
+        <Button size="lg" loading={busy} onClick={logout} className="w-full">
+          ออกจากระบบแล้วดำเนินการต่อ
         </Button>
       </div>
-    </div>
+    </AuthLayout>
   );
 }
 
@@ -200,7 +228,6 @@ function IdentityStep({ token, invitation }: { token: string; invitation: Invita
       }
     >
       <div className="flex flex-col gap-5">
-        <SignedInWarning invitationEmail={invitation.email} />
         <div className="rounded-xl border border-line bg-canvas p-5">
           <p className="text-sm leading-relaxed text-ink-muted">
             ระบบจะเปรียบเทียบเลขประจำตัวประชาชนที่ได้จาก ThaID
@@ -298,7 +325,6 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
       description={`ยืนยันตัวตนกับ ThaID เรียบร้อยแล้ว เหลือเพียงตั้งรหัสผ่านสำหรับ ${invitation.email}`}
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>
-        <SignedInWarning invitationEmail={invitation.email} />
         <div className="rounded-xl bg-success-bg px-4 py-3 text-[13px] leading-relaxed text-success">
           ยืนยันตัวตนด้วย ThaID สำเร็จ — เลขประจำตัวประชาชนตรงกับที่บันทึกไว้ในระบบ
         </div>

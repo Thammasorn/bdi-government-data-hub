@@ -326,7 +326,6 @@ export interface DatasetRequest {
   authorizePersonalDataAnonymization: boolean | null;
   allowTransformedRawDataSharingSpecifiedPlatforms: string | null;
 
-  legalAcceptedAt: string | null;
 
   revisionNote: string | null;
   submittedAt: string | null;

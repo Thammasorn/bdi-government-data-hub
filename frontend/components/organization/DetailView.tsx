@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { DocumentStack } from "@/components/organization/DocumentStack";
 import { LegalDocumentsCard, useLegalDocuments } from "@/components/organization/LegalDocuments";
 import { SigningDialog } from "@/components/organization/SigningDialog";
 import { Timeline } from "@/components/organization/Timeline";
@@ -612,9 +613,22 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
       <Modal
         open={modal === "approve"}
         onClose={() => setModal(null)}
+        size={legalDocuments && legalDocuments.length > 0 ? "lg" : "md"}
         title={ability.approveLabel ?? "ยืนยัน"}
         description="ยืนยันว่าคุณตรวจสอบข้อมูลและเอกสารทั้งหมดเรียบร้อยแล้ว"
       >
+        {/*
+          เอกสารอยู่ในกล่องยืนยันด้วย (การ์ด "BDI officer ตรวจสอบเอกสาร")
+
+          ด่านของผู้ประสานงานของ BDI เป็นด่านเดียวของเส้นทางนี้ที่ไม่ได้เปิด SigningDialog
+          จึงเป็นด่านเดียวที่กดผ่านได้โดยไม่เคยเห็นเอกสาร — ใช้ `DocumentStack` ตัวเดียว
+          กับที่กล่องลงนามใช้ ไม่ใช่ของใหม่
+        */}
+        {legalDocuments && legalDocuments.length > 0 ? (
+          <div className="mb-6">
+            <DocumentStack documents={legalDocuments} reloadKey={documentRound} />
+          </div>
+        ) : null}
         <p className="text-[15px] leading-relaxed text-ink-muted">
           ระบบจะบันทึกกระบวนการนี้และแจ้งผู้เกี่ยวข้องในขั้นตอนถัดไป
         </p>

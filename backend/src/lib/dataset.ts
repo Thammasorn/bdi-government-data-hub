@@ -575,8 +575,6 @@ export const datasetDraftSchema = z.object({
   allowAggregatedDataSharing: optionalFlag,
   authorizePersonalDataAnonymization: optionalFlag,
   allowTransformedRawDataSharingSpecifiedPlatforms: optionalText(1000),
-
-  legalAccepted: z.boolean().optional(),
 });
 
 export type DatasetDraftInput = z.infer<typeof datasetDraftSchema>;

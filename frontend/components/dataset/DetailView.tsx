@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { DatasetSigningDialog } from "@/components/dataset/DatasetSigningDialog";
+import { DocumentStack } from "@/components/organization/DocumentStack";
 import { LegalDocumentsCard, useLegalDocuments } from "@/components/organization/LegalDocuments";
 import { Timeline } from "@/components/organization/Timeline";
 import { ApprovalSteps } from "@/components/review/ApprovalSteps";
@@ -130,7 +131,7 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string)
   }
 }
 
-type ModalKind = "advance" | "revise" | "reject" | "comment" | "assign" | "sign";
+type ModalKind = "advance" | "revise" | "reject" | "comment" | "comment-confirm" | "assign" | "sign";
 
 export function DatasetDetailView({ id, backHref }: { id: string; backHref?: string }) {
   const { user, ready } = useRequireAuth();
@@ -295,11 +296,30 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
    * ตามที่การ์ดสั่งไว้ ("ส่วนของประวัติ ยังเห็น comment ได้เหมือนเดิม") การซ่อนสิ่งที่
    * ผู้อ่านเปิดดูได้อยู่แล้วอีกที่หนึ่งไม่ใช่การกันข้อมูล
    */
+  const lastSpecialistNote = [...request.events]
+    .reverse()
+    .find((e) => e.taskType === "DATASET_SPECIALIST_REVIEW" && Boolean(e.note?.trim()));
+
   const latestSpecialistNote = user.roles.includes("BDI_FINAL_APPROVER")
     ? undefined
-    : [...request.events]
-        .reverse()
-        .find((e) => e.taskType === "DATASET_SPECIALIST_REVIEW" && Boolean(e.note?.trim()));
+    : lastSpecialistNote;
+
+  /**
+   * ความเห็นล่าสุด **ของผู้ใช้คนนี้เอง** — ตัวที่กล่องบันทึกความเห็นเอามาตั้งต้นให้แก้
+   *
+   * เทียบ `actor.id` ไม่ใช่แค่ชนิดด่าน: ผู้ประสานงานของ BDI เปลี่ยนตัวผู้เชี่ยวชาญได้
+   * ระหว่างทาง คนที่เพิ่งถูกขอความเห็นจึงไม่ควรเปิดกล่องมาเจอข้อความของคนก่อนหน้า
+   * ค้างอยู่ในช่องให้แก้ ราวกับเป็นของตัวเอง (การ์ด "Data Specialist comment")
+   */
+  const ownSpecialistNote = [...request.events]
+    .reverse()
+    .find(
+      (e) =>
+        e.taskType === "DATASET_SPECIALIST_REVIEW" &&
+        e.actor?.id === user.id &&
+        Boolean(e.note?.trim()),
+    );
+  const editingNote = Boolean(ownSpecialistNote);
 
   const closeModal = () => {
     setModal(null);
@@ -493,8 +513,16 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
                 </Button>
               ) : null}
               {ability.canComment ? (
-                <Button variant="secondary" onClick={() => setModal("comment")}>
-                  บันทึกความเห็น
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    // แก้ของเดิมต้องเห็นของเดิม — กล่องเปล่าอ่านเหมือนความเห็นก่อนหน้าหายไป
+                    setNote(ownSpecialistNote?.note ?? "");
+                    setNoteError(undefined);
+                    setModal("comment");
+                  }}
+                >
+                  {editingNote ? "แก้ไขความเห็น" : "บันทึกความเห็น"}
                 </Button>
               ) : null}
               {ability.canRevise ? (
@@ -674,10 +702,6 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
                     ],
                   ] as DetailRow[])
                 : []),
-              [
-                "ยอมรับเงื่อนไขการนำส่งข้อมูล",
-                request.legalAcceptedAt ? `ยอมรับเมื่อ ${formatThaiDate(request.legalAcceptedAt)}` : null,
-              ],
             ]}
           />
         </Card>
@@ -813,7 +837,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
       <Modal
         open={modal === "comment"}
         onClose={closeModal}
-        title="บันทึกความเห็นของผู้เชี่ยวชาญ"
+        title={editingNote ? "แก้ไขความเห็นของผู้เชี่ยวชาญ" : "บันทึกความเห็นของผู้เชี่ยวชาญ"}
         description="ความเห็นจะปรากฏในประวัติการดำเนินการ โดยไม่เปลี่ยนสถานะคำขอ"
       >
         <TextAreaField
@@ -830,8 +854,53 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
           <Button variant="secondary" onClick={closeModal}>
             ยกเลิก
           </Button>
+          <Button
+            loading={busy}
+            onClick={() => {
+              if (!editingNote) {
+                void act("comment");
+                return;
+              }
+              // แก้ของเดิมต้องถามก่อน — ของเดิมคือสิ่งที่เจ้าหน้าที่อาจอ่านไปแล้ว
+              if (note.trim().length === 0) {
+                setNoteError("กรุณาพิมพ์ความเห็น");
+                return;
+              }
+              setModal("comment-confirm");
+            }}
+          >
+            {editingNote ? "บันทึกการแก้ไข" : "บันทึกความเห็น"}
+          </Button>
+        </div>
+      </Modal>
+
+      {/*
+        ยืนยันก่อนทับความเห็นเดิม (การ์ด "Data Specialist comment")
+
+        "ยกเลิก" กลับไปกล่องแก้ไขพร้อมข้อความที่พิมพ์ไว้ ไม่ใช่ทิ้งทั้งหมดแล้วปิด — คนที่
+        กดยกเลิกตรงนี้กำลังบอกว่า "ขอดูอีกที" ไม่ใช่ "ไม่เอาแล้ว" จึงเรียก setModal ตรง ๆ
+        ไม่ใช่ closeModal() ซึ่งล้างช่องข้อความทิ้ง
+
+        ความเห็นเดิมยังอยู่ในประวัติการดำเนินการตามเดิม — สิ่งที่ถูกทับคือ "ความเห็นล่าสุด"
+        ที่ยกขึ้นมาไว้บนสุดของหน้าให้ผู้ประสานงานของ BDI อ่าน ข้อความจึงบอกไว้ตรง ๆ
+        แทนที่จะปล่อยให้เข้าใจว่าของเดิมถูกลบทิ้ง
+      */}
+      <Modal
+        open={modal === "comment-confirm"}
+        onClose={closeModal}
+        title="ทับความเห็นเดิม"
+        description="ความเห็นใหม่จะกลายเป็นความเห็นล่าสุดที่ผู้ประสานงานของ BDI เห็น"
+      >
+        <p className="text-[15px] leading-relaxed text-ink-muted">
+          ความเห็นเดิมที่คุณบันทึกไว้จะถูกแทนที่ด้วยฉบับนี้
+          และยังคงอ่านย้อนหลังได้ในประวัติการดำเนินการ
+        </p>
+        <div className="mt-6 flex justify-end gap-3">
+          <Button variant="secondary" onClick={() => setModal("comment")}>
+            ยกเลิก
+          </Button>
           <Button loading={busy} onClick={() => act("comment")}>
-            บันทึกความเห็น
+            ตกลง
           </Button>
         </div>
       </Modal>
@@ -889,13 +958,27 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         />
       ) : null}
 
+      {/*
+        เอกสารอยู่ในกล่อง ไม่ใช่อยู่ที่การ์ดกลางหน้า (การ์ด "BDI officer ตรวจสอบเอกสาร")
+
+        ด่านของผู้ประสานงานของ BDI เป็นด่านเดียวที่เหลืออยู่ซึ่งกดผ่านได้โดยไม่เคยเปิดเอกสาร
+        เลยสักฉบับ — สองด่านที่เหลือของเส้นทางนี้เปิด SigningDialog ซึ่งเรียงเอกสารไว้ในกล่อง
+        ตั้งแต่การ์ด "BDI approver preview before approve" (2026-09-09) แล้ว ที่นี่จึงใช้
+        `DocumentStack` ตัวเดียวกัน ไม่ใช่คอมโพเนนต์ใหม่ที่ต้องดูแลอีกตัว
+      */}
       <Modal
         open={modal === "advance"}
         onClose={closeModal}
+        size={legalDocuments && legalDocuments.length > 0 ? "lg" : "md"}
         // กล่องยืนยันใช้คำว่า "ยืนยัน" เสมอ — ชื่อการกระทำอยู่ที่ปุ่มที่เพิ่งกดไปแล้ว
         title="ยืนยัน"
         description="ยืนยันว่าคุณตรวจสอบข้อมูลและเอกสารทั้งหมดเรียบร้อยแล้ว"
       >
+        {legalDocuments && legalDocuments.length > 0 ? (
+          <div className="mb-6">
+            <DocumentStack documents={legalDocuments} reloadKey={documentRound} />
+          </div>
+        ) : null}
         <p className="text-[15px] leading-relaxed text-ink-muted">
           ระบบจะบันทึกกระบวนการนี้และแจ้งผู้เกี่ยวข้องในขั้นตอนถัดไป
         </p>
