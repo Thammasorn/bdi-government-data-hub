@@ -6,7 +6,6 @@ import { useEffect, useState } from "react";
 
 import { LegalDocumentsCard, useLegalDocuments } from "@/components/organization/LegalDocuments";
 import { SigningDialog } from "@/components/organization/SigningDialog";
-import { DocumentWalkthrough } from "@/components/review/DocumentWalkthrough";
 import { Timeline } from "@/components/organization/Timeline";
 import { ApprovalSteps } from "@/components/review/ApprovalSteps";
 import { RequestMovedNotice } from "@/components/review/RequestMovedNotice";
@@ -610,26 +609,29 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         </div>
       </Modal>
 
-      {/*
-        ด่านของผู้ประสานงานของ BDI — อ่านเอกสารทีละฉบับก่อน แล้วจึงยืนยัน
-        เหตุผลและที่มาอยู่ที่กล่องเดียวกันของเส้นทางชุดข้อมูล (`dataset/DetailView.tsx`)
-      */}
-      <DocumentWalkthrough
+      <Modal
         open={modal === "approve"}
         onClose={() => setModal(null)}
-        documents={legalDocuments ?? []}
-        reloadKey={documentRound}
-        confirmTitle={ability.approveLabel ?? "ยืนยัน"}
-        confirmDescription="ยืนยันว่าคุณตรวจสอบข้อมูลและเอกสารทั้งหมดเรียบร้อยแล้ว"
-        confirmBody={
-          <p className="text-[15px] leading-relaxed text-ink-muted">
-            ระบบจะบันทึกกระบวนการนี้และแจ้งผู้เกี่ยวข้องในขั้นตอนถัดไป
-          </p>
-        }
-        confirmLabel={ability.approveLabel ?? "ยืนยัน"}
-        busy={busy}
-        onConfirm={() => act("approve")}
-      />
+        title={ability.approveLabel ?? "ยืนยัน"}
+        description="ยืนยันว่าคุณตรวจสอบข้อมูลและเอกสารทั้งหมดเรียบร้อยแล้ว"
+      >
+        {/*
+          กล่องยืนยันสั้น ๆ ไม่มีเอกสารอยู่ข้างใน — เหตุผลเดียวกับกล่องของเส้นทางชุดข้อมูล
+          (`dataset/DetailView.tsx`): BDI ขอให้กลับไปแบบเดิมเมื่อ 2026-09-11 บ่าย
+          เอกสารอ่านได้จากการ์ด "เอกสารข้อตกลง" ที่อยู่เหนือปุ่มนี้ในหน้าเดียวกัน
+        */}
+        <p className="text-[15px] leading-relaxed text-ink-muted">
+          ระบบจะบันทึกกระบวนการนี้และแจ้งผู้เกี่ยวข้องในขั้นตอนถัดไป
+        </p>
+        <div className="mt-6 flex justify-end gap-3">
+          <Button variant="secondary" onClick={() => setModal(null)}>
+            ยกเลิก
+          </Button>
+          <Button loading={busy} onClick={() => act("approve")}>
+            {ability.approveLabel}
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

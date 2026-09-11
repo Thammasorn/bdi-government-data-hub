@@ -6,7 +6,6 @@ import { useCallback, useEffect, useState } from "react";
 
 import { DatasetSigningDialog } from "@/components/dataset/DatasetSigningDialog";
 import { LegalDocumentsCard, useLegalDocuments } from "@/components/organization/LegalDocuments";
-import { DocumentWalkthrough } from "@/components/review/DocumentWalkthrough";
 import { Timeline } from "@/components/organization/Timeline";
 import { ApprovalSteps } from "@/components/review/ApprovalSteps";
 import { RequestMovedNotice } from "@/components/review/RequestMovedNotice";
@@ -966,31 +965,32 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
       ) : null}
 
       {/*
-        ด่านของผู้ประสานงานของ BDI — อ่านเอกสารทีละฉบับก่อน แล้วจึงยืนยัน
+        กล่องยืนยันสั้น ๆ ไม่มีเอกสารอยู่ข้างใน (BDI ยืนยันเมื่อ 2026-09-11 บ่าย)
 
-        เอกสารเข้ามาอยู่ในกล่องตั้งแต่การ์ด "BDI officer ตรวจสอบเอกสาร" (เช้าวันเดียวกัน)
-        ตอนนั้นเรียงต่อกันลงมาแบบ `DocumentStack` แล้ว BDI สั่งเพิ่มในบ่ายวันนั้นว่า
-        "modal preview ของทุกคน ให้ดูทีละเอกสาร (เหมือน organization approver) ยกเว้น
-        bdi approver ขึ้นถูกแล้ว" — กล่องนี้จึงเดินทีละฉบับ ส่วนกล่องของผู้อนุมัติ BDI
-        (`DatasetSigningDialog`) ยังเรียงทั้งชุดตามเดิม
+        เช้าวันเดียวกันเคยเอาเอกสารทั้งชุดมาไว้ในกล่องนี้ตามการ์ด "BDI officer ตรวจสอบ
+        เอกสาร" แล้ว BDI ขอให้กลับไปแบบเดิม — "BDI officer ให้ทำเหมือนเดิม (preview แล้ว
+        ตรวจสอบได้เลย ไม่ต้องมี modal)" เอกสารเปิดอ่านได้จากการ์ด "เอกสารข้อตกลง" กลางหน้า
+        ซึ่งอยู่เหนือปุ่มนี้อยู่แล้ว การบังคับให้อ่านซ้ำในกล่องเพิ่มขั้นตอนโดยไม่เพิ่มอะไร
       */}
-      <DocumentWalkthrough
+      <Modal
         open={modal === "advance"}
         onClose={closeModal}
-        documents={legalDocuments ?? []}
-        reloadKey={documentRound}
         // กล่องยืนยันใช้คำว่า "ยืนยัน" เสมอ — ชื่อการกระทำอยู่ที่ปุ่มที่เพิ่งกดไปแล้ว
-        confirmTitle="ยืนยัน"
-        confirmDescription="ยืนยันว่าคุณตรวจสอบข้อมูลและเอกสารทั้งหมดเรียบร้อยแล้ว"
-        confirmBody={
-          <p className="text-[15px] leading-relaxed text-ink-muted">
-            ระบบจะบันทึกกระบวนการนี้และแจ้งผู้เกี่ยวข้องในขั้นตอนถัดไป
-          </p>
-        }
-        confirmLabel={ability?.advanceLabel ?? "ยืนยัน"}
-        busy={busy}
-        onConfirm={() => act("approve")}
-      />
+        title="ยืนยัน"
+        description="ยืนยันว่าคุณตรวจสอบข้อมูลและเอกสารทั้งหมดเรียบร้อยแล้ว"
+      >
+        <p className="text-[15px] leading-relaxed text-ink-muted">
+          ระบบจะบันทึกกระบวนการนี้และแจ้งผู้เกี่ยวข้องในขั้นตอนถัดไป
+        </p>
+        <div className="mt-6 flex justify-end gap-3">
+          <Button variant="secondary" onClick={closeModal}>
+            ยกเลิก
+          </Button>
+          <Button loading={busy} onClick={() => act("approve")}>
+            {ability?.advanceLabel}
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }
