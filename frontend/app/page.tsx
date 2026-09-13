@@ -14,6 +14,7 @@ import { Card, DotDecoration, OrganizationStatusBadge } from "@/components/ui/Ca
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api } from "@/lib/api";
+import { useDatasetRegistration } from "@/lib/use-dataset-registration";
 import { useOrganizationRegistration } from "@/lib/use-organization-registration";
 import {
   formatThaiDate,
@@ -455,12 +456,19 @@ function HomeHeader({
  * โดยกล่องของงานที่ค้างรอฝั่ง BDI ถูกยุบเป็นบรรทัดเล็กใต้ตัวเลขรวม เพราะเป็นสิ่งที่หน่วยงาน
  * ทำอะไรกับมันไม่ได้ รู้ไว้เฉย ๆ ว่ายังไม่หายไปไหน
  *
+ * กล่อง "แบบร่าง + แก้ไข" มีลิงก์เปิดฟอร์มใบใหม่อยู่ใต้ตัวเลข เพราะมันเป็นกล่องเดียวในแถวที่
+ * ผู้อ่านลงมือทำอะไรกับมันได้ทันที และ "ยังไม่มีใบไหนค้าง" (เลข 0) คือตอนที่คำถามถัดไปของ
+ * ผู้ประสานงานของหน่วยงานคือ "แล้วจะเพิ่มชุดข้อมูลยังไง" พอดี — เดิมต้องเดาว่าต้องกดเมนู
+ * "คำขอส่งชุดข้อมูล" ก่อนแล้วค่อยหาปุ่มในนั้น
+ *
  * **กล่องไหนเด่นมาจาก `mine` ที่ server ส่งมา ไม่ได้อ่าน role เอง** ตามกติกาหัวไฟล์
  * lib/stage.ts — `myNodeKeys()` ยก DRAFT/RETURNED ให้ผู้ดำเนินการของหน่วยงาน และยก
  * ORGANIZATION_APPROVAL ให้ผู้มีอำนาจกระทำการแทน ซึ่งตรงกับที่การ์ดสั่งไว้พอดี ถ้าวันหนึ่ง
  * ด่านย้ายมือ กล่องที่เด่นจะย้ายตาม โดยไม่ต้องแก้ไฟล์นี้
  */
 function StatTiles({ summary }: { summary: ListSummary }) {
+  const { start: startDataset, starting: startingDataset } = useDatasetRegistration();
+
   const tiles = useMemo(() => {
     const nodeOf = (key: NodeKey) => summary.nodes.find((n) => n.key === key) ?? null;
     /**
@@ -491,6 +499,7 @@ function StatTiles({ summary }: { summary: ListSummary }) {
         note: `อยู่ระหว่างรอ BDI ดำเนินการ ${waitingOnBdi.toLocaleString("th-TH")}`,
         mine: false,
         tone: "text-navy-800",
+        canStartDataset: false,
       },
       {
         key: "DRAFTING",
@@ -499,6 +508,14 @@ function StatTiles({ summary }: { summary: ListSummary }) {
         note: null,
         mine: Boolean(draft?.mine || returned?.mine),
         tone: "text-navy-800",
+        /**
+         * ลิงก์เปิดฟอร์มใบใหม่ขึ้นเฉพาะกับเจ้าของกล่องนี้ — `mine` ของโหนดฉบับร่าง
+         * เป็นจริงกับผู้ประสานงานของหน่วยงานเท่านั้น (myNodeKeys() ยก DRAFT/RETURNED
+         * ให้ ORGANIZATION_REVISION) ซึ่งเป็นตำแหน่งเดียวกับที่ยื่นคำขอชุดข้อมูลได้จริง
+         * ผู้มีอำนาจอนุมัติของหน่วยงานจึงไม่เห็นลิงก์ในกล่องของเขา และไม่ควรเห็น —
+         * เขาลงนาม ไม่ได้เป็นคนกรอก
+         */
+        canStartDataset: true,
       },
       {
         key: "ORGANIZATION_APPROVAL",
@@ -507,6 +524,7 @@ function StatTiles({ summary }: { summary: ListSummary }) {
         note: null,
         mine: Boolean(approval?.mine),
         tone: "text-navy-800",
+        canStartDataset: false,
       },
       {
         /* คำของปลายทางนี้คือ "เปิดใช้งานแล้ว" ไม่ใช่ "อนุมัติแล้ว" แบบ badge ในตาราง —
@@ -517,6 +535,7 @@ function StatTiles({ summary }: { summary: ListSummary }) {
         note: null,
         mine: false,
         tone: "text-success",
+        canStartDataset: false,
       },
     ];
   }, [summary]);
@@ -531,7 +550,7 @@ function StatTiles({ summary }: { summary: ListSummary }) {
           <div
             key={t.key}
             className={clsx(
-              "rounded-2xl px-5 py-4 ring-1",
+              "flex flex-col items-start rounded-2xl px-5 py-4 ring-1",
               // "งานของคุณ" มีทั้งเส้นข้าง คำกำกับ และสี — สีอย่างเดียวสื่อไม่ได้
               t.mine && "border-l-[3px] border-l-coral-500 bg-white shadow-card ring-coral-200",
               dimmed
@@ -567,6 +586,19 @@ function StatTiles({ summary }: { summary: ListSummary }) {
               >
                 {t.note}
               </p>
+            ) : null}
+            {/* ปุ่ม ไม่ใช่ <a> เพราะปลายทางยังไม่มี id จนกว่าจะสร้างฉบับร่างเสร็จ —
+                `POST /api/dataset-requests` เป็นคนบอกว่าจะพาไปหน้าไหน (ดู
+                lib/use-dataset-registration.ts) ตัวหนังสือจึงทำให้ดูเป็นลิงก์แทน */}
+            {t.canStartDataset && t.mine ? (
+              <button
+                type="button"
+                onClick={startDataset}
+                disabled={startingDataset}
+                className="mt-1.5 text-left text-[11px] font-medium leading-snug text-coral-600 underline-offset-4 hover:underline disabled:opacity-60"
+              >
+                {startingDataset ? "กำลังเปิดฟอร์ม…" : "หรือลงทะเบียนชุดข้อมูลเพิ่มเติม →"}
+              </button>
             ) : null}
           </div>
         );
