@@ -698,6 +698,61 @@ export async function sendDatasetRevisionRequested(
   );
 }
 
+/**
+ * ผู้เชี่ยวชาญบันทึกความเห็นกลับมาแล้ว — ถึงผู้ประสานงานของ BDI
+ *
+ * โครงเดียวกับ sendDatasetRevisionRequested() (ความเห็น + ใคร + เมื่อไหร่) แต่กล่องเป็นสี navy
+ * ไม่ใช่แดง เพราะนี่ไม่ใช่คำสั่งให้แก้อะไร และ **ด่านไม่ได้ขยับ** — คำขอยังอยู่ที่ผู้ประสานงาน
+ * ของ BDI เหมือนเดิม ถ้อยคำจึงต้องไม่อ่านเหมือน "มีงานใหม่เข้าคิว"
+ */
+export async function sendDatasetSpecialistCommented(
+  to: string[],
+  info: {
+    requestNumber: string;
+    organizationCode: string | null;
+    datasetName: string;
+    organizationName: string;
+    note: string;
+    byName: string;
+    at: Date;
+    id: string;
+  },
+  progress?: JourneyProgress | null,
+) {
+  const when = new Intl.DateTimeFormat("th-TH", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Bangkok",
+  }).format(info.at);
+
+  await sendMany(
+    to,
+    datasetSubject(info.requestNumber, `ผู้เชี่ยวชาญให้ความเห็นต่อชุดข้อมูล: ${info.datasetName}`),
+    layout({
+      title: "ผู้เชี่ยวชาญให้ความเห็นกลับมาแล้ว",
+      orgCode: info.organizationCode,
+      intro:
+        `ผู้เชี่ยวชาญด้านข้อมูลบันทึกความเห็นต่อคำขอ <strong style="color:${TEXT};">${escapeHtml(info.datasetName)}</strong> ` +
+        "ไว้ให้ประกอบการตัดสินใจแล้ว คำขอยังอยู่ที่ขั้นตรวจสอบของผู้ประสานงานของ BDI ตามเดิม",
+      body:
+        `<div style="background:#F3F5FB;border-left:3px solid ${NAVY};border-radius:8px;padding:16px;">
+           <div style="font:600 13px/1 'Helvetica Neue',Arial,sans-serif;color:${NAVY};margin-bottom:8px;">ความเห็นของผู้เชี่ยวชาญ</div>
+           <div style="font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};white-space:pre-wrap;">${escapeHtml(info.note)}</div>
+           <div style="margin-top:12px;font:400 12px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
+             โดย ${escapeHtml(info.byName)} · ${when}
+           </div>
+         </div>` +
+        summaryTable([
+          ["เลขที่คำขอ", info.requestNumber],
+          ["ชื่อชุดข้อมูล", info.datasetName],
+          ["หน่วยงานเจ้าของข้อมูล", info.organizationName],
+        ]),
+      steps: stepsBlock(progress),
+      button: { label: "เปิดดูคำขอ", url: bdiLink(info.id) },
+    }),
+  );
+}
+
 export async function sendDatasetSpecialistAssigned(
   to: string,
   info: {

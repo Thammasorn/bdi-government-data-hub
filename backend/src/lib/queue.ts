@@ -277,11 +277,57 @@ export type JourneyNodeCount = JourneyNodeShape & { count: number; mine: boolean
 export type JourneySummary = {
   total: number;
   mine: number;
+  /** ในกองที่รอผู้อ่านอยู่ มีกี่ใบที่ผู้เชี่ยวชาญให้ความเห็นกลับมาแล้ว (0 เสมอในเส้นทางหน่วยงาน) */
+  advisory: number;
   /** คำนามที่ใช้นับของในเส้นทางนี้ — กล่องเขียน "จำนวน: 20 <unit>" */
   unit: string;
   nodes: JourneyNodeCount[];
   edges: JourneyEdge[];
 };
+
+/**
+ * "ความเห็นของผู้เชี่ยวชาญกลับมาแล้วกี่ใบ" — นับคำขอ ไม่ใช่นับความเห็น
+ *
+ * การขอความเห็นไม่ย้ายด่าน คำขอจึงค้างอยู่ที่ด่านของผู้ประสานงานของ BDI ตลอด และตัวเลขนี้
+ * ตอบคำถามเดียวว่า "ในกองที่รอฉันอยู่ ใบไหนมีความเห็นให้อ่านแล้วบ้าง" — **อ่านจากสถานะจริง
+ * ไม่ใช่จากสถานะอ่าน/ยังไม่อ่าน** มันจึงลดลงเองเมื่อผู้ประสานงานกดส่งต่อหรือส่งกลับ และไม่มี
+ * ทางค้างเป็นเลขที่กดล้างไม่ได้
+ *
+ * **ผู้เชี่ยวชาญต้องได้ 0** ไม่ใช่จำนวนความเห็นของตัวเอง — `myNodeKeys()` พาเขามาที่
+ * `OFFICER_REVIEW` ด้วย (`ADVISORY_NODE_KEYS`) เพื่อให้แท็บ "ที่ต้องดำเนินการ" ของเขาไม่ว่าง
+ * ตัวเลขนี้จึงถามจาก `ROLE_TASK_TYPES` ตรง ๆ ว่า "ถือด่านนี้จริงไหม" ไม่ได้ถามจาก mineKeys
+ */
+async function advisoryReturnedCount(params: {
+  db: Db;
+  subjectType: SubjectType;
+  roles: RoleCode[];
+  active: { subjectId: string; taskType: ReviewTaskType }[];
+}): Promise<number> {
+  if (params.subjectType !== SubjectType.DATASET_REGISTRATION_REQUEST) return 0;
+
+  const ownsGate = params.roles.some((r) =>
+    (ROLE_TASK_TYPES[r] ?? []).includes(ReviewTaskType.BDI_OFFICER_REVIEW),
+  );
+  if (!ownsGate) return 0;
+
+  const waiting = params.active
+    .filter((row) => row.taskType === ReviewTaskType.BDI_OFFICER_REVIEW)
+    .map((row) => row.subjectId);
+  if (waiting.length === 0) return 0;
+
+  // distinct เพราะผู้เชี่ยวชาญบันทึกความเห็นได้หลายรอบ และแต่ละรอบเป็นแถวใหม่
+  const withNotes = await params.db.reviewTask.findMany({
+    where: {
+      subjectType: params.subjectType,
+      subjectId: { in: waiting },
+      taskType: ReviewTaskType.DATASET_SPECIALIST_REVIEW,
+      resultComment: { not: null },
+    },
+    distinct: ["subjectId"],
+    select: { subjectId: true },
+  });
+  return withNotes.length;
+}
 
 /**
  * ตัวเลขบนแผนภาพ
@@ -317,8 +363,11 @@ export async function journeySummary(params: {
     if (isTerminalKey(row.status)) counts.set(row.status, row._count._all);
   }
 
+  // เก็บไว้นอก if เพราะ advisoryReturnedCount() ใช้ต่อ — ด่านที่ค้างอยู่ของแต่ละใบ
+  let active: { subjectId: string; taskType: ReviewTaskType }[] = [];
+
   if (inflight.length > 0) {
-    const active = await params.db.reviewTask.findMany({
+    active = await params.db.reviewTask.findMany({
       where: {
         subjectType: params.subjectType,
         subjectId: { in: inflight },
@@ -335,6 +384,13 @@ export async function journeySummary(params: {
     }
   }
 
+  const advisory = await advisoryReturnedCount({
+    db: params.db,
+    subjectType: params.subjectType,
+    roles: params.roles,
+    active,
+  });
+
   const mineKeys = new Set(myNodeKeys(params.subjectType, params.roles));
   const graph = journeyGraph(params.subjectType);
   const nodes: JourneyNodeCount[] = graph.nodes.map((n) => ({
@@ -349,6 +405,7 @@ export async function journeySummary(params: {
     // ช่องกับปลายทางไม่ทับกัน (ใบที่มี active task เป็น SUBMITTED/UNDER_REVIEW เสมอ)
     // ผลบวกจึงไม่นับซ้ำ และไม่ต้องยิงคิวรีเพิ่ม
     mine: nodes.filter((n) => n.mine).reduce((sum, n) => sum + n.count, 0),
+    advisory,
     nodes,
     edges: graph.edges,
   };
