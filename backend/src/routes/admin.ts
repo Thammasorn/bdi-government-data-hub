@@ -16,6 +16,12 @@ import { uploadedFile } from "../lib/attachment.js";
 import { TEMPLATE_VARIABLES, VARIABLE_GROUPS } from "../lib/document-render.js";
 import { publishVersion } from "../lib/legal.js";
 import { lookupZipcode, resolveAddressCodes, resolveAddressNames } from "../lib/address.js";
+import {
+  CHOICE_FIELD_KEYS,
+  choiceStatus,
+  refreshChoices,
+  type ChoiceFieldKey,
+} from "../lib/dataset-choices.js";
 import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
 import { issueActivationKey } from "../lib/iam.js";
 import { sendInvitationEmail } from "../lib/mail.js";
@@ -1234,3 +1240,299 @@ adminRouter.post(
     });
   },
 );
+
+/**
+ * ────────────────────────────────────────────────────────── ตัวเลือกในแบบฟอร์มชุดข้อมูล
+ *
+ * นี่คือทางที่ทำให้ "แก้ตัวเลือกได้โดยไม่ต้องแก้โค้ด" เป็นจริง — เดิมรายการนี้เป็นค่าคงที่
+ * ใน `lib/dataset.ts` คู่กับสำเนาใน `frontend/lib/dataset-form.ts` การเพิ่มตัวเลือกหรือ
+ * แก้ป้ายสักตัวจึงต้องแก้โค้ดสองไฟล์ merge แล้ว deploy ใหม่ทั้งระบบ
+ *
+ * ใช้ x-admin-token เหมือน endpoint อื่นในไฟล์นี้ — ยังไม่มีหน้าจอแอดมินในระบบ
+ *
+ * **ไม่มี DELETE โดยตั้งใจ** คำขอที่บันทึกไปแล้วถือรหัสนั้นอยู่ในคอลัมน์ของมัน และเอกสาร
+ * A4 ที่ลงนามแล้วก็พิมพ์ช่องติ๊กของรหัสนั้นไว้ การลบแถวทิ้งจะทำให้คำขอเก่ากลายเป็นคำขอที่
+ * ถือค่าที่ระบบไม่รู้จัก — ปิดด้วย `isActive: false` แทน ซึ่งเอาออกจาก dropdown ของคนที่
+ * กำลังกรอก โดยที่ของเก่ายังตรวจผ่านและยังพิมพ์ ✔ ได้เหมือนเดิม
+ */
+
+/** ช่องที่เพิ่มรหัสใหม่ไม่ได้ เพราะตารางเงื่อนไขในโค้ดตัดสินตัวเลือกของมันเอง */
+const RULE_BOUND_FIELDS: Record<string, string> = {
+  dataClassification:
+    "ระดับชั้นข้อมูล (ข้อ 13.3) ถูกจำกัดด้วยตารางเงื่อนไขในชีท conditions — " +
+    "หมวดหมู่ข้อมูลแต่ละหมวดเปิดให้เลือกได้เฉพาะรหัส 01–05 ที่กำหนดไว้ รหัสใหม่จะถูกล้างทิ้ง" +
+    "ทุกครั้งที่บันทึก การเพิ่มระดับชั้นต้องแก้ metadataRules() ใน backend/src/lib/dataset.ts ด้วย",
+  licenseId:
+    "สัญญาอนุญาต (ข้อ 14) ถูกจำกัดด้วยตารางเงื่อนไขในชีท conditions — " +
+    "ระดับชั้นข้อมูลแต่ละระดับเปิดให้เลือกได้เฉพาะ G0 / G2 / G5 รหัสใหม่จะถูกล้างทิ้ง" +
+    "ทุกครั้งที่บันทึก การเพิ่มสัญญาอนุญาตต้องแก้ metadataRules() ใน backend/src/lib/dataset.ts ด้วย",
+};
+
+function parseFieldKey(value: string): ChoiceFieldKey | null {
+  return (CHOICE_FIELD_KEYS as readonly string[]).includes(value)
+    ? (value as ChoiceFieldKey)
+    : null;
+}
+
+const unknownField = (value: string) => ({
+  error: "not_found",
+  message:
+    `ไม่มีช่องชื่อ ${value} ในแบบฟอร์มลงทะเบียนชุดข้อมูล ` +
+    `ช่องที่มีตัวเลือกให้แก้ได้คือ: ${CHOICE_FIELD_KEYS.join(", ")}`,
+});
+
+adminRouter.get("/dataset-choices", async (_req, res) => {
+  const rows = await prisma.datasetChoice.findMany({
+    orderBy: [{ fieldKey: "asc" }, { displayOrder: "asc" }],
+    select: {
+      id: true,
+      fieldKey: true,
+      code: true,
+      labelTh: true,
+      labelEn: true,
+      displayOrder: true,
+      isActive: true,
+      updatedAt: true,
+    },
+  });
+
+  // จัดกลุ่มตามช่อง และไล่ตามลำดับที่ฟอร์มถาม ไม่ใช่ตามตัวอักษรของ field_key
+  const byField = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const bucket = byField.get(row.fieldKey);
+    if (bucket) bucket.push(row);
+    else byField.set(row.fieldKey, [row]);
+  }
+
+  res.json({
+    fields: CHOICE_FIELD_KEYS.map((fieldKey) => ({
+      fieldKey,
+      /** ช่องที่เพิ่มรหัสใหม่ไม่ได้ พร้อมเหตุผล — null แปลว่าเพิ่มได้ */
+      addRestriction: RULE_BOUND_FIELDS[fieldKey] ?? null,
+      choices: (byField.get(fieldKey) ?? []).map((row) => ({
+        id: row.id,
+        code: row.code,
+        labelTh: row.labelTh,
+        labelEn: row.labelEn,
+        displayOrder: row.displayOrder,
+        isActive: row.isActive,
+        updatedAt: row.updatedAt,
+      })),
+    })),
+    /**
+     * แถวที่ field_key ไม่ใช่ช่องที่โค้ดรู้จัก — ระบบไม่ได้ใช้ แต่บอกไว้ให้เห็น
+     * ไม่งั้นแถวที่พิมพ์ชื่อช่องผิดจะหายเงียบและไม่มีใครรู้ว่าทำไมแก้แล้วไม่มีผล
+     */
+    ignored: rows
+      .filter((row) => !parseFieldKey(row.fieldKey))
+      .map((row) => ({ id: row.id, fieldKey: row.fieldKey, code: row.code })),
+  });
+});
+
+/**
+ * โหลด cache ใหม่โดยไม่ต้องรีสตาร์ต backend
+ *
+ * `seed:masters` และการแก้ผ่าน psql เกิดในคนละโปรเซสกับ API แถวที่เปลี่ยนที่นั่นจึงยังไม่
+ * เข้า cache ของ API จนกว่าจะรีสตาร์ต — นี่คือคำสั่งที่ใช้แทนการรีสตาร์ต
+ * (การแก้ผ่าน endpoint ข้างบนไม่ต้องเรียก ทั้งสองตัวเรียก refreshChoices() ให้เองแล้ว)
+ */
+adminRouter.post("/dataset-choices/refresh", async (_req, res) => {
+  await refreshChoices();
+  const { source, count } = choiceStatus();
+  res.json({
+    source,
+    count,
+    message:
+      source === "database"
+        ? `โหลดตัวเลือก ${count} รายการจากฐานข้อมูลแล้ว`
+        : `ยังไม่พบตัวเลือกในฐานข้อมูล ระบบใช้ค่าตั้งต้นในโค้ด ${count} รายการอยู่ — กรุณารัน seed:masters`,
+  });
+});
+
+const newChoiceSchema = z.object({
+  code: z
+    .string({ error: "กรุณาระบุรหัสของตัวเลือก" })
+    .trim()
+    .min(1, "กรุณาระบุรหัสของตัวเลือก")
+    .max(16, "รหัสต้องยาวไม่เกิน 16 ตัวอักษร"),
+  labelTh: z
+    .string({ error: "กรุณาระบุป้ายภาษาไทยของตัวเลือก" })
+    .trim()
+    .min(1, "กรุณาระบุป้ายภาษาไทยของตัวเลือก")
+    .max(255, "ป้ายต้องยาวไม่เกิน 255 ตัวอักษร"),
+  labelEn: z.string().trim().max(255, "ป้ายต้องยาวไม่เกิน 255 ตัวอักษร").nullable().optional(),
+  /** ไม่ระบุ = ต่อท้ายรายการ ซึ่งเป็นที่ที่ตัวเลือกใหม่ควรอยู่จนกว่าจะมีคนสั่งเป็นอย่างอื่น */
+  displayOrder: z.number().int("ลำดับต้องเป็นจำนวนเต็ม").min(0, "ลำดับต้องไม่ติดลบ").optional(),
+});
+
+adminRouter.post("/dataset-choices/:fieldKey", async (req, res) => {
+  const fieldKey = parseFieldKey(String(req.params.fieldKey ?? ""));
+  if (!fieldKey) {
+    res.status(404).json(unknownField(String(req.params.fieldKey ?? "")));
+    return;
+  }
+
+  /**
+   * ปฏิเสธตั้งแต่ต้นทาง ไม่ใช่ปล่อยให้เพิ่มได้แล้วไปหายตอนบันทึกคำขอ —
+   * normaliseMetadata() ล้างรหัสที่อยู่นอกตารางเงื่อนไขทิ้งทุกครั้งที่เขียน ซึ่งจะกลาย
+   * เป็นรายงานบั๊ก "เพิ่มรหัสแล้วมันหาย" ที่ไล่หาต้นตอยาก
+   */
+  const restriction = RULE_BOUND_FIELDS[fieldKey];
+  if (restriction) {
+    res.status(409).json({ error: "rule_bound_field", message: restriction });
+    return;
+  }
+
+  const parsed = newChoiceSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+    return;
+  }
+
+  const existing = await prisma.datasetChoice.findUnique({
+    where: { fieldKey_code: { fieldKey, code: parsed.data.code } },
+    select: { id: true, labelTh: true, isActive: true },
+  });
+  if (existing) {
+    res.status(409).json({
+      error: "code_exists",
+      message:
+        `ช่องนี้มีรหัส ${parsed.data.code} อยู่แล้ว ("${existing.labelTh}"` +
+        `${existing.isActive ? "" : " — ปิดอยู่"}) ` +
+        `ถ้าต้องการแก้ป้ายหรือเปิดใช้งานอีกครั้ง ให้ใช้ PATCH แทน`,
+    });
+    return;
+  }
+
+  const last = await prisma.datasetChoice.findFirst({
+    where: { fieldKey },
+    orderBy: { displayOrder: "desc" },
+    select: { displayOrder: true },
+  });
+
+  const created = await prisma.datasetChoice.create({
+    data: {
+      fieldKey,
+      code: parsed.data.code,
+      labelTh: parsed.data.labelTh,
+      labelEn: parsed.data.labelEn ?? null,
+      displayOrder: parsed.data.displayOrder ?? (last?.displayOrder ?? 0) + 1,
+      createdBy: SYSTEM_USER_ID,
+      updatedBy: SYSTEM_USER_ID,
+    },
+    select: {
+      id: true,
+      fieldKey: true,
+      code: true,
+      labelTh: true,
+      labelEn: true,
+      displayOrder: true,
+      isActive: true,
+    },
+  });
+
+  await logAudit({
+    action: AuditAction.DATASET_CHOICE_CHANGED,
+    subjectType: AuditSubject.DATASET_CHOICE,
+    subjectId: created.id,
+    after: created,
+    metadata: { field_key: fieldKey, code: created.code, changed_via: "ADMIN_API", operation: "CREATE" },
+  });
+
+  await refreshChoices();
+
+  res.status(201).json({
+    choice: created,
+    message:
+      `เพิ่มตัวเลือก "${created.labelTh}" (รหัส ${created.code}) แล้ว ` +
+      `หน้าฟอร์มจะเห็นทันที ส่วนช่องติ๊ก {{tick.${fieldKey}.${created.code}}} ใช้ในเอกสารได้แล้ว ` +
+      `แต่ยังต้องเพิ่มบรรทัดของมันในไฟล์ A4.docx แล้วอัปโหลดเวอร์ชันใหม่ด้วย`,
+  });
+});
+
+const patchChoiceSchema = z
+  .object({
+    labelTh: z.string().trim().min(1, "ป้ายภาษาไทยห้ามว่าง").max(255, "ป้ายต้องยาวไม่เกิน 255 ตัวอักษร").optional(),
+    labelEn: z.string().trim().max(255, "ป้ายต้องยาวไม่เกิน 255 ตัวอักษร").nullable().optional(),
+    displayOrder: z.number().int("ลำดับต้องเป็นจำนวนเต็ม").min(0, "ลำดับต้องไม่ติดลบ").optional(),
+    isActive: z.boolean().optional(),
+  })
+  .refine((body) => Object.keys(body).length > 0, {
+    error: "ไม่มีอะไรให้แก้ — ระบุอย่างน้อยหนึ่งใน labelTh, labelEn, displayOrder, isActive",
+  });
+
+adminRouter.patch("/dataset-choices/:fieldKey/:code", async (req, res) => {
+  const fieldKey = parseFieldKey(String(req.params.fieldKey ?? ""));
+  if (!fieldKey) {
+    res.status(404).json(unknownField(String(req.params.fieldKey ?? "")));
+    return;
+  }
+  const code = String(req.params.code ?? "");
+
+  const parsed = patchChoiceSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+    return;
+  }
+
+  const before = await prisma.datasetChoice.findUnique({
+    where: { fieldKey_code: { fieldKey, code } },
+    select: {
+      id: true,
+      fieldKey: true,
+      code: true,
+      labelTh: true,
+      labelEn: true,
+      displayOrder: true,
+      isActive: true,
+    },
+  });
+  if (!before) {
+    res.status(404).json({
+      error: "not_found",
+      message: `ไม่มีรหัส ${code} ในช่อง ${fieldKey}`,
+    });
+    return;
+  }
+
+  const after = await prisma.datasetChoice.update({
+    where: { id: before.id },
+    data: { ...parsed.data, updatedBy: SYSTEM_USER_ID },
+    select: {
+      id: true,
+      fieldKey: true,
+      code: true,
+      labelTh: true,
+      labelEn: true,
+      displayOrder: true,
+      isActive: true,
+    },
+  });
+
+  await logAudit({
+    action: AuditAction.DATASET_CHOICE_CHANGED,
+    subjectType: AuditSubject.DATASET_CHOICE,
+    subjectId: before.id,
+    before,
+    after,
+    metadata: { field_key: fieldKey, code, changed_via: "ADMIN_API", operation: "UPDATE" },
+  });
+
+  await refreshChoices();
+
+  const notes: string[] = [];
+  if (before.isActive && !after.isActive) {
+    notes.push(
+      `ตัวเลือกนี้หายจากฟอร์มแล้ว แต่คำขอที่เลือกไว้ก่อนหน้ายังนำส่งได้และยังพิมพ์ ✔ ได้ตามเดิม`,
+    );
+  }
+  if (!before.isActive && after.isActive) notes.push("ตัวเลือกนี้กลับมาให้เลือกในฟอร์มแล้ว");
+  if (before.labelTh !== after.labelTh) {
+    notes.push(
+      `ป้ายใหม่จะขึ้นกับคำขอทุกฉบับที่ถือรหัสนี้ รวมถึงฉบับที่อนุมัติไปแล้ว — ` +
+        `ส่วนข้อความในไฟล์ A4.docx เป็นของฝ่ายกฎหมาย ต้องแก้แล้วอัปโหลดแยกต่างหาก`,
+    );
+  }
+
+  res.json({ choice: after, message: notes.join(" · ") || "บันทึกแล้ว" });
+});

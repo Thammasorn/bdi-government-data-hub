@@ -1655,3 +1655,47 @@ model SubDistrict {
   @@map("sub_district")
   @@schema("administration")
 }
+
+/// Master ของตัวเลือก (code list) ในแบบฟอร์มลงทะเบียนชุดข้อมูล
+///
+/// เบี่ยงจากดีไซน์: ตารางนี้ไม่มี sheet ใน Excel — ภาพ "5. Schema Overview" ระบุ schema
+/// `administration` ว่าเป็น "Configuration, lookup, holiday calendar" ซึ่งตรงกับหน้าที่ของมัน
+///
+/// เดิมรายการนี้เป็นค่าคงที่ใน `backend/src/lib/dataset.ts` คู่กับสำเนาใน
+/// `frontend/lib/dataset-form.ts` การเพิ่มตัวเลือกหรือแก้ป้ายสักตัวจึงต้อง deploy ใหม่
+/// ทั้งระบบ — การ์ด "Choice master data สำหรับ choice ในหน้า dataset registration"
+/// ย้ายมาเป็นตาราง เพื่อให้ BDI แก้เองได้ผ่าน `/api/admin/dataset-choices`
+///
+/// ที่มาของแถวตั้งต้นคือชีท `A4_dataset_metadata` ของ
+/// `assets/metadata_registration_form/metadata_mapping-update-20260912.xlsx`
+/// seed โดย `seed:masters` จาก `lib/dataset-choices-defaults.ts`
+///
+/// `code` คือ id ตามที่ชีทแสดง ("1 ข้อมูลระเบียน" → `"1"`) ไม่ใช่เลขรันที่ตั้งเอง —
+/// คอลัมน์ใน `dataset.dataset_registration_metadata` เก็บค่านี้ตรง ๆ อยู่แล้ว
+///
+/// `field_key` เป็นชื่อช่องฝั่ง API (camelCase) ชื่อเดียวกับที่ `TICK_FIELDS` ใช้ตั้งชื่อ
+/// placeholder `{{tick.<field_key>.<code>}}` ในเอกสาร A4
+///
+/// **ไม่มีการลบแถว** — คำขอที่บันทึกไปแล้วถือรหัสนั้นอยู่ และเอกสารที่ลงนามแล้วต้อง
+/// เรนเดอร์ช่องติ๊กเดิมได้ ตัวเลือกที่เลิกใช้ให้ตั้ง `is_active = false` ซึ่งเอาออกจาก
+/// dropdown โดยไม่ทำให้ค่าที่เก็บไว้กลายเป็นค่าที่ระบบไม่รู้จัก
+model DatasetChoice {
+  id           String  @id @default(uuid()) @db.Uuid
+  fieldKey     String  @map("field_key") @db.VarChar(64)
+  code         String  @db.VarChar(16)
+  labelTh      String  @map("label_th") @db.VarChar(255)
+  labelEn      String? @map("label_en") @db.VarChar(255)
+  /// ลำดับบนหน้าจอ ไม่ใช่ลำดับรหัส — "ไม่มี" "ไม่ทราบ" "อื่น ๆ" อยู่ท้ายรายการ ดู docs/11 §3
+  displayOrder Int     @map("display_order")
+  isActive     Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  @@unique([fieldKey, code])
+  @@index([fieldKey, isActive, displayOrder])
+  @@map("dataset_choice")
+  @@schema("administration")
+}

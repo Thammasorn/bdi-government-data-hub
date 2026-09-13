@@ -12,21 +12,12 @@ import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
 import { useRequireAuth } from "@/lib/require-auth";
+import { labelOf, useDatasetChoices } from "@/lib/dataset-choices";
 import {
   ASSIGN_LABELS,
-  DATA_CATEGORY_LABELS,
-  DATA_CLASSIFICATION_LABELS,
-  DATA_FORMAT_LABELS,
-  DATA_TOPIC_LABELS,
-  DATA_TYPE_LABELS,
-  DELIVERY_FREQUENCY_LABELS,
   EMPTY_FORM,
-  GEO_COVERAGE_LABELS,
   GRANT_LABELS,
   HAVE_LABELS,
-  LICENSE_LABELS,
-  PERSONAL_DATA_PERIOD_LABELS,
-  UPDATE_FREQUENCY_UNIT_LABELS,
   applyRules,
   formRules,
   optionsFor,
@@ -87,6 +78,8 @@ export default function EditDatasetRequestPage() {
   /** ช่องที่ผู้ใช้เข้าไปแล้วออกมา — ก่อนนั้นไม่เตือน ไม่งั้นขอบแดงขึ้นระหว่างพิมพ์ตัวแรก */
   const [touched, setTouched] = useState<Partial<Record<FormField, boolean>>>({});
   const [loading, setLoading] = useState(true);
+  /** ตัวเลือกมาจาก /api/dataset-choices แล้ว ไม่ได้อยู่ในบันเดิลของหน้านี้ */
+  const { choices, loaded: choicesLoaded } = useDatasetChoices();
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [revisionNote, setRevisionNote] = useState<string | null>(null);
@@ -267,7 +260,11 @@ export default function EditDatasetRequestPage() {
     }
   };
 
-  if (loading) return <Spinner />;
+  /**
+   * รอตัวเลือกด้วย ไม่ใช่รอแค่คำขอ — Choice ตีความ options ที่ว่างเปล่าว่า "ล็อก"
+   * ฟอร์มที่ขึ้นมาก่อนตัวเลือกมาถึงจึงเป็นฟอร์มที่ทุก dropdown กดไม่ได้อยู่ครู่หนึ่ง
+   */
+  if (loading || !choicesLoaded) return <Spinner />;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
@@ -305,7 +302,7 @@ export default function EditDatasetRequestPage() {
                     value={form.dataType}
                     onChange={(v) => set("dataType", v)}
                     error={fields.dataType}
-                    options={optionsFor(DATA_TYPE_LABELS)}
+                    options={optionsFor(choices.dataType)}
                   />
                 </Wrap>
                 <Wrap name="dataTopic">
@@ -315,7 +312,7 @@ export default function EditDatasetRequestPage() {
                     value={form.dataTopic}
                     onChange={(v) => set("dataTopic", v)}
                     error={fields.dataTopic}
-                    options={optionsFor(DATA_TOPIC_LABELS)}
+                    options={optionsFor(choices.dataTopic)}
                   />
                 </Wrap>
               </div>
@@ -448,7 +445,7 @@ export default function EditDatasetRequestPage() {
                     value={form.updateFrequencyUnit}
                     onChange={(v) => set("updateFrequencyUnit", v)}
                     error={fields.updateFrequencyUnit}
-                    options={optionsFor(UPDATE_FREQUENCY_UNIT_LABELS)}
+                    options={optionsFor(choices.updateFrequencyUnit)}
                   />
                 </Wrap>
                 {rules.updateFrequencyInterval.visible ? (
@@ -463,9 +460,7 @@ export default function EditDatasetRequestPage() {
                       }
                       error={fields.updateFrequencyInterval}
                       hint={`ปรับปรุงทุกกี่${
-                        UPDATE_FREQUENCY_UNIT_LABELS[
-                          form.updateFrequencyUnit as keyof typeof UPDATE_FREQUENCY_UNIT_LABELS
-                        ] ?? "หน่วย"
+                        labelOf(choices.updateFrequencyUnit, form.updateFrequencyUnit) ?? "หน่วย"
                       } เช่น ทุก 2 ปี ให้กรอก 2`}
                     />
                   </Wrap>
@@ -479,7 +474,7 @@ export default function EditDatasetRequestPage() {
                     value={form.deliveryFrequency}
                     onChange={(v) => set("deliveryFrequency", v)}
                     error={fields.deliveryFrequency}
-                    options={optionsFor(DELIVERY_FREQUENCY_LABELS)}
+                    options={optionsFor(choices.deliveryFrequency)}
                   />
                 </Wrap>
                 <Wrap name="geoCoverage">
@@ -489,7 +484,7 @@ export default function EditDatasetRequestPage() {
                     value={form.geoCoverage}
                     onChange={(v) => set("geoCoverage", v)}
                     error={fields.geoCoverage}
-                    options={optionsFor(GEO_COVERAGE_LABELS)}
+                    options={optionsFor(choices.geoCoverage)}
                     hint="มิติการจัดจำแนกพื้นที่ในระดับย่อยที่สุดที่จัดเก็บหรือนำเสนอ"
                   />
                 </Wrap>
@@ -525,7 +520,7 @@ export default function EditDatasetRequestPage() {
                     value={form.dataFormat}
                     onChange={(v) => set("dataFormat", v)}
                     error={fields.dataFormat}
-                    options={optionsFor(DATA_FORMAT_LABELS)}
+                    options={optionsFor(choices.dataFormat)}
                   />
                 </Wrap>
                 {rules.dataFormatOther.visible ? (
@@ -559,7 +554,7 @@ export default function EditDatasetRequestPage() {
                   value={form.dataCategory}
                   onChange={(v) => set("dataCategory", v)}
                   error={fields.dataCategory}
-                  options={optionsFor(DATA_CATEGORY_LABELS)}
+                  options={optionsFor(choices.dataCategory)}
                 />
               </Wrap>
               <Wrap name="containsPersonalData">
@@ -608,7 +603,7 @@ export default function EditDatasetRequestPage() {
                       value={form.personalDataProcessingPeriod}
                       onChange={(v) => set("personalDataProcessingPeriod", v)}
                       error={fields.personalDataProcessingPeriod}
-                      options={optionsFor(PERSONAL_DATA_PERIOD_LABELS)}
+                      options={optionsFor(choices.personalDataProcessingPeriod)}
                     />
                   </Wrap>
                   {rules.personalDataPeriodAmount.visible ? (
@@ -653,7 +648,7 @@ export default function EditDatasetRequestPage() {
                     value={form.dataClassification}
                     onChange={(v) => set("dataClassification", v)}
                     error={fields.dataClassification}
-                    options={optionsFor(DATA_CLASSIFICATION_LABELS, rules.dataClassification.options)}
+                    options={optionsFor(choices.dataClassification, rules.dataClassification.options)}
                     forced={Boolean(rules.dataClassification.forced)}
                     disabledHint={
                       form.dataCategory
@@ -670,7 +665,7 @@ export default function EditDatasetRequestPage() {
                     value={form.licenseId}
                     onChange={(v) => set("licenseId", v)}
                     error={fields.licenseId}
-                    options={optionsFor(LICENSE_LABELS, rules.licenseId.options)}
+                    options={optionsFor(choices.licenseId, rules.licenseId.options)}
                     forced={Boolean(rules.licenseId.forced)}
                     disabledHint={
                       form.dataClassification

@@ -8,10 +8,12 @@ import { prisma } from "./db.js";
 import { env } from "./env.js";
 import { DocumentRenderError } from "./lib/document-render.js";
 import { correlationMiddleware } from "./lib/context.js";
+import { loadChoices } from "./lib/dataset-choices.js";
 import { adminRouter } from "./routes/admin.js";
 import { adminUserRouter } from "./routes/admin-users.js";
 import { addressRouter } from "./routes/address.js";
 import { authRouter } from "./routes/auth.js";
+import { datasetChoiceRouter } from "./routes/dataset-choices.js";
 import { datasetRequestRouter } from "./routes/dataset-requests.js";
 import { healthRouter } from "./routes/health.js";
 import { notificationRouter } from "./routes/notifications.js";
@@ -38,6 +40,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/admin/users", adminUserRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/address", addressRouter);
+app.use("/api/dataset-choices", datasetChoiceRouter);
 app.use("/api/organizations", organizationRouter);
 app.use("/api/dataset-requests", datasetRequestRouter);
 app.use("/api/notifications", notificationRouter);
@@ -137,6 +140,13 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 async function main() {
+  /**
+   * ตัวเลือกของแบบฟอร์มชุดข้อมูลอยู่ในฐานข้อมูล แต่ผู้ใช้ของมัน (zod schema, ชื่อช่องติ๊ก)
+   * ถูกประเมินตั้งแต่ตอน import แล้ว จึงต้องโหลดเข้า cache ให้เสร็จก่อนเปิดรับ request
+   * โหลดไม่ได้ก็ไม่ล้ม — ใช้ค่าตั้งต้นในโค้ดไปก่อนและเตือนไว้ ดู lib/dataset-choices.ts
+   */
+  await loadChoices();
+
   // Best-effort: don't block startup if Azure Blob Storage is briefly unavailable —
   // /health/ready will report it.
   await ensureContainer().catch((err) => {

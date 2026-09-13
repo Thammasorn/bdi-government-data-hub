@@ -8,7 +8,7 @@
  * ทุกตัวเลือกยังพิมพ์ออกมาครบ ข้อที่ตรงกับคำขอได้ ✔ ข้อที่ไม่ตรงได้ ☐ ผู้อ่านจึงเห็นว่า
  * ตัวเลือกอื่นมีอะไรและไม่ได้เลือกอะไร ซึ่งเป็นสิ่งที่แบบฟอร์มกระดาษสื่อ
  */
-import { SYSTEM_NAME, TICK_FIELDS } from "./document-render.js";
+import { SYSTEM_NAME, tickFields } from "./document-render.js";
 import { splitTags, type MetadataValues } from "./dataset.js";
 import { thaiLongDate, thaiLongDateTime } from "./legal-values.js";
 
@@ -61,13 +61,13 @@ export interface DatasetDocumentInput extends MetadataValues {
 /**
  * ค่าของช่องติ๊กทุกช่อง
  *
- * เดินจาก TICK_FIELDS ไม่ใช่จากสิ่งที่ template ใช้ — ช่องที่ template ไม่ได้ใช้ก็สร้างค่าไว้
+ * เดินจาก tickFields() ไม่ใช่จากสิ่งที่ template ใช้ — ช่องที่ template ไม่ได้ใช้ก็สร้างค่าไว้
  * เฉย ๆ ไม่เสียหาย แต่ช่องที่ template ใช้แล้วเราไม่ได้สร้างจะกลายเป็นค่าว่าง ซึ่งอ่านเหมือน
  * "ไม่ได้เลือก" ทั้งที่จริงคือระบบลืมส่งค่ามา
  */
 function tickValues(metadata: MetadataValues): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [field, codes] of Object.entries(TICK_FIELDS)) {
+  for (const [field, codes] of Object.entries(tickFields())) {
     const raw = (metadata as unknown as Record<string, unknown>)[field];
     // boolean เก็บเป็น true/false ส่วน code list เก็บเป็นสตริงรหัส
     const selected = raw === null || raw === undefined ? null : String(raw);

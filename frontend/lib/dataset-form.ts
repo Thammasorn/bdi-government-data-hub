@@ -1,7 +1,7 @@
 /**
  * แบบฟอร์มลงทะเบียน metadata ของชุดข้อมูล — ฝั่งหน้าเว็บ
  *
- * **สำเนาของ `backend/src/lib/dataset.ts`** ทั้งรายการรหัส ป้ายภาษาไทย และกฎในชีท
+ * **สำเนาของ *เครื่องยนต์เงื่อนไข* ใน `backend/src/lib/dataset.ts`** คือกฎในชีท
  * `conditions` ของ `assets/metadata_registration_form/metadata_mapping.xlsx`
  * แก้ที่ไฟล์ใดไฟล์หนึ่งแล้วต้องแก้อีกไฟล์ด้วยเสมอ
  *
@@ -9,139 +9,34 @@
  * ทุกครั้งที่เปลี่ยน dropdown ฟอร์มจะกระตุกและใช้ออฟไลน์ไม่ได้ ส่วน backend ก็เชื่อ
  * ค่าที่หน้าเว็บส่งมาไม่ได้อยู่ดี (normaliseMetadata() บังคับซ้ำก่อนเขียนฐานข้อมูลเสมอ)
  * แบบเดียวกับสีของ CI ที่ซ้ำอยู่ใน globals.css / mail.ts / pdf.ts
+ *
+ * **แต่ไม่ใช่สำเนาของ code list อีกต่อไป** — รหัสกับป้ายภาษาไทยย้ายไปอยู่ในฐานข้อมูล
+ * ตั้งแต่การ์ด "Choice master data สำหรับ choice ในหน้า dataset registration" หน้าเว็บ
+ * ดึงผ่าน `lib/dataset-choices.ts` เพราะป้ายเป็น *ข้อมูล* ที่ BDI แก้เองได้โดยไม่ต้อง
+ * deploy ส่วนเงื่อนไขเป็น *ตรรกะ* ที่อ้างรหัสตรง ๆ และเปลี่ยนไปพร้อมโค้ดเสมอ
+ *
+ * ป้าย Y/N ข้างล่างยังอยู่ที่นี่โดยตั้งใจ: backend เก็บช่องเหล่านั้นเป็น Boolean ไม่ใช่รหัส
+ * จึงไม่ใช่ code list และไม่มีแถวในตาราง
  */
+
+import { labelOf, type ChoiceOption } from "./dataset-choices";
 
 // ------------------------------------------------------------------ รหัสและป้าย
 
-export const DATA_TYPE_LABELS = {
-  "1": "ข้อมูลระเบียน",
-  "2": "ข้อมูลภูมิสารสนเทศ",
-  "3": "ข้อมูลรวม (สถิติ)",
-  "9": "ข้อมูลอื่น ๆ",
-} as const;
-
-export const DATA_TOPIC_LABELS = {
-  "01": "ทรัพยากรน้ำ",
-  "02": "อุตุนิยมวิทยา",
-  "03": "ภัยพิบัติ",
-  "04": "สภาพพื้นที่",
-  "05": "โครงสร้างพื้นฐาน",
-  "06": "การวางแผนและเยียวยา",
-  "07": "ด้านสาธารณสุข",
-  "99": "อื่น ๆ",
-} as const;
-
-export const UPDATE_FREQUENCY_UNIT_LABELS = {
-  A: "ปี",
-  S: "ครึ่งปี",
-  Q: "ไตรมาส",
-  M: "เดือน",
-  W: "สัปดาห์",
-  D: "วัน",
-  B: "วันทำการ",
-  H: "ชั่วโมง",
-  N: "นาที",
-  R: "ตามเวลาจริง",
-  O: "ไม่มีการปรับปรุงหลังจากการจัดเก็บข้อมูล",
-  U: "ไม่ทราบ",
-} as const;
-
 /** หน่วยที่ไม่มี "ทุก ๆ กี่หน่วย" ให้กรอก */
 export const FREQUENCY_UNITS_WITHOUT_INTERVAL: string[] = ["R", "O", "U"];
-
-export const DELIVERY_FREQUENCY_LABELS = {
-  "1": "เมื่อมีการร้องขอ หรือเมื่อมีคำสั่ง",
-  "2": "ต่อเนื่องรายเดือน",
-  "3": "ต่อเนื่องรายไตรมาส",
-  "4": "ต่อเนื่องรายครึ่งปี",
-  "5": "ต่อเนื่องรายปี",
-} as const;
-
-export const GEO_COVERAGE_LABELS = {
-  "00": "ไม่มี",
-  "01": "โลก",
-  "02": "ทวีป/กลุ่มประเทศในทวีป",
-  "03": "กลุ่มประเทศทางเศรษฐกิจ",
-  "04": "ประเทศ",
-  "05": "ภาค",
-  "06": "จังหวัด",
-  "07": "อำเภอ",
-  "08": "ตำบล",
-  "09": "หมู่บ้าน",
-  "10": "องค์กรปกครองส่วนท้องถิ่น",
-  "11": "พิกัด",
-  "98": "ไม่ทราบ",
-  "99": "อื่น ๆ",
-} as const;
-
-export const DATA_FORMAT_LABELS = {
-  "1": "วางไฟล์",
-  "2": "Database synchronization",
-  "3": "Batch API",
-  "4": "ผ่านระบบเชื่อมโยงข้อมูลอื่น",
-} as const;
 
 export const DATA_FORMAT_OTHER_CODE = "4";
 export const DATA_TOPIC_OTHER_CODE = "99";
 /** ข้อ 10 รหัส "อื่น ๆ" — คนละรายการรหัสกับข้อ 1.2 ถึงจะเลขเท่ากัน */
 export const GEO_COVERAGE_OTHER_CODE = "99";
 
-export const DATA_CATEGORY_LABELS = {
-  a: "ข้อมูลสาธารณะ",
-  b: "ข้อมูลใช้ภายใน",
-  c: "ข้อมูลความลับทางราชการ",
-  d: "ข้อมูลความมั่นคง",
-} as const;
-
-export const PERSONAL_DATA_PERIOD_LABELS = {
-  a: "จนกว่าจะมีคำสั่งยุติการประมวลผล",
-  b: "ระบุระยะเวลา (ปี/เดือน)",
-} as const;
-
 export const PERSONAL_DATA_PERIOD_FIXED = "b";
-
-export const DATA_CLASSIFICATION_LABELS = {
-  "01": "เปิดเผย",
-  "02": "เผยแพร่ภายในองค์กร",
-  "03": "ลับ",
-  "04": "ลับมาก",
-  "05": "ลับที่สุด",
-} as const;
-
-export const LICENSE_LABELS = {
-  G0: "Open Data Common",
-  G2: "Creative Commons Attribution-NonCommercial",
-  G5: "Others License",
-} as const;
 
 /** ป้ายของคำตอบ Y/N ต่างกันไปตามคำถาม — "อนุญาต" กับ "มอบหมาย" ไม่ใช่คำเดียวกัน */
 export const GRANT_LABELS = { Y: "อนุญาต", N: "ไม่อนุญาต" } as const;
 export const ASSIGN_LABELS = { Y: "มอบหมาย", N: "ไม่มอบหมาย" } as const;
 export const HAVE_LABELS = { Y: "มี", N: "ไม่มี" } as const;
-
-/**
- * ลำดับตัวเลือกบนหน้าจอ — คำตอบสุดท้ายของ optionsFor()
- *
- * ลำดับที่เขียนไว้ในอ็อบเจ็กต์ข้างบนเชื่อไม่ได้ JS ยกคีย์ที่เป็น "เลขจำนวนเต็มพอดี"
- * ("10" "11" "98" "99") ขึ้นก่อนเสมอและเรียงตามค่าตัวเลข ส่วนคีย์ที่มีศูนย์นำ
- * ("00" "01") นับเป็นสตริงจึงไปต่อท้าย กล่อง "ประเด็น" เลยขึ้น "อื่น ๆ" เป็นตัวแรก
- * และ "ความละเอียดเชิงภูมิศาสตร์" ขึ้น "องค์กรปกครองส่วนท้องถิ่น" ก่อน "โลก"
- *
- * ตารางนี้จึงเรียงเอง ไล่ตามลำดับชั้นจริงจากหยาบไปละเอียด แล้วปิดท้ายด้วยตัวเลือก
- * ที่ไม่ใช่ระดับใดระดับหนึ่ง — "ไม่มี" "ไม่ทราบ" "อื่น ๆ"
- *
- * มีเฉพาะชุดที่ลำดับคีย์ผิด ชุดที่เหลือใช้ลำดับที่ประกาศไว้ตามเดิม รหัสที่ไม่ได้เอ่ยถึง
- * ในตารางจะถูกต่อท้ายให้ — เพิ่มรหัสใหม่แล้วตัวเลือกไม่หาย แต่ต้องมาเรียงเอง
- *
- * นี่เป็นเรื่องของหน้าจอล้วน ๆ `backend/src/lib/dataset.ts` จึงไม่มีตารางนี้
- */
-const CHOICE_ORDER = new Map<Record<string, string>, readonly string[]>([
-  [DATA_TOPIC_LABELS, ["01", "02", "03", "04", "05", "06", "07", "99"]],
-  [
-    GEO_COVERAGE_LABELS,
-    ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "00", "98", "99"],
-  ],
-]);
 
 // ------------------------------------------------------------------ รูปของฟอร์ม
 
@@ -514,13 +409,17 @@ export function validateDatasetForm(f: FormState): Partial<Record<FormField, str
 
 // ------------------------------------------------------------------ การแสดงผล
 
-/** 9.1 + 9.2 อ่านคู่กันเสมอ — "ทุก 2 ปี" ไม่ใช่ "ปี" กับ "2" คนละบรรทัด */
+/**
+ * 9.1 + 9.2 อ่านคู่กันเสมอ — "ทุก 2 ปี" ไม่ใช่ "ปี" กับ "2" คนละบรรทัด
+ * รับรายการหน่วยความถี่เข้ามา เพราะป้ายของมันอยู่ในฐานข้อมูลแล้ว
+ */
 export function formatUpdateFrequency(
+  units: ChoiceOption[],
   unit: string | null | undefined,
   interval: number | string | null | undefined,
 ): string {
   if (!unit) return "";
-  const label = UPDATE_FREQUENCY_UNIT_LABELS[unit as keyof typeof UPDATE_FREQUENCY_UNIT_LABELS] ?? unit;
+  const label = labelOf(units, unit) ?? unit;
   const count = typeof interval === "string" ? Number(interval) : interval;
   if (FREQUENCY_UNITS_WITHOUT_INTERVAL.includes(unit) || !count) return label;
   return `ทุก ${count.toLocaleString("th-TH")} ${label}`;
@@ -533,17 +432,20 @@ export const splitTags = (value: string | null | undefined): string[] =>
     .map((t) => t.trim())
     .filter(Boolean);
 
-/** ตัวช่วยทำ <option> เฉพาะรหัสที่เงื่อนไขยังอนุญาต เรียงตาม CHOICE_ORDER */
+/**
+ * ตัวช่วยทำ <option> เฉพาะรหัสที่เงื่อนไขยังอนุญาต
+ *
+ * ลำดับมาจาก `display_order` ในฐานข้อมูล เซิร์ฟเวอร์เรียงมาให้แล้ว — ก่อนหน้านี้มีตาราง
+ * `CHOICE_ORDER` ที่เปิดหาด้วย **object identity** ของ map ป้าย ซึ่งใช้กับข้อมูลที่ fetch
+ * มาไม่ได้เลย การย้ายลำดับไปอยู่ในฐานข้อมูลจึงลบตารางนั้นทิ้งได้ทั้งตาราง
+ *
+ * `allowed` คือการหรี่ตัวเลือกตามเงื่อนไข (ข้อ 13.3 และ 14) ซึ่งยังเป็นตรรกะในโค้ด
+ */
 export function optionsFor(
-  labels: Record<string, string>,
+  options: ChoiceOption[],
   allowed?: string[],
 ): Array<[string, string]> {
-  const order = CHOICE_ORDER.get(labels) ?? [];
-  const codes = [
-    ...order.filter((code) => code in labels),
-    ...Object.keys(labels).filter((code) => !order.includes(code)),
-  ];
-  return codes
-    .filter((code) => !allowed || allowed.includes(code))
-    .map((code): [string, string] => [code, labels[code]!]);
+  return options
+    .filter(({ code }) => !allowed || allowed.includes(code))
+    .map(({ code, label }): [string, string] => [code, label]);
 }
