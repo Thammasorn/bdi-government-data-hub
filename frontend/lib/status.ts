@@ -298,6 +298,34 @@ export function formatThaiDate(value: string | Date | null | undefined): string 
 }
 
 /**
+ * วันที่กับเวลาแยกชิ้น — สำหรับที่ที่วางสองอย่างนี้คนละบรรทัด (คอลัมน์วันที่ในตารางคำขอ)
+ *
+ * **ไม่ได้ตัดผลของ `formatThaiDate()` ด้วยการ split ช่องว่าง** ซึ่งเป็นวิธีที่ตารางใช้อยู่เดิม
+ * ตอนที่มันต้องการเฉพาะวันที่ (`.split(" ").slice(0, 3)`) — จำนวนคำที่ `Intl` คืนมาไม่ใช่
+ * สัญญาอะไรเลย มันขึ้นกับ locale data ของ runtime ที่รันอยู่ พอ ICU เปลี่ยนรูปแบบเมื่อไร
+ * บรรทัดนั้นจะกินเวลาเข้าไปด้วยหรือกินวันที่หายไป โดยที่ไม่มี type ไหนจับได้
+ *
+ * ใช้ formatter สองตัวแทน แต่ละตัวขอสิ่งที่ตัวเองต้องการตรง ๆ ผลที่ได้ประกอบกลับเป็น
+ * ข้อความเดียวกับ `formatThaiDate()` เสมอ เพราะทั้งคู่อ่าน dateStyle/timeStyle ชุดเดียวกัน
+ */
+export function thaiDateParts(
+  value: string | Date | null | undefined,
+): { date: string; time: string } | null {
+  if (!value) return null;
+  const d = new Date(value);
+  return {
+    date: new Intl.DateTimeFormat("th-TH", {
+      dateStyle: "medium",
+      timeZone: "Asia/Bangkok",
+    }).format(d),
+    time: new Intl.DateTimeFormat("th-TH", {
+      timeStyle: "short",
+      timeZone: "Asia/Bangkok",
+    }).format(d),
+  };
+}
+
+/**
  * จำนวนวันเต็มนับจากวันที่ให้มาถึงตอนนี้ — ใช้บอก "รอมาแล้ว N วัน"
  *
  * ย้ายมาจาก components/home/DatasetSection.tsx ตอนที่กล่องรายละเอียดของตารางต้องใช้

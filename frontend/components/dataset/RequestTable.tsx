@@ -8,6 +8,7 @@ import { AdvisoryBadge, AdvisoryFilter } from "@/components/list/AdvisoryFilter"
 import { ListSearch } from "@/components/list/ListSearch";
 import { JourneyFlow } from "@/components/list/JourneyFlow";
 import { Pagination } from "@/components/list/Pagination";
+import { DateTimeCell } from "@/components/list/DateTimeCell";
 import { RowDetailCard, useRowDetail } from "@/components/list/RowDetailCard";
 import { QueueTabs } from "@/components/list/QueueTabs";
 import { SortSelect } from "@/components/list/SortSelect";
@@ -15,7 +16,7 @@ import { StepDots } from "@/components/review/ApprovalSteps";
 import { useSession } from "@/components/SessionProvider";
 import { Card, DatasetStatusBadge } from "@/components/ui/Card";
 import { SkeletonRows } from "@/components/ui/Spinner";
-import { formatThaiDate, isBdiStaff } from "@/lib/status";
+import { isBdiStaff } from "@/lib/status";
 import { hasOwnQueue } from "@/lib/stage";
 import { datasetTitle, fullName, type DatasetRequestListItem } from "@/lib/types";
 import { useRequestList } from "@/lib/use-request-list";
@@ -213,20 +214,8 @@ export function DatasetRequestTable({
                           .join(" · ")}
                       </span>
                     </span>
-                    {/* หัวคอลัมน์ซ่อนตัวเองต่ำกว่า md แถวจึงกลายเป็นวันที่สองบรรทัดที่ไม่มีชื่อ
-                        กำกับ — คำนำหน้าที่โผล่เฉพาะจอแคบคือที่เดียวที่บอกได้ว่าอันไหนคืออันไหน */}
-                    <span className="text-[13px] text-ink-muted md:text-right">
-                      <span className="md:hidden">วันที่นำส่ง: </span>
-                      {row.submittedAt
-                        ? formatThaiDate(row.submittedAt).split(" ").slice(0, 3).join(" ")
-                        : "—"}
-                    </span>
-                    <span className="text-[13px] text-ink-muted md:text-right">
-                      <span className="md:hidden">อัปเดตล่าสุด: </span>
-                      {row.updatedAt
-                        ? formatThaiDate(row.updatedAt).split(" ").slice(0, 3).join(" ")
-                        : "—"}
-                    </span>
+                    <DateTimeCell value={row.submittedAt} label="วันที่นำส่ง" />
+                    <DateTimeCell value={row.updatedAt} label="อัปเดตล่าสุด" />
                   </button>
                 </li>
               ))}

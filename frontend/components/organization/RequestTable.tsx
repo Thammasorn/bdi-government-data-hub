@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ListSearch } from "@/components/list/ListSearch";
 import { JourneyFlow } from "@/components/list/JourneyFlow";
 import { Pagination } from "@/components/list/Pagination";
+import { DateTimeCell } from "@/components/list/DateTimeCell";
 import { RowDetailCard, useRowDetail } from "@/components/list/RowDetailCard";
 import { QueueTabs } from "@/components/list/QueueTabs";
 import { SortSelect } from "@/components/list/SortSelect";
@@ -12,7 +13,6 @@ import { StepDots } from "@/components/review/ApprovalSteps";
 import { useSession } from "@/components/SessionProvider";
 import { Card, StatusBadge } from "@/components/ui/Card";
 import { SkeletonRows } from "@/components/ui/Spinner";
-import { formatThaiDate } from "@/lib/status";
 import { hasOwnQueue } from "@/lib/stage";
 import { organizationTitle, fullName, type OrganizationListItem } from "@/lib/types";
 import { useRequestList } from "@/lib/use-request-list";
@@ -162,16 +162,8 @@ export function OrganizationRequestTable({ basePath }: { basePath: string }) {
                           .join(" · ")}
                       </span>
                     </span>
-                    {/* หัวคอลัมน์ซ่อนตัวเองต่ำกว่า md แถวจึงกลายเป็นวันที่สองบรรทัดที่ไม่มีชื่อ
-                        กำกับ — คำนำหน้าที่โผล่เฉพาะจอแคบคือที่เดียวที่บอกได้ว่าอันไหนคืออันไหน */}
-                    <span className="text-[13px] text-ink-muted md:text-right">
-                      <span className="md:hidden">วันที่ยื่น: </span>
-                      {row.submittedAt ? formatThaiDate(row.submittedAt).split(" ").slice(0, 3).join(" ") : "—"}
-                    </span>
-                    <span className="text-[13px] text-ink-muted md:text-right">
-                      <span className="md:hidden">อัปเดตล่าสุด: </span>
-                      {row.updatedAt ? formatThaiDate(row.updatedAt).split(" ").slice(0, 3).join(" ") : "—"}
-                    </span>
+                    <DateTimeCell value={row.submittedAt} label="วันที่ยื่น" />
+                    <DateTimeCell value={row.updatedAt} label="อัปเดตล่าสุด" />
                   </button>
                 </li>
               ))}

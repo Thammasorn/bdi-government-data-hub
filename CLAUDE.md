@@ -1045,6 +1045,15 @@ map it feeds into the response is what greys the inputs — the page holds no co
 the **account** has no value for stays editable and required, which is the ordinary case for the
 prefix, since ThaID sends no `title` claim. Position, division and national ID are still typed in.
 
+**Never split `formatThaiDate()`'s output on spaces to get one half of it.** Both list tables
+did (`.split(" ").slice(0, 3)`) while they wanted the date alone, and it worked only by accident:
+the number of space-separated tokens `Intl` produces is not a contract, it follows the runtime's
+locale data, so an ICU update swallows the time into the date or drops the date entirely with no
+type error anywhere. `thaiDateParts()` in `lib/status.ts` runs two formatters instead, each asking
+for exactly the half it wants, and `components/list/DateTimeCell.tsx` is the one place that lays
+them out — date on top, time under it, plus the `md:hidden` label the narrow layout needs once the
+column headers disappear. Both date columns of both tables go through it.
+
 Fonts are self-hosted via `next/font/local` from `frontend/public/fonts/` — no Google Fonts,
 so it works behind a firewall.
 
