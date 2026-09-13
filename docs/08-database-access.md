@@ -85,7 +85,7 @@ Postgres ผูกพอร์ตไว้ที่ `0.0.0.0` ทุก checkout
 | `notification` | `notification`, `notification_delivery` |
 | `integration` | `integration_operation` |
 | `audit` | `audit_event` |
-| `administration` | `province`, `district`, `sub_district` |
+| `administration` | `province`, `district`, `sub_district`, `dataset_choice` |
 | `public` | `_prisma_migrations` — **อย่าแตะ** ดูข้อ 6 |
 
 ใน Database Navigator เปิดตามลำดับ **connection → `bdi` → Schemas** แล้วจะเห็นครบทั้งหมด
@@ -159,6 +159,10 @@ from audit.audit_event order by occurred_at desc limit 50;
 - **อย่าลบแถว `attachment.attachment` เพื่อลบไฟล์** ไฟล์จริงอยู่ใน Azure Blob Storage การลบแถวทิ้ง
   ทำให้ object ค้างอยู่โดยไม่มีใครอ้างถึง ระบบออกแบบให้ไฟล์เก่าเป็น `REPLACED` ไม่ใช่ถูกลบ
 - **อย่าแก้ `audit.audit_event`** มันคือบันทึกว่าเกิดอะไรขึ้น ไม่ใช่ข้อมูลที่แก้ได้
+- **`administration.dataset_choice` แก้ผ่าน API ไม่ใช่ผ่าน SQL** — backend อ่านตารางนี้เข้า
+  cache ตอนบูต แถวที่แก้ด้วย SQL จึงยังไม่มีผลจนกว่าจะรีสตาร์ต ถ้าแก้ด้วย SQL ไปแล้วให้เรียก
+  `POST /api/admin/dataset-choices/refresh` และ **อย่าลบแถว** — คำขอที่เลือกรหัสนั้นไว้จะ
+  กลายเป็นคำขอที่ถือค่าที่ระบบไม่รู้จัก ให้ตั้ง `is_active = false` แทน (ดู `docs/11` §3)
 - **อย่าเพิ่ม/ลบ index หรือ constraint ด้วยมือ** — เกิดขึ้นแล้วครั้งหนึ่ง: ฐานข้อมูลของ `main`
   มี `UNIQUE CONSTRAINT "user_account_unique" (cid)` ที่ไม่มี migration ไหนสร้าง ผลคือ
   `POST /api/admin/invitations` ตอบ 500 บน `main` ในเคสที่ checkout อื่นตอบ 201 — บั๊กที่

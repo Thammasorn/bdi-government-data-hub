@@ -76,7 +76,7 @@ docker compose exec frontend npx tsc --noEmit
 docker compose exec backend npm install <pkg>          # NOT on the host
 docker compose exec backend npm run prisma:migrate -- --name <name>
 docker compose exec backend npm run prisma:studio
-docker compose exec backend npm run seed:masters       # roles, BDI org, legal docs, addresses
+docker compose exec backend npm run seed:masters       # dataset choices, roles, BDI org, legal docs, addresses
 docker compose exec backend npm run seed:demo          # wipes data, rebuilds demo fixtures
 docker compose logs -f delivery-worker                 # outbox email sender
 docker compose logs -f gotenberg                       # .docx -> PDF converter (LibreOffice)
@@ -84,6 +84,11 @@ docker compose logs -f gotenberg                       # .docx -> PDF converter 
 
 `seed:masters` must run before `seed:demo` and after any `migrate reset` — the demo seed fails
 fast if `iam.role` is empty. Both are idempotent.
+
+**Restart the backend (or `POST /api/admin/dataset-choices/refresh`) after running it**, and
+after any hand-edit of `administration.dataset_choice`: the API caches those rows at boot, and
+a seed run is a different process, so its writes are invisible to a running backend. Edits made
+through the admin API need neither — they refresh the cache themselves.
 
 Production build (also what a public deployment must use):
 
@@ -686,9 +691,12 @@ fixes the order inside `build-a4-template.py`: `field()` rewrites a paragraph in
 `<w:t>`, so the tick run must be inserted *after* the field pass or it is overwritten.
 `build-a4-template.py` also strips the drafting highlight now, reversing the 2026-08-20 decision to
 keep A4 exactly as drafted — the values the system fills in were coming out with a yellow bar
-behind them, which reads as an unfinished form on a document somebody has to sign. Tick names are generated from the code lists in `lib/dataset.ts`
-(`TICK_FIELDS`), never hand-listed, so adding a code list value makes a new tick usable with no
-change here. A document may omit ticks for codes it has no line for.
+behind them, which reads as an unfinished form on a document somebody has to sign. Tick names are generated from the code lists, never hand-listed, so adding a value makes a new
+tick usable with no change here. A document may omit ticks for codes it has no line for. Since
+2026-09-13 those lists are **rows in `administration.dataset_choice`**, so `TICK_FIELDS` is now
+`tickFields()` — a function, because a module-level constant would freeze the pre-load snapshot
+(see below). It reads codes that are *inactive* too: a request that chose an option later
+withdrawn must still print its ✔, not a blank box on a document somebody signed.
 
 **Variables are scoped per journey.** `agreement.*` / `org_approver.*` only mean something in the
 organisation agreement; `dataset.*` / `tick.*` only in the dataset form. Upload validation checks
@@ -906,11 +914,39 @@ header attaches the same PNG and references it by `cid:` because mail clients bl
 images. `docs/02-ui-spec.md` §1.6 maps each surface to the source file it came from — copy from
 those originals rather than exporting your own.
 
-`frontend/lib/dataset-form.ts` is a **deliberate copy** of the code lists and the conditions
-engine in `backend/src/lib/dataset.ts` — the form has to show what a choice forces the moment
-it is made, so it cannot ask the API on every change. The backend re-applies the same rules
-before every write (`normaliseMetadata`), so a stale copy is a UI bug, never a data bug.
-Change both files together, like the CI colors.
+`frontend/lib/dataset-form.ts` is a **deliberate copy** of the conditions engine in
+`backend/src/lib/dataset.ts` — the form has to show what a choice forces the moment it is made,
+so it cannot ask the API on every change. The backend re-applies the same rules before every
+write (`normaliseMetadata`), so a stale copy is a UI bug, never a data bug. Change both files
+together, like the CI colors.
+
+**It is no longer a copy of the code lists.** Those moved to `administration.dataset_choice` on
+2026-09-13 so BDI can add an option or fix a label without a deploy, and the form now fetches
+them from `GET /api/dataset-choices` through `frontend/lib/dataset-choices.ts`. The line is
+that *conditions are logic* — they name specific codes and change with the code — while
+*labels and order are data*. `CHOICE_ORDER` is gone; ordering is the `display_order` column.
+
+Three things about that arrangement are load-bearing:
+
+- **`backend/src/lib/dataset-choices.ts` hands out a snapshot, and every lookup happens inside
+  its closure.** The zod schemas and the tick names are built at *import* time, long before
+  `main()` calls `loadChoices()` — `index.ts` importing one error class is enough to evaluate
+  the whole chain. Hoisting a set out of a `refine` re-freezes the pre-load snapshot.
+- **An empty table falls back to `dataset-choices-defaults.ts` and warns; it never throws.**
+  `seed:masters` publishes A4.docx, whose 75 tick placeholders are validated against these very
+  lists — so failing on an empty table would mean the script that fills the table cannot run.
+  Production also boots `migrate deploy && node dist/index.js` with no seed step, so a throw
+  would take the public site down. `GET /health/ready` reports which set is in use and
+  deliberately does **not** let it decide `healthy`.
+- **Validation reads active *and* inactive codes** (`allCodes()`), because `datasetSubmitSchema`
+  parses *stored* values at PDF generation and submit, not just fresh input. Deactivating an
+  option must remove it from the picker without making every draft holding it unsubmittable.
+  That is why the admin API has no DELETE.
+
+`POST /api/admin/dataset-choices/:fieldKey` refuses `dataClassification` and `licenseId`:
+`metadataRules()` still hard-codes which of their codes each category allows, so a new one
+would be nulled out by `normaliseMetadata()` on every write and read as "I added a code and it
+vanished".
 
 `frontend/lib/organization-form.ts` is the same arrangement for Journey B's registration form,
 mirroring `submitSchema` in `backend/src/routes/organizations.ts` and the shared validators in
