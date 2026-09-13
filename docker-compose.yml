@@ -129,7 +129,7 @@ services:
       SMTP_FROM: ${SMTP_FROM:-ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล <no-reply@bdi.or.th>}
       # ช่องทางติดต่อที่พิมพ์ท้ายอีเมลทุกฉบับ — ต้องส่งให้ทั้ง backend และ worker เพราะทั้งคู่
       # ประกอบอีเมลเอง ค่าตั้งต้นคือช่องทางจริงของ BDI ไม่ต้องมีใน .env ก็ถูกอยู่แล้ว
-      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-d2s-support@bdi.or.th}
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-d2share-support@bdi.or.th}
       SUPPORT_PHONE: ${SUPPORT_PHONE:-02-480-8833}
       THAID_ROOT_URL: ${THAID_ROOT_URL:-}
       THAID_CLIENT_ID: ${THAID_CLIENT_ID:-}
@@ -185,7 +185,7 @@ services:
       SMTP_FROM: ${SMTP_FROM:-ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล <no-reply@bdi.or.th>}
       # ช่องทางติดต่อที่พิมพ์ท้ายอีเมลทุกฉบับ — ต้องส่งให้ทั้ง backend และ worker เพราะทั้งคู่
       # ประกอบอีเมลเอง ค่าตั้งต้นคือช่องทางจริงของ BDI ไม่ต้องมีใน .env ก็ถูกอยู่แล้ว
-      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-d2s-support@bdi.or.th}
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-d2share-support@bdi.or.th}
       SUPPORT_PHONE: ${SUPPORT_PHONE:-02-480-8833}
       DELIVERY_POLL_INTERVAL_MS: ${DELIVERY_POLL_INTERVAL_MS:-15000}
       DELIVERY_MAX_ATTEMPTS: ${DELIVERY_MAX_ATTEMPTS:-5}
