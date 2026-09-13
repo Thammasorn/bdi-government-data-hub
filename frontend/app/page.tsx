@@ -500,6 +500,7 @@ function StatTiles({ summary }: { summary: ListSummary }) {
         mine: false,
         tone: "text-navy-800",
         canStartDataset: false,
+        href: null,
       },
       {
         key: "DRAFTING",
@@ -516,6 +517,13 @@ function StatTiles({ summary }: { summary: ListSummary }) {
          * เขาลงนาม ไม่ได้เป็นคนกรอก
          */
         canStartDataset: true,
+        /**
+         * กดที่กล่องแล้วไปหน้า "คำขอส่งชุดข้อมูล" ที่แท็บ "ที่ต้องดำเนินการ" — แท็บนั้นคือ
+         * ฉบับร่างบวกใบที่ถูกส่งกลับมาแก้พอดี ตัวเลขบนกล่องกับจำนวนแถวที่เห็นหลังกดจึงตรงกัน
+         * (ไม่ได้ส่ง `stage=` ไปด้วย เพราะตัวกรองขั้นตอนบนหน้านั้นเป็น radio เลือกได้ทีละหนึ่ง
+         * ส่งสองโหนดไปจะไม่มีเม็ดไหนติ๊ก ทั้งที่แถวถูกกรองอยู่ — อ่านว่าตัวกรองพัง)
+         */
+        href: "/datasets?tab=mine",
       },
       {
         key: "ORGANIZATION_APPROVAL",
@@ -525,6 +533,7 @@ function StatTiles({ summary }: { summary: ListSummary }) {
         mine: Boolean(approval?.mine),
         tone: "text-navy-800",
         canStartDataset: false,
+        href: null,
       },
       {
         /* คำของปลายทางนี้คือ "เปิดใช้งานแล้ว" ไม่ใช่ "อนุมัติแล้ว" แบบ badge ในตาราง —
@@ -536,6 +545,7 @@ function StatTiles({ summary }: { summary: ListSummary }) {
         mine: false,
         tone: "text-success",
         canStartDataset: false,
+        href: null,
       },
     ];
   }, [summary]);
@@ -550,14 +560,37 @@ function StatTiles({ summary }: { summary: ListSummary }) {
           <div
             key={t.key}
             className={clsx(
-              "flex flex-col items-start rounded-2xl px-5 py-4 ring-1",
+              "relative flex flex-col items-start rounded-2xl px-5 py-4 ring-1 transition-shadow",
               // "งานของคุณ" มีทั้งเส้นข้าง คำกำกับ และสี — สีอย่างเดียวสื่อไม่ได้
               t.mine && "border-l-[3px] border-l-coral-500 bg-white shadow-card ring-coral-200",
               dimmed
                 ? "bg-navy-50/40 ring-line"
                 : !t.mine && "bg-white shadow-card ring-line",
+              /* กดได้ต้องดูออกว่ากดได้ — shadow-pop เป็นสำนวน hover ของการ์ดในหน้านี้อยู่แล้ว
+                 และไม่ไปทับสี ring ของกล่อง "งานของคุณ" แบบที่ hover:ring-navy-300 จะทำ */
+              t.href && "cursor-pointer hover:shadow-pop",
             )}
           >
+            {/* ลิงก์คลุมทั้งกล่อง วางเป็นแผ่นใต้เนื้อหา ไม่ได้ห่อเนื้อหาไว้ข้างใน — ปุ่ม
+                "ลงทะเบียนชุดข้อมูลเพิ่มเติม" อยู่ในกล่องเดียวกัน และ <button> ซ้อนใน <a>
+                เป็น HTML ที่ใช้ไม่ได้ เบราว์เซอร์จะกินคลิกของปุ่มไป เนื้อหาจึงถูกตั้ง
+                pointer-events-none ให้คลิกทะลุลงไปโดนลิงก์ ส่วนปุ่มรับคลิกของตัวเองตามปกติ */}
+            {t.href ? (
+              <Link
+                href={t.href}
+                aria-label={[
+                  t.label,
+                  `จำนวน ${t.value.toLocaleString("th-TH")} ชุดข้อมูล`,
+                  t.mine ? "รอคุณดำเนินการ" : null,
+                  "เปิดรายการคำขอส่งชุดข้อมูล",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+                className="absolute inset-0 rounded-2xl"
+              />
+            ) : null}
+
+            <div className="pointer-events-none relative flex flex-col items-start">
             {t.mine ? (
               <p className="text-[11px] font-medium leading-tight text-coral-600">รอคุณดำเนินการ</p>
             ) : null}
@@ -587,6 +620,8 @@ function StatTiles({ summary }: { summary: ListSummary }) {
                 {t.note}
               </p>
             ) : null}
+            </div>
+
             {/* ปุ่ม ไม่ใช่ <a> เพราะปลายทางยังไม่มี id จนกว่าจะสร้างฉบับร่างเสร็จ —
                 `POST /api/dataset-requests` เป็นคนบอกว่าจะพาไปหน้าไหน (ดู
                 lib/use-dataset-registration.ts) ตัวหนังสือจึงทำให้ดูเป็นลิงก์แทน */}
@@ -595,7 +630,7 @@ function StatTiles({ summary }: { summary: ListSummary }) {
                 type="button"
                 onClick={startDataset}
                 disabled={startingDataset}
-                className="mt-1.5 text-left text-[11px] font-medium leading-snug text-coral-600 underline-offset-4 hover:underline disabled:opacity-60"
+                className="relative mt-1.5 text-left text-[11px] font-medium leading-snug text-coral-600 underline-offset-4 hover:underline disabled:opacity-60"
               >
                 {startingDataset ? "กำลังเปิดฟอร์ม…" : "หรือลงทะเบียนชุดข้อมูลเพิ่มเติม →"}
               </button>
