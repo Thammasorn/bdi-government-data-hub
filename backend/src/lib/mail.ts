@@ -397,7 +397,7 @@ export async function sendInvitationEmail(
          </div>`,
         `<p style="margin:20px 0 16px;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
            ท่านสามารถเริ่มต้นการใช้งานระบบได้จากปุ่มด้านล่าง หรือเปิด URL ข้างต้นแล้วกรอก Activation Key
-           ด้วยตนเอง จากนั้นยืนยันตัวตนด้วย ThaID แล้วตั้งรหัสผ่าน
+           ด้วยตนเอง จากนั้นยืนยันตัวตนด้วย ThaID และกำหนดรหัสผ่านสำหรับระบบ D2
          </p>`,
         paragraph(
           `ทั้งนี้ ขอให้${info.internal ? "ท่าน" : "หน่วยงาน"}เก็บรักษา Activation Key ไว้เป็นความลับ และโปรดลงทะเบียนภายใน ` +
