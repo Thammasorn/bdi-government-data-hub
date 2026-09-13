@@ -42,12 +42,7 @@ export function JourneyRow({
   return (
     <section aria-label={title}>
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h2 className="flex flex-wrap items-baseline gap-x-2 text-[15px] font-semibold text-navy-800">
-          {title}
-          <span className="text-[13px] font-normal text-ink-muted">
-            {`ทั้งหมด ${summary.total.toLocaleString("th-TH")} รายการ`}
-          </span>
-        </h2>
+        <h2 className="text-[15px] font-semibold text-navy-800">{title}</h2>
         {/* ลิงก์ไปหน้าที่วาดเส้นทางเต็ม — แทนกล่องของด่านหน่วยงานที่ตัดออกไป */}
         <Link
           href={`${basePath}?tab=all`}
