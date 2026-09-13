@@ -47,8 +47,10 @@ import {
   activeAssignmentWhere,
   assignRole,
   derivedAssignmentStatus,
+  pendingInvitationFor,
   revokeRoleAssignments,
   roleIdByCode,
+  roleSeatTaken,
   type Db,
 } from "../lib/iam.js";
 import { NotificationType, notifyUsers } from "../lib/notify.js";
@@ -175,6 +177,62 @@ async function roleClash(
       organization: { select: { nameTh: true } },
     },
   });
+}
+
+/**
+ * ที่นั่ง (หน่วยงาน, role) นี้ว่างให้บัญชีนี้หรือไม่ — คืน payload 409 เมื่อไม่ว่าง
+ *
+ * กติกา *หนึ่งหน่วยงานมีผู้ดำเนินการหนึ่งคน ผู้มีอำนาจอนุมัติหนึ่งคน* ฉบับ 2026-09-13 ที่
+ * **ปฏิเสธคนใหม่** แทนการเตะคนเดิม (ดู `assignRole()`) — เช็คล่วงหน้าตรงนี้เพื่อให้ได้
+ * 409 พร้อมบอกว่าใครนั่งอยู่และต้องทำอะไรก่อน แทนที่จะโดน `RoleOccupiedError` กลาง
+ * ทรานแซกชัน คำเชิญที่ยังค้างอยู่นับเป็นจองที่นั่งด้วย เหตุผลเดียวกับ `POST /invitations`
+ *
+ * หน่วยงาน BDI ไม่มีที่นั่ง — เจ้าหน้าที่หลายคนต่อ role เป็นเรื่องปกติ
+ */
+async function seatConflict(
+  db: Db,
+  params: { userAccountId: string; roleCode: RoleCode; organizationId: string },
+) {
+  if (params.organizationId === BDI_ORGANIZATION_ID) return null;
+  if (!ORGANIZATION_SCOPED_ROLES.includes(params.roleCode)) return null;
+  const roleId = await roleIdByCode(db, params.roleCode);
+  const label = ROLE_LABELS[params.roleCode];
+
+  const holder = await roleSeatTaken(db, {
+    organizationId: params.organizationId,
+    roleId,
+    exceptUserAccountId: params.userAccountId,
+  });
+  if (holder) {
+    return {
+      error: "role_occupied",
+      message:
+        `หน่วยงานนี้มี "${label}" ที่ใช้งานอยู่แล้ว (${holder.userAccount.email}) — ` +
+        `หนึ่งหน่วยงานมีได้คนเดียว ระบบไม่เปลี่ยนตัวให้เอง ` +
+        `ต้องระงับ (POST /api/admin/users/:id/suspend) หรือยุติบัญชี ` +
+        `(POST /api/admin/users/:id/deactivate) คนนั้นก่อน`,
+      holderUserAccountId: holder.userAccountId,
+      holderEmail: holder.userAccount.email,
+    };
+  }
+
+  const pending = await pendingInvitationFor(db, {
+    organizationId: params.organizationId,
+    roleId,
+    exceptUserAccountId: params.userAccountId,
+  });
+  if (pending) {
+    return {
+      error: "invitation_pending",
+      message:
+        `หน่วยงานนี้มีคำเชิญ "${label}" ค้างอยู่ (${pending.userAccount.email}) — ` +
+        `ที่นั่งถูกจองตั้งแต่ตอนเชิญ ยกเลิกใบนั้นด้วย DELETE /api/admin/invitations/${pending.id} ก่อน`,
+      activationKeyId: pending.id,
+      userAccountId: pending.userAccountId,
+      pendingEmail: pending.userAccount.email,
+    };
+  }
+  return null;
 }
 
 /**
@@ -1033,6 +1091,16 @@ adminUserRouter.post("/:id/roles", async (req, res) => {
     return;
   }
 
+  const seat = await seatConflict(prisma, {
+    userAccountId: account.id,
+    roleCode: role,
+    organizationId: organization.id,
+  });
+  if (seat) {
+    res.status(409).json(seat);
+    return;
+  }
+
   const { replaced } = await prisma.$transaction((tx) =>
     assignRole(tx, {
       userAccountId: account.id,
@@ -1192,6 +1260,16 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
       error: "already_there",
       message: `บัญชีนี้เป็น "${ROLE_LABELS[role]}" ของหน่วยงาน ${target.nameTh} อยู่แล้ว`,
     });
+    return;
+  }
+
+  const seat = await seatConflict(prisma, {
+    userAccountId: account.id,
+    roleCode: role,
+    organizationId: target.id,
+  });
+  if (seat) {
+    res.status(409).json(seat);
     return;
   }
 

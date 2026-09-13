@@ -55,6 +55,7 @@ import {
   issueActivationKey,
   revokeRoleAssignments,
   roleIdByCode,
+  roleSeatTaken,
   type Db,
   type RevokedAssignment,
 } from "../lib/iam.js";
@@ -990,6 +991,33 @@ organizationRouter.post("/", async (req, res) => {
   if (isBdiStaff(session.roles)) {
     res.status(403).json({ error: "forbidden", message: "บัญชีฝั่ง BDI ไม่สามารถสร้างหน่วยงานได้" });
     return;
+  }
+
+  /**
+   * หน่วยงานที่เปิดใช้งานแล้วยื่นคำขอจดทะเบียนอีกไม่ได้ (ตัดสินใจ 2026-09-13 — การ์ด
+   * "แก้เรื่อง invite org user เพิ่ม": หนึ่งหน่วยงาน หนึ่งผู้ดำเนินการ หนึ่งผู้มีอำนาจอนุมัติ)
+   *
+   * คำขอจดทะเบียนคือทางที่หน่วยงานตั้งผู้มีอำนาจอนุมัติของตัวเอง ถ้ายื่นซ้ำได้หลังเปิดใช้งาน
+   * ใบที่สองที่กรอกคนละคนจะกลายเป็นทางเปลี่ยนตัวผู้มีอำนาจฯ ที่ไม่ผ่านใครเลย — ก่อนหน้านี้
+   * คนเดิมถูกถอน role ตอนผู้ประสานงานของ BDI กดผ่านด่านแรก ซึ่งเป็น "เชิญแล้วคนเก่าโดนเตะ"
+   * แบบเดียวกับที่การ์ดสั่งให้เอาออก การเปลี่ยนตัวหลังเปิดใช้งานเป็นงานของ BDI ผ่าน admin API
+   * (ระงับ/ยุติคนเดิม แล้วเชิญคนใหม่) หน้าแรกไม่แสดงปุ่มนี้ให้หน่วยงานที่ ACTIVE อยู่แล้ว
+   * ตรงนี้คือกฎจริงสำหรับคนที่ยิง API ตรง
+   */
+  if (session.organizationId) {
+    const own = await prisma.organization.findUnique({
+      where: { id: session.organizationId },
+      select: { status: true },
+    });
+    if (own?.status === OrganizationStatus.ACTIVE) {
+      res.status(409).json({
+        error: "organization_active",
+        message:
+          "หน่วยงานของคุณเปิดใช้งานแล้ว จึงไม่ต้องยื่นคำขอจดทะเบียนอีก — " +
+          "หากต้องการเปลี่ยนผู้ดำเนินการหรือผู้มีอำนาจอนุมัติของหน่วยงาน กรุณาติดต่อผู้ประสานงานของ BDI",
+      });
+      return;
+    }
   }
 
   /**
@@ -2664,6 +2692,33 @@ async function approverConflict(
     where: { email },
     select: { id: true, cid: true },
   });
+
+  /**
+   * ที่นั่งผู้มีอำนาจอนุมัติของหน่วยงานนี้ต้องว่าง หรือเป็นของคนที่กรอกมานี่เอง
+   * (2026-09-13 — กติกาเดียวกับ `POST /api/admin/invitations`)
+   *
+   * เกิดได้เมื่อคำขอใบก่อนเดินไปถึงด่านลงนามแล้ว (ผู้มีอำนาจฯ เปิดใช้งานบัญชีและถือ role
+   * แล้ว) แต่จบลงที่ปฏิเสธ หน่วยงานจึงยังไม่ ACTIVE และยื่นใบใหม่ได้ ถ้าใบใหม่กรอกคนละคน
+   * ของเดิม `assignRole()` จะเตะคนแรกออกตอนผู้ประสานงานของ BDI กดผ่าน ตอนนี้
+   * `assignRole()` ปฏิเสธแทน จึงต้องบอกตั้งแต่ตอนกรอก ไม่ใช่ให้เจ้าหน้าที่เจอ 409 แทน
+   * คนกรอกหลายวันให้หลัง — ข้อความ mask เหมือนเคสอื่นในฟังก์ชันนี้ ไม่บอกว่าคนเดิมคือใคร
+   */
+  const seatRoleId = await roleIdByCode(db, ROLE_CODES.ORGANIZATION_APPROVER);
+  const seatHolder = await roleSeatTaken(db, {
+    organizationId,
+    roleId: seatRoleId,
+    exceptUserAccountId: existing?.id,
+  });
+  if (seatHolder) {
+    return conflictOf(
+      "หน่วยงานนี้มีผู้มีอำนาจอนุมัติที่ใช้งานอยู่แล้ว ระบบไม่เปลี่ยนตัวผ่านคำขอจดทะเบียน — " +
+        "การเปลี่ยนตัวต้องระงับหรือยุติบัญชีคนเดิมก่อน",
+      {
+        signatoryEmail: "หน่วยงานนี้มีผู้มีอำนาจอนุมัติที่ใช้งานอยู่แล้ว กรอกเป็นคนอื่นไม่ได้",
+        signatoryNationalId: "หน่วยงานนี้มีผู้มีอำนาจอนุมัติที่ใช้งานอยู่แล้ว กรอกเป็นคนอื่นไม่ได้",
+      },
+    );
+  }
 
   if (!existing) {
     // อีเมลนี้ยังไม่มีบัญชี — เลขบัตรจึงต้องว่างด้วย ไม่งั้นเป็นของคนอื่น

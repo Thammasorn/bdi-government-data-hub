@@ -90,6 +90,21 @@ Content-Type: application/json
   (`DELETE /api/admin/invitations/:id` ซึ่งคืนทั้งอีเมลและเลขบัตรให้ใช้ใหม่ได้)
 - **ส่งลิงก์ซ้ำ** ใช้ `POST /api/admin/invitations/:id/resend` — ไม่รับ payload เลย
   ออกคีย์ใบใหม่บนบัญชี/หน่วยงาน/role เดิม แล้วยกเลิกใบเก่าให้
+- **ที่นั่งไม่ว่างก็เชิญไม่ได้** (2026-09-13 — การ์ด "แก้เรื่อง invite org user เพิ่ม")
+  หนึ่งหน่วยงานมี `ORGANIZATION_USER` หนึ่งคนและ `ORGANIZATION_APPROVER` หนึ่งคน ระบบ
+  **ไม่เปลี่ยนตัวให้เอง** — เดิมเชิญได้เสมอแล้วคนเดิมถูกถอน role เงียบ ๆ ตอนคนใหม่เปิดใช้งาน
+  ตอนนี้ตอบ `409` ตั้งแต่ตอนเชิญ สามกรณีตามลำดับที่ตรวจ:
+  - `organization_not_active` — เชิญ `ORGANIZATION_APPROVER` ให้หน่วยงานที่ยังไม่ `ACTIVE`
+    ผู้มีอำนาจอนุมัติคนแรกต้องมาจากคำขอจดทะเบียน (Journey B) เพราะเป็นคนที่ชื่ออยู่บน A0
+  - `role_occupied` — มีคนถือ role นี้และบัญชียังใช้งานอยู่ คำตอบบอก `holderEmail` ทางออกคือ
+    `POST /api/admin/users/:id/suspend` หรือ `deactivate` คนเดิมก่อน แล้วเชิญใหม่
+    (การระงับไม่ถอน role — คนที่ถูกระงับจะเสีย role ก็ต่อเมื่อคนใหม่เปิดใช้งานสำเร็จ
+    และได้รับแจ้งเหมือนเดิม)
+  - `invitation_pending` — มีคำเชิญ role นี้ค้างอยู่ ที่นั่งถูกจองตั้งแต่ตอนเชิญ คำตอบคืน
+    `activationKeyId` ของใบนั้น จะเปลี่ยนคนต้อง `DELETE` ใบเดิมก่อน
+  กฎเดียวกันคุม `resend` · `POST /users/:id/roles` · `transfer` และการเปิดใช้งานบัญชี
+  (`GET /api/auth/invitation` ตอบ `409 role_occupied` โดย **ไม่ทำลายลิงก์** — ระงับคนเดิม
+  แล้วกดลิงก์เดิมซ้ำได้) หน่วยงาน BDI ไม่มีที่นั่ง เชิญเจ้าหน้าที่กี่คนต่อ role ก็ได้
 - **ค้นหาคำเชิญ** `GET /api/admin/invitations?email=&cid=&status=&organizationId=&page=&pageSize=`
   (`email` ค้นบางส่วนได้ · `cid` ต้องตรงตัวเต็ม)
 - ตอบกลับ `201` พร้อม `invitationId`, `expiresAt` (ไม่คืน token ใน response — token อยู่ในอีเมลเท่านั้น)

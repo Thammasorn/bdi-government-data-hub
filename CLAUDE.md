@@ -487,17 +487,35 @@ many officers per role is normal there. The trade-off is that concurrent writes 
 a database-level net; `assignRole` runs inside the activation transaction, which covers the
 paths that exist.
 
-The rule is enforced by **revoking the previous holder**, not by refusing the new one — so
-inviting a second officer into an organisation silently ejects the first. Until 2026-08-24 that
-was invisible: no audit event, no email, and the home page read the resulting
-`organizationId === null` as "has no organisation yet" and offered to create one, which is how
-four empty "หน่วยงานใหม่" organisations appeared on `main`. `revokeRoleAssignments()` now returns
-the rows it revoked and `announceRoleReplacement()` (in `lib/notify.ts`) writes the `ROLE_REVOKED`
-audit event and notifies the person — **always after the transaction commits**, because both write
-through the main `prisma` client rather than the `tx` that reassigned the role. `/api/auth/me`
-carries `removedFromOrganization` so the home page can say what happened instead of inviting a
-duplicate registration. The rule itself is unchanged and still contradicts
-`docs/01-user-journey.md` §1.
+**The rule refuses the newcomer; it no longer ejects the holder** (2026-09-13, card "แก้เรื่อง
+invite org user เพิ่ม"). Until then `assignRole` revoked the previous holder, so inviting a second
+officer into an organisation silently ejected the first when the second activated — an admin who
+invited the wrong person had changed who runs the organisation without meaning to. Now
+`roleSeatTaken()` in `lib/iam.ts` answers "who holds this (organisation, role) seat with an
+ACTIVE account", `assignRole` throws `RoleOccupiedError` when someone does, and every granting
+path checks first so it can answer 409 with the holder's email and the way out: `POST
+/api/admin/invitations` (`role_occupied`), `resend`, `POST /users/:id/roles`, `transfer` (all
+via `seatConflict()` in `admin-users.ts`), Journey B's `approverConflict()`, and `GET
+/api/auth/invitation` / `POST /api/auth/activate` (the link is **not** revoked — once BDI
+suspends the holder the same link works). A **pending invitation (ISSUED, unexpired) occupies
+the seat too** (`pendingInvitationFor()`, 409 `invitation_pending` carrying the key id): the
+alternative was a second invitee failing at activation, days away from the admin who could fix
+it. Suspension does not revoke roles, so the seat is judged by **account status**, not by the
+assignment alone: a suspended or deactivated holder leaves the seat free, and when the newcomer
+activates the old assignment is revoked with `ROLE_REPLACED_REASON` — the one surviving use of
+that path — so reinstating the old account cannot produce two officers. `revokeRoleAssignments()`
+returns those rows and `announceRoleReplacement()` (in `lib/notify.ts`) writes the `ROLE_REVOKED`
+audit event and notifies the person, **always after the transaction commits**, because both write
+through the main `prisma` client rather than the `tx`. `/api/auth/me` carries
+`removedFromOrganization` so the home page can say what happened instead of inviting a
+duplicate registration. `ORGANIZATION_APPROVER` cannot be invited directly until the organisation
+is `ACTIVE` (409 `organization_not_active`): the first approver comes from Journey B, where the
+name is printed on A0. And an `ACTIVE` organisation cannot open another registration request
+(`POST /api/organizations` → 409 `organization_active`), because a second request naming a
+different signatory was the other road to the same ejection. `DELETE /api/admin/invitations/:id`
+counts only *usable* other keys when deciding whether the account may go — a `resend` leaves a
+REVOKED predecessor behind, which used to pin the email and CID forever. The rule itself still
+contradicts `docs/01-user-journey.md` §1.
 
 **One user is one role** — settled 2026-09-03, and a different rule from the one above. Nothing
 enforced it: `assignRole` caps *one holder per role per organisation*, `organizationClash()` in

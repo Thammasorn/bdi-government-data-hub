@@ -64,6 +64,14 @@ function ActivateFlow() {
   const token = useSearchParams().get("token") ?? "";
   const [invitation, setInvitation] = useState<InvitationInfo | null>(null);
   const [invalidReason, setInvalidReason] = useState<string | null>(null);
+  /**
+   * ลิงก์ยังดี แต่ที่นั่งของบทบาทนี้ในหน่วยงานมีคนใช้งานอยู่ — คนละเรื่องกับลิงก์ตาย
+   *
+   * `GET /invitation` ตอบ 409 `role_occupied` โดย **ไม่** ทำลายคีย์ (ดู routes/auth.ts)
+   * ถ้าแสดงเป็น "ลิงก์ใช้งานไม่ได้ ขอลิงก์ใหม่" ผู้รับจะไปขอคำเชิญใหม่ทั้งที่ใบเดิมกดซ้ำได้
+   * ทันทีที่ผู้ประสานงานของ BDI ระงับคนเดิม — ข้อความจึงต้องบอกให้รอ ไม่ใช่ให้ขอใหม่
+   */
+  const [occupiedReason, setOccupiedReason] = useState<string | null>(null);
   const load = useCallback(async () => {
     if (!token) return;
     try {
@@ -71,6 +79,10 @@ function ActivateFlow() {
         await api.get<InvitationInfo>(`/api/auth/invitation?token=${encodeURIComponent(token)}`),
       );
     } catch (err) {
+      if (err instanceof ApiError && err.code === "role_occupied") {
+        setOccupiedReason(err.message);
+        return;
+      }
       setInvalidReason(err instanceof ApiError ? err.message : "ลิงก์ใช้งานไม่ได้");
     }
   }, [token]);
@@ -80,6 +92,7 @@ function ActivateFlow() {
   }, [load]);
 
   if (!token) return <KeyEntry />;
+  if (occupiedReason) return <SeatOccupied reason={occupiedReason} />;
   if (invalidReason) return <InvalidLink reason={invalidReason} />;
   if (!invitation) return <Spinner className="min-h-screen" />;
 
@@ -480,6 +493,29 @@ function PasswordRequirements({ value }: { value: string }) {
         );
       })}
     </ul>
+  );
+}
+
+/** ที่นั่งไม่ว่าง — ลิงก์ใบนี้ยังใช้ได้ กดซ้ำได้เมื่อ BDI ระงับหรือยุติบัญชีคนเดิมแล้ว */
+function SeatOccupied({ reason }: { reason: string }) {
+  return (
+    <AuthLayout
+      title="ยังเปิดใช้งานบัญชีไม่ได้ในขณะนี้"
+      description={reason}
+      footer={
+        <Link href="/login" className="font-medium text-navy-700 hover:underline">
+          ไปหน้าเข้าสู่ระบบ
+        </Link>
+      }
+    >
+      <div className="rounded-xl bg-warning-bg p-5">
+        <p className="text-sm leading-relaxed text-ink">
+          หนึ่งหน่วยงานมีผู้ดำเนินการและผู้มีอำนาจอนุมัติได้อย่างละหนึ่งคน
+          ลิงก์คำเชิญของคุณยังใช้ได้อยู่ — เมื่อผู้ประสานงานของ BDI ระงับหรือยุติบัญชีของผู้ถือบทบาทคนเดิมแล้ว
+          ให้เปิดลิงก์เดิมอีกครั้งได้ทันที ไม่ต้องขอคำเชิญใหม่
+        </p>
+      </div>
+    </AuthLayout>
   );
 }
 

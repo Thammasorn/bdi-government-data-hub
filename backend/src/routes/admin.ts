@@ -23,7 +23,7 @@ import {
   type ChoiceFieldKey,
 } from "../lib/dataset-choices.js";
 import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
-import { issueActivationKey } from "../lib/iam.js";
+import { issueActivationKey, pendingInvitationFor, roleIdByCode, roleSeatTaken } from "../lib/iam.js";
 import { sendInvitationEmail } from "../lib/mail.js";
 import { ROLE_LABELS } from "../lib/roles.js";
 import {
@@ -607,11 +607,75 @@ adminRouter.post("/invitations", async (req, res) => {
   const organization = await prisma.organization.findUnique({
     where: { id: organizationId },
     // ชื่อหน่วยงานขึ้นหัวจดหมายในอีเมลคำเชิญ ("เรียน ผู้ใช้งาน <หน่วยงาน>")
-    select: { id: true, nameTh: true },
+    select: { id: true, nameTh: true, status: true },
   });
   if (!organization) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานที่ระบุ" });
     return;
+  }
+
+  /**
+   * หนึ่งหน่วยงานมีผู้ดำเนินการหนึ่งคนและผู้มีอำนาจอนุมัติหนึ่งคน — **ที่นั่งไม่ว่างก็เชิญ
+   * ไม่ได้** (การ์ด "แก้เรื่อง invite org user เพิ่ม" 2026-09-13)
+   *
+   * เดิม endpoint นี้ไม่ดูเลยว่าหน่วยงานมีคนอยู่แล้วหรือไม่ แล้วปล่อยให้ `assignRole()`
+   * ตอนเปิดใช้งานเตะคนเดิมออกให้คนใหม่ — เชิญผิดคนครั้งเดียวเปลี่ยนตัวผู้รับผิดชอบของ
+   * หน่วยงานได้ทั้งคน ตอนนี้ตอบ 409 ตั้งแต่ตอนเชิญ พร้อมบอกว่าใครนั่งอยู่ (ฝั่ง admin
+   * ไม่ mask — คนเรียกคือผู้ประสานงานของ BDI) และต้องระงับหรือยุติบัญชีคนนั้นก่อน
+   *
+   * สามด่านตามลำดับ:
+   *   1. ผู้มีอำนาจอนุมัติเชิญได้เฉพาะหน่วยงานที่ ACTIVE แล้ว — ก่อนหน้านั้นผู้มีอำนาจฯ
+   *      ต้องมาจากคำขอจดทะเบียน (Journey B) ซึ่งเป็นคนที่ถูกกรอกชื่อไว้บนเอกสาร A0
+   *      การเชิญตรงจะได้คนที่ไม่ตรงกับเอกสารที่หน่วยงานกำลังจะลงนาม
+   *   2. มีคนถือ role นี้และบัญชียังใช้งานอยู่ → 409 `role_occupied`
+   *   3. มีคำเชิญ role นี้ค้างอยู่ → 409 `invitation_pending` — ที่นั่งถูกจองตั้งแต่ตอน
+   *      เชิญ ไม่งั้นคนที่กดลิงก์ทีหลังจะเจอ error ตอนเปิดใช้งานที่ตัวเองแก้ไม่ได้
+   */
+  if (isOrgScoped) {
+    if (role === ROLE_CODES.ORGANIZATION_APPROVER && organization.status !== OrganizationStatus.ACTIVE) {
+      res.status(409).json({
+        error: "organization_not_active",
+        message:
+          `หน่วยงานนี้ยังไม่เปิดใช้งาน (สถานะ ${organization.status}) จึงยังเชิญผู้มีอำนาจอนุมัติตรง ๆ ไม่ได้ — ` +
+          `ผู้มีอำนาจอนุมัติคนแรกมาจากคำขอจดทะเบียนหน่วยงาน (ผู้ดำเนินการกรอกชื่อไว้ในฟอร์ม ` +
+          `ระบบส่งคำเชิญให้เองเมื่อผู้ประสานงานของ BDI ตรวจสอบผ่าน) ` +
+          `เชิญตรงได้เฉพาะเมื่อหน่วยงานเปิดใช้งานแล้วและที่นั่งว่าง`,
+        organizationStatus: organization.status,
+      });
+      return;
+    }
+
+    const roleId = await roleIdByCode(prisma, role);
+    const holder = await roleSeatTaken(prisma, { organizationId, roleId });
+    if (holder) {
+      res.status(409).json({
+        error: "role_occupied",
+        message:
+          `หน่วยงานนี้มี "${ROLE_LABELS[role]}" ที่ใช้งานอยู่แล้ว (${holder.userAccount.email}) — ` +
+          `หนึ่งหน่วยงานมีได้คนเดียว ระบบไม่เปลี่ยนตัวให้เอง ` +
+          `ถ้าต้องการเปลี่ยนคน ให้ระงับด้วย POST /api/admin/users/:id/suspend ` +
+          `หรือยุติบัญชีด้วย POST /api/admin/users/:id/deactivate ก่อน แล้วค่อยเชิญใหม่`,
+        holderUserAccountId: holder.userAccountId,
+        holderEmail: holder.userAccount.email,
+      });
+      return;
+    }
+
+    const pending = await pendingInvitationFor(prisma, { organizationId, roleId });
+    if (pending) {
+      res.status(409).json({
+        error: "invitation_pending",
+        message:
+          `หน่วยงานนี้มีคำเชิญ "${ROLE_LABELS[role]}" ค้างอยู่แล้ว (${pending.userAccount.email}) — ` +
+          `ที่นั่งถูกจองตั้งแต่ตอนเชิญ ถ้าจะเปลี่ยนคน ให้ยกเลิกใบเดิมด้วย ` +
+          `DELETE /api/admin/invitations/${pending.id} ก่อน ` +
+          `ถ้าเป็นคนเดิมและแค่ลิงก์หาย ใช้ POST /api/admin/invitations/${pending.id}/resend`,
+        activationKeyId: pending.id,
+        userAccountId: pending.userAccountId,
+        pendingEmail: pending.userAccount.email,
+      });
+      return;
+    }
   }
 
   /**
@@ -849,6 +913,53 @@ adminRouter.post("/invitations/:id/resend", async (req, res) => {
   }
 
   const roleCode = key.role.code as RoleCode;
+
+  /**
+   * ที่นั่งต้องยังเป็นของคนนี้อยู่ — กฎเดียวกับ `POST /invitations`
+   *
+   * คำเชิญที่หมดอายุไปแล้วไม่ได้จองที่นั่ง (`pendingInvitationFor()` นับเฉพาะใบที่ยังไม่
+   * หมดอายุ) ระหว่างนั้นหน่วยงานอาจได้คนใหม่ไปแล้ว ถ้าส่งใบเก่าซ้ำโดยไม่ดู คนที่กดลิงก์
+   * จะเจอ `RoleOccupiedError` ตอนเปิดใช้งาน — error ที่เขาแก้เองไม่ได้
+   */
+  if (
+    ORGANIZATION_SCOPED_ROLES.includes(roleCode) &&
+    key.organizationId !== BDI_ORGANIZATION_ID
+  ) {
+    const holder = await roleSeatTaken(prisma, {
+      organizationId: key.organizationId,
+      roleId: key.roleId,
+      exceptUserAccountId: key.userAccountId,
+    });
+    if (holder) {
+      res.status(409).json({
+        error: "role_occupied",
+        message:
+          `หน่วยงานนี้มี "${ROLE_LABELS[roleCode]}" ที่ใช้งานอยู่แล้ว (${holder.userAccount.email}) — ` +
+          `ส่งคำเชิญใบนี้ซ้ำไม่ได้จนกว่าจะระงับหรือยุติบัญชีคนนั้นก่อน`,
+        holderUserAccountId: holder.userAccountId,
+        holderEmail: holder.userAccount.email,
+      });
+      return;
+    }
+    const pending = await pendingInvitationFor(prisma, {
+      organizationId: key.organizationId,
+      roleId: key.roleId,
+      exceptUserAccountId: key.userAccountId,
+    });
+    if (pending) {
+      res.status(409).json({
+        error: "invitation_pending",
+        message:
+          `หน่วยงานนี้มีคำเชิญ "${ROLE_LABELS[roleCode]}" ของคนอื่นค้างอยู่ (${pending.userAccount.email}) — ` +
+          `ยกเลิกใบนั้นด้วย DELETE /api/admin/invitations/${pending.id} ก่อน ถ้าจะส่งใบนี้ซ้ำ`,
+        activationKeyId: pending.id,
+        userAccountId: pending.userAccountId,
+        pendingEmail: pending.userAccount.email,
+      });
+      return;
+    }
+  }
+
   const { key: raw, record } = await prisma.$transaction((tx) =>
     issueActivationKey(tx, {
       userAccountId: key.userAccountId,
@@ -922,7 +1033,16 @@ adminRouter.delete("/invitations/:id", async (req, res) => {
           status: true,
           _count: {
             select: {
-              activationKeys: true,
+              /**
+               * นับเฉพาะคีย์ใบอื่นที่ **ยังใช้ได้** — ใบ REVOKED ที่ `resend` ทิ้งไว้เป็นประวัติ
+               * ของคำเชิญใบเดียวกัน ไม่ใช่ "คำเชิญใบอื่น" เดิมนับทุกใบ พอ resend สักครั้ง
+               * บัญชีก็มีสองแถวและลบไม่ได้อีกเลย อีเมลกับเลขบัตรถูกยึดถาวรทั้งที่ทางแก้
+               * ที่ทุกข้อความ 409 ชี้ไปคือ "ลบใบเดิมแล้วเชิญใหม่" (พบ 2026-09-13)
+               * `activation_key` มี onDelete: Cascade ใบเก่าจึงหายไปพร้อมบัญชี
+               */
+              activationKeys: {
+                where: { NOT: { id: parsedId.data }, status: ActivationKeyStatus.ISSUED },
+              },
               roleAssignments: true,
               assignedReviewTasks: true,
               legalAcceptances: true,
@@ -951,10 +1071,9 @@ adminRouter.delete("/invitations/:id", async (req, res) => {
   }
 
   const counts = account._count;
-  // คีย์ใบนี้นับอยู่ใน activationKeys ด้วย จึงเทียบกับ 1 ไม่ใช่ 0
   const keepAccountBecause =
-    counts.activationKeys > 1
-      ? "บัญชีนี้ยังมีคำเชิญใบอื่นอยู่"
+    counts.activationKeys > 0
+      ? "บัญชีนี้ยังมีคำเชิญใบอื่นที่ใช้ได้อยู่"
       : counts.roleAssignments > 0
         ? "บัญชีนี้มีสิทธิ์ (role) ผูกอยู่แล้ว"
         : counts.assignedReviewTasks > 0
