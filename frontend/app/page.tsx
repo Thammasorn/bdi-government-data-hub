@@ -1,5 +1,6 @@
 "use client";
 
+import clsx from "clsx";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
@@ -14,8 +15,19 @@ import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api } from "@/lib/api";
 import { useOrganizationRegistration } from "@/lib/use-organization-registration";
-import { formatThaiDate, isBdiStaff, type OrganizationStatus } from "@/lib/status";
-import { nodeCount, type ListSummary, type PageInfo } from "@/lib/stage";
+import {
+  formatThaiDate,
+  isBdiStaff,
+  isOrganizationScopedRole,
+  type OrganizationStatus,
+} from "@/lib/status";
+import {
+  nodeCount,
+  type JourneyNode,
+  type ListSummary,
+  type NodeKey,
+  type PageInfo,
+} from "@/lib/stage";
 import type { DatasetRequestListItem, OrganizationListItem } from "@/lib/types";
 
 /** ผลของ endpoint ที่แบ่งหน้าแล้ว — แถวของหน้านี้ กับจำนวนจริงทั้งหมด */
@@ -192,18 +204,6 @@ function OrganizationHome({
    */
   const pendingRegistration = orgRequests === null ? undefined : (orgRequests[0] ?? null);
 
-  const counts = useMemo(
-    () => ({
-      // ยังเดินอยู่ = ทั้งหมด ลบปลายทางทั้งห้า — อ่านจากโหนดที่ server ส่งมา ไม่ไล่ชื่อด่านเอง
-      pending: summary
-        ? summary.total - SETTLED.reduce((sum, k) => sum + nodeCount(summary, k), 0)
-        : 0,
-      revision: nodeCount(summary, "RETURNED"),
-      approved: nodeCount(summary, "APPROVED"),
-    }),
-    [summary],
-  );
-
   const name = user?.firstName?.trim() || user?.email || "";
   const organization = user?.organization ?? null;
 
@@ -274,7 +274,7 @@ function OrganizationHome({
         </p>
       ) : (
         <>
-          <StatTiles counts={counts} total={summary.total} />
+          <StatTiles summary={summary} />
 
           {/* ผู้มีอำนาจกระทำการแทนคือคนเดียวที่กดต่อได้เมื่อคำขอค้างที่ด่านนี้
               จึงยกขึ้นมาเป็นการ์ดแยก ไม่ให้จมอยู่ในรายการรวม */}
@@ -444,28 +444,133 @@ function HomeHeader({
   );
 }
 
-function StatTiles({
-  counts,
-  total,
-}: {
-  counts: { pending: number; revision: number; approved: number };
-  total: number;
-}) {
-  const tiles = [
-    { label: "ชุดข้อมูลทั้งหมด", value: total, className: "text-navy-800" },
-    { label: "รออนุมัติ", value: counts.pending, className: "text-navy-600" },
-    { label: "รอการแก้ไข", value: counts.revision, className: "text-danger" },
-    { label: "อนุมัติแล้ว", value: counts.approved, className: "text-success" },
-  ];
+/**
+ * แถวสรุปสี่กล่องของหน้าแรกฝั่งหน่วยงาน
+ *
+ * เดิมสี่กล่องนี้เขียนว่า ทั้งหมด / รออนุมัติ / รอการแก้ไข / อนุมัติแล้ว ซึ่งตอบคำถามของ
+ * คนดูแลระบบ ไม่ใช่คำถามของหน่วยงาน: "รออนุมัติ" รวมทุกด่านที่ยังเดินอยู่ไว้ในตัวเลขเดียว
+ * ทั้งด่านที่หน่วยงานต้องทำเองและด่านที่ต้องรอ BDI คนอ่านจึงแยกไม่ออกว่ามีอะไรค้างอยู่ที่
+ * โต๊ะตัวเอง — การ์ด Task Board 2026-09-13 ("แก้หน้า home page ของ organization officer
+ * และ approver") ตัดใหม่เป็น: ทั้งหมด · แบบร่าง+แก้ไข · รอหน่วยงานอนุมัติ · เปิดใช้งานแล้ว
+ * โดยกล่องของงานที่ค้างรอฝั่ง BDI ถูกยุบเป็นบรรทัดเล็กใต้ตัวเลขรวม เพราะเป็นสิ่งที่หน่วยงาน
+ * ทำอะไรกับมันไม่ได้ รู้ไว้เฉย ๆ ว่ายังไม่หายไปไหน
+ *
+ * **กล่องไหนเด่นมาจาก `mine` ที่ server ส่งมา ไม่ได้อ่าน role เอง** ตามกติกาหัวไฟล์
+ * lib/stage.ts — `myNodeKeys()` ยก DRAFT/RETURNED ให้ผู้ดำเนินการของหน่วยงาน และยก
+ * ORGANIZATION_APPROVAL ให้ผู้มีอำนาจกระทำการแทน ซึ่งตรงกับที่การ์ดสั่งไว้พอดี ถ้าวันหนึ่ง
+ * ด่านย้ายมือ กล่องที่เด่นจะย้ายตาม โดยไม่ต้องแก้ไฟล์นี้
+ */
+function StatTiles({ summary }: { summary: ListSummary }) {
+  const tiles = useMemo(() => {
+    const nodeOf = (key: NodeKey) => summary.nodes.find((n) => n.key === key) ?? null;
+    /**
+     * ด่านของเส้นทาง (ไม่นับปลายทาง) แยกเป็นของหน่วยงานกับของ BDI ด้วย roleCode —
+     * สำนวนเดียวกับ JourneyRow ฝั่ง BDI ที่ใช้ `isOrganizationScopedRole` คัดกล่อง
+     * ไม่ใช่การไล่ชื่อด่าน เพิ่มด่านใน journey-steps.ts แล้วตัวเลขทั้งสองฝั่งตามไปเอง
+     */
+    const gates = summary.nodes.filter(
+      (n): n is JourneyNode & { roleCode: string } =>
+        n.lane === "main" && !n.terminal && n.roleCode !== null,
+    );
+    const sum = (ns: typeof gates) => ns.reduce((acc, n) => acc + n.count, 0);
+    const byOrganization = gates.filter((n) => isOrganizationScopedRole(n.roleCode));
+    const waitingOnBdi = sum(gates.filter((n) => !isOrganizationScopedRole(n.roleCode)));
+
+    /* ฉบับร่างกับใบที่ถูกส่งกลับมาแก้เป็นกองเดียวกันสำหรับคนกรอก — ทั้งคู่คือ "ถึงตาคุณแล้ว"
+       (เหตุผลเดียวกับที่ myNodeKeys() ยกสองโหนดนี้ให้ ORGANIZATION_REVISION พร้อมกัน) */
+    const draft = nodeOf("DRAFT");
+    const returned = nodeOf("RETURNED");
+    const approval = byOrganization[0] ?? null;
+
+    return [
+      {
+        key: "TOTAL",
+        label: "ทั้งหมด",
+        value: summary.total,
+        /* บรรทัดเล็กใต้ตัวเลข — เขียนเป็นสตริงเดียว ไม่ให้ JSX แทรกช่องว่างกลางคำไทย */
+        note: `อยู่ระหว่างรอ BDI ดำเนินการ ${waitingOnBdi.toLocaleString("th-TH")}`,
+        mine: false,
+        tone: "text-navy-800",
+      },
+      {
+        key: "DRAFTING",
+        label: "แบบร่าง + แก้ไข",
+        value: (draft?.count ?? 0) + (returned?.count ?? 0),
+        note: null,
+        mine: Boolean(draft?.mine || returned?.mine),
+        tone: "text-navy-800",
+      },
+      {
+        key: "ORGANIZATION_APPROVAL",
+        label: "รอหน่วยงานอนุมัติ",
+        value: approval?.count ?? 0,
+        note: null,
+        mine: Boolean(approval?.mine),
+        tone: "text-navy-800",
+      },
+      {
+        /* คำของปลายทางนี้คือ "เปิดใช้งานแล้ว" ไม่ใช่ "อนุมัติแล้ว" แบบ badge ในตาราง —
+           ข้อยกเว้นเดียวกับ TERMINAL_LABELS ใน JourneyRow.tsx และด้วยเหตุผลเดียวกัน */
+        key: "APPROVED",
+        label: "เปิดใช้งานแล้ว",
+        value: nodeCount(summary, "APPROVED"),
+        note: null,
+        mine: false,
+        tone: "text-success",
+      },
+    ];
+  }, [summary]);
+
+  const hasOwn = tiles.some((t) => t.mine);
 
   return (
     <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
-      {tiles.map((t) => (
-        <Card key={t.label} className="px-5 py-4">
-          <p className="text-[13px] text-ink-muted">{t.label}</p>
-          <p className={`mt-1 text-[28px] font-semibold leading-tight ${t.className}`}>{t.value}</p>
-        </Card>
-      ))}
+      {tiles.map((t) => {
+        const dimmed = hasOwn && !t.mine;
+        return (
+          <div
+            key={t.key}
+            className={clsx(
+              "rounded-2xl px-5 py-4 ring-1",
+              // "งานของคุณ" มีทั้งเส้นข้าง คำกำกับ และสี — สีอย่างเดียวสื่อไม่ได้
+              t.mine && "border-l-[3px] border-l-coral-500 bg-white shadow-card ring-coral-200",
+              dimmed
+                ? "bg-navy-50/40 ring-line"
+                : !t.mine && "bg-white shadow-card ring-line",
+            )}
+          >
+            {t.mine ? (
+              <p className="text-[11px] font-medium leading-tight text-coral-600">รอคุณดำเนินการ</p>
+            ) : null}
+            <p
+              className={clsx(
+                "text-[13px] leading-snug",
+                dimmed ? "text-ink-subtle" : "text-ink-muted",
+              )}
+            >
+              {t.label}
+            </p>
+            <p
+              className={clsx(
+                "mt-1 text-[28px] font-semibold leading-tight tabular-nums",
+                t.mine ? "text-coral-600" : dimmed ? "text-ink-subtle" : t.tone,
+              )}
+            >
+              {t.value.toLocaleString("th-TH")}
+            </p>
+            {t.note ? (
+              <p
+                className={clsx(
+                  "mt-1 text-[11px] leading-snug",
+                  dimmed ? "text-ink-subtle" : "text-ink-muted",
+                )}
+              >
+                {t.note}
+              </p>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
