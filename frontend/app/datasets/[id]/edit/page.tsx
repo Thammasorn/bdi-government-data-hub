@@ -979,6 +979,12 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
 /**
  * คำสำคัญเป็นชิป — พิมพ์แล้วกด Enter หรือคอมมาเพื่อเพิ่ม
  * เก็บลงฐานข้อมูลเป็นสตริงเดียวคั่นด้วย "," ตามคอลัมน์ tag_string ในชีท
+ *
+ * ปุ่มลบเป็น `<svg>` ไม่ใช่ตัวอักษร "×": ตัวอักษรวางบนเส้นฐานของฟอนต์ และ body
+ * ตั้ง line-height ไว้ 1.7 (22.1px) ให้สระกับวรรณยุกต์ไทย ซึ่งสูงกว่าปุ่ม 16px
+ * — `place-items-center` จึงจัดกึ่งกลาง "กล่องบรรทัด" ไม่ใช่ตัวหมึก กากบาทเลย
+ * ตกต่ำกว่าจุดกึ่งกลางวงกลมราว 4px และหลุดแนวเดียวกับตัวอักษรในชิป ไอคอน SVG
+ * ไม่มีเส้นฐาน จึงอยู่กึ่งกลางตามเรขาคณิตเสมอ
  */
 function KeywordInput({
   value,
@@ -1026,9 +1032,18 @@ function KeywordInput({
               type="button"
               aria-label={`ลบคำสำคัญ ${word}`}
               onClick={() => onChange(tags.filter((w) => w !== word).join(","))}
-              className="grid h-4 w-4 place-items-center rounded-full text-navy-600 transition-colors hover:bg-navy-200"
+              className="grid h-4 w-4 shrink-0 place-items-center rounded-full text-navy-600 transition-colors hover:bg-navy-200 hover:text-navy-800"
             >
-              ×
+              <svg
+                viewBox="0 0 20 20"
+                className="h-2.5 w-2.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                aria-hidden="true"
+              >
+                <path d="M5 5 15 15M15 5 5 15" strokeLinecap="round" />
+              </svg>
             </button>
           </span>
         ))}
