@@ -109,6 +109,14 @@ export function BdiHome() {
   const orgMine = orgSummary?.mine ?? 0;
   const datasetMine = datasetSummary?.mine ?? 0;
   const mine = orgMine + datasetMine;
+  /**
+   * ความเห็นของผู้เชี่ยวชาญที่กลับมาแล้ว — นับ **คำขอ** ในกองที่รอผู้อ่านอยู่ ไม่ใช่นับความเห็น
+   *
+   * เซิร์ฟเวอร์เป็นคนตัดสินว่าใครควรเห็นตัวเลขนี้ (ผู้เชี่ยวชาญได้ 0 ไม่ใช่จำนวนความเห็นของ
+   * ตัวเอง — ดู advisoryReturnedCount() ใน backend/src/lib/queue.ts) หน้านี้จึงเช็คแค่ว่ามี
+   * ตัวเลขมาไหม ไม่ต้องรู้ว่าด่านไหนเป็นของ role ไหน ตามกติกาหัวไฟล์ lib/stage.ts
+   */
+  const advisory = datasetSummary?.advisory ?? 0;
 
   /* ประโยคไทยประกอบเป็นชิ้นเดียว ไม่ปล่อยให้ JSX ขึ้นบรรทัดใหม่คั่นกลาง */
   const scopeNote = specialistOnly
@@ -179,6 +187,37 @@ export function BdiHome() {
                       </Button>
                     </Link>
                   ) : null}
+                </div>
+              </div>
+            </Card>
+          ) : null}
+
+          {/*
+            ความเห็นที่ผู้ประสานงานขอไว้เอง กลับมาแล้วกี่ใบ
+
+            อยู่ใต้การ์ด coral เพราะมันไม่ใช่ "งานใหม่ที่รอคุณ" — ใบพวกนี้นับอยู่ในเลขนั้นแล้ว
+            ตั้งแต่ก่อนมีความเห็น สิ่งที่การ์ดนี้เพิ่มคือ "อ่านได้แล้วนะ" จึงเป็นน้ำเงินไม่ใช่ส้ม
+            สีเดียวกับการ์ดความเห็นบนหน้ารายละเอียด
+
+            ปุ่มพาไปที่กองของตัวเอง ไม่ได้กรองเฉพาะใบที่มีความเห็น — คำศัพท์ของตัวกรองคือโหนด
+            ของเส้นทาง (lib/queue.ts) การเพิ่มโทเคน "มีความเห็น" จะเป็นโหนดปลอมบนแผนภาพ
+            ป้ายปุ่มจึงพูดเท่าที่มันทำได้จริง
+          */}
+          {advisory > 0 ? (
+            <Card className="mb-8 border-l-[3px] border-l-navy-500">
+              <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="font-medium text-navy-800">
+                    {`ผู้เชี่ยวชาญให้ความเห็นกลับมาแล้ว ${advisory} คำขอ`}
+                  </p>
+                  <p className="mt-0.5 text-sm leading-relaxed text-ink-muted">
+                    {`จากคำขอลงทะเบียนชุดข้อมูลที่รอคุณตรวจสอบอยู่ ${datasetMine} รายการ`}
+                  </p>
+                </div>
+                <div className="shrink-0">
+                  <Link href={`${DATASETS}?tab=mine&stage=OFFICER_REVIEW`}>
+                    <Button variant="secondary">ดูคำขอที่รอคุณตรวจสอบ</Button>
+                  </Link>
                 </div>
               </div>
             </Card>

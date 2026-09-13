@@ -32,6 +32,7 @@ import {
   sendDatasetPendingOrgApprover,
   sendDatasetRejected,
   sendDatasetRevisionRequested,
+  sendDatasetSpecialistCommented,
   sendDatasetSubmitted,
   sendRaw,
   sendRequestProgressed,
@@ -161,6 +162,38 @@ export async function renderAndSend(
             progress,
           );
           return;
+        /**
+         * ความเห็นของผู้เชี่ยวชาญ — ตัวความเห็นมาจาก `n.message` ไม่ใช่จากแถวล่าสุด
+         *
+         * ผู้เชี่ยวชาญแก้ความเห็นได้ และการแก้เขียนแถว review_task ใหม่อีกแถวพร้อม
+         * notification ของตัวเอง อีเมลฉบับนี้จึงต้องเล่าความเห็น **รอบที่มันถูกสร้าง**
+         * ไม่ใช่รอบล่าสุด ไม่งั้นสองฉบับที่ผู้รับได้จะมีเนื้อเดียวกันทั้งคู่
+         *
+         * ชื่อคนเขียนอ่านสดตอนส่ง (เหมือนทุกอย่างในไฟล์นี้) จากแถวความเห็นล่าสุด — ชื่อคน
+         * ไม่ใช่สิ่งที่แก้ไปมาระหว่างสองรอบ ต่างจากตัวข้อความ
+         */
+        case NotificationType.SPECIALIST_COMMENTED: {
+          const latest = await prisma.reviewTask.findFirst({
+            where: {
+              subjectType: SubjectType.DATASET_REGISTRATION_REQUEST,
+              subjectId: n.subjectId,
+              taskType: ReviewTaskType.DATASET_SPECIALIST_REVIEW,
+            },
+            orderBy: { completedAt: "desc" },
+            select: { completedAt: true, completedByUser: { select: NAME_FIELDS } },
+          });
+          await sendDatasetSpecialistCommented(
+            to,
+            {
+              ...info,
+              note: n.message,
+              byName: fullNameTh(latest?.completedByUser) || "ผู้เชี่ยวชาญด้านข้อมูล",
+              at: latest?.completedAt ?? new Date(),
+            },
+            progress,
+          );
+          return;
+        }
         case NotificationType.REQUEST_REJECTED:
           await sendDatasetRejected(to, { ...info, reason: n.message }, progress);
           return;

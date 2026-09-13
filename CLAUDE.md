@@ -398,6 +398,28 @@ messages about the same event in the same minute bury the one with the button. I
 `JourneyProgress` it computed so callers can hand it to emails they send inline instead of
 recomputing.
 
+**The specialist's opinion is a notification too, and it is the only one that moves nothing.**
+`recordAdvisoryNote()` writes a closed `review_task` row and no gate changes, so the comment
+branch of `POST /dataset-requests/:id/review` returned without telling anyone until 2026-09-13 —
+the officer who *asked* for the opinion learnt of it only by having that request's page open when
+`use-request-watch.ts` polled. The screen meanwhile claimed otherwise: one hardcoded toast line
+("ระบบแจ้งผู้เกี่ยวข้องทางอีเมลและในระบบแล้ว") served all four buttons. It now notifies
+`assigned_specialist_by` plus every `bdiOfficerIds()` with `SPECIALIST_COMMENTED`, through the
+outbox like everything else — **not inline**, because `workers/render.ts` gained a branch for it
+(sending inline *and* writing the row is what gave the specialist two copies of the assignment
+mail; see the "Data specialist got Double notification email" card). The comment text rides in
+`notification.message` so the mail tells the round it was created for, not whatever the
+specialist has since edited it to, while the author's name is read fresh at send time like every
+other fact in that worker. It is also the only thing on that path that writes an
+`audit_event` (`SPECIALIST_COMMENT_RECORDED`).
+
+`journeySummary()` counts the same thing for the home page: `advisory` is **requests, not
+comments** — those sitting at `BDI_OFFICER_REVIEW` that already carry an opinion — so it falls
+back to zero when the officer forwards or returns, and needs no read state. It asks
+`ROLE_TASK_TYPES` whether the reader really holds that gate rather than reading `mineKeys`,
+because `ADVISORY_NODE_KEYS` puts the specialist on that node too and would otherwise show them
+a count of their own comments.
+
 `docs/01-user-journey.md` §4.5 item 4 requires BDI officers to be told when the organisation
 signs a dataset request; `sendDatasetPendingFinalCheck()` had been written for it but the
 dispatcher had no `ORGANIZATION_APPROVAL` branch at all, so that stage opened in silence until

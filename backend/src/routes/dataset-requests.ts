@@ -1447,6 +1447,39 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
         comment: note,
         actorId: session.sub,
       });
+
+      await logAudit({
+        action: AuditAction.SPECIALIST_COMMENT_RECORDED,
+        subjectType: AuditSubject.DATASET_REGISTRATION_REQUEST,
+        subjectId: request.id,
+        organizationId: request.organizationId,
+        after: { taskType: ReviewTaskType.DATASET_SPECIALIST_REVIEW, note },
+      });
+
+      /**
+       * ความเห็นต้องเดินกลับไปหาคนที่ขอมันไว้
+       *
+       * ถึง **ผู้ประสานงานที่กดขอความเห็นใบนี้ + ผู้ประสานงานของ BDI ทุกคน** — สอดคล้องกับ
+       * กติกาที่ด่านฝั่ง BDI ไม่มีผู้รับมอบหมาย ใครถือ role ก็กดปิดด่านได้ (`ROLE_TASK_TYPES`)
+       * คนที่กดขอจึงอาจไม่ใช่คนที่ตัดสิน `notifyUsers()` ตัด id ซ้ำและค่าว่างให้เอง
+       *
+       * ปล่อย `email` เป็นค่าเริ่มต้น = ผ่าน outbox ตามปกติ **ไม่ส่งอินไลน์ที่นี่** ขา assign
+       * ต้องส่งเองเพราะ worker ไม่มี branch ให้ (การ์ด "Data specialist got Double
+       * notification email") รอบนี้ worker มี branch แล้ว (`workers/render.ts`)
+       *
+       * ตัวความเห็นถูกเก็บลง `message` เหมือนที่ `REQUEST_RETURNED` เก็บเหตุผลไว้ — กระดิ่ง
+       * ในระบบอ่านจากตาราง notification ตรง ๆ และอีเมลก็เล่าความเห็นรอบนี้จากค่าเดียวกัน
+       * ไม่ใช่รอบล่าสุด ณ เวลาที่ worker หยิบไปส่ง
+       */
+      await notifyUsers([request.assignedSpecialistById, ...(await bdiOfficerIds())], {
+        type: NotificationType.SPECIALIST_COMMENTED,
+        title: "ผู้เชี่ยวชาญให้ความเห็นต่อคำขอ",
+        message: note,
+        subjectType: SUBJECT,
+        subjectId: request.id,
+        organizationId: request.organizationId,
+      });
+
       const fresh = await prisma.datasetRegistrationRequest.findUniqueOrThrow({
         where: { id: request.id },
         include: requestInclude,

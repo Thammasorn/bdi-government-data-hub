@@ -51,6 +51,14 @@ export const NotificationType = {
   REQUEST_PROGRESSED: "REQUEST_PROGRESSED",
   REQUEST_REJECTED: "REQUEST_REJECTED",
   SPECIALIST_ASSIGNED: "SPECIALIST_ASSIGNED",
+  /**
+   * ผู้เชี่ยวชาญบันทึกความเห็นกลับมาแล้ว
+   *
+   * ไม่ได้อยู่ในรายการชนิดตัวอย่างของ sheet `notification` เช่นเดียวกับ REQUEST_PROGRESSED
+   * แต่ต้องมี — การขอความเห็นแจ้งผู้เชี่ยวชาญ แต่ความเห็นที่กลับมาไม่เคยแจ้งใครเลย
+   * ผู้ประสานงานที่ขอไว้เองจึงรู้ก็ต่อเมื่อบังเอิญเปิดหน้าคำขอค้างไว้ (พบบน main 2026-09-13)
+   */
+  SPECIALIST_COMMENTED: "SPECIALIST_COMMENTED",
   SLA_REMINDER: "SLA_REMINDER",
   LEGAL_DOCUMENT_UPDATED: "LEGAL_DOCUMENT_UPDATED",
 } as const;

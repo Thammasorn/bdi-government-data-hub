@@ -133,6 +133,16 @@ export const AuditAction = {
    * นำส่งไปแล้วอ้างรหัสเหล่านี้ และเอกสารที่ลงนามแล้วพิมพ์ป้ายของมันลงกระดาษ
    */
   DATASET_CHOICE_CHANGED: "DATASET_CHOICE_CHANGED",
+
+  /**
+   * ผู้เชี่ยวชาญด้านข้อมูลบันทึกความเห็นต่อคำขอชุดข้อมูล
+   *
+   * ไม่ใช่ `REQUEST_APPROVED` และไม่ใช่ `REQUEST_RETURNED` — ความเห็นไม่ปิดด่านและไม่ย้าย
+   * คำขอไปไหน (`recordAdvisoryNote()` ใน lib/workflow.ts) แต่มันคือสิ่งที่ผู้ประสานงานของ BDI
+   * ใช้ประกอบการตัดสินใจที่ด่านถัดไป จึงต้องตอบได้ว่าใครเขียนเมื่อไร ก่อนหน้านี้เส้นทางนี้
+   * ไม่เขียน audit_event เลยสักแถว
+   */
+  SPECIALIST_COMMENT_RECORDED: "SPECIALIST_COMMENT_RECORDED",
 } as const;
 
 export type AuditActionCode = (typeof AuditAction)[keyof typeof AuditAction];
