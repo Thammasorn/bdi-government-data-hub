@@ -27,6 +27,8 @@ import {
   findUsableActivationKey,
   revokeActivationKey,
   ROLE_REPLACED_REASON,
+  RoleOccupiedError,
+  roleSeatTaken,
   usableActivationKeyById,
   type RevokedAssignment,
 } from "../lib/iam.js";
@@ -40,7 +42,7 @@ import {
   revokeSession,
   revokeSessionsFor,
 } from "../lib/session.js";
-import { ORGANIZATION_SCOPED_ROLES, type RoleCode } from "../lib/system.js";
+import { BDI_ORGANIZATION_ID, ORGANIZATION_SCOPED_ROLES, type RoleCode } from "../lib/system.js";
 import {
   ThaidError,
   authorizeUrl,
@@ -129,6 +131,32 @@ authRouter.get("/invitation", async (req, res) => {
   if (!key) {
     res.status(410).json({ error: reason, message: ACTIVATION_FAILURE_MESSAGES[reason!] });
     return;
+  }
+
+  /**
+   * ที่นั่งของ role นี้ต้องยังว่างอยู่ — บอกตั้งแต่เปิดลิงก์ ไม่ใช่หลังยืนยัน ThaID เสร็จ
+   *
+   * `POST /activate` ดักเคสเดียวกันไว้เป็นตาข่ายสุดท้าย (`RoleOccupiedError`) แต่กว่าจะถึง
+   * ตรงนั้นผู้ใช้ผ่านการสแกน ThaID และตั้งรหัสผ่านไปแล้ว ทั้งที่ระบบรู้ตั้งแต่ตอนนี้ว่า
+   * ไปต่อไม่ได้ ลิงก์ไม่ถูกทำลาย (410 คือลิงก์ตาย — นี่ไม่ใช่) พอ BDI ระงับคนเดิมแล้ว
+   * กดลิงก์เดิมซ้ำได้เลย
+   */
+  const roleCode = key.role.code as RoleCode;
+  if (ORGANIZATION_SCOPED_ROLES.includes(roleCode) && key.organizationId !== BDI_ORGANIZATION_ID) {
+    const holder = await roleSeatTaken(prisma, {
+      organizationId: key.organizationId,
+      roleId: key.roleId,
+      exceptUserAccountId: key.userAccountId,
+    });
+    if (holder) {
+      res.status(409).json({
+        error: "role_occupied",
+        message:
+          `หน่วยงาน ${key.organization.nameTh} มี "${ROLE_LABELS[roleCode]}" ที่ใช้งานอยู่แล้ว ` +
+          `จึงยังเปิดใช้งานบัญชีนี้ในบทบาทเดียวกันไม่ได้ กรุณาติดต่อผู้ประสานงานของ BDI`,
+      });
+      return;
+    }
   }
 
   // ยืนยัน ThaID ผ่านแล้วหรือยัง ตัดสินที่ฝั่ง server เสมอ — หน้าเว็บแค่แสดงตาม
@@ -621,6 +649,21 @@ authRouter.post("/activate", async (req, res) => {
       res.status(409).json({
         error: "identity_in_use",
         message: "บัญชี ThaID นี้ถูกใช้เปิดใช้งานบัญชีอื่นในระบบแล้ว กรุณาติดต่อผู้ประสานงานของ BDI",
+      });
+      return;
+    }
+    /**
+     * ที่นั่งของ role นี้มีคนใช้งานอยู่แล้ว — ตั้งแต่ 2026-09-13 การเปิดใช้งานไม่เตะคนเดิม
+     * ออกอีกแล้ว `POST /api/admin/invitations` ปฏิเสธตั้งแต่ตอนเชิญ จึงมาถึงตรงนี้ได้
+     * เฉพาะคำเชิญที่ออกก่อนกฎนี้ หรือมีคนได้ที่นั่งไประหว่างที่ลิงก์ยังไม่ถูกกด
+     * คีย์ยังใช้ได้ต่อ (ไม่ revoke) — พอ BDI ระงับคนเดิมแล้วเขากดลิงก์เดิมซ้ำได้เลย
+     */
+    if (err instanceof RoleOccupiedError) {
+      res.status(409).json({
+        error: "role_occupied",
+        message:
+          `หน่วยงานนี้มี "${ROLE_LABELS[err.roleCode]}" ที่ใช้งานอยู่แล้ว จึงเปิดใช้งานบัญชีของคุณ ` +
+          `ในบทบาทนี้ไม่ได้ กรุณาติดต่อผู้ประสานงานของ BDI`,
       });
       return;
     }

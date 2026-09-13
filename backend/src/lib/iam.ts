@@ -66,6 +66,27 @@ export class RoleConflictError extends Error {
   }
 }
 
+/**
+ * ที่นั่งนี้มีคนถืออยู่แล้ว — กฎ *หนึ่งหน่วยงานมี ORGANIZATION_USER / ORGANIZATION_APPROVER
+ * ได้อย่างละคน* ฉบับ 2026-09-13 ที่ **ปฏิเสธคนใหม่** แทนการเตะคนเดิมออก
+ *
+ * แยกชนิดจาก `RoleConflictError` เพราะเป็นคนละคำถาม: ตัวนั้นคือ "คนนี้ถือบทบาทอื่นอยู่"
+ * ตัวนี้คือ "บทบาทนี้มีคนอื่นถืออยู่" ทางออกจึงต่างกัน — ตัวนั้นถอนบทบาทของคนนี้
+ * ตัวนี้ต้องระงับหรือยุติบัญชีของ *คนเดิม* ก่อน ผู้เรียกทุกทางควรดักด้วย
+ * `roleSeatTaken()` ก่อนถึงตรงนี้ ตัวนี้เป็นตาข่ายชั้นสุดท้ายในทรานแซกชัน
+ */
+export class RoleOccupiedError extends Error {
+  constructor(
+    readonly roleCode: RoleCode,
+    readonly organizationId: string,
+    readonly holderUserAccountId: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "RoleOccupiedError";
+  }
+}
+
 /** เงื่อนไข "assignment ใช้งานได้" ตามที่ sheet `user_role_assignment` เขียนไว้ */
 export function activeAssignmentWhere() {
   return {
@@ -101,6 +122,9 @@ export function derivedAssignmentStatus(assignment: {
  * บังคับที่นี่ ไม่ใช่ที่ฐานข้อมูลอีกแล้ว — `uq_active_org_scoped_role_assignment` ถูกลบไป
  * เพราะมันคลุมทุก role ไม่ใช่แค่สองตัวนี้ พอเจ้าหน้าที่ BDI มีหน่วยงานจริงก็ชนกันเอง
  * และเขียน index ให้แยก role ไม่ได้ (role.id สุ่มใหม่ทุกฐานข้อมูล)
+ *
+ * **ตั้งแต่ 2026-09-13 กติกานี้ปฏิเสธคนใหม่ ไม่ใช่เตะคนเดิมออก** — ดู `roleSeatTaken()`
+ * และคอมเมนต์ในตัวฟังก์ชัน ที่นั่งจะว่างให้คนใหม่ก็ต่อเมื่อคนเดิมถูกระงับหรือยุติบัญชีแล้ว
  *
  * **หน่วยงาน BDI ยกเว้นจากกติกานี้** มีเจ้าหน้าที่กี่คนต่อ role ก็ได้
  *
@@ -170,22 +194,43 @@ export async function assignRole(
   }
 
   /**
-   * หนึ่ง role หนึ่งคนต่อหนึ่งหน่วยงาน — เพิกถอนคนเดิมก่อนเสมอ ไม่ใช่ปฏิเสธคนใหม่
-   * (พฤติกรรมเดิมตั้งแต่ตอนที่ยังมี unique index คอยรับอยู่ ไม่ได้เปลี่ยน)
+   * หนึ่ง role หนึ่งคนต่อหนึ่งหน่วยงาน — **ปฏิเสธคนใหม่** เมื่อคนเดิมยังใช้งานอยู่
+   * (การ์ด "แก้เรื่อง invite org user เพิ่ม" 2026-09-13)
    *
-   * ไม่ใช้กับหน่วยงาน BDI เพราะเจ้าหน้าที่ BDI มีหลายคนต่อ role เป็นเรื่องปกติ —
-   * ถ้าเพิกถอนคนเดิม การเปิดใช้งานบัญชีเจ้าหน้าที่คนที่สองจะไปปิดสิทธิ์คนแรกเงียบ ๆ
+   * ของเดิมเพิกถอนคนเดิมเงียบ ๆ ให้คนใหม่ ตั้งแต่สมัยที่ยังมี unique index คอยรับอยู่
+   * ผลคือ "เชิญ → เปิดใช้งาน → คนเก่าโดนเตะออก" โดยไม่มีใครตั้งใจสั่ง — ผู้ประสานงานของ
+   * BDI ที่เชิญผิดคนเปลี่ยนตัวผู้รับผิดชอบของหน่วยงานได้โดยไม่รู้ตัว ตอนนี้ที่นั่งจะว่าง
+   * ก็ต่อเมื่อคนเดิมถูก **ระงับ** หรือ **ยุติบัญชี** ไปก่อนแล้วเท่านั้น
+   *
+   * "ยังใช้งานอยู่" วัดจากสถานะบัญชี ไม่ใช่แค่ assignment: การระงับบัญชีไม่ถอน role
+   * (จะได้คืนสถานะได้ทั้งชุด) ถ้านับ assignment อย่างเดียว การระงับก็ไม่ทำให้ที่นั่งว่าง
+   * และการ์ดบอกไว้ว่าต้อง "deactivate/suspend ก่อน ถึงจะเชิญเพิ่มได้" คนที่ถูกระงับแล้วมี
+   * คนใหม่มานั่งแทนจึงเสีย assignment ตรงนี้ พร้อมเหตุผล `ROLE_REPLACED_REASON` — ไม่งั้น
+   * การคืนสถานะบัญชีเขาจะทำให้หน่วยงานมีผู้ดำเนินการสองคนพร้อมกัน ผู้เรียกยังต้อง
+   * ประกาศให้เขารู้หลัง commit เหมือนเดิม (`announceRoleReplacement()`)
+   *
+   * ไม่ใช้กับหน่วยงาน BDI เพราะเจ้าหน้าที่ BDI มีหลายคนต่อ role เป็นเรื่องปกติ
    */
-  const replaced =
-    isOrgScoped && organizationId && organizationId !== BDI_ORGANIZATION_ID
-      ? await revokeRoleAssignments(db, {
-          organizationId,
-          roleId,
-          actorId,
-          reason: ROLE_REPLACED_REASON,
-          exceptUserAccountId: userAccountId,
-        })
-      : [];
+  let replaced: RevokedAssignment[] = [];
+  if (isOrgScoped && organizationId && organizationId !== BDI_ORGANIZATION_ID) {
+    const holder = await roleSeatTaken(db, { organizationId, roleId, exceptUserAccountId: userAccountId });
+    if (holder) {
+      throw new RoleOccupiedError(
+        roleCode,
+        organizationId,
+        holder.userAccountId,
+        `หน่วยงานนี้มี "${ROLE_LABELS[roleCode]}" ที่ใช้งานอยู่แล้ว — หนึ่งหน่วยงานมีได้คนเดียว ` +
+          `ต้องระงับหรือยุติบัญชีคนเดิมก่อนจึงจะมอบบทบาทนี้ให้คนใหม่ได้`,
+      );
+    }
+    replaced = await revokeRoleAssignments(db, {
+      organizationId,
+      roleId,
+      actorId,
+      reason: ROLE_REPLACED_REASON,
+      exceptUserAccountId: userAccountId,
+    });
+  }
 
   const existing = await db.userRoleAssignment.findFirst({
     where: { userAccountId, roleId, organizationId, ...activeAssignmentWhere() },
@@ -216,6 +261,62 @@ export interface RevokedAssignment {
   userAccountId: string;
   organizationId: string | null;
   roleId: string;
+}
+
+/**
+ * ใครนั่งที่นั่ง (หน่วยงาน, role) นี้อยู่และ **ยังใช้งานได้** — `null` ถ้าที่นั่งว่าง
+ *
+ * "ว่าง" นับสองแบบ: ไม่มี assignment ที่ ACTIVE เลย หรือมีแต่บัญชีของเจ้าของถูกระงับ /
+ * ยุติไปแล้ว (บัญชีที่ SUSPENDED ยังถือ assignment อยู่ — ดู `POST /:id/suspend`) กรณีหลัง
+ * `assignRole()` จะถอน assignment นั้นให้ตอนคนใหม่มานั่งแทน
+ *
+ * `POST /api/admin/invitations` · `POST /api/admin/users/:id/roles` · `transfer` และ
+ * `approverConflict()` ใน routes/organizations.ts ใช้ตัวนี้ตอบ 409 ล่วงหน้าพร้อมบอก
+ * ทางออก แทนที่จะปล่อยให้ `RoleOccupiedError` โยนกลางทรานแซกชัน
+ */
+export async function roleSeatTaken(
+  db: Db,
+  params: { organizationId: string; roleId: string; exceptUserAccountId?: string },
+) {
+  return db.userRoleAssignment.findFirst({
+    where: {
+      organizationId: params.organizationId,
+      roleId: params.roleId,
+      ...(params.exceptUserAccountId ? { userAccountId: { not: params.exceptUserAccountId } } : {}),
+      userAccount: { status: UserAccountStatus.ACTIVE },
+      ...activeAssignmentWhere(),
+    },
+    select: {
+      id: true,
+      userAccountId: true,
+      userAccount: { select: { email: true, displayName: true } },
+    },
+  });
+}
+
+/**
+ * คำเชิญที่ยังค้างอยู่ (ISSUED ยังไม่หมดอายุ) ของที่นั่ง (หน่วยงาน, role) นี้ — `null` ถ้าไม่มี
+ *
+ * นับเป็น "จองที่นั่งแล้ว" ตั้งแต่ตอนเชิญ (ตัดสินใจ 2026-09-13) ไม่ใช่รอให้ activate ก่อน:
+ * ถ้าเชิญซ้อนได้ คนที่กดลิงก์ทีหลังจะเจอ `RoleOccupiedError` ตอนเปิดใช้งาน ซึ่งเป็น
+ * error ที่เขาแก้เองไม่ได้และห่างจากคนที่เชิญผิดหลายวัน ผู้ประสานงานของ BDI ที่จะเปลี่ยน
+ * ตัวจึงต้องยกเลิกคำเชิญใบเดิมก่อน (`DELETE /api/admin/invitations/:id`)
+ */
+export async function pendingInvitationFor(
+  db: Db,
+  params: { organizationId: string; roleId: string; exceptUserAccountId?: string },
+) {
+  return db.activationKey.findFirst({
+    where: {
+      organizationId: params.organizationId,
+      roleId: params.roleId,
+      status: ActivationKeyStatus.ISSUED,
+      expiresAt: { gt: new Date() },
+      ...(params.exceptUserAccountId ? { userAccountId: { not: params.exceptUserAccountId } } : {}),
+    },
+    select: { id: true, userAccountId: true, userAccount: { select: { email: true } } },
+    orderBy: { createdAt: "desc" },
+  });
 }
 
 /**
