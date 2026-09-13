@@ -94,6 +94,13 @@ export function JourneyFlow({
   /** กล่องทุกใบสูงเท่ากัน (min-h-[4.5rem]) กึ่งกลางจึงอยู่ที่ 2.25rem จากขอบแถวเสมอ */
   const MID = "2.25rem";
   const BOX = "4.5rem";
+  /** หัวลูกศร (`Chevron`) เป็น `h-3 w-3` — ครึ่งหนึ่งคือระยะที่ต้องหักเพื่อจัดกึ่งกลาง */
+  const HEAD_SIZE = "0.75rem";
+  const HALF_HEAD = "0.375rem";
+  /** หัวลูกศรล้ำเข้าไปในกล่องที่มันชี้ เท่ากันทุกหัวในภาพนี้ จึงอ่านว่า "จ่อกล่อง" ไม่ใช่ "ลอยอยู่ใกล้ ๆ" */
+  const HEAD_BITE = "0.3rem";
+  /** ช่องว่างทางแยก↔แถวหลัก — `h-12` ของเส้นประและ `md:mb-12` ของกริดทางแยกเป็นค่าเดียวกัน */
+  const BRANCH_GAP = "3rem";
   /** กลางช่องว่างทางซ้ายของกล่องรอการแก้ไข — ทางเดินของเส้น "นำส่งใหม่" */
   const gutter = `calc(${colStart(revisionColumn)} - 1rem)`;
 
@@ -153,12 +160,15 @@ export function JourneyFlow({
                 <Chevron
                   direction="up"
                   className="absolute hidden text-ink-subtle md:block"
-                  style={{ left: "calc(50% - 0.375rem)", top: "calc(100% + 0.15rem)" }}
+                  style={{ left: `calc(50% - ${HALF_HEAD})`, top: `calc(100% - ${HEAD_BITE})` }}
                 />
                 <Chevron
                   direction="down"
                   className="absolute hidden text-ink-subtle md:block"
-                  style={{ left: "calc(50% - 0.375rem)", top: "calc(100% + 2.1rem)" }}
+                  style={{
+                    left: `calc(50% - ${HALF_HEAD})`,
+                    top: `calc(100% + ${BRANCH_GAP} - ${HEAD_SIZE} + ${HEAD_BITE})`,
+                  }}
                 />
                 <FlowNode
                   node={branch}
@@ -188,7 +198,11 @@ export function JourneyFlow({
           {main.map((node, i) => (
             <div key={node.key} className="relative">
               {i > 0 ? (
-                <Arrow className="absolute right-full top-[2.25rem] w-8 -translate-y-1/2" />
+                /* z-10 — ชั้นเส้นเชื่อมอยู่หลังในลำดับ DOM จึงทับลูกศรนี้เมื่อทั้งคู่ซ้อนกัน
+                   เส้น "นำส่งใหม่" เดินในช่องว่างเดียวกันและอยู่ที่ความสูง MID เท่ากันพอดี
+                   หัวลูกศรเข้ากล่องที่คอลัมน์รอการแก้ไขจึงถูกเส้นแนวนอนพาดขาดกลาง
+                   ยกลูกศรขึ้นมาข้างหน้าแทน ไม่ใช่ขยับเส้น — เส้นวิ่งตรงตามแบบอยู่แล้ว */
+                <Arrow className="absolute right-full top-[2.25rem] z-10 w-8 -translate-y-1/2" />
               ) : null}
               <FlowNode
                 node={node}
@@ -238,7 +252,7 @@ export function JourneyFlow({
             <Chevron
               direction="down"
               className="absolute -translate-x-1/2"
-              style={{ left: colMid(revisionColumn), bottom: `calc(${BOX} - 0.3rem)` }}
+              style={{ left: colMid(revisionColumn), bottom: `calc(${BOX} - ${HEAD_BITE})` }}
             />
 
             {/* ด่านอื่น — ดิ่งลงมาถึงกึ่งกลางแถวส่งกลับ แล้ววิ่งซ้ายเข้าด้านขวาของกล่อง */}
@@ -259,10 +273,12 @@ export function JourneyFlow({
                     bottom: MID,
                   }}
                 />
+                {/* กึ่งกลางหัวลูกศรต้องอยู่บนเส้นพอดี — หัวสูง 0.75rem จึงหักครึ่งออกจาก MID
+                    ตรง ๆ ไม่ใช่ `translate-y-1/2` ซึ่งดันหัวลงไปอีกครึ่งหัวจนลอยใต้เส้น */}
                 <Chevron
                   direction="left"
-                  className="absolute translate-y-1/2"
-                  style={{ left: colEnd(revisionColumn), bottom: `calc(${MID} - 0.3rem)` }}
+                  className="absolute"
+                  style={{ left: colEnd(revisionColumn), bottom: `calc(${MID} - ${HALF_HEAD})` }}
                 />
               </>
             ) : null}
