@@ -7,8 +7,8 @@ import { DatasetRequestTable } from "@/components/dataset/RequestTable";
 import { Button } from "@/components/ui/Button";
 import { ListPageHeader } from "@/components/list/ListPageHeader";
 import { Spinner } from "@/components/ui/Spinner";
-import { useToast } from "@/components/ui/Toast";
-import { api, ApiError } from "@/lib/api";
+import { api } from "@/lib/api";
+import { useDatasetRegistration } from "@/lib/use-dataset-registration";
 import { useRequireAuth } from "@/lib/require-auth";
 import { isBdiStaff } from "@/lib/status";
 
@@ -25,12 +25,12 @@ export default function DatasetsPage() {
 function DatasetList() {
   const router = useRouter();
   const { user, loading } = useRequireAuth();
-  const { show } = useToast();
+  /* เปิดฟอร์มใบใหม่ — ก้อนเดียวกับที่ลิงก์บนหน้าแรกใช้ ดู lib/use-dataset-registration.ts */
+  const { start: create, starting: creating } = useDatasetRegistration();
 
   const [eligibility, setEligibility] = useState<{ eligible: boolean; reason: string | null } | null>(
     null,
   );
-  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     if (loading || !user) return;
@@ -47,21 +47,6 @@ function DatasetList() {
   if (loading || !user) return <Spinner />;
 
   const canCreate = user.roles.includes("ORGANIZATION_USER");
-
-  const create = async () => {
-    setCreating(true);
-    try {
-      const data = await api.post<{ request: { id: string } }>("/api/dataset-requests", {});
-      router.push(`/datasets/${data.request.id}/edit`);
-    } catch (err) {
-      show({
-        tone: "error",
-        title: "สร้างคำขอไม่สำเร็จ",
-        detail: err instanceof ApiError ? err.message : undefined,
-      });
-      setCreating(false);
-    }
-  };
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
