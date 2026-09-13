@@ -4,6 +4,7 @@ import clsx from "clsx";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { AdvisoryBadge, AdvisoryFilter } from "@/components/list/AdvisoryFilter";
 import { ListSearch } from "@/components/list/ListSearch";
 import { JourneyFlow } from "@/components/list/JourneyFlow";
 import { Pagination } from "@/components/list/Pagination";
@@ -14,7 +15,7 @@ import { StepDots } from "@/components/review/ApprovalSteps";
 import { useSession } from "@/components/SessionProvider";
 import { Card, DatasetStatusBadge } from "@/components/ui/Card";
 import { SkeletonRows } from "@/components/ui/Spinner";
-import { formatThaiDate } from "@/lib/status";
+import { formatThaiDate, isBdiStaff } from "@/lib/status";
 import { hasOwnQueue } from "@/lib/stage";
 import { datasetTitle, fullName, type DatasetRequestListItem } from "@/lib/types";
 import { useRequestList } from "@/lib/use-request-list";
@@ -55,6 +56,12 @@ export function DatasetRequestTable({
     : "md:grid-cols-[minmax(0,2fr)_16rem_8rem]";
 
   const showQueue = list.summary?.nodes.some((n) => n.mine) ?? false;
+  /**
+   * ตัวกรองความเห็นเป็นเครื่องมือของฝั่ง BDI — ทั้งความเห็นและตัวผู้เชี่ยวชาญเป็นเรื่องภายใน
+   * และ backend มองข้าม `?advisory=` ที่มาจากฝั่งหน่วยงานอยู่แล้ว ปุ่มที่กดแล้วไม่เกิดอะไร
+   * แย่กว่าไม่มีปุ่ม
+   */
+  const showAdvisory = isBdiStaff(user?.roles ?? []);
 
   return (
     <>
@@ -94,6 +101,11 @@ export function DatasetRequestTable({
             </>
           }
         />
+
+        {/* ใต้ช่องค้นหา เหนือตาราง — ลำดับการอ่านคือ ขั้นไหน → ความเห็นมาหรือยัง → แถว */}
+        {showAdvisory ? (
+          <AdvisoryFilter value={list.advisory} onChange={list.setAdvisory} />
+        ) : null}
       </div>
 
       <Card className="overflow-hidden">
@@ -128,6 +140,7 @@ export function DatasetRequestTable({
                         progress: row.progress,
                         submittedAt: row.submittedAt,
                         updatedAt: row.updatedAt,
+                        specialistCommentAt: showAdvisory ? row.specialistCommentAt : null,
                       })
                     }
                     onBlur={() => setDetail(null)}
@@ -138,11 +151,20 @@ export function DatasetRequestTable({
                   >
                     <span className="min-w-0">
                       <span className="block truncate font-medium text-ink">{datasetTitle(row)}</span>
-                      <span className="block truncate text-[13px] text-ink-muted">
-                        {row.requestNumber}
-                        {row.assignedSpecialist
-                          ? ` · ผู้เชี่ยวชาญ ${fullName(row.assignedSpecialist.prefix, row.assignedSpecialist.firstName, row.assignedSpecialist.lastName)}`
-                          : ""}
+                      {/* ป้ายอยู่นอก truncate — ถ้าอยู่ในนั้น ชื่อผู้เชี่ยวชาญยาว ๆ จะกินมันหายไป */}
+                      <span className="flex min-w-0 items-center gap-2 text-[13px] text-ink-muted">
+                        <span className="truncate">
+                          {row.requestNumber}
+                          {row.assignedSpecialist
+                            ? ` · ผู้เชี่ยวชาญ ${fullName(row.assignedSpecialist.prefix, row.assignedSpecialist.firstName, row.assignedSpecialist.lastName)}`
+                            : ""}
+                        </span>
+                        {showAdvisory ? (
+                          <AdvisoryBadge
+                            commentedAt={row.specialistCommentAt}
+                            assigned={Boolean(row.assignedSpecialist)}
+                          />
+                        ) : null}
                       </span>
                     </span>
                     {showOrganization ? (
@@ -158,6 +180,7 @@ export function DatasetRequestTable({
                           progress: row.progress,
                           submittedAt: row.submittedAt,
                           updatedAt: row.updatedAt,
+                          specialistCommentAt: showAdvisory ? row.specialistCommentAt : null,
                         })
                       }
                       onMouseLeave={() => setDetail(null)}

@@ -16,6 +16,16 @@ import type { ListSummary, NodeKey, PageInfo, SortOrder } from "@/lib/stage";
 
 export type QueueTab = "mine" | "all";
 
+/**
+ * ตัวกรอง "ความเห็นของผู้เชี่ยวชาญ" — มิติที่สอง AND กับโหนดบนแผนภาพและแท็บ
+ *
+ * เป็นเรื่องของเส้นทางชุดข้อมูลเส้นเดียว (เส้นทางหน่วยงานไม่มีผู้เชี่ยวชาญ) แต่อยู่ในฮุกที่
+ * ใช้ร่วมกัน เพราะทุกอย่างที่ต้องซิงก์กับ URL, รีเซ็ตหน้า และนับเป็น "มีตัวกรองอยู่" ต้องอยู่
+ * ที่เดียวกัน — ตารางหน่วยงานไม่เคยตั้งค่านี้ จึงไม่เคยส่ง param ออกไป
+ */
+export type AdvisoryFilterValue = "with" | "awaiting" | "none";
+const ADVISORY_VALUES: AdvisoryFilterValue[] = ["with", "awaiting", "none"];
+
 /** ตัวเลือกจำนวนแถวต่อหน้า — เพดาน 100 มาจาก parsePaging() ฝั่ง backend */
 export const PAGE_SIZES = [10, 20, 50, 100];
 export const DEFAULT_PAGE_SIZE = 20;
@@ -81,6 +91,12 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
     return PAGE_SIZES.includes(raw) ? raw : DEFAULT_PAGE_SIZE;
   });
   const [query, setQueryState] = useState(() => params.get("q") ?? "");
+  const [advisory, setAdvisoryState] = useState<AdvisoryFilterValue | null>(() => {
+    const raw = params.get("advisory");
+    return ADVISORY_VALUES.includes(raw as AdvisoryFilterValue)
+      ? (raw as AdvisoryFilterValue)
+      : null;
+  });
 
   /**
    * การเปลี่ยนหน้าและการสลับแท็บเป็น "การเดินทาง" ที่ผู้ใช้อยากกด back กลับมาได้
@@ -116,6 +132,10 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
     setQueryState(next);
     setPage(1);
   }, []);
+  const setAdvisory = useCallback((next: AdvisoryFilterValue | null) => {
+    setAdvisoryState(next);
+    setPage(1);
+  }, []);
   /** เปลี่ยนจำนวนแถวต่อหน้าแล้วหน้าเดิมอาจเลยขอบ — กลับหน้า 1 เหมือนตัวกรองอื่น */
   const setPageSize = useCallback((next: number) => {
     setPageSizeState(next);
@@ -147,6 +167,7 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
       if (stage) qs.set("stage", stage);
       if (legacyFilter) qs.set(legacyFilter.key, legacyFilter.value);
       if (query.trim()) qs.set("q", query.trim());
+      if (advisory) qs.set("advisory", advisory);
       if (tab === "mine") qs.set("scope", "mine");
       qs.set("sort", sort);
       qs.set("page", String(page));
@@ -174,7 +195,7 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
         });
     }, 250);
     return () => clearTimeout(timer);
-  }, [endpoint, itemsKey, stage, legacyFilter, query, tab, sort, page, pageSize, show]);
+  }, [endpoint, itemsKey, stage, legacyFilter, query, advisory, tab, sort, page, pageSize, show]);
 
   /** เขียนสถานะทั้งชุดกลับลง URL พร้อมกัน ลิงก์ที่แชร์ไปจึงเปิดได้ตามที่เห็นบนจอ */
   useEffect(() => {
@@ -182,6 +203,7 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
     if (tab === "mine") qs.set("tab", "mine");
     if (stage) qs.set("stage", stage);
     if (query.trim()) qs.set("q", query.trim());
+    if (advisory) qs.set("advisory", advisory);
     if (sort !== "date_desc") qs.set("sort", sort);
     if (page > 1) qs.set("page", String(page));
     if (pageSize !== DEFAULT_PAGE_SIZE) qs.set("pageSize", String(pageSize));
@@ -192,7 +214,7 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
       else router.replace(href, { scroll: false });
     }
     pushNext.current = false;
-  }, [tab, stage, query, sort, page, pageSize, router]);
+  }, [tab, stage, query, advisory, sort, page, pageSize, router]);
 
   /**
    * หน้าที่เลยขอบ — เกิดกับ bookmark ที่ `?page=9` แล้วมาเจอผลลัพธ์ 2 หน้า
@@ -221,10 +243,13 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
     setSort,
     query,
     setQuery,
+    advisory,
+    setAdvisory,
     page,
     goToPage,
     pageSize,
     setPageSize,
-    hasFilter: stage !== null || legacyFilter !== null || query.trim().length > 0,
+    hasFilter:
+      stage !== null || legacyFilter !== null || advisory !== null || query.trim().length > 0,
   };
 }

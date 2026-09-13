@@ -380,6 +380,13 @@ export interface DatasetRequestListItem {
     firstName: string | null;
     lastName: string | null;
   } | null;
+  /**
+   * เวลาที่ผู้เชี่ยวชาญบันทึกความเห็นล่าสุด — null คือยังไม่มีความเห็นที่ผู้อ่านคนนี้เห็นได้
+   *
+   * server ตัดความเห็นที่เป็น BDI_INTERNAL ออกให้ฝั่งหน่วยงานแล้ว หน้าเว็บจึงเช็คแค่
+   * "มีค่าไหม" ไม่ได้ตัดสินเรื่องสิทธิ์เอง (กติกาเดียวกับการ์ดความเห็นบนหน้ารายละเอียด)
+   */
+  specialistCommentAt: string | null;
   /** แบบฟอร์มที่ระบบสร้าง — ว่างได้ ถ้ายังไม่เคยกดตรวจสอบและสร้าง PDF */
   generatedForm: { id: string; filename: string } | null;
 }

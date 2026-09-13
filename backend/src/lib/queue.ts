@@ -24,6 +24,7 @@
  * แผนภาพที่รอตัวเลขอยู่แล้วไม่ใช่
  */
 import {
+  CommentVisibility,
   Prisma,
   PrismaClient,
   RequestStatus,
@@ -269,6 +270,57 @@ export async function nodeWhere(
   if (statuses.length > 0) or.push({ status: { in: statuses } });
   if (nodes.length > 0) or.push({ id: { in: await requestIdsAtStage(db, subjectType, nodes) } });
   return { OR: or };
+}
+
+/**
+ * ตัวกรอง "ความเห็นของผู้เชี่ยวชาญ" — **มิติที่สอง ไม่ใช่โหนดของเส้นทาง**
+ *
+ * หนึ่งโทเคนของ `parseFilterTokens()` คือหนึ่งกล่องบนแผนภาพ (`journeyGraph()`) การขอความเห็น
+ * ไม่ใช่ด่านและไม่ย้ายคำขอไปไหนตั้งแต่ 2026-08-30 ถ้าเอา "มีความเห็น" ไปใส่ในคำศัพท์ชุดนั้น
+ * แผนภาพจะวาดกล่องที่ไม่มีอยู่ในเครื่องสถานะ ตัวกรองนี้จึงเป็น query param ของตัวเอง
+ * ที่ **AND** กับโหนดและแท็บ — เลือกพร้อมกันได้ และแต่ละอันยังหมายความตามเดิม
+ *
+ * สามค่า: มีความเห็นแล้ว · ขอไปแล้วแต่ยังไม่มีความเห็น · ยังไม่ได้ขอใครเลย — สองค่าหลังคือ
+ * คนละงานของผู้ประสานงาน (รอคนอื่น กับ ต้องตัดสินใจเองว่าจะขอไหม) จึงไม่ยุบเป็น "ยังไม่มี"
+ */
+export const ADVISORY_TOKENS = ["with", "awaiting", "none"] as const;
+export type AdvisoryToken = (typeof ADVISORY_TOKENS)[number];
+
+/** ค่าที่ไม่รู้จัก = ไม่กรอง (ทิ้งเงียบ เหมือน parseFilterTokens) */
+export function parseAdvisoryToken(raw?: unknown): AdvisoryToken | null {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return typeof value === "string" && (ADVISORY_TOKENS as readonly string[]).includes(value)
+    ? (value as AdvisoryToken)
+    : null;
+}
+
+/**
+ * id ของคำขอที่ผู้เชี่ยวชาญบันทึกความเห็นไว้แล้ว — รูปแบบเดียวกับ requestIdsAtStage()
+ *
+ * ความเห็นเป็นแถว `review_task` ที่ปิดตั้งแต่เกิด (`recordAdvisoryNote()`) ผู้เชี่ยวชาญบันทึก
+ * ได้หลายรอบ จึง `distinct` ที่ subjectId · แถวที่ไม่มีข้อความไม่นับ เพราะไม่มีอะไรให้อ่าน
+ *
+ * `includeInternal: false` สำหรับผู้อ่านฝั่งหน่วยงาน — กติกาเดียวกับที่หน้ารายละเอียดใช้ซ่อน
+ * ความเห็น `BDI_INTERNAL` ซึ่งวันนี้คือค่าเริ่มต้นของทุกความเห็น
+ */
+export async function advisoryCommentedIds(
+  db: Db,
+  subjectType: SubjectType,
+  opts: { includeInternal: boolean },
+): Promise<string[]> {
+  const rows = await db.reviewTask.findMany({
+    where: {
+      subjectType,
+      taskType: ReviewTaskType.DATASET_SPECIALIST_REVIEW,
+      resultComment: { not: null },
+      ...(opts.includeInternal
+        ? {}
+        : { commentVisibility: { not: CommentVisibility.BDI_INTERNAL } }),
+    },
+    distinct: ["subjectId"],
+    select: { subjectId: true },
+  });
+  return rows.map((r) => r.subjectId);
 }
 
 /** โหนดหนึ่งโหนดพร้อมตัวเลข — รูปร่างจาก journeyGraph() บวกสิ่งที่ต้องนับ */
