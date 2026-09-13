@@ -246,7 +246,7 @@ export function DatasetSigningDialog({
       <div className="mt-5 flex items-center justify-between gap-3">
         {/* บอกเหตุผลที่ปุ่มกดไม่ได้ ปุ่มที่จางอยู่เฉย ๆ อ่านเหมือนระบบพัง */}
         <p className="text-[13px] leading-relaxed text-ink-muted">
-          {readAll ? "อ่านครบแล้ว — กดยืนยันเพื่อดำเนินการต่อ" : "ติ๊กยืนยันว่าอ่านเอกสารครบแล้วก่อน จึงจะกดยืนยันได้"}
+          {readAll ? "อ่านครบแล้ว — กดยืนยันเพื่อดำเนินการต่อ" : "กรุณาติ๊กช่องยืนยันว่าอ่านเอกสารครบแล้วก่อน จึงจะกดยืนยันต่อได้"}
         </p>
         <div className="flex shrink-0 gap-3">
           <Button variant="secondary" onClick={close}>
