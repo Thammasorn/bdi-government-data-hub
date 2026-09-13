@@ -3,6 +3,7 @@
  *
  *   - iam.user_account แถว SYSTEM หนึ่งแถว (ผู้กระทำสำหรับ created_by/updated_by ของ master data)
  *   - iam.role ทั้งเจ็ดตาม sheet `role`
+ *   - administration.dataset_choice — ตัวเลือกในแบบฟอร์มลงทะเบียนชุดข้อมูล
  *   - administration.province / district / sub_district จาก backend/src/data/thai-address.json
  *
  * เรื่องรหัสที่อยู่: draft_db_design ใช้ province_code / district_code / sub_district_code
@@ -19,6 +20,8 @@ import { PrismaClient } from "@prisma/client";
 import { AccountType, LegalDocumentStatus, OrganizationStatus, UserAccountStatus } from "@prisma/client";
 
 import { listProvinces, listAmphoes, listSubdistricts } from "../lib/address.js";
+import { DATASET_CHOICE_DEFAULTS } from "../lib/dataset-choices-defaults.js";
+import { refreshChoices } from "../lib/dataset-choices.js";
 import { publishVersion } from "../lib/legal.js";
 import {
   BDI_ORGANIZATION_CODE,
@@ -202,6 +205,42 @@ async function seedLegalDocuments() {
   }
 }
 
+/**
+ * ตัวเลือกในแบบฟอร์มลงทะเบียนชุดข้อมูล
+ *
+ * **ต้องรันเป็นตัวแรกใน main()** และต้องตามด้วย refreshChoices() ในโปรเซสเดียวกัน
+ * seedLegalDocuments() เผยแพร่ A4.docx ซึ่งมี placeholder `{{tick.<ช่อง>.<รหัส>}}` อยู่
+ * 75 ตัว และ publishVersion() ตรวจชื่อเหล่านั้นกับรายการที่ lib/dataset-choices.ts คืนให้
+ * ถ้าตัวเลือกยังไม่ถูกเติมและ cache ยังไม่ถูกโหลดใหม่ A4 จะถูกปฏิเสธว่าใช้ตัวแปรที่ระบบ
+ * ไม่รู้จัก — สคริปต์ที่มีหน้าที่เติมตาราง จะพังเพราะตารางยังไม่ถูกเติม
+ *
+ * labelTh / displayOrder / isActive อยู่ใน create **เท่านั้น** โดยตั้งใจ — แอดมินแก้สามค่านี้
+ * ได้เองผ่าน PATCH /api/admin/dataset-choices/:fieldKey/:code ถ้าใส่ไว้ใน update ด้วย
+ * การรัน seed:masters รอบถัดไปจะล้างสิ่งที่แอดมินตั้งไว้เงียบ ๆ (แบบเดียวกับ isRequired
+ * ของ legal_document) ผลคือไฟล์ค่าตั้งต้นเป็น "ค่าเริ่มต้นของฐานข้อมูลใหม่" ไม่ใช่
+ * "คำตอบสุดท้ายที่บังคับทุกฐานข้อมูล"
+ */
+async function seedDatasetChoices() {
+  for (const choice of DATASET_CHOICE_DEFAULTS) {
+    await prisma.datasetChoice.upsert({
+      where: { fieldKey_code: { fieldKey: choice.fieldKey, code: choice.code } },
+      update: {},
+      create: {
+        fieldKey: choice.fieldKey,
+        code: choice.code,
+        labelTh: choice.labelTh,
+        displayOrder: choice.displayOrder,
+        createdBy: SYSTEM_USER_ID,
+        updatedBy: SYSTEM_USER_ID,
+      },
+    });
+  }
+
+  // cache ในโปรเซสนี้ถูกโหลดตอน import ซึ่งเกิดก่อนแถวข้างบนถูกเขียน
+  await refreshChoices();
+  console.log(`• administration.dataset_choice — ${DATASET_CHOICE_DEFAULTS.length} แถว`);
+}
+
 async function seedAddresses() {
   const provinces = listProvinces();
 
@@ -247,6 +286,8 @@ async function seedAddresses() {
 
 async function main() {
   console.log("seed master data …");
+  // ก่อน seedLegalDocuments() เสมอ — A4 ตรวจชื่อช่องติ๊กกับตัวเลือกชุดนี้ ดูคอมเมนต์ที่ฟังก์ชัน
+  await seedDatasetChoices();
   await seedSystemUser();
   await seedRoles();
   await seedBdiOrganization();

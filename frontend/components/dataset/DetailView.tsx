@@ -19,16 +19,8 @@ import { api, ApiError } from "@/lib/api";
 import { useRequireAuth } from "@/lib/require-auth";
 import { ROLE_LABELS, taskEventLabel, formatThaiDate } from "@/lib/status";
 import { describeState, movedMessage, useRequestWatch } from "@/lib/use-request-watch";
+import { labelOf, useDatasetChoices } from "@/lib/dataset-choices";
 import {
-  DATA_CATEGORY_LABELS,
-  DATA_CLASSIFICATION_LABELS,
-  DATA_FORMAT_LABELS,
-  DATA_TOPIC_LABELS,
-  DATA_TYPE_LABELS,
-  DELIVERY_FREQUENCY_LABELS,
-  GEO_COVERAGE_LABELS,
-  LICENSE_LABELS,
-  PERSONAL_DATA_PERIOD_LABELS,
   formRules,
   formatUpdateFrequency,
   splitTags,
@@ -144,6 +136,13 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
   const { user, ready } = useRequireAuth();
   const { show } = useToast();
   const router = useRouter();
+
+  /**
+   * ป้ายของตัวเลือกมาจาก /api/dataset-choices — ก่อนโหลดเสร็จ labelOf() คืนรหัสดิบ
+   * ซึ่งอ่านออกกว่าค่าว่าง และเป็นพฤติกรรมเดียวกับที่ pick() เคยทำกับรหัสที่ไม่รู้จัก
+   * หน้านี้จึงไม่ต้องกั้นด้วย loaded เหมือนหน้าฟอร์ม
+   */
+  const { choices } = useDatasetChoices();
 
   const [request, setRequest] = useState<DatasetRequest | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -592,8 +591,8 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
           <CardHeader tag="ส่วนที่ 1" title="ข้อมูลทั่วไปของชุดข้อมูล" />
           <Rows
             rows={[
-              ["ประเภทข้อมูล", pick(DATA_TYPE_LABELS, request.dataType)],
-              ["ประเด็น", pick(DATA_TOPIC_LABELS, request.dataTopic)],
+              ["ประเภทข้อมูล", labelOf(choices.dataType, request.dataType)],
+              ["ประเด็น", labelOf(choices.dataTopic, request.dataTopic)],
               ...(rules.dataTopicOther.visible
                 ? ([["ประเด็นอื่น ๆ", request.dataTopicOther]] as DetailRow[])
                 : []),
@@ -616,18 +615,22 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
             rows={[
               [
                 "ความถี่ของการปรับปรุงข้อมูลต้นทาง",
-                formatUpdateFrequency(request.updateFrequencyUnit, request.updateFrequencyInterval),
+                formatUpdateFrequency(
+                  choices.updateFrequencyUnit,
+                  request.updateFrequencyUnit,
+                  request.updateFrequencyInterval,
+                ),
               ],
               [
                 "ความถี่ของการนำส่งข้อมูลเข้าสู่ระบบกลาง",
-                pick(DELIVERY_FREQUENCY_LABELS, request.deliveryFrequency),
+                labelOf(choices.deliveryFrequency, request.deliveryFrequency),
               ],
-              ["ความละเอียดเชิงภูมิศาสตร์", pick(GEO_COVERAGE_LABELS, request.geoCoverage)],
+              ["ความละเอียดเชิงภูมิศาสตร์", labelOf(choices.geoCoverage, request.geoCoverage)],
               ...(rules.geoCoverageOther.visible
                 ? ([["ระบุความละเอียดเชิงภูมิศาสตร์อื่น ๆ", request.geoCoverageOther]] as DetailRow[])
                 : []),
               ["แหล่งที่มาของข้อมูล", request.dataSource],
-              ["รูปแบบการนำส่งข้อมูล", pick(DATA_FORMAT_LABELS, request.dataFormat)],
+              ["รูปแบบการนำส่งข้อมูล", labelOf(choices.dataFormat, request.dataFormat)],
               ...(rules.dataFormatOther.visible
                 ? ([["ชื่อระบบเชื่อมโยงข้อมูล", request.dataFormatOther]] as DetailRow[])
                 : []),
@@ -639,7 +642,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
           <CardHeader tag="ส่วนที่ 3" title="การจัดประเภทและระดับชั้นข้อมูล" />
           <Rows
             rows={[
-              ["หมวดหมู่ข้อมูลตามธรรมาภิบาลภาครัฐ", pick(DATA_CATEGORY_LABELS, request.dataCategory)],
+              ["หมวดหมู่ข้อมูลตามธรรมาภิบาลภาครัฐ", labelOf(choices.dataCategory, request.dataCategory)],
               [
                 "มีข้อมูลส่วนบุคคล",
                 request.containsPersonalData === null
@@ -656,12 +659,12 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
                       "ระยะเวลาประมวลผลข้อมูลส่วนบุคคล",
                       rules.personalDataPeriodAmount.visible
                         ? personalDataPeriod(request)
-                        : pick(PERSONAL_DATA_PERIOD_LABELS, request.personalDataProcessingPeriod),
+                        : labelOf(choices.personalDataProcessingPeriod, request.personalDataProcessingPeriod),
                     ],
                   ]
                 : []) as DetailRow[]),
-              ["ระดับชั้นข้อมูล", pick(DATA_CLASSIFICATION_LABELS, request.dataClassification)],
-              ["สัญญาอนุญาตให้ใช้ข้อมูล", pick(LICENSE_LABELS, request.licenseId)],
+              ["ระดับชั้นข้อมูล", labelOf(choices.dataClassification, request.dataClassification)],
+              ["สัญญาอนุญาตให้ใช้ข้อมูล", labelOf(choices.licenseId, request.licenseId)],
             ]}
           />
         </Card>
@@ -1022,10 +1025,6 @@ function Rows({ rows }: { rows: DetailRow[] }) {
       ))}
     </dl>
   );
-}
-
-function pick<T extends Record<string, string>>(map: T, key: string | null): string | null {
-  return key ? (map[key as keyof T] ?? key) : null;
 }
 
 /** 13.2.3 ปีกับเดือนอ่านรวมเป็นประโยคเดียว */

@@ -124,6 +124,15 @@ export const AuditAction = {
 
   /** ลงนามอิเล็กทรอนิกส์บนเอกสารข้อตกลง (signature.signature_confirmation) */
   DOCUMENT_SIGNED: "DOCUMENT_SIGNED",
+
+  /**
+   * เพิ่ม แก้ หรือปิดตัวเลือกในแบบฟอร์มลงทะเบียนชุดข้อมูล — เพิ่มจากรายการตัวอย่างใน sheet
+   *
+   * ด้วยเหตุผลเดียวกับ LEGAL_DOCUMENT_PUBLISHED: ตัวเลือกที่หน่วยงานเห็นและเลือก
+   * เปลี่ยนได้โดยไม่ต้อง deploy จึงต้องมีร่องรอยว่าใครเปลี่ยนอะไรเมื่อไร คำขอที่
+   * นำส่งไปแล้วอ้างรหัสเหล่านี้ และเอกสารที่ลงนามแล้วพิมพ์ป้ายของมันลงกระดาษ
+   */
+  DATASET_CHOICE_CHANGED: "DATASET_CHOICE_CHANGED",
 } as const;
 
 export type AuditActionCode = (typeof AuditAction)[keyof typeof AuditAction];
@@ -143,6 +152,11 @@ export const AuditSubject = {
   APPROVAL: "APPROVAL",
   ATTACHMENT: "ATTACHMENT",
   LEGAL_DOCUMENT: "LEGAL_DOCUMENT",
+  /**
+   * ตัวเลือกหนึ่งแถวใน `administration.dataset_choice` — ไม่มีใน sheet
+   * `DATASET` หมายถึงชุดข้อมูลที่ลงทะเบียนแล้ว จึงใช้แทนกันไม่ได้
+   */
+  DATASET_CHOICE: "DATASET_CHOICE",
   NOTIFICATION: "NOTIFICATION",
   INTEGRATION_JOB: "INTEGRATION_JOB",
 } as const;

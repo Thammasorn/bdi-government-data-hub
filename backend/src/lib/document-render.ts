@@ -20,17 +20,10 @@ import Docxtemplater from "docxtemplater";
 import PizZip from "pizzip";
 
 import {
-  DATA_CATEGORY_LABELS,
-  DATA_CLASSIFICATION_LABELS,
-  DATA_FORMAT_LABELS,
-  DATA_TOPIC_LABELS,
-  DATA_TYPE_LABELS,
-  DELIVERY_FREQUENCY_LABELS,
-  GEO_COVERAGE_LABELS,
-  LICENSE_LABELS,
-  PERSONAL_DATA_PERIOD_LABELS,
-  UPDATE_FREQUENCY_UNIT_LABELS,
-} from "./dataset.js";
+  CHOICE_FIELD_KEYS,
+  allCodes,
+  choiceTickVariables,
+} from "./dataset-choices.js";
 import { env } from "../env.js";
 
 /** `{{ }}` ไม่ใช่ `{ }` ของ docxtemplater — วงเล็บเดี่ยวชนกับข้อความในเอกสารกฎหมายเอง */
@@ -275,22 +268,14 @@ export const DEPRECATED_PLACEHOLDERS: Readonly<Record<string, TemplateVariable>>
  * ช่องติ๊กเป็น "ตระกูล" ไม่ใช่ชื่อเดี่ยว — `{{tick.<ฟิลด์>.<รหัส>}}`
  *
  * ไม่ไล่เขียนทีละชื่อลง TEMPLATE_VARIABLES เพราะมีเกือบร้อยช่อง และจะกลายเป็นสำเนาที่สอง
- * ของ code list ใน lib/dataset.ts ที่ต้องคอยแก้ให้ตรงกัน — สร้างจาก code list ตรง ๆ
- * เพิ่มตัวเลือกใหม่ในนั้นแล้วช่องติ๊กใหม่ใช้ได้ทันทีโดยไม่ต้องแตะไฟล์นี้
+ * ของ code list ที่ต้องคอยแก้ให้ตรงกัน — สร้างจาก code list ตรง ๆ แอดมินเพิ่มตัวเลือกใหม่
+ * ผ่าน `/api/admin/dataset-choices` แล้วช่องติ๊กใหม่ใช้ได้ทันที โดยไม่ต้องแตะไฟล์นี้และ
+ * ไม่ต้อง deploy (แต่ยังต้องมีบรรทัดให้มันในไฟล์ .docx — ดู docs/18)
  *
- * ฟิลด์ที่เป็น boolean ใช้รหัส `true` / `false`
+ * ตระกูลที่เป็น boolean ไม่ได้มาจาก code list จึงยังอยู่ในโค้ด: backend เก็บช่องเหล่านี้
+ * เป็น Boolean ไม่ใช่รหัส รหัสของมันจึงเป็น `true` / `false` เสมอ
  */
-export const TICK_FIELDS: Record<string, readonly string[]> = {
-  dataType: Object.keys(DATA_TYPE_LABELS),
-  dataTopic: Object.keys(DATA_TOPIC_LABELS),
-  updateFrequencyUnit: Object.keys(UPDATE_FREQUENCY_UNIT_LABELS),
-  deliveryFrequency: Object.keys(DELIVERY_FREQUENCY_LABELS),
-  geoCoverage: Object.keys(GEO_COVERAGE_LABELS),
-  dataFormat: Object.keys(DATA_FORMAT_LABELS),
-  dataCategory: Object.keys(DATA_CATEGORY_LABELS),
-  dataClassification: Object.keys(DATA_CLASSIFICATION_LABELS),
-  personalDataProcessingPeriod: Object.keys(PERSONAL_DATA_PERIOD_LABELS),
-  licenseId: Object.keys(LICENSE_LABELS),
+const BOOLEAN_TICK_FIELDS: Record<string, readonly string[]> = {
   containsPersonalData: ["true", "false"],
   allowOriginalRawDataRetention: ["true", "false"],
   allowOriginalRawDataSharing: ["true", "false"],
@@ -300,17 +285,39 @@ export const TICK_FIELDS: Record<string, readonly string[]> = {
   authorizePersonalDataAnonymization: ["true", "false"],
 };
 
-/** ชื่อช่องติ๊กที่ใช้ได้ทั้งหมด เช่น `tick.dataType.1` */
-export const TICK_VARIABLES: ReadonlySet<string> = new Set(
-  Object.entries(TICK_FIELDS).flatMap(([field, codes]) => codes.map((c) => `tick.${field}.${c}`)),
+/**
+ * ช่องติ๊กทั้งหมดคู่กับรหัสของมัน — **เป็นฟังก์ชัน ไม่ใช่ค่าคงที่**
+ *
+ * ครึ่งที่มาจาก code list อ่านจาก `lib/dataset-choices.ts` ซึ่งอ่านจากฐานข้อมูล ค่าคงที่
+ * ระดับโมดูลจะถูกประเมินตอน import ซึ่งเกิดก่อนที่ cache จะถูกโหลด และจะค้างเป็นภาพ
+ * ก่อนโหลดไปตลอดอายุโปรเซส
+ *
+ * ใช้ `allCodes()` ที่รวมรหัสที่ปิดอยู่ด้วย — คำขอเก่าที่เลือกตัวเลือกซึ่งภายหลังถูกปิด
+ * ยังต้องพิมพ์ ✔ ตรงข้อนั้นได้ ไม่ใช่กลายเป็นช่องว่างบนเอกสารที่มีคนลงนามไปแล้ว
+ */
+export function tickFields(): Record<string, readonly string[]> {
+  const out: Record<string, readonly string[]> = {};
+  for (const fieldKey of CHOICE_FIELD_KEYS) out[fieldKey] = [...allCodes(fieldKey)];
+  return { ...out, ...BOOLEAN_TICK_FIELDS };
+}
+
+const BOOLEAN_TICK_VARIABLES: ReadonlySet<string> = new Set(
+  Object.entries(BOOLEAN_TICK_FIELDS).flatMap(([field, codes]) =>
+    codes.map((c) => `tick.${field}.${c}`),
+  ),
 );
+
+/** ชื่อช่องติ๊กนี้ใช้ได้ไหม เช่น `tick.dataType.1` — ดูคอมเมนต์ของ tickFields() */
+export function isTickVariable(name: string): boolean {
+  return BOOLEAN_TICK_VARIABLES.has(name) || choiceTickVariables().has(name);
+}
 
 /**
  * ชื่อที่ถูกต้องของ placeholder ตัวนี้ — คืนชื่อเดิมถ้ามันเป็นชื่อปัจจุบันอยู่แล้ว
  * แปลงให้เมื่อเป็นชื่อชุดเก่า และคืน null เมื่อไม่รู้จักเลย
  */
 export function canonicalPlaceholder(name: string): string | null {
-  if (TICK_VARIABLES.has(name)) return name;
+  if (isTickVariable(name)) return name;
   if (name in TEMPLATE_VARIABLES) return name;
   return DEPRECATED_PLACEHOLDERS[name] ?? null;
 }
@@ -319,7 +326,7 @@ export function canonicalPlaceholder(name: string): string | null {
 export function variableAllowed(name: string, scope: VariableScope): boolean {
   const canonical = canonicalPlaceholder(name);
   if (!canonical) return false;
-  if (TICK_VARIABLES.has(canonical)) return scope === "dataset" || scope === "both";
+  if (isTickVariable(canonical)) return scope === "dataset" || scope === "both";
   const spec = (TEMPLATE_VARIABLES as Record<string, TemplateVariableSpec | undefined>)[canonical];
   if (!spec) return false;
   const declared = spec.scope ?? "both";

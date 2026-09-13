@@ -13,51 +13,21 @@
  * รหัสเหล่านี้คือของมาตรฐานบัญชีข้อมูลเปิดภาครัฐ การเก็บรหัสตรง ๆ ทำให้ส่งต่อ DGA/DII
  * ได้โดยไม่ต้องมีตารางแปลง และเพิ่มรหัสใหม่ได้โดยไม่ต้อง migrate ฐานข้อมูล
  *
- * ป้ายภาษาไทยชุดเดียวกันนี้ถูกคัดลอกไว้ที่ `frontend/lib/dataset-form.ts` ด้วย
- * (หน้าเว็บต้องแสดงผลแบบ synchronous ไม่ผ่าน API) — **แก้ที่นี่แล้วต้องแก้ที่นั่นด้วย**
- * เหมือนกับสีของ CI ที่ซ้ำอยู่ใน globals.css / mail.ts / pdf.ts
+ * **รายการรหัสกับป้ายภาษาไทยไม่ได้อยู่ในไฟล์นี้แล้ว** ตั้งแต่การ์ด "Choice master data
+ * สำหรับ choice ในหน้า dataset registration" — ย้ายไปเป็นแถวใน `administration.dataset_choice`
+ * อ่านผ่าน `lib/dataset-choices.ts` และแอดมินแก้ได้ผ่าน `/api/admin/dataset-choices`
+ * โดยไม่ต้อง deploy ส่วนที่ยังอยู่ที่นี่คือ **ตรรกะ** ซึ่งอ้างรหัสตรง ๆ ไม่ใช่ข้อมูล:
+ * เงื่อนไขในชีท `conditions` (metadataRules / normaliseMetadata) กับ zod
+ *
+ * หน้าเว็บดึงตัวเลือกจาก `GET /api/dataset-choices` `frontend/lib/dataset-form.ts` จึงเป็น
+ * สำเนาของ *เครื่องยนต์เงื่อนไข* เท่านั้น ไม่ใช่สำเนาของ code list อีกต่อไป
  */
 import { z } from "zod";
 
+import { allCodes, choiceLabel, type ChoiceFieldKey } from "./dataset-choices.js";
 import { containsEnglish, containsThai } from "./validation.js";
 
 // ------------------------------------------------------------------ รหัสและป้าย
-
-/** 1.1 ประเภทข้อมูล — ปรับจาก code list มาตรฐาน: ใช้ "ข้อมูลรวม" แทน "สถิติ" และไม่รับ "หลากหลายประเภท" */
-export const DATA_TYPE_LABELS: Record<string, string> = {
-  "1": "ข้อมูลระเบียน",
-  "2": "ข้อมูลภูมิสารสนเทศ",
-  "3": "ข้อมูลรวม (สถิติ)",
-  "9": "ข้อมูลอื่น ๆ",
-};
-
-/** 1.2 ประเด็น — อิงตามระเบียบสำนักนายกรัฐมนตรีว่าด้วยการแบ่งปันข้อมูลฯ */
-export const DATA_TOPIC_LABELS: Record<string, string> = {
-  "01": "ทรัพยากรน้ำ",
-  "02": "อุตุนิยมวิทยา",
-  "03": "ภัยพิบัติ",
-  "04": "สภาพพื้นที่",
-  "05": "โครงสร้างพื้นฐาน",
-  "06": "การวางแผนและเยียวยา",
-  "07": "ด้านสาธารณสุข",
-  "99": "อื่น ๆ",
-};
-
-/** 9.1 หน่วยความถี่ของการปรับปรุงข้อมูลต้นทาง */
-export const UPDATE_FREQUENCY_UNIT_LABELS: Record<string, string> = {
-  A: "ปี",
-  S: "ครึ่งปี",
-  Q: "ไตรมาส",
-  M: "เดือน",
-  W: "สัปดาห์",
-  D: "วัน",
-  B: "วันทำการ",
-  H: "ชั่วโมง",
-  N: "นาที",
-  R: "ตามเวลาจริง",
-  O: "ไม่มีการปรับปรุงหลังจากการจัดเก็บข้อมูล",
-  U: "ไม่ทราบ",
-};
 
 /**
  * หน่วยที่ไม่มี "ทุก ๆ กี่หน่วย" ให้กรอก — ถามว่าข้อมูลตามเวลาจริงปรับปรุงทุกกี่ครั้ง
@@ -66,97 +36,11 @@ export const UPDATE_FREQUENCY_UNIT_LABELS: Record<string, string> = {
  */
 export const FREQUENCY_UNITS_WITHOUT_INTERVAL = ["R", "O", "U"];
 
-/** 9.3 ความถี่ของการนำส่งข้อมูลเข้าสู่ระบบกลาง */
-export const DELIVERY_FREQUENCY_LABELS: Record<string, string> = {
-  "1": "เมื่อมีการร้องขอ หรือเมื่อมีคำสั่ง",
-  "2": "ต่อเนื่องรายเดือน",
-  "3": "ต่อเนื่องรายไตรมาส",
-  "4": "ต่อเนื่องรายครึ่งปี",
-  "5": "ต่อเนื่องรายปี",
-};
-
-/** 10 ความละเอียดเชิงภูมิศาสตร์ — ระดับย่อยที่สุดที่จัดเก็บหรือนำเสนอข้อมูล */
-export const GEO_COVERAGE_LABELS: Record<string, string> = {
-  "00": "ไม่มี",
-  "01": "โลก",
-  "02": "ทวีป/กลุ่มประเทศในทวีป",
-  "03": "กลุ่มประเทศทางเศรษฐกิจ",
-  "04": "ประเทศ",
-  "05": "ภาค",
-  "06": "จังหวัด",
-  "07": "อำเภอ",
-  "08": "ตำบล",
-  "09": "หมู่บ้าน",
-  "10": "องค์กรปกครองส่วนท้องถิ่น",
-  "11": "พิกัด",
-  "98": "ไม่ทราบ",
-  "99": "อื่น ๆ",
-};
-
-/** 12.1 รูปแบบการนำส่งข้อมูล */
-export const DATA_FORMAT_LABELS: Record<string, string> = {
-  "1": "วางไฟล์",
-  "2": "Database synchronization",
-  "3": "Batch API",
-  "4": "ผ่านระบบเชื่อมโยงข้อมูลอื่น",
-};
-
 /** รูปแบบการนำส่งที่ต้องระบุชื่อระบบเชื่อมโยง */
 export const DATA_FORMAT_OTHER_CODE = "4";
 
-/**
- * 13.1 หมวดหมู่ข้อมูลตามธรรมาภิบาลข้อมูลภาครัฐ
- * "ข้อมูลส่วนบุคคล" ในมาตรฐานเป็นหมวด ค. แต่ชีทให้ถามเป็นคำถามแยก (13.2) รหัส c/d
- * ในนี้จึงเป็นความลับทางราชการกับความมั่นคง ตรงตามชีท ไม่ใช่ตามมาตรฐานต้นทาง
- */
-export const DATA_CATEGORY_LABELS: Record<string, string> = {
-  a: "ข้อมูลสาธารณะ",
-  b: "ข้อมูลใช้ภายใน",
-  c: "ข้อมูลความลับทางราชการ",
-  d: "ข้อมูลความมั่นคง",
-};
-
-/** 13.2.3 ระยะเวลาประมวลผลข้อมูลส่วนบุคคล */
-export const PERSONAL_DATA_PERIOD_LABELS: Record<string, string> = {
-  a: "จนกว่าจะมีคำสั่งยุติการประมวลผล",
-  b: "ระบุระยะเวลา (ปี/เดือน)",
-};
-
 /** 13.2.3 ตัวเลือก b ต้องระบุจำนวนปีและเดือน */
 export const PERSONAL_DATA_PERIOD_FIXED = "b";
-
-/** 13.3 ระดับชั้นข้อมูลตาม พ.ร.บ.ข้อมูลข่าวสารของราชการ พ.ศ. 2540 */
-export const DATA_CLASSIFICATION_LABELS: Record<string, string> = {
-  "01": "เปิดเผย",
-  "02": "เผยแพร่ภายในองค์กร",
-  "03": "ลับ",
-  "04": "ลับมาก",
-  "05": "ลับที่สุด",
-};
-
-/**
- * 14 สัญญาอนุญาตให้ใช้ข้อมูล — ชีท "สัญญาอนุญาต" รับเพียงสามฉบับ
- * G1 ตัดออกเพราะระบบไม่ให้ใช้เชิงพาณิชย์ (เว้นแต่เป็น open data)
- * G3 (ShareAlike) ขัดกับสิทธิของ BDI ในการกำหนด metadata และ G4 (NoDerivs) ขัดกับการจัดการข้อมูลดิบ
- */
-export const LICENSE_LABELS: Record<string, string> = {
-  G0: "Open Data Common",
-  G2: "Creative Commons Attribution-NonCommercial",
-  G5: "Others License",
-};
-
-const codes = (labels: Record<string, string>) => Object.keys(labels) as [string, ...string[]];
-
-const DATA_TYPES = codes(DATA_TYPE_LABELS);
-const DATA_TOPICS = codes(DATA_TOPIC_LABELS);
-const UPDATE_FREQUENCY_UNITS = codes(UPDATE_FREQUENCY_UNIT_LABELS);
-const DELIVERY_FREQUENCIES = codes(DELIVERY_FREQUENCY_LABELS);
-const GEO_COVERAGES = codes(GEO_COVERAGE_LABELS);
-const DATA_FORMATS = codes(DATA_FORMAT_LABELS);
-const DATA_CATEGORIES = codes(DATA_CATEGORY_LABELS);
-const PERSONAL_DATA_PERIODS = codes(PERSONAL_DATA_PERIOD_LABELS);
-const DATA_CLASSIFICATIONS = codes(DATA_CLASSIFICATION_LABELS);
-const LICENSES = codes(LICENSE_LABELS);
 
 /** รหัสที่บอกว่าต้องกรอกช่อง "อื่น ๆ" ต่อ */
 export const DATA_TOPIC_OTHER_CODE = "99";
@@ -524,10 +408,23 @@ const optionalText = (max: number) => z.string().trim().max(max).nullable().opti
 /**
  * ค่าที่ผู้ใช้เลือกจากหน้าเว็บมาถูกเสมอ ข้อความนี้จึงไว้รับ client อื่นที่ส่งรหัสนอกรายการ —
  * ยังต้องเป็นภาษาไทย เพราะข้อความ validation ทุกอันถูกผูกกับช่องแล้วแสดงบนฟอร์ม
+ *
+ * เปิดหารหัส **ข้างใน refine** ไม่ใช่ดึงออกมาไว้ข้างนอก: schema ถูกสร้างตอน import ซึ่ง
+ * เกิดก่อน cache ของตัวเลือกถูกโหลด การดึงเซตออกมาเก็บไว้เท่ากับแช่ภาพก่อนโหลดค้างไว้
+ *
+ * ใช้ `allCodes()` ที่รวมรหัสที่ปิดอยู่ด้วย — schema ชุดนี้ถูก parse กับค่าที่ **บันทึกไป
+ * แล้ว** ด้วย ไม่ใช่แค่กับสิ่งที่ผู้ใช้เพิ่งพิมพ์ ถ้าตรวจด้วยเฉพาะรหัสที่เปิดอยู่ การปิด
+ * ตัวเลือกหนึ่งจะทำให้ร่างทุกฉบับที่เคยเลือกรหัสนั้น บันทึกและนำส่งไม่ได้ทั้งที่กรอกครบ
+ *
+ * `z.string({ error })` ไม่ใช่ `z.string()` เฉย ๆ — ค่าที่ไม่ใช่สตริง (เช่นตัวเลข) ต้องได้
+ * ข้อความไทยเหมือนกัน ไม่ใช่ invalid_type ภาษาอังกฤษของ zod อย่างที่ `z.enum` เคยให้
  */
-const optionalCode = (values: [string, ...string[]]) =>
+const CODE_OUT_OF_RANGE = "ค่าที่ส่งมาไม่อยู่ในรายการรหัสที่ระบบรองรับ";
+
+const optionalCode = (fieldKey: ChoiceFieldKey) =>
   z
-    .enum(values, { error: "ค่าที่ส่งมาไม่อยู่ในรายการรหัสที่ระบบรองรับ" })
+    .string({ error: CODE_OUT_OF_RANGE })
+    .refine((code) => allCodes(fieldKey).has(code), { error: CODE_OUT_OF_RANGE })
     .nullable()
     .optional();
 const optionalFlag = z.boolean().nullable().optional();
@@ -540,8 +437,8 @@ const optionalCount = (max?: number, maxMessage?: string) => {
 
 /** ตอนบันทึกร่างยอมให้ว่างได้ทุกช่อง — ความครบถ้วนบังคับตอนสร้าง PDF และตอนนำส่ง */
 export const datasetDraftSchema = z.object({
-  dataType: optionalCode(DATA_TYPES),
-  dataTopic: optionalCode(DATA_TOPICS),
+  dataType: optionalCode("dataType"),
+  dataTopic: optionalCode("dataTopic"),
   dataTopicOther: optionalText(150),
   title: optionalText(150),
   name: optionalText(150),
@@ -551,23 +448,23 @@ export const datasetDraftSchema = z.object({
   tagString: optionalText(200),
   notes: optionalText(1000),
   objective: optionalText(1000),
-  updateFrequencyUnit: optionalCode(UPDATE_FREQUENCY_UNITS),
+  updateFrequencyUnit: optionalCode("updateFrequencyUnit"),
   updateFrequencyInterval: optionalCount(),
-  deliveryFrequency: optionalCode(DELIVERY_FREQUENCIES),
-  geoCoverage: optionalCode(GEO_COVERAGES),
+  deliveryFrequency: optionalCode("deliveryFrequency"),
+  geoCoverage: optionalCode("geoCoverage"),
   geoCoverageOther: optionalText(300),
   dataSource: optionalText(200),
-  dataFormat: optionalCode(DATA_FORMATS),
+  dataFormat: optionalCode("dataFormat"),
   dataFormatOther: optionalText(150),
-  dataCategory: optionalCode(DATA_CATEGORIES),
+  dataCategory: optionalCode("dataCategory"),
   containsPersonalData: optionalFlag,
   personalDataTypes: optionalText(1000),
   dataSubjectCategories: optionalText(1000),
-  personalDataProcessingPeriod: optionalCode(PERSONAL_DATA_PERIODS),
+  personalDataProcessingPeriod: optionalCode("personalDataProcessingPeriod"),
   personalDataProcessingPeriodYear: optionalCount(),
   personalDataProcessingPeriodMonth: optionalCount(11, "จำนวนเดือนต้องอยู่ระหว่าง 0–11 ถ้ามากกว่านั้นให้กรอกเป็นจำนวนปี"),
-  dataClassification: optionalCode(DATA_CLASSIFICATIONS),
-  licenseId: optionalCode(LICENSES),
+  dataClassification: optionalCode("dataClassification"),
+  licenseId: optionalCode("licenseId"),
   allowOriginalRawDataRetention: optionalFlag,
   allowOriginalRawDataSharing: optionalFlag,
   allowTransformedRawDataSharing: optionalFlag,
@@ -631,8 +528,8 @@ export function fromMetadataRow(
  * zod จะตอบข้อความ invalid_type เป็นภาษาอังกฤษ ซึ่งผู้ใช้อ่านไม่รู้เรื่อง
  */
 const required = (message: string) => z.string({ error: message }).trim().min(1, message);
-const requiredCode = (values: [string, ...string[]], message: string) =>
-  z.enum(values, { error: message });
+const requiredCode = (fieldKey: ChoiceFieldKey, message: string) =>
+  z.string({ error: message }).refine((code) => allCodes(fieldKey).has(code), { error: message });
 const requiredFlag = (message: string) => z.boolean({ error: message });
 
 const requiredEmail = (message: string) =>
@@ -647,8 +544,8 @@ const requiredEmail = (message: string) =>
  */
 export const datasetSubmitSchema = z
   .object({
-    dataType: requiredCode(DATA_TYPES, "กรุณาเลือกประเภทข้อมูล"),
-    dataTopic: requiredCode(DATA_TOPICS, "กรุณาเลือกประเด็นของข้อมูล"),
+    dataType: requiredCode("dataType", "กรุณาเลือกประเภทข้อมูล"),
+    dataTopic: requiredCode("dataTopic", "กรุณาเลือกประเด็นของข้อมูล"),
     dataTopicOther: optionalText(150),
     title: required("กรุณากรอกชื่อชุดข้อมูลภาษาไทย")
       .max(150, "ชื่อชุดข้อมูลต้องยาวไม่เกิน 150 ตัวอักษร")
@@ -673,28 +570,28 @@ export const datasetSubmitSchema = z
       .min(30, "วัตถุประสงค์ต้องมีอย่างน้อย 30 ตัวอักษร")
       .max(1000, "วัตถุประสงค์ต้องยาวไม่เกิน 1,000 ตัวอักษร"),
     updateFrequencyUnit: requiredCode(
-      UPDATE_FREQUENCY_UNITS,
+      "updateFrequencyUnit",
       "กรุณาเลือกหน่วยความถี่ของการปรับปรุงข้อมูลต้นทาง",
     ),
     updateFrequencyInterval: optionalCount(),
     deliveryFrequency: requiredCode(
-      DELIVERY_FREQUENCIES,
+      "deliveryFrequency",
       "กรุณาเลือกความถี่ของการนำส่งข้อมูลเข้าสู่ระบบกลาง",
     ),
-    geoCoverage: requiredCode(GEO_COVERAGES, "กรุณาเลือกความละเอียดเชิงภูมิศาสตร์"),
+    geoCoverage: requiredCode("geoCoverage", "กรุณาเลือกความละเอียดเชิงภูมิศาสตร์"),
     geoCoverageOther: optionalText(300),
     dataSource: required("กรุณาระบุแหล่งที่มาของข้อมูล").max(200, "แหล่งที่มาต้องยาวไม่เกิน 200 ตัวอักษร"),
-    dataFormat: requiredCode(DATA_FORMATS, "กรุณาเลือกรูปแบบการนำส่งข้อมูล"),
+    dataFormat: requiredCode("dataFormat", "กรุณาเลือกรูปแบบการนำส่งข้อมูล"),
     dataFormatOther: optionalText(150),
-    dataCategory: requiredCode(DATA_CATEGORIES, "กรุณาเลือกหมวดหมู่ข้อมูลตามธรรมาภิบาลภาครัฐ"),
+    dataCategory: requiredCode("dataCategory", "กรุณาเลือกหมวดหมู่ข้อมูลตามธรรมาภิบาลภาครัฐ"),
     containsPersonalData: requiredFlag("กรุณาระบุว่าชุดข้อมูลนี้มีข้อมูลส่วนบุคคลหรือไม่"),
     personalDataTypes: optionalText(1000),
     dataSubjectCategories: optionalText(1000),
-    personalDataProcessingPeriod: optionalCode(PERSONAL_DATA_PERIODS),
+    personalDataProcessingPeriod: optionalCode("personalDataProcessingPeriod"),
     personalDataProcessingPeriodYear: optionalCount(),
     personalDataProcessingPeriodMonth: optionalCount(11, "จำนวนเดือนต้องอยู่ระหว่าง 0–11 ถ้ามากกว่านั้นให้กรอกเป็นจำนวนปี"),
-    dataClassification: requiredCode(DATA_CLASSIFICATIONS, "กรุณาเลือกระดับชั้นข้อมูล"),
-    licenseId: requiredCode(LICENSES, "กรุณาเลือกสัญญาอนุญาตให้ใช้ข้อมูล"),
+    dataClassification: requiredCode("dataClassification", "กรุณาเลือกระดับชั้นข้อมูล"),
+    licenseId: requiredCode("licenseId", "กรุณาเลือกสัญญาอนุญาตให้ใช้ข้อมูล"),
     allowOriginalRawDataRetention: requiredFlag(
       "กรุณาระบุว่าอนุญาตให้สำนักงานจัดเก็บข้อมูลดิบต้นฉบับหรือไม่",
     ),
@@ -726,7 +623,7 @@ export const datasetSubmitSchema = z
     if (rules.updateFrequencyInterval.visible && !value.updateFrequencyInterval) {
       missing(
         "updateFrequencyInterval",
-        `กรุณากรอกค่าความถี่ เช่น ปรับปรุงทุก 2 ${UPDATE_FREQUENCY_UNIT_LABELS[value.updateFrequencyUnit]} ให้กรอก 2`,
+        `กรุณากรอกค่าความถี่ เช่น ปรับปรุงทุก 2 ${choiceLabel("updateFrequencyUnit", value.updateFrequencyUnit)} ให้กรอก 2`,
       );
     }
     if (rules.personalDataDetail.visible) {
@@ -781,7 +678,7 @@ export function formatUpdateFrequency(
   interval: number | null | undefined,
 ): string {
   if (!unit) return "";
-  const label = UPDATE_FREQUENCY_UNIT_LABELS[unit] ?? unit;
+  const label = choiceLabel("updateFrequencyUnit", unit);
   if (FREQUENCY_UNITS_WITHOUT_INTERVAL.includes(unit) || !interval) return label;
   return `ทุก ${interval.toLocaleString("th-TH")} ${label}`;
 }

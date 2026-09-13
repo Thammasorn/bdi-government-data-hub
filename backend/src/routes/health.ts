@@ -1,6 +1,7 @@
 import { Router } from "../lib/async-route.js";
 
 import { pingDatabase } from "../db.js";
+import { choiceStatus } from "../lib/dataset-choices.js";
 import { pingStorage } from "../storage.js";
 
 export const healthRouter = Router();
@@ -25,9 +26,16 @@ async function check(fn: () => Promise<unknown>): Promise<CheckResult> {
 healthRouter.get("/ready", async (_req, res) => {
   const [database, storage] = await Promise.all([check(pingDatabase), check(pingStorage)]);
 
+  /**
+   * ตัวเลือกของแบบฟอร์มชุดข้อมูลรายงานไว้ให้เห็น แต่ **ไม่ร่วมตัดสิน** healthy —
+   * source: "defaults" แปลว่ายังไม่ได้รัน seed:masters ซึ่งควรแก้ แต่ระบบยังให้บริการได้
+   * ถ้าปล่อยให้ตอบ 503 reverse proxy จะถอนเว็บสาธารณะออก ซึ่งตรงข้ามกับเหตุผลที่มี fallback
+   */
+  const datasetChoices = choiceStatus();
+
   const healthy = database.status === "up" && storage.status === "up";
   res.status(healthy ? 200 : 503).json({
     status: healthy ? "ok" : "degraded",
-    checks: { database, storage },
+    checks: { database, storage, datasetChoices },
   });
 });
