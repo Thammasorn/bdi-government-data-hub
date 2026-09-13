@@ -199,9 +199,9 @@ export function BdiHome() {
             ตั้งแต่ก่อนมีความเห็น สิ่งที่การ์ดนี้เพิ่มคือ "อ่านได้แล้วนะ" จึงเป็นน้ำเงินไม่ใช่ส้ม
             สีเดียวกับการ์ดความเห็นบนหน้ารายละเอียด
 
-            ปุ่มพาไปที่กองของตัวเอง ไม่ได้กรองเฉพาะใบที่มีความเห็น — คำศัพท์ของตัวกรองคือโหนด
-            ของเส้นทาง (lib/queue.ts) การเพิ่มโทเคน "มีความเห็น" จะเป็นโหนดปลอมบนแผนภาพ
-            ป้ายปุ่มจึงพูดเท่าที่มันทำได้จริง
+            ปุ่มพาไปที่กองของตัวเองที่ **กรองเฉพาะใบที่มีความเห็นแล้ว** (`&advisory=with`) ตัวกรอง
+            นั้นเป็นมิติที่สอง ไม่ใช่โหนดบนแผนภาพ — ดู AdvisoryFilter และหัวข้อในหน้ารายการ
+            (เดิมปุ่มนี้พาไปที่กองทั้งกอง เพราะยังไม่มีตัวกรอง ป้ายจึงเลี่ยงไปพูดแค่ที่ทำได้จริง)
           */}
           {advisory > 0 ? (
             <Card className="mb-8 border-l-[3px] border-l-navy-500">
@@ -215,8 +215,8 @@ export function BdiHome() {
                   </p>
                 </div>
                 <div className="shrink-0">
-                  <Link href={`${DATASETS}?tab=mine&stage=OFFICER_REVIEW`}>
-                    <Button variant="secondary">ดูคำขอที่รอคุณตรวจสอบ</Button>
+                  <Link href={`${DATASETS}?tab=mine&stage=OFFICER_REVIEW&advisory=with`}>
+                    <Button variant="secondary">ดูคำขอที่มีความเห็น</Button>
                   </Link>
                 </div>
               </div>

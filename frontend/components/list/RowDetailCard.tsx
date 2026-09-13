@@ -17,6 +17,8 @@ export interface RowDetail {
   progress: JourneyProgressSummary | null;
   submittedAt: string | null;
   updatedAt: string | null;
+  /** เวลาที่ผู้เชี่ยวชาญบันทึกความเห็นล่าสุด — null เมื่อยังไม่มี หรือผู้อ่านไม่ใช่ฝั่ง BDI */
+  specialistCommentAt?: string | null;
 }
 
 /** ข้อความอธิบายช่วงที่คำขออยู่ — ชุดเดียวกับที่ ApprovalStepsCompact ใช้ */
@@ -122,6 +124,15 @@ export function RowDetailCard({ detail }: { detail: RowDetail | null }) {
             <dt>รอมาแล้ว</dt>
             <dd className={clsx("text-right", waited >= 7 ? "text-warning" : "text-ink-muted")}>
               {waited.toLocaleString("th-TH")} วัน
+            </dd>
+          </div>
+        ) : null}
+        {/* ป้ายในแถวบอกว่า "มีความเห็นแล้ว" ตรงนี้คือที่เดียวที่มีที่ว่างพอจะบอกว่าเมื่อไร */}
+        {detail.specialistCommentAt ? (
+          <div className="flex justify-between gap-3">
+            <dt>ความเห็นผู้เชี่ยวชาญ</dt>
+            <dd className="text-right text-ink-muted">
+              {formatThaiDate(detail.specialistCommentAt)}
             </dd>
           </div>
         ) : null}

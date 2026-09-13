@@ -352,6 +352,24 @@ nothing else. Their sum can fall short of `total` by the requests sitting in the
 `requestStatusFor()` fall-through (`UNDER_REVIEW` with no active task); those match no node and
 are visible only on the ทั้งหมด tab. That is a data anomaly worth seeing, not one to paper over.
 
+**"Has the specialist answered yet?" is a second dimension, not a node.** `?advisory=` on the
+dataset list takes `with` / `awaiting` / `none` and ANDs with the node and the tab. It could not
+be a filter token: one token is one box on the drawing, and asking for an opinion moves the
+request nowhere, so a box for it would be a box the state machine does not have. `queue.ts` owns
+the vocabulary (`parseAdvisoryToken`, `advisoryCommentedIds` — the same id-list shape as
+`requestIdsAtStage`) but the clause is assembled in `dataset-requests.ts`, because
+`assigned_specialist_id` is a column of that model alone and `queue.ts` serves both journeys.
+`awaiting` is "assigned **and** not in the commented set", so an opinion that arrives moves the
+row from one answer to the other with nothing to keep in sync. The three answers are kept apart
+on purpose: "nobody asked yet" is the officer's own decision to make, while "asked and waiting"
+is someone else's turn. Org-side callers have their `?advisory=` ignored rather than rejected
+(the file's standing rule for tokens that cannot apply), and `GET /summary` does not take it at
+all — those counts move with visibility and the search box only, which is also why the chips
+carry no numbers: a count from a wider scope pinned to an ANDed filter reads as broken
+arithmetic. The row badge comes from `specialistCommentAt`, computed from the `review_task` rows
+the list handler already fetched, and it obeys the timeline's rule — a `BDI_INTERNAL` opinion is
+invisible to the organisation, an `ORGANIZATION` one is not.
+
 Both list endpoints page with `page`/`pageSize` and sort with `sort=date_asc|date_desc`. The
 `orderBy` ends with `id` on purpose: rows sharing a `submittedAt` have no defined relative order
 otherwise, so one lands on two pages and another on none — `seed:demo` writes rows in a loop and

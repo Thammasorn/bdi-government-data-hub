@@ -102,8 +102,10 @@ import {
 } from "../lib/system.js";
 import { formatZodError, isUuid, parseRequestSnapshot } from "../lib/validation.js";
 import {
+  advisoryCommentedIds,
   listOrderBy,
   myNodeKeys,
+  parseAdvisoryToken,
   parseFilterTokens,
   parsePaging,
   parseSort,
@@ -334,6 +336,7 @@ datasetRequestRouter.get("/", async (req, res) => {
     sort?: string;
     q?: string;
   };
+  const isBdi = isBdiStaff(session.roles);
 
   const and = await baseFilters(session, q);
 
@@ -351,6 +354,25 @@ datasetRequestRouter.get("/", async (req, res) => {
     const mine = await nodeWhere(prisma, SUBJECT, myNodeKeys(SUBJECT, session.roles));
     // ไม่มีด่านเป็นของตัวเองเลย (เช่น ผู้ดูแลระบบ) = คิวว่าง ไม่ใช่ "ไม่กรอง"
     and.push(mine ?? { id: { in: [] } });
+  }
+
+  /**
+   * ตัวกรอง "ความเห็นของผู้เชี่ยวชาญ" — มิติที่สอง AND กับโหนดและแท็บ (ดู lib/queue.ts)
+   *
+   * ประกอบ where ที่นี่ไม่ใช่ใน queue.ts เพราะ `assigned_specialist_id` เป็นคอลัมน์ของ
+   * โมเดลนี้เท่านั้น ส่วนไฟล์นั้นใช้ร่วมกับเส้นทางหน่วยงานซึ่งไม่มีผู้เชี่ยวชาญ
+   *
+   * ฝั่งหน่วยงานส่ง `?advisory=` มาก็ถูกมองข้าม — ทั้งความเห็นและตัวผู้เชี่ยวชาญเป็นเรื่อง
+   * ภายในของ BDI และกติกาเดิมของหน้านี้คือโทเคนที่ใช้ไม่ได้ถูกทิ้งเงียบ ไม่ใช่ตอบ error
+   */
+  const advisory = isBdi ? parseAdvisoryToken(req.query.advisory) : null;
+  if (advisory) {
+    // `notIn: []` ใช้ได้ปกติ — "ยังไม่มีใบไหนมีความเห็นเลย" ไม่ใช่กรณีพิเศษ
+    const commented = await advisoryCommentedIds(prisma, SUBJECT, { includeInternal: true });
+    if (advisory === "with") and.push({ id: { in: commented } });
+    if (advisory === "awaiting")
+      and.push({ assignedSpecialistId: { not: null }, id: { notIn: commented } });
+    if (advisory === "none") and.push({ assignedSpecialistId: null });
   }
 
   const where: Prisma.DatasetRegistrationRequestWhereInput = { AND: and };
@@ -385,8 +407,28 @@ datasetRequestRouter.get("/", async (req, res) => {
       result: true,
       completedAt: true,
       assignedUserId: true,
+      // ป้าย "มีความเห็นแล้ว" ในแถว — อ่านจากชุดนี้ที่ดึงมาอยู่แล้ว ไม่มีคิวรีเพิ่ม
+      resultComment: true,
+      commentVisibility: true,
     },
   });
+
+  /**
+   * เวลาที่ผู้เชี่ยวชาญบันทึกความเห็นล่าสุดของแต่ละใบ — null เมื่อยังไม่มี
+   *
+   * ฝั่งหน่วยงานไม่เห็นความเห็นที่เป็น BDI_INTERNAL (ค่าเริ่มต้นของทุกความเห็นวันนี้)
+   * กติกาเดียวกับไทม์ไลน์ในหน้ารายละเอียด — ตัดสินที่ server ที่เดียว หน้าเว็บไม่ต้องรู้
+   */
+  const commentAtBySubject = new Map<string, Date>();
+  for (const t of tasks) {
+    if (t.taskType !== ReviewTaskType.DATASET_SPECIALIST_REVIEW) continue;
+    if (!t.resultComment?.trim()) continue;
+    if (!isBdi && t.commentVisibility === CommentVisibility.BDI_INTERNAL) continue;
+    const at = t.completedAt ?? null;
+    if (!at) continue;
+    const seen = commentAtBySubject.get(t.subjectId);
+    if (!seen || at > seen) commentAtBySubject.set(t.subjectId, at);
+  }
   const activeTasks = tasks.filter(
     (t) => t.status === ReviewTaskStatus.PENDING || t.status === ReviewTaskStatus.IN_PROGRESS,
   );
@@ -411,6 +453,7 @@ datasetRequestRouter.get("/", async (req, res) => {
       currentTaskType: stage_.get(r.id)?.taskType ?? null,
       currentRound: stage_.get(r.id)?.roundNumber ?? null,
       progress: progressBySubject.get(r.id) ?? null,
+      specialistCommentAt: commentAtBySubject.get(r.id) ?? null,
       generatedForm: formByRequest.has(r.id)
         ? { id: formByRequest.get(r.id)!.id, filename: formByRequest.get(r.id)!.originalFileName }
         : null,
