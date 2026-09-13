@@ -370,10 +370,24 @@ arithmetic. The row badge comes from `specialistCommentAt`, computed from the `r
 the list handler already fetched, and it obeys the timeline's rule — a `BDI_INTERNAL` opinion is
 invisible to the organisation, an `ORGANIZATION` one is not.
 
-Both list endpoints page with `page`/`pageSize` and sort with `sort=date_asc|date_desc`. The
+Both list endpoints page with `page`/`pageSize` and sort with
+`sort=date_asc|date_desc|updated_asc|updated_desc` — **two dimensions in one token**: which date
+(`date_*` is `submitted_at`, `updated_*` is `updated_at`) and which way. `date_*` was not renamed
+to the more accurate `submitted_*` because those two tokens are already in bookmarks, in the
+Postman collection and in the links the home page fires, and `parseSort()` falls back to the
+default *silently* — a renamed token would sort by the wrong thing rather than fail. The
 `orderBy` ends with `id` on purpose: rows sharing a `submittedAt` have no defined relative order
 otherwise, so one lands on two pages and another on none — `seed:demo` writes rows in a loop and
 reproduces it immediately.
+
+**`updated_at` is the "last changed" date both lists show, and it is only true because one
+write was added.** Every path that moves a request ends in `syncStatus()`, which writes the
+request row — except the specialist's comment, which used to write `review_task` alone
+(`recordAdvisoryNote()`). Sorting happens in SQL, so it can read one column; a `max()` across
+`review_task` computed at render time would order page 2 differently from page 1. The comment
+branch of `POST /dataset-requests/:id/review` therefore runs both inside one transaction, and
+`20260913120000_backfill_request_last_activity` carries the same rule back over rows written
+before it. The rule to keep: **every path that writes `review_task` ends with `syncStatus()`.**
 
 ### Audit log, notifications and the outbox
 

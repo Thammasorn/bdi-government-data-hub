@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useToast } from "@/components/ui/Toast";
 import { api } from "@/lib/api";
-import type { ListSummary, NodeKey, PageInfo, SortOrder } from "@/lib/stage";
+import { SORT_ORDERS, type ListSummary, type NodeKey, type PageInfo, type SortOrder } from "@/lib/stage";
 
 export type QueueTab = "mine" | "all";
 
@@ -81,9 +81,11 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
     return hasQueue ? "mine" : "all";
   });
 
-  const [sort, setSortState] = useState<SortOrder>(() =>
-    params.get("sort") === "date_asc" ? "date_asc" : "date_desc",
-  );
+  /** โทเคนที่ไม่รู้จักตกไปที่ค่าเริ่มต้นเงียบ ๆ เหมือนฝั่ง API — ลิงก์เก่าจึงยังเปิดได้ */
+  const [sort, setSortState] = useState<SortOrder>(() => {
+    const raw = params.get("sort");
+    return SORT_ORDERS.includes(raw as SortOrder) ? (raw as SortOrder) : "date_desc";
+  });
   const [page, setPage] = useState(() => Math.max(1, Number(params.get("page")) || 1));
   /** จำนวนแถวต่อหน้า — ผู้ใช้เลือกเองได้ backend รับได้ถึง 100 */
   const [pageSize, setPageSizeState] = useState(() => {

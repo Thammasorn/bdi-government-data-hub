@@ -65,7 +65,9 @@ export function OrganizationRequestTable({ basePath }: { basePath: string }) {
           value={list.query}
           onChange={list.setQuery}
           placeholder="ค้นหาชื่อหน่วยงาน หรือผู้ยื่น"
-          action={<SortSelect value={list.sort} onChange={list.setSort} />}
+          action={
+            <SortSelect value={list.sort} onChange={list.setSort} submittedLabel="วันที่ยื่น" />
+          }
         />
       </div>
 
@@ -78,11 +80,12 @@ export function OrganizationRequestTable({ basePath }: { basePath: string }) {
           <>
             {/* คอลัมน์สถานะต้องกว้างคงที่ ไม่ใช่ auto — หัวตารางกับแถวเป็นคนละ grid
                 ถ้าใช้ auto ความกว้างจะคิดจากเนื้อหาของแต่ละอันแยกกัน แล้วคอลัมน์จะเหลื่อม */}
-            <div className="hidden grid-cols-[minmax(0,1.7fr)_minmax(0,1.3fr)_16rem_8rem] gap-4 border-b border-line px-6 py-3 text-[12px] font-semibold uppercase tracking-wide text-ink-subtle md:grid">
+            <div className="hidden grid-cols-[minmax(0,1.7fr)_minmax(0,1.3fr)_16rem_8rem_8rem] gap-4 border-b border-line px-6 py-3 text-[12px] font-semibold uppercase tracking-wide text-ink-subtle md:grid">
               <span>ชื่อหน่วยงาน</span>
               <span>ผู้สร้าง</span>
               <span>สถานะ</span>
               <span className="text-right">วันที่ยื่น</span>
+              <span className="text-right">อัปเดตล่าสุด</span>
             </div>
             <ul className="divide-y divide-line">
               {list.rows.map((row) => (
@@ -101,7 +104,7 @@ export function OrganizationRequestTable({ basePath }: { basePath: string }) {
                       })
                     }
                     onBlur={() => setDetail(null)}
-                    className="grid w-full grid-cols-1 items-center gap-2 px-6 py-4 text-left transition-colors hover:bg-navy-50/60 md:grid-cols-[minmax(0,1.7fr)_minmax(0,1.3fr)_16rem_8rem] md:gap-4"
+                    className="grid w-full grid-cols-1 items-center gap-2 px-6 py-4 text-left transition-colors hover:bg-navy-50/60 md:grid-cols-[minmax(0,1.7fr)_minmax(0,1.3fr)_16rem_8rem_8rem] md:gap-4"
                   >
                     <span className="min-w-0">
                       <span className="block truncate font-medium text-ink">{organizationTitle(row)}</span>
@@ -159,8 +162,15 @@ export function OrganizationRequestTable({ basePath }: { basePath: string }) {
                           .join(" · ")}
                       </span>
                     </span>
+                    {/* หัวคอลัมน์ซ่อนตัวเองต่ำกว่า md แถวจึงกลายเป็นวันที่สองบรรทัดที่ไม่มีชื่อ
+                        กำกับ — คำนำหน้าที่โผล่เฉพาะจอแคบคือที่เดียวที่บอกได้ว่าอันไหนคืออันไหน */}
                     <span className="text-[13px] text-ink-muted md:text-right">
+                      <span className="md:hidden">วันที่ยื่น: </span>
                       {row.submittedAt ? formatThaiDate(row.submittedAt).split(" ").slice(0, 3).join(" ") : "—"}
+                    </span>
+                    <span className="text-[13px] text-ink-muted md:text-right">
+                      <span className="md:hidden">อัปเดตล่าสุด: </span>
+                      {row.updatedAt ? formatThaiDate(row.updatedAt).split(" ").slice(0, 3).join(" ") : "—"}
                     </span>
                   </button>
                 </li>
