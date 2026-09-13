@@ -216,7 +216,7 @@ export const env = {
    * ประกอบอีเมลเอง จึงต้องได้ตัวแปรครบทั้งคู่) โค้ดที่รองรับเบอร์ว่างยังอยู่ เผื่อวันที่เบอร์เลิกใช้
    */
   support: {
-    email: optional("SUPPORT_EMAIL", "d2s-support@bdi.or.th"),
+    email: optional("SUPPORT_EMAIL", "d2share-support@bdi.or.th"),
     phone: optional("SUPPORT_PHONE", "02-480-8833"),
   },
 } as const;
