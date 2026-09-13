@@ -52,8 +52,8 @@ export function DatasetRequestTable({
   // คอลัมน์สถานะกว้างคงที่ ไม่ใช้ auto เพราะหัวตารางกับแถวเป็นคนละ grid
   // ถ้าใช้ auto ต่างฝ่ายต่างคิดความกว้างจากเนื้อหาตัวเอง คอลัมน์จะไม่ตรงกัน
   const columns = showOrganization
-    ? "md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_16rem_8rem]"
-    : "md:grid-cols-[minmax(0,2fr)_16rem_8rem]";
+    ? "md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_16rem_8rem_8rem]"
+    : "md:grid-cols-[minmax(0,2fr)_16rem_8rem_8rem]";
 
   const showQueue = list.summary?.nodes.some((n) => n.mine) ?? false;
   /**
@@ -96,7 +96,7 @@ export function DatasetRequestTable({
           placeholder="ค้นหาชื่อชุดข้อมูล เลขที่คำขอ หรือหน่วยงาน"
           action={
             <>
-              <SortSelect value={list.sort} onChange={list.setSort} />
+              <SortSelect value={list.sort} onChange={list.setSort} submittedLabel="วันที่นำส่ง" />
               {action}
             </>
           }
@@ -125,6 +125,7 @@ export function DatasetRequestTable({
               {showOrganization ? <span>หน่วยงาน</span> : null}
               <span>สถานะ</span>
               <span className="text-right">วันที่นำส่ง</span>
+              <span className="text-right">อัปเดตล่าสุด</span>
             </div>
             <ul className="divide-y divide-line">
               {list.rows.map((row) => (
@@ -212,9 +213,18 @@ export function DatasetRequestTable({
                           .join(" · ")}
                       </span>
                     </span>
+                    {/* หัวคอลัมน์ซ่อนตัวเองต่ำกว่า md แถวจึงกลายเป็นวันที่สองบรรทัดที่ไม่มีชื่อ
+                        กำกับ — คำนำหน้าที่โผล่เฉพาะจอแคบคือที่เดียวที่บอกได้ว่าอันไหนคืออันไหน */}
                     <span className="text-[13px] text-ink-muted md:text-right">
+                      <span className="md:hidden">วันที่นำส่ง: </span>
                       {row.submittedAt
                         ? formatThaiDate(row.submittedAt).split(" ").slice(0, 3).join(" ")
+                        : "—"}
+                    </span>
+                    <span className="text-[13px] text-ink-muted md:text-right">
+                      <span className="md:hidden">อัปเดตล่าสุด: </span>
+                      {row.updatedAt
+                        ? formatThaiDate(row.updatedAt).split(" ").slice(0, 3).join(" ")
                         : "—"}
                     </span>
                   </button>

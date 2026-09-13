@@ -91,12 +91,45 @@ export interface PageInfo {
   pageCount: number;
 }
 
-export type SortOrder = "date_desc" | "date_asc";
+/**
+ * การเรียง — สำเนาโดยตั้งใจของ `SortOrder` ใน `backend/src/lib/queue.ts`
+ *
+ * สองมิติในโทเคนเดียว: เรียงตามวันที่ไหน (`date` = วันที่นำส่ง · `updated` = วันที่คำขอ
+ * เปลี่ยนแปลงล่าสุด) และเรียงทางไหน โทเคนเดียวเพราะมันเดินทางเป็น `?sort=` ตัวเดียวทั้ง
+ * ใน URL ของหน้าและใน query ที่ยิงไป API
+ *
+ * ชื่อ `date_*` ไม่ถูกเปลี่ยนเป็น `submitted_*` ที่ตรงกว่า ด้วยเหตุผลเดียวกับฝั่ง backend:
+ * โทเคนสองตัวนี้อยู่ในลิงก์ที่แชร์กันไปแล้ว และโทเคนที่ไม่รู้จักจะตกไปที่ค่าเริ่มต้นเงียบ ๆ
+ */
+export type SortField = "date" | "updated";
+export type SortDirection = "desc" | "asc";
+export type SortOrder = `${SortField}_${SortDirection}`;
 
-export const SORT_LABELS: Record<SortOrder, string> = {
-  date_desc: "ใหม่ → เก่า",
-  date_asc: "เก่า → ใหม่",
+export const SORT_ORDERS: SortOrder[] = ["date_desc", "date_asc", "updated_desc", "updated_asc"];
+
+export const sortField = (value: SortOrder): SortField =>
+  value.startsWith("updated_") ? "updated" : "date";
+
+export const sortDirection = (value: SortOrder): SortDirection =>
+  value.endsWith("_asc") ? "asc" : "desc";
+
+export const sortToken = (field: SortField, direction: SortDirection): SortOrder =>
+  `${field}_${direction}`;
+
+export const SORT_DIRECTION_LABELS: Record<SortDirection, string> = {
+  desc: "ใหม่ → เก่า",
+  asc: "เก่า → ใหม่",
 };
+
+/**
+ * ชื่อของวันที่ที่เรียง — ครึ่งเดียว
+ *
+ * `updated` มีชื่อเดียวทั้งสองเส้นทาง ส่วน `date` ไม่มี: ตารางหน่วยงานเรียกคอลัมน์นั้นว่า
+ * "วันที่ยื่น" ตารางชุดข้อมูลเรียกว่า "วันที่นำส่ง" ตัวเลือกในกล่องเรียงต้องอ่านตรงกับหัว
+ * คอลัมน์ที่อยู่ใต้มันบนหน้าจอเดียวกัน ไม่ใช่ตรงกับอีกหน้าหนึ่ง — ชื่อของ `date` จึงมาจาก
+ * ผู้เรียก (`submittedLabel`) แทนที่จะอยู่ในตารางนี้
+ */
+export const SORT_UPDATED_LABEL = "วันที่อัปเดตล่าสุด";
 
 /**
  * ผู้ใช้คนนี้มีช่องเป็นของตัวเองไหม — ใช้ตัดสิน **แค่ว่าจะเปิดแท็บไหนก่อน** ตอนที่
