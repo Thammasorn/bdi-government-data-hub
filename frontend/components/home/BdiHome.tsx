@@ -7,8 +7,7 @@ import { DatasetSection } from "@/components/home/DatasetSection";
 import { JourneyRow } from "@/components/home/JourneyRow";
 import { OrganizationSection } from "@/components/home/OrganizationSection";
 import { useSession } from "@/components/SessionProvider";
-import { Button } from "@/components/ui/Button";
-import { Card, DotDecoration } from "@/components/ui/Card";
+import { DotDecoration } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api } from "@/lib/api";
@@ -34,15 +33,22 @@ const EMPTY_PAGE: PageInfo = { page: 1, pageSize: 5, total: 0, pageCount: 1 };
  * "ตอนนี้มีอะไรค้างรอฉันอยู่บ้าง"
  *
  * โครงเดียวกับหน้าแรกของฝั่งหน่วยงาน (`OrganizationHome` ใน app/page.tsx) — ทักทาย,
- * การ์ด coral ของงานที่หยุดรอผู้อ่านอยู่, แถวสรุป, แล้ว section ของรายการ — ต่างกันที่ที่นี่มี
- * **สอง** เส้นทางให้ดู ไม่ใช่เส้นทางเดียว
+ * แถวสรุป, แล้ว section ของรายการ — ต่างกันที่ที่นี่มี **สอง** เส้นทางให้ดู ไม่ใช่เส้นทางเดียว
  *
- * การ์ด coral อยู่บนสุดถัดจากคำทักทาย และแถวสรุปเป็น **แถวละเส้นทาง** กล่องละด่าน
- * (`JourneyRow`) แทนการ์ดสี่ใบที่รวมสองเส้นทางไว้ในตัวเลขเดียว — ตามการ์ด Task Board
- * 2026-09-11: คนที่ถือด่านต้องเห็นก่อนว่ามีอะไรรอตัวเอง แล้วค่อยเห็นว่ากองอยู่ที่ด่านไหน
- * ของเส้นทางไหน ทั้งสองแถววางไว้ด้านบนด้วยกันแทนที่จะแยกไปอยู่หัว section ของแต่ละ
- * เส้นทาง เพราะแถวตอบคำถาม "ตอนนี้ระบบเป็นยังไง" ส่วน section ตอบ "ใบไหนบ้าง" —
- * คนละคำถาม และคำถามแรกอ่านจบในจอเดียวได้ก็ต่อเมื่อไม่มีตารางคั่นกลาง
+ * แถวสรุปเป็น **แถวละเส้นทาง** กล่องละด่าน (`JourneyRow`) แทนการ์ดสี่ใบที่รวมสองเส้นทาง
+ * ไว้ในตัวเลขเดียว — ตามการ์ด Task Board 2026-09-11: คนที่ถือด่านต้องเห็นก่อนว่ามีอะไรรอ
+ * ตัวเอง แล้วค่อยเห็นว่ากองอยู่ที่ด่านไหนของเส้นทางไหน ทั้งสองแถววางไว้ด้านบนด้วยกันแทนที่จะ
+ * แยกไปอยู่หัว section ของแต่ละเส้นทาง เพราะแถวตอบคำถาม "ตอนนี้ระบบเป็นยังไง" ส่วน
+ * section ตอบ "ใบไหนบ้าง" — คนละคำถาม และคำถามแรกอ่านจบในจอเดียวได้ก็ต่อเมื่อไม่มี
+ * ตารางคั่นกลาง
+ *
+ * **ไม่มีแถบสรุปคั่นระหว่างคำทักทายกับแถวอีกแล้ว** (การ์ด Task Board 2026-09-13) — เดิมมี
+ * สองใบซ้อนกัน: การ์ด coral "งานที่รอคุณดำเนินการ N รายการ" กับการ์ดน้ำเงิน "ผู้เชี่ยวชาญให้
+ * ความเห็นกลับมาแล้ว N คำขอ" ทั้งคู่พูดถึงของที่แถวข้างล่างนับอยู่แล้ว และดันแถวลงไปจนอ่าน
+ * ไม่จบในจอเดียว ซึ่งเป็นเหตุผลที่แถวถูกวางไว้บนสุดตั้งแต่แรก กองของตัวเองยังเข้าถึงได้จาก
+ * กล่องที่เน้นไว้ในแถว (ลิงก์ไป `?tab=mine&stage=…` ตรง ๆ) และจาก section ข้างล่างที่ยัง
+ * ขึ้นหัวว่า "ที่รอคุณดำเนินการ" อยู่ ส่วนใบที่ผู้เชี่ยวชาญให้ความเห็นแล้วกรองได้ที่ชิป
+ * `?advisory=` บนหน้ารายการ ซึ่งเป็นที่ที่ตัวกรองนั้นอยู่จริง
  *
  * ทุกตัวเลขและทุกแถวมาจากเซิร์ฟเวอร์: `mine` บน `/summary` คือผลรวมของด่านที่ตำแหน่งของ
  * ผู้อ่านเป็นเจ้าของ และ `scope=mine` บนรายการก็ตัดสินด้วยกติกาเดียวกัน หน้านี้จึงไม่ต้องรู้
@@ -106,31 +112,12 @@ export function BdiHome() {
   const name = user?.firstName?.trim() || user?.email || "";
   const organizationName = user?.organization?.name ?? null;
 
-  const orgMine = orgSummary?.mine ?? 0;
-  const datasetMine = datasetSummary?.mine ?? 0;
-  const mine = orgMine + datasetMine;
-  /**
-   * ความเห็นของผู้เชี่ยวชาญที่กลับมาแล้ว — นับ **คำขอ** ในกองที่รอผู้อ่านอยู่ ไม่ใช่นับความเห็น
-   *
-   * เซิร์ฟเวอร์เป็นคนตัดสินว่าใครควรเห็นตัวเลขนี้ (ผู้เชี่ยวชาญได้ 0 ไม่ใช่จำนวนความเห็นของ
-   * ตัวเอง — ดู advisoryReturnedCount() ใน backend/src/lib/queue.ts) หน้านี้จึงเช็คแค่ว่ามี
-   * ตัวเลขมาไหม ไม่ต้องรู้ว่าด่านไหนเป็นของ role ไหน ตามกติกาหัวไฟล์ lib/stage.ts
-   */
-  const advisory = datasetSummary?.advisory ?? 0;
-
   /* ประโยคไทยประกอบเป็นชิ้นเดียว ไม่ปล่อยให้ JSX ขึ้นบรรทัดใหม่คั่นกลาง */
   const scopeNote = specialistOnly
     ? "ด้านล่างคือคำขอลงทะเบียนชุดข้อมูลที่ผู้ประสานงานของ BDI ขอความเห็นของคุณในฐานะผู้เชี่ยวชาญด้านข้อมูล"
     : hasQueue
       ? "ด้านล่างคือคำขอที่หยุดรอการดำเนินการของคุณอยู่ ทั้งคำขอลงทะเบียนหน่วยงานและคำขอลงทะเบียนชุดข้อมูล"
       : "ด้านล่างคือคำขอล่าสุดในระบบ ทั้งคำขอลงทะเบียนหน่วยงานและคำขอลงทะเบียนชุดข้อมูล";
-
-  const breakdown = [
-    orgMine > 0 ? `คำขอลงทะเบียนหน่วยงาน ${orgMine} รายการ` : null,
-    datasetMine > 0 ? `คำขอลงทะเบียนชุดข้อมูล ${datasetMine} รายการ` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
 
   const waitingForOrganizations = specialistOnly || orgRows !== null;
   const loaded = datasetSummary !== null && datasetRows !== null && waitingForOrganizations;
@@ -164,65 +151,6 @@ export function BdiHome() {
         <Spinner className="min-h-[40vh]" />
       ) : (
         <>
-          {/* งานที่หยุดรอผู้อ่านอยู่ต้องเห็นก่อนทุกอย่าง และต้องมีปุ่มพาไปทำต่อ ไม่ใช่แค่ตัวเลข */}
-          {hasQueue && mine > 0 ? (
-            <Card className="mb-8 border-l-[3px] border-l-coral-500">
-              <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <p className="font-medium text-navy-800">{`งานที่รอคุณดำเนินการ ${mine} รายการ`}</p>
-                  <p className="mt-0.5 text-sm leading-relaxed text-ink-muted">{breakdown}</p>
-                </div>
-                {/* `?tab=mine` ไม่ใช่ `?scope=mine` — หน้าตารางอ่านแท็บจาก `tab`
-                    แล้วค่อยแปลงเป็น scope ตอนยิง API (ดู lib/use-request-list.ts) */}
-                <div className="flex shrink-0 flex-wrap gap-2">
-                  {orgMine > 0 ? (
-                    <Link href={`${ORGANIZATIONS}?tab=mine`}>
-                      <Button>ตรวจคำขอหน่วยงาน</Button>
-                    </Link>
-                  ) : null}
-                  {datasetMine > 0 ? (
-                    <Link href={`${DATASETS}?tab=mine`}>
-                      <Button variant={orgMine > 0 ? "secondary" : "primary"}>
-                        ตรวจคำขอชุดข้อมูล
-                      </Button>
-                    </Link>
-                  ) : null}
-                </div>
-              </div>
-            </Card>
-          ) : null}
-
-          {/*
-            ความเห็นที่ผู้ประสานงานขอไว้เอง กลับมาแล้วกี่ใบ
-
-            อยู่ใต้การ์ด coral เพราะมันไม่ใช่ "งานใหม่ที่รอคุณ" — ใบพวกนี้นับอยู่ในเลขนั้นแล้ว
-            ตั้งแต่ก่อนมีความเห็น สิ่งที่การ์ดนี้เพิ่มคือ "อ่านได้แล้วนะ" จึงเป็นน้ำเงินไม่ใช่ส้ม
-            สีเดียวกับการ์ดความเห็นบนหน้ารายละเอียด
-
-            ปุ่มพาไปที่กองของตัวเองที่ **กรองเฉพาะใบที่มีความเห็นแล้ว** (`&advisory=with`) ตัวกรอง
-            นั้นเป็นมิติที่สอง ไม่ใช่โหนดบนแผนภาพ — ดู AdvisoryFilter และหัวข้อในหน้ารายการ
-            (เดิมปุ่มนี้พาไปที่กองทั้งกอง เพราะยังไม่มีตัวกรอง ป้ายจึงเลี่ยงไปพูดแค่ที่ทำได้จริง)
-          */}
-          {advisory > 0 ? (
-            <Card className="mb-8 border-l-[3px] border-l-navy-500">
-              <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <p className="font-medium text-navy-800">
-                    {`ผู้เชี่ยวชาญให้ความเห็นกลับมาแล้ว ${advisory} คำขอ`}
-                  </p>
-                  <p className="mt-0.5 text-sm leading-relaxed text-ink-muted">
-                    {`จากคำขอลงทะเบียนชุดข้อมูลที่รอคุณตรวจสอบอยู่ ${datasetMine} รายการ`}
-                  </p>
-                </div>
-                <div className="shrink-0">
-                  <Link href={`${DATASETS}?tab=mine&stage=OFFICER_REVIEW&advisory=with`}>
-                    <Button variant="secondary">ดูคำขอที่มีความเห็น</Button>
-                  </Link>
-                </div>
-              </div>
-            </Card>
-          ) : null}
-
           <div className="mb-10 flex flex-col gap-6">
             {specialistOnly || orgSummary === null ? null : (
               <JourneyRow
