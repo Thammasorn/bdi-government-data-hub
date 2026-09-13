@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { DatasetSection } from "@/components/home/DatasetSection";
+import { JourneyRow } from "@/components/home/JourneyRow";
 import { OrganizationSection } from "@/components/home/OrganizationSection";
 import { useSession } from "@/components/SessionProvider";
 import { Button } from "@/components/ui/Button";
@@ -11,15 +12,12 @@ import { Card, DotDecoration } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api } from "@/lib/api";
-import { hasOwnQueue, nodeCount, type ListSummary, type PageInfo } from "@/lib/stage";
+import { hasOwnQueue, type ListSummary, type PageInfo } from "@/lib/stage";
 import { ROLE_LABELS, isSpecialistOnly, type Role } from "@/lib/status";
 import type { DatasetRequestListItem, OrganizationListItem } from "@/lib/types";
 
 const ORGANIZATIONS = "/admin/organizations";
 const DATASETS = "/admin/datasets";
-
-/** ปลายทางทั้งห้า — ห้าคีย์นี้เป็นสถานะล้วน หน้าเว็บจึงเป็นเจ้าของได้ ต่างจากชื่อด่าน */
-const SETTLED = ["DRAFT", "RETURNED", "APPROVED", "REJECTED", "CANCELLED"];
 
 interface Page<T> {
   rows: T[];
@@ -28,10 +26,6 @@ interface Page<T> {
 
 const EMPTY_PAGE: PageInfo = { page: 1, pageSize: 5, total: 0, pageCount: 1 };
 
-/** ยังเดินอยู่ในสายพาน = ทั้งหมด ลบปลายทางทั้งห้า — ไม่ต้องไล่ชื่อด่านเอง */
-const inFlight = (s: ListSummary | null) =>
-  s ? s.total - SETTLED.reduce((sum, k) => sum + nodeCount(s, k), 0) : 0;
-
 /**
  * หน้าแรกของผู้ประสานงานของ BDI
  *
@@ -39,9 +33,16 @@ const inFlight = (s: ListSummary | null) =>
  * คนที่ถือด่านของทั้งสองเส้นทางจึงต้องเปิดสองตารางแล้วสลับแท็บเอง เพื่อตอบคำถามเดียวว่า
  * "ตอนนี้มีอะไรค้างรอฉันอยู่บ้าง"
  *
- * โครงเดียวกับหน้าแรกของฝั่งหน่วยงาน (`OrganizationHome` ใน app/page.tsx) ทุกชั้น —
- * ทักทาย, การ์ดสรุปสี่ใบ, การ์ด coral ของงานที่หยุดรอผู้อ่านอยู่, แล้ว section ของรายการ —
- * ต่างกันที่ที่นี่มี **สอง** เส้นทางให้ดู ไม่ใช่เส้นทางเดียว
+ * โครงเดียวกับหน้าแรกของฝั่งหน่วยงาน (`OrganizationHome` ใน app/page.tsx) — ทักทาย,
+ * การ์ด coral ของงานที่หยุดรอผู้อ่านอยู่, แถวสรุป, แล้ว section ของรายการ — ต่างกันที่ที่นี่มี
+ * **สอง** เส้นทางให้ดู ไม่ใช่เส้นทางเดียว
+ *
+ * การ์ด coral อยู่บนสุดถัดจากคำทักทาย และแถวสรุปเป็น **แถวละเส้นทาง** กล่องละด่าน
+ * (`JourneyRow`) แทนการ์ดสี่ใบที่รวมสองเส้นทางไว้ในตัวเลขเดียว — ตามการ์ด Task Board
+ * 2026-09-11: คนที่ถือด่านต้องเห็นก่อนว่ามีอะไรรอตัวเอง แล้วค่อยเห็นว่ากองอยู่ที่ด่านไหน
+ * ของเส้นทางไหน ทั้งสองแถววางไว้ด้านบนด้วยกันแทนที่จะแยกไปอยู่หัว section ของแต่ละ
+ * เส้นทาง เพราะแถวตอบคำถาม "ตอนนี้ระบบเป็นยังไง" ส่วน section ตอบ "ใบไหนบ้าง" —
+ * คนละคำถาม และคำถามแรกอ่านจบในจอเดียวได้ก็ต่อเมื่อไม่มีตารางคั่นกลาง
  *
  * ทุกตัวเลขและทุกแถวมาจากเซิร์ฟเวอร์: `mine` บน `/summary` คือผลรวมของด่านที่ตำแหน่งของ
  * ผู้อ่านเป็นเจ้าของ และ `scope=mine` บนรายการก็ตัดสินด้วยกติกาเดียวกัน หน้านี้จึงไม่ต้องรู้
@@ -109,43 +110,6 @@ export function BdiHome() {
   const datasetMine = datasetSummary?.mine ?? 0;
   const mine = orgMine + datasetMine;
 
-  const tiles = useMemo(() => {
-    const approved =
-      nodeCount(orgSummary, "APPROVED") + nodeCount(datasetSummary, "APPROVED");
-    const waiting = hasQueue
-      ? { label: "รอคุณดำเนินการ", value: mine, className: "text-coral-600" }
-      : {
-          label: "อยู่ระหว่างพิจารณา",
-          value: inFlight(orgSummary) + inFlight(datasetSummary),
-          className: "text-navy-600",
-        };
-
-    return [
-      waiting,
-      ...(specialistOnly
-        ? [
-            {
-              label: "อยู่ระหว่างพิจารณา",
-              value: inFlight(datasetSummary),
-              className: "text-navy-600",
-            },
-          ]
-        : [
-            {
-              label: "คำขอลงทะเบียนหน่วยงาน",
-              value: orgSummary?.total ?? 0,
-              className: "text-navy-800",
-            },
-          ]),
-      {
-        label: specialistOnly ? "ได้รับมอบหมายทั้งหมด" : "คำขอลงทะเบียนชุดข้อมูล",
-        value: datasetSummary?.total ?? 0,
-        className: "text-navy-800",
-      },
-      { label: "อนุมัติแล้ว", value: approved, className: "text-success" },
-    ];
-  }, [orgSummary, datasetSummary, hasQueue, mine, specialistOnly]);
-
   /* ประโยคไทยประกอบเป็นชิ้นเดียว ไม่ปล่อยให้ JSX ขึ้นบรรทัดใหม่คั่นกลาง */
   const scopeNote = specialistOnly
     ? "ด้านล่างคือคำขอลงทะเบียนชุดข้อมูลที่ผู้ประสานงานของ BDI ขอความเห็นของคุณในฐานะผู้เชี่ยวชาญด้านข้อมูล"
@@ -192,18 +156,7 @@ export function BdiHome() {
         <Spinner className="min-h-[40vh]" />
       ) : (
         <>
-          <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
-            {tiles.map((t) => (
-              <Card key={t.label} className="px-5 py-4">
-                <p className="text-[13px] text-ink-muted">{t.label}</p>
-                <p className={`mt-1 text-[28px] font-semibold leading-tight ${t.className}`}>
-                  {t.value}
-                </p>
-              </Card>
-            ))}
-          </div>
-
-          {/* งานที่หยุดรอผู้อ่านอยู่ต้องเห็นก่อนรายการ และต้องมีปุ่มพาไปทำต่อ ไม่ใช่แค่ตัวเลข */}
+          {/* งานที่หยุดรอผู้อ่านอยู่ต้องเห็นก่อนทุกอย่าง และต้องมีปุ่มพาไปทำต่อ ไม่ใช่แค่ตัวเลข */}
           {hasQueue && mine > 0 ? (
             <Card className="mb-8 border-l-[3px] border-l-coral-500">
               <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
@@ -230,6 +183,23 @@ export function BdiHome() {
               </div>
             </Card>
           ) : null}
+
+          <div className="mb-10 flex flex-col gap-6">
+            {specialistOnly || orgSummary === null ? null : (
+              <JourneyRow
+                title="คำขอลงทะเบียนหน่วยงาน"
+                summary={orgSummary}
+                basePath={ORGANIZATIONS}
+              />
+            )}
+            <JourneyRow
+              title={
+                specialistOnly ? "คำขอลงทะเบียนชุดข้อมูลที่ได้รับมอบหมาย" : "คำขอลงทะเบียนชุดข้อมูล"
+              }
+              summary={datasetSummary}
+              basePath={DATASETS}
+            />
+          </div>
 
           <div className="flex flex-col gap-8">
             {specialistOnly || orgRows === null ? null : (
