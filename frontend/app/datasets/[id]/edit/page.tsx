@@ -767,7 +767,7 @@ export default function EditDatasetRequestPage() {
               {rules.authorizePersonalDataAnonymization.visible ? (
                 <Wrap name="authorizePersonalDataAnonymization">
                   <YesNo
-                    label="ท่านมอบหมายให้สำนักงานประมวลผลข้อมูลส่วนบุคคลซึ่งเป็นข้อมูลดิบต้นฉบับ ให้เป็นข้อมูลที่ไม่สามารถระบุตัวตนได้ เพื่อการใช้ประโยชน์เชิงวิเคราะห์ต่อไปหรือไม่"
+                    label="ท่านมอบหมายให้ สขญ. ประมวลผลข้อมูลส่วนบุคคลซึ่งเป็นข้อมูลดิบต้นฉบับ (original raw data) ให้เป็นข้อมูลที่ไม่สามารถระบุตัวตนได้ เพื่อการใช้ประโยชน์เชิงวิเคราะห์ต่อไปหรือไม่"
                     required
                     labels={ASSIGN_LABELS}
                     value={form.authorizePersonalDataAnonymization}
