@@ -463,10 +463,22 @@ export async function journeySummary(params: {
   };
 }
 
-/** ทิศทางการเรียง — ค่าเดียวที่หน้าเว็บส่งมาได้ */
-export type SortOrder = "date_desc" | "date_asc";
+/**
+ * การเรียง — **สองมิติในโทเคนเดียว**: เรียงตามวันที่ไหน และเรียงทางไหน
+ *
+ * `date_*` คือวันที่นำส่ง `updated_*` คือวันที่คำขอเปลี่ยนแปลงล่าสุด
+ *
+ * ชื่อ `date_desc` / `date_asc` **ไม่ถูกเปลี่ยนเป็น `submitted_*` โดยตั้งใจ** ทั้งที่นั่นคือ
+ * ชื่อที่ตรงกว่า — สองโทเคนนี้อยู่ใน bookmark, ใน Postman collection และในลิงก์ที่หน้าแรก
+ * ยิงมา และ `parseSort()` ตกไปที่ค่าเริ่มต้นเงียบ ๆ เมื่อไม่รู้จักโทเคน ลิงก์เก่าจึงจะ
+ * "เรียงผิดแบบไม่มีใครรู้" ไม่ใช่พัง — กติกาเดียวกับ LEGACY_NODE_KEYS ข้างบน
+ */
+export type SortOrder = "date_desc" | "date_asc" | "updated_desc" | "updated_asc";
 
-export const parseSort = (raw?: string): SortOrder => (raw === "date_asc" ? "date_asc" : "date_desc");
+const SORT_ORDERS: readonly SortOrder[] = ["date_desc", "date_asc", "updated_desc", "updated_asc"];
+
+export const parseSort = (raw?: string): SortOrder =>
+  SORT_ORDERS.includes(raw as SortOrder) ? (raw as SortOrder) : "date_desc";
 
 export const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
@@ -491,9 +503,15 @@ export function parsePaging(query: { page?: unknown; pageSize?: unknown }) {
  * ร่างไม่มีวันที่นำส่ง — `nulls` เขียนให้ตรงกับพฤติกรรมเดิม (Postgres วาง NULL ไว้หัว
  * ตารางเมื่อ DESC) เพื่อไม่ให้ร่างของผู้ใช้ย้ายที่เพราะงานนี้ และเขียนออกมาตรง ๆ
  * เพราะการพึ่ง default คือทางที่ทำให้ร่างย้ายที่เงียบ ๆ ตอนกดสลับทิศ
+ *
+ * `updated_at` เป็น NOT NULL จึงไม่ต้องสั่ง `nulls` และไม่มีร่างตัวไหนหลุดไปอยู่หัวตาราง
+ * — ทุกคำขอถูกแตะอย่างน้อยหนึ่งครั้งคือตอนถูกสร้าง
  */
 export function listOrderBy(sort: SortOrder) {
-  const dir: Prisma.SortOrder = sort === "date_asc" ? "asc" : "desc";
+  const dir: Prisma.SortOrder = sort.endsWith("_asc") ? "asc" : "desc";
+
+  if (sort.startsWith("updated_")) return [{ updatedAt: dir }, { id: dir }];
+
   const nulls: Prisma.NullsOrder = dir === "desc" ? "first" : "last";
   return [{ submittedAt: { sort: dir, nulls } }, { createdAt: dir }, { id: dir }];
 }

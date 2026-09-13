@@ -1480,15 +1480,32 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
       /**
        * ด่านของเจ้าหน้าที่ **ไม่ถูกแตะ** — ความเห็นเป็นแถวที่ปิดตั้งแต่เกิด เพื่อให้ไทม์ไลน์
        * ซึ่งเรนเดอร์จาก review_task ล้วน ๆ ยังเห็นมัน โดยที่คำขอไม่ขยับไปไหน
+       *
+       * **แต่แถวคำขอต้องถูกแตะ** — `syncStatus()` ต่อท้ายในทรานแซกชันเดียวกัน
+       *
+       * `updated_at` คือคำตอบของคอลัมน์ "วันที่เปลี่ยนแปลงล่าสุด" และของการเรียงตามคอลัมน์
+       * นั้น ซึ่งเรียงใน SQL จึงอ่านคอลัมน์เดียวได้เท่านั้น — max() ข้าม review_task
+       * ตอนแสดงผลจะทำให้หน้าที่ 2 ไม่ต่อจากหน้าที่ 1 ความเห็นของผู้เชี่ยวชาญเป็น**ทางเดียว**
+       * ที่เขียน review_task โดยไม่ผ่าน syncStatus() (เส้นทางอื่นทั้งหมดจบที่ POST /:id/submit
+       * หรือ POST /:id/review ซึ่งเรียกให้แล้ว) ถ้าไม่แตะตรงนี้ คำขอที่เพิ่งได้ความเห็นจะ
+       * จมอยู่ท้ายรายการทั้งที่เพิ่งขยับ — และการ์ดระบุ "การบันทึก comment ของ specialist"
+       * ไว้เป็นการเปลี่ยนแปลงข้อหนึ่งโดยตรง
+       *
+       * สถานะไม่มีทางเปลี่ยนจากความเห็น (แถวนี้ไม่เคย active ด่านที่ค้างยังเป็นของเจ้าหน้าที่)
+       * `syncStatus()` จึงเป็น no-op เชิงความหมาย และถูกใช้แทนที่จะเขียน update เปล่า ๆ เอง
+       * เพราะกติกา "ทุกทางที่เขียน review_task จบด้วย syncStatus()" มีข้อยกเว้นแล้วจะพังเงียบ
        */
-      await recordAdvisoryNote(prisma, {
-        subjectType: SUBJECT,
-        subjectId: request.id,
-        taskType: ReviewTaskType.DATASET_SPECIALIST_REVIEW,
-        assignedUserId: session.sub,
-        assignedRole: ROLE_CODES.BDI_DATASET_SPECIALIST,
-        comment: note,
-        actorId: session.sub,
+      await prisma.$transaction(async (tx) => {
+        await recordAdvisoryNote(tx, {
+          subjectType: SUBJECT,
+          subjectId: request.id,
+          taskType: ReviewTaskType.DATASET_SPECIALIST_REVIEW,
+          assignedUserId: session.sub,
+          assignedRole: ROLE_CODES.BDI_DATASET_SPECIALIST,
+          comment: note,
+          actorId: session.sub,
+        });
+        await syncStatus(tx, request);
       });
 
       await logAudit({

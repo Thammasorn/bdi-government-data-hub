@@ -660,6 +660,8 @@ model OrganizationRegistrationRequest {
 
   @@index([organizationId, status])
   @@index([status])
+  /// คีย์ของ "เรียงตามวันที่เปลี่ยนแปลงล่าสุด" ในหน้ารายการ
+  @@index([updatedAt])
   @@map("organization_registration_request")
   @@schema("organization")
 }
@@ -862,6 +864,8 @@ model DatasetRegistrationRequest {
   @@index([organizationId, status])
   @@index([status])
   @@index([assignedSpecialistId])
+  /// คีย์ของ "เรียงตามวันที่เปลี่ยนแปลงล่าสุด" ในหน้ารายการ
+  @@index([updatedAt])
   @@map("dataset_registration_request")
   @@schema("dataset")
 }
