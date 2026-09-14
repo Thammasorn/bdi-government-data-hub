@@ -226,7 +226,7 @@ async function seatConflict(
       error: "invitation_pending",
       message:
         `หน่วยงานนี้มีคำเชิญ "${label}" ค้างอยู่ (${pending.userAccount.email}) — ` +
-        `ที่นั่งถูกจองตั้งแต่ตอนเชิญ ยกเลิกใบนั้นด้วย DELETE /api/admin/invitations/${pending.id} ก่อน`,
+        `หากต้องการสร้างใหม่ กรุณายกเลิกคำเชิญก่อนหน้าด้วย DELETE /api/admin/invitations/${pending.id} ก่อน`,
       activationKeyId: pending.id,
       userAccountId: pending.userAccountId,
       pendingEmail: pending.userAccount.email,

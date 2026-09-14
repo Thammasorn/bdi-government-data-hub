@@ -666,10 +666,10 @@ adminRouter.post("/invitations", async (req, res) => {
       res.status(409).json({
         error: "invitation_pending",
         message:
-          `หน่วยงานนี้มีคำเชิญ "${ROLE_LABELS[role]}" ค้างอยู่แล้ว (${pending.userAccount.email}) — ` +
-          `ที่นั่งถูกจองตั้งแต่ตอนเชิญ ถ้าจะเปลี่ยนคน ให้ยกเลิกใบเดิมด้วย ` +
+          `หน่วยงานนี้มีคำเชิญไปยังตำแหน่ง "${ROLE_LABELS[role]}" ค้างอยู่แล้วที่อีเมล์ ${pending.userAccount.email} — ` +
+          `หากต้องการเปลี่ยนแปลง กรุณายกเลิกคำเชิญก่อนหน้าด้วย ` +
           `DELETE /api/admin/invitations/${pending.id} ก่อน ` +
-          `ถ้าเป็นคนเดิมและแค่ลิงก์หาย ใช้ POST /api/admin/invitations/${pending.id}/resend`,
+          `ในกรณีที่ต้องการ invite เจ้าหน้าที่ท่านเดิมเพื่อส่ง link invitation ใหม่ กรุณาใช้ POST /api/admin/invitations/${pending.id}/resend`,
         activationKeyId: pending.id,
         userAccountId: pending.userAccountId,
         pendingEmail: pending.userAccount.email,
