@@ -392,7 +392,7 @@ export default function EditDatasetRequestPage() {
                   value={form.dataFields}
                   onChange={(e) => set("dataFields", e.target.value)}
                   error={fields.dataFields}
-                  hint="ไล่ชื่อฟิลด์ที่จะนำส่ง คั่นด้วยจุลภาค เช่น ข้อมูลพิกัด, ข้อมูลประเภทที่ตั้ง, ข้อมูลหน่วยให้บริการ"
+                  hint="ใส่ชื่อฟิลด์ที่จะนำส่ง คั่นด้วยจุลภาค เช่น ข้อมูลพิกัด, ข้อมูลประเภทที่ตั้ง, ข้อมูลหน่วยให้บริการ"
                 />
               </Wrap>
               <ReadOnlyField label="องค์กร" value={organizationName} />
