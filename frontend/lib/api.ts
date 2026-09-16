@@ -61,6 +61,8 @@ export const api = {
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
   upload: <T>(path: string, form: FormData) => request<T>(path, { method: "POST", body: form }),
+  /** ตอบ 204 ไม่มี body — request() คืน undefined ให้เอง จึงประกาศเป็น void */
+  del: (path: string) => request<void>(path, { method: "DELETE" }),
   /** URL สำหรับ <iframe>/<img> ที่ต้องส่ง cookie ไปด้วย */
   fileUrl: (path: string) => `${BASE}${path}`,
 };

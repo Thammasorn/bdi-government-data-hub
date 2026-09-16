@@ -130,7 +130,15 @@ function decideAbility(request: DatasetRequest, roles: string[], userId: string)
   }
 }
 
-type ModalKind = "advance" | "revise" | "reject" | "comment" | "comment-confirm" | "assign" | "sign";
+type ModalKind =
+  | "advance"
+  | "revise"
+  | "reject"
+  | "comment"
+  | "comment-confirm"
+  | "assign"
+  | "sign"
+  | "delete";
 
 export function DatasetDetailView({ id, backHref }: { id: string; backHref?: string }) {
   const { user, ready } = useRequireAuth();
@@ -395,6 +403,35 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
     }
   };
 
+  /**
+   * ลบคำขอฉบับร่างทิ้ง — ปุ่มเดียวกับที่อยู่ในรายการ ให้คนที่เปิดร่างที่กดมาเกินอยู่แล้ว
+   * ไม่ต้องย้อนกลับไปหาแถวของมันในตารางก่อน เงื่อนไขทั้งหมดอยู่ฝั่ง server
+   * (DRAFT + mayEdit) ที่นี่แค่ไม่แสดงปุ่มเมื่อรู้แน่อยู่แล้วว่ากดไม่ผ่าน
+   */
+  const removeDraft = async () => {
+    setBusy(true);
+    try {
+      await api.del(`/api/dataset-requests/${id}`);
+      show({
+        tone: "success",
+        title: "ลบคำขอแล้ว",
+        detail: `${request?.requestNumber ?? ""} ถูกลบออกจากรายการเรียบร้อย`,
+      });
+      // ออกจากหน้าไปเลย — คำขอที่เพิ่งลบไม่มีอะไรให้ดูอีก และการโหลดหน้านี้ใหม่จะได้ 404
+      router.push(backHref ?? "/datasets");
+    } catch (err) {
+      show({
+        tone: "error",
+        title: "ลบคำขอไม่สำเร็จ",
+        detail: err instanceof ApiError ? err.message : undefined,
+      });
+      closeModal();
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const assign = async () => {
     setBusy(true);
     try {
@@ -508,7 +545,14 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
               <p className="font-medium text-navy-800">คำขอนี้ยังเป็นฉบับร่าง</p>
               <p className="mt-0.5 text-sm text-ink-muted">กรอกข้อมูลให้ครบแล้วนำส่งเพื่อเข้าสู่การตรวจสอบ</p>
             </div>
-            <Button onClick={() => router.push(`/datasets/${id}/edit`)}>กรอกข้อมูลต่อ</Button>
+            <div className="flex shrink-0 flex-wrap gap-3">
+              {/* ลบอยู่ซ้ายของปุ่มหลักและเป็น secondary — ปุ่มที่ทำลายของไม่ควรเป็น
+                  ปุ่มที่มือไปตกใส่ก่อน ส่วนสีแดงเก็บไว้ที่ปุ่มยืนยันในกล่อง */}
+              <Button variant="secondary" onClick={() => setModal("delete")}>
+                ลบคำขอ
+              </Button>
+              <Button onClick={() => router.push(`/datasets/${id}/edit`)}>กรอกข้อมูลต่อ</Button>
+            </div>
           </div>
         </Card>
       ) : null}
@@ -918,6 +962,29 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
           </Button>
           <Button loading={busy} onClick={() => act("comment")}>
             ตกลง
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={modal === "delete"}
+        onClose={() => (busy ? undefined : closeModal())}
+        title="ลบคำขอฉบับร่าง"
+        description="คำขอและข้อมูลที่กรอกไว้จะถูกลบออกจากระบบ และกู้คืนไม่ได้"
+      >
+        <p className="text-[15px] leading-relaxed text-ink-muted">
+          ต้องการลบ <span className="font-medium text-ink">{datasetTitle(request)}</span>
+          {/* ร่างที่ยังไม่มีชื่อถูกเรียกว่า "คำขอ <เลขที่>" อยู่แล้ว — ไม่ต่อเลขซ้ำ */}
+          {request.title?.trim() ? ` (${request.requestNumber})` : ""} ใช่หรือไม่
+          <br />
+          คำขอนี้ยังไม่ได้นำส่ง จึงยังไม่มีผู้ตรวจสอบท่านใดเห็นข้อมูลในคำขอ
+        </p>
+        <div className="mt-6 flex justify-end gap-3">
+          <Button variant="secondary" disabled={busy} onClick={closeModal}>
+            ยกเลิก
+          </Button>
+          <Button variant="danger" loading={busy} onClick={removeDraft}>
+            ยืนยันลบคำขอ
           </Button>
         </div>
       </Modal>

@@ -83,6 +83,16 @@ export const AuditAction = {
   ORGANIZATION_ACTIVATED: "ORGANIZATION_ACTIVATED",
 
   REQUEST_CREATED: "REQUEST_CREATED",
+
+  /**
+   * คำขอฉบับร่างถูกลบทิ้ง (`DELETE /api/dataset-requests/:id`) — เพิ่มจากรายการใน sheet
+   *
+   * ไม่ใช่ REQUEST_REJECTED และไม่ใช่การยกเลิก: ทั้งสองอย่างนั้นแถวยังอยู่ให้ย้อนดูได้
+   * ส่วนอันนี้คือแถวนั้นหายไปแล้ว แถวนี้จึงเป็นหลักฐานชิ้นเดียวที่เหลือว่าเคยมีคำขอเลขนี้
+   * `before` จึงเก็บเลขที่คำขอ ชื่อชุดข้อมูล และวันที่สร้างของใบที่ลบไว้ด้วยเหตุนี้
+   */
+  REQUEST_DELETED: "REQUEST_DELETED",
+
   REQUEST_SUBMITTED: "REQUEST_SUBMITTED",
   REQUEST_RETURNED: "REQUEST_RETURNED",
   REQUEST_APPROVED: "REQUEST_APPROVED",

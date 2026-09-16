@@ -160,6 +160,15 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
    *  ตัวเลขบอกหน้า 3 เกิดได้ง่ายกับ debounce บวกการกดเปลี่ยนหน้ารัว ๆ */
   const seq = useRef(0);
 
+  /**
+   * ตัวนับที่ทำให้ effect ด้านล่างวิ่งใหม่ได้โดยที่ตัวกรองไม่ขยับ — ใช้ตอนที่แถวหนึ่ง
+   * หายไปเพราะการกระทำบนหน้านี้เอง (ลบคำขอฉบับร่าง) ไม่ใช่เพราะผู้ใช้เปลี่ยนเงื่อนไข
+   * เขียนแถวทิ้งจาก state ฝั่งหน้าจอแทนไม่ได้ เพราะตัวเลขในแผนภาพและตัวแบ่งหน้า
+   * มาจากคำตอบของ server คนละก้อนกัน
+   */
+  const [refreshTick, setRefreshTick] = useState(0);
+  const reload = useCallback(() => setRefreshTick((n) => n + 1), []);
+
   useEffect(() => {
     const timer = setTimeout(() => {
       const mine = seq.current + 1;
@@ -197,7 +206,7 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
         });
     }, 250);
     return () => clearTimeout(timer);
-  }, [endpoint, itemsKey, stage, legacyFilter, query, advisory, tab, sort, page, pageSize, show]);
+  }, [endpoint, itemsKey, stage, legacyFilter, query, advisory, tab, sort, page, pageSize, show, refreshTick]);
 
   /** เขียนสถานะทั้งชุดกลับลง URL พร้อมกัน ลิงก์ที่แชร์ไปจึงเปิดได้ตามที่เห็นบนจอ */
   useEffect(() => {
@@ -235,6 +244,7 @@ export function useRequestList<T>({ endpoint, itemsKey, hasQueue }: Options) {
   return {
     rows,
     loading,
+    reload,
     pageInfo,
     summary,
     tab,
