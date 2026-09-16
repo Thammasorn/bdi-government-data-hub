@@ -15,7 +15,7 @@ export function AuthLayout({
   back,
 }: {
   title: string;
-  description?: string;
+  description?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
   /** ทางออกกลับไปหน้าอื่น วางไว้เหนือหัวข้อ — บนจอใหญ่ไม่มีโลโก้ให้กดกลับ */

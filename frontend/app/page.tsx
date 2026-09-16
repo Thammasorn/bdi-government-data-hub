@@ -212,7 +212,8 @@ function OrganizationHome({
    * ระหว่างที่หน่วยงานยังลงทะเบียนไม่เสร็จ ครึ่งล่างของหน้าเป็นช่องว่างทั้งหมด —
    * ตัวเลขศูนย์สี่ช่องกับสองรายการที่ไม่มีแถวเลย รวมหกกล่องที่ไม่ได้บอกอะไร
    * และดันสิ่งเดียวที่กดได้จริงให้จมอยู่กลางหน้า ยังลงทะเบียนชุดข้อมูลไม่ได้อยู่แล้ว
-   * จนกว่าหน่วยงานจะเปิดใช้งาน จึงยุบเหลือประโยคเดียว
+   * จนกว่าหน่วยงานจะเปิดใช้งาน จึงไม่แสดงครึ่งล่างเลย — การ์ดสีเหลืองด้านบนบอก
+   * เรื่องเดียวกันอยู่แล้วพร้อมปุ่มลงทะเบียนหน่วยงาน ประโยคซ้ำใต้การ์ดจึงไม่ต้องมี
    */
   const organizationActive = organization?.status === "ACTIVE";
   const datasetHalfIsEmpty = !organizationActive && summary !== null && summary.total === 0;
@@ -269,11 +270,7 @@ function OrganizationHome({
 
       {summary === null || pending === null || others === null ? (
         <Spinner className="min-h-[40vh]" />
-      ) : datasetHalfIsEmpty ? (
-        <p className="rounded-2xl bg-white p-6 text-[15px] leading-relaxed text-ink-muted shadow-card ring-1 ring-line">
-          ยังไม่มีชุดข้อมูลของหน่วยงาน — ลงทะเบียนชุดข้อมูลได้เมื่อหน่วยงานผ่านการอนุมัติและเปิดใช้งานแล้ว
-        </p>
-      ) : (
+      ) : datasetHalfIsEmpty ? null : (
         <>
           <StatTiles summary={summary} />
 

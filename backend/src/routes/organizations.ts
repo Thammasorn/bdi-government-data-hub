@@ -1667,7 +1667,7 @@ organizationRouter.post("/:id/generate-form", async (req, res) => {
   if (rendered.length === 0) {
     res.status(503).json({
       error: "no_legal_documents",
-      message: "ยังไม่มีเอกสารข้อตกลงที่เผยแพร่ในระบบ กรุณาแจ้งผู้ดูแลระบบ",
+      message: "ยังไม่มีเอกสารที่เกี่ยวข้องที่เผยแพร่ในระบบ กรุณาแจ้งผู้ดูแลระบบ",
     });
     return;
   }
@@ -2303,7 +2303,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
       if (expected.length + alreadySkipped.length === 0) {
         res.status(503).json({
           error: "no_legal_documents",
-          message: "ยังไม่มีเอกสารข้อตกลงที่เผยแพร่ในระบบ กรุณาแจ้งผู้ดูแลระบบ",
+          message: "ยังไม่มีเอกสารที่เกี่ยวข้องที่เผยแพร่ในระบบ กรุณาแจ้งผู้ดูแลระบบ",
         });
         return;
       }

@@ -30,6 +30,9 @@ import {
 } from "@/lib/dataset-form";
 import type { DatasetRequest } from "@/lib/types";
 
+/** ผูกปุ่มที่กดไม่ได้เข้ากับบรรทัดที่บอกว่าทำไม โปรแกรมอ่านหน้าจอจึงอ่านเหตุผลได้ด้วย */
+const DICTIONARY_HINT_ID = "dataset-dictionary-required";
+
 const SECTIONS = [
   { id: "section-1", tag: "ส่วนที่ 1", title: "ข้อมูลทั่วไปของชุดข้อมูล" },
   { id: "section-2", tag: "ส่วนที่ 2", title: "แหล่งที่มา การปรับปรุง และการนำส่ง" },
@@ -818,10 +821,27 @@ export default function EditDatasetRequestPage() {
 
           {/* ทึบเต็ม ไม่ใช้ความโปร่ง — เนื้อหาข้างหลังทะลุมาแล้วอ่านยาก */}
           <div className="sticky bottom-0 -mx-4 flex flex-col gap-3 rounded-t-2xl border-t border-line bg-white px-4 py-4 shadow-[0_-4px_16px_rgb(20_26_51_/_0.06)] sm:mx-0 sm:flex-row sm:justify-end sm:px-6">
+            {dictionary ? null : (
+              /*
+               * ปุ่มที่กดไม่ได้ต้องบอกเหตุผลด้วย ไม่งั้นอ่านว่าหน้าเว็บเสีย — เหมือนกล่องขั้นตอน
+               * ที่ถูกปิดในหน้ารายการคำขอ ซึ่งมีบรรทัดบอกเหตุผลอยู่ข้าง ๆ เสมอ
+               */
+              <p
+                id={DICTIONARY_HINT_ID}
+                className="text-[13px] leading-relaxed text-ink-muted sm:mr-auto sm:self-center"
+              >
+                แนบพจนานุกรมข้อมูล (Data Dictionary) ในส่วนที่ 5 ก่อน จึงจะตรวจสอบคำขอได้
+              </p>
+            )}
             <Button type="button" variant="secondary" loading={saving} onClick={saveDraft}>
               บันทึกแบบร่าง
             </Button>
-            <Button type="submit" loading={generating}>
+            <Button
+              type="submit"
+              loading={generating}
+              disabled={!dictionary}
+              aria-describedby={dictionary ? undefined : DICTIONARY_HINT_ID}
+            >
               ตรวจสอบคำขอ
             </Button>
           </div>

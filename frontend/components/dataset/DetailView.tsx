@@ -650,7 +650,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
                 : []),
               ["ชื่อชุดข้อมูล (ภาษาไทย)", request.title],
               ["ชื่อชุดข้อมูล (ภาษาอังกฤษ)", request.name],
-              ["รายการข้อมูล (ฟิลด์ข้อมูล) ที่ประสงค์จะนำส่ง", request.dataFields],
+              ["รายการข้อมูล (ฟิลด์ข้อมูล) ที่ประสงค์จะนำส่ง", splitTags(request.dataFields).join(", ")],
               ["องค์กร", request.organization.name],
               ["ชื่อผู้ติดต่อ", request.maintainer],
               ["อีเมลผู้ติดต่อ", request.maintainerEmail],
@@ -1047,7 +1047,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
 
         เช้าวันเดียวกันเคยเอาเอกสารทั้งชุดมาไว้ในกล่องนี้ตามการ์ด "BDI officer ตรวจสอบ
         เอกสาร" แล้ว BDI ขอให้กลับไปแบบเดิม — "BDI officer ให้ทำเหมือนเดิม (preview แล้ว
-        ตรวจสอบได้เลย ไม่ต้องมี modal)" เอกสารเปิดอ่านได้จากการ์ด "เอกสารข้อตกลง" กลางหน้า
+        ตรวจสอบได้เลย ไม่ต้องมี modal)" เอกสารเปิดอ่านได้จากการ์ด "เอกสารที่เกี่ยวข้อง" กลางหน้า
         ซึ่งอยู่เหนือปุ่มนี้อยู่แล้ว การบังคับให้อ่านซ้ำในกล่องเพิ่มขั้นตอนโดยไม่เพิ่มอะไร
       */}
       <Modal
