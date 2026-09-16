@@ -232,7 +232,15 @@ function IdentityStep({ token, invitation }: { token: string; invitation: Invita
   return (
     <AuthLayout
       title="ยืนยันตัวตนด้วย ThaID"
-      description={`เปิดใช้งานบัญชี ${invitation.email} ในสิทธิ์ ${invitation.roleLabel}`}
+      /* อีเมลกับสิทธิ์เป็นคนละเรื่อง และอีเมลยาวพอจะดันคำว่า "ในสิทธิ์" ไปห้อยท้าย
+         บรรทัดจนอ่านต่อกันเป็นประโยคเดียว — บังคับขึ้นบรรทัดใหม่ไว้ตรงรอยต่อ */
+      description={
+        <>
+          เปิดใช้งานบัญชี {invitation.email}
+          <br />
+          ในสิทธิ์ {invitation.roleLabel}
+        </>
+      }
       footer={
         <p>
           ยังไม่มีแอปพลิเคชัน ThaID? ลงทะเบียนได้ที่แอป ThaID ของกรมการปกครอง
@@ -394,16 +402,13 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
           บอกครั้งเดียวว่าทำไมช่องข้างบนแก้ไม่ได้ แทนที่จะเขียน hint ซ้ำใต้ทุกช่อง —
           เหตุผลเป็นเรื่องเดียวกันทั้งกลุ่ม และช่องที่ยังไม่ล็อก (คำนำหน้าเป็นปกติ
           เพราะ ThaID ไม่ส่ง claim นั้นมา) ต้องไม่ถูกอ่านว่าล็อกไปด้วย
+
+          ประโยคเดียวจบ ไม่แจกแจงว่าช่องไหนถูกล็อกและไม่บอกให้ติดต่อ BDI (BDI
+          แก้ชื่อให้ไม่ได้อยู่ดี — ชื่อมาจาก ThaID ต้องไปแก้ที่ต้นทาง)
         */}
         {locked.prefix || locked.firstName || locked.lastName ? (
           <p className="-mt-2 text-[13px] leading-relaxed text-ink-muted">
-            {locked.prefix && locked.firstName && locked.lastName
-              ? "คำนำหน้า ชื่อ และนามสกุล"
-              : locked.firstName && locked.lastName
-                ? "ชื่อและนามสกุล"
-                : "ข้อมูลที่แสดงไว้แล้ว"}{" "}
-            เป็นข้อมูลที่ระบบได้รับมาแล้ว จึงแก้ไขในหน้านี้ไม่ได้ —
-            หากไม่ตรงกับบัตรประชาชน กรุณาติดต่อผู้ประสานงานของ BDI ที่เชิญคุณเข้าระบบ
+            ข้อมูลที่แสดงเป็นข้อมูลที่ได้รับมาจากระบบ ThaID จึงไม่สามารถแก้ไขได้
           </p>
         ) : null}
 
