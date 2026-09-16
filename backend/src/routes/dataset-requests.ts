@@ -47,6 +47,7 @@ import {
   publicAttachment,
   storeAttachment,
   sendRenderedPdf,
+  softDeleteAttachment,
   streamAttachment,
   uploadedFile,
 } from "../lib/attachment.js";
@@ -115,6 +116,7 @@ import {
 import {
   TASK_TYPE_ROLES,
   ACTIVE_STATUSES,
+  TASK_TAKEN_MESSAGE,
   WorkflowError,
   activeTask,
   cancelActiveTask,
@@ -817,6 +819,124 @@ datasetRequestRouter.patch("/:id", async (req, res) => {
   });
 
   res.json({ request: toApiShape(updated) });
+});
+
+// -------------------------------------------------------------- ลบฉบับร่าง
+
+/**
+ * ลบคำขอที่ยังเป็นฉบับร่างทิ้ง
+ *
+ * `POST /` สร้างแถวใหม่ทุกครั้งที่กด ไม่เคยใช้ร่างเดิมซ้ำ (ต่างจากเส้นทางหน่วยงาน ซึ่ง
+ * มองหาคำขอที่ค้างอยู่ก่อน) มือลั่นกดสองทีจึงได้ร่างเปล่าสองใบที่ไม่มีทางหายไปจากรายการ
+ *
+ * **ลบจริง ไม่ใช่ยกเลิก** คำขอที่ยกเลิกแล้วยังนอนอยู่ในรายการพร้อมป้าย "ยกเลิกแล้ว" ซึ่ง
+ * ไม่ได้แก้เรื่องที่ขอมา — สิ่งที่ต้องหายไปคือแถวที่กดมาเกิน
+ *
+ * เงื่อนไขจึงแคบที่สุดเท่าที่พอ: DRAFT เท่านั้น ยังไม่เคยนำส่ง และยังไม่มี review_task
+ * ใบใดผูกอยู่ แปลว่าไม่มีใครนอกหน่วยงานเคยเห็นคำขอนี้ และไม่มีด่านไหนถูกลบตามไปด้วย
+ * **RETURNED ไม่เข้าข่าย** — มันเดินผ่านการตรวจมาแล้ว ปุ่มนี้จะกลืนงานของผู้ตรวจไปด้วย
+ * ส่วนคำขอที่อนุมัติแล้วถูก FK ของ `dataset` (ON DELETE RESTRICT) กันไว้อีกชั้นอยู่แล้ว
+ *
+ * แถว metadata หายตาม FK (`onDelete: Cascade`) ส่วน `attachment` เป็น polymorphic ไม่มี
+ * FK จริง จึงไม่มีอะไรตามไปปิดให้ ต้องปิดเองก่อนลบ และปิดแบบ soft delete ตามกฎของ
+ * lib/attachment.ts — ไฟล์ใน object storage ไม่เคยถูกลบ ที่นี่ก็ไม่ใช่ข้อยกเว้น
+ */
+const DRAFT_DELETED_REASON = "เจ้าของคำขอลบคำขอฉบับร่างทิ้ง";
+
+datasetRequestRouter.delete("/:id", async (req, res, next) => {
+  const session = req.session! as Session;
+  const request = await prisma.datasetRegistrationRequest.findUnique({
+    where: { id: req.params.id },
+    select: {
+      id: true,
+      organizationId: true,
+      createdBy: true,
+      createdAt: true,
+      status: true,
+      submittedAt: true,
+      requestNumber: true,
+      proposedTitle: true,
+      metadata: { select: { title: true } },
+    },
+  });
+  // 404 ไม่ใช่ 403 เหมือนทุกเส้นทางฝั่งหน่วยงานในไฟล์นี้ — ไม่บอกคนนอกว่าคำขอนี้มีอยู่
+  if (!request || !mayEdit(session, request)) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
+    return;
+  }
+  if (request.status !== RequestStatus.DRAFT || request.submittedAt) {
+    res.status(409).json({
+      error: "locked",
+      message: "คำขอนี้นำส่งแล้ว ลบไม่ได้ — ลบได้เฉพาะคำขอที่ยังเป็นฉบับร่าง",
+    });
+    return;
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // ตาข่ายชั้นที่สอง ไม่ใช่การเช็คซ้ำเปล่า ๆ: ฉบับร่างไม่ควรมี review_task อยู่แล้ว
+      // ถ้าวันไหนมีเส้นทางใหม่ที่เปิดด่านตั้งแต่ยังเป็นร่าง ให้ล้มทั้ง transaction
+      // ดีกว่าลบด่านของคนอื่นทิ้งไปเงียบ ๆ (review_task เป็น polymorphic ไม่มี FK กัน)
+      const tasks = await tx.reviewTask.count({
+        where: { subjectType: SUBJECT, subjectId: request.id },
+      });
+      if (tasks > 0) {
+        throw new WorkflowError(
+          "locked",
+          "คำขอนี้เข้าสู่ขั้นตอนการตรวจสอบแล้ว ลบไม่ได้",
+          409,
+        );
+      }
+
+      const attachments = await tx.attachment.findMany({
+        where: {
+          ownerType: AttachmentOwnerType.DATASET_REGISTRATION_REQUEST,
+          ownerId: request.id,
+          status: AttachmentStatus.ACTIVE,
+        },
+        select: { id: true },
+      });
+      for (const file of attachments) {
+        await softDeleteAttachment(tx, file.id, {
+          deletedBy: session.sub,
+          reason: DRAFT_DELETED_REASON,
+        });
+      }
+
+      // เงื่อนไขอยู่ใน WHERE ไม่ใช่ใน if ข้างบนอย่างเดียว — อีกแท็บหนึ่งกดนำส่งแทรกเข้ามา
+      // ระหว่างนี้ได้ ถ้าเกิดขึ้น ให้ลบไม่ติดแล้วล้มทั้งก้อน ดีกว่าลบคำขอที่นำส่งไปแล้ว
+      const removed = await tx.datasetRegistrationRequest.deleteMany({
+        where: { id: request.id, status: RequestStatus.DRAFT, submittedAt: null },
+      });
+      if (removed.count === 0) {
+        throw new WorkflowError("locked", TASK_TAKEN_MESSAGE, 409);
+      }
+    });
+  } catch (err) {
+    if (err instanceof WorkflowError) {
+      res.status(err.status).json({ error: err.code, message: err.message });
+      return;
+    }
+    next(err);
+    return;
+  }
+
+  // หลัง commit และเก็บค่าที่หายไปไว้ใน `before` — หลังจากนี้แถว audit คือหลักฐาน
+  // ชิ้นเดียวที่เหลือว่าเคยมีคำขอเลขนี้ (แบบเดียวกับ INVITATION_DELETED)
+  await logAudit({
+    action: AuditAction.REQUEST_DELETED,
+    subjectType: AuditSubject.DATASET_REGISTRATION_REQUEST,
+    subjectId: request.id,
+    organizationId: request.organizationId,
+    before: {
+      requestNumber: request.requestNumber,
+      title: request.metadata?.title ?? request.proposedTitle,
+      createdAt: request.createdAt.toISOString(),
+      createdBy: request.createdBy,
+    },
+  });
+
+  res.status(204).end();
 });
 
 // ---------------------------------------------------------------- attachments
