@@ -583,7 +583,7 @@ export const datasetSubmitSchema = z
     dataSource: required("กรุณาระบุแหล่งที่มาของข้อมูล").max(200, "แหล่งที่มาต้องยาวไม่เกิน 200 ตัวอักษร"),
     dataFormat: requiredCode("dataFormat", "กรุณาเลือกรูปแบบการนำส่งข้อมูล"),
     dataFormatOther: optionalText(150),
-    dataCategory: requiredCode("dataCategory", "กรุณาเลือกหมวดหมู่ข้อมูลตามธรรมาภิบาลภาครัฐ"),
+    dataCategory: requiredCode("dataCategory", "กรุณาเลือกหมวดหมู่ข้อมูลตามธรรมาภิบาลข้อมูลภาครัฐ"),
     containsPersonalData: requiredFlag("กรุณาระบุว่าชุดข้อมูลนี้มีข้อมูลส่วนบุคคลหรือไม่"),
     personalDataTypes: optionalText(1000),
     dataSubjectCategories: optionalText(1000),

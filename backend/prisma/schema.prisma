@@ -936,7 +936,7 @@ model DatasetRegistrationMetadata {
   dataFormat      String? @map("data_format") @db.VarChar(8)
   dataFormatOther String? @map("data_format_other") @db.VarChar(150)
 
-  /// 13.1 หมวดหมู่ข้อมูลตามธรรมาภิบาลภาครัฐ — a สาธารณะ · b ใช้ภายใน ·
+  /// 13.1 หมวดหมู่ข้อมูลตามธรรมาภิบาลข้อมูลภาครัฐ — a สาธารณะ · b ใช้ภายใน ·
   /// c ความลับทางราชการ · d ความมั่นคง (ข้อมูลส่วนบุคคลเป็นคำถามแยก ไม่ใช่หมวดหมู่)
   dataCategory String? @map("data_category") @db.VarChar(8)
 

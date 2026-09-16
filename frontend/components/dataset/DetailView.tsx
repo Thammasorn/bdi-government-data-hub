@@ -694,7 +694,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
           <CardHeader tag="ส่วนที่ 3" title="การจัดประเภทและระดับชั้นข้อมูล" />
           <Rows
             rows={[
-              ["หมวดหมู่ข้อมูลตามธรรมาภิบาลภาครัฐ", labelOf(choices.dataCategory, request.dataCategory)],
+              ["หมวดหมู่ข้อมูลตามธรรมาภิบาลข้อมูลภาครัฐ", labelOf(choices.dataCategory, request.dataCategory)],
               [
                 "มีข้อมูลส่วนบุคคล",
                 request.containsPersonalData === null

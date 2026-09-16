@@ -581,7 +581,7 @@ export default function EditDatasetRequestPage() {
             <div className="grid gap-5 p-6">
               <Wrap name="dataCategory">
                 <Choice
-                  label="หมวดหมู่ข้อมูลตามธรรมาภิบาลภาครัฐ"
+                  label="หมวดหมู่ข้อมูลตามธรรมาภิบาลข้อมูลภาครัฐ"
                   required
                   value={form.dataCategory}
                   onChange={(v) => set("dataCategory", v)}
