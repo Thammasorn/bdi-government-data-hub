@@ -606,7 +606,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
                 : []),
               ["ชื่อชุดข้อมูล (ภาษาไทย)", request.title],
               ["ชื่อชุดข้อมูล (ภาษาอังกฤษ)", request.name],
-              ["รายการข้อมูล (ฟิลด์ข้อมูล) ที่ประสงค์จะนำส่ง", request.dataFields],
+              ["รายการข้อมูล (ฟิลด์ข้อมูล) ที่ประสงค์จะนำส่ง", splitTags(request.dataFields).join(", ")],
               ["องค์กร", request.organization.name],
               ["ชื่อผู้ติดต่อ", request.maintainer],
               ["อีเมลผู้ติดต่อ", request.maintainerEmail],
