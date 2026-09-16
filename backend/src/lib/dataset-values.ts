@@ -88,7 +88,9 @@ export function datasetDocumentValues(input: DatasetDocumentInput): Record<strin
     // ── ชุดข้อมูล ──
     "dataset.title": input.title ?? "",
     "dataset.nameEn": input.name ?? "",
-    "dataset.dataFields": input.dataFields ?? "",
+    /* รายการฟิลด์คั่นด้วยจุลภาคเหมือนคำสำคัญ (hint ใต้ช่องบอกไว้เอง) จึงผ่าน
+       splitTags แล้วต่อกลับ — จุลภาคที่ผู้กรอกทิ้งไว้ท้ายบรรทัดจะไม่ไปโผล่บนเอกสาร */
+    "dataset.dataFields": splitTags(input.dataFields).join(", "),
     "dataset.maintainer": input.maintainer ?? "",
     "dataset.maintainerEmail": input.maintainerEmail ?? "",
     "dataset.tags": splitTags(input.tagString).join(" · "),

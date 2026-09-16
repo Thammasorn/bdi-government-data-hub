@@ -497,7 +497,7 @@ export default function EditOrganizationPage() {
                   ตัวเองไม่ได้ และรหัสที่ไปชนของหน่วยงานอื่นเคยไประเบิดตอนอนุมัติขั้นสุดท้าย
                   ฝั่ง API ปฏิเสธค่าที่ต่างจากเดิมด้วย ไม่ได้กันแค่ที่หน้าจอ */}
               <Wrap name="organizationCode">
-                <TextField label="รหัสหน่วยงาน" readOnly value={form.organizationCode} error={fields.organizationCode} hint="หากรหัสหน่วยงานไม่ถูกต้อง กรุณาแจ้งผู้ประสานงานของ BDI" />
+                <TextField label="รหัสหน่วยงาน" readOnly value={form.organizationCode} error={fields.organizationCode} />
               </Wrap>
               {/* ชื่อหน่วยงานที่ BDI บันทึกไว้ล่วงหน้าเป็นข้อมูลของระบบ ไม่ใช่ของผู้กรอก —
                   แสดงอย่างเดียวเหมือนรหัสหน่วยงาน และ API ปฏิเสธค่าที่ต่างจากเดิม

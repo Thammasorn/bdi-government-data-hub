@@ -58,7 +58,7 @@ export function useLegalDocuments(
 }
 
 /**
- * เอกสารข้อตกลงทั้งชุด — รายชื่อฉบับ พร้อมปุ่มเปิดอ่านทีละฉบับใน modal
+ * เอกสารที่เกี่ยวข้องทั้งชุด — รายชื่อฉบับ พร้อมปุ่มเปิดอ่านทีละฉบับใน modal
  *
  * **ไม่ฝังตัวอ่าน PDF ไว้ในหน้า** (BDI ขอเมื่อ 2026-09-10) เดิมการ์ดนี้เป็นแท็บสลับฉบับ
  * โดยมี `<iframe>` ของฉบับที่เลือกฝังอยู่ตลอด ทุกครั้งที่เปิดหน้ารายละเอียดจึงมีการโหลด
@@ -102,10 +102,10 @@ export function LegalDocumentsCard({
   if (error) {
     return (
       <Card>
-        <CardHeader title="เอกสารข้อตกลง" description={description} />
+        <CardHeader title="เอกสารที่เกี่ยวข้อง" description={description} />
         <div className="p-6">
           <p className="rounded-xl bg-danger-bg p-5 text-sm leading-relaxed text-danger">
-            โหลดเอกสารข้อตกลงไม่สำเร็จ — {error}
+            โหลดเอกสารที่เกี่ยวข้องไม่สำเร็จ — {error}
           </p>
           {onRetry ? (
             <button
@@ -124,7 +124,7 @@ export function LegalDocumentsCard({
   if (!documents) {
     return (
       <Card>
-        <CardHeader title="เอกสารข้อตกลง" description={description} />
+        <CardHeader title="เอกสารที่เกี่ยวข้อง" description={description} />
         <div className="p-6">
           <Spinner />
         </div>
@@ -149,11 +149,11 @@ export function LegalDocumentsCard({
   if (documents.length === 0) {
     return (
       <Card>
-        <CardHeader title="เอกสารข้อตกลง" description={description} />
+        <CardHeader title="เอกสารที่เกี่ยวข้อง" description={description} />
         <div className="p-6">
           {skippedNote ?? (
             <p className="rounded-xl bg-warning-bg p-5 text-sm text-warning">
-              ยังไม่มีเอกสารข้อตกลงที่เผยแพร่ในระบบ กรุณาแจ้งผู้ดูแลระบบ
+              ยังไม่มีเอกสารที่เกี่ยวข้องที่เผยแพร่ในระบบ กรุณาแจ้งผู้ดูแลระบบ
             </p>
           )}
         </div>
@@ -163,7 +163,7 @@ export function LegalDocumentsCard({
 
   return (
     <Card>
-      <CardHeader title="เอกสารข้อตกลง" description={description} />
+      <CardHeader title="เอกสารที่เกี่ยวข้อง" description={description} />
       <ul className="divide-y divide-line">
         {documents.map((doc) => (
           <li
