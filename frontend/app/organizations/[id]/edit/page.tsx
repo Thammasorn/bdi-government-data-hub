@@ -197,6 +197,7 @@ export default function EditOrganizationPage() {
   const [appointment, setAppointment] = useState<UploadedFile | null>(null);
   const [powerOfAttorney, setPowerOfAttorney] = useState<UploadedFile | null>(null);
   const [uploadingKind, setUploadingKind] = useState<string | null>(null);
+  const [removingKind, setRemovingKind] = useState<string | null>(null);
 
   const [provinces, setProvinces] = useState<string[]>([]);
   const [amphoes, setAmphoes] = useState<string[]>([]);
@@ -405,6 +406,37 @@ export default function EditOrganizationPage() {
     }
   };
 
+  /**
+   * ลบไฟล์ต้องยิงถึง API ไม่ใช่ล้างแต่ state
+   *
+   * เดิม onRemove ของ FileUpload คือ `setAppointment(null)` เปล่า ๆ ช่องบนหน้าจอจึงว่าง
+   * ทั้งที่ไฟล์ยังอยู่ครบฝั่งเซิร์ฟเวอร์ — บันทึกแบบร่างแล้วออกไปกลับเข้ามาไฟล์เดิมกลับมา
+   * (การ์ด "Bug ลบไฟล์ในฟอร์มแล้วไม่หาย") และการนำส่งก็ยังผ่านด้วยไฟล์ที่ผู้ใช้ลบไปแล้ว
+   *
+   * ล้าง state หลังจาก API ตอบสำเร็จเท่านั้น ลบไม่ผ่านแล้วช่องต้องยังแสดงไฟล์เดิมอยู่
+   * ไม่งั้นหน้าจอก็โกหกอีกทางหนึ่ง
+   */
+  const removeFile = async (kind: AttachmentSlot, file: UploadedFile) => {
+    if (!orgId) return;
+    setRemovingKind(kind);
+    try {
+      await api.del(`/api/organizations/${orgId}/attachments/${file.id}`);
+      if (kind === "APPOINTMENT_ORDER") setAppointment(null);
+      else setPowerOfAttorney(null);
+      show({ tone: "success", title: "ลบไฟล์แล้ว" });
+    } catch (err) {
+      // ไม่เดินผ่าน handleApiError() เพราะมันเขียน `fields` ทับทั้งชุด แล้วขอบแดงของช่อง
+      // ที่ผู้ใช้กำลังไล่แก้อยู่จะหายไปพร้อมกัน ทั้งที่การลบไฟล์ไม่เกี่ยวกับช่องเหล่านั้น
+      show({
+        tone: "error",
+        title: "ลบไฟล์ไม่สำเร็จ",
+        detail: err instanceof ApiError ? err.message : undefined,
+      });
+    } finally {
+      setRemovingKind(null);
+    }
+  };
+
   /** เลื่อนไปให้เห็นช่องที่ต้องแก้ช่องแรก — ฟอร์มยาวเกินกว่าจะให้ผู้ใช้ไล่หาเอง */
   const scrollToField = (name: string) => {
     requestAnimationFrame(() => {
@@ -589,9 +621,9 @@ export default function EditOrganizationPage() {
               </div>
               <div className="grid gap-5 border-t border-line pt-5 sm:grid-cols-2">
                 <div data-field="APPOINTMENT_ORDER">
-                  <FileUpload label="คำสั่งแต่งตั้งผู้มีอำนาจอนุมัติของหน่วยงาน" required value={appointment} error={fields.APPOINTMENT_ORDER} uploading={uploadingKind === "APPOINTMENT_ORDER"} onSelect={(f) => uploadFile("APPOINTMENT_ORDER", f)} onRemove={() => setAppointment(null)} />
+                  <FileUpload label="คำสั่งแต่งตั้งผู้มีอำนาจอนุมัติของหน่วยงาน" required value={appointment} error={fields.APPOINTMENT_ORDER} uploading={uploadingKind === "APPOINTMENT_ORDER"} removing={removingKind === "APPOINTMENT_ORDER"} onSelect={(f) => uploadFile("APPOINTMENT_ORDER", f)} onRemove={() => appointment && removeFile("APPOINTMENT_ORDER", appointment)} />
                 </div>
-                <FileUpload label="คำสั่ง/หนังสือมอบอำนาจ (ถ้ามี)" value={powerOfAttorney} uploading={uploadingKind === "POWER_OF_ATTORNEY"} onSelect={(f) => uploadFile("POWER_OF_ATTORNEY", f)} onRemove={() => setPowerOfAttorney(null)} />
+                <FileUpload label="คำสั่ง/หนังสือมอบอำนาจ (ถ้ามี)" value={powerOfAttorney} uploading={uploadingKind === "POWER_OF_ATTORNEY"} removing={removingKind === "POWER_OF_ATTORNEY"} onSelect={(f) => uploadFile("POWER_OF_ATTORNEY", f)} onRemove={() => powerOfAttorney && removeFile("POWER_OF_ATTORNEY", powerOfAttorney)} />
               </div>
             </div>
           </Card>

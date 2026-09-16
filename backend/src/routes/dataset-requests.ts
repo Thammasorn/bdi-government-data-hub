@@ -1031,6 +1031,103 @@ datasetRequestRouter.get("/:id/attachments/:attachmentId", async (req, res) => {
   await streamAttachment(res, attachment, "download" in req.query ? "attachment" : "inline");
 });
 
+/**
+ * ลบไฟล์ที่แนบไว้ในช่องหนึ่งของฟอร์มออก — เหมือน `DELETE /organizations/:id/attachments/:attachmentId`
+ *
+ * บั๊กเดียวกันกับเส้นทางหน่วยงาน และเจอจากการ์ด "Bug ลบไฟล์ในฟอร์มแล้วไม่หาย" ใบเดียวกัน:
+ * ปุ่ม "ลบ" บน FileUpload ล้างแต่ state ในเบราว์เซอร์ ไฟล์ฝั่งเซิร์ฟเวอร์ยังเป็น ACTIVE
+ * จึงกลับมาทั้งที่หน้าฟอร์มและที่ `POST /:id/submit` ซึ่งตรวจพจนานุกรมข้อมูลด้วย
+ * activeAttachment() ตัวเดียวกัน
+ *
+ * ผลข้างเคียงที่ได้มาด้วยคือปุ่ม "ตรวจสอบคำขอ" ที่ปิดตัวเองเมื่อไม่มีพจนานุกรมข้อมูล
+ * (การ์ด "Disable ปุ่มตรวจสอบคำขอ ถ้าไม่แนบไฟล์ data dict") พูดความจริงแล้ว — ก่อนหน้านี้
+ * มันปิดตามสิ่งที่หน้าเว็บคิดว่าเกิดขึ้น ขณะที่เซิร์ฟเวอร์ยังเก็บไฟล์อยู่
+ */
+const FORM_REMOVED_REASON = "ผู้กรอกลบไฟล์ออกจากฟอร์ม";
+
+datasetRequestRouter.delete("/:id/attachments/:attachmentId", async (req, res) => {
+  const session = req.session! as Session;
+  const request = await prisma.datasetRegistrationRequest.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, organizationId: true, createdBy: true, status: true },
+  });
+  if (!request || !mayEdit(session, request)) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
+    return;
+  }
+  // เงื่อนไขเดียวกับ PATCH /:id — นำส่งไปแล้วห้ามถอนไฟล์ออกจากคำขอที่ผู้ตรวจกำลังอ่าน
+  if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
+    res.status(409).json({ error: "locked", message: "คำขออยู่ระหว่างการตรวจสอบ แก้ไขไม่ได้" });
+    return;
+  }
+
+  const attachment = await prisma.attachment.findFirst({
+    where: { id: req.params.attachmentId, ownerType: OWNER, ownerId: request.id },
+  });
+  if (!attachment) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบไฟล์นี้" });
+    return;
+  }
+
+  /**
+   * ลบได้เฉพาะสองช่องที่ฟอร์มเป็นเจ้าของ — แบบฟอร์มลงทะเบียนชุดข้อมูลกับเอกสารข้อตกลง
+   * ที่ระบบ render เองเป็นไฟล์แนบของคำขอใบเดียวกัน และ id ของมันส่งออกไปกับ `GET /:id`
+   * เหมือนกัน ถ้าไม่กั้นชนิดไว้ที่นี่ คำขอที่ยิงตรงจะลบเอกสารที่การลงนามต้องใช้ได้
+   */
+  if (
+    attachment.attachmentType !== AttachmentType.DATA_DICTIONARY &&
+    attachment.attachmentType !== AttachmentType.EXAMPLE_DATA
+  ) {
+    res.status(409).json({
+      error: "locked",
+      message: "เอกสารฉบับนี้ระบบสร้างขึ้นเอง ลบจากฟอร์มไม่ได้",
+    });
+    return;
+  }
+
+  // กดสองทีหรือลบซ้ำจากอีกแท็บ — ไฟล์หายไปแล้วจริง ๆ ตอบว่าสำเร็จ ไม่ใช่ 404 ที่ดูเหมือนพัง
+  if (attachment.status !== AttachmentStatus.ACTIVE) {
+    res.status(204).end();
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await softDeleteAttachment(tx, attachment.id, {
+      deletedBy: session.sub,
+      reason: FORM_REMOVED_REASON,
+    });
+    /**
+     * คอลัมน์ FK ต้องว่างตามไปด้วย ไม่งั้นมันยังชี้ว่าไฟล์ที่ถูกลบคือไฟล์ปัจจุบันของช่อง
+     * และตอนอนุมัติ ค่านั้นถูก copy ต่อไปที่แถว `dataset` (ดู materialiseDataset())
+     *
+     * "ยังชี้ไฟล์ใบนี้อยู่" อยู่ใน WHERE ไม่ใช่ใน if — อีกแท็บอัปโหลดไฟล์ใหม่แทรกเข้ามา
+     * ระหว่างนี้ได้ ถ้าเกิดขึ้น คอลัมน์ชี้ไฟล์ใหม่แล้วและต้องไม่ถูกล้างทิ้งตามไฟล์เก่า
+     */
+    const dictionary = attachment.attachmentType === AttachmentType.DATA_DICTIONARY;
+    await tx.datasetRegistrationRequest.updateMany({
+      where: dictionary
+        ? { id: request.id, dataDictionaryAttachmentId: attachment.id }
+        : { id: request.id, exampleDataAttachmentId: attachment.id },
+      data: dictionary
+        ? { dataDictionaryAttachmentId: null, updatedBy: session.sub }
+        : { exampleDataAttachmentId: null, updatedBy: session.sub },
+    });
+  });
+
+  await logAudit({
+    action: AuditAction.ATTACHMENT_DELETED,
+    subjectType: AuditSubject.ATTACHMENT,
+    subjectId: attachment.id,
+    organizationId: request.organizationId,
+    before: {
+      attachmentType: attachment.attachmentType,
+      filename: attachment.originalFileName,
+    },
+  });
+
+  res.status(204).end();
+});
+
 // ---------------------------------------------------------------- generate PDF
 
 /** §4.3 ข้อ 4 — ต้องผ่าน validation ทั้งฉบับก่อน แล้วจึงสร้าง PDF ให้ตรวจ */
