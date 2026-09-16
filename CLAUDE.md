@@ -1026,6 +1026,25 @@ mirroring `submitSchema` in `backend/src/routes/organizations.ts` and the shared
 typed in — red with the reason, green with a tick — which a round trip per keystroke cannot do.
 The backend is still the decider; the copy only decides what the screen says.
 
+**`dataset-form.ts` carries the same mirror for Journey C** since 2026-09-16 (card "frontend
+validate ฟอร์มชุดข้อมูล"): `validateDatasetField()` is field-for-field `datasetSubmitSchema`,
+**message string included** — a field that says one thing while typing and another after the API
+answers is worse than a field that only says the second. Before that, only the two dataset-name
+fields were checked here and everything else waited for `POST /generate-form`, so a mistyped
+contact e-mail in section 1 surfaced only after all five sections were filled. Two halves of the
+rule stay on the *page*, not in the copy: a message shows only once the field is `touched` (a
+form nobody has typed in is never red), and `FIELDS_BY_SECTION` decides which section a message
+belongs to — the left stepper reads the same `clientErrors`, so it cannot tick a section green
+while a field in it is red. Conditional fields need no special case anywhere: a field the
+`conditions` sheet is not asking for returns `null`.
+
+Three of its rules cannot be mirrored and are the API's alone: that a choice code exists at all
+(the list is in the database and the `<select>` only offers live ones), the `optionalText()`
+caps whose message is zod's English default (every one of those inputs has a `maxLength` that
+gets there first), and anything needing another row. Copying the first would re-freeze the
+snapshot `dataset-choices.ts` exists to avoid; inventing Thai wording for the second would make
+one field speak twice.
+
 **The organization code is not a form field.** `organization_code` is `@unique`, comes from the
 admin (`POST /api/admin/organizations`) or `nextOrganizationCode()`, and is what A0 uses to name
 the organization — so the registration form shows it `readOnly` and `toRequestData()` does not

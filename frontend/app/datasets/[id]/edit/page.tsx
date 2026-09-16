@@ -42,14 +42,19 @@ const SECTIONS = [
 ];
 
 /**
- * ช่องบังคับของแต่ละส่วน สำหรับแถบความคืบหน้าด้านซ้าย
- * ช่องที่ขึ้นกับเงื่อนไข (ประเด็นอื่น ๆ, รายละเอียดข้อมูลส่วนบุคคล ฯลฯ) ถูกเติมตอนคำนวณ
- * เพราะบังคับกรอกก็ต่อเมื่อชีท conditions สั่งให้ถาม
+ * ช่องทั้งหมดของแต่ละส่วน สำหรับแถบความคืบหน้าด้านซ้าย — ทุกช่องใน `FormState` อยู่ที่นี่
+ * ที่เดียว ทั้งช่องบังคับ ช่องที่ขึ้นกับเงื่อนไข และช่องที่ไม่บังคับ
+ *
+ * ส่วนหนึ่ง "ครบ" เมื่อไม่มีช่องไหนในส่วนนั้นเหลือข้อความผิดพลาด ไม่ใช่เมื่อทุกช่องมีค่า:
+ * `validateDatasetField()` เป็นคนรู้อยู่แล้วว่าช่องไหนบังคับ ช่องไหนชีท conditions ซ่อนอยู่
+ * (คืน null) และช่องไหนเว้นว่างได้ รายการนี้จึงไม่ต้องแยกกรณีเองอีก และแถบความคืบหน้า
+ * ก็เลิกบอกว่า "กรอกครบแล้ว" ทั้งที่ยังมีช่องขอบแดงค้างอยู่ในส่วนนั้น
  */
-const REQUIRED_BY_SECTION: Record<string, FormField[]> = {
+const FIELDS_BY_SECTION: Record<string, FormField[]> = {
   "section-1": [
     "dataType",
     "dataTopic",
+    "dataTopicOther",
     "title",
     "name",
     "dataFields",
@@ -59,14 +64,35 @@ const REQUIRED_BY_SECTION: Record<string, FormField[]> = {
     "notes",
     "objective",
   ],
-  "section-2": ["updateFrequencyUnit", "deliveryFrequency", "geoCoverage", "dataSource", "dataFormat"],
-  "section-3": ["dataCategory", "containsPersonalData", "dataClassification", "licenseId"],
+  "section-2": [
+    "updateFrequencyUnit",
+    "updateFrequencyInterval",
+    "deliveryFrequency",
+    "geoCoverage",
+    "geoCoverageOther",
+    "dataSource",
+    "dataFormat",
+    "dataFormatOther",
+  ],
+  "section-3": [
+    "dataCategory",
+    "containsPersonalData",
+    "personalDataTypes",
+    "dataSubjectCategories",
+    "personalDataProcessingPeriod",
+    "personalDataProcessingPeriodYear",
+    "personalDataProcessingPeriodMonth",
+    "dataClassification",
+    "licenseId",
+  ],
   "section-4": [
     "allowOriginalRawDataRetention",
     "allowOriginalRawDataSharing",
     "allowTransformedRawDataSharing",
+    "allowTransformedRawDataSharingSpecifiedPlatforms",
     "allowTransformedRawDataGdxSharing",
     "allowAggregatedDataSharing",
+    "authorizePersonalDataAnonymization",
   ],
 };
 
@@ -129,13 +155,35 @@ export default function EditDatasetRequestPage() {
 
   const touch = (key: FormField) => setTouched((t) => (t[key] ? t : { ...t, [key]: true }));
 
+  /**
+   * เลือกค่าให้ช่องหนึ่ง แล้วนับว่า "แตะแล้ว" ทันที ไม่ต้องรอ blur
+   *
+   * dropdown กับปุ่มตัวเลือกไม่มีสถานะ "กำลังพิมพ์" แบบช่องข้อความ ที่ต้องรอจนออกจากช่อง
+   * ก่อนจึงตัดสินได้ว่าค่าที่เห็นคือค่าที่ผู้ใช้ตั้งใจ — การเลือกคือการตอบเสร็จแล้ว การรอ blur
+   * อีกทีแปลว่าช่องที่เพิ่งเลือกค้างอยู่โดยไม่มีขอบเขียว จนกว่าผู้ใช้จะไปแตะอย่างอื่น
+   */
+  const choose = (key: FormField, value: string) => {
+    set(key, value);
+    touch(key);
+  };
+
   const rules = useMemo(() => formRules(form), [form]);
 
   /**
    * ผลตรวจฝั่งหน้าเว็บ คิดใหม่ทุกครั้งที่ฟอร์มเปลี่ยน — พิมพ์แก้ให้ถูกแล้วข้อความหายเอง
    * ไม่ต้องรอ blur อีกรอบ
+   *
+   * ป้ายของหน่วยความถี่ส่งเข้าไปด้วย เพราะข้อความของข้อ 9.2 อ้างถึงมัน ("ปรับปรุงทุก 2 ปี
+   * ให้กรอก 2") และป้ายอยู่ในฐานข้อมูล ไม่ได้อยู่ในโค้ด
    */
-  const clientErrors = useMemo(() => validateDatasetForm(form), [form]);
+  const clientErrors = useMemo(
+    () =>
+      validateDatasetForm(form, {
+        updateFrequencyUnitLabel:
+          labelOf(choices.updateFrequencyUnit, form.updateFrequencyUnit) ?? undefined,
+      }),
+    [form, choices],
+  );
 
   /**
    * ข้อความของช่องหนึ่ง — **ของ API มาก่อนของหน้าเว็บเสมอ** มันคือคำตอบของตัวตัดสินจริง
@@ -144,51 +192,49 @@ export default function EditDatasetRequestPage() {
   const errorOf = (key: FormField) => fields[key] || (touched[key] ? clientErrors[key] : undefined);
 
   /**
-   * ไม่ส่ง `valid` ต่อ — ฟอร์มนี้ไม่มีขอบเขียวและเครื่องหมายถูกที่ช่องไหนเลย ให้แค่สองช่อง
-   * ที่มีกฎฝั่งหน้าเว็บอ่านได้ว่าเป็นสองช่องเดียวที่ระบบตรวจ ทั้งที่ทุกช่องถูกตรวจตอนนำส่ง
+   * สถานะของช่องหนึ่ง — ข้อความที่ผิด ขอบเขียวเมื่อผ่าน และการนับว่าแตะแล้ว
+   *
+   * **ทุกช่องผูกกับตัวนี้ ไม่ใช่กับ `fields` ตรง ๆ** เดิมมีเพียงชื่อชุดข้อมูลไทย/อังกฤษสองช่อง
+   * ที่หน้าเว็บตรวจเองได้ ที่เหลือรอให้ API ตอบตอนกด "ตรวจสอบคำขอ" ผู้ใช้จึงต้องกรอกจนครบ
+   * ทั้งห้าส่วนก่อน ถึงจะรู้ว่าอีเมลผู้ติดต่อในส่วนที่ 1 พิมพ์ผิด (การ์ด "frontend validate
+   * ฟอร์มชุดข้อมูล") ตอนนี้ `validateDatasetField()` รู้กฎของทุกช่องแล้ว
+   *
+   * ขอบเขียวจึงกลับมาได้โดยไม่หลอกว่า "ระบบตรวจแค่สองช่องนี้" ซึ่งเป็นเหตุผลเดิมที่ไม่ส่ง
+   * `valid` ต่อ · มันขึ้นเฉพาะช่องที่ผู้ใช้กรอกเองและผ่านแล้ว ไม่ใช่ทุกช่องที่ไม่มี error
+   * ไม่งั้นฟอร์มเปล่าจะเขียวทั้งหน้าตั้งแต่ยังไม่ได้กรอกอะไร
    */
-  const fieldProps = (key: FormField) => ({
+  const fieldProps = (key: FormField) => {
+    const error = errorOf(key);
+    return {
+      error,
+      valid: Boolean(touched[key]) && !error && form[key].trim().length > 0,
+      onBlur: () => touch(key),
+    };
+  };
+
+  /**
+   * ช่องที่ตอบแล้วเห็นคำตอบอยู่ในตัว — คำถามใช่/ไม่ใช่ (ปุ่มวงกลมที่เลือกไว้) และคำสำคัญ
+   * (ชิปที่เพิ่มเข้าไป) จึงไม่ต้องมีขอบเขียวมาบอกซ้ำอีกชั้น ที่ยังต้องส่งคือข้อความผิดพลาด
+   * และการนับว่าแตะแล้ว
+   */
+  const answerProps = (key: FormField) => ({
     error: errorOf(key),
     onBlur: () => touch(key),
   });
 
+  /**
+   * ส่วนไหนกรอกครบแล้ว — อ่านจาก `clientErrors` ชุดเดียวกับที่ขึ้นใต้ช่อง ไม่ใช่จาก
+   * "ทุกช่องมีค่า" เหมือนเดิม ไม่งั้นแถบซ้ายติ๊กเขียวว่าส่วนที่ 1 ครบแล้ว ขณะที่อีเมล
+   * ผู้ติดต่อในส่วนนั้นยังขอบแดงอยู่
+   */
   const completion = useMemo(() => {
-    const conditional: Record<string, FormField[]> = {
-      "section-1": rules.dataTopicOther.visible ? ["dataTopicOther"] : [],
-      "section-2": [
-        ...(rules.updateFrequencyInterval.visible ? (["updateFrequencyInterval"] as FormField[]) : []),
-        ...(rules.geoCoverageOther.visible ? (["geoCoverageOther"] as FormField[]) : []),
-        ...(rules.dataFormatOther.visible ? (["dataFormatOther"] as FormField[]) : []),
-      ],
-      "section-3": rules.personalDataDetail.visible
-        ? ([
-            "personalDataTypes",
-            "dataSubjectCategories",
-            "personalDataProcessingPeriod",
-          ] as FormField[])
-        : [],
-      "section-4": [
-        ...(rules.authorizePersonalDataAnonymization.visible
-          ? (["authorizePersonalDataAnonymization"] as FormField[])
-          : []),
-        /* ช่อง "ระบุระบบเชื่อมโยงข้อมูลที่อนุญาต" ของข้อ 16.1 ไม่บังคับกรอก จึงไม่นับ */
-      ],
-    };
-
     const done: Record<string, boolean> = {};
-    for (const [section, keys] of Object.entries(REQUIRED_BY_SECTION)) {
-      done[section] = [...keys, ...(conditional[section] ?? [])].every(
-        (k) => form[k].trim().length > 0,
-      );
-    }
-    if (rules.personalDataPeriodAmount.visible) {
-      const years = Number(form.personalDataProcessingPeriodYear || 0);
-      const months = Number(form.personalDataProcessingPeriodMonth || 0);
-      done["section-3"] = Boolean(done["section-3"]) && years + months > 0;
+    for (const [section, keys] of Object.entries(FIELDS_BY_SECTION)) {
+      done[section] = keys.every((k) => !clientErrors[k]);
     }
     done["section-5"] = dictionary !== null;
     return done;
-  }, [form, rules, dictionary]);
+  }, [clientErrors, dictionary]);
 
   // ---------- actions ----------
   const persist = () =>
@@ -332,8 +378,8 @@ export default function EditDatasetRequestPage() {
                     label="ประเภทข้อมูล"
                     required
                     value={form.dataType}
-                    onChange={(v) => set("dataType", v)}
-                    error={fields.dataType}
+                    onChange={(v) => choose("dataType", v)}
+                    {...fieldProps("dataType")}
                     options={optionsFor(choices.dataType)}
                   />
                 </Wrap>
@@ -342,8 +388,8 @@ export default function EditDatasetRequestPage() {
                     label="ประเด็น"
                     required
                     value={form.dataTopic}
-                    onChange={(v) => set("dataTopic", v)}
-                    error={fields.dataTopic}
+                    onChange={(v) => choose("dataTopic", v)}
+                    {...fieldProps("dataTopic")}
                     options={optionsFor(choices.dataTopic)}
                   />
                 </Wrap>
@@ -356,7 +402,7 @@ export default function EditDatasetRequestPage() {
                     maxLength={150}
                     value={form.dataTopicOther}
                     onChange={(e) => set("dataTopicOther", e.target.value)}
-                    error={fields.dataTopicOther}
+                    {...fieldProps("dataTopicOther")}
                   />
                 </Wrap>
               ) : null}
@@ -391,7 +437,7 @@ export default function EditDatasetRequestPage() {
                   maxLength={1000}
                   value={form.dataFields}
                   onChange={(e) => set("dataFields", e.target.value)}
-                  error={fields.dataFields}
+                  {...fieldProps("dataFields")}
                   hint="ใส่ชื่อฟิลด์ที่จะนำส่ง คั่นด้วยจุลภาค เช่น ข้อมูลพิกัด, ข้อมูลประเภทที่ตั้ง, ข้อมูลหน่วยให้บริการ"
                 />
               </Wrap>
@@ -404,7 +450,7 @@ export default function EditDatasetRequestPage() {
                     maxLength={150}
                     value={form.maintainer}
                     onChange={(e) => set("maintainer", e.target.value)}
-                    error={fields.maintainer}
+                    {...fieldProps("maintainer")}
                     hint="ชื่อกอง สำนัก หรือฝ่ายที่ได้รับมอบหมายให้รับผิดชอบข้อมูล"
                   />
                 </Wrap>
@@ -416,7 +462,7 @@ export default function EditDatasetRequestPage() {
                     maxLength={50}
                     value={form.maintainerEmail}
                     onChange={(e) => set("maintainerEmail", e.target.value)}
-                    error={fields.maintainerEmail}
+                    {...fieldProps("maintainerEmail")}
                     hint="อีเมลของกอง สำนัก หรือฝ่าย ไม่ใช่อีเมลส่วนตัว"
                   />
                 </Wrap>
@@ -425,7 +471,7 @@ export default function EditDatasetRequestPage() {
                 <KeywordInput
                   value={form.tagString}
                   onChange={(next) => set("tagString", next)}
-                  error={fields.tagString}
+                  {...answerProps("tagString")}
                 />
               </Wrap>
               <Wrap name="notes">
@@ -435,7 +481,7 @@ export default function EditDatasetRequestPage() {
                   maxLength={1000}
                   value={form.notes}
                   onChange={(e) => set("notes", e.target.value)}
-                  error={fields.notes}
+                  {...fieldProps("notes")}
                   hint={counterHint(
                     form.notes,
                     1000,
@@ -450,7 +496,7 @@ export default function EditDatasetRequestPage() {
                   maxLength={1000}
                   value={form.objective}
                   onChange={(e) => set("objective", e.target.value)}
-                  error={fields.objective}
+                  {...fieldProps("objective")}
                   hint={counterHint(
                     form.objective,
                     1000,
@@ -475,8 +521,8 @@ export default function EditDatasetRequestPage() {
                     label="หน่วยความถี่ของการปรับปรุงข้อมูลต้นทาง"
                     required
                     value={form.updateFrequencyUnit}
-                    onChange={(v) => set("updateFrequencyUnit", v)}
-                    error={fields.updateFrequencyUnit}
+                    onChange={(v) => choose("updateFrequencyUnit", v)}
+                    {...fieldProps("updateFrequencyUnit")}
                     options={optionsFor(choices.updateFrequencyUnit)}
                   />
                 </Wrap>
@@ -490,7 +536,7 @@ export default function EditDatasetRequestPage() {
                       onChange={(e) =>
                         set("updateFrequencyInterval", e.target.value.replace(/\D/g, ""))
                       }
-                      error={fields.updateFrequencyInterval}
+                      {...fieldProps("updateFrequencyInterval")}
                       hint={`ปรับปรุงทุกกี่${
                         labelOf(choices.updateFrequencyUnit, form.updateFrequencyUnit) ?? "หน่วย"
                       } เช่น ทุก 2 ปี ให้กรอก 2`}
@@ -504,8 +550,8 @@ export default function EditDatasetRequestPage() {
                     label="ความถี่ของการนำส่งข้อมูลเข้าสู่ระบบกลาง"
                     required
                     value={form.deliveryFrequency}
-                    onChange={(v) => set("deliveryFrequency", v)}
-                    error={fields.deliveryFrequency}
+                    onChange={(v) => choose("deliveryFrequency", v)}
+                    {...fieldProps("deliveryFrequency")}
                     options={optionsFor(choices.deliveryFrequency)}
                   />
                 </Wrap>
@@ -514,8 +560,8 @@ export default function EditDatasetRequestPage() {
                     label="ความละเอียดเชิงภูมิศาสตร์"
                     required
                     value={form.geoCoverage}
-                    onChange={(v) => set("geoCoverage", v)}
-                    error={fields.geoCoverage}
+                    onChange={(v) => choose("geoCoverage", v)}
+                    {...fieldProps("geoCoverage")}
                     options={optionsFor(choices.geoCoverage)}
                     hint="มิติการจัดจำแนกพื้นที่ในระดับย่อยที่สุดที่จัดเก็บหรือนำเสนอ"
                   />
@@ -529,7 +575,7 @@ export default function EditDatasetRequestPage() {
                     maxLength={300}
                     value={form.geoCoverageOther}
                     onChange={(e) => set("geoCoverageOther", e.target.value)}
-                    error={fields.geoCoverageOther}
+                    {...fieldProps("geoCoverageOther")}
                   />
                 </Wrap>
               ) : null}
@@ -540,7 +586,7 @@ export default function EditDatasetRequestPage() {
                   maxLength={200}
                   value={form.dataSource}
                   onChange={(e) => set("dataSource", e.target.value)}
-                  error={fields.dataSource}
+                  {...fieldProps("dataSource")}
                   hint="ระบุแหล่งที่มาพร้อมหน่วยงานที่จัดทำ เช่น สำรวจภาวะการทำงานของประชากร (สำนักงานสถิติแห่งชาติ)"
                 />
               </Wrap>
@@ -550,8 +596,8 @@ export default function EditDatasetRequestPage() {
                     label="รูปแบบการนำส่งข้อมูล"
                     required
                     value={form.dataFormat}
-                    onChange={(v) => set("dataFormat", v)}
-                    error={fields.dataFormat}
+                    onChange={(v) => choose("dataFormat", v)}
+                    {...fieldProps("dataFormat")}
                     options={optionsFor(choices.dataFormat)}
                   />
                 </Wrap>
@@ -563,7 +609,7 @@ export default function EditDatasetRequestPage() {
                       maxLength={150}
                       value={form.dataFormatOther}
                       onChange={(e) => set("dataFormatOther", e.target.value)}
-                      error={fields.dataFormatOther}
+                      {...fieldProps("dataFormatOther")}
                     />
                   </Wrap>
                 ) : null}
@@ -584,8 +630,8 @@ export default function EditDatasetRequestPage() {
                   label="หมวดหมู่ข้อมูลตามธรรมาภิบาลข้อมูลภาครัฐ"
                   required
                   value={form.dataCategory}
-                  onChange={(v) => set("dataCategory", v)}
-                  error={fields.dataCategory}
+                  onChange={(v) => choose("dataCategory", v)}
+                  {...fieldProps("dataCategory")}
                   options={optionsFor(choices.dataCategory)}
                 />
               </Wrap>
@@ -596,8 +642,8 @@ export default function EditDatasetRequestPage() {
                   labels={HAVE_LABELS}
                   value={form.containsPersonalData}
                   forced={rules.containsPersonalData.forced}
-                  onChange={(v) => set("containsPersonalData", v)}
-                  error={fields.containsPersonalData}
+                  onChange={(v) => choose("containsPersonalData", v)}
+                  {...answerProps("containsPersonalData")}
                   hint="ข้อมูลส่วนบุคคลตามกฎหมายว่าด้วยการคุ้มครองข้อมูลส่วนบุคคล"
                   forcedHint="ข้อมูลสาธารณะต้องไม่มีข้อมูลส่วนบุคคล"
                 />
@@ -614,7 +660,7 @@ export default function EditDatasetRequestPage() {
                       required
                       value={form.personalDataTypes}
                       onChange={(e) => set("personalDataTypes", e.target.value)}
-                      error={fields.personalDataTypes}
+                      {...fieldProps("personalDataTypes")}
                       hint="เช่น ชื่อ-นามสกุล เลขประจำตัวประชาชน ที่อยู่ เบอร์โทรศัพท์"
                     />
                   </Wrap>
@@ -624,7 +670,7 @@ export default function EditDatasetRequestPage() {
                       required
                       value={form.dataSubjectCategories}
                       onChange={(e) => set("dataSubjectCategories", e.target.value)}
-                      error={fields.dataSubjectCategories}
+                      {...fieldProps("dataSubjectCategories")}
                       hint="เช่น ผู้รับบริการของหน่วยงาน ผู้ประกอบการที่ขึ้นทะเบียน"
                     />
                   </Wrap>
@@ -633,8 +679,8 @@ export default function EditDatasetRequestPage() {
                       label="ระยะเวลาประมวลผลข้อมูลส่วนบุคคล"
                       required
                       value={form.personalDataProcessingPeriod}
-                      onChange={(v) => set("personalDataProcessingPeriod", v)}
-                      error={fields.personalDataProcessingPeriod}
+                      onChange={(v) => choose("personalDataProcessingPeriod", v)}
+                      {...fieldProps("personalDataProcessingPeriod")}
                       options={optionsFor(choices.personalDataProcessingPeriod)}
                     />
                   </Wrap>
@@ -648,7 +694,7 @@ export default function EditDatasetRequestPage() {
                           onChange={(e) =>
                             set("personalDataProcessingPeriodYear", e.target.value.replace(/\D/g, ""))
                           }
-                          error={fields.personalDataProcessingPeriodYear}
+                          {...fieldProps("personalDataProcessingPeriodYear")}
                           hint="นับจากวันที่เอกสารฉบับนี้มีผล"
                         />
                       </Wrap>
@@ -663,7 +709,7 @@ export default function EditDatasetRequestPage() {
                               e.target.value.replace(/\D/g, ""),
                             )
                           }
-                          error={fields.personalDataProcessingPeriodMonth}
+                          {...fieldProps("personalDataProcessingPeriodMonth")}
                           hint="0–11 เดือน ถ้ามากกว่านั้นให้กรอกเป็นจำนวนปี"
                         />
                       </Wrap>
@@ -678,8 +724,8 @@ export default function EditDatasetRequestPage() {
                     label="ระดับชั้นข้อมูล"
                     required
                     value={form.dataClassification}
-                    onChange={(v) => set("dataClassification", v)}
-                    error={fields.dataClassification}
+                    onChange={(v) => choose("dataClassification", v)}
+                    {...fieldProps("dataClassification")}
                     options={optionsFor(choices.dataClassification, rules.dataClassification.options)}
                     forced={Boolean(rules.dataClassification.forced)}
                     disabledHint={
@@ -695,8 +741,8 @@ export default function EditDatasetRequestPage() {
                     label="สัญญาอนุญาตให้ใช้ข้อมูล"
                     required
                     value={form.licenseId}
-                    onChange={(v) => set("licenseId", v)}
-                    error={fields.licenseId}
+                    onChange={(v) => choose("licenseId", v)}
+                    {...fieldProps("licenseId")}
                     options={optionsFor(choices.licenseId, rules.licenseId.options)}
                     forced={Boolean(rules.licenseId.forced)}
                     disabledHint={
@@ -725,8 +771,8 @@ export default function EditDatasetRequestPage() {
                   labels={GRANT_LABELS}
                   value={form.allowOriginalRawDataRetention}
                   forced={rules.allowOriginalRawDataRetention.forced}
-                  onChange={(v) => set("allowOriginalRawDataRetention", v)}
-                  error={fields.allowOriginalRawDataRetention}
+                  onChange={(v) => choose("allowOriginalRawDataRetention", v)}
+                  {...answerProps("allowOriginalRawDataRetention")}
                   forcedHint="ชุดข้อมูลที่เปิดเผยได้ทั้งฉบับ อนุญาตให้ทุกข้อโดยอัตโนมัติ"
                 />
               </Wrap>
@@ -737,8 +783,8 @@ export default function EditDatasetRequestPage() {
                   labels={GRANT_LABELS}
                   value={form.allowOriginalRawDataSharing}
                   forced={rules.allowOriginalRawDataSharing.forced}
-                  onChange={(v) => set("allowOriginalRawDataSharing", v)}
-                  error={fields.allowOriginalRawDataSharing}
+                  onChange={(v) => choose("allowOriginalRawDataSharing", v)}
+                  {...answerProps("allowOriginalRawDataSharing")}
                   forcedHint={
                     form.allowOriginalRawDataRetention === "N"
                       ? "ไม่ได้ให้สำนักงานเก็บข้อมูลดิบต้นฉบับไว้ จึงส่งต่อไม่ได้"
@@ -753,8 +799,8 @@ export default function EditDatasetRequestPage() {
                   labels={GRANT_LABELS}
                   value={form.allowTransformedRawDataSharing}
                   forced={rules.allowTransformedRawDataSharing.forced}
-                  onChange={(v) => set("allowTransformedRawDataSharing", v)}
-                  error={fields.allowTransformedRawDataSharing}
+                  onChange={(v) => choose("allowTransformedRawDataSharing", v)}
+                  {...answerProps("allowTransformedRawDataSharing")}
                   forcedHint="ข้อมูลระดับนี้ส่งต่อข้อมูลแปลงสภาพได้โดยอัตโนมัติ"
                 />
               </Wrap>
@@ -767,7 +813,7 @@ export default function EditDatasetRequestPage() {
                     onChange={(e) =>
                       set("allowTransformedRawDataSharingSpecifiedPlatforms", e.target.value)
                     }
-                    error={fields.allowTransformedRawDataSharingSpecifiedPlatforms}
+                    {...fieldProps("allowTransformedRawDataSharingSpecifiedPlatforms")}
                     hint="เว้นว่างได้ — เว้นไว้แปลว่าอนุญาตให้ส่งต่อไปยังระบบเชื่อมโยงข้อมูลใดก็ได้"
                   />
                 </Wrap>
@@ -779,8 +825,8 @@ export default function EditDatasetRequestPage() {
                   labels={GRANT_LABELS}
                   value={form.allowTransformedRawDataGdxSharing}
                   forced={rules.allowTransformedRawDataGdxSharing.forced}
-                  onChange={(v) => set("allowTransformedRawDataGdxSharing", v)}
-                  error={fields.allowTransformedRawDataGdxSharing}
+                  onChange={(v) => choose("allowTransformedRawDataGdxSharing", v)}
+                  {...answerProps("allowTransformedRawDataGdxSharing")}
                   forcedHint="ข้อมูลระดับนี้ส่งต่อข้อมูลแปลงสภาพได้โดยอัตโนมัติ"
                 />
               </Wrap>
@@ -791,8 +837,8 @@ export default function EditDatasetRequestPage() {
                   labels={GRANT_LABELS}
                   value={form.allowAggregatedDataSharing}
                   forced={rules.allowAggregatedDataSharing.forced}
-                  onChange={(v) => set("allowAggregatedDataSharing", v)}
-                  error={fields.allowAggregatedDataSharing}
+                  onChange={(v) => choose("allowAggregatedDataSharing", v)}
+                  {...answerProps("allowAggregatedDataSharing")}
                   forcedHint="ข้อมูลระดับนี้ส่งต่อข้อมูลรวมได้โดยอัตโนมัติ"
                 />
               </Wrap>
@@ -804,8 +850,8 @@ export default function EditDatasetRequestPage() {
                     labels={ASSIGN_LABELS}
                     value={form.authorizePersonalDataAnonymization}
                     forced=""
-                    onChange={(v) => set("authorizePersonalDataAnonymization", v)}
-                    error={fields.authorizePersonalDataAnonymization}
+                    onChange={(v) => choose("authorizePersonalDataAnonymization", v)}
+                    {...answerProps("authorizePersonalDataAnonymization")}
                     hint="ถ้าไม่มอบหมาย สำนักงานจะนำข้อมูลชุดนี้ไปใช้สร้างแบบจำลองไม่ได้"
                   />
                 </Wrap>
@@ -899,6 +945,8 @@ function Choice({
   value,
   onChange,
   error,
+  valid,
+  onBlur,
   options,
   hint,
   forced,
@@ -909,6 +957,8 @@ function Choice({
   value: string;
   onChange: (value: string) => void;
   error?: string;
+  valid?: boolean;
+  onBlur?: () => void;
   options: Array<[string, string]>;
   hint?: string;
   /** true = ชีท conditions บังคับค่านี้ ผู้ใช้เปลี่ยนไม่ได้ แต่ยังต้องเห็น */
@@ -922,6 +972,9 @@ function Choice({
       required={required}
       value={value}
       error={error}
+      /* ค่าที่ระบบบังคับไม่ใช่คำตอบของผู้ใช้ ขอบเขียวจึงไม่ขึ้น — มีบรรทัดบอกเหตุผลแทนอยู่แล้ว */
+      valid={valid && !locked}
+      onBlur={onBlur}
       disabled={locked}
       hint={locked ? (disabledHint ?? hint) : hint}
       onChange={(e) => onChange(e.target.value)}
@@ -948,6 +1001,7 @@ function YesNo({
   forced,
   onChange,
   error,
+  onBlur,
   hint,
   forcedHint,
 }: {
@@ -958,6 +1012,8 @@ function YesNo({
   forced: string;
   onChange: (value: string) => void;
   error?: string;
+  /** เรียกเมื่อออกจากกลุ่มตัวเลือก — คำถามที่เข้าไปแล้วไม่ตอบต้องเตือนได้เหมือนช่องอื่น */
+  onBlur?: () => void;
   hint?: string;
   forcedHint?: string;
 }) {
@@ -991,6 +1047,7 @@ function YesNo({
               checked={value === code}
               disabled={locked}
               onChange={() => onChange(code)}
+              onBlur={onBlur}
               className="h-4 w-4 border-line text-coral-500 focus:ring-2 focus:ring-navy-100"
             />
             {labels[code]}
@@ -1041,10 +1098,13 @@ function KeywordInput({
   value,
   onChange,
   error,
+  onBlur,
 }: {
   value: string;
   onChange: (next: string) => void;
   error?: string;
+  /** เรียกหลังเก็บคำที่ค้างอยู่ในช่องพิมพ์แล้ว ไม่ใช่ก่อน — ไม่งั้นคำสุดท้ายยังไม่นับตอนตรวจ */
+  onBlur?: () => void;
 }) {
   const [draft, setDraft] = useState("");
   const tags = splitTags(value);
@@ -1107,7 +1167,10 @@ function KeywordInput({
               add();
             }
           }}
-          onBlur={add}
+          onBlur={() => {
+            add();
+            onBlur?.();
+          }}
           maxLength={Math.max(remaining, 0)}
           placeholder={tags.length === 0 ? "พิมพ์คำสำคัญแล้วกด Enter" : ""}
           className="h-8 min-w-40 flex-1 bg-transparent px-1.5 text-[15px] outline-none placeholder:text-ink-subtle"
