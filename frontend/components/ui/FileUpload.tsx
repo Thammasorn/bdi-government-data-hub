@@ -19,6 +19,7 @@ export function FileUpload({
   error,
   value,
   uploading,
+  removing,
   onSelect,
   onRemove,
   accept = "application/pdf",
@@ -30,6 +31,8 @@ export function FileUpload({
   error?: string;
   value: UploadedFile | null;
   uploading?: boolean;
+  /** ระหว่างที่คำขอลบไฟล์ยังค้างอยู่ที่ API — ปุ่มต้องกดซ้ำไม่ได้ */
+  removing?: boolean;
   onSelect: (file: File) => void;
   onRemove: () => void;
   /** ชนิดไฟล์ต่างกันไปตามเอกสาร — เส้นทางชุดข้อมูลรับ XLSX/CSV/JSON ด้วย */
@@ -68,9 +71,10 @@ export function FileUpload({
           <button
             type="button"
             onClick={onRemove}
-            className="rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-ink-muted transition-colors hover:bg-danger-bg hover:text-danger"
+            disabled={removing}
+            className="rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-ink-muted transition-colors hover:bg-danger-bg hover:text-danger disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-ink-muted"
           >
-            ลบ
+            {removing ? "กำลังลบ…" : "ลบ"}
           </button>
         </div>
       ) : (

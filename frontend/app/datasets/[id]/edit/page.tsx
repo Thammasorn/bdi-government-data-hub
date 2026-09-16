@@ -92,6 +92,7 @@ export default function EditDatasetRequestPage() {
   const [dictionary, setDictionary] = useState<UploadedFile | null>(null);
   const [example, setExample] = useState<UploadedFile | null>(null);
   const [uploadingKind, setUploadingKind] = useState<string | null>(null);
+  const [removingKind, setRemovingKind] = useState<string | null>(null);
 
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -227,6 +228,34 @@ export default function EditDatasetRequestPage() {
       handleApiError(err);
     } finally {
       setUploadingKind(null);
+    }
+  };
+
+  /**
+   * ลบไฟล์ต้องยิงถึง API ไม่ใช่ล้างแต่ state — บั๊กเดียวกับฟอร์มลงทะเบียนหน่วยงาน
+   * (การ์ด "Bug ลบไฟล์ในฟอร์มแล้วไม่หาย")
+   *
+   * ที่นี่มีผลกับปุ่ม "ตรวจสอบคำขอ" ด้วย: มันปิดตัวเองเมื่อ `dictionary` เป็น null ซึ่งก่อน
+   * หน้านี้เป็นการปิดตามสิ่งที่หน้าเว็บคิดว่าเกิดขึ้น ขณะที่เซิร์ฟเวอร์ยังเก็บไฟล์อยู่และ
+   * ยอมให้นำส่ง ตอนนี้ทั้งสองฝั่งพูดเรื่องเดียวกัน
+   */
+  const removeFile = async (kind: "DATA_DICTIONARY" | "EXAMPLE_DATA", file: UploadedFile) => {
+    setRemovingKind(kind);
+    try {
+      await api.del(`/api/dataset-requests/${id}/attachments/${file.id}`);
+      if (kind === "DATA_DICTIONARY") setDictionary(null);
+      else setExample(null);
+      show({ tone: "success", title: "ลบไฟล์แล้ว" });
+    } catch (err) {
+      // ไม่เดินผ่าน handleApiError() เพราะมันเขียน `fields` ทับทั้งชุด แล้วขอบแดงของช่อง
+      // ที่ผู้ใช้กำลังไล่แก้อยู่จะหายไปพร้อมกัน ทั้งที่การลบไฟล์ไม่เกี่ยวกับช่องเหล่านั้น
+      show({
+        tone: "error",
+        title: "ลบไฟล์ไม่สำเร็จ",
+        detail: err instanceof ApiError ? err.message : undefined,
+      });
+    } finally {
+      setRemovingKind(null);
     }
   };
 
@@ -798,8 +827,9 @@ export default function EditDatasetRequestPage() {
                   value={dictionary}
                   error={fields.DATA_DICTIONARY}
                   uploading={uploadingKind === "DATA_DICTIONARY"}
+                  removing={removingKind === "DATA_DICTIONARY"}
                   onSelect={(f) => uploadFile("DATA_DICTIONARY", f)}
-                  onRemove={() => setDictionary(null)}
+                  onRemove={() => dictionary && removeFile("DATA_DICTIONARY", dictionary)}
                   accept=".pdf,.xlsx,.xls,.csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
                   supportText="รองรับ PDF, XLSX หรือ CSV ขนาดไม่เกิน 10 MB"
                 />
@@ -810,8 +840,9 @@ export default function EditDatasetRequestPage() {
                   value={example}
                   error={fields.EXAMPLE_DATA}
                   uploading={uploadingKind === "EXAMPLE_DATA"}
+                  removing={removingKind === "EXAMPLE_DATA"}
                   onSelect={(f) => uploadFile("EXAMPLE_DATA", f)}
-                  onRemove={() => setExample(null)}
+                  onRemove={() => example && removeFile("EXAMPLE_DATA", example)}
                   accept=".csv,.xlsx,.xls,.json,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                   supportText="รองรับ CSV, XLSX หรือ JSON ขนาดไม่เกิน 10 MB"
                 />

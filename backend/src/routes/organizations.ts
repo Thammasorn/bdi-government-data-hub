@@ -20,6 +20,7 @@ import {
   AccountType,
   ActivationKeyStatus,
   AttachmentOwnerType,
+  AttachmentStatus,
   AttachmentType,
   OrganizationStatus,
   Prisma,
@@ -40,6 +41,7 @@ import {
   publicAttachment,
   storeAttachment,
   sendRenderedPdf,
+  softDeleteAttachment,
   streamAttachment,
   uploadedFile,
 } from "../lib/attachment.js";
@@ -1516,6 +1518,21 @@ organizationRouter.post("/:id/attachments", upload.single("file"), async (req, r
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
+  /**
+   * เงื่อนไขเดียวกับ PATCH /:id และ DELETE /:id/attachments/:attachmentId
+   *
+   * เดิมที่นี่ดูแต่สิทธิ์ ไม่ดูสถานะ ผู้ใช้ของหน่วยงานจึงอัปโหลดทับไฟล์แนบของคำขอที่
+   * **นำส่งไปแล้วและผู้ตรวจกำลังอ่านอยู่** ได้ — storeAttachment() เปลี่ยนไฟล์เดิมเป็น
+   * REPLACED แล้วชี้ไฟล์ปัจจุบันไปที่ใบใหม่ เอกสารที่ผู้ตรวจเห็นจึงเปลี่ยนใต้มือเขา
+   * โดยไม่มีอะไรบนหน้าจอบอก และไม่ต้องเดินผ่านการส่งกลับมาแก้เลย
+   *
+   * เจอระหว่างตรวจการ์ด "Bug ลบไฟล์ในฟอร์มแล้วไม่หาย" — ตอนที่เส้นทางลบถูกกั้นด้วย
+   * สถานะแล้ว การอัปโหลดทับที่ยังไม่ถูกกั้นก็ให้ผลเดียวกันคือเปลี่ยนไฟล์ของคำขอที่ล็อกอยู่
+   */
+  if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
+    res.status(409).json({ error: "locked", message: "คำขออยู่ระหว่างการตรวจสอบ แก้ไขไม่ได้" });
+    return;
+  }
 
   const attachment = await storeAttachment(prisma, {
     ownerType: AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
@@ -1578,6 +1595,107 @@ organizationRouter.get("/:id/attachments/:attachmentId", async (req, res) => {
   });
 
   await streamAttachment(res, attachment);
+});
+
+/**
+ * ลบไฟล์ที่แนบไว้ในช่องหนึ่งของฟอร์มออก
+ *
+ * เดิมไม่มี route นี้เลย ปุ่ม "ลบ" บน FileUpload จึงล้างแต่ state ในเบราว์เซอร์ ไฟล์ฝั่ง
+ * เซิร์ฟเวอร์ยังเป็น ACTIVE อยู่ — กดบันทึกแบบร่างแล้วออกไปกลับเข้ามา `GET /:id` ก็อ่าน
+ * จาก activeAttachments() ได้ไฟล์เดิมกลับมาตามเดิม (การ์ด "Bug ลบไฟล์ในฟอร์มแล้วไม่หาย")
+ *
+ * ที่หนักกว่าการแสดงผลคือ `POST /:id/submit` ตรวจไฟล์คำสั่งแต่งตั้งด้วย activeAttachment()
+ * ตัวเดียวกัน ผู้ใช้ที่ลบไฟล์ผิดออกแล้วไม่ได้แนบใหม่จึงนำส่งผ่าน และผู้ตรวจได้ไฟล์ที่
+ * เจ้าของคำขอเชื่อว่าลบไปแล้ว ไม่ใช่แค่เห็นชื่อไฟล์ค้างบนหน้าจอ
+ *
+ * ลบแบบ soft delete ตามกฎของ lib/attachment.ts — object ใน storage ไม่เคยถูกลบ
+ */
+const FORM_REMOVED_REASON = "ผู้กรอกลบไฟล์ออกจากฟอร์ม";
+
+organizationRouter.delete("/:id/attachments/:attachmentId", async (req, res) => {
+  const session = req.session!;
+  const request = await prisma.organizationRegistrationRequest.findUnique({
+    where: { id: req.params.id },
+  });
+  if (!request || !canEdit(session, request)) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
+    return;
+  }
+  // เงื่อนไขเดียวกับ PATCH /:id — นำส่งไปแล้วห้ามถอนไฟล์ออกจากคำขอที่ผู้ตรวจกำลังอ่าน
+  if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
+    res.status(409).json({ error: "locked", message: "คำขออยู่ระหว่างการตรวจสอบ แก้ไขไม่ได้" });
+    return;
+  }
+
+  const attachment = await prisma.attachment.findFirst({
+    where: {
+      id: req.params.attachmentId,
+      ownerType: AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
+      ownerId: request.id,
+    },
+  });
+  if (!attachment) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบไฟล์นี้" });
+    return;
+  }
+
+  /**
+   * ลบได้เฉพาะสองช่องที่ฟอร์มเป็นเจ้าของ — เอกสารข้อตกลง A0–A3 ที่ระบบ render เองเป็น
+   * ไฟล์แนบของคำขอใบเดียวกัน และ id ของมันก็ส่งออกไปกับ `GET /:id` เหมือนกัน ถ้าไม่กั้น
+   * ชนิดไว้ที่นี่ คำขอที่ยิงตรงจะลบเอกสารที่หน้าตรวจสอบก่อนนำส่งและการลงนามต้องใช้ได้
+   */
+  if (
+    attachment.attachmentType !== AttachmentType.AUTHORIZED_REPRESENTATIVE_APPOINTMENT_ORDER &&
+    attachment.attachmentType !== AttachmentType.POWER_OF_ATTORNEY
+  ) {
+    res.status(409).json({
+      error: "locked",
+      message: "เอกสารฉบับนี้ระบบสร้างขึ้นเอง ลบจากฟอร์มไม่ได้",
+    });
+    return;
+  }
+
+  // กดสองทีหรือลบซ้ำจากอีกแท็บ — ไฟล์หายไปแล้วจริง ๆ ตอบว่าสำเร็จ ไม่ใช่ 404 ที่ดูเหมือนพัง
+  if (attachment.status !== AttachmentStatus.ACTIVE) {
+    res.status(204).end();
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await softDeleteAttachment(tx, attachment.id, {
+      deletedBy: session.sub,
+      reason: FORM_REMOVED_REASON,
+    });
+    /**
+     * คอลัมน์ FK ต้องว่างตามไปด้วย ไม่งั้นมันยังชี้ว่าไฟล์ที่ถูกลบคือไฟล์ปัจจุบันของช่อง
+     *
+     * "ยังชี้ไฟล์ใบนี้อยู่" อยู่ใน WHERE ไม่ใช่ใน if — อีกแท็บอัปโหลดไฟล์ใหม่แทรกเข้ามา
+     * ระหว่างนี้ได้ ถ้าเกิดขึ้น คอลัมน์ชี้ไฟล์ใหม่แล้วและต้องไม่ถูกล้างทิ้งตามไฟล์เก่า
+     */
+    const appointmentOrder =
+      attachment.attachmentType === AttachmentType.AUTHORIZED_REPRESENTATIVE_APPOINTMENT_ORDER;
+    await tx.organizationRegistrationRequest.updateMany({
+      where: appointmentOrder
+        ? { id: request.id, authorizedRepresentativeAppointmentAttachmentId: attachment.id }
+        : { id: request.id, powerOfAttorneyAttachmentId: attachment.id },
+      data: appointmentOrder
+        ? { authorizedRepresentativeAppointmentAttachmentId: null, updatedBy: session.sub }
+        : { powerOfAttorneyAttachmentId: null, updatedBy: session.sub },
+    });
+  });
+
+  await logAudit({
+    action: AuditAction.ATTACHMENT_DELETED,
+    subjectType: AuditSubject.ATTACHMENT,
+    subjectId: attachment.id,
+    organizationId: request.organizationId,
+    before: {
+      attachmentType: attachment.attachmentType,
+      filename: attachment.originalFileName,
+    },
+  });
+
+  res.status(204).end();
 });
 
 // ---------------------------------------------------------------- generate PDF
