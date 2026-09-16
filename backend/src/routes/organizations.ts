@@ -1518,6 +1518,21 @@ organizationRouter.post("/:id/attachments", upload.single("file"), async (req, r
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
+  /**
+   * เงื่อนไขเดียวกับ PATCH /:id และ DELETE /:id/attachments/:attachmentId
+   *
+   * เดิมที่นี่ดูแต่สิทธิ์ ไม่ดูสถานะ ผู้ใช้ของหน่วยงานจึงอัปโหลดทับไฟล์แนบของคำขอที่
+   * **นำส่งไปแล้วและผู้ตรวจกำลังอ่านอยู่** ได้ — storeAttachment() เปลี่ยนไฟล์เดิมเป็น
+   * REPLACED แล้วชี้ไฟล์ปัจจุบันไปที่ใบใหม่ เอกสารที่ผู้ตรวจเห็นจึงเปลี่ยนใต้มือเขา
+   * โดยไม่มีอะไรบนหน้าจอบอก และไม่ต้องเดินผ่านการส่งกลับมาแก้เลย
+   *
+   * เจอระหว่างตรวจการ์ด "Bug ลบไฟล์ในฟอร์มแล้วไม่หาย" — ตอนที่เส้นทางลบถูกกั้นด้วย
+   * สถานะแล้ว การอัปโหลดทับที่ยังไม่ถูกกั้นก็ให้ผลเดียวกันคือเปลี่ยนไฟล์ของคำขอที่ล็อกอยู่
+   */
+  if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
+    res.status(409).json({ error: "locked", message: "คำขออยู่ระหว่างการตรวจสอบ แก้ไขไม่ได้" });
+    return;
+  }
 
   const attachment = await storeAttachment(prisma, {
     ownerType: AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
