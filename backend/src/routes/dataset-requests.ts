@@ -936,6 +936,27 @@ datasetRequestRouter.post("/:id/generate-form", async (req, res) => {
     return;
   }
   /**
+   * ไม่มีพจนานุกรมข้อมูลก็สร้างเอกสารไม่ได้ — ตอนนำส่งก็บังคับข้อนี้อยู่แล้ว การปล่อยให้
+   * สร้างเอกสารก่อนแปลว่าผู้กรอกเดินไปจนถึงหน้าตรวจสอบแล้วจึงถูกตีกลับ ห่างจากช่องที่ต้องแก้
+   * ไปหลายหน้าจอ · ปุ่ม "ตรวจสอบคำขอ" ในหน้ากรอกถูกปิดไว้ด้วย นี่คือกฎฝั่งเซิร์ฟเวอร์ของมัน
+   * ไม่ใช่การตรวจซ้ำเฉย ๆ — แท็บที่เปิดค้างไว้ยังยิงเข้ามาได้
+   */
+  const dictionary = await activeAttachment(
+    prisma,
+    OWNER,
+    request.id,
+    AttachmentType.DATA_DICTIONARY,
+  );
+  if (!dictionary) {
+    res.status(400).json({
+      error: "validation",
+      message: "ข้อมูลยังไม่ครบถ้วน กรุณาตรวจสอบอีกครั้ง",
+      fields: { DATA_DICTIONARY: "กรุณาแนบพจนานุกรมข้อมูล (Data Dictionary)" },
+    });
+    return;
+  }
+
+  /**
    * เอกสารที่สร้างคือ A4 (แบบนำส่งข้อมูล) ฉบับจริงจาก template ของฝ่ายกฎหมาย
    *
    * ก่อนหน้านี้ตรงนี้เรียก renderDatasetRegistrationForm() ซึ่งวางเลย์เอาต์ขึ้นมาเองด้วย
