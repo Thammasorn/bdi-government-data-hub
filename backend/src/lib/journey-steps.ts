@@ -297,6 +297,24 @@ function latestBySlot(tasks: JourneyTaskRow[], plan: StepPlan[]) {
   return { latest, slotOfTaskId };
 }
 
+/**
+ * เลขลำดับของการส่งกลับครั้งล่าสุด — ทุกแถวที่ลำดับไม่เกินค่านี้อยู่ใน**รอบที่ถูกล้างไปแล้ว**
+ *
+ * การส่งกลับ (รวม "ยกเลิกผลการตรวจสอบ" ซึ่งปิดด่านด้วย RETURNED เช่นกัน) ล้างผลของทุกด่าน
+ * ที่ทำไปในรอบนั้น และหน่วยงานนำส่งใหม่แล้วคำขอเดินใหม่ตั้งแต่ด่านแรกเสมอ แถวที่เกิด
+ * หลังการส่งกลับจึงเป็นของรอบใหม่ ส่วนแถวที่เกิดก่อนหรือคือตัวส่งกลับเองเป็นของรอบเก่า
+ * null = ยังไม่เคยถูกส่งกลับ ทุกแถวยังนับ
+ */
+function lastReturnSequence(tasks: JourneyTaskRow[]): number | null {
+  let last: number | null = null;
+  for (const task of tasks) {
+    if (task.status === ReviewTaskStatus.COMPLETED && task.result === ReviewResult.RETURNED) {
+      if (last === null || task.sequenceNumber > last) last = task.sequenceNumber;
+    }
+  }
+  return last;
+}
+
 function phaseFor(status: RequestStatus): JourneyPhase {
   switch (status) {
     case RequestStatus.DRAFT:
@@ -340,6 +358,7 @@ export function buildJourneyProgress(params: {
   const { latest, slotOfTaskId } = latestBySlot(params.tasks, plan);
   const activeSlot = params.active ? (slotOfTaskId.get(params.active.id) ?? null) : null;
   const phase = phaseFor(params.status);
+  const lastReturn = lastReturnSequence(params.tasks);
 
   /**
    * ขั้นที่ไม่ใช่ด่านยังไม่จบก็ต่อเมื่อคำขอยัง "ไม่ได้อยู่ในมือใคร" — ร่างอยู่ หรือถูกส่ง
@@ -375,13 +394,26 @@ export function buildJourneyProgress(params: {
        *    นี่คือภาพในการ์ด: ผู้ประสานงานของ BDI กดยกเลิกผลการตรวจสอบที่ขั้นที่ 3 แล้วขั้นที่ 2
        *    ยังขึ้น "เสร็จสิ้น"
        *
-       * ดูที่ `phase` ไม่ใช่ที่ผลของด่านนี้อย่างเดียว เพราะข้อ 2 อ่านจากแถวของตัวเองไม่ได้
-       * เลย — แถวนั้นบอกแค่ว่ารอบก่อนผ่าน ไม่ได้บอกว่ารอบก่อนยังนับอยู่ไหม
+       * ข้อ 2 อ่านจากแถวของตัวเองไม่ได้เลย — แถวนั้นบอกแค่ว่ารอบก่อนผ่าน ไม่ได้บอกว่ารอบก่อน
+       * ยังนับอยู่ไหม จึงต้องเทียบกับการส่งกลับครั้งล่าสุด: แถวที่ลำดับไม่เกินมันคือของรอบ
+       * ที่ถูกล้างไปแล้ว **ไม่ว่าคำขอจะยังรอแก้ไขอยู่หรือนำส่งใหม่ไปแล้วก็ตาม** — รอบแรก
+       * ของการแก้ (2026-09-10) ถามแค่ `phase === WAITING_REVISION` จึงถูกเฉพาะช่วงที่คำขอ
+       * ยังอยู่กับหน่วยงาน พอหน่วยงานนำส่งใหม่ phase กลับเป็น IN_PROGRESS แล้วด่านที่ 3
+       * (ลงนาม) ซึ่งผ่านไปในรอบที่ถูกล้างก็กลับมาขึ้นเขียว "เสร็จสิ้น" ทั้งที่คำขอเพิ่งกลับ
+       * ไปอยู่ด่านที่ 2 — การ์ด "BUG registration step" (2026-09-18) ทั้งสองเส้นทาง
+       *
+       * การเทียบ `phase` ยังอยู่เป็นตาข่ายชั้นสอง สำหรับสถานะ RETURNED ที่ไม่ได้มาจากแถว
+       * RETURNED (เช่น แก้ข้อมูลมือ) — ถ้าลำดับตอบได้อยู่แล้วมันไม่เปลี่ยนคำตอบ
        *
        * ขั้นที่ยังไม่เคยมีใครแตะ (ไม่มีแถว) ยังเป็น "ยังไม่เริ่ม" ตามเดิม — ในภาพคือขั้นที่ 3
        * ซึ่งถูกอยู่แล้ว
        */
-    } else if (task && (task.result === ReviewResult.RETURNED || phase === "WAITING_REVISION")) {
+    } else if (
+      task &&
+      (task.result === ReviewResult.RETURNED ||
+        (lastReturn !== null && task.sequenceNumber <= lastReturn) ||
+        phase === "WAITING_REVISION")
+    ) {
       state = "RETURNED";
     } else if (task?.result && PASSING_RESULTS.includes(task.result)) {
       state = "DONE";
