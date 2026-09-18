@@ -34,6 +34,7 @@ import {
 } from "../lib/iam.js";
 import { announceRoleReplacement } from "../lib/notify.js";
 import { sendOtpEmail } from "../lib/mail.js";
+import { findUsablePasswordResetToken, type PasswordResetLookupFailure } from "../lib/password-reset.js";
 import { ROLE_LABELS } from "../lib/roles.js";
 import {
   activeSessionsFor,
@@ -693,6 +694,137 @@ authRouter.post("/activate", async (req, res) => {
   await announceRoleReplacement(replaced);
 
   await issueSession(req, res, key.userAccountId);
+});
+
+// ---------------------------------------------------------------- ตั้งรหัสผ่านใหม่
+
+const PASSWORD_RESET_FAILURE_MESSAGES: Record<PasswordResetLookupFailure, string> = {
+  expired: "ลิงก์ตั้งรหัสผ่านใหม่หมดอายุแล้ว กรุณาติดต่อผู้ประสานงานของ BDI เพื่อขอลิงก์ใหม่",
+  used: "ลิงก์นี้ถูกใช้ตั้งรหัสผ่านไปแล้ว กรุณาเข้าสู่ระบบด้วยรหัสผ่านใหม่",
+  revoked: "ลิงก์นี้ถูกยกเลิกแล้วเพราะมีการส่งลิงก์ใหม่ให้ กรุณาใช้ลิงก์จากอีเมลฉบับล่าสุด",
+  not_found: "ไม่พบลิงก์ตั้งรหัสผ่านใหม่นี้ในระบบ",
+};
+
+/**
+ * ตรวจลิงก์ก่อนแสดงฟอร์ม — คู่กับ `GET /invitation` ของคำเชิญ
+ *
+ * ตอบอีเมลของบัญชีกลับไปให้หน้าจอบอกว่ากำลังตั้งรหัสของบัญชีไหน ปลอดภัยด้วยเหตุผลเดียวกับ
+ * `GET /invitation`: ความลับคือโทเคนในลิงก์ และอีเมลนี้คือที่อยู่ที่ลิงก์ถูกส่งไปหาเอง
+ * บัญชีที่ไม่ `ACTIVE` แล้ว (ถูกระงับหลังส่งลิงก์) ตอบ 409 ไม่ใช่ 410 — ลิงก์ไม่ได้เสีย
+ * แต่บัญชีเข้าไม่ได้ ข้อความจึงต้องชี้ไปที่ BDI ไม่ใช่ให้ขอลิงก์ใหม่
+ */
+authRouter.get("/password-reset", async (req, res) => {
+  const token = String(req.query.token ?? "");
+  if (!token) {
+    res.status(400).json({ error: "invalid", message: "ไม่พบ token" });
+    return;
+  }
+  const { record, reason } = await findUsablePasswordResetToken(token);
+  if (!record) {
+    res.status(410).json({ error: reason, message: PASSWORD_RESET_FAILURE_MESSAGES[reason] });
+    return;
+  }
+  if (record.userAccount.status !== UserAccountStatus.ACTIVE) {
+    res.status(409).json({
+      error: "inactive",
+      message: "บัญชีนี้ถูกระงับการใช้งาน จึงตั้งรหัสผ่านใหม่ไม่ได้ กรุณาติดต่อผู้ประสานงานของ BDI",
+    });
+    return;
+  }
+  res.json({ email: record.userAccount.email, expiresAt: record.expiresAt });
+});
+
+const passwordResetSchema = z
+  .object({
+    token: z.string().min(1),
+    password: passwordSchema,
+    confirmPassword: z.string().min(1, "กรุณากรอกรหัสผ่านอีกครั้งเพื่อยืนยัน"),
+  })
+  .refine((value) => value.password === value.confirmPassword, {
+    path: ["confirmPassword"],
+    message: "รหัสผ่านทั้งสองช่องไม่ตรงกัน",
+  });
+
+/**
+ * ตั้งรหัสผ่านใหม่ด้วยลิงก์ที่ผู้ดูแลระบบสั่งออกให้ — การ์ด "API ให้ system admin reset
+ * password ให้ user" (2026-09-18)
+ *
+ * ทำสามอย่างใน transaction เดียว: เขียน `password_hash`, เผาโทเคน (`used_at`), และ
+ * **เพิกถอน session ทุกใบของบัญชีด้วย `PASSWORD_CHANGED`** — เหตุผลที่ `lib/session.ts`
+ * เขียนรอไว้ตั้งแต่ 2026-08-16 ได้ผู้เรียกตัวแรกที่นี่ คนที่ขอรีเซ็ตมักขอเพราะสงสัยว่า
+ * รหัสเดิมหลุด ใบที่ล็อกอินค้างอยู่ที่ไหนสักแห่งจึงต้องตายพร้อมรหัสเดิม
+ *
+ * **ไม่ออก session ให้** ต่างจาก `/activate` — การ์ดข้อ 4 สั่งให้กลับไปหน้าเข้าสู่ระบบ
+ * และการเข้าสู่ระบบด้วยรหัสผ่านต้องผ่าน OTP ทางอีเมลเสมอ ถ้าออก session ตรงนี้เท่ากับ
+ * เปิดทางเข้าระบบด้วยลิงก์ในอีเมลฉบับเดียวโดยข้ามชั้นที่สองไป
+ */
+authRouter.post("/password-reset", async (req, res) => {
+  const parsed = passwordResetSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+    return;
+  }
+  const { record, reason } = await findUsablePasswordResetToken(parsed.data.token);
+  if (!record) {
+    res.status(410).json({ error: reason, message: PASSWORD_RESET_FAILURE_MESSAGES[reason] });
+    return;
+  }
+  if (record.userAccount.status !== UserAccountStatus.ACTIVE) {
+    res.status(409).json({
+      error: "inactive",
+      message: "บัญชีนี้ถูกระงับการใช้งาน จึงตั้งรหัสผ่านใหม่ไม่ได้ กรุณาติดต่อผู้ประสานงานของ BDI",
+    });
+    return;
+  }
+
+  const passwordHash = await hashPassword(parsed.data.password);
+  const revokedSessions = await prisma.$transaction(async (tx) => {
+    // updateMany มีเงื่อนไข used_at IS NULL — สองคำขอที่มาพร้อมกันด้วยลิงก์เดียวกันจะมี
+    // แค่ใบเดียวที่นับว่าเผาโทเคนได้ อีกใบตอบ "ใช้ไปแล้ว" แทนที่จะเขียนรหัสทับกันสองรอบ
+    const burned = await tx.passwordResetToken.updateMany({
+      where: { id: record.id, usedAt: null, revokedAt: null },
+      data: { usedAt: new Date() },
+    });
+    if (burned.count === 0) return null;
+    await tx.userAccount.update({
+      where: { id: record.userAccountId },
+      data: { passwordHash, updatedBy: record.userAccountId },
+    });
+    return revokeSessionsFor(tx, {
+      userAccountId: record.userAccountId,
+      reason: SessionRevokeReason.PASSWORD_CHANGED,
+    });
+  });
+  if (revokedSessions === null) {
+    res.status(410).json({ error: "used", message: PASSWORD_RESET_FAILURE_MESSAGES.used });
+    return;
+  }
+
+  await logAudit({
+    action: AuditAction.PASSWORD_RESET_COMPLETED,
+    subjectType: AuditSubject.USER_ACCOUNT,
+    subjectId: record.userAccountId,
+    actorId: record.userAccountId,
+    metadata: {
+      password_reset_token_id: record.id,
+      requested_via: record.requestedVia,
+      sessions_revoked: revokedSessions,
+    },
+  });
+
+  /**
+   * เบราว์เซอร์นี้ถือ cookie ของบัญชีที่เพิ่งถูกเพิกถอนอยู่ — ล้างให้เลย ไม่ต้องรอ 401
+   * แต่ถ้าเป็น cookie ของ**คนอื่น** (เปิดลิงก์ของเพื่อนร่วมงานในเครื่องที่ตัวเองล็อกอินค้าง)
+   * ปล่อยไว้ session ของเขาไม่ได้ถูกแตะ จึงไม่มีเหตุให้เขาหลุดออกจากระบบ
+   */
+  const presented = req.cookies?.[SESSION_COOKIE];
+  if (presented) {
+    const { session } = await resolveSession(presented);
+    if (!session || session.userAccountId === record.userAccountId) {
+      res.clearCookie(SESSION_COOKIE, { ...cookieOptions(), maxAge: undefined });
+    }
+  }
+  res.json({ ok: true, email: record.userAccount.email });
 });
 
 // ---------------------------------------------------------------- เข้า/ออกระบบ

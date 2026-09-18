@@ -106,6 +106,18 @@ export const AuditAction = {
   LOGIN_FAILED: "LOGIN_FAILED",
 
   /**
+   * ตั้งรหัสผ่านใหม่ผ่านลิงก์ที่ผู้ดูแลระบบสั่งออกให้ — เพิ่มจากรายการตัวอย่างใน sheet
+   * (การ์ด "API ให้ system admin reset password ให้ user" 2026-09-18)
+   *
+   * สองเหตุการณ์ คนละคนทำ: REQUESTED คือแอดมินสั่งออกลิงก์ (actor = ระบบ เพราะมาทาง
+   * `x-admin-token` ดู docs/09 §4) COMPLETED คือเจ้าของบัญชีกดลิงก์แล้วตั้งรหัสสำเร็จ
+   * ระยะห่างระหว่างสองแถวนี้ และแถว REQUESTED ที่ไม่มี COMPLETED ตามมา คือสิ่งที่ต้องดู
+   * เวลาสอบสวนว่าลิงก์ถูกส่งไปหาใครแล้วใครเป็นคนใช้
+   */
+  PASSWORD_RESET_REQUESTED: "PASSWORD_RESET_REQUESTED",
+  PASSWORD_RESET_COMPLETED: "PASSWORD_RESET_COMPLETED",
+
+  /**
    * session ถูกเพิกถอน — เพิ่มจากรายการตัวอย่างใน sheet พร้อมตาราง `iam.session`
    * เหตุผลอยู่ใน `metadata_json.reason` (LOGOUT · LOGOUT_ALL · PASSWORD_CHANGED ·
    * ACCOUNT_SUSPENDED · ROTATED · EXPIRED) ไม่ได้แยกเป็น action คนละตัว เพราะทั้งหมด
