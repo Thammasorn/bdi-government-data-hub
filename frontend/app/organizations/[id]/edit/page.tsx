@@ -640,7 +640,7 @@ export default function EditOrganizationPage() {
                     <TextField label="เบอร์โทรศัพท์" required inputMode="tel" maxLength={20} value={form.signatoryPhone} onChange={(e) => set("signatoryPhone", e.target.value)} {...fieldProps("signatoryPhone")} hint="มือถือ 10 หลัก หรือเบอร์ที่ทำงาน 9 หลัก" />
                   </Wrap>
                   <Wrap name="signatoryPhoneExtension">
-                    <TextField label="ต่อ" inputMode="numeric" maxLength={MAX_PHONE_EXTENSION} placeholder="1232" value={form.signatoryPhoneExtension} onChange={(e) => set("signatoryPhoneExtension", e.target.value)} {...fieldProps("signatoryPhoneExtension")} hint="ถ้าไม่มีเว้นว่าง" />
+                    <TextField label="ต่อ" inputMode="numeric" maxLength={MAX_PHONE_EXTENSION} placeholder="1232" value={form.signatoryPhoneExtension} onChange={(e) => set("signatoryPhoneExtension", e.target.value)} {...fieldProps("signatoryPhoneExtension")} hint="ถ้าไม่มี ให้เว้นว่าง" />
                   </Wrap>
                 </div>
               </div>
@@ -694,7 +694,7 @@ export default function EditOrganizationPage() {
                     {contactLocked.phone ? (
                       <TextField label="ต่อ" readOnly value={form.contactPhoneExtension} error={fields.contactPhoneExtension} />
                     ) : (
-                      <TextField label="ต่อ" inputMode="numeric" maxLength={MAX_PHONE_EXTENSION} placeholder="1232" value={form.contactPhoneExtension} onChange={(e) => set("contactPhoneExtension", e.target.value)} {...fieldProps("contactPhoneExtension")} hint="ถ้าไม่มีเว้นว่าง" />
+                      <TextField label="ต่อ" inputMode="numeric" maxLength={MAX_PHONE_EXTENSION} placeholder="1232" value={form.contactPhoneExtension} onChange={(e) => set("contactPhoneExtension", e.target.value)} {...fieldProps("contactPhoneExtension")} hint="ถ้าไม่มี ให้เว้นว่าง" />
                     )}
                   </Wrap>
                 </div>
