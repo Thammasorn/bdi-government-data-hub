@@ -132,6 +132,22 @@ const TASK_PERSON = {
   ...NAME_FIELDS,
 } as const;
 
+/**
+ * แถวที่**ไม่ใช่ด่าน** — ปิดตั้งแต่เกิด ไม่เคยเป็น active task และคำขอไม่เคยค้างอยู่ที่นี่
+ *
+ * ตอนนี้มีชนิดเดียวคือความเห็นของผู้เชี่ยวชาญ (`recordAdvisoryNote()`) ซึ่งได้
+ * `sequenceNumber` ถัดจากแถวล่าสุดเหมือนแถวอื่น ทั้งที่ด่านของเจ้าหน้าที่ยังเปิดค้างอยู่
+ * ผลคือพอเจ้าหน้าที่ปิดด่านของตัวเอง แถวของเขามีเลขลำดับ**น้อยกว่า**ความเห็นที่มาทีหลัง
+ * ใครที่ถามว่า "ด่านล่าสุดที่ปิดไปคือด่านไหน" ด้วยการเรียง sequenceNumber จะได้ความเห็น
+ * แทนด่าน — `deriveRequestStatus()` เคยตอบ UNDER_REVIEW ให้คำขอที่ถูกส่งกลับ เพราะแถว
+ * CONFIRMED ของผู้เชี่ยวชาญบังแถว RETURNED ของเจ้าหน้าที่ไว้ (การ์ด "BUG registration
+ * step" 2026-09-18) คำขอนั้นจึงหายจากตัวกรองทุกโหนดและขั้นที่ 1 ขึ้นว่าเสร็จสิ้น
+ *
+ * ทุกที่ที่อ่านประวัติเพื่อตอบว่าคำขอ**อยู่ไหน** ต้องข้ามแถวชนิดนี้ — ไทม์ไลน์ยังแสดงมันได้
+ * เพราะไทม์ไลน์ตอบว่าเกิดอะไรขึ้น ไม่ได้ตอบว่าค้างอยู่ที่ไหน
+ */
+export const ADVISORY_TASK_TYPES: ReviewTaskType[] = [ReviewTaskType.DATASET_SPECIALIST_REVIEW];
+
 /** สถานะของ task ที่ถือว่ายัง "ค้างอยู่" — lib/queue.ts ใช้ชุดเดียวกันนี้ */
 export const ACTIVE_STATUSES: ReviewTaskStatus[] = [
   ReviewTaskStatus.PENDING,
@@ -565,6 +581,10 @@ export async function recordAdvisoryNote(
  *   REJECTED     Task ล่าสุดเป็น COMPLETED และ result = REJECTED
  *   CANCELLED    ไม่มี Active Task หรือ Active Task ถูก CANCELLED
  *
+ * "Task ล่าสุด" ในตารางนี้คือ**ด่าน**ล่าสุด — ผู้เรียก (`deriveRequestStatus()`) ต้องกรอง
+ * แถวใน ADVISORY_TASK_TYPES ออกก่อน ไม่งั้นความเห็นของผู้เชี่ยวชาญที่มาหลังจากด่านของ
+ * เจ้าหน้าที่เปิด จะบังผล RETURNED ของเจ้าหน้าที่แล้วตกไปบรรทัดสุดท้าย (UNDER_REVIEW)
+ *
  * ใช้ตรวจความสอดคล้องหลังทุก transition — คอลัมน์ status ยังเก็บค่าจริงไว้เพื่อ query
  * แต่ต้องตรงกับสิ่งที่ฟังก์ชันนี้คำนวณได้เสมอ
  */
@@ -618,11 +638,13 @@ export async function deriveRequestStatus(
       },
       select: { status: true },
     }),
+    // "ด่านล่าสุดที่ปิดไป" — ความเห็นของผู้เชี่ยวชาญไม่ใช่ด่าน ดู ADVISORY_TASK_TYPES
     db.reviewTask.findFirst({
       where: {
         subjectType: params.subjectType,
         subjectId: params.subjectId,
         status: ReviewTaskStatus.COMPLETED,
+        taskType: { notIn: ADVISORY_TASK_TYPES },
       },
       orderBy: { sequenceNumber: "desc" },
       select: { taskType: true, result: true },

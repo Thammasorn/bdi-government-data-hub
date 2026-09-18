@@ -173,6 +173,17 @@ a task, so it cannot collide with the one-active-task index. Until 2026-08-30 th
 opened that task type *instead of* the officer's, which took the gate away from the officer and
 let the specialist send the request back to the organisation on their own.
 
+**That advisory row is not a gate, and anything asking "where is the request?" must skip it.**
+It takes the next `sequence_number` like every row, while the officer's gate is still open — so
+once the officer closes that gate, the officer's row sits *below* the opinion that arrived after
+it. `deriveRequestStatus()` read "the latest completed task" by sequence and got the
+`CONFIRMED` opinion instead of the officer's `RETURNED`, fell through to `UNDER_REVIEW`, and
+the returned request vanished from every filter node and showed step 1 as "เสร็จสิ้น" (card
+"BUG registration step", 2026-09-18). `ADVISORY_TASK_TYPES` in `lib/workflow.ts` names the
+row types to exclude, and `20260918150000_returned_requests_hidden_by_advisory_note` repairs
+rows that were stuck before the fix. The timeline still shows the opinion — it answers "what
+happened", not "where is it".
+
 **One `task_type` is one gate on both journeys.** Journey C used to carry a second
 `BDI_OFFICER_REVIEW` round — a "re-check" between the signature and the final approval — which was
 removed on 2026-08-30; the organisation's signature now opens `BDI_FINAL_APPROVAL` directly. A
@@ -198,13 +209,19 @@ while `DRAFT` or `RETURNED`, DONE otherwise. Don't give it a row by opening `ORG
 as a task; the one-active-task index would start colliding with real gates.
 
 **A gate whose round was thrown away is `RETURNED`, not `DONE` and not `UPCOMING`.** `StepState`
-has a fifth value, shown as a grey "ส่งกลับแก้ไข" beside "ยังไม่เริ่ม". A step earns it two ways:
-its own task closed with `RETURNED`, or the request as a whole is in `WAITING_REVISION` and the
-step has a task at all. The second test has to read the phase, because a gate that passed cleanly
-cannot tell from its own row that the round it belongs to has since been voided — which is how a
-recalled request showed a green "เสร็จสิ้น" on the officer's step while sitting back with the
-organisation (reported from production 2026-09-10). Steps never reached keep "ยังไม่เริ่ม", and
-no date is printed on a `RETURNED` step because `completedAt` belongs to the discarded round.
+has a fifth value, shown as a grey "ส่งกลับแก้ไข" beside "ยังไม่เริ่ม". A step earns it when its
+own task closed with `RETURNED`, or when its latest row has a `sequence_number` **at or below the
+most recent `RETURNED` row** (`lastReturnSequence()`) — every row up to a return belongs to the
+round that return voided, and every row after it belongs to the round the resubmission opened.
+A gate that passed cleanly cannot tell from its own row that the round it belongs to has since
+been voided, which is how a recalled request showed a green "เสร็จสิ้น" on the officer's step
+while sitting back with the organisation (reported from production 2026-09-10). The first fix
+for that read `phase === "WAITING_REVISION"` instead, which is only true while the request is
+still with the organisation: as soon as it was resubmitted the phase went back to `IN_PROGRESS`
+and the signatory's step turned green again while the request sat at step 2 (card "BUG
+registration step", 2026-09-18, both journeys). The phase test remains as a second net for a
+`RETURNED` status that did not come from a `RETURNED` row. Steps never reached keep "ยังไม่เริ่ม",
+and no date is printed on a `RETURNED` step because `completedAt` belongs to the discarded round.
 
 `currentStep` is still found by `state === "CURRENT"` alone, so `currentOrder`, `nextStep`, the
 steps block in every journey email and `announceProgress()` are untouched by that value.
@@ -350,7 +367,10 @@ Counts live in `GET /summary` rather than in the list response because their sco
 that must **not** move when a node is pressed or a page turned — visibility plus the search box,
 nothing else. Their sum can fall short of `total` by the requests sitting in the
 `requestStatusFor()` fall-through (`UNDER_REVIEW` with no active task); those match no node and
-are visible only on the ทั้งหมด tab. That is a data anomaly worth seeing, not one to paper over.
+are visible only on the ทั้งหมด tab. That is a data anomaly worth seeing, not one to paper over —
+and when it shows up, the first suspect is a row type that is not a gate being read as the
+latest gate (see `ADVISORY_TASK_TYPES`), which is exactly what put returned dataset requests
+there until 2026-09-18.
 
 **"Has the specialist answered yet?" is a second dimension, not a node.** `?advisory=` on the
 dataset list takes `with` / `awaiting` / `none` and ANDs with the node and the tab. It could not
