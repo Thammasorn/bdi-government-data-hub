@@ -20,7 +20,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
-import { LogoImage } from "@/components/brand/Logo";
+import { D2Mark, LogoImage } from "@/components/brand/Logo";
 
 import diagram from "./d2-platform-diagram.webp";
 import {
@@ -154,9 +154,7 @@ function TopNav({ active }: { active: string }) {
       <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3 sm:px-6">
         <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="หน้าแรก D2">
           <LogoImage className="h-14" />
-          <span className="hidden font-heading text-[15px] font-semibold text-navy-800 sm:block">
-            D2
-          </span>
+          <D2Mark className="h-12" />
         </Link>
 
         <nav aria-label="หัวข้อในหน้านี้" className="min-w-0 flex-1">
@@ -687,7 +685,7 @@ function SiteFooter() {
           <div className="max-w-md">
             <div className="flex items-center gap-3">
               <LogoImage tone="white" className="h-12" />
-              <span className="font-heading text-[17px] font-semibold text-white">D2</span>
+              <D2Mark tone="white" className="h-10" />
             </div>
             <p className="mt-4 text-[14px] leading-[1.85] text-white/60">
               Data Integration and Intelligence Platform — ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัลของประเทศ
