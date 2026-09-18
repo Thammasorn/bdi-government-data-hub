@@ -64,6 +64,13 @@ const PREFIX_OTHER = "อื่น ๆ";
  */
 type ContactLocked = Partial<Record<"prefix" | "firstName" | "lastName" | "email" | "phone", boolean>>;
 
+/**
+ * ช่องของ "ผู้มีอำนาจอนุมัติของหน่วยงาน" ที่บัญชีของเขาเป็นเจ้าของค่าแล้ว — ตรงกับ `approverLocked`
+ * ที่ API ส่งมา ล็อกก็ต่อเมื่อเขาเปิดใช้งานบัญชีแล้ว (อีเมลรับลิงก์ได้จริง ThaID ยืนยันเลขบัตรแล้ว)
+ * ก่อนหน้านั้นทั้งสองช่องยังแก้ได้ตามปกติ กฎอยู่ฝั่ง API หน้านี้ไม่มีสำเนา
+ */
+type ApproverLocked = Partial<Record<"email" | "nationalId", boolean>>;
+
 const EMPTY: OrganizationFormValues = {
   organizationCode: "",
   name: "",
@@ -193,6 +200,11 @@ export default function EditOrganizationPage() {
    * อย่างมากก็พิมพ์ค่าที่ API เขียนทับให้ทีหลัง — ตัวบังคับจริงอยู่ฝั่ง API ไม่ใช่ที่นี่
    */
   const [contactLocked, setContactLocked] = useState<ContactLocked>({});
+  /**
+   * อีเมลกับเลขบัตรของผู้มีอำนาจฯ ล็อกหลังเขาเปิดใช้งานบัญชีแล้ว — API เป็นคนตอบ
+   * (`approverLocked` ใน GET /:id) ตั้งต้น "ยังไม่ล็อก" ด้วยเหตุผลเดียวกับ `contactLocked`
+   */
+  const [approverLocked, setApproverLocked] = useState<ApproverLocked>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -242,6 +254,7 @@ export default function EditOrganizationPage() {
         setForm(next);
         setNameLocked(Boolean(organization.nameLocked));
         setContactLocked((organization.contactLocked as ContactLocked | undefined) ?? {});
+        setApproverLocked((organization.approverLocked as ApproverLocked | undefined) ?? {});
         // ค่าที่โหลดมาจากคำขอเดิมยังไม่ใช่สิ่งที่ผู้ใช้เพิ่งพิมพ์ ยังไม่ระบายสีจนกว่าจะแตะ
         setTouched({});
         setRevisionNote((organization.revisionNote as string | null) ?? null);
@@ -622,13 +635,26 @@ export default function EditOrganizationPage() {
                 <Wrap name="signatoryPosition">
                   <TextField label="ตำแหน่ง (ชื่อเต็มภาษาไทย)" required value={form.signatoryPosition} onChange={(e) => set("signatoryPosition", e.target.value)} {...fieldProps("signatoryPosition")} hint="ชื่อตำแหน่งเต็มเป็นภาษาไทย ตำแหน่งนี้จะถูกพิมพ์ลงเอกสารข้อตกลง" />
                 </Wrap>
+                {/*
+                  ผู้มีอำนาจฯ เปิดใช้งานบัญชีแล้ว = อีเมลนี้รับลิงก์ได้จริงและ ThaID ยืนยันเลขบัตรแล้ว
+                  สองช่องนี้จึงเป็นของบัญชีเขา ไม่ใช่ของฟอร์ม (`approverLocked` มาจาก API) — การแก้
+                  ที่นี่เคยทำให้ snapshot ไม่ตรงกับบัญชี แล้วระบบมองคนเดิมเป็น "คนอื่น" ตอนนำส่งซ้ำ
+                */}
                 <Wrap name="signatoryEmail">
-                  <TextField label="อีเมล" required type="email" value={form.signatoryEmail} onChange={(e) => set("signatoryEmail", e.target.value)} {...fieldProps("signatoryEmail")} />
+                  {approverLocked.email ? (
+                    <TextField label="อีเมล" required readOnly value={form.signatoryEmail} error={fields.signatoryEmail} />
+                  ) : (
+                    <TextField label="อีเมล" required type="email" value={form.signatoryEmail} onChange={(e) => set("signatoryEmail", e.target.value)} {...fieldProps("signatoryEmail")} />
+                  )}
                 </Wrap>
               </div>
               <div className="grid gap-5 sm:grid-cols-2">
                 <Wrap name="signatoryNationalId">
-                  <TextField label="เลขบัตรประชาชน" required inputMode="numeric" maxLength={13} value={form.signatoryNationalId} onChange={(e) => set("signatoryNationalId", e.target.value.replace(/\D/g, ""))} {...fieldProps("signatoryNationalId")} hint="ตัวเลข 13 หลัก" />
+                  {approverLocked.nationalId ? (
+                    <TextField label="เลขบัตรประชาชน" required readOnly value={form.signatoryNationalId} error={fields.signatoryNationalId} />
+                  ) : (
+                    <TextField label="เลขบัตรประชาชน" required inputMode="numeric" maxLength={13} value={form.signatoryNationalId} onChange={(e) => set("signatoryNationalId", e.target.value.replace(/\D/g, ""))} {...fieldProps("signatoryNationalId")} hint="ตัวเลข 13 หลัก" />
+                  )}
                 </Wrap>
                 {/*
                   เบอร์กับเลขต่อเป็นคนละช่องแต่เป็นเรื่องเดียวกัน จึงวางชิดกันในเซลล์เดียว —
@@ -644,6 +670,13 @@ export default function EditOrganizationPage() {
                   </Wrap>
                 </div>
               </div>
+              {/* บอกครั้งเดียวทั้งกลุ่ม เหมือนส่วนที่ 3 — และบอกทางออกเมื่อต้องการเปลี่ยนตัวคนจริง ๆ */}
+              {Object.values(approverLocked).some(Boolean) ? (
+                <p className="text-[13px] leading-relaxed text-ink-muted">
+                  ผู้มีอำนาจอนุมัติของหน่วยงานเปิดใช้งานบัญชีแล้ว อีเมลและเลขบัตรประชาชนจึงยืนยันแล้วว่าถูกต้องและแก้ไขที่นี่ไม่ได้
+                  หากหน่วยงานต้องการเปลี่ยนตัวผู้มีอำนาจอนุมัติ กรุณาติดต่อผู้ประสานงานของ BDI
+                </p>
+              ) : null}
               <div className="grid gap-5 border-t border-line pt-5 sm:grid-cols-2">
                 <div data-field="APPOINTMENT_ORDER">
                   <FileUpload label="คำสั่งแต่งตั้งผู้มีอำนาจอนุมัติของหน่วยงาน" required value={appointment} error={fields.APPOINTMENT_ORDER} uploading={uploadingKind === "APPOINTMENT_ORDER"} removing={removingKind === "APPOINTMENT_ORDER"} onSelect={(f) => uploadFile("APPOINTMENT_ORDER", f)} onRemove={() => appointment && removeFile("APPOINTMENT_ORDER", appointment)} />

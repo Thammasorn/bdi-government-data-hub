@@ -564,6 +564,29 @@ rejected at `POST /:id/submit` rather than days later at officer approval, and
 `submitSchema` plus `frontend/lib/organization-form.ts` reject a signatory email equal to the
 operator's own — the read-only contact email — while the form is still being filled.
 
+**Every e-mail that names an account is stored lowercase, and every lookup assumes it.**
+`emailSchema` lowercases, `user_account.email` is a case-sensitive `@unique`, and login,
+`approverConflict()` and `recallRefusal()` all look the account up by the lowercased form. Until
+2026-09-18 the draft schema of `PATCH /organizations/:id` stored `signatoryEmail` as typed, and
+`ensureApproverAccount()` created the signatory's account from that raw snapshot — so a form
+that said `Pattarasaya.kr+…` produced an account nobody could find: the signatory could not log
+in with a password, and when the organisation resubmitted after a BDI return, `approverConflict()`
+missed their account, passed no `exceptUserAccountId` to `roleSeatTaken()`, and reported the
+signatory's own seat as taken by someone else (card "BUG ส่งชื่อ approver ไม่ได้", seen on
+production). `draftEmailSchema` now lowercases at the draft, `ensureApproverAccount()` /
+`approverConflict()` lowercase what they are handed, and
+`20260918160000_lowercase_account_emails` rewrites the rows written before that (skipping an
+account whose lowercase form would collide with another — that needs a person).
+
+**Once the signatory has activated, their e-mail and CID belong to the account, not the form.**
+`activatedApprover()` in `organizations.ts` answers "ACTIVE account holding
+`ORGANIZATION_APPROVER` for *this* organisation" — the role test matters, or a draft naming
+another organisation's signatory would lock the very field the operator has to fix. When it
+answers, `toApiShape()` prefers the account's `email`/`cid` over the snapshot and sends
+`approverLocked`, and `PATCH /:id` writes the account's values over whatever the body carried,
+silently, the same arrangement as `contactLocked` for section 3. The form only greys what the
+API says; changing who the signatory is stays an administrator's job (`recallRefusal()` rule 4).
+
 `Invitation` is replaced by `iam.activation_key`, following the lifecycle in that sheet: create
 the `user_account` as `PENDING` first, then issue a key for (account, organisation, role).
 The key is hashed with **HMAC-SHA-256** (`ACTIVATION_KEY_SECRET`), not bare SHA-256, so a
