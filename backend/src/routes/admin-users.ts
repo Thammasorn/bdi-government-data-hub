@@ -41,6 +41,7 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "../db.js";
+import { env } from "../env.js";
 import { NAME_FIELDS, fullNameTh } from "../lib/person-name.js";
 import { AuditAction, AuditSubject, diffFields, logAudit } from "../lib/audit.js";
 import {
@@ -53,7 +54,9 @@ import {
   roleSeatTaken,
   type Db,
 } from "../lib/iam.js";
+import { sendPasswordResetEmail } from "../lib/mail.js";
 import { NotificationType, notifyUsers } from "../lib/notify.js";
+import { PASSWORD_RESET_VIA_ADMIN, issuePasswordResetToken } from "../lib/password-reset.js";
 import { ROLE_LABELS } from "../lib/roles.js";
 import { activeSessionsFor, revokeSessionsFor } from "../lib/session.js";
 import { ACTIVE_STATUSES, cancelActiveTask } from "../lib/workflow.js";
@@ -287,6 +290,75 @@ const listQuerySchema = z.object({
   organizationId: uuidSchema("organizationId ต้องเป็น UUID").optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(50),
+});
+
+// ---------------------------------------------------------------- ตั้งรหัสผ่านใหม่
+
+/**
+ * ส่งลิงก์ตั้งรหัสผ่านใหม่ให้เจ้าของบัญชีทางอีเมล — การ์ด "API ให้ system admin reset
+ * password ให้ user" (2026-09-18)
+ *
+ * ระบุบัญชีด้วย **อีเมล** ไม่ใช่ id ตามที่การ์ดเขียน: คนที่โทรมาบอกว่าลืมรหัสผ่านบอกอีเมล
+ * ของตัวเองได้ แต่ไม่รู้ UUID ของแถวตัวเอง อยู่ก่อน `/:id` และไม่ชนกัน (คนละจำนวน segment)
+ *
+ * แอดมิน**ไม่ได้ตั้งรหัสให้** — ระบบส่งลิงก์ครั้งเดียว อายุ `PASSWORD_RESET_TTL_MINUTES`
+ * ไปที่อีเมลของบัญชี แล้วเจ้าตัวตั้งเองที่ `/reset-password` แอดมินจึงไม่เคยรู้รหัสผ่าน
+ * ของใคร และการตอบกลับก็ไม่มีโทเคนอยู่ในนั้น (ตอน SMTP ยังไม่ตั้ง mailer พิมพ์ลิงก์ลง log
+ * ให้ทดสอบเหมือนคำเชิญ)
+ *
+ * รับเฉพาะบัญชี `ACTIVE`: `PENDING` ยังไม่มีรหัสผ่านให้รีเซ็ต ต้องใช้ลิงก์คำเชิญ (resend ได้
+ * ที่ `POST /api/admin/invitations/:id/resend`) ส่วน `SUSPENDED`/`DEACTIVATED` ตั้งรหัสใหม่
+ * ไปก็เข้าระบบไม่ได้อยู่ดี ต้อง reinstate/reactivate ก่อน — บอกทางออกในข้อความทุกกรณี
+ * ตอบ 404 ตรง ๆ เมื่อไม่พบอีเมล เพราะฝั่งแอดมินไม่ปิดบังข้อมูล (ดูหัวไฟล์)
+ */
+adminUserRouter.post("/password-reset", async (req, res) => {
+  const parsed = z.object({ email: emailSchema }).safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+    return;
+  }
+  const account = await prisma.userAccount.findUnique({
+    where: { email: parsed.data.email },
+    select: { id: true, email: true, status: true, ...NAME_FIELDS },
+  });
+  if (!account) {
+    res.status(404).json({ error: "not_found", message: `ไม่พบบัญชีที่ใช้อีเมล ${parsed.data.email}` });
+    return;
+  }
+  if (account.status !== UserAccountStatus.ACTIVE) {
+    const wayOut =
+      account.status === UserAccountStatus.PENDING
+        ? "บัญชียังไม่ได้เปิดใช้งาน จึงยังไม่มีรหัสผ่านให้ตั้งใหม่ — ส่งลิงก์คำเชิญซ้ำด้วย POST /api/admin/invitations/:id/resend แทน"
+        : account.status === UserAccountStatus.SUSPENDED
+          ? "บัญชีถูกระงับอยู่ ตั้งรหัสผ่านใหม่ไปก็เข้าระบบไม่ได้ — คืนสถานะด้วย POST /api/admin/users/:id/reinstate ก่อน"
+          : "บัญชีถูกยุติการใช้งานแล้ว — เปิดใช้งานอีกครั้งด้วย POST /api/admin/users/:id/reactivate ก่อน";
+    res.status(409).json({ error: "invalid_state", message: wayOut, status: account.status });
+    return;
+  }
+
+  const { token, record } = await issuePasswordResetToken(prisma, account.id, PASSWORD_RESET_VIA_ADMIN);
+  await sendPasswordResetEmail(account.email, token, {
+    displayName: fullNameTh(account) || null,
+    expiresAt: record.expiresAt,
+  });
+  await logAudit({
+    action: AuditAction.PASSWORD_RESET_REQUESTED,
+    subjectType: AuditSubject.USER_ACCOUNT,
+    subjectId: account.id,
+    metadata: {
+      email: account.email,
+      password_reset_token_id: record.id,
+      expires_at: record.expiresAt.toISOString(),
+      requested_via: PASSWORD_RESET_VIA_ADMIN,
+    },
+  });
+
+  res.status(202).json({
+    userAccountId: account.id,
+    email: account.email,
+    expiresAt: record.expiresAt,
+    message: `ส่งลิงก์ตั้งรหัสผ่านใหม่ไปที่ ${account.email} แล้ว ลิงก์ใช้ได้ ${env.auth.passwordResetTtlMinutes} นาที`,
+  });
 });
 
 adminUserRouter.get("/", async (req, res) => {

@@ -426,6 +426,55 @@ export async function sendInvitationEmail(
   );
 }
 
+/**
+ * ลิงก์ตั้งรหัสผ่านใหม่ — ออกให้โดยผู้ดูแลระบบ ไม่ใช่เจ้าตัวกด "ลืมรหัสผ่าน" เอง
+ *
+ * บอกให้ชัดว่าใครเป็นคนสั่ง (สขญ) เพราะผู้รับไม่ได้ขอเอง อีเมลที่โผล่มาโดยไม่มีที่มา
+ * อ่านเหมือนฟิชชิง — และบอกว่าถ้าไม่ได้ติดต่อขอไว้ให้เพิกเฉย รหัสผ่านเดิมยังใช้ได้ตามปกติ
+ * ลิงก์ใช้ได้ครั้งเดียวและอายุเป็นนาที จึงพิมพ์เวลาหมดอายุเป็นเวลาไทยไม่ใช่แค่วันที่
+ */
+export async function sendPasswordResetEmail(
+  to: string,
+  token: string,
+  info: { displayName: string | null; expiresAt: Date },
+) {
+  const resetUrl = `${env.appUrl}/reset-password?token=${token}`;
+  const expiresAt = new Intl.DateTimeFormat("th-TH", {
+    dateStyle: "long",
+    timeStyle: "short",
+    timeZone: "Asia/Bangkok",
+  }).format(info.expiresAt);
+  const paragraph = (html: string) =>
+    `<p style="margin:0 0 16px;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">${html}</p>`;
+
+  await send(
+    to,
+    "ตั้งรหัสผ่านใหม่ — ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)",
+    layout({
+      title: "ตั้งรหัสผ่านใหม่สำหรับบัญชีของท่าน",
+      intro: info.displayName ? `เรียน ${escapeHtml(info.displayName)}` : "เรียน ผู้ใช้งานระบบ",
+      body: [
+        paragraph(
+          `สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) (สขญ) ได้รับแจ้งให้ตั้งรหัสผ่านใหม่สำหรับบัญชี ` +
+            `<strong style="color:${TEXT};">${escapeHtml(to)}</strong> ในระบบ D2 ` +
+            `กรุณากดปุ่มด้านล่างเพื่อกำหนดรหัสผ่านใหม่ แล้วเข้าสู่ระบบด้วยรหัสผ่านนั้น`,
+        ),
+        paragraph(
+          `ลิงก์นี้ใช้ได้ครั้งเดียว และ<strong style="color:${TEXT};">ใช้ได้ถึง ${expiresAt}</strong> ` +
+            `หากเลยเวลาแล้ว กรุณาติดต่อผู้ประสานงานของ BDI เพื่อขอลิงก์ใหม่`,
+        ),
+        `<div style="background:${WARNING_BG};border-left:3px solid ${WARNING};border-radius:8px;padding:16px;">
+           <div style="font:400 14px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};">
+             หากท่านไม่ได้ติดต่อขอตั้งรหัสผ่านใหม่ กรุณาอย่ากดลิงก์นี้ — รหัสผ่านเดิมของท่านยังใช้ได้ตามปกติ
+             ${contactLine("และโปรดแจ้งสถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) ที่")}
+           </div>
+         </div>`,
+      ].join(""),
+      button: { label: "ตั้งรหัสผ่านใหม่", url: resetUrl },
+    }),
+  );
+}
+
 export async function sendOtpEmail(to: string, code: string) {
   await send(
     to,

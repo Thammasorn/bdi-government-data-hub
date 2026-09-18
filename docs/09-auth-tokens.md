@@ -124,10 +124,10 @@ session หนึ่งใบ = แถวหนึ่งแถวใน `iam.ses
 `metadata_json.reason` — แยก logout · logout ทุกอุปกรณ์ · เปลี่ยนรหัสผ่าน · ระงับบัญชี ·
 หมุนใบ · หมดอายุ (ซึ่งยังแยกต่อได้อีกว่า `ABSOLUTE` หรือ `IDLE`)
 
-**ที่ยังไม่มี**: endpoint เปลี่ยนรหัสผ่าน `SessionRevokeReason.PASSWORD_CHANGED` และ
-`revokeSessionsFor(..., { exceptSessionId })` เขียนรออยู่แล้ว แต่ยังไม่มีเส้นทางไหนเรียก
-เพราะระบบยังไม่มีการเปลี่ยนรหัสผ่าน (ตัดสินไว้ 2026-08-16 ว่าไม่เพิ่มในการ์ดนี้)
-เมื่อเพิ่ม endpoint นั้น สิ่งที่ต้องทำคือเรียกฟังก์ชันนั้นหนึ่งบรรทัด
+`PASSWORD_CHANGED` มีผู้เรียกแล้วตั้งแต่ 2026-09-18 — `POST /api/auth/password-reset`
+(ข้อ 3.1) เพิกถอน**ทุกใบ**ของบัญชีตอนตั้งรหัสผ่านใหม่ ไม่เว้นใบไหน เพราะไม่ได้ออก session
+ให้ตรงนั้น `revokeSessionsFor(..., { exceptSessionId })` จึงยังไม่มีใครใช้ — มันรอ endpoint
+"เปลี่ยนรหัสผ่านขณะล็อกอินอยู่" ซึ่งยังไม่มี (ตัดสินไว้ 2026-08-16 ว่าไม่เพิ่ม)
 
 **ยังไม่มี refresh token และไม่ตั้งใจจะมี** — refresh token คู่กับ access token อายุสั้น
 มีไว้แก้ปัญหา "เพิกถอน token ที่กระจายไปแล้วไม่ได้" ซึ่งตารางนี้แก้ไปแล้วโดยตรง
@@ -195,6 +195,28 @@ session หนึ่งใบ = แถวหนึ่งแถวใน `iam.ses
 `OtpPurpose` มีสองค่า — `LOGIN` ใช้อยู่จริง ส่วน `REGISTRATION` เหลือจากตอนที่การเปิดใช้งาน
 บัญชียังใช้ OTP ทางอีเมล ตอนนี้การเปิดใช้งานเป็น ThaID ทางเดียว ไม่มีเส้นทางไหนออก
 OTP แบบ `REGISTRATION` อีกแล้ว
+
+### 3.1 ลิงก์ตั้งรหัสผ่านใหม่ — ผู้ดูแลระบบสั่งออก เจ้าตัวตั้งเอง
+
+การ์ด "API ให้ system admin reset password ให้ user" (2026-09-18) ก่อนหน้านั้นคนที่ลืมรหัสผ่าน
+ไม่มีทางกลับเข้าระบบเลยนอกจาก ThaID — activation key ใบเดิมถูกเผาไปแล้ว และไม่มีปุ่ม
+"ลืมรหัสผ่าน" ระบบเป็น invite-only จึงให้ผู้ดูแลระบบเป็นคนเริ่ม ไม่เปิดให้กดขอเอง
+
+| | |
+|---|---|
+| ออกที่ไหน | `POST /api/admin/users/password-reset` `{ email }` ด้วย `x-admin-token` — 202 พร้อม `expiresAt` **ไม่มีโทเคนในคำตอบ** (checkout ที่ไม่ตั้ง SMTP พิมพ์ลิงก์ลง log เหมือนคำเชิญ) |
+| หน้าตา | 32 ไบต์ base64url ในลิงก์ `{APP_URL}/reset-password?token=…` |
+| เก็บอย่างไร | `iam.password_reset_token.token_hash` = HMAC-SHA-256(`ACTIVATION_KEY_SECRET`, token) — กุญแจเดียวกับ activation key เหตุผลเดียวกัน |
+| อายุ | `PASSWORD_RESET_TTL_MINUTES` (60) — นาที ไม่ใช่วัน เพราะแอดมินเพิ่งคุยกับเจ้าตัว |
+| ใช้ได้กี่ครั้ง | ครั้งเดียว (`used_at`) หนึ่งบัญชีมีใบที่ใช้ได้ทีละใบ ออกใบใหม่ = ใบเก่า `revoked_at` |
+| รับบัญชีไหน | `ACTIVE` เท่านั้น — `PENDING` ยังไม่มีรหัสผ่าน (ให้ resend คำเชิญ) `SUSPENDED`/`DEACTIVATED` ตั้งไปก็เข้าไม่ได้ (409 `invalid_state` บอกทางออก) |
+| ใช้ที่ไหน | `GET /api/auth/password-reset?token=` ตรวจลิงก์ (410 `expired`/`used`/`revoked`/`not_found`) แล้ว `POST /api/auth/password-reset` `{ token, password, confirmPassword }` กฎรหัสผ่านชุดเดียวกับ `/activate` |
+| ผลข้างเคียง | เขียน `password_hash`, เผาโทเคน, **เพิกถอน session ทุกใบ** (`PASSWORD_CHANGED`) ใน transaction เดียว — `updateMany` ที่มี `used_at IS NULL` ใน WHERE กันสองคำขอพร้อมกันด้วยลิงก์เดียว |
+| ไม่ทำอะไร | **ไม่ออก session** ต้องไปเข้าสู่ระบบด้วยรหัสใหม่ + OTP เหมือนปกติ ไม่งั้นลิงก์ในอีเมลฉบับเดียวจะข้ามชั้นที่สองของการเข้าสู่ระบบไป |
+| audit | `PASSWORD_RESET_REQUESTED` (actor = ระบบ ตามข้อ 4) แล้ว `PASSWORD_RESET_COMPLETED` (actor = เจ้าของบัญชี) — ใบ REQUESTED ที่ไม่มี COMPLETED ตามมาคือลิงก์ที่ไม่มีใครใช้ |
+
+เป็นตารางของตัวเองเพราะ `activation_key` บังคับ `organization_id` + `role_id` และ `otp_code`
+เก็บ bcrypt ค้นด้วยโทเคนในลิงก์ตรง ๆ ไม่ได้ Postman: `U15`
 
 ## 4. `x-admin-token` — shared secret ไม่ใช่ session
 
@@ -302,6 +324,7 @@ OTP_TTL_MINUTES=10
 OTP_MAX_ATTEMPTS=5
 ACTIVATION_KEY_TTL_DAYS=7
 ACTIVATION_KEY_SECRET=         # HMAC ของ activation key — บังคับบน production
+PASSWORD_RESET_TTL_MINUTES=60  # ลิงก์ตั้งรหัสผ่านใหม่ (ข้อ 3.1) hash ด้วย secret ตัวเดียวกัน
 ADMIN_API_TOKEN=               # ค่าใน header x-admin-token
 THAID_STATE_TTL_MINUTES=15
 THAID_VERIFICATION_TTL_MINUTES=30

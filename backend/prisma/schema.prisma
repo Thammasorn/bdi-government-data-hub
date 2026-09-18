@@ -131,6 +131,7 @@ model UserAccount {
   activationKeys       ActivationKey[]
   roleAssignments      UserRoleAssignment[]
   sessions             Session[]
+  passwordResetTokens  PasswordResetToken[]
   assignedReviewTasks  ReviewTask[]            @relation("ReviewTaskAssignee")
   delegatedReviewTasks ReviewTask[]            @relation("ReviewTaskAssigner")
   completedReviewTasks ReviewTask[]            @relation("ReviewTaskCompleter")
@@ -305,6 +306,40 @@ model Session {
   @@index([userAccountId, revokedAt])
   @@index([expiresAt])
   @@map("session")
+  @@schema("iam")
+}
+
+/// ลิงก์ตั้งรหัสผ่านใหม่ที่ผู้ดูแลระบบสั่งออกให้ — เบี่ยงจากดีไซน์: ไม่มีใน Excel
+///
+/// การ์ด "API ให้ system admin reset password ให้ user" (2026-09-18) ตารางแยกจาก
+/// `activation_key` เพราะใบนั้นบังคับมี organization + role ซึ่งการรีเซ็ตรหัสผ่านไม่เกี่ยว
+/// และแยกจาก `otp_code` เพราะที่นั่นเก็บ bcrypt ค้นด้วยโทเคนในลิงก์ตรง ๆ ไม่ได้
+///
+/// วงจรชีวิตเหมือน activation key: ออก → ใช้ (`used_at`) หรือถูกแทนที่ (`revoked_at`)
+/// หรือหมดอายุ (`expires_at`) หนึ่งบัญชีมีใบที่ใช้ได้ทีละใบ — ออกใบใหม่ = ใบเก่าถูกยกเลิก
+model PasswordResetToken {
+  id String @id @default(uuid()) @db.Uuid
+
+  userAccountId String      @map("user_account_id") @db.Uuid
+  userAccount   UserAccount @relation(fields: [userAccountId], references: [id], onDelete: Cascade)
+
+  /// HMAC-SHA-256(ACTIVATION_KEY_SECRET, raw token) hex — กุญแจเดียวกับ activation key
+  /// ด้วยเหตุผลเดียวกัน: ฐานข้อมูลรั่วโดย secret ไม่รั่ว สร้างลิงก์ที่ใช้ได้ไม่ได้
+  tokenHash String @unique @map("token_hash") @db.VarChar(64)
+
+  issuedAt  DateTime  @default(now()) @map("issued_at") @db.Timestamptz(6)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+
+  /// ใครสั่ง — ตอนนี้มีทางเดียวคือ ADMIN_API (ไม่มี "ลืมรหัสผ่าน" ให้กดเอง)
+  requestedVia String @map("requested_via") @db.VarChar(32)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+
+  @@index([userAccountId, usedAt, revokedAt])
+  @@map("password_reset_token")
   @@schema("iam")
 }
 

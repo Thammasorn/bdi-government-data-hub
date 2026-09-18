@@ -497,9 +497,23 @@ expiries, both enforced: absolute (`SESSION_TTL_DAYS`, 7 days, not renewable) an
 request). `issueSession()` revokes whatever session the caller arrived with, so logging in
 always rotates the value. Every revocation writes an `audit_event` whose
 `metadata_json.reason` says which of LOGOUT · LOGOUT_ALL · PASSWORD_CHANGED ·
-ACCOUNT_SUSPENDED · ROTATED · EXPIRED it was. `PASSWORD_CHANGED` has no caller yet — there is
-no change-password endpoint; the helper is written and waiting for one.
-`docs/09-auth-tokens.md` §1.4 is the full account.
+ACCOUNT_SUSPENDED · ROTATED · EXPIRED it was. `PASSWORD_CHANGED` is written by
+`POST /api/auth/password-reset` only; there is still no change-password-while-logged-in
+endpoint. `docs/09-auth-tokens.md` §1.4 is the full account.
+
+**A forgotten password is reset by the admin sending a link, never by the admin setting one**
+(card "API ให้ system admin reset password ให้ user", 2026-09-18). `POST
+/api/admin/users/password-reset` `{ email }` (admin token, `ACTIVE` accounts only — `PENDING`
+has no password yet, and a suspended one would still not get in) issues a one-shot token in
+`iam.password_reset_token`, HMAC'd with `ACTIVATION_KEY_SECRET` exactly like an activation key,
+good for `PASSWORD_RESET_TTL_MINUTES` (60), one usable per account (a reissue revokes the last),
+and mails `/reset-password?token=…`. The response carries no token; the dry-run mailer prints
+the link. `GET /api/auth/password-reset` checks the link and `POST` sets the password — same
+`passwordSchema` + `confirmPassword` as `/activate` — burns the token and revokes **every**
+session of the account, all in one transaction, and **does not issue a session**: the user goes
+back to `/login` and through OTP, or the emailed link would be a way past the second factor.
+`lib/password-reset.ts` owns the token. There is deliberately no self-service "forgot password"
+form; the system is invite-only and the card says the admin starts it. `docs/09` §3.1.
 
 Roles are rows in `iam.role`, not an enum. Two codes changed from the old model:
 `BDI_APPROVER` → `BDI_FINAL_APPROVER` and `BDI_SPECIALIST` → `BDI_DATASET_SPECIALIST`; two are

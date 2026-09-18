@@ -80,6 +80,12 @@ export const env = {
     ),
     activationKeyTtlDays: Number(optional("ACTIVATION_KEY_TTL_DAYS", "7")),
     /**
+     * อายุลิงก์ตั้งรหัสผ่านใหม่ที่ผู้ดูแลระบบสั่งออก — สั้นกว่าคำเชิญมาก (นาที ไม่ใช่วัน)
+     * เพราะแอดมินเพิ่งคุยกับเจ้าตัวอยู่ กดไม่ทันก็ขอใหม่ได้ทันที ลิงก์ที่ค้างอยู่ในกล่อง
+     * จดหมายเป็นวัน ๆ มีแต่โอกาสถูกคนอื่นใช้ (hash ด้วย activationKeySecret ตัวเดียวกัน)
+     */
+    passwordResetTtlMinutes: Number(optional("PASSWORD_RESET_TTL_MINUTES", "60")),
+    /**
      * ตั้ง Secure ให้ session cookie โดยอัตโนมัติเมื่อ APP_URL เป็น https
      * (เบราว์เซอร์ทิ้ง cookie ที่มี Secure ถ้าเชื่อมต่อผ่าน http ธรรมดา
      * จึงเปิดตายตัวไม่ได้ ต้องดูจากที่อยู่จริงที่ผู้ใช้เข้า)
