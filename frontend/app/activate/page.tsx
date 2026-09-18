@@ -439,7 +439,7 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
             value={form.phoneExtension}
             onChange={(e) => set("phoneExtension")(e.target.value)}
             error={fields.phoneExtension}
-            hint="ถ้าไม่มีเว้นว่าง"
+            hint="ถ้าไม่มี ให้เว้นว่าง"
           />
         </div>
 

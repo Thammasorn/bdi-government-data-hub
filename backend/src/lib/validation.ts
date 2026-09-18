@@ -106,6 +106,23 @@ export const emailSchema = z
   .email("รูปแบบอีเมลไม่ถูกต้อง")
   .transform((v) => v.toLowerCase());
 
+/**
+ * อีเมลตอน**บันทึกร่าง** — ยังไม่ตรวจรูปแบบ (ร่างกรอกค้างไว้ครึ่งเดียวได้) แต่เก็บเป็น
+ * ตัวพิมพ์เล็กเสมอเหมือน `emailSchema`
+ *
+ * ทุกที่ที่ค้นบัญชีด้วยอีเมลค้นด้วยค่าที่ผ่าน `emailSchema` มาแล้ว (ล็อกอิน · คำเชิญ ·
+ * `approverConflict()` ตอนนำส่ง) ส่วน `user_account.email` เป็น unique แบบ case-sensitive
+ * ร่างที่เก็บ "Somchai@x.go.th" ไว้ตรง ๆ จึงกลายเป็นบัญชีที่ค้นไม่เจอเมื่อ
+ * `ensureApproverAccount()` สร้างบัญชีจากค่านั้น — ผู้มีอำนาจฯ ที่เปิดใช้งานบัญชีแล้ว
+ * ถูกมองว่าเป็น "คนอื่น" ตอนหน่วยงานนำส่งคำขอใบเดิมซ้ำ และล็อกอินด้วยรหัสผ่านไม่ได้เลย
+ * (การ์ด "BUG ส่งชื่อ approver ไม่ได้" 2026-09-18)
+ */
+export const draftEmailSchema = z
+  .string()
+  .trim()
+  .transform((v) => v.toLowerCase())
+  .optional();
+
 export const phoneSchema = z
   .string()
   .trim()

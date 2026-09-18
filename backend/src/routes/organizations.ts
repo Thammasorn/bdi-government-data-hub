@@ -101,6 +101,7 @@ import {
 } from "../lib/system.js";
 import {
   emailSchema,
+  draftEmailSchema,
   parseRequestSnapshot,
   formatZodError,
   isUuid,
@@ -218,14 +219,14 @@ const draftSchema = z.object({
    * ค่าว่างผ่านและกลายเป็น null: ผู้ใช้ลบเลขต่อออกแล้วบันทึก ต้องลบออกจากคอลัมน์จริง ๆ
    */
   phoneExtension: phoneExtensionSchema,
-  email: z.string().trim().optional(),
+  email: draftEmailSchema,
   websiteUrl: z.string().trim().max(500).optional(),
 
   signatoryPrefix: z.string().trim().optional(),
   signatoryFirstName: z.string().trim().optional(),
   signatoryLastName: z.string().trim().optional(),
   signatoryPosition: z.string().trim().optional(),
-  signatoryEmail: z.string().trim().optional(),
+  signatoryEmail: draftEmailSchema,
   signatoryNationalId: z.string().trim().optional(),
   signatoryPhone: z.string().trim().optional(),
   signatoryPhoneExtension: phoneExtensionSchema,
@@ -236,7 +237,7 @@ const draftSchema = z.object({
   contactLastName: z.string().trim().optional(),
   contactPosition: z.string().trim().optional(),
   contactDepartment: z.string().trim().optional(),
-  contactEmail: z.string().trim().optional(),
+  contactEmail: draftEmailSchema,
   contactPhone: z.string().trim().optional(),
   contactPhoneExtension: phoneExtensionSchema,
   contactNationalId: z.string().trim().optional(),
@@ -515,6 +516,53 @@ function contactAccount(request: { createdBy: string }) {
 }
 
 /**
+ * ผู้มีอำนาจอนุมัติของหน่วยงานที่**เปิดใช้งานบัญชีแล้ว**และนั่งที่นั่งของหน่วยงานนี้อยู่ —
+ * `null` ถ้าคำขอยังไม่เดินไปถึงขั้นนั้น
+ *
+ * เมื่อเขาเปิดใช้งานบัญชีแล้ว อีเมลนั้นรับลิงก์ได้จริงและ ThaID ยืนยันเลขบัตรไปแล้ว
+ * สองช่องนี้จึงเป็นข้อเท็จจริงของบัญชี ไม่ใช่ของฟอร์มอีกต่อไป — เหตุผลเดียวกับที่
+ * `recallRefusal()` ปฏิเสธการยกเลิกผลตรวจสอบหลังจากนั้น และเป็นคู่ของ `contactFromAccount()`
+ * สำหรับส่วนที่ 2: ค่าจากบัญชีมาก่อน snapshot และฟอร์มแก้ไม่ได้ (การ์ด "BUG ส่งชื่อ approver
+ * ไม่ได้": "ถ้า org approver activate แล้ว ให้ disable email และ cid ไม่ให้แก้ไข")
+ *
+ * ต้องถือ role ของ**หน่วยงานนี้**ด้วย ไม่ใช่แค่บัญชี ACTIVE — ร่างที่กรอกอีเมลของผู้มีอำนาจฯ
+ * หน่วยงานอื่นเข้ามาต้องยังแก้ช่องนั้นได้ ไม่งั้นคนกรอกติดอยู่กับค่าที่ `approverConflict()`
+ * จะปฏิเสธและแก้ไม่ได้
+ *
+ * ค้นแบบไม่สนตัวพิมพ์ เพราะร่างที่บันทึกก่อน 2026-09-18 เก็บอีเมลตามที่พิมพ์มา
+ */
+async function activatedApprover(
+  db: Db,
+  request: { approverEmail: string | null; organizationId: string },
+) {
+  if (!request.approverEmail) return null;
+  const roleId = await roleIdByCode(db, ROLE_CODES.ORGANIZATION_APPROVER);
+  return db.userAccount.findFirst({
+    where: {
+      email: { equals: request.approverEmail, mode: "insensitive" },
+      status: UserAccountStatus.ACTIVE,
+      roleAssignments: {
+        some: { roleId, organizationId: request.organizationId, ...activeAssignmentWhere() },
+      },
+    },
+    select: { id: true, email: true, cid: true },
+  });
+}
+
+/**
+ * ค่าของส่วนที่ 2 ที่บัญชีเป็นเจ้าของ — ว่างเปล่าจนกว่าผู้มีอำนาจฯ จะเปิดใช้งานบัญชี
+ *
+ * รูปเดียวกับ `contactFromAccount()`: คืนเฉพาะช่องที่บัญชีมีค่าจริง ผู้เรียก spread ทับ
+ * snapshot ได้เลย (`PATCH /:id`) หรืออ่านเป็นค่าที่มาก่อน (`toApiShape()`)
+ */
+function approverFromAccount(account: { email: string; cid: string | null } | null) {
+  return providedOnly({
+    approverEmail: account?.email,
+    approverCid: account?.cid ?? undefined,
+  });
+}
+
+/**
  * รหัสหน่วยงานเป็นของระบบ ไม่ใช่ของผู้กรอก — คืนข้อความผิดพลาดถ้าฟอร์มพยายามเปลี่ยน
  *
  * เดิมช่อง "รหัสหน่วยงาน" บนฟอร์มแก้ได้ และค่าที่แก้ไหลลง snapshot ตรง ๆ ผลคือ
@@ -605,6 +653,7 @@ function organizationNameEdit(
 async function toApiShape(request: RequestRow) {
   const systemName = systemOrganizationName(request);
   const contact = contactFromAccount(await contactAccount(request));
+  const approver = approverFromAccount(await activatedApprover(prisma, request));
   const names = await resolveAddressNames(prisma, {
     provinceCode: request.organizationProvinceCode,
     districtCode: request.organizationDistrictCode,
@@ -650,10 +699,26 @@ async function toApiShape(request: RequestRow) {
     // เก็บลงคอลัมน์ตั้งแต่ต้นแต่ไม่เคยส่งกลับออกมา ฟอร์มจึงลืมค่าที่กรอกไว้ทุกครั้งที่โหลด
     // และ {{org_approver.department}} ในเอกสารก็ไม่มีค่าให้เติม
     signatoryDepartment: request.approverDepartmentTh,
-    signatoryEmail: request.approverEmail,
-    signatoryNationalId: request.approverCid,
+    /**
+     * อีเมลกับเลขบัตรของผู้มีอำนาจฯ: **บัญชีมาก่อน snapshot** เมื่อเขาเปิดใช้งานบัญชีแล้ว
+     *
+     * `generate-form` กับ `submit` ตรวจจากรูปนี้ แล้ว `approverConflict()` ก็ค้นบัญชีด้วย
+     * ค่านี้ — ถ้าปล่อยให้ snapshot ที่เก็บตัวพิมพ์ต่างจากบัญชีชนะ บัญชีของคนเดิมจะค้น
+     * ไม่เจอและถูกนับเป็น "คนอื่นนั่งที่นั่งอยู่" (การ์ด "BUG ส่งชื่อ approver ไม่ได้")
+     */
+    signatoryEmail: approver.approverEmail ?? request.approverEmail,
+    signatoryNationalId: approver.approverCid ?? request.approverCid,
     signatoryPhone: request.approverPhoneNumber,
     signatoryPhoneExtension: request.approverPhoneNumberExtension,
+    /**
+     * ช่องไหนในส่วนที่ 2 เป็นแบบอ่านอย่างเดียว — ตัดสินที่นี่ที่เดียวเหมือน `contactLocked`
+     * สองช่องล็อกพร้อมกันเสมอ (เป็นข้อเท็จจริงชุดเดียวกันของบัญชีที่ ThaID ยืนยันแล้ว)
+     * แต่ส่งแยก key ให้หน้าเว็บอ่านทีละช่องได้แบบเดียวกับส่วนที่ 3
+     */
+    approverLocked: {
+      email: approver.approverEmail !== undefined,
+      nationalId: approver.approverCid !== undefined,
+    },
 
     /**
      * ตัวตนของผู้กรอก: **บัญชีมาก่อน snapshot** เหมือนที่ชื่อหน่วยงานให้ master มาก่อน
@@ -1491,6 +1556,14 @@ organizationRouter.patch("/:id", async (req, res) => {
   const snapshot = {
     ...(await toRequestData(parsed.data)),
     ...contactFromAccount(await contactAccount(request)),
+    /**
+     * อีเมลกับเลขบัตรของผู้มีอำนาจฯ ที่เปิดใช้งานบัญชีแล้วก็ทับค่าจาก body แบบเดียวกัน —
+     * ทั้งสองช่องผ่าน ThaID มาแล้ว การ "แก้" ได้แค่ทำให้ snapshot ไม่ตรงกับบัญชีที่จะมา
+     * ลงนาม ส่วนการเปลี่ยนตัวคนเป็นงานของผู้ดูแลระบบ (ดู `recallRefusal()`) ตัดสินจาก
+     * snapshot **ก่อน**เขียนทับ ไม่ใช่จาก body: ถ้า body พิมพ์อีเมลคนอื่นมา ที่นั่งยังเป็น
+     * ของคนเดิม และค่าที่พิมพ์มาต้องถูกทิ้ง ไม่ใช่ปลดล็อกช่อง
+     */
+    ...approverFromAccount(await activatedApprover(prisma, request)),
   };
 
   const updated = await prisma.$transaction(async (tx) => {
@@ -2843,7 +2916,10 @@ async function approverConflict(
   db: Db,
   params: { email: string; cid: string | null; organizationId: string },
 ): Promise<ApproverConflict | null> {
-  const { email, cid, organizationId } = params;
+  const { cid, organizationId } = params;
+  // ทุกทางที่เขียน user_account.email เขียนตัวพิมพ์เล็ก (emailSchema · draftEmailSchema ·
+  // migration 20260918160000) ค้นด้วยตัวพิมพ์เล็กจึงเจอบัญชีเดิมแม้ผู้เรียกส่งค่าดิบมา
+  const email = params.email.toLowerCase();
 
   const existing = await db.userAccount.findUnique({
     where: { email },
@@ -2951,7 +3027,12 @@ async function ensureApproverAccount(
   tx: Prisma.TransactionClient,
   request: RequestRow,
 ): Promise<{ id: string; replaced: RevokedAssignment[] }> {
-  const email = request.approverEmail;
+  /**
+   * ตัวพิมพ์เล็กเสมอ — บัญชีที่สร้างตรงนี้คือบัญชีที่ล็อกอิน (`emailSchema`) และ
+   * `approverConflict()` จะค้นหาด้วยตัวพิมพ์เล็ก ร่างเก่าที่เก็บ "Somchai@x.go.th" ไว้
+   * เคยกลายเป็นบัญชีที่ค้นไม่เจอทั้งสองทาง (การ์ด "BUG ส่งชื่อ approver ไม่ได้")
+   */
+  const email = request.approverEmail?.toLowerCase();
   if (!email) {
     throw new WorkflowError("no_approver", "คำขอนี้ยังไม่ได้ระบุอีเมลผู้มีอำนาจกระทำการแทน");
   }
@@ -3090,7 +3171,7 @@ async function recallRefusal(
 
   if (request.approverEmail) {
     const account = await prisma.userAccount.findUnique({
-      where: { email: request.approverEmail },
+      where: { email: request.approverEmail.toLowerCase() },
       select: { status: true },
     });
     if (account?.status === UserAccountStatus.ACTIVE) {

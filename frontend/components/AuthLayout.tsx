@@ -35,7 +35,8 @@ export function AuthLayout({
         {/* self-start: aside เป็น flex column ถ้าปล่อยให้ stretch รูปจะถูกยืดเต็มความกว้าง */}
         <div className="relative flex items-center gap-5 self-start">
           <LogoImage tone="white" className="h-28" />
-          <D2Mark tone="white" className="h-24" />
+          {/* h-16 ไม่ใช่สัดส่วน 75% ของแถบหัว — BDI ระบุค่านี้ตรง ๆ (2026-09-18) */}
+          <D2Mark tone="white" className="h-16" />
         </div>
 
         <div className="relative max-w-md">
