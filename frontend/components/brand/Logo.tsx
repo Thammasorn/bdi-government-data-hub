@@ -64,8 +64,9 @@ export function LogoImage({
  * `D2` ที่เป็นคำในประโยค (`<title>`, aria-label, เนื้อหา) ยังเป็นตัวหนังสือเหมือนเดิม
  *
  * ไฟล์เป็นจัตุรัส 1001×1001 มีขอบว่างรอบตัวอักษรราว 4% บน-ล่าง และ 9% ซ้าย-ขวา
- * ความสูงตั้งต้น h-12 จึงได้ตัวอักษรสูงราวเท่าเครื่องหมาย B ของโลโก้สถาบันที่ h-14
- * (ซึ่งมีบรรทัดชื่อสถาบันกินพื้นที่ด้านล่างอยู่)
+ * ความสูงตั้งต้นเคยเป็น h-12 ให้ตัวอักษรสูงราวเท่าเครื่องหมาย B ของโลโก้สถาบันที่ h-14 —
+ * แต่พอวางจริงมันเด่นกว่าโลโก้สถาบันที่ยืนอยู่ข้าง ๆ การ์ด "Adjust D2 logo and Navbar"
+ * (2026-09-18) จึงให้ลดเหลือราว 75% → h-9 (36px) ทุกที่ที่มันอยู่ข้างโลโก้สถาบัน
  */
 export function D2Mark({
   className,
@@ -79,7 +80,7 @@ export function D2Mark({
       src={tone === "white" ? d2Dark : d2Normal}
       alt="D2"
       priority
-      className={clsx("w-auto", className ?? "h-12")}
+      className={clsx("w-auto", className ?? "h-9")}
     />
   );
 }
@@ -89,22 +90,18 @@ export function D2Mark({
  *
  * ชื่อระบบตั้งต้นไม่มี `(D2)` ต่อท้ายแล้ว เพราะเครื่องหมาย D2 อยู่ข้าง ๆ พอดี
  * พิมพ์ซ้ำจะอ่านเป็น "D2 ระบบกลาง… (D2)"
+ *
+ * แถบหัวหลังล็อกอินไม่แสดงชื่อระบบอีกแล้ว (การ์ด "Adjust D2 logo and Navbar" 2026-09-18) —
+ * โลโก้สองอันบอกอยู่แล้วว่านี่คือระบบอะไร และชื่อยาวราวเท่าป้ายเมนูสองป้าย ที่ยังแสดงคือ
+ * หน้า login บนจอแคบ ซึ่งไม่มีเมนูมาเบียด จึงไม่ต้องมี prop ซ่อนตาม breakpoint อีก
  */
 export function Logo({
   className,
   subtitle = "ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล",
-  subtitleClassName,
   tone = "navy",
 }: {
   className?: string;
   subtitle?: string | null;
-  /**
-   * คลาสของ "เส้นคั่น + ชื่อระบบ" — แถบหัวในระบบใช้ซ่อนชื่อระบบบนจอแคบ
-   *
-   * ชื่อระบบใหม่ยาวกว่าชื่อเดิม (`Government Datahub`) ราวเท่าตัว พอถึง `md` ที่เมนู
-   * เริ่มโผล่ ป้ายเมนูจะถูกบีบจนตัดเป็นสองบรรทัด ที่ `lg` ขึ้นไปมีที่พอทั้งคู่
-   */
-  subtitleClassName?: string;
   tone?: "navy" | "white";
 }) {
   const white = tone === "white";
@@ -112,10 +109,8 @@ export function Logo({
     <span className={clsx("inline-flex items-center gap-3", className)}>
       <LogoImage tone={tone} />
       <D2Mark tone={tone} />
-      {/* คลาส display มาจาก subtitleClassName ทั้งก้อน ไม่งั้น `inline-flex` ที่ตั้งไว้ตรงนี้
-          กับ `hidden` ที่ส่งเข้ามาจะเป็นคลาสเดี่ยวเท่ากัน แล้วแพ้ชนะกันตามลำดับใน stylesheet */}
       {subtitle ? (
-        <span className={clsx("items-center gap-3", subtitleClassName ?? "inline-flex")}>
+        <span className="inline-flex items-center gap-3">
           <span aria-hidden="true" className={clsx("h-6 w-px", white ? "bg-white/30" : "bg-line")} />
           <span
             className={clsx(

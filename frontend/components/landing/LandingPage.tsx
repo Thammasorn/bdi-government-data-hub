@@ -198,7 +198,7 @@ function TopNav({ active }: { active: string }) {
       <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3 sm:px-6">
         <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="หน้าแรก D2">
           <LogoImage className="h-14" />
-          <D2Mark className="h-12" />
+          <D2Mark className="h-9" />
         </Link>
 
         <nav aria-label="หัวข้อในหน้านี้" className="hidden min-w-0 flex-1 xl:block">
@@ -785,7 +785,7 @@ function SiteFooter() {
           <div className="max-w-md">
             <div className="flex items-center gap-3">
               <LogoImage tone="white" className="h-12" />
-              <D2Mark tone="white" className="h-10" />
+              <D2Mark tone="white" className="h-8" />
             </div>
             <p className="mt-4 text-[14px] leading-[1.85] text-white/60">
               Data Integration and Intelligence Platform — ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัลของประเทศ

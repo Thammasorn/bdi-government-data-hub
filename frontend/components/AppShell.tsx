@@ -138,7 +138,7 @@ function Header() {
               จะจัดกึ่งกลางให้ "ลิงก์" ไม่ใช่ "โลโก้" — ตัวโลโก้กับชื่อระบบจึงลอยสูงกว่าป้ายเมนู
               ราว 3.6px ซึ่งคือสิ่งที่การ์ด "UI Navbar ไม่ตรง" รายงานมา */}
           <Link href="/" className="flex shrink-0" aria-label="หน้าแรก ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)">
-            <Logo subtitleClassName="hidden lg:inline-flex" />
+            <Logo subtitle={null} />
           </Link>
 
           <nav className="hidden flex-1 items-center gap-1 md:flex">
