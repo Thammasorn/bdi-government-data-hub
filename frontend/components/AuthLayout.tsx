@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
-import { Logo, LogoImage } from "@/components/brand/Logo";
+import { D2Mark, Logo, LogoImage } from "@/components/brand/Logo";
 
 /**
  * โครงหน้า auth สองคอลัมน์ — ซ้ายเป็นแบรนด์ ขวาเป็นฟอร์ม (docs/02-ui-spec.md §3.1)
@@ -33,7 +33,10 @@ export function AuthLayout({
           className="bg-dot-grid absolute -bottom-24 -left-10 h-80 w-80 text-white opacity-[0.10]"
         />
         {/* self-start: aside เป็น flex column ถ้าปล่อยให้ stretch รูปจะถูกยืดเต็มความกว้าง */}
-        <LogoImage tone="white" className="relative h-28 self-start" />
+        <div className="relative flex items-center gap-5 self-start">
+          <LogoImage tone="white" className="h-28" />
+          <D2Mark tone="white" className="h-24" />
+        </div>
 
         <div className="relative max-w-md">
           <p className="text-[14px] font-medium uppercase tracking-wide text-white/60">
