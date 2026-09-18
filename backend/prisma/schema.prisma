@@ -94,6 +94,10 @@ model UserAccount {
 
   email        String  @unique @db.VarChar(255)
   phoneNumber  String? @map("phone_number") @db.VarChar(32)
+  /// เบี่ยงจากดีไซน์: เลขต่อของเบอร์โทรศัพท์ (การ์ด "Field เบอร์โทร ให้เพิ่ม ต่อ-1232" 2026-09-18)
+  /// เป็นช่องแยกจากเบอร์ ตัวเลขล้วน ว่างได้ — เบอร์ราชการเป็นเบอร์กลางที่ต้องกดต่อ ถ้ายัดลงช่องเบอร์
+  /// จะไม่ผ่านกฎเบอร์ 9–10 หลัก และเบอร์ที่เก็บจะไม่ใช่เบอร์ที่โทรออกได้
+  phoneNumberExtension String? @map("phone_number_extension") @db.VarChar(16)
   /// ฝ่าย / กอง / สำนัก
   departmentTh String? @map("department_th") @db.VarChar(255)
   /// ตำแหน่ง
@@ -367,6 +371,8 @@ model Organization {
   provinceCode    String? @map("province_code") @db.VarChar(16)
   postalCode      String? @map("postal_code") @db.VarChar(16)
   phone           String? @db.VarChar(32)
+  /// เบี่ยงจากดีไซน์: เลขต่อของเบอร์หน่วยงาน — คู่กับ user_account.phone_number_extension ดูเหตุผลที่นั่น
+  phoneExtension  String? @map("phone_extension") @db.VarChar(16)
   email           String? @db.VarChar(255)
   websiteUrl      String? @map("website_url") @db.VarChar(500)
 
@@ -612,6 +618,8 @@ model OrganizationRegistrationRequest {
   organizationProvinceCode    String? @map("organization_province_code") @db.VarChar(16)
   organizationPostalCode      String? @map("organization_postal_code") @db.VarChar(16)
   organizationPhone           String? @map("organization_phone") @db.VarChar(32)
+  /// เบี่ยงจากดีไซน์: เลขต่อ — คู่กับ user_account.phone_number_extension ดูเหตุผลที่นั่น
+  organizationPhoneExtension  String? @map("organization_phone_extension") @db.VarChar(16)
   organizationEmail           String? @map("organization_email") @db.VarChar(255)
   organizationWebsite         String? @map("organization_website") @db.VarChar(500)
 
@@ -622,6 +630,8 @@ model OrganizationRegistrationRequest {
   approverLastnameTh   String? @map("approver_lastname_th") @db.VarChar(255)
   approverEmail        String? @map("approver_email") @db.VarChar(255)
   approverPhoneNumber  String? @map("approver_phone_number") @db.VarChar(32)
+  /// เบี่ยงจากดีไซน์: เลขต่อ — คู่กับ user_account.phone_number_extension ดูเหตุผลที่นั่น
+  approverPhoneNumberExtension String? @map("approver_phone_number_extension") @db.VarChar(16)
   approverDepartmentTh String? @map("approver_department_th") @db.VarChar(255)
   approverPositionTh   String? @map("approver_position_th") @db.VarChar(255)
 
@@ -632,6 +642,8 @@ model OrganizationRegistrationRequest {
   userLastnameTh   String? @map("user_lastname_th") @db.VarChar(255)
   userEmail        String? @map("user_email") @db.VarChar(255)
   userPhoneNumber  String? @map("user_phone_number") @db.VarChar(32)
+  /// เบี่ยงจากดีไซน์: เลขต่อ — คู่กับ user_account.phone_number_extension ดูเหตุผลที่นั่น
+  userPhoneNumberExtension String? @map("user_phone_number_extension") @db.VarChar(16)
   userDepartmentTh String? @map("user_department_th") @db.VarChar(255)
   userPositionTh   String? @map("user_position_th") @db.VarChar(255)
 

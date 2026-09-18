@@ -41,7 +41,7 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   Sarabun faces from `assets/theme_ci_design/Font/Sarabun.zip` **embedded**, rebuilt by
   `docs/tools/manual-to-docx.py`; the Markdown stays the source, so never hand-edit the .docx
 - `docs/18-document-template-variables.md` — **คู่มือสำหรับผู้เขียนเอกสาร** (ไม่ใช่ผู้เขียนโค้ด):
-  ตัวแปรทั้ง 74 ตัวที่ template ใช้ได้ พร้อมตัวอย่างค่า วิธีพิมพ์ placeholder ให้ไม่พลาด
+  ตัวแปรทั้ง 81 ตัวที่ template ใช้ได้ พร้อมตัวอย่างค่า วิธีพิมพ์ placeholder ให้ไม่พลาด
   วิธีอัปโหลดเวอร์ชันใหม่ และเส้นแบ่งว่าอะไรแก้เองได้ อะไรต้องให้ทีมพัฒนาทำก่อน
   §3.1 คือตารางชื่อเดิม→ชื่อใหม่ของการเปลี่ยนชื่อเมื่อ 2026-08-24 · §3.2 คือชุดเอกสาร
   2026-08-31 ที่สลับเลขผนวก — มีฉบับ .docx อยู่ที่
@@ -635,6 +635,25 @@ sends no `title` claim. A locked prefix renders as a read-only input rather than
 which also retired the old `PREFIXES` filter: an imported value like `นายแพทย์` used to leave
 the dropdown blank and submit empty without showing anyone.
 
+**A telephone number is two fields: the number and its extension.** Every `*phone*` column has
+a `*_extension` sibling (`iam.user_account.phone_number_extension`,
+`organization.phone_extension`, and the three snapshot columns on the registration request),
+added 2026-09-18 for the card "Field เบอร์โทร ให้เพิ่ม ต่อ-1232 ของเบอร์โทรศัพท์". Government
+numbers are switchboard numbers, and `phoneSchema` only accepts 9–10 digits, so before this the
+extension had nowhere to go. `phoneExtensionSchema` in `lib/validation.ts` is the one rule —
+digits only, at most 10, blank means none — mirrored in `frontend/lib/organization-form.ts`
+like every other form rule. Three things about it are easy to get wrong: it maps `""` to `null`
+so the column never holds an empty string, but leaves an **absent** key `undefined`, because a
+partial `PATCH` must not clear everyone's extension; the org form therefore sends the extension
+fields even when empty (`SENT_WHEN_EMPTY`), since "blank" is an answer there, not "untouched";
+and on the registration form the contact person's extension is **locked together with the
+phone** (`contactFromAccount()` puts it outside `providedOnly()`), because "this number has no
+extension" is a fact about the account too, and it cannot be told apart from "not set". The
+extension travels wherever the phone is copied — `ensureApproverAccount()`, the master copy at
+final approval — and reaches documents as its own `*.phoneExtension` variable rather than being
+glued onto `*.phone`, so a template printing a number today does not change when someone adds
+an extension.
+
 **Password rules are a table, in two mirrored files.** `PASSWORD_RULES` in
 `backend/src/lib/validation.ts` (twelve characters, upper, lower, digit, symbol — the 2026-09-06
 card) is copied into `frontend/lib/password.ts` for the same reason `organization-form.ts` is a
@@ -849,7 +868,7 @@ per view, `LegalDocumentsCard` lists the documents and renders one only when the
 **The variable catalogue is the contract between documents and code.**
 `TEMPLATE_VARIABLES` in `lib/document-render.ts` is the single source for validation, the admin
 API listing and `docs/18-document-template-variables.md`; `lib/legal-values.ts` fills every entry.
-It covers 74 variables across organisation, org approver, org officer, request, dataset, signature,
+It covers 81 variables across organisation, org approver, org officer, request, dataset, signature,
 BDI, document-version and system data — deliberately wider than A0 uses, so a new document can pull
 data it needs without a code change. Adding a *name* still needs code, and upload validation rejects unknown names for
 exactly that reason. `bdi.address` / `bdi.directorName` are constants (`OFFICE_DEFAULTS`)

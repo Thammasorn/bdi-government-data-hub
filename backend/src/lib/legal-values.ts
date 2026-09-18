@@ -69,6 +69,7 @@ export interface AgreementInput {
   subdistrict: string | null;
   postalCode: string | null;
   phone: string | null;
+  phoneExtension: string | null;
   email: string | null;
   websiteUrl: string | null;
 
@@ -79,6 +80,7 @@ export interface AgreementInput {
   signatoryDepartment: string | null;
   signatoryEmail: string | null;
   signatoryPhone: string | null;
+  signatoryPhoneExtension: string | null;
   signatoryNationalId: string | null;
 
   contactPrefix: string | null;
@@ -88,6 +90,7 @@ export interface AgreementInput {
   contactDepartment: string | null;
   contactEmail: string | null;
   contactPhone: string | null;
+  contactPhoneExtension: string | null;
   contactNationalId: string | null;
 
   /** วันที่ที่ถือเป็นวันทำข้อตกลง — วันที่นำส่งคำขอ ถ้ายังไม่นำส่งใช้วันนี้ */
@@ -109,6 +112,7 @@ export interface AgreementInput {
   officeName: string | null;
   officeEmail: string | null;
   officePhone: string | null;
+  officePhoneExtension: string | null;
 
   /** คนที่กดสร้างเอกสารครั้งนี้ */
   printedByName: string | null;
@@ -172,6 +176,7 @@ export function agreementValues(input: AgreementInput): TemplateValues {
     "org.postalCode": input.postalCode ?? "",
     "org.address": organizationAddress(input),
     "org.phone": input.phone ?? "",
+    "org.phoneExtension": input.phoneExtension ?? "",
     "org.email": input.email ?? "",
     "org.website": input.websiteUrl ?? "",
 
@@ -188,6 +193,7 @@ export function agreementValues(input: AgreementInput): TemplateValues {
     "org_approver.department": input.signatoryDepartment ?? "",
     "org_approver.email": input.signatoryEmail ?? "",
     "org_approver.phone": input.signatoryPhone ?? "",
+    "org_approver.phoneExtension": input.signatoryPhoneExtension ?? "",
     "org_approver.nationalId": formatNationalId(input.signatoryNationalId),
 
     // ── ผู้ประสานงานของหน่วยงาน ──
@@ -203,6 +209,7 @@ export function agreementValues(input: AgreementInput): TemplateValues {
     "org_officer.department": input.contactDepartment ?? "",
     "org_officer.email": input.contactEmail ?? "",
     "org_officer.phone": input.contactPhone ?? "",
+    "org_officer.phoneExtension": input.contactPhoneExtension ?? "",
     "org_officer.nationalId": formatNationalId(input.contactNationalId),
 
     // ── ลายมือชื่อ ──
@@ -221,6 +228,7 @@ export function agreementValues(input: AgreementInput): TemplateValues {
     "bdi.address": OFFICE_DEFAULTS.address,
     "bdi.email": input.officeEmail ?? "",
     "bdi.phone": input.officePhone ?? "",
+    "bdi.phoneExtension": input.officePhoneExtension ?? "",
     "bdi.directorName": OFFICE_DEFAULTS.directorName,
     "bdi.directorPosition": OFFICE_DEFAULTS.directorPosition,
 

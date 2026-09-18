@@ -69,6 +69,8 @@ async function makeUser(opts: {
   firstName: string;
   lastName: string;
   phone: string;
+  /** เลขต่อ — ใส่ให้เฉพาะคนที่ใช้เบอร์กลางของหน่วยงาน มือถือไม่มี */
+  phoneExtension?: string;
   cid?: string;
   accountType: AccountType;
   role: RoleCode;
@@ -86,6 +88,7 @@ async function makeUser(opts: {
       firstnameTh: opts.firstName,
       lastnameTh: opts.lastName,
       phoneNumber: opts.phone,
+      phoneNumberExtension: opts.phoneExtension ?? null,
       displayName,
       accountType: opts.accountType,
       status,
@@ -382,7 +385,9 @@ async function main() {
         subDistrictCode: subDistrict?.code ?? null,
         postalCode: subDistrict?.postalCode ?? null,
         email: spec.userEmail,
+        // เบอร์กลาง + เลขต่อ — ให้หน้าจอกับเอกสารมีเลขต่อให้เห็นอย่างน้อยหนึ่งที่
         phone: "021234567",
+        phoneExtension: "1232",
         activatedAt: active ? dt(spec.daysAgo - 2) : null,
         activatedBy: active ? approver.id : null,
         createdAt: dt(spec.daysAgo),
@@ -396,7 +401,9 @@ async function main() {
       prefix: spec.userName[0],
       firstName: spec.userName[1],
       lastName: spec.userName[2],
-      phone: "0820000000",
+      // ผู้ประสานงานติดต่อผ่านเบอร์กลางของหน่วยงาน — เลขต่อของเขาจึงไหลไปล็อกอยู่ในส่วนที่ 3 ของฟอร์ม
+      phone: "021234567",
+      phoneExtension: "1201",
       cid: `11010000000${index + 1}`.slice(0, 13),
       accountType: AccountType.ORGANIZATION,
       role: ROLE_CODES.ORGANIZATION_USER,
@@ -438,6 +445,7 @@ async function main() {
         organizationPostalCode: subDistrict?.postalCode ?? null,
         organizationEmail: spec.userEmail,
         organizationPhone: "021234567",
+        organizationPhoneExtension: "1232",
 
         approverPrefixTh: spec.approverName[0],
         approverFirstnameTh: spec.approverName[1],
@@ -453,7 +461,8 @@ async function main() {
         userPositionTh: "นักวิเคราะห์นโยบายและแผน",
         userDepartmentTh: "กลุ่มงานข้อมูลสารสนเทศ",
         userEmail: spec.userEmail,
-        userPhoneNumber: "0820000000",
+        userPhoneNumber: "021234567",
+        userPhoneNumberExtension: "1201",
 
         submittedAt: dt(spec.daysAgo - 1),
         approvedAt: active ? dt(spec.daysAgo - 2) : null,
