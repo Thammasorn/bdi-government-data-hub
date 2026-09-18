@@ -146,7 +146,9 @@ const SUBMISSION_STEP: StepPlan = {
   key: "SUBMISSION",
   taskType: null,
   optional: false,
-  label: "ส่งคำขอลงทะเบียน",
+  // "ส่ง/แก้ไข" เพราะขั้นนี้กลับมาเป็นขั้นปัจจุบันอีกครั้งทุกรอบที่คำขอถูกส่งกลับ —
+  // ป้ายที่บอกแค่ "ส่ง" ทำให้คนที่กำลังแก้อ่านว่าตัวเองอยู่ผิดขั้น (2026-09-18)
+  label: "ส่ง/แก้ไข คำขอลงทะเบียน",
   shortLabel: "รอหน่วยงานนำส่ง",
   waitingLabel: `รอ${withRole(ROLE_CODES.ORGANIZATION_USER, "นำส่งคำขอ")}`,
   roleCode: ROLE_CODES.ORGANIZATION_USER,

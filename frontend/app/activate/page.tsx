@@ -39,6 +39,7 @@ interface InvitationInfo {
     firstName: string | null;
     lastName: string | null;
     phone: string | null;
+    phoneExtension: string | null;
   };
   /**
    * ช่องไหนแก้ไม่ได้ — ตัดสินที่ backend (`lockedProfile()` ใน routes/auth.ts) ไม่ใช่
@@ -305,6 +306,7 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
     firstName: (invitation.profile.firstName ?? "").trim(),
     lastName: (invitation.profile.lastName ?? "").trim(),
     phone: invitation.profile.phone ?? "",
+    phoneExtension: invitation.profile.phoneExtension ?? "",
     password: "",
     confirmPassword: "",
   });
@@ -412,16 +414,34 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
           </p>
         ) : null}
 
-        <TextField
-          label="เบอร์โทรศัพท์"
-          required
-          inputMode="tel"
-          autoComplete="tel"
-          placeholder="081-234-5678"
-          value={form.phone}
-          onChange={(e) => set("phone")(e.target.value)}
-          error={fields.phone}
-        />
+        {/*
+          เบอร์กับเลขต่อเป็นคนละช่องแต่เรื่องเดียวกัน จึงอยู่ในแถวเดียวกัน — เบอร์กลางราชการ
+          ต้องกดต่อ แต่ช่องเบอร์รับได้แค่ 9–10 หลัก (การ์ด "Field เบอร์โทร ให้เพิ่ม ต่อ-1232")
+          เลขต่อว่างได้และไม่บังคับ กฎเดียวกับฟอร์มลงทะเบียนหน่วยงาน (`phoneExtensionSchema`)
+        */}
+        <div className="grid grid-cols-[minmax(0,1fr)_9rem] items-start gap-3">
+          <TextField
+            label="เบอร์โทรศัพท์"
+            required
+            inputMode="tel"
+            autoComplete="tel"
+            placeholder="081-234-5678"
+            value={form.phone}
+            onChange={(e) => set("phone")(e.target.value)}
+            error={fields.phone}
+          />
+          <TextField
+            label="ต่อ"
+            inputMode="numeric"
+            autoComplete="tel-extension"
+            maxLength={10}
+            placeholder="1232"
+            value={form.phoneExtension}
+            onChange={(e) => set("phoneExtension")(e.target.value)}
+            error={fields.phoneExtension}
+            hint="ถ้าไม่มีเว้นว่าง"
+          />
+        </div>
 
         <div className="flex flex-col gap-3">
           <TextField

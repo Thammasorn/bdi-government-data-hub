@@ -64,7 +64,13 @@ import {
   SYSTEM_USER_ID,
   type RoleCode,
 } from "../lib/system.js";
-import { emailSchema, formatZodError, nationalIdSchema, uuidSchema } from "../lib/validation.js";
+import {
+  emailSchema,
+  formatZodError,
+  nationalIdSchema,
+  phoneExtensionSchema,
+  uuidSchema,
+} from "../lib/validation.js";
 import { requireAdminToken } from "../middleware/auth.js";
 
 export const adminUserRouter = Router();
@@ -99,6 +105,7 @@ const accountSelect = {
   lastnameTh: true,
   displayName: true,
   phoneNumber: true,
+  phoneNumberExtension: true,
   positionTh: true,
   departmentTh: true,
   accountType: true,
@@ -411,6 +418,7 @@ const profileSchema = z
     lastnameTh: z.string().trim().max(255).nullable().optional(),
     displayName: z.string().trim().min(1).max(255).optional(),
     phoneNumber: z.string().trim().max(32).nullable().optional(),
+    phoneNumberExtension: phoneExtensionSchema,
     positionTh: z.string().trim().max(255).nullable().optional(),
     departmentTh: z.string().trim().max(255).nullable().optional(),
   })

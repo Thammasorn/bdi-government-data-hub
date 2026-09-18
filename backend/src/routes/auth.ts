@@ -58,7 +58,13 @@ import {
   startThaidOperation,
   succeedThaidOperation,
 } from "../lib/thaid-flow.js";
-import { emailSchema, formatZodError, passwordSchema, phoneSchema } from "../lib/validation.js";
+import {
+  emailSchema,
+  formatZodError,
+  passwordSchema,
+  phoneExtensionSchema,
+  phoneSchema,
+} from "../lib/validation.js";
 import { requireAuth } from "../middleware/auth.js";
 
 export const authRouter = Router();
@@ -188,6 +194,7 @@ authRouter.get("/invitation", async (req, res) => {
       firstName: key.userAccount.firstnameTh,
       lastName: key.userAccount.lastnameTh,
       phone: key.userAccount.phoneNumber,
+      phoneExtension: key.userAccount.phoneNumberExtension,
     },
     /** ช่องไหนล็อก ตัดสินที่นี่ที่เดียว หน้าเว็บแค่แสดงตาม — ดู lockedProfile() */
     profileLocked: lockedProfile(key.userAccount),
@@ -545,6 +552,8 @@ const activateSchema = z
     firstName: z.string().trim().optional(),
     lastName: z.string().trim().optional(),
     phone: phoneSchema,
+    /** เลขต่อของเบอร์ข้างบน — ว่างได้ ตัวเลขล้วน (การ์ด "Field เบอร์โทร ให้เพิ่ม ต่อ-1232") */
+    phoneExtension: phoneExtensionSchema,
     password: passwordSchema,
     confirmPassword: z.string().min(1, "กรุณากรอกรหัสผ่านอีกครั้งเพื่อยืนยัน"),
   })
@@ -568,7 +577,7 @@ authRouter.post("/activate", async (req, res) => {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;
   }
-  const { token, phone, password } = parsed.data;
+  const { token, phone, phoneExtension, password } = parsed.data;
 
   const { key, reason } = await findUsableActivationKey(token);
   if (!key) {
@@ -628,6 +637,8 @@ authRouter.post("/activate", async (req, res) => {
           lastnameTh: lastName,
           displayName: fullNameTh({ prefixTh: prefix, firstnameTh: firstName, lastnameTh: lastName }),
           phoneNumber: phone,
+          // undefined = แท็บเก่าที่ไม่รู้จักช่องนี้ — อย่าลบเลขต่อที่เจ้าหน้าที่กรอกไว้ให้ผู้มีอำนาจ
+          phoneNumberExtension: phoneExtension,
           passwordHash: await hashPassword(password),
           externalSubject: verification.externalReference,
           updatedBy: key.userAccountId,
@@ -1027,6 +1038,7 @@ function publicUser(
     firstnameTh: string | null;
     lastnameTh: string | null;
     phoneNumber: string | null;
+    phoneNumberExtension: string | null;
     displayName: string;
   },
   roles: RoleCode[],
@@ -1039,6 +1051,7 @@ function publicUser(
     firstName: user.firstnameTh,
     lastName: user.lastnameTh,
     phone: user.phoneNumber,
+    phoneExtension: user.phoneNumberExtension,
     displayName: user.displayName,
     roles,
     organizationId,

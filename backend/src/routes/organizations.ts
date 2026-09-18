@@ -107,6 +107,7 @@ import {
   nationalIdSchema,
   normaliseThaiPhone,
   organizationNameSchema,
+  phoneExtensionSchema,
   phoneSchema,
   positionSchema,
 } from "../lib/validation.js";
@@ -211,6 +212,12 @@ const draftSchema = z.object({
   subdistrict: z.string().trim().optional(),
   postalCode: z.string().trim().optional(),
   phone: z.string().trim().optional(),
+  /**
+   * เลขต่อตรวจตั้งแต่บันทึกร่าง ไม่รอถึงตอนนำส่งแบบช่องอื่น — กฎมันสั้น (ตัวเลขล้วน) และ
+   * ค่าที่ผิดกฎเป็นค่าที่เก็บไว้ก็ไม่มีประโยชน์ ต่างจากเบอร์ที่ค่าครึ่ง ๆ กลาง ๆ ยังเป็นร่างได้
+   * ค่าว่างผ่านและกลายเป็น null: ผู้ใช้ลบเลขต่อออกแล้วบันทึก ต้องลบออกจากคอลัมน์จริง ๆ
+   */
+  phoneExtension: phoneExtensionSchema,
   email: z.string().trim().optional(),
   websiteUrl: z.string().trim().max(500).optional(),
 
@@ -221,6 +228,7 @@ const draftSchema = z.object({
   signatoryEmail: z.string().trim().optional(),
   signatoryNationalId: z.string().trim().optional(),
   signatoryPhone: z.string().trim().optional(),
+  signatoryPhoneExtension: phoneExtensionSchema,
   signatoryDepartment: z.string().trim().optional(),
 
   contactPrefix: z.string().trim().optional(),
@@ -230,6 +238,7 @@ const draftSchema = z.object({
   contactDepartment: z.string().trim().optional(),
   contactEmail: z.string().trim().optional(),
   contactPhone: z.string().trim().optional(),
+  contactPhoneExtension: phoneExtensionSchema,
   contactNationalId: z.string().trim().optional(),
 });
 
@@ -265,6 +274,7 @@ const submitSchema = z
   signatoryEmail: emailSchema,
   signatoryNationalId: nationalIdSchema,
   signatoryPhone: phoneSchema,
+  signatoryPhoneExtension: phoneExtensionSchema,
 
   contactPrefix: z.string().trim().min(1, "กรุณาเลือกคำนำหน้า"),
   contactFirstName: z.string().trim().min(1, "กรุณากรอกชื่อ"),
@@ -273,6 +283,7 @@ const submitSchema = z
   contactDepartment: z.string().trim().min(1, "กรุณากรอกฝ่าย/กอง/สำนัก"),
   contactEmail: emailSchema,
   contactPhone: phoneSchema,
+  contactPhoneExtension: phoneExtensionSchema,
   })
   /**
    * อีเมลหน่วยงานต้องไม่ใช่อีเมลของผู้มีอำนาจกระทำการแทน
@@ -357,6 +368,8 @@ async function toRequestData(input: z.infer<typeof draftSchema>) {
     organizationSubdistrictCode: codes.subDistrictCode,
     organizationPostalCode: postalCode,
     organizationPhone: phone(input.phone),
+    // phoneExtensionSchema แปลง "" เป็น null ให้แล้ว — undefined (ไม่ได้ส่งมา) คงค่าเดิมไว้
+    organizationPhoneExtension: input.phoneExtension,
     organizationEmail: input.email,
     organizationWebsite: input.websiteUrl,
 
@@ -367,6 +380,7 @@ async function toRequestData(input: z.infer<typeof draftSchema>) {
     approverEmail: input.signatoryEmail,
     approverCid: input.signatoryNationalId,
     approverPhoneNumber: phone(input.signatoryPhone),
+    approverPhoneNumberExtension: input.signatoryPhoneExtension,
     approverDepartmentTh: input.signatoryDepartment,
 
     userPrefixTh: input.contactPrefix,
@@ -376,6 +390,7 @@ async function toRequestData(input: z.infer<typeof draftSchema>) {
     userDepartmentTh: input.contactDepartment,
     userEmail: input.contactEmail,
     userPhoneNumber: phone(input.contactPhone),
+    userPhoneNumberExtension: input.contactPhoneExtension,
     userCid: input.contactNationalId,
   };
 }
@@ -398,6 +413,7 @@ function prefillFromOrganization(org: {
   subDistrictCode: string | null;
   postalCode: string | null;
   phone: string | null;
+  phoneExtension: string | null;
   email: string | null;
   websiteUrl: string | null;
 }) {
@@ -414,6 +430,7 @@ function prefillFromOrganization(org: {
     organizationSubdistrictCode: org.subDistrictCode,
     organizationPostalCode: org.postalCode,
     organizationPhone: org.phone,
+    organizationPhoneExtension: org.phoneExtension,
     organizationEmail: org.email,
     organizationWebsite: org.websiteUrl,
   };
@@ -438,6 +455,7 @@ type ContactAccount = {
   lastnameTh: string | null;
   email: string;
   phoneNumber: string | null;
+  phoneNumberExtension: string | null;
 };
 
 const CONTACT_ACCOUNT_SELECT = {
@@ -446,6 +464,7 @@ const CONTACT_ACCOUNT_SELECT = {
   lastnameTh: true,
   email: true,
   phoneNumber: true,
+  phoneNumberExtension: true,
 } as const;
 
 /**
@@ -466,13 +485,25 @@ function contactFromAccount(account: ContactAccount | null) {
     const trimmed = value?.trim();
     return trimmed ? trimmed : undefined;
   };
-  return providedOnly({
-    userPrefixTh: take(account?.prefixTh ?? null),
-    userFirstnameTh: take(account?.firstnameTh ?? null),
-    userLastnameTh: take(account?.lastnameTh ?? null),
-    userEmail: take(account?.email ?? null),
-    userPhoneNumber: take(account?.phoneNumber ?? null),
-  });
+  const phone = take(account?.phoneNumber ?? null);
+  return {
+    ...providedOnly({
+      userPrefixTh: take(account?.prefixTh ?? null),
+      userFirstnameTh: take(account?.firstnameTh ?? null),
+      userLastnameTh: take(account?.lastnameTh ?? null),
+      userEmail: take(account?.email ?? null),
+      userPhoneNumber: phone,
+    }),
+    /**
+     * เลขต่อเดินทางไปกับเบอร์ — บัญชีมีเบอร์เมื่อไร เลขต่อ (หรือการไม่มีเลขต่อ) ก็เป็นของ
+     * บัญชีด้วย จึงอยู่นอก providedOnly(): null ที่นี่แปลว่า "เบอร์นี้ไม่มีเลขต่อ" และต้อง
+     * ทับค่าที่ฟอร์มส่งมา ไม่ใช่ถูกกรองทิ้งแล้วปล่อยให้ snapshot เก็บเลขต่อที่ไม่ตรงกับบัญชี
+     * บัญชีที่ยังไม่มีเบอร์ปล่อยทั้งคู่ให้ฟอร์มกรอก
+     */
+    ...(phone !== undefined
+      ? { userPhoneNumberExtension: take(account?.phoneNumberExtension ?? null) ?? null }
+      : {}),
+  };
 }
 
 /** บัญชีของคนที่เปิดคำขอใบนี้ — ผู้ประสานงานของหน่วยงานคือคนนั้นเสมอ */
@@ -608,6 +639,7 @@ async function toApiShape(request: RequestRow) {
     subdistrict: names.subdistrict,
     postalCode: request.organizationPostalCode,
     phone: request.organizationPhone,
+    phoneExtension: request.organizationPhoneExtension,
     email: request.organizationEmail,
     websiteUrl: request.organizationWebsite,
 
@@ -621,6 +653,7 @@ async function toApiShape(request: RequestRow) {
     signatoryEmail: request.approverEmail,
     signatoryNationalId: request.approverCid,
     signatoryPhone: request.approverPhoneNumber,
+    signatoryPhoneExtension: request.approverPhoneNumberExtension,
 
     /**
      * ตัวตนของผู้กรอก: **บัญชีมาก่อน snapshot** เหมือนที่ชื่อหน่วยงานให้ master มาก่อน
@@ -637,6 +670,11 @@ async function toApiShape(request: RequestRow) {
     contactNationalId: request.userCid,
     contactEmail: contact.userEmail ?? request.userEmail,
     contactPhone: contact.userPhoneNumber ?? request.userPhoneNumber,
+    // ล็อกพร้อมเบอร์ (ดู contactFromAccount) — ไม่มี key แยกใน contactLocked ด้านล่าง
+    contactPhoneExtension:
+      contact.userPhoneNumber !== undefined
+        ? (contact.userPhoneNumberExtension ?? null)
+        : request.userPhoneNumberExtension,
     /**
      * ช่องไหนในส่วนที่ 3 เป็นแบบอ่านอย่างเดียว — ตัดสินที่นี่ที่เดียว หน้าเว็บแค่แสดงตาม
      * (แบบเดียวกับ `profileLocked` ของ `GET /api/auth/invitation`) ช่องที่บัญชียังไม่มีค่า
@@ -2645,6 +2683,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
             subDistrictCode: request.organizationSubdistrictCode,
             postalCode: request.organizationPostalCode,
             phone: request.organizationPhone,
+            phoneExtension: request.organizationPhoneExtension,
             email: request.organizationEmail,
             websiteUrl: request.organizationWebsite,
             updatedBy: session.sub,
@@ -2962,6 +3001,7 @@ async function ensureApproverAccount(
         firstnameTh: request.approverFirstnameTh,
         lastnameTh: request.approverLastnameTh,
         phoneNumber: request.approverPhoneNumber,
+        phoneNumberExtension: request.approverPhoneNumberExtension,
         positionTh: request.approverPositionTh,
         departmentTh: request.approverDepartmentTh,
         displayName,

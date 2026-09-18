@@ -1172,7 +1172,7 @@ function KeywordInput({
             onBlur?.();
           }}
           maxLength={Math.max(remaining, 0)}
-          placeholder={tags.length === 0 ? "พิมพ์คำสำคัญแล้วกด Enter" : ""}
+          placeholder={tags.length === 0 ? "พิมพ์คำสำคัญแล้วกด , หรือ Enter" : ""}
           className="h-8 min-w-40 flex-1 bg-transparent px-1.5 text-[15px] outline-none placeholder:text-ink-subtle"
         />
       </div>
@@ -1182,6 +1182,10 @@ function KeywordInput({
         </p>
       ) : (
         <p className="text-[13px] text-ink-muted">
+          {/* บอกตัวคั่นไว้ตรง ๆ — ผู้ทดสอบพิมพ์หลายคำเว้นวรรคแล้วได้ชิปเดียวยาว ๆ เพราะไม่รู้ว่าต้องคั่นด้วย "," (2026-09-18) */}
+          พิมพ์ทีละคำแล้วกด <kbd className="rounded border border-line bg-canvas px-1 font-mono text-[12px]">,</kbd> หรือ Enter
+          คำนั้นถึงจะขึ้นเป็นแท็กแยกกัน — ถ้าไม่คั่นด้วยคอมมา ทั้งข้อความจะนับเป็นคำสำคัญคำเดียว
+          <br />
           อย่างน้อย 1 คำ · รวมกันไม่เกิน 200 ตัวอักษร (เหลือ {Math.max(remaining, 0).toLocaleString("th-TH")})
         </p>
       )}

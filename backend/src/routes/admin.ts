@@ -34,7 +34,13 @@ import {
   SYSTEM_USER_ID,
   type RoleCode,
 } from "../lib/system.js";
-import { emailSchema, formatZodError, nationalIdSchema, uuidSchema } from "../lib/validation.js";
+import {
+  emailSchema,
+  formatZodError,
+  nationalIdSchema,
+  phoneExtensionSchema,
+  uuidSchema,
+} from "../lib/validation.js";
 import { requireAdminToken } from "../middleware/auth.js";
 
 export const adminRouter = Router();
@@ -70,6 +76,8 @@ const adminOrganizationSchema = z.object({
   subdistrict: z.string().trim().optional(),
   postalCode: z.string().trim().regex(/^\d{5}$/, "รหัสไปรษณีย์ต้องเป็นตัวเลข 5 หลัก").optional(),
   phone: z.string().trim().max(32).optional(),
+  /** เลขต่อของเบอร์หน่วยงาน — ตัวเลขล้วน ว่างได้ ไหลลงฟอร์มลงทะเบียนพร้อมเบอร์ */
+  phoneExtension: phoneExtensionSchema,
   email: emailSchema.optional(),
   websiteUrl: z.string().trim().max(500).optional(),
   parentOrganizationId: uuidSchema(
@@ -93,6 +101,7 @@ async function toAdminOrganizationShape(org: {
   subDistrictCode: string | null;
   postalCode: string | null;
   phone: string | null;
+  phoneExtension: string | null;
   email: string | null;
   websiteUrl: string | null;
   parentOrganizationId: string | null;
@@ -118,6 +127,7 @@ async function toAdminOrganizationShape(org: {
     subdistrict: names.subdistrict,
     postalCode: org.postalCode,
     phone: org.phone,
+    phoneExtension: org.phoneExtension,
     email: org.email,
     websiteUrl: org.websiteUrl,
     parentOrganizationId: org.parentOrganizationId,
@@ -210,6 +220,7 @@ adminRouter.post("/organizations", async (req, res) => {
       subDistrictCode: codes.subDistrictCode ?? null,
       postalCode,
       phone: input.phone ?? null,
+      phoneExtension: input.phoneExtension ?? null,
       email: input.email ?? null,
       websiteUrl: input.websiteUrl ?? null,
       parentOrganizationId: input.parentOrganizationId ?? null,
@@ -287,6 +298,7 @@ const adminOrganizationPatchSchema = z.object({
     .nullable()
     .optional(),
   phone: z.string().trim().max(32).nullable().optional(),
+  phoneExtension: phoneExtensionSchema,
   email: emailSchema.nullable().optional(),
   websiteUrl: z.string().trim().max(500).nullable().optional(),
   parentOrganizationId: uuidSchema(
@@ -415,6 +427,7 @@ adminRouter.patch("/organizations/:id", async (req, res) => {
         : {}),
       postalCode,
       ...(input.phone !== undefined ? { phone: input.phone } : {}),
+      ...(input.phoneExtension !== undefined ? { phoneExtension: input.phoneExtension } : {}),
       ...(input.email !== undefined ? { email: input.email } : {}),
       ...(input.websiteUrl !== undefined ? { websiteUrl: input.websiteUrl } : {}),
       ...(input.parentOrganizationId !== undefined
