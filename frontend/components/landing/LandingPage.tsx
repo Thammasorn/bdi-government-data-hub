@@ -139,8 +139,22 @@ function useRevealOnScroll() {
 
 // ───────────────────────────────────────────────────────────────────── nav
 
+/**
+ * แถบบน — สองหน้าตาตามความกว้าง
+ *
+ * ตั้งแต่ `xl` (1280px) ขึ้นไป สิบหัวข้อเรียงเป็นเม็ดยาในแถวเดียว ต่ำกว่านั้นยุบเป็นปุ่ม
+ * hamburger ที่กางรายการลงมาใต้แถบ เดิมแถวนี้เป็น `overflow-x-auto` ที่ซ่อน scrollbar
+ * ไว้ทุกขนาดจอ — บนจอแคบหัวข้อท้าย ๆ จึงถูกตัดหายไปนอกขอบโดยไม่มีอะไรบอกว่าเลื่อนได้
+ * ผู้ใช้เห็นแค่สามสี่หัวข้อแรกแล้วกดที่เหลือไม่ได้ (รายงาน 2026-09-18) การเลื่อนแนวนอน
+ * ยังเก็บไว้เป็นตาข่ายรองรับบนจอกว้างที่ฟอนต์ใหญ่ผิดปกติ แต่ไม่ใช่ทางหลักอีกแล้ว
+ *
+ * 1280 ไม่ใช่ตัวเลขสุ่ม: โลโก้ + สิบเม็ดยาภาษาไทย + ปุ่มเข้าสู่ระบบ กินราว 1,200px
+ * ที่ `lg` (1024) ยังไม่พอ
+ */
 function TopNav({ active }: { active: string }) {
   const listRef = useRef<HTMLUListElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
+  const [open, setOpen] = useState(false);
 
   // แถบเลื่อนแนวนอนต้องเลื่อนตามหัวข้อที่ active ไม่งั้นผู้ใช้ไม่เห็นว่าอยู่ตรงไหน
   useEffect(() => {
@@ -149,15 +163,45 @@ function TopNav({ active }: { active: string }) {
       ?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
   }, [active]);
 
+  /**
+   * เมนูที่กางอยู่ปิดได้สามทาง — Esc, คลิกนอกแถบ, และจอถูกขยายจนข้ามไปเป็นแบบเม็ดยา
+   * ทางที่สามสำคัญกว่าที่คิด: ถ้าไม่ปิด state จะค้างเป็น `open` ทั้งที่ปุ่มมองไม่เห็นแล้ว
+   * และพอย่อจอกลับมาเมนูก็เด้งกางเองโดยไม่มีใครกด
+   */
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    const onClick = (e: MouseEvent) => {
+      if (!headerRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const wide = window.matchMedia("(min-width: 1280px)");
+    const onWide = (e: MediaQueryListEvent) => {
+      if (e.matches) setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onClick);
+    wide.addEventListener("change", onWide);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onClick);
+      wide.removeEventListener("change", onWide);
+    };
+  }, [open]);
+
   return (
-    <header className="sticky top-0 z-30 border-b border-line/70 bg-white/80 frost-12">
+    <header
+      ref={headerRef}
+      className="sticky top-0 z-30 border-b border-line/70 bg-white/80 frost-12"
+    >
       <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3 sm:px-6">
         <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="หน้าแรก D2">
           <LogoImage className="h-14" />
           <D2Mark className="h-12" />
         </Link>
 
-        <nav aria-label="หัวข้อในหน้านี้" className="min-w-0 flex-1">
+        <nav aria-label="หัวข้อในหน้านี้" className="hidden min-w-0 flex-1 xl:block">
           <ul
             ref={listRef}
             className="flex gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
@@ -185,13 +229,69 @@ function TopNav({ active }: { active: string }) {
           </ul>
         </nav>
 
+        {/* ต่ำกว่า xl โลโก้อยู่ซ้าย ปุ่มสองปุ่มชิดขวา — ml-auto ดันแทนที่ flex-1 ของ nav ที่ซ่อนไป */}
         <Link
           href="/login"
-          className="shrink-0 rounded-full bg-coral-500 px-5 py-2 text-[14px] font-medium text-white transition-colors hover:bg-coral-600"
+          className="ml-auto shrink-0 rounded-full bg-coral-500 px-5 py-2 text-[14px] font-medium text-white transition-colors hover:bg-coral-600 xl:ml-0"
         >
           เข้าสู่ระบบ
         </Link>
+
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-controls="landing-nav-menu"
+          aria-label={open ? "ปิดเมนูหัวข้อ" : "เปิดเมนูหัวข้อ"}
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-navy-800 transition-colors hover:bg-navy-50 xl:hidden"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            className="h-6 w-6"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            aria-hidden="true"
+          >
+            {open ? (
+              <path d="M6 6l12 12M18 6 6 18" strokeLinecap="round" />
+            ) : (
+              <path d="M4 7h16M4 12h16M4 17h16" strokeLinecap="round" />
+            )}
+          </svg>
+        </button>
       </div>
+
+      {open ? (
+        <nav
+          id="landing-nav-menu"
+          aria-label="หัวข้อในหน้านี้"
+          className="animate-in-up absolute inset-x-0 top-full max-h-[calc(100vh-5rem)] overflow-y-auto border-b border-line bg-white shadow-pop xl:hidden"
+        >
+          <ul className="mx-auto max-w-7xl px-4 py-2 sm:px-6">
+            {SECTIONS.map((section) => {
+              const current = active === section.id;
+              return (
+                <li key={section.id}>
+                  <a
+                    href={`#${section.id}`}
+                    aria-current={current ? "true" : undefined}
+                    onClick={() => setOpen(false)}
+                    className={clsx(
+                      "block rounded-xl px-4 py-2.5 text-[15px] transition-colors",
+                      current
+                        ? "bg-navy-800 font-medium text-white"
+                        : "text-ink hover:bg-navy-50 hover:text-navy-800",
+                    )}
+                  >
+                    {section.navLabel}
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+      ) : null}
     </header>
   );
 }
