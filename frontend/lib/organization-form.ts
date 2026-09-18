@@ -69,6 +69,18 @@ export function isValidEmail(value: string): boolean {
 export const PHONE_MESSAGE =
   "เบอร์โทรศัพท์ไม่ถูกต้อง — มือถือ 10 หลักขึ้นต้นด้วย 06 08 หรือ 09 (เช่น 0812345678) เบอร์ที่ทำงาน 9 หลักขึ้นต้นด้วย 0 ตามด้วยรหัสพื้นที่ (เช่น 021234567)";
 
+/**
+ * เลขต่อ — ตัวเลขล้วน ไม่เกิน 10 หลัก ว่างได้
+ * (คู่ของ `phoneExtensionSchema` ใน backend/src/lib/validation.ts — แก้พร้อมกันเสมอ)
+ */
+export const MAX_PHONE_EXTENSION = 10;
+
+export function isValidPhoneExtension(value: string): boolean {
+  return new RegExp(`^\\d{1,${MAX_PHONE_EXTENSION}}$`).test(value);
+}
+
+export const PHONE_EXTENSION_MESSAGE = `เลขต่อต้องเป็นตัวเลขล้วน ไม่เกิน ${MAX_PHONE_EXTENSION} หลัก (เช่น 1232)`;
+
 export interface OrganizationFormValues {
   organizationCode: string;
   name: string;
@@ -86,6 +98,7 @@ export interface OrganizationFormValues {
   signatoryEmail: string;
   signatoryNationalId: string;
   signatoryPhone: string;
+  signatoryPhoneExtension: string;
   contactPrefix: string;
   contactFirstName: string;
   contactLastName: string;
@@ -93,6 +106,7 @@ export interface OrganizationFormValues {
   contactDepartment: string;
   contactEmail: string;
   contactPhone: string;
+  contactPhoneExtension: string;
 }
 
 export type OrganizationFormField = keyof OrganizationFormValues;
@@ -206,6 +220,12 @@ export function validateOrganizationField(
       if (empty) return empty;
       return isValidThaiPhone(trimmed) ? null : PHONE_MESSAGE;
     }
+
+    // ว่างคือ "ไม่มีเลขต่อ" — เป็นคำตอบปกติ ไม่ใช่ช่องที่ยังไม่ได้กรอก
+    case "signatoryPhoneExtension":
+    case "contactPhoneExtension":
+      if (!trimmed) return null;
+      return isValidPhoneExtension(trimmed) ? null : PHONE_EXTENSION_MESSAGE;
 
     /**
      * "ระบุ" ไม่ใช่ "เลือก" — คำนำหน้าของผู้มีอำนาจกระทำการแทนเหลือ นาย/นาง/นางสาว/อื่น ๆ

@@ -141,6 +141,7 @@ export interface Organization {
   signatoryEmail: string | null;
   signatoryNationalId: string | null;
   signatoryPhone: string | null;
+  signatoryPhoneExtension: string | null;
 
   contactPrefix: string | null;
   contactFirstName: string | null;
@@ -149,6 +150,7 @@ export interface Organization {
   contactDepartment: string | null;
   contactEmail: string | null;
   contactPhone: string | null;
+  contactPhoneExtension: string | null;
 
   revisionNote: string | null;
   submittedAt: string | null;
@@ -215,6 +217,21 @@ export const fullName = (
 ): string => {
   if (!first && !last) return "—";
   return [prefix, first, last].filter(Boolean).join(" ");
+};
+
+/**
+ * เบอร์โทรศัพท์พร้อมเลขต่อในบรรทัดเดียว — `"021234567 ต่อ 1232"` หรือแค่เบอร์เมื่อไม่มีเลขต่อ
+ *
+ * เก็บเป็นสองคอลัมน์ (เบอร์กับเลขต่อแยกกัน ตามการ์ด "Field เบอร์โทร ให้เพิ่ม ต่อ-1232")
+ * แต่บนหน้าอ่านอย่างเดียวคนอ่านต้องการบรรทัดเดียวที่โทรตามได้ คืน null เมื่อไม่มีเบอร์
+ * ให้ช่องตารางวาดขีดจาง ๆ ของมันเอง — เลขต่อที่ไม่มีเบอร์ให้ต่อไม่นับว่ามีค่า
+ */
+export const phoneWithExtension = (
+  phone?: string | null,
+  extension?: string | null,
+): string | null => {
+  if (!phone) return null;
+  return extension ? `${phone} ต่อ ${extension}` : phone;
 };
 
 export const ATTACHMENT_LABELS: Record<Attachment["kind"], string> = {

@@ -14,6 +14,7 @@ import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
 import {
   MAX_ADDRESS_LINE,
+  MAX_PHONE_EXTENSION,
   validateOrganizationForm,
   type OrganizationFormValues,
 } from "@/lib/organization-form";
@@ -80,6 +81,7 @@ const EMPTY: OrganizationFormValues = {
   signatoryEmail: "",
   signatoryNationalId: "",
   signatoryPhone: "",
+  signatoryPhoneExtension: "",
   contactPrefix: "",
   contactFirstName: "",
   contactLastName: "",
@@ -87,6 +89,7 @@ const EMPTY: OrganizationFormValues = {
   contactDepartment: "",
   contactEmail: "",
   contactPhone: "",
+  contactPhoneExtension: "",
 };
 /**
  * ชื่อช่องบนฟอร์มต้องตรงกับชุดที่ `lib/organization-form.ts` รู้จักเป๊ะ ๆ
@@ -131,6 +134,7 @@ const SECTION_FIELDS: Record<string, Array<keyof FormState>> = {
     "signatoryEmail",
     "signatoryNationalId",
     "signatoryPhone",
+    "signatoryPhoneExtension",
   ],
   "section-3": [
     "contactPrefix",
@@ -140,8 +144,16 @@ const SECTION_FIELDS: Record<string, Array<keyof FormState>> = {
     "contactDepartment",
     "contactEmail",
     "contactPhone",
+    "contactPhoneExtension",
   ],
 };
+
+/**
+ * ช่องที่ต้องส่งไป API แม้จะว่าง — ค่าว่างของช่องเหล่านี้คือคำตอบ ("ไม่มีเลขต่อ") ไม่ใช่
+ * "ยังไม่ได้กรอก" ถ้ากรองทิ้งเหมือนช่องอื่นใน `persist()` ผู้ใช้ที่ลบเลขต่อออกแล้วบันทึก
+ * จะได้เลขต่อเดิมกลับมาทุกครั้งที่โหลด เพราะ API ไม่เคยได้ยินว่าให้ลบ
+ */
+const SENT_WHEN_EMPTY = new Set<keyof FormState>(["signatoryPhoneExtension", "contactPhoneExtension"]);
 
 /**
  * id มาจาก path ไม่ใช่ query string — useSearchParams() ยังว่างในเรนเดอร์แรก
@@ -355,7 +367,10 @@ export default function EditOrganizationPage() {
      */
     const payload = Object.fromEntries(
       Object.entries(form).filter(
-        ([k, v]) => v !== "" && k !== "organizationCode" && !(k === "name" && nameLocked),
+        ([k, v]) =>
+          (v !== "" || SENT_WHEN_EMPTY.has(k as keyof FormState)) &&
+          k !== "organizationCode" &&
+          !(k === "name" && nameLocked),
       ),
     );
     return api.patch<{ organization: unknown }>(`/api/organizations/${orgId}`, payload);
@@ -615,9 +630,19 @@ export default function EditOrganizationPage() {
                 <Wrap name="signatoryNationalId">
                   <TextField label="เลขบัตรประชาชน" required inputMode="numeric" maxLength={13} value={form.signatoryNationalId} onChange={(e) => set("signatoryNationalId", e.target.value.replace(/\D/g, ""))} {...fieldProps("signatoryNationalId")} hint="ตัวเลข 13 หลัก" />
                 </Wrap>
-                <Wrap name="signatoryPhone">
-                  <TextField label="เบอร์โทรศัพท์" required inputMode="tel" maxLength={20} value={form.signatoryPhone} onChange={(e) => set("signatoryPhone", e.target.value)} {...fieldProps("signatoryPhone")} hint="มือถือ 10 หลัก หรือเบอร์ที่ทำงาน 9 หลัก" />
-                </Wrap>
+                {/*
+                  เบอร์กับเลขต่อเป็นคนละช่องแต่เป็นเรื่องเดียวกัน จึงวางชิดกันในเซลล์เดียว —
+                  เลขต่อของเบอร์กลางราชการ (02-xxx-xxxx ต่อ 1232) เคยไม่มีที่ให้กรอกเลย
+                  เพราะกฎเบอร์รับได้แค่ 9–10 หลัก (การ์ด "Field เบอร์โทร ให้เพิ่ม ต่อ-1232")
+                */}
+                <div className="grid grid-cols-[minmax(0,1fr)_9rem] items-start gap-3">
+                  <Wrap name="signatoryPhone">
+                    <TextField label="เบอร์โทรศัพท์" required inputMode="tel" maxLength={20} value={form.signatoryPhone} onChange={(e) => set("signatoryPhone", e.target.value)} {...fieldProps("signatoryPhone")} hint="มือถือ 10 หลัก หรือเบอร์ที่ทำงาน 9 หลัก" />
+                  </Wrap>
+                  <Wrap name="signatoryPhoneExtension">
+                    <TextField label="ต่อ" inputMode="numeric" maxLength={MAX_PHONE_EXTENSION} placeholder="1232" value={form.signatoryPhoneExtension} onChange={(e) => set("signatoryPhoneExtension", e.target.value)} {...fieldProps("signatoryPhoneExtension")} hint="ถ้าไม่มีเว้นว่าง" />
+                  </Wrap>
+                </div>
               </div>
               <div className="grid gap-5 border-t border-line pt-5 sm:grid-cols-2">
                 <div data-field="APPOINTMENT_ORDER">
@@ -656,13 +681,23 @@ export default function EditOrganizationPage() {
                     <TextField label="อีเมล" required type="email" value={form.contactEmail} onChange={(e) => set("contactEmail", e.target.value)} {...fieldProps("contactEmail")} />
                   )}
                 </Wrap>
-                <Wrap name="contactPhone">
-                  {contactLocked.phone ? (
-                    <TextField label="เบอร์โทรศัพท์" required readOnly value={form.contactPhone} error={fields.contactPhone} />
-                  ) : (
-                    <TextField label="เบอร์โทรศัพท์" required inputMode="tel" maxLength={20} value={form.contactPhone} onChange={(e) => set("contactPhone", e.target.value)} {...fieldProps("contactPhone")} />
-                  )}
-                </Wrap>
+                {/* เลขต่อล็อกพร้อมเบอร์ — API ตัดสินจากบัญชีเป็นชุดเดียว ไม่มี key แยกใน contactLocked */}
+                <div className="grid grid-cols-[minmax(0,1fr)_9rem] items-start gap-3">
+                  <Wrap name="contactPhone">
+                    {contactLocked.phone ? (
+                      <TextField label="เบอร์โทรศัพท์" required readOnly value={form.contactPhone} error={fields.contactPhone} />
+                    ) : (
+                      <TextField label="เบอร์โทรศัพท์" required inputMode="tel" maxLength={20} value={form.contactPhone} onChange={(e) => set("contactPhone", e.target.value)} {...fieldProps("contactPhone")} />
+                    )}
+                  </Wrap>
+                  <Wrap name="contactPhoneExtension">
+                    {contactLocked.phone ? (
+                      <TextField label="ต่อ" readOnly value={form.contactPhoneExtension} error={fields.contactPhoneExtension} />
+                    ) : (
+                      <TextField label="ต่อ" inputMode="numeric" maxLength={MAX_PHONE_EXTENSION} placeholder="1232" value={form.contactPhoneExtension} onChange={(e) => set("contactPhoneExtension", e.target.value)} {...fieldProps("contactPhoneExtension")} hint="ถ้าไม่มีเว้นว่าง" />
+                    )}
+                  </Wrap>
+                </div>
               </div>
               {/*
                 บอกครั้งเดียวว่าทำไมช่องข้างบนแก้ไม่ได้ แทนที่จะเขียน hint ซ้ำใต้ทุกช่อง —

@@ -61,6 +61,7 @@ export type AgreementRequest = Omit<
   | "officeName"
   | "officeEmail"
   | "officePhone"
+  | "officePhoneExtension"
   | "printedByName"
   | "printedAt"
   | "documentVersionNumber"
@@ -155,7 +156,7 @@ export async function agreementPdf(
   // ที่ยัง hardcode คือช่องที่ตารางไม่มี (ที่อยู่ ชื่อผู้อำนวยการ) ดู OFFICE_DEFAULTS
   const office = await db.organization.findUnique({
     where: { id: BDI_ORGANIZATION_ID },
-    select: { nameTh: true, email: true, phone: true },
+    select: { nameTh: true, email: true, phone: true, phoneExtension: true },
   });
   const now = new Date();
 
@@ -173,6 +174,7 @@ export async function agreementPdf(
     officeName: office?.nameTh ?? null,
     officeEmail: office?.email ?? null,
     officePhone: office?.phone ?? null,
+    officePhoneExtension: office?.phoneExtension ?? null,
     printedByName: params.printedByName,
     printedAt: params.printedAt ?? now,
     documentVersionNumber: params.document.versionNumber,

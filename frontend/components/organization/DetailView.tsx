@@ -20,7 +20,7 @@ import { useRequireAuth } from "@/lib/require-auth";
 import { formatThaiDate } from "@/lib/status";
 import { useOrganizationRegistration } from "@/lib/use-organization-registration";
 import { describeState, movedMessage, useRequestWatch } from "@/lib/use-request-watch";
-import { ATTACHMENT_LABELS, fullName, type Organization } from "@/lib/types";
+import { ATTACHMENT_LABELS, fullName, phoneWithExtension, type Organization } from "@/lib/types";
 
 /** ผู้ใช้ปัจจุบันตัดสินใจกับคำขอนี้ได้หรือไม่ ขึ้นกับสถานะ + role */
 /**
@@ -450,7 +450,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
               ["ตำแหน่ง", org.signatoryPosition],
               ["เลขบัตรประชาชน", maskId(org.signatoryNationalId)],
               ["อีเมล", org.signatoryEmail],
-              ["เบอร์โทรศัพท์", org.signatoryPhone],
+              ["เบอร์โทรศัพท์", phoneWithExtension(org.signatoryPhone, org.signatoryPhoneExtension)],
             ]}
           />
         </Card>
@@ -463,7 +463,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
               ["ตำแหน่ง", org.contactPosition],
               ["ฝ่าย/กอง/สำนัก", org.contactDepartment],
               ["อีเมล", org.contactEmail],
-              ["เบอร์โทรศัพท์", org.contactPhone],
+              ["เบอร์โทรศัพท์", phoneWithExtension(org.contactPhone, org.contactPhoneExtension)],
             ]}
           />
         </Card>

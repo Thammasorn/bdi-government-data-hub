@@ -125,7 +125,13 @@ export const TEMPLATE_VARIABLES = {
   "org.province": { group: "org", description: "จังหวัด", example: "ขอนแก่น" },
   "org.postalCode": { group: "org", description: "รหัสไปรษณีย์", example: "40000" },
   "org.address": { group: "org", description: "ที่อยู่หน่วยงานทั้งบรรทัด ประกอบให้แล้ว สำหรับเอกสารที่มีช่องที่อยู่ช่องเดียว", example: "578 ถนนศรีจันทร์ ตำบลในเมือง อำเภอเมืองขอนแก่น จังหวัดขอนแก่น 40000" },
-  "org.phone": { group: "org", description: "เบอร์โทรศัพท์หน่วยงาน", example: "043236789" },
+  "org.phone": { group: "org", description: "เบอร์โทรศัพท์หน่วยงาน — เฉพาะตัวเบอร์ ไม่รวมเลขต่อ", example: "043236789" },
+  /**
+   * เลขต่อเป็นตัวแปรแยกจากเบอร์ ไม่ได้ต่อท้ายให้ใน `*.phone` — แบบฟอร์มราชการมีช่อง
+   * "โทรศัพท์ ____ ต่อ ____" แยกกันอยู่แล้ว และ template ที่พิมพ์เบอร์อยู่ก่อนต้องไม่เปลี่ยนค่า
+   * เพราะมีคนเพิ่มเลขต่อในระบบ ว่างเมื่อไม่มีเลขต่อ ซึ่งเป็นกรณีปกติ
+   */
+  "org.phoneExtension": { group: "org", description: "เลขต่อของเบอร์โทรศัพท์หน่วยงาน — ว่างถ้าไม่มี", example: "1232" },
   "org.email": { group: "org", description: "อีเมลหน่วยงาน", example: "saraban@dla.go.th" },
   "org.website": { group: "org", description: "เว็บไซต์หน่วยงาน — ว่างถ้าไม่ได้กรอก", example: "https://www.dla.go.th" },
 
@@ -137,7 +143,8 @@ export const TEMPLATE_VARIABLES = {
   "org_approver.position": { scope: "organization", group: "org_approver", description: "ตำแหน่งผู้มีอำนาจกระทำการแทน", example: "ผู้อำนวยการ" },
   "org_approver.department": { scope: "organization", group: "org_approver", description: "ฝ่าย/กอง/สำนักของผู้มีอำนาจกระทำการแทน — ว่างถ้าไม่ได้กรอก", example: "สำนักบริหารกลาง" },
   "org_approver.email": { scope: "organization", group: "org_approver", description: "อีเมลผู้มีอำนาจกระทำการแทน", example: "director@dla.go.th" },
-  "org_approver.phone": { scope: "organization", group: "org_approver", description: "เบอร์โทรศัพท์ผู้มีอำนาจกระทำการแทน", example: "0812345678" },
+  "org_approver.phone": { scope: "organization", group: "org_approver", description: "เบอร์โทรศัพท์ผู้มีอำนาจกระทำการแทน — เฉพาะตัวเบอร์ ไม่รวมเลขต่อ", example: "0812345678" },
+  "org_approver.phoneExtension": { scope: "organization", group: "org_approver", description: "เลขต่อของเบอร์โทรศัพท์ผู้มีอำนาจกระทำการแทน — ว่างถ้าไม่มี", example: "1232" },
   "org_approver.nationalId": { scope: "organization", group: "org_approver", description: "เลขบัตรประชาชนผู้มีอำนาจกระทำการแทน (คั่นด้วยขีด)", example: "1-1017-00207-03-0" },
 
   // ── ผู้ประสานงานของหน่วยงาน ───────────────────────────────────
@@ -148,7 +155,8 @@ export const TEMPLATE_VARIABLES = {
   "org_officer.position": { group: "org_officer", description: "ตำแหน่งผู้ประสานงานของหน่วยงาน", example: "นักวิเคราะห์นโยบายและแผน" },
   "org_officer.department": { group: "org_officer", description: "ฝ่าย/กอง/สำนักของผู้ประสานงานของหน่วยงาน", example: "กลุ่มงานข้อมูลสารสนเทศ" },
   "org_officer.email": { group: "org_officer", description: "อีเมลผู้ประสานงานของหน่วยงาน", example: "user@dla.go.th" },
-  "org_officer.phone": { group: "org_officer", description: "เบอร์โทรศัพท์ผู้ประสานงานของหน่วยงาน", example: "0820000000" },
+  "org_officer.phone": { group: "org_officer", description: "เบอร์โทรศัพท์ผู้ประสานงานของหน่วยงาน — เฉพาะตัวเบอร์ ไม่รวมเลขต่อ", example: "0820000000" },
+  "org_officer.phoneExtension": { group: "org_officer", description: "เลขต่อของเบอร์โทรศัพท์ผู้ประสานงานของหน่วยงาน — ว่างถ้าไม่มี", example: "1232" },
   "org_officer.nationalId": { group: "org_officer", description: "เลขบัตรประชาชนผู้ประสานงานของหน่วยงาน (คั่นด้วยขีด)", example: "1-1017-00207-03-0" },
 
   // ── ชุดข้อมูลที่ขอลงทะเบียน (เส้นทาง C) ──
@@ -185,7 +193,8 @@ export const TEMPLATE_VARIABLES = {
   "bdi.name": { group: "bdi", description: "ชื่อสำนักงาน", example: "สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)" },
   "bdi.address": { group: "bdi", description: "ที่อยู่สำนักงานทั้งบรรทัด", example: "234/432 ซอยลาดพร้าว 12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพมหานคร 10900" },
   "bdi.email": { group: "bdi", description: "อีเมลสำนักงาน — ว่างถ้ายังไม่ได้บันทึกไว้ในระบบ", example: "saraban@bdi.or.th" },
-  "bdi.phone": { group: "bdi", description: "เบอร์โทรศัพท์สำนักงาน — ว่างถ้ายังไม่ได้บันทึกไว้ในระบบ", example: "021421444" },
+  "bdi.phone": { group: "bdi", description: "เบอร์โทรศัพท์สำนักงาน — เฉพาะตัวเบอร์ ว่างถ้ายังไม่ได้บันทึกไว้ในระบบ", example: "021421444" },
+  "bdi.phoneExtension": { group: "bdi", description: "เลขต่อของเบอร์โทรศัพท์สำนักงาน — ว่างถ้าไม่มีหรือยังไม่ได้บันทึก", example: "1232" },
   "bdi.directorName": { group: "bdi", description: "ชื่อผู้อำนวยการสถาบัน — เป็นค่าตั้งไว้ในโค้ด ต้องแก้เมื่อเปลี่ยนผู้อำนวยการ", example: "ศาสตราจารย์ธีรณี อจลากุล" },
   "bdi.directorPosition": { group: "bdi", description: "ตำแหน่งผู้ลงนามฝ่ายสำนักงาน", example: "ผู้อำนวยการสถาบันข้อมูลขนาดใหญ่" },
 
@@ -366,7 +375,7 @@ export function assertKnownPlaceholders(docx: Buffer, scope: VariableScope = "bo
   const unknown = used.filter((name) => !variableAllowed(name, scope));
   if (unknown.length > 0) {
     /**
-     * ไม่ไล่ชื่อตัวแปรทั้ง 74 ตัวลงในข้อความ — ยาวเกินกว่าจะอ่านบนหน้าจอ
+     * ไม่ไล่ชื่อตัวแปรทั้ง 81 ตัวลงในข้อความ — ยาวเกินกว่าจะอ่านบนหน้าจอ
      * บอกตัวที่ผิด แล้วเสนอตัวที่ชื่อใกล้กันในกลุ่มเดียวกัน ซึ่งมักเป็นตัวที่เขาตั้งใจพิมพ์
      */
     const suggestions = unknown
