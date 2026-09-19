@@ -88,8 +88,9 @@ export function datasetDocumentValues(input: DatasetDocumentInput): Record<strin
     // ── ชุดข้อมูล ──
     "dataset.title": input.title ?? "",
     "dataset.nameEn": input.name ?? "",
-    /* รายการฟิลด์คั่นด้วยจุลภาคเหมือนคำสำคัญ (hint ใต้ช่องบอกไว้เอง) จึงผ่าน
-       splitTags แล้วต่อกลับ — จุลภาคที่ผู้กรอกทิ้งไว้ท้ายบรรทัดจะไม่ไปโผล่บนเอกสาร */
+    /* รายการฟิลด์เป็นชิปเหมือนคำสำคัญ เก็บเป็นสตริงเดียวคั่นด้วยจุลภาค จึงผ่าน
+       splitTags แล้วต่อกลับ — จุลภาคที่ผู้กรอกทิ้งไว้ท้ายบรรทัดจะไม่ไปโผล่บนเอกสาร
+       บนเอกสารยังคั่นด้วย ", " ตามตัวอย่างใน template ไม่ใช่จุดกลางแบบคำสำคัญ */
     "dataset.dataFields": splitTags(input.dataFields).join(", "),
     "dataset.maintainer": input.maintainer ?? "",
     "dataset.maintainerEmail": input.maintainerEmail ?? "",

@@ -459,8 +459,8 @@ export function validateDatasetField(
 
     case "dataFields":
       return (
-        required(value, "กรุณาระบุรายการข้อมูล (ฟิลด์ข้อมูล) ที่ประสงค์จะนำส่ง") ??
-        tooLong(value, 1000, "รายการข้อมูลต้องยาวไม่เกิน 1,000 ตัวอักษร")
+        required(value, "กรุณาระบุรายการข้อมูล (ฟิลด์ข้อมูล) อย่างน้อย 1 ฟิลด์") ??
+        tooLong(value, 1000, "รายการข้อมูลรวมกันต้องยาวไม่เกิน 1,000 ตัวอักษร")
       );
     case "maintainer":
       return required(value, "กรุณากรอกชื่อผู้ติดต่อ (กอง สำนัก หรือฝ่ายที่รับผิดชอบข้อมูล)");

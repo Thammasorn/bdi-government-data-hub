@@ -650,7 +650,12 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
                 : []),
               ["ชื่อชุดข้อมูล (ภาษาไทย)", request.title],
               ["ชื่อชุดข้อมูล (ภาษาอังกฤษ)", request.name],
-              ["รายการข้อมูล (ฟิลด์ข้อมูล) ที่ประสงค์จะนำส่ง", splitTags(request.dataFields).join(", ")],
+              [
+                "รายการข้อมูล (ฟิลด์ข้อมูล) ที่ประสงค์จะนำส่ง",
+                /* คั่นด้วยจุดกลางเหมือนคำสำคัญ — ทั้งคู่กรอกเป็นชิป จุลภาคในบรรทัดเดียว
+                   อ่านไม่ออกว่าเป็นตัวคั่นหรือเป็นส่วนหนึ่งของชื่อฟิลด์ */
+                splitTags(request.dataFields).join(" · "),
+              ],
               ["องค์กร", request.organization.name],
               ["ชื่อผู้ติดต่อ", request.maintainer],
               ["อีเมลผู้ติดต่อ", request.maintainerEmail],
