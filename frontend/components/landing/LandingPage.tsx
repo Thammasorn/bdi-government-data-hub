@@ -1,15 +1,21 @@
 "use client";
 
 /**
- * หน้าแรกก่อนเข้าสู่ระบบ
+ * หน้าแนะนำโครงการ — ใช้สองที่
  *
- * เนื้อหามาจาก assets/info_page/25690806_D2 info page.pptx ครบทุกหัวข้อ แต่ไม่ได้ลอก
- * เลย์เอาต์ของสไลด์มาตรง ๆ — สไลด์วางแถบเมนูสีเข้มค้างไว้ทางซ้ายตลอด ซึ่งเป็นแบบที่
- * เหมาะกับสไลด์นำเสนอมากกว่าหน้าเว็บ: บนจอ 1440 มันกิน 264px ตลอดเวลาโดยไม่ให้อะไรกลับมา
- * และบนมือถือก็ต้องยุบทิ้งอยู่ดี
+ * `variant="public"` คือหน้าแรกของผู้ที่ยังไม่ล็อกอิน มีโลโก้กับปุ่มเข้าสู่ระบบเป็นของตัวเอง
+ * `variant="embedded"` คือหน้า `/about` ที่เปิดจากเมนู "ข้อมูลโครงการ" หลังล็อกอิน ซึ่งอยู่ใน
+ * AppShell ที่มีแถบหัวและ footer อยู่แล้ว จึงตัดสองอย่างนั้นทิ้งเพื่อไม่ให้ซ้อนกันสองชั้น
+ * เนื้อหาเป็นชุดเดียวกันทั้งสองที่ ไม่ได้ลอกไว้สองก๊อปปี้ — BDI ขอให้ผู้ใช้อ่านรายละเอียด
+ * โครงการได้โดยไม่ต้องออกจากระบบก่อน (การ์ด "เพิ่มเมนูข้อมูลโครงการหลัง login ไปแล้ว")
  *
- * ที่ใช้แทนคือแถบบนแบบโปร่งเบลอที่ติดขอบบน ซึ่งคืนความกว้างทั้งหน้าให้เนื้อหา
- * และยังไฮไลต์หัวข้อที่กำลังอ่านได้เหมือนเดิม
+ * เนื้อหามาจาก assets/info_page/25690806_D2 info page.pptx ครบทุกหัวข้อ
+ *
+ * แถบนำทางหัวข้ออยู่ **ทางซ้าย** ตามที่ BDI ขอ ซึ่งกลับไปตรงกับสไลด์ต้นทาง เดิมที่นี่เป็น
+ * แถบบนแบบโปร่งเบลอ ด้วยเหตุผลว่าคอลัมน์ซ้ายกิน 264px ตลอดเวลา — เหตุผลนั้นยังจริง แต่
+ * แลกมาด้วยสิ่งที่จำเป็นกว่าเมื่อหน้านี้ไปอยู่หลังล็อกอิน: แถบบนสองแถบซ้อนกัน (ของแอป
+ * กับของหน้านี้) อ่านไม่ออกว่าอันไหนเป็นเมนูอะไร ส่วนคอลัมน์ซ้ายไม่ชนกับแถบหัวของแอปเลย
+ * และยังกางได้ครบสิบหัวข้อโดยไม่ต้องเลื่อนแนวนอนหรือยุบเป็น hamburger บนจอ 1280
  *
  * แต่ละหัวข้อจงใจใช้รูปแบบต่างกัน (การ์ด · แผงสีเข้ม · ไทม์ไลน์ · รายการเอกสาร)
  * เพราะสิบหัวข้อที่หน้าตาเหมือนกันหมดจะกลายเป็นผนังเดียวที่กวาดตาหาอะไรไม่เจอ
@@ -18,7 +24,7 @@
 import clsx from "clsx";
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { D2Mark, LogoImage } from "@/components/brand/Logo";
 
@@ -43,27 +49,58 @@ import {
   OBJECTIVES_BANNER,
   OBJECTIVES_LEAD,
   SECTIONS,
+  type Section,
 } from "./content";
 
-export function LandingPage() {
+/** `public` = หน้าแรกก่อนล็อกอิน · `embedded` = อยู่ใน AppShell หลังล็อกอิน */
+export type LandingVariant = "public" | "embedded";
+
+export function LandingPage({ variant = "public" }: { variant?: LandingVariant }) {
   const active = useActiveSection();
   useRevealOnScroll();
+  const embedded = variant === "embedded";
+
+  const sections = (
+    <>
+      <Hero embedded={embedded} />
+      <Background />
+      <Objectives />
+      <BdiRole />
+      <HowItWorks />
+      <Benefits />
+      <Connect />
+      <Legal />
+      <MoreInfo />
+    </>
+  );
 
   return (
-    <div className="bg-white">
-      <TopNav active={active} />
-      <main>
-        <Hero />
-        <Background />
-        <Objectives />
-        <BdiRole />
-        <HowItWorks />
-        <Benefits />
-        <Connect />
-        <Legal />
-        <MoreInfo />
-      </main>
-      <SiteFooter />
+    <div
+      className="bg-white"
+      style={
+        {
+          /**
+           * ระยะที่ของติดหนึบต้องหลบ — ประกาศเป็นตัวแปรตรงนี้ที่เดียว เพราะค่ามันต่างกัน
+           * ระหว่างสองรูปแบบ แต่คนที่ต้องใช้ (หัวข้อทุกหัวข้อ, แถบซ้าย, แถบบนของจอแคบ)
+           * กระจายอยู่คนละที่ และบางอันเป็น media query ที่เขียนใน style ไม่ได้
+           *
+           * 5.25rem = แถบหัวของ AppShell (เส้น gradient 3px + h-20 + เส้นขอบ)
+           */
+          "--landing-top": embedded ? "5.25rem" : "0px",
+          "--landing-scroll-mt": embedded ? "9.5rem" : "8rem",
+          "--landing-scroll-mt-lg": embedded ? "6.5rem" : "1.5rem",
+        } as CSSProperties
+      }
+    >
+      {/* items-start ไม่ใช่ของประดับ: flex item ที่ถูกยืดเต็มความสูงคอนเทนเนอร์จะ sticky ไม่ได้ */}
+      <div className="lg:flex lg:items-start">
+        <SectionNav active={active} embedded={embedded} />
+        <div className="min-w-0 flex-1">
+          {/* หลังล็อกอินหน้านี้อยู่ใน <main> ของ AppShell อยู่แล้ว ซ้อนอีกชั้นคือ HTML ที่ผิด */}
+          {embedded ? sections : <main>{sections}</main>}
+          {embedded ? null : <SiteFooter />}
+        </div>
+      </div>
     </div>
   );
 }
@@ -139,32 +176,97 @@ function useRevealOnScroll() {
 
 // ───────────────────────────────────────────────────────────────────── nav
 
-/**
- * แถบบน — สองหน้าตาตามความกว้าง
- *
- * ตั้งแต่ `xl` (1280px) ขึ้นไป สิบหัวข้อเรียงเป็นเม็ดยาในแถวเดียว ต่ำกว่านั้นยุบเป็นปุ่ม
- * hamburger ที่กางรายการลงมาใต้แถบ เดิมแถวนี้เป็น `overflow-x-auto` ที่ซ่อน scrollbar
- * ไว้ทุกขนาดจอ — บนจอแคบหัวข้อท้าย ๆ จึงถูกตัดหายไปนอกขอบโดยไม่มีอะไรบอกว่าเลื่อนได้
- * ผู้ใช้เห็นแค่สามสี่หัวข้อแรกแล้วกดที่เหลือไม่ได้ (รายงาน 2026-09-18) การเลื่อนแนวนอน
- * ยังเก็บไว้เป็นตาข่ายรองรับบนจอกว้างที่ฟอนต์ใหญ่ผิดปกติ แต่ไม่ใช่ทางหลักอีกแล้ว
- *
- * 1280 ไม่ใช่ตัวเลขสุ่ม: โลโก้ + สิบเม็ดยาภาษาไทย + ปุ่มเข้าสู่ระบบ กินราว 1,200px
- * ที่ `lg` (1024) ยังไม่พอ
- */
-function TopNav({ active }: { active: string }) {
-  const listRef = useRef<HTMLUListElement>(null);
-  const headerRef = useRef<HTMLElement>(null);
-  const [open, setOpen] = useState(false);
+/** คำกำกับกลุ่มของสามหัวข้อท้ายที่ยังไม่มีเนื้อหา — ใช้ทั้งบนแถบนำทางและบนหัวข้อจริง */
+const MORE_INFO_EYEBROW = "ข้อมูลเพิ่มเติม";
 
-  // แถบเลื่อนแนวนอนต้องเลื่อนตามหัวข้อที่ active ไม่งั้นผู้ใช้ไม่เห็นว่าอยู่ตรงไหน
-  useEffect(() => {
-    listRef.current
-      ?.querySelector(`[data-nav="${active}"]`)
-      ?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
-  }, [active]);
+/**
+ * หัวข้อที่จัดกลุ่มแล้ว
+ *
+ * สิบหัวข้อเรียงติดกันในคอลัมน์เดียวคือรายการยาวที่กวาดตาแล้วไม่เจออะไร — จัดกลุ่มตาม
+ * `eyebrow` ที่แต่ละหัวข้อมีอยู่แล้ว (เกี่ยวกับ D2 · กลไกของแพลตฟอร์ม · เริ่มใช้งาน) จึงไม่ต้อง
+ * คิดชื่อกลุ่มขึ้นใหม่ และแถบนำทางกับตัวหน้าก็เรียกของสิ่งเดียวกันด้วยคำเดียวกัน
+ */
+const NAV_GROUPS = groupSections();
+
+function groupSections(): { title: string; sections: Section[] }[] {
+  const groups: { title: string; sections: Section[] }[] = [];
+  for (const section of SECTIONS) {
+    const title = section.eyebrow ?? MORE_INFO_EYEBROW;
+    const last = groups[groups.length - 1];
+    if (last?.title === title) last.sections.push(section);
+    else groups.push({ title, sections: [section] });
+  }
+  return groups;
+}
+
+/**
+ * ระยะเผื่อไม่ให้หัวข้อถูกของที่ติดหนึบบังตอนกดลิงก์ในแถบนำทาง
+ *
+ * ค่าจริงมาจากตัวแปรบน <div> นอกสุดของหน้า เพราะสิ่งที่ต้องหลบไม่เท่ากัน: จอแคบมีแถบหัวข้อ
+ * ติดอยู่บนสุด ส่วนจอกว้างแถบนั้นย้ายไปอยู่ซ้ายแล้วจึงไม่บังอะไร และหลังล็อกอินยังมีแถบหัว
+ * ของ AppShell ทับอีกชั้น
+ */
+const SCROLL_MARGIN = "scroll-mt-[var(--landing-scroll-mt)] lg:scroll-mt-[var(--landing-scroll-mt-lg)]";
+
+/** รายการหัวข้อ — ใช้ทั้งในคอลัมน์ซ้ายและในเมนูที่กางจากแถบบนของจอแคบ */
+function SectionList({ active, onNavigate }: { active: string; onNavigate?: () => void }) {
+  return (
+    <ul className="space-y-6">
+      {NAV_GROUPS.map((group) => (
+        <li key={group.title}>
+          <p className="px-4 font-heading text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">
+            {group.title}
+          </p>
+          {/* เส้นตั้งบาง ๆ ที่ขอบซ้ายของรายการ ทำให้หัวข้อที่อ่านอยู่ชี้ตัวเองได้โดยไม่ต้องทำให้ทั้งแถวเข้ม */}
+          <ul className="mt-2 border-l border-line">
+            {group.sections.map((section) => {
+              const current = active === section.id;
+              return (
+                <li key={section.id}>
+                  <a
+                    href={`#${section.id}`}
+                    aria-current={current ? "true" : undefined}
+                    onClick={onNavigate}
+                    className={clsx(
+                      "-ml-px flex items-center gap-2 rounded-r-lg border-l-2 py-2 pl-4 pr-3 text-[15px] transition-colors",
+                      current
+                        ? "border-coral-500 bg-navy-50 font-medium text-navy-800"
+                        : "border-transparent text-ink-muted hover:bg-canvas hover:text-navy-800",
+                    )}
+                  >
+                    <span className="min-w-0 flex-1">{section.navLabel}</span>
+                    {/* สามหัวข้อท้ายยังไม่มีเนื้อหา — บอกไว้ก่อนกด ดีกว่าให้กดแล้วไปเจอกล่องเปล่า */}
+                    {section.pending ? (
+                      <span className="shrink-0 rounded-full border border-line px-1.5 py-px text-[10px] font-normal text-ink-subtle">
+                        เร็ว ๆ นี้
+                      </span>
+                    ) : null}
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * แถบนำทางหัวข้อ — คอลัมน์ซ้ายบนจอกว้าง แถบที่กางลงมาบนจอแคบ
+ *
+ * ตัดที่ `lg` (1024px) ไม่ใช่ `xl` เหมือนแถบบนเดิม: คอลัมน์ตั้งกว้าง 17.5rem กางหัวข้อ
+ * ภาษาไทยได้ครบสิบหัวข้อโดยไม่ต้องแข่งที่กับโลโก้และปุ่มเข้าสู่ระบบบนบรรทัดเดียวกัน
+ * ต่ำกว่านั้นคอลัมน์ซ้ายกินที่จนเนื้อหาเหลือนิดเดียว จึงยุบเป็นแถบเดียวที่บอกหัวข้อที่กำลังอ่าน
+ * แล้วกางรายการลงมาทับเนื้อหา (absolute) ไม่ใช่ดันเนื้อหาลง
+ */
+function SectionNav({ active, embedded }: { active: string; embedded: boolean }) {
+  const [open, setOpen] = useState(false);
+  const barRef = useRef<HTMLDivElement>(null);
+  const activeLabel = SECTIONS.find((s) => s.id === active)?.navLabel ?? SECTIONS[0]!.navLabel;
 
   /**
-   * เมนูที่กางอยู่ปิดได้สามทาง — Esc, คลิกนอกแถบ, และจอถูกขยายจนข้ามไปเป็นแบบเม็ดยา
+   * เมนูที่กางอยู่ปิดได้สามทาง — Esc, คลิกนอกแถบ, และจอถูกขยายจนข้ามไปเป็นคอลัมน์ซ้าย
    * ทางที่สามสำคัญกว่าที่คิด: ถ้าไม่ปิด state จะค้างเป็น `open` ทั้งที่ปุ่มมองไม่เห็นแล้ว
    * และพอย่อจอกลับมาเมนูก็เด้งกางเองโดยไม่มีใครกด
    */
@@ -174,9 +276,9 @@ function TopNav({ active }: { active: string }) {
       if (e.key === "Escape") setOpen(false);
     };
     const onClick = (e: MouseEvent) => {
-      if (!headerRef.current?.contains(e.target as Node)) setOpen(false);
+      if (!barRef.current?.contains(e.target as Node)) setOpen(false);
     };
-    const wide = window.matchMedia("(min-width: 1280px)");
+    const wide = window.matchMedia("(min-width: 1024px)");
     const onWide = (e: MediaQueryListEvent) => {
       if (e.matches) setOpen(false);
     };
@@ -191,108 +293,113 @@ function TopNav({ active }: { active: string }) {
   }, [open]);
 
   return (
-    <header
-      ref={headerRef}
-      className="sticky top-0 z-30 border-b border-line/70 bg-white/80 frost-12"
-    >
-      <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3 sm:px-6">
-        <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="หน้าแรก D2">
-          <LogoImage className="h-14" />
-          <D2Mark className="h-9" />
-        </Link>
-
-        <nav aria-label="หัวข้อในหน้านี้" className="hidden min-w-0 flex-1 xl:block">
-          <ul
-            ref={listRef}
-            className="flex gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+    <>
+      <aside
+        aria-label="หัวข้อในหน้านี้"
+        style={{ top: "var(--landing-top)", height: "calc(100dvh - var(--landing-top))" }}
+        className="sticky hidden w-[17.5rem] shrink-0 flex-col self-start border-r border-line bg-white lg:flex"
+      >
+        {embedded ? (
+          <div className="border-b border-line px-6 py-5">
+            <p className="font-heading text-[11px] font-semibold uppercase tracking-[0.14em] text-coral-500">
+              ข้อมูลโครงการ
+            </p>
+            <p className="mt-1 font-heading text-[18px] font-semibold text-navy-800">รู้จัก D2</p>
+          </div>
+        ) : (
+          <Link
+            href="/"
+            className="flex shrink-0 items-center gap-2.5 border-b border-line px-6 py-5"
+            aria-label="หน้าแรก D2"
           >
-            {SECTIONS.map((section) => {
-              const current = active === section.id;
-              return (
-                <li key={section.id} className="shrink-0">
-                  <a
-                    href={`#${section.id}`}
-                    data-nav={section.id}
-                    aria-current={current ? "true" : undefined}
-                    className={clsx(
-                      "block whitespace-nowrap rounded-full px-3 py-1.5 text-[14px] transition-colors",
-                      current
-                        ? "bg-navy-800 font-medium text-white"
-                        : "text-ink-muted hover:bg-navy-50 hover:text-navy-800",
-                    )}
-                  >
-                    {section.navLabel}
-                  </a>
-                </li>
-              );
-            })}
-          </ul>
+            <LogoImage className="h-12" />
+            <D2Mark className="h-8" />
+          </Link>
+        )}
+
+        {/* min-h-0 คือสิ่งที่ทำให้รายการเลื่อนเองได้ — flex item ไม่ยอมหดต่ำกว่าเนื้อหาถ้าไม่บอก */}
+        <nav className="min-h-0 flex-1 overflow-y-auto px-3 py-6">
+          <SectionList active={active} />
         </nav>
 
-        {/* ต่ำกว่า xl โลโก้อยู่ซ้าย ปุ่มสองปุ่มชิดขวา — ml-auto ดันแทนที่ flex-1 ของ nav ที่ซ่อนไป */}
-        <Link
-          href="/login"
-          className="ml-auto shrink-0 rounded-full bg-coral-500 px-5 py-2 text-[14px] font-medium text-white transition-colors hover:bg-coral-600 xl:ml-0"
-        >
-          เข้าสู่ระบบ
-        </Link>
+        {embedded ? null : (
+          <div className="shrink-0 border-t border-line p-4">
+            <Link
+              href="/login"
+              className="block rounded-full bg-coral-500 px-5 py-2.5 text-center text-[14px] font-medium text-white transition-colors hover:bg-coral-600"
+            >
+              เข้าสู่ระบบ
+            </Link>
+          </div>
+        )}
+      </aside>
 
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          aria-controls="landing-nav-menu"
-          aria-label={open ? "ปิดเมนูหัวข้อ" : "เปิดเมนูหัวข้อ"}
-          className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-navy-800 transition-colors hover:bg-navy-50 xl:hidden"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            className="h-6 w-6"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            aria-hidden="true"
+      <div
+        ref={barRef}
+        style={{ top: "var(--landing-top)" }}
+        className="sticky z-30 border-b border-line bg-white/90 frost-12 lg:hidden"
+      >
+        {embedded ? null : (
+          <div className="flex items-center gap-3 px-4 py-2.5 sm:px-6">
+            <Link href="/" className="flex shrink-0 items-center gap-2" aria-label="หน้าแรก D2">
+              <LogoImage className="h-11" />
+              <D2Mark className="h-7" />
+            </Link>
+            <Link
+              href="/login"
+              className="ml-auto shrink-0 rounded-full bg-coral-500 px-4 py-2 text-[14px] font-medium text-white transition-colors hover:bg-coral-600"
+            >
+              เข้าสู่ระบบ
+            </Link>
+          </div>
+        )}
+        <div className={clsx("px-4 py-2.5 sm:px-6", embedded ? null : "border-t border-line/70")}>
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            aria-controls="landing-section-menu"
+            className="flex w-full items-center gap-2 rounded-xl border border-line bg-white px-3.5 py-2.5 text-left text-[14px] transition-colors hover:bg-canvas"
           >
-            {open ? (
-              <path d="M6 6l12 12M18 6 6 18" strokeLinecap="round" />
-            ) : (
-              <path d="M4 7h16M4 12h16M4 17h16" strokeLinecap="round" />
-            )}
-          </svg>
-        </button>
+            <svg
+              viewBox="0 0 24 24"
+              className="h-[18px] w-[18px] shrink-0 text-navy-700"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              aria-hidden="true"
+            >
+              <path d="M4 6h16M4 12h16M4 18h10" strokeLinecap="round" />
+            </svg>
+            <span className="shrink-0 text-ink-subtle">หัวข้อในหน้านี้</span>
+            <span className="min-w-0 flex-1 truncate font-medium text-navy-800">{activeLabel}</span>
+            <svg
+              viewBox="0 0 20 20"
+              className={clsx(
+                "h-4 w-4 shrink-0 text-ink-subtle transition-transform",
+                open ? "rotate-180" : null,
+              )}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              aria-hidden="true"
+            >
+              <path d="m5 8 5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
+
+        {open ? (
+          <nav
+            id="landing-section-menu"
+            aria-label="หัวข้อในหน้านี้"
+            className="animate-in-up absolute inset-x-0 top-full max-h-[65vh] overflow-y-auto border-b border-line bg-white px-3 py-4 shadow-pop"
+          >
+            <SectionList active={active} onNavigate={() => setOpen(false)} />
+          </nav>
+        ) : null}
       </div>
-
-      {open ? (
-        <nav
-          id="landing-nav-menu"
-          aria-label="หัวข้อในหน้านี้"
-          className="animate-in-up absolute inset-x-0 top-full max-h-[calc(100vh-5rem)] overflow-y-auto border-b border-line bg-white shadow-pop xl:hidden"
-        >
-          <ul className="mx-auto max-w-7xl px-4 py-2 sm:px-6">
-            {SECTIONS.map((section) => {
-              const current = active === section.id;
-              return (
-                <li key={section.id}>
-                  <a
-                    href={`#${section.id}`}
-                    aria-current={current ? "true" : undefined}
-                    onClick={() => setOpen(false)}
-                    className={clsx(
-                      "block rounded-xl px-4 py-2.5 text-[15px] transition-colors",
-                      current
-                        ? "bg-navy-800 font-medium text-white"
-                        : "text-ink hover:bg-navy-50 hover:text-navy-800",
-                    )}
-                  >
-                    {section.navLabel}
-                  </a>
-                </li>
-              );
-            })}
-          </ul>
-        </nav>
-      ) : null}
-    </header>
+    </>
   );
 }
 
@@ -310,8 +417,7 @@ function Section({
   return (
     <section
       id={id}
-      // scroll-mt กันหัวข้อถูกแถบบนบังตอนกดลิงก์
-      className={clsx("scroll-mt-20 px-4 py-16 sm:px-6 lg:py-24", {
+      className={clsx(SCROLL_MARGIN, "px-4 py-16 sm:px-6 lg:py-24", {
         "bg-white": tone === "white",
         "bg-canvas": tone === "canvas",
         "bg-navy-800": tone === "navy",
@@ -420,7 +526,7 @@ const BENEFIT_ICONS = [
 
 // ───────────────────────────────────────────────────────────────── หัวข้อ
 
-function Hero() {
+function Hero({ embedded }: { embedded: boolean }) {
   return (
     <header className="relative overflow-hidden bg-navy-800">
       {/* แสงเรืองสองจุดกับตารางจุด ทำให้พื้นหลังเข้มไม่ตายด้าน */}
@@ -448,15 +554,23 @@ function Hero() {
         </p>
 
         <div className="mt-9 flex flex-wrap gap-3">
-          <Link
-            href="/login"
-            className="rounded-full bg-coral-500 px-7 py-3.5 text-[15px] font-medium text-white shadow-pop transition-colors hover:bg-coral-600"
-          >
-            เข้าสู่ระบบ
-          </Link>
+          {/* คนที่อ่านหน้านี้จากในระบบล็อกอินอยู่แล้ว ปุ่มเข้าสู่ระบบจึงหายไป และปุ่มที่เหลือรับสีหลักแทน */}
+          {embedded ? null : (
+            <Link
+              href="/login"
+              className="rounded-full bg-coral-500 px-7 py-3.5 text-[15px] font-medium text-white shadow-pop transition-colors hover:bg-coral-600"
+            >
+              เข้าสู่ระบบ
+            </Link>
+          )}
           <a
             href="#connect"
-            className="rounded-full border border-white/30 bg-white/5 px-7 py-3.5 text-[15px] font-medium text-white frost-4 transition-colors hover:bg-white/15"
+            className={clsx(
+              "rounded-full px-7 py-3.5 text-[15px] font-medium text-white transition-colors",
+              embedded
+                ? "bg-coral-500 shadow-pop hover:bg-coral-600"
+                : "border border-white/30 bg-white/5 frost-4 hover:bg-white/15",
+            )}
           >
             ขั้นตอนการขอเชื่อมต่อ
           </a>
@@ -746,11 +860,11 @@ function Legal() {
 function MoreInfo() {
   const pending = SECTIONS.filter((s) => s.pending);
   return (
-    <section className="scroll-mt-20 bg-white px-4 py-16 sm:px-6 lg:py-24">
+    <section className={clsx(SCROLL_MARGIN, "bg-white px-4 py-16 sm:px-6 lg:py-24")}>
       <div className="mx-auto max-w-6xl">
         <div className="reveal max-w-3xl">
           <p className="font-heading text-[13px] font-semibold uppercase tracking-[0.14em] text-coral-500">
-            ข้อมูลเพิ่มเติม
+            {MORE_INFO_EYEBROW}
           </p>
           <h2 className="mt-2 font-heading text-[28px] font-semibold text-navy-800 sm:text-[34px]">
             กำลังจัดเตรียม
@@ -761,7 +875,7 @@ function MoreInfo() {
             <div
               key={section.id}
               id={section.id}
-              className="reveal scroll-mt-20 rounded-2xl border border-dashed border-line bg-canvas p-7"
+              className={clsx(SCROLL_MARGIN, "reveal rounded-2xl border border-dashed border-line bg-canvas p-7")}
             >
               <h3 className="font-heading text-[17px] font-semibold text-navy-800">
                 {section.heading}

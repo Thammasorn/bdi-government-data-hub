@@ -55,7 +55,24 @@ interface NavItem {
   disabledReason?: string;
 }
 
+/**
+ * ข้อมูลโครงการ — หน้าแนะนำ D2 ชุดเดียวกับที่คนนอกเห็นก่อนล็อกอิน
+ *
+ * BDI ขอเมื่อ 2026-09-19 ให้ **ทุกบทบาท** มีช่องนี้ เพราะเดิมรายละเอียดโครงการอ่านได้ที่
+ * หน้าแรกก่อนล็อกอินที่เดียว คนที่อยากอ่านจึงต้องออกจากระบบก่อน ซึ่งไม่มีเหตุผลจะเป็นแบบนั้น
+ */
+const PROJECT_INFO_ITEM: NavItem = { href: "/about", label: "ข้อมูลโครงการ" };
+
+/** ช่องของทุกบทบาท ต่อท้ายช่องที่แต่ละบทบาทเห็นไม่เหมือนกัน */
 function navItems(
+  roles: string[],
+  organizationId: string | null,
+  organizationStatus: string | null,
+): NavItem[] {
+  return [...roleNavItems(roles, organizationId, organizationStatus), PROJECT_INFO_ITEM];
+}
+
+function roleNavItems(
   roles: string[],
   organizationId: string | null,
   organizationStatus: string | null,
@@ -102,7 +119,8 @@ function navItems(
    */
   const datasetsLocked = organizationStatus !== "ACTIVE";
 
-  // สเปก: ผู้ใช้ที่ยังไม่มีหน่วยงานเห็นได้แค่ปุ่มสร้างหน่วยงานกลางจอ ไม่มีเมนู
+  // สเปก: ผู้ใช้ที่ยังไม่มีหน่วยงานเห็นได้แค่ปุ่มสร้างหน่วยงานกลางจอ ไม่มีช่องของเส้นทางไหนเลย
+  // (ยังเหลือ "ข้อมูลโครงการ" ที่ navItems ต่อท้ายให้ทุกคน ซึ่งไม่ใช่เส้นทางของงาน)
   return hasOrganization
     ? [
         { href: "/", label: "หน้าแรก" },
