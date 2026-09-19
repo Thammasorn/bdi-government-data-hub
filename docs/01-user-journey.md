@@ -235,9 +235,15 @@ lastName  = ThaID family_name ?? ค่าจากคำเชิญ
 
 | ขั้น | ชื่อที่หน้าจอใช้ | `review_task.task_type` | บทบาทที่รับผิดชอบ |
 | --- | --- | --- | --- |
-| 1 | ผู้ประสานงานของ BDI ตรวจสอบเอกสาร | `BDI_OFFICER_REVIEW` | `BDI_OFFICER` |
-| 2 | ผู้มีอำนาจของหน่วยงานลงนามเห็นชอบ | `ORGANIZATION_APPROVAL` | `ORGANIZATION_APPROVER` |
-| 3 | BDI อนุมัติขั้นสุดท้าย | `BDI_FINAL_APPROVAL` | `BDI_FINAL_APPROVER` |
+| 1 | หน่วยงานส่งหรือแก้ไขคำขอ | — (ไม่มีแถวใน `review_task`) | `ORGANIZATION_USER` |
+| 2 | BDI ตรวจสอบคำขอ | `BDI_OFFICER_REVIEW` | `BDI_OFFICER` |
+| 3 | หน่วยงานลงนามเห็นชอบ | `ORGANIZATION_APPROVAL` | `ORGANIZATION_APPROVER` |
+| 4 | BDI พิจารณาเห็นชอบ | `BDI_FINAL_APPROVAL` | `BDI_FINAL_APPROVER` |
+
+ขั้นที่ 1 คือการนำส่งเอง — ไม่มีด่านให้ใครปิด จึงไม่มีแถวใน `review_task` แต่นับเป็นขั้นบน
+หน้าจอ (`totalSteps` = 4) และกลับมาเป็นขั้นปัจจุบันทุกรอบที่คำขอถูกส่งกลับให้แก้ไข
+
+ชื่อขั้นขึ้นต้นด้วยฝ่ายที่รับผิดชอบ (หน่วยงาน / BDI) ตามการ์ด *ปรับแก้ชื่อขั้นตอน* (2026-09-19)
 
 ตารางนี้ประกาศไว้เป็นข้อมูลที่ `backend/src/lib/journey-steps.ts` — ที่เดียวในระบบที่รู้ลำดับด่าน
 ทั้งเส้น หน้าจอ (stepper บนหน้ารายละเอียด คอลัมน์ความคืบหน้าในตาราง การ์ดหน้าแรก) และบล็อก
@@ -389,9 +395,15 @@ lastName  = ThaID family_name ?? ค่าจากคำเชิญ
 
 | ขั้น | ชื่อที่หน้าจอใช้ | `review_task.task_type` | บทบาทที่รับผิดชอบ |
 | --- | --- | --- | --- |
-| 1 | ผู้ประสานงานของ BDI ตรวจสอบเอกสาร | `BDI_OFFICER_REVIEW` | `BDI_OFFICER` |
-| 2 | ผู้มีอำนาจของหน่วยงานลงนามเห็นชอบ | `ORGANIZATION_APPROVAL` | `ORGANIZATION_APPROVER` |
-| 3 | BDI อนุมัติขั้นสุดท้าย | `BDI_FINAL_APPROVAL` | `BDI_FINAL_APPROVER` |
+| 1 | หน่วยงานส่งหรือแก้ไขคำขอ | — (ไม่มีแถวใน `review_task`) | `ORGANIZATION_USER` |
+| 2 | BDI ตรวจสอบคำขอ | `BDI_OFFICER_REVIEW` | `BDI_OFFICER` |
+| 3 | หน่วยงานลงนามเห็นชอบ | `ORGANIZATION_APPROVAL` | `ORGANIZATION_APPROVER` |
+| 4 | BDI พิจารณาเห็นชอบ | `BDI_FINAL_APPROVAL` | `BDI_FINAL_APPROVER` |
+
+ขั้นที่ 1 คือการนำส่งเอง — ไม่มีด่านให้ใครปิด จึงไม่มีแถวใน `review_task` แต่นับเป็นขั้นบน
+หน้าจอ (`totalSteps` = 4) และกลับมาเป็นขั้นปัจจุบันทุกรอบที่คำขอถูกส่งกลับให้แก้ไข
+
+ชื่อขั้นขึ้นต้นด้วยฝ่ายที่รับผิดชอบ (หน่วยงาน / BDI) ตามการ์ด *ปรับแก้ชื่อขั้นตอน* (2026-09-19)
 
 **หนึ่ง `task_type` คือหนึ่งขั้น** เส้นทางนี้จึงมีรูปเดียวกับเส้นทาง B ทุกประการ
 
