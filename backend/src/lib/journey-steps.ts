@@ -71,9 +71,11 @@ export interface JourneyStep {
   /**
    * ชื่อกลาง ๆ ใช้ได้ทั้งกับขั้นที่ผ่านไปแล้วและขั้นที่ยังไม่ถึง
    *
-   * **ไม่มีชื่อบทบาทอยู่ในนี้** — ทั้งไทม์ไลน์บนหน้าจอและบล็อกขั้นตอนในอีเมลพิมพ์บทบาท
-   * ไว้บรรทัดใต้ชื่อขั้นอยู่แล้ว ("โดยผู้ประสานงานของ BDI") ชื่อขั้นที่ขึ้นต้นด้วยบทบาทซ้ำอีก
-   * จึงอ่านเป็น "ผู้ประสานงานของ BDIตรวจสอบเอกสาร · โดยผู้ประสานงานของ BDI"
+   * **ขึ้นต้นด้วยฝ่ายที่รับผิดชอบ — "หน่วยงาน…" หรือ "BDI…"** ตามการ์ด "ปรับแก้ชื่อขั้นตอน"
+   * (2026-09-19) เดิมตั้งใจไม่ใส่ เพราะบรรทัดใต้ชื่อขั้นพิมพ์บทบาทเต็มไว้อยู่แล้ว
+   * ("โดยผู้ประสานงานของ BDI") แต่ BDI อ่านรายการขั้นรวดเดียวแล้วแยกไม่ออกว่าขั้นไหน
+   * เป็นของใคร จึงยอมให้ซ้ำกับบรรทัดล่าง — คำที่ใส่เป็นชื่อ**ฝ่าย** (หน่วยงาน / BDI)
+   * ไม่ใช่ชื่อบทบาทเต็ม บรรทัดล่างจึงยังบอกอะไรเพิ่ม
    */
   label: string;
   /** ชื่อสั้นที่กล่องในแผนภาพและ badge ในแถวใช้ร่วมกัน — ดู StepPlan.shortLabel */
@@ -146,9 +148,9 @@ const SUBMISSION_STEP: StepPlan = {
   key: "SUBMISSION",
   taskType: null,
   optional: false,
-  // "ส่ง/แก้ไข" เพราะขั้นนี้กลับมาเป็นขั้นปัจจุบันอีกครั้งทุกรอบที่คำขอถูกส่งกลับ —
+  // "ส่งหรือแก้ไข" เพราะขั้นนี้กลับมาเป็นขั้นปัจจุบันอีกครั้งทุกรอบที่คำขอถูกส่งกลับ —
   // ป้ายที่บอกแค่ "ส่ง" ทำให้คนที่กำลังแก้อ่านว่าตัวเองอยู่ผิดขั้น (2026-09-18)
-  label: "ส่ง/แก้ไข คำขอลงทะเบียน",
+  label: "หน่วยงานส่งหรือแก้ไขคำขอ",
   shortLabel: "รอหน่วยงานนำส่ง",
   waitingLabel: `รอ${withRole(ROLE_CODES.ORGANIZATION_USER, "นำส่งคำขอ")}`,
   roleCode: ROLE_CODES.ORGANIZATION_USER,
@@ -164,7 +166,7 @@ const ORGANIZATION_PLAN: StepPlan[] = [
     key: "OFFICER_REVIEW",
     taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
     optional: false,
-    label: "ตรวจสอบคำขอ",
+    label: "BDI ตรวจสอบคำขอ",
     shortLabel: "รอ BDI ตรวจสอบ",
     waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.BDI_OFFICER_REVIEW],
     roleCode: ROLE_CODES.BDI_OFFICER,
@@ -173,7 +175,7 @@ const ORGANIZATION_PLAN: StepPlan[] = [
     key: "ORGANIZATION_APPROVAL",
     taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
     optional: false,
-    label: "ลงนามเห็นชอบ",
+    label: "หน่วยงานลงนามเห็นชอบ",
     shortLabel: "รอหน่วยงานลงนาม",
     waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.ORGANIZATION_APPROVAL],
     roleCode: ROLE_CODES.ORGANIZATION_APPROVER,
@@ -182,7 +184,7 @@ const ORGANIZATION_PLAN: StepPlan[] = [
     key: "FINAL_APPROVAL",
     taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
     optional: false,
-    label: "พิจารณาคำขอ",
+    label: "BDI พิจารณาเห็นชอบ",
     shortLabel: "รอ BDI อนุมัติ",
     waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.BDI_FINAL_APPROVAL],
     roleCode: ROLE_CODES.BDI_FINAL_APPROVER,
@@ -205,7 +207,7 @@ const DATASET_PLAN: StepPlan[] = [
     key: "OFFICER_REVIEW",
     taskType: ReviewTaskType.BDI_OFFICER_REVIEW,
     optional: false,
-    label: "ตรวจสอบคำขอ",
+    label: "BDI ตรวจสอบคำขอ",
     shortLabel: "รอ BDI ตรวจสอบ",
     waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.BDI_OFFICER_REVIEW],
     roleCode: ROLE_CODES.BDI_OFFICER,
@@ -214,7 +216,7 @@ const DATASET_PLAN: StepPlan[] = [
     key: "ORGANIZATION_APPROVAL",
     taskType: ReviewTaskType.ORGANIZATION_APPROVAL,
     optional: false,
-    label: "ลงนามเห็นชอบ",
+    label: "หน่วยงานลงนามเห็นชอบ",
     shortLabel: "รอหน่วยงานลงนาม",
     waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.ORGANIZATION_APPROVAL],
     roleCode: ROLE_CODES.ORGANIZATION_APPROVER,
@@ -223,7 +225,7 @@ const DATASET_PLAN: StepPlan[] = [
     key: "FINAL_APPROVAL",
     taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
     optional: false,
-    label: "พิจารณาคำขอ",
+    label: "BDI พิจารณาเห็นชอบ",
     shortLabel: "รอ BDI อนุมัติ",
     waitingLabel: REVIEW_TASK_TYPE_LABELS[ReviewTaskType.BDI_FINAL_APPROVAL],
     roleCode: ROLE_CODES.BDI_FINAL_APPROVER,
