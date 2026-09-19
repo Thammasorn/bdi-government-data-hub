@@ -118,17 +118,63 @@ function navItems(
     : [];
 }
 
+/**
+ * แถบหัวหลังล็อกอิน — สองหน้าตาตามความกว้าง
+ *
+ * ตั้งแต่ `md` (768px) ขึ้นไป เมนูเรียงเป็นเม็ดยาในแถบ ต่ำกว่านั้นยุบเป็นปุ่ม hamburger
+ * ที่กางรายการลงมาใต้แถบ เดิมแถบเมนูเป็น `hidden md:flex` เฉย ๆ — ต่ำกว่า 768px เมนูจึง
+ * **หายไปทั้งชุด** โดยไม่มีอะไรมาแทน ทั้งฝั่งหน่วยงานและฝั่ง BDI (รายงาน 2026-09-19)
+ * เหลือแค่โลโก้กับชื่อผู้ใช้ และหน้าเดียวที่ไปต่อได้คือหน้าแรกผ่านโลโก้
+ *
+ * ทำแบบเดียวกับ `TopNav` ของหน้าแนะนำระบบตามที่การ์ดขอ รวมถึงบทเรียนของมัน: เมนูที่
+ * กางอยู่ต้องปิดเมื่อจอถูกขยายจนข้ามไปเป็นแบบเม็ดยาด้วย ไม่งั้น state ค้างเป็น open
+ * ทั้งที่ปุ่มมองไม่เห็นแล้ว พอย่อจอกลับมาเมนูก็เด้งกางเองโดยไม่มีใครกด
+ *
+ * จุดที่ต่างจากหน้าแนะนำระบบ: เมนูที่กดไม่ได้ (`disabledReason`) บนแผงนี้เขียนเหตุผลเป็น
+ * ข้อความจริงใต้ชื่อเมนู ไม่ใช่ `title=` แบบบนแถบ — จอแคบคือจอสัมผัส ซึ่งไม่มี hover
+ * ให้ tooltip โผล่ ป้ายที่จาง ๆ กดไม่ได้และไม่บอกว่าทำไมคืออีกแบบหนึ่งของเมนูที่หายไป
+ */
 function Header() {
   const { user } = useSession();
   const pathname = usePathname();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const headerRef = useRef<HTMLElement>(null);
   const items = navItems(
     user?.roles ?? [],
     user?.organizationId ?? null,
     user?.organization?.status ?? null,
   );
 
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    const onClick = (e: MouseEvent) => {
+      if (!headerRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    // 768px = เบรกพอยต์ `md` ของ Tailwind ที่เมนูกลับไปเรียงในแถบ
+    const wide = window.matchMedia("(min-width: 768px)");
+    const onWide = (e: MediaQueryListEvent) => {
+      if (e.matches) setMenuOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onClick);
+    wide.addEventListener("change", onWide);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onClick);
+      wide.removeEventListener("change", onWide);
+    };
+  }, [menuOpen]);
+
+  // ไปหน้าใหม่แล้วแผงต้องหุบเอง — ลิงก์ในแผงปิดให้ตอนถูกกด แต่ปุ่ม Back/Forward ไม่ผ่านตรงนั้น
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
+
   return (
-    <header className="sticky top-0 z-40 bg-white/85 frost-12">
+    <header ref={headerRef} className="sticky top-0 z-40 bg-white/85 frost-12">
       {/* แถบ gradient ประจำแบรนด์ */}
       <div className="bg-brand-gradient h-[3px]" />
       <div className="border-b border-line">
@@ -141,7 +187,7 @@ function Header() {
             <Logo subtitle={null} />
           </Link>
 
-          <nav className="hidden flex-1 items-center gap-1 md:flex">
+          <nav aria-label="เมนูหลัก" className="hidden flex-1 items-center gap-1 md:flex">
             {items.map((item) => {
               const active = pathname === item.href.split("?")[0];
               if (item.disabledReason) {
@@ -172,12 +218,84 @@ function Header() {
             })}
           </nav>
 
-          <div className="ml-auto flex items-center gap-1">
+          {/* `min-w-0` ตลอดสาย ไม่งั้นชื่อผู้ใช้ที่ยาวดันปุ่ม hamburger ออกนอกจอแทนที่จะถูกตัดด้วย … */}
+          <div className="ml-auto flex min-w-0 items-center gap-1">
             {user ? <NotificationBell /> : null}
             {user ? <UserMenu /> : <SignInLink />}
+
+            {/* ผู้ใช้ที่ยังไม่มีหน่วยงานไม่มีเมนูเลยตามสเปก ปุ่มที่กางแผงเปล่าจึงไม่ควรมี */}
+            {items.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setMenuOpen((v) => !v)}
+                aria-expanded={menuOpen}
+                aria-controls="app-nav-menu"
+                aria-label={menuOpen ? "ปิดเมนู" : "เปิดเมนู"}
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-navy-800 transition-colors hover:bg-navy-50 md:hidden"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-6 w-6"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  aria-hidden="true"
+                >
+                  {menuOpen ? (
+                    <path d="M6 6l12 12M18 6 6 18" strokeLinecap="round" />
+                  ) : (
+                    <path d="M4 7h16M4 12h16M4 17h16" strokeLinecap="round" />
+                  )}
+                </svg>
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
+
+      {menuOpen ? (
+        <nav
+          id="app-nav-menu"
+          aria-label="เมนูหลัก"
+          className="animate-in-up absolute inset-x-0 top-full max-h-[calc(100vh-5rem)] overflow-y-auto border-b border-line bg-white shadow-pop md:hidden"
+        >
+          <ul className="mx-auto max-w-6xl px-4 py-2 sm:px-6">
+            {items.map((item) => {
+              const active = pathname === item.href.split("?")[0];
+              if (item.disabledReason) {
+                return (
+                  <li key={item.href}>
+                    <span
+                      aria-disabled="true"
+                      className="block cursor-not-allowed rounded-xl px-4 py-2.5 text-[15px] text-ink-subtle"
+                    >
+                      {item.label}
+                      <span className="mt-0.5 block text-[13px]">{item.disabledReason}</span>
+                    </span>
+                  </li>
+                );
+              }
+              return (
+                <li key={item.href}>
+                  <Link
+                    href={item.href}
+                    aria-current={active ? "page" : undefined}
+                    onClick={() => setMenuOpen(false)}
+                    className={clsx(
+                      "block rounded-xl px-4 py-2.5 text-[15px] transition-colors",
+                      active
+                        ? "bg-navy-50 font-medium text-navy-800"
+                        : "text-ink hover:bg-navy-50 hover:text-navy-800",
+                    )}
+                  >
+                    {item.label}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+      ) : null}
     </header>
   );
 }
@@ -214,6 +332,11 @@ function UserMenu() {
    * รายชื่อครบอยู่ในเมนูที่กดเปิด
    */
   const first = user.roles[0];
+  /**
+   * อักษรแรกของ "ชื่อ" ไม่ใช่ของคำนำหน้า — `fullNameTh()` ให้ "นาย วิชัย เอกสาร" มาเสมอ
+   * ถ้าหยิบตัวแรกของทั้งก้อนจะได้ "น" ของทุกคนที่เป็นนาย
+   */
+  const initial = (name.split(" ")[1] ?? name).charAt(0);
   const roleLabel = first
     ? `${ROLE_LABELS[first as Role] ?? first}${user.roles.length > 1 ? ` +${user.roles.length - 1}` : ""}`
     : null;
@@ -241,13 +364,16 @@ function UserMenu() {
   };
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative min-w-0" ref={ref}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-haspopup="menu"
-        className="flex items-center gap-2 rounded-full px-3 py-1.5 transition-colors hover:bg-navy-50"
+        aria-label={`เมนูผู้ใช้ ${name}`}
+        /* `max-w-full` ไม่ใช่ของแถม: ความกว้างอัตโนมัติของ <button> คือ fit-content เสมอ
+           มันจึงไม่ยอมหดตามกล่องที่ครอบอยู่แม้ใส่ min-w-0 ให้ทั้งสายแล้ว */
+        className="flex min-w-0 max-w-full items-center gap-2 rounded-full px-1.5 py-1.5 transition-colors hover:bg-navy-50 sm:px-3"
       >
         {/*
           ชื่อกับบทบาทอยู่ด้วยกัน ไม่ต้องเปิดเมนูถึงจะรู้ว่าตอนนี้เป็นใคร (BDI ขอเมื่อ 2026-09-04)
@@ -265,8 +391,20 @@ function UserMenu() {
             <span className="max-w-[16rem] truncate text-[11px] text-ink-muted">{roleLabel}</span>
           ) : null}
         </span>
-        <span className="text-sm font-medium text-ink sm:hidden">{name}</span>
-        <svg viewBox="0 0 20 20" className="h-4 w-4 text-ink-subtle" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+        {/*
+          ต่ำกว่า sm ขึ้นเป็นอักษรแรกในวงกลม ไม่ใช่ชื่อเต็ม — ที่ความกว้าง 320px เหลือที่ให้
+          ข้อความราว 11px หลังหักโลโก้ กระดิ่ง และปุ่มเมนู ชื่อไทยเต็ม ๆ จึงถูกตัดเหลือ "น.."
+          ซึ่งไม่ได้บอกว่าใคร ชื่อ อีเมล และบทบาทครบยังอยู่ในเมนูที่กดเปิดห่างไปหนึ่งสัมผัส
+          และ aria-label ของปุ่มยังอ่านชื่อเต็ม
+        */}
+        <span
+          aria-hidden="true"
+          className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-navy-50 text-[13px] font-semibold text-navy-700 sm:hidden"
+        >
+          {initial}
+        </span>
+        {/* ลูกศรเป็นของประดับ ต่ำกว่า sm ที่มีแต่วงกลมอักษรแรกอยู่แล้วจึงยอมสละให้ปุ่มเมนูก่อน */}
+        <svg viewBox="0 0 20 20" className="hidden h-4 w-4 shrink-0 text-ink-subtle sm:block" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
           <path d="m5 8 5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
