@@ -213,9 +213,9 @@ export default function EditDatasetRequestPage() {
   };
 
   /**
-   * ช่องที่ตอบแล้วเห็นคำตอบอยู่ในตัว — คำถามใช่/ไม่ใช่ (ปุ่มวงกลมที่เลือกไว้) และคำสำคัญ
-   * (ชิปที่เพิ่มเข้าไป) จึงไม่ต้องมีขอบเขียวมาบอกซ้ำอีกชั้น ที่ยังต้องส่งคือข้อความผิดพลาด
-   * และการนับว่าแตะแล้ว
+   * ช่องที่ตอบแล้วเห็นคำตอบอยู่ในตัว — คำถามใช่/ไม่ใช่ (ปุ่มวงกลมที่เลือกไว้) กับช่องแบบชิป
+   * (คำสำคัญ และรายการข้อมูล (ฟิลด์ข้อมูล) — ชิปที่เพิ่มเข้าไป) จึงไม่ต้องมีขอบเขียวมาบอก
+   * ซ้ำอีกชั้น ที่ยังต้องส่งคือข้อความผิดพลาดและการนับว่าแตะแล้ว
    */
   const answerProps = (key: FormField) => ({
     error: errorOf(key),
@@ -431,14 +431,14 @@ export default function EditDatasetRequestPage() {
                 </Wrap>
               </div>
               <Wrap name="dataFields">
-                <TextAreaField
+                <ChipInput
                   label="รายการข้อมูล (ฟิลด์ข้อมูล) ที่ประสงค์จะนำส่ง"
-                  required
-                  maxLength={1000}
+                  noun="ชื่อฟิลด์"
+                  unit="ฟิลด์"
+                  limit={1000}
                   value={form.dataFields}
-                  onChange={(e) => set("dataFields", e.target.value)}
-                  {...fieldProps("dataFields")}
-                  hint="ใส่ชื่อฟิลด์ที่จะนำส่ง คั่นด้วยจุลภาค เช่น ข้อมูลพิกัด, ข้อมูลประเภทที่ตั้ง, ข้อมูลหน่วยให้บริการ"
+                  onChange={(next) => set("dataFields", next)}
+                  {...answerProps("dataFields")}
                 />
               </Wrap>
               <ReadOnlyField label="องค์กร" value={organizationName} />
@@ -468,7 +468,11 @@ export default function EditDatasetRequestPage() {
                 </Wrap>
               </div>
               <Wrap name="tagString">
-                <KeywordInput
+                <ChipInput
+                  label="คำสำคัญ หรือคำค้น"
+                  noun="คำสำคัญ"
+                  unit="คำ"
+                  limit={200}
                   value={form.tagString}
                   onChange={(next) => set("tagString", next)}
                   {...answerProps("tagString")}
@@ -1085,8 +1089,13 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * คำสำคัญเป็นชิป — พิมพ์แล้วกด Enter หรือคอมมาเพื่อเพิ่ม
- * เก็บลงฐานข้อมูลเป็นสตริงเดียวคั่นด้วย "," ตามคอลัมน์ tag_string ในชีท
+ * ช่องกรอกแบบชิป — พิมพ์แล้วกด Enter หรือคอมมาเพื่อเพิ่มทีละรายการ
+ * เก็บลงฐานข้อมูลเป็นสตริงเดียวคั่นด้วย "," ตามชีท (`tag_string`, `data_fields`)
+ *
+ * ใช้ร่วมกันสองช่อง: คำสำคัญ และรายการข้อมูล (ฟิลด์ข้อมูล) — การ์ด "ปรับวิธีการกรอก
+ * รายการข้อมูล (ฟิลด์ข้อมูล)" ขอให้ช่องหลังกรอกและแสดงผลแบบเดียวกับช่องแรก เพราะทั้งคู่
+ * เป็นรายการคั่นด้วยจุลภาคเหมือนกัน แต่เดิมช่องฟิลด์เป็นกล่องข้อความยาว ๆ ที่ผู้กรอก
+ * ต้องพิมพ์จุลภาคเอง และไม่เห็นว่าระบบตัดคำออกมาได้กี่รายการ
  *
  * ปุ่มลบเป็น `<svg>` ไม่ใช่ตัวอักษร "×": ตัวอักษรวางบนเส้นฐานของฟอนต์ และ body
  * ตั้ง line-height ไว้ 1.7 (22.1px) ให้สระกับวรรณยุกต์ไทย ซึ่งสูงกว่าปุ่ม 16px
@@ -1094,12 +1103,23 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
  * ตกต่ำกว่าจุดกึ่งกลางวงกลมราว 4px และหลุดแนวเดียวกับตัวอักษรในชิป ไอคอน SVG
  * ไม่มีเส้นฐาน จึงอยู่กึ่งกลางตามเรขาคณิตเสมอ
  */
-function KeywordInput({
+function ChipInput({
+  label,
+  noun,
+  unit,
+  limit,
   value,
   onChange,
   error,
   onBlur,
 }: {
+  label: string;
+  /** สิ่งที่พิมพ์ลงไปหนึ่งชิป ใช้ในคำใบ้และป้ายปุ่มลบ เช่น "คำสำคัญ" "ชื่อฟิลด์" */
+  noun: string;
+  /** ลักษณนามของชิป ใช้นับ เช่น "คำ" "ฟิลด์" */
+  unit: string;
+  /** เพดานความยาวของสตริงที่เก็บจริง รวมจุลภาค — ต้องตรงกับกฎใน `dataset-form.ts` */
+  limit: number;
   value: string;
   onChange: (next: string) => void;
   error?: string;
@@ -1119,12 +1139,12 @@ function KeywordInput({
     setDraft("");
   };
 
-  const remaining = 200 - value.length;
+  const remaining = limit - value.length;
 
   return (
     <div className="flex flex-col gap-1.5">
       <span className="text-sm font-medium text-ink">
-        คำสำคัญ หรือคำค้น
+        {label}
         <span className="ml-1 text-coral-500">*</span>
       </span>
       <div
@@ -1141,7 +1161,7 @@ function KeywordInput({
             {word}
             <button
               type="button"
-              aria-label={`ลบคำสำคัญ ${word}`}
+              aria-label={`ลบ${noun} ${word}`}
               onClick={() => onChange(tags.filter((w) => w !== word).join(","))}
               className="grid h-4 w-4 shrink-0 place-items-center rounded-full text-navy-600 transition-colors hover:bg-navy-200 hover:text-navy-800"
             >
@@ -1172,7 +1192,7 @@ function KeywordInput({
             onBlur?.();
           }}
           maxLength={Math.max(remaining, 0)}
-          placeholder={tags.length === 0 ? "พิมพ์คำสำคัญแล้วกด , หรือ Enter" : ""}
+          placeholder={tags.length === 0 ? `พิมพ์${noun}แล้วกด , หรือ Enter` : ""}
           className="h-8 min-w-40 flex-1 bg-transparent px-1.5 text-[15px] outline-none placeholder:text-ink-subtle"
         />
       </div>
@@ -1183,10 +1203,11 @@ function KeywordInput({
       ) : (
         <p className="text-[13px] text-ink-muted">
           {/* บอกตัวคั่นไว้ตรง ๆ — ผู้ทดสอบพิมพ์หลายคำเว้นวรรคแล้วได้ชิปเดียวยาว ๆ เพราะไม่รู้ว่าต้องคั่นด้วย "," (2026-09-18) */}
-          พิมพ์ทีละคำแล้วกด <kbd className="rounded border border-line bg-canvas px-1 font-mono text-[12px]">,</kbd> หรือ Enter
-          คำนั้นถึงจะขึ้นเป็นแท็กแยกกัน — ถ้าไม่คั่นด้วยคอมมา ทั้งข้อความจะนับเป็นคำสำคัญคำเดียว
+          พิมพ์ทีละ{unit}แล้วกด <kbd className="rounded border border-line bg-canvas px-1 font-mono text-[12px]">,</kbd> หรือ Enter{" "}
+          {unit}นั้นถึงจะขึ้นเป็นแท็กแยกกัน — ถ้าไม่คั่นด้วยคอมมา ทั้งข้อความจะนับเป็น{noun}เดียว
           <br />
-          อย่างน้อย 1 คำ · รวมกันไม่เกิน 200 ตัวอักษร (เหลือ {Math.max(remaining, 0).toLocaleString("th-TH")})
+          อย่างน้อย 1 {unit} · รวมกันไม่เกิน {limit.toLocaleString("th-TH")} ตัวอักษร (เหลือ{" "}
+          {Math.max(remaining, 0).toLocaleString("th-TH")})
         </p>
       )}
     </div>
