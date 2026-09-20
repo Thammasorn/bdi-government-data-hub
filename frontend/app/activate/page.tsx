@@ -425,7 +425,7 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
             required
             inputMode="tel"
             autoComplete="tel"
-            placeholder="081-234-5678"
+            placeholder="08 1234 5678"
             value={form.phone}
             onChange={(e) => set("phone")(e.target.value)}
             error={fields.phone}
