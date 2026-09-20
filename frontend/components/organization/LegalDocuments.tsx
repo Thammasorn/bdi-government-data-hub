@@ -140,7 +140,7 @@ export function LegalDocumentsCard({
   const skippedNote =
     notApplicable.length > 0 ? (
       <p className="text-[13px] leading-relaxed text-ink-muted">
-        หน่วยงานระบุว่า &ldquo;{notApplicable.map(documentLabel).join(" · ")}&rdquo;
+        หน่วยงานระบุว่า &ldquo;{notApplicable.map(documentLabel).join(", ")}&rdquo;
         ไม่เกี่ยวข้องกับหน่วยงาน จึงไม่อยู่ในชุดที่ต้องเห็นชอบและลงนาม
       </p>
     ) : null;
