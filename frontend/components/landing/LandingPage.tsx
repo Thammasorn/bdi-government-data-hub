@@ -28,7 +28,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { D2Mark, LogoImage } from "@/components/brand/Logo";
 
-import diagram from "./d2-platform-diagram.webp";
+import diagram from "./d2-how-it-works.webp";
 import {
   BACKGROUND_BANNER,
   BACKGROUND_LEAD,
@@ -714,12 +714,13 @@ function HowItWorks() {
           named volume ที่ไม่หายตอน restart) และ width/height ที่ใส่มือไว้ก็ยังเป็น
           สัดส่วนเก่า ทำให้จองพื้นที่ผิด · ทั้งคู่จะเกิดกับผู้ใช้จริงหลัง CDN ด้วย ไม่ใช่แค่ในเครื่อง
 
-          ต้นฉบับ assets/info_page/home-page-diagram-image.png (3168×1344 / 5.4 MB)
-          ย่อเหลือ 1600px แล้วแปลงเป็น WebP เหลือ 65 KB
+          ต้นฉบับ assets/info_page/D2 ทำงานอย่างไร.png (2730×1544 / 680 KB)
+          ย่อเหลือ 1600px แล้วแปลงเป็น WebP เหลือ 126 KB — ชื่อไฟล์ใหม่ทุกครั้งที่เปลี่ยนรูป
+          ด้วยเหตุผลเรื่องแคชข้างบน
         */}
         <Image
           src={diagram}
-          alt="แผนภาพการทำงานของ D2 — ข้อมูลจากหลายหน่วยงาน (A ถึง E และอื่น ๆ) ไหลเข้าสู่แพลตฟอร์มกลางด้านข้อมูลขนาดใหญ่ที่เชื่อมโยง บูรณาการ ปลอดภัย และควบคุมคุณภาพข้อมูล แล้วนำออกไปใช้เป็นแดชบอร์ดและรายงาน การวางแผนและคาดการณ์ การวิเคราะห์เชิงลึก การกำหนดนโยบาย และการบริหารราชการ"
+          alt="แผนภาพการทำงานของ D2 — National Big Data Backbone: ข้อมูลจาก Sectorial Zone (ศูนย์ข้อมูลรายสาขา ฐานข้อมูลหน่วยงาน ไฟล์ GIS แบบสำรวจ เซ็นเซอร์และเว็บ) ไหลเข้าสู่ Central Zone ของ D2 ผ่าน Data Staging ไปยัง Data Catalog และ Lakehouse ภายใต้ธรรมาภิบาลข้อมูลร่วม แล้วส่งออกผ่าน Data Gateway ไปยัง Service Zone เป็น Open Data แดชบอร์ดและโมเดล ข้อมูลภาครัฐที่ได้รับอนุญาต และเครื่องมือวิทยาศาสตร์ข้อมูล/AI"
           className="mx-auto h-auto w-full max-w-3xl rounded-xl"
           sizes="(max-width: 768px) 100vw, 768px"
         />
