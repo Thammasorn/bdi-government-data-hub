@@ -1053,12 +1053,17 @@ the `…` the legal team put around `{{dataset.objectiveOther}}` to print. A0 th
 had it, unlike the 9 September draft that had simply never marked it. `docs/18` §3.5.
 
 **Production carries exactly one version per document, numbered 1** — reset on 2026-09-10 once
-the 9 September set was published. The versions removed were superseded drafts from August; the
-twelve `legal_acceptance` rows that pointed at them were **repointed to the surviving version,
-not deleted**, so the demo requests that had been signed still read as signed. That is the only
-time this has been done, and it is a pre-launch tidy-up rather than a routine: once a real
+the 9 September set was published, and again on 2026-09-20 after the 20 September set (A0, A2,
+A4). Each time the versions removed were the superseded ones, and the `legal_acceptance` rows
+that pointed at them (12 the first time, 37 the second) were **repointed to the surviving
+version, not deleted**, so the demo requests that had been signed still read as signed; the
+per-request rendered files were repointed too and re-render on the next read because they
+predate the new publish. Both were pre-launch tidy-ups rather than a routine: once a real
 organisation has signed, deleting the version it accepted destroys the only record of what it
-accepted. `backups/bdi-main-20260910-before-version-reset.sql` is the state before it.
+accepted. `backups/bdi-main-20260910-before-version-reset.sql` and
+`backups/bdi-main-20260920-before-version-reset.sql` are the states before; the SQL that did
+the second one is `backups/reset-legal-versions-20260920.sql` (it lists the blobs it orphans —
+SQL cannot delete from storage). Not in the repo, on purpose: it is not a tool.
 
 **Reading is attested, not measured.** The organisation approver ticks
 "ข้าพเจ้าได้อ่านเอกสารฉบับนี้ครบถ้วนแล้ว" per document before `เห็นชอบ` unlocks, and the tick
