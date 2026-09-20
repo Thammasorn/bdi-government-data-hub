@@ -29,7 +29,7 @@ import {
   type NodeKey,
   type PageInfo,
 } from "@/lib/stage";
-import type { DatasetRequestListItem, OrganizationListItem } from "@/lib/types";
+import type { DatasetRequestListItem, Organization, OrganizationListItem } from "@/lib/types";
 
 /** ผลของ endpoint ที่แบ่งหน้าแล้ว — แถวของหน้านี้ กับจำนวนจริงทั้งหมด */
 interface Page<T> {
@@ -120,6 +120,18 @@ function OrganizationHome({
   const [others, setOthers] = useState<Page<DatasetRequestListItem> | null>(null);
   const [awaitingMe, setAwaitingMe] = useState<Page<DatasetRequestListItem> | null>(null);
   const [orgRequests, setOrgRequests] = useState<OrganizationListItem[] | null>(null);
+  /**
+   * คำขอลงทะเบียนหน่วยงานที่ถูกส่งกลับมาให้แก้ไข — `undefined` ระหว่างที่ยังตอบไม่ได้
+   * และ `null` เมื่อรู้แล้วว่าไม่มีใบไหนถูกส่งกลับ
+   *
+   * ใบที่ถูกส่งกลับไม่อยู่ในชุด "ยังเดินอยู่" (`SUBMITTED,UNDER_REVIEW`) ที่คิวรีข้างล่างถาม
+   * เพราะมันหยุดรออยู่ที่หน่วยงาน ไม่ได้เดินอยู่ — หน้าแรกจึงไม่เคยเห็นมันเลย แล้วตกไปพูด
+   * ประโยค "หน่วยงานยังไม่ได้ลงทะเบียนใช้งานระบบ" กับคนที่ยื่นไปแล้วและถูก BDI ส่งกลับมาแก้
+   * เขาต้องเดินไปที่เมนู "คำขอลงทะเบียนหน่วยงาน" เองถึงจะรู้ว่ามีงานค้างอยู่ที่โต๊ะตัวเอง
+   */
+  const [returnedRegistration, setReturnedRegistration] = useState<Organization | null | undefined>(
+    undefined,
+  );
 
   useEffect(() => {
     const load = <T,>(path: string, key: string): Promise<Page<T>> =>
@@ -163,6 +175,27 @@ function OrganizationHome({
     )
       .then((d) => setOrgRequests(d.rows))
       .catch(() => setOrgRequests([]));
+
+    /**
+     * ใบที่ถูกส่งกลับมาให้แก้ไข — คิวรีแยกจากใบที่ยังเดินอยู่ ด้วยเหตุผลในคำอธิบายของ
+     * `returnedRegistration` ข้างบน หน่วยงานหนึ่งมีคำขอที่ยังไม่จบได้ใบเดียว จึงขอมาแถวเดียว
+     *
+     * แล้วโหลดใบเต็มต่ออีกครั้งหนึ่ง เพราะสิ่งที่ผู้อ่านกลับมาหน้าแรกเพื่อถามคือ "ต้องแก้อะไร"
+     * และข้อความของผู้ตรวจ (`revisionNote`) กับคนที่ส่งกลับอยู่ใน `GET /:id` เท่านั้น
+     * ไม่ได้ติดมากับรายการ — คำขอที่ไม่ได้ถูกส่งกลับไม่จ่ายค่าคิวรีใบที่สองนี้เลย
+     */
+    load<OrganizationListItem>("/api/organizations?status=RETURNED&pageSize=1", "organizations")
+      .then((d) => {
+        const row = d.rows[0];
+        if (!row) {
+          setReturnedRegistration(null);
+          return;
+        }
+        return api
+          .get<{ organization: Organization }>(`/api/organizations/${row.id}`)
+          .then((o) => setReturnedRegistration(o.organization));
+      })
+      .catch(() => setReturnedRegistration(null));
 
     // ยิงเฉพาะคนที่การ์ดนี้พูดด้วย — ผู้ประสานงานของหน่วยงานไม่มีการ์ดนี้
     if (isApprover) {
@@ -229,6 +262,7 @@ function OrganizationHome({
         onRegister={isApprover || registrationInReview !== false ? undefined : onRegister}
         registering={registering}
         registration={pendingRegistration}
+        returnedRegistration={returnedRegistration}
         /* การ์ดลงนามด้านล่างบอกเรื่องเดียวกันแต่ตรงกว่าและมีปุ่มให้กด กล่องเตือนบนหัว
            จึงกลายเป็นการพูดซ้ำครั้งที่สาม ต่อจาก badge */
         hideInactiveNotice={Boolean(awaitingSignature)}
@@ -349,6 +383,7 @@ function HomeHeader({
   onRegister,
   registering,
   registration,
+  returnedRegistration,
   hideInactiveNotice = false,
 }: {
   name: string;
@@ -360,6 +395,11 @@ function HomeHeader({
    * และ `undefined` ถ้ายังตอบไม่ได้ ซึ่งกล่องจะยังไม่ขึ้นจนกว่าจะรู้คำตอบ
    */
   registration?: OrganizationListItem | null;
+  /**
+   * คำขอที่ถูกส่งกลับมาให้แก้ไข พร้อมข้อความของผู้ตรวจ — `null` ถ้าไม่มี และ `undefined`
+   * ถ้ายังตอบไม่ได้ กติกา "ยังไม่รู้ก็ยังไม่พูด" เดียวกับ `registration` ข้างบน
+   */
+  returnedRegistration?: Organization | null;
   /** ซ่อนกล่องบอกสถานะหน่วยงาน เมื่อมีการ์ดอื่นบอกเรื่องเดียวกันไปแล้ว */
   hideInactiveNotice?: boolean;
 }) {
@@ -389,7 +429,20 @@ function HomeHeader({
           </p>
         )}
 
-        {status && status !== "ACTIVE" && !hideInactiveNotice && registration !== undefined ? (
+        {/**
+         * ใบที่ถูกส่งกลับมาแก้มาก่อนกล่องอื่น และแทนที่กล่องเหลืองไปเลย ไม่ได้ขึ้นเพิ่ม
+         *
+         * กล่องเหลืองพูดกับคนที่ยังไม่ได้ยื่นว่า "หน่วยงานยังไม่ได้ลงทะเบียนใช้งานระบบ"
+         * พร้อมปุ่มเปิดฟอร์มใบใหม่ ซึ่งกับคนที่ยื่นไปแล้วและถูกส่งกลับมาแก้ มันทั้งผิด
+         * (ยื่นไปแล้ว) และซ่อนสิ่งเดียวที่เขาต้องรู้ คือมีข้อความจากผู้ตรวจรออ่านอยู่
+         */}
+        {returnedRegistration ? (
+          <RegistrationReturnedNotice request={returnedRegistration} />
+        ) : status &&
+          status !== "ACTIVE" &&
+          !hideInactiveNotice &&
+          registration !== undefined &&
+          returnedRegistration !== undefined ? (
           <div className="mt-5 rounded-xl border-l-[3px] border-warning bg-warning-bg p-5">
             {/**
              * ยื่นคำขอไปแล้วกับยังไม่ได้ยื่น เป็นคนละเรื่องกัน
@@ -439,6 +492,51 @@ function HomeHeader({
         ) : null}
       </div>
     </header>
+  );
+}
+
+/**
+ * กล่องแดงบนหน้าแรก เมื่อคำขอลงทะเบียนหน่วยงานถูกส่งกลับมาให้แก้ไข
+ *
+ * พูดเรื่องเดียวกับกล่องบนหน้ารายละเอียดคำขอ (`components/organization/DetailView.tsx`)
+ * และตั้งใจให้อ่านเหมือนกันทุกบรรทัด — สิ่งที่ต้องแก้ โดยใคร เมื่อไร แล้วปุ่มเข้าฟอร์ม
+ * เพราะจุดที่การ์ดบ่นคือผู้ใช้ต้องเดินไปหน้านั้นเองถึงจะรู้ว่าคำขอถูกส่งกลับมา การย้าย
+ * ข้อความมาไว้ตรงนี้จึงต้องได้ของครบ ไม่ใช่ส่งเขาไปอ่านต่อที่เดิม
+ */
+function RegistrationReturnedNotice({ request }: { request: Organization }) {
+  const { user } = useSession();
+  // "ขอให้ปรับปรุง" = review_task ที่ปิดด้วย result = RETURNED — สำนวนเดียวกับ DetailView
+  const lastRevision = [...request.events].reverse().find((e) => e.result === "RETURNED");
+  // ปุ่มพาเข้าฟอร์ม ซึ่งเปิดได้เฉพาะเจ้าของคำขอ — กติกาเดียวกับหน้ารายละเอียด
+  const isOwner = request.createdBy?.id === user?.id;
+
+  return (
+    <div className="mt-5 rounded-xl border-l-[3px] border-danger bg-danger-bg p-5">
+      <p className="text-[13px] font-semibold text-danger">คำขอลงทะเบียนหน่วยงานถูกส่งกลับมาให้แก้ไข</p>
+      {request.revisionNote ? (
+        <p className="mt-1.5 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-ink">
+          {request.revisionNote}
+        </p>
+      ) : (
+        /* ผู้ตรวจส่งกลับโดยไม่ได้พิมพ์เหตุผลไม่ได้ (`/review` บังคับอย่างน้อยสิบตัวอักษร)
+           แต่ใบเก่าก่อนกฎนั้นยังมีอยู่ — กล่องต้องไม่ว่างเปล่า */
+        <p className="mt-1.5 text-[15px] leading-relaxed text-ink">
+          ผู้ตรวจสอบส่งคำขอกลับมาให้แก้ไข โปรดเปิดคำขอเพื่อดูรายละเอียด
+        </p>
+      )}
+      {lastRevision ? (
+        <p className="mt-2 text-[13px] text-ink-muted">
+          โดย {lastRevision.actor ? lastRevision.actor.name : "ระบบ"} ·{" "}
+          {formatThaiDate(lastRevision.completedAt ?? lastRevision.createdAt)}
+        </p>
+      ) : null}
+      <Link
+        href={isOwner ? `/organizations/${request.id}/edit` : `/organizations/${request.id}`}
+        className="mt-4 inline-block"
+      >
+        <Button size="sm">{isOwner ? "แก้ไขข้อมูล" : "ดูคำขอลงทะเบียนหน่วยงาน"}</Button>
+      </Link>
+    </div>
   );
 }
 
