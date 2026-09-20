@@ -23,6 +23,7 @@ import { ROLE_LABELS } from "./roles.js";
 import {
   BDI_ORGANIZATION_ID,
   ORGANIZATION_SCOPED_ROLES,
+  ROLE_CODES,
   SYSTEM_USER_ID,
   type RoleCode,
 } from "./system.js";
@@ -571,4 +572,42 @@ export async function completeActivation(
   });
 
   return { replaced };
+}
+
+/**
+ * ผู้มีอำนาจอนุมัติของหน่วยงานที่**เปิดใช้งานบัญชีแล้ว**และนั่งที่นั่งของหน่วยงานนี้อยู่ —
+ * `null` ถ้าคำขอยังไม่เดินไปถึงขั้นนั้น
+ *
+ * เมื่อเขาเปิดใช้งานบัญชีแล้ว อีเมลนั้นรับลิงก์ได้จริงและ ThaID ยืนยันเลขบัตรไปแล้ว
+ * สองช่องนี้จึงเป็นข้อเท็จจริงของบัญชี ไม่ใช่ของฟอร์มอีกต่อไป — เหตุผลเดียวกับที่
+ * `recallRefusal()` ปฏิเสธการยกเลิกผลตรวจสอบหลังจากนั้น และเป็นคู่ของ `contactFromAccount()`
+ * สำหรับส่วนที่ 2: ค่าจากบัญชีมาก่อน snapshot และฟอร์มแก้ไม่ได้ (การ์ด "BUG ส่งชื่อ approver
+ * ไม่ได้": "ถ้า org approver activate แล้ว ให้ disable email และ cid ไม่ให้แก้ไข")
+ *
+ * ต้องถือ role ของ**หน่วยงานนี้**ด้วย ไม่ใช่แค่บัญชี ACTIVE — ร่างที่กรอกอีเมลของผู้มีอำนาจฯ
+ * หน่วยงานอื่นเข้ามาต้องยังแก้ช่องนั้นได้ ไม่งั้นคนกรอกติดอยู่กับค่าที่ `approverConflict()`
+ * จะปฏิเสธและแก้ไม่ได้
+ *
+ * ค้นแบบไม่สนตัวพิมพ์ เพราะร่างที่บันทึกก่อน 2026-09-18 เก็บอีเมลตามที่พิมพ์มา
+ *
+ * ย้ายมาจาก `routes/organizations.ts` ตอนเพิ่ม `/api/admin/registrations` — คำถาม
+ * "ที่นั่งผู้มีอำนาจฯ ของหน่วยงานนี้มีคนจริงนั่งอยู่ไหม" เป็นคำถามของ iam ไม่ใช่ของฟอร์ม
+ * และเส้นทางของผู้ดูแลระบบตัดสินจากคำตอบเดียวกันนี้ (ต่างกันแค่ทำอะไรต่อ)
+ */
+export async function activatedApprover(
+  db: Db,
+  request: { approverEmail: string | null; organizationId: string },
+) {
+  if (!request.approverEmail) return null;
+  const roleId = await roleIdByCode(db, ROLE_CODES.ORGANIZATION_APPROVER);
+  return db.userAccount.findFirst({
+    where: {
+      email: { equals: request.approverEmail, mode: "insensitive" },
+      status: UserAccountStatus.ACTIVE,
+      roleAssignments: {
+        some: { roleId, organizationId: request.organizationId, ...activeAssignmentWhere() },
+      },
+    },
+    select: { id: true, email: true, cid: true },
+  });
 }
