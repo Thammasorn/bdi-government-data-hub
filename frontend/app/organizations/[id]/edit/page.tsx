@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SelectField, TextField } from "@/components/ui/Field";
 import { FileUpload, type UploadedFile } from "@/components/ui/FileUpload";
+import { IncompleteGate, type IncompleteItem } from "@/components/ui/IncompleteGate";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
@@ -154,6 +155,49 @@ const SECTION_FIELDS: Record<string, Array<keyof FormState>> = {
     "contactPhoneExtension",
   ],
 };
+
+/**
+ * ป้ายของแต่ละช่องอย่างที่เขียนอยู่บนฟอร์ม สำหรับกล่องที่บอกว่ายังต้องแก้อะไรบ้าง
+ *
+ * `clientErrors` ให้มาแต่ข้อความ ซึ่งบอกไม่ได้ว่าเป็นช่องไหน — "กรุณากรอกอีเมล" ตรงกับได้ทั้ง
+ * อีเมลหน่วยงาน อีเมลผู้มีอำนาจอนุมัติ และอีเมลผู้ประสานงาน ป้ายคู่กับเลขส่วนจึงเป็นสิ่งที่บอกว่า
+ * ต้องเลื่อนไปแก้ตรงไหน **แก้พร้อมกับป้ายบน `<TextField>` เสมอ** ป้ายสองที่ที่พูดไม่ตรงกัน
+ * ทำให้ผู้ใช้หาช่องที่ระบบอ้างถึงไม่เจอ
+ *
+ * `APPOINTMENT_ORDER` ไม่ใช่ช่องใน `FormState` แต่เป็นไฟล์แนบที่บังคับ — มันไม่เคยอยู่ใน
+ * `clientErrors` (ดู `missing` ข้างล่าง) จึงต้องมีป้ายของตัวเองที่นี่
+ */
+const FIELD_LABELS: Record<keyof FormState | "APPOINTMENT_ORDER", string> = {
+  organizationCode: "รหัสหน่วยงาน",
+  name: "ชื่อหน่วยงาน",
+  addressLine: "ที่อยู่ (เลขที่ / อาคาร / ซอย)",
+  road: "ถนน",
+  province: "จังหวัด",
+  district: "อำเภอ/เขต",
+  subdistrict: "ตำบล/แขวง",
+  postalCode: "รหัสไปรษณีย์",
+  email: "อีเมลหน่วยงาน",
+  signatoryPrefix: "คำนำหน้า",
+  signatoryFirstName: "ชื่อ",
+  signatoryLastName: "นามสกุล",
+  signatoryPosition: "ตำแหน่ง (ชื่อเต็มภาษาไทย)",
+  signatoryEmail: "อีเมล",
+  signatoryNationalId: "เลขบัตรประชาชน",
+  signatoryPhone: "เบอร์โทรศัพท์",
+  signatoryPhoneExtension: "ต่อ",
+  contactPrefix: "คำนำหน้า",
+  contactFirstName: "ชื่อ",
+  contactLastName: "นามสกุล",
+  contactPosition: "ตำแหน่ง (ชื่อเต็มภาษาไทย)",
+  contactDepartment: "ฝ่าย/กอง/สำนัก",
+  contactEmail: "อีเมล",
+  contactPhone: "เบอร์โทรศัพท์",
+  contactPhoneExtension: "ต่อ",
+  APPOINTMENT_ORDER: "คำสั่งแต่งตั้งผู้มีอำนาจอนุมัติของหน่วยงาน",
+};
+
+/** ผูกปุ่มที่กดไม่ได้เข้ากับกล่องที่บอกว่าทำไม โปรแกรมอ่านหน้าจอจึงอ่านเหตุผลได้ด้วย */
+const INCOMPLETE_HINT_ID = "organization-form-incomplete";
 
 /**
  * ช่องที่ต้องส่งไป API แม้จะว่าง — ค่าว่างของช่องเหล่านี้คือคำตอบ ("ไม่มีเลขต่อ") ไม่ใช่
@@ -367,6 +411,35 @@ export default function EditOrganizationPage() {
     }
     return done;
   }, [clientErrors]);
+
+  /**
+   * ทุกอย่างที่ยังขวางไม่ให้กด "ตรวจสอบข้อมูล" เรียงตามลำดับที่อยู่บนฟอร์ม
+   *
+   * อ่านจาก `clientErrors` ชุดเดียวกับขอบแดงใต้ช่องและเครื่องหมายถูกของแถบซ้าย ปุ่มจึงปิดอยู่
+   * ก็ต่อเมื่อมีช่องที่หน้าจอทำเครื่องหมายไว้จริง ๆ — ปุ่มที่ปิดโดยไม่มีอะไรแดงเลยอ่านว่าหน้าเว็บพัง
+   *
+   * ไฟล์แนบต้องบวกเข้ามาเอง: `validateOrganizationForm()` รู้จักแต่ช่องกรอก ส่วนคำสั่งแต่งตั้งฯ
+   * เป็นของบังคับที่ API ตรวจต่างหาก (`POST /:id/generate-form`) ถ้าไม่นับตรงนี้ ปุ่มจะเปิดให้กด
+   * ทั้งที่ยังไม่ได้แนบไฟล์ แล้วไปล้มที่ API — ซึ่งเป็นอาการเดิมที่การ์ดใบนี้สั่งให้แก้
+   */
+  const missing = useMemo<IncompleteItem[]>(() => {
+    const items: IncompleteItem[] = [];
+    for (const section of SECTIONS) {
+      for (const key of SECTION_FIELDS[section.id] ?? []) {
+        const message = clientErrors[key];
+        if (message) items.push({ key, section: section.tag, label: FIELD_LABELS[key], message });
+      }
+      if (section.id === "section-2" && !appointment) {
+        items.push({
+          key: "APPOINTMENT_ORDER",
+          section: section.tag,
+          label: FIELD_LABELS.APPOINTMENT_ORDER,
+          message: "กรุณาอัปโหลดไฟล์",
+        });
+      }
+    }
+    return items;
+  }, [clientErrors, appointment]);
 
   // ---------- actions ----------
   const persist = async () => {
@@ -750,9 +823,16 @@ export default function EditOrganizationPage() {
             <Button type="button" variant="secondary" loading={saving} onClick={saveDraft}>
               บันทึกแบบร่าง
             </Button>
-            <Button type="submit" loading={generating}>
-              ตรวจสอบข้อมูล
-            </Button>
+            <IncompleteGate items={missing} actionLabel="ตรวจสอบข้อมูล" hintId={INCOMPLETE_HINT_ID}>
+              <Button
+                type="submit"
+                loading={generating}
+                disabled={missing.length > 0}
+                aria-describedby={missing.length > 0 ? INCOMPLETE_HINT_ID : undefined}
+              >
+                ตรวจสอบข้อมูล
+              </Button>
+            </IncompleteGate>
           </div>
         </form>
       </div>
