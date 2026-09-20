@@ -981,6 +981,14 @@ computes line breaks and pagination from the fonts installed on the machine; wit
 substitutes another and the whole document shifts, which reads as a broken template.
 `gotenberg/Dockerfile` fails the build if `fc-list` cannot find it.
 
+**LibreOffice reads `w:jc w:val="thaiDistribute"` as left-aligned.** That is the value Word
+writes for "Thai distributed" — the justify button every Thai body paragraph in the legal team's
+files has been through — so every template arrived looking justified in Word and rendered
+ragged-right in production until 2026-09-20. `docs/tools/normalise-template.py` rewrites it (and
+the kashida values) to `both`, which LibreOffice lays out the way Word shows it; `distribute`
+would stretch the last line of every paragraph too. Run the script on **every** file before
+publishing, annexes included — nothing else about a placeholder-free file needs it, this does.
+
 **Every document with placeholders is rendered per request, not just A0.**
 `hasPlaceholders` is read from the stored `.docx`, never from the document code, so adding a
 placeholder to A1 makes it render per request with no code change, and removing it sends it back

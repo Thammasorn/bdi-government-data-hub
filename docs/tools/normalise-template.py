@@ -3,7 +3,8 @@
 
     python3 docs/tools/normalise-template.py <ไฟล์ที่ได้มา.docx> <ปลายทาง.docx>
 
-ใช้กับ A4 เป็นหลัก แต่ใช้กับ A0 ได้ด้วย — เอกสารที่ไม่มีบรรทัดตัวเลือกจะโดนแค่ขั้นลบไฮไลต์
+ใช้กับ**ทุกฉบับ** ก่อนเผยแพร่ ไม่ใช่แค่ A0/A4 — เอกสารที่ไม่มีบรรทัดตัวเลือก (ผนวก 1–3) จะโดน
+แค่ขั้นลบไฮไลต์กับขั้นแก้การจัดชิดขอบ ซึ่งขั้นหลังจำเป็นกับทุกไฟล์ที่ออกจาก Word
 (ชุด 2026-09-20 ฝ่ายกฎหมายทาไฮไลต์ไว้ที่ `{{system.name}}` ใน A0 เพื่อบอกว่าแก้ตรงนั้น)
 
 `build-a4-template.py` รับแบบฟอร์มเปล่า (bullet `o` กับเส้นประ) แล้วใส่ placeholder ให้ตาม
@@ -20,6 +21,13 @@ placeholder จึงครบอยู่แล้ว แต่สิ่งท�
 - **ย่อหน้าใหม่ย่อหน้าไม่เท่ากับรายการตัวเลือกอื่น** (`ind left=720 firstLine=720` แทน
   style ListParagraph + `left=1440`) รายการวัตถุประสงค์จึงเยื้องต่างจากรายการข้ออื่น
 - **ไฮไลต์เหลือง** ที่ใช้ทำเครื่องหมายบรรทัดที่เพิ่มตอนร่าง — ลบทั้งไฟล์เหมือนสคริปต์เดิม
+- **จัดชิดขอบแบบไทย (`thaiDistribute`)** Word เขียนค่านี้ให้ทุกย่อหน้าที่กด "กระจายแบบไทย"
+  ซึ่งเป็นปุ่มจัดเต็มบรรทัดที่ฝ่ายกฎหมายใช้ แต่ LibreOffice ไม่รู้จักและตกไปเป็นชิดซ้าย —
+  PDF ที่ออกจากระบบจึงขอบขวาขรุขระทั้งที่ใน Word เห็นเต็มบรรทัด (BDI แจ้ง 2026-09-20)
+  เปลี่ยนเป็น `both` (จัดเต็มบรรทัดธรรมดา บรรทัดสุดท้ายชิดซ้าย) ซึ่ง LibreOffice จัดให้ตรงกับ
+  ที่ Word แสดง ไม่ใช้ `distribute` เพราะตัวนั้นยืดบรรทัดสุดท้ายของทุกย่อหน้าออกจนเต็มด้วย
+  ค่า kashida (`lowKashida`/`mediumKashida`/`highKashida` — จัดเต็มบรรทัดแบบอาหรับ ที่ Word
+  ใส่ให้เมื่อกดจัดเต็มบรรทัดซ้ำ ๆ ใน A0 มีอยู่ย่อหน้าหนึ่ง) เจอชะตาเดียวกันและถูกแปลงเหมือนกัน
 
 วิธีคือ *ทุกย่อหน้าที่ขึ้นต้นด้วย `{{tick.<ช่อง>.<รหัส>}}`* ถูกเขียนใหม่เป็นรูปเดียวกันหมด:
 pPr ของรายการตัวเลือก + run ของเครื่องหมาย + run เดียวของข้อความที่เหลือใน TH SarabunPSK 16pt
@@ -38,6 +46,9 @@ PARAGRAPH = re.compile(r"<w:p(?: [^>]*)?>.*?</w:p>", re.S)
 TEXT_NODE = re.compile(r"(<w:t(?: [^>]*)?>)(.*?)(</w:t>)", re.S)
 PPR = re.compile(r"<w:pPr>.*?</w:pPr>", re.S)
 HIGHLIGHT = re.compile(r'<w:highlight w:val="[^"]*"/>')
+# ค่าจัดชิดขอบที่ LibreOffice ไม่รู้จัก — เหตุผลอยู่ในหัวไฟล์ (w:jc ในตารางใช้ค่า left/center/right
+# เท่านั้น จึงไม่โดน)
+UNSUPPORTED_JC = re.compile(r'<w:jc w:val="(?:thaiDistribute|lowKashida|mediumKashida|highKashida)"/>')
 TICK_PREFIX = re.compile(r"^\s*(\{\{tick\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+\}\})\s*")
 
 # pPr ของรายการตัวเลือก — ตัวเดียวกับที่ build-a4-template.py ทิ้งไว้ในทุกบรรทัดตัวเลือก
@@ -109,8 +120,14 @@ def main() -> None:
 
     xml = PARAGRAPH.sub(visit, xml)
     xml, highlights = HIGHLIGHT.subn("", xml)
+    xml, justified = UNSUPPORTED_JC.subn('<w:jc w:val="both"/>', xml)
 
     blobs["word/document.xml"] = xml.encode("utf-8")
+    # style ก็ถือ w:jc ได้ (ย่อหน้าที่สืบทอดจาก style จะไม่มี w:jc ของตัวเอง) — แก้ที่เดียวกัน
+    if "word/styles.xml" in blobs:
+        styles, n = UNSUPPORTED_JC.subn('<w:jc w:val="both"/>', blobs["word/styles.xml"].decode("utf-8"))
+        blobs["word/styles.xml"] = styles.encode("utf-8")
+        justified += n
     out.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
         for n in names:
@@ -122,7 +139,7 @@ def main() -> None:
     ticks = [p for p in ph if p.startswith("tick.")]
     print(f"เขียน {out}")
     print(f"  ย่อหน้าตัวเลือกที่เขียนใหม่ {options} · ช่องติ๊ก {len(ticks)} · placeholder ทั้งหมด {len(ph)}")
-    print(f"  ลบไฮไลต์ {highlights} จุด")
+    print(f"  ลบไฮไลต์ {highlights} จุด · แก้จัดชิดขอบเป็น both {justified} ย่อหน้า")
 
 
 if __name__ == "__main__":
