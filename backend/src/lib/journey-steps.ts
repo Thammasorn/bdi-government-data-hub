@@ -411,12 +411,21 @@ export function buildJourneyProgress(params: {
        *
        * ขั้นที่ยังไม่เคยมีใครแตะ (ไม่มีแถว) ยังเป็น "ยังไม่เริ่ม" ตามเดิม — ในภาพคือขั้นที่ 3
        * ซึ่งถูกอยู่แล้ว
+       *
+       * ทางที่สาม (2026-09-20 — การ์ด "Admin API for registration"): ผู้ดูแลระบบสั่ง
+       * `POST /api/admin/registrations/.../reset` ซึ่งพาคำขอกลับไปเป็น **ฉบับร่าง**
+       * โดยที่ด่านที่ค้างอยู่ถูกปิดเป็น `CANCELLED` ไม่ใช่ `RETURNED` — ไม่มีแถว
+       * RETURNED ให้ `lastReturnSequence()` จับ และ phase เป็น `DRAFT` ไม่ใช่
+       * `WAITING_REVISION` ด่านที่ผ่านไปแล้วจึงค้างเขียว "เสร็จสิ้น" อยู่บนคำขอที่
+       * ยังไม่ได้นำส่งด้วยซ้ำ คำขอที่เป็นร่างแปลว่า**ยังไม่มีรอบไหนนับเลย**เสมอ
+       * (ร่างที่ไม่เคยนำส่งไม่มีแถวให้ตัดสินอยู่แล้ว เงื่อนไขนี้จึงไม่เปลี่ยนคำตอบของมัน)
        */
     } else if (
       task &&
       (task.result === ReviewResult.RETURNED ||
         (lastReturn !== null && task.sequenceNumber <= lastReturn) ||
-        phase === "WAITING_REVISION")
+        phase === "WAITING_REVISION" ||
+        phase === "DRAFT")
     ) {
       state = "RETURNED";
     } else if (task?.result && PASSING_RESULTS.includes(task.result)) {

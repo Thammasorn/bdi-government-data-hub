@@ -54,8 +54,10 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   (หน้าคอนโซล, บริการ init), พอร์ตกับ `new-dev.sh` ที่ยังต้องแก้ตอน merge, และไฟล์เก่าที่
   **ยังไม่ได้ย้าย**
 - `docs/bdi-admin-portal.postman_collection.json` — Journey A as a runnable collection,
-  with three `*.postman_environment.json` files beside it (dev checkout / main / public).
-  The admin token is left empty in the last two on purpose — it is a real secret from `.env`
+  plus `/api/admin/users` (**U1–U15**), the legal documents (**L1–L3**) and the registration
+  requests (**R1–R5**), with three `*.postman_environment.json` files beside it (dev checkout /
+  main / public). The admin token is left empty in the last two on purpose — it is a real
+  secret from `.env`
 
 Read `docs/01-user-journey.md` before touching anything in `backend/src/routes/organizations.ts`
 or `backend/src/routes/dataset-requests.ts`.
@@ -220,7 +222,9 @@ for that read `phase === "WAITING_REVISION"` instead, which is only true while t
 still with the organisation: as soon as it was resubmitted the phase went back to `IN_PROGRESS`
 and the signatory's step turned green again while the request sat at step 2 (card "BUG
 registration step", 2026-09-18, both journeys). The phase test remains as a second net for a
-`RETURNED` status that did not come from a `RETURNED` row. Steps never reached keep "ยังไม่เริ่ม",
+`RETURNED` status that did not come from a `RETURNED` row, and a third clause treats
+`phase === "DRAFT"` the same way, for the admin reset that closes its gate `CANCELLED` and leaves
+no `RETURNED` row at all (see `/api/admin/registrations` under **Auth**). Steps never reached keep "ยังไม่เริ่ม",
 and no date is printed on a `RETURNED` step because `completedAt` belongs to the discarded round.
 
 `currentStep` is still found by `state === "CURRENT"` alone, so `currentOrder`, `nextStep`, the
@@ -613,13 +617,82 @@ production). `draftEmailSchema` now lowercases at the draft, `ensureApproverAcco
 account whose lowercase form would collide with another — that needs a person).
 
 **Once the signatory has activated, their e-mail and CID belong to the account, not the form.**
-`activatedApprover()` in `organizations.ts` answers "ACTIVE account holding
+`activatedApprover()` in `lib/iam.ts` (it was in `organizations.ts` until the admin
+registration API needed the same answer) answers "ACTIVE account holding
 `ORGANIZATION_APPROVER` for *this* organisation" — the role test matters, or a draft naming
 another organisation's signatory would lock the very field the operator has to fix. When it
 answers, `toApiShape()` prefers the account's `email`/`cid` over the snapshot and sends
 `approverLocked`, and `PATCH /:id` writes the account's values over whatever the body carried,
 silently, the same arrangement as `contactLocked` for section 3. The form only greys what the
 API says; changing who the signatory is stays an administrator's job (`recallRefusal()` rule 4).
+
+**That administrator's job is now an API** — `/api/admin/registrations`, card "Admin API for
+registration" (2026-09-20), `routes/admin-registrations.ts`, admin token like every other
+`/api/admin/*`. Four endpoints, two per journey:
+
+```
+PUT  /api/admin/registrations/organizations/:id        แก้ snapshot ของคำขอ
+POST /api/admin/registrations/organizations/:id/reset  พากลับไปเป็นฉบับร่าง
+PUT  /api/admin/registrations/datasets/:id
+POST /api/admin/registrations/datasets/:id/reset
+```
+
+`:id` is the **request** id or its request number — an operator holds the number, never the
+uuid. Every endpoint requires a `reason` of at least ten characters, the same rule
+`/api/admin/users` follows and for the same reason: the admin token is not a person, so
+`audit_event` can only say "the system did it" and the typed reason is the whole of the
+provenance. It also reaches the organisation as the notification text.
+
+**Reset closes the round; it does not delete it.** The active gate is closed `CANCELLED`
+(`cancelActiveTask()`) rather than `RETURNED` — nobody reviewed anything — `submitted_at`,
+`rejected_at` and `cancelled_at` are cleared so `deriveRequestStatus()` can answer `DRAFT`,
+and every `review_task` row stays. `APPROVED` is refused (409 `already_approved`): its values
+have already been copied out into the live `organization` / `dataset` rows, and rolling those
+back is a different job. `DRAFT` is refused too — *unless* the call is `is_remove_approver` with
+an activated approver still holding the seat, which is the one case where a draft request still
+has work to do (and the previous reset's own response tells the operator to make that call).
+
+**The approver seat has three outcomes, and which one you get depends on the account, not the
+flag.** Not activated → `releaseApproverSeat()` (now `lib/approver-seat.ts`, shared with the
+officer's "ยกเลิกผลการตรวจสอบ") revokes the invitation and deletes the `PENDING` account that was
+pinning `email` and `cid`. Activated + default → **untouched**, so `activatedApprover()` still
+answers and the form keeps both fields greyed, which is the card's "disable email and cid".
+Activated + `is_remove_approver` → role revoked, sessions and keys revoked, account
+`DEACTIVATED`; the seat frees itself because `roleSeatTaken()` judges by account status, and
+`POST /api/admin/users/:id/reactivate` is the way back from a mistaken call. The e-mail and CID
+stay bound to the deactivated account on purpose — history has to stay readable. **The snapshot's
+approver fields are never cleared** in any of the three: the card says enable the field, and
+whoever fills it in next needs to see who it was.
+
+`releaseApproverSeat()` takes `taskIds` rather than one `taskId` because the two callers want
+different widths: the officer's recall unassigns only the gate it just closed, while a reset
+throws the whole round away and must unassign every task of the request — otherwise a request
+with no active gate leaves `assignedReviewTasks` non-zero and the `PENDING` account survives,
+which is the exact trap that function exists to avoid.
+
+**`PUT` goes past all three of the form's locks** (organisation code, the contact section, and
+an activated approver's e-mail/CID) and works in **every** status, gates untouched — settled
+2026-09-20. The dangerous one is the third: the request can end up naming one person while a
+different account holds `ORGANIZATION_APPROVER` and will sign A0. That is allowed, and the
+response carries `warnings` saying so. The warning asks `roleSeatTaken()`, **not**
+`activatedApprover()`, because the latter looks the account up by the very field the `PUT` just
+overwrote and would go silent in the one case worth warning about.
+
+Two more things about `PUT` that were bugs before they were rules. Only keys present in the body
+are written, so `sentOnly()` drops `undefined` before both the update and `diffFields()` —
+`toRequestData()` returns every key, and diffing the raw result reports the whole form as changed
+in `audit_event`. The address is a special case on top of that: `resolveAddressCodes()` returns
+**null**, not `undefined`, for an address it was not given, so a body that never mentions the
+address must have the three code columns removed explicitly or a one-field edit silently wipes
+them. The admin edit schemas are also `.strict()`, unlike the form's — a script that mistypes a
+field name must get a 400, not a 200 that changed nothing.
+
+**A request reset to `DRAFT` shows step 1 again**, which took a third clause in
+`lib/journey-steps.ts`: a cleared round is recognised by a `RETURNED` row, by
+`phase === "WAITING_REVISION"`, and now by `phase === "DRAFT"`. A reset leaves no `RETURNED` row
+(the gate is `CANCELLED`) and the phase is `DRAFT`, so gates that had passed stayed green on a
+request that had not even been submitted. A draft has no counted round by definition, so the
+clause cannot be wrong for an ordinary draft, which has no rows to judge.
 
 `Invitation` is replaced by `iam.activation_key`, following the lifecycle in that sheet: create
 the `user_account` as `PENDING` first, then issue a key for (account, organisation, role).
@@ -1098,7 +1171,11 @@ vanished".
 
 `frontend/lib/organization-form.ts` is the same arrangement for Journey B's registration form,
 mirroring `submitSchema` in `backend/src/routes/organizations.ts` and the shared validators in
-`backend/src/lib/validation.ts`. It exists because the form colours each input the moment it is
+`backend/src/lib/validation.ts`. Its backend counterpart for the *draft* half —
+`organizationDraftSchema` and `toRequestData()`, the field-name→snapshot-column table — lives in
+`backend/src/lib/organization-form.ts` rather than in the route, because the admin registration
+API writes the same columns; a second copy of that table would take new columns down one path
+only. The lock rules stay with each caller, and the two are deliberately different. It exists because the form colours each input the moment it is
 typed in — red with the reason, green with a tick — which a round trip per keystroke cannot do.
 The backend is still the decider; the copy only decides what the screen says.
 

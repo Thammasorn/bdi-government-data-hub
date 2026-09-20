@@ -51,7 +51,9 @@ import {
   LegalDocumentVersionStatus,
 } from "@prisma/client";
 import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
+import { releaseApproverSeat, type ReleasedSeat } from "../lib/approver-seat.js";
 import {
+  activatedApprover,
   activeAssignmentWhere,
   assignRole,
   issueActivationKey,
@@ -89,6 +91,11 @@ import {
 import { DocumentRenderError } from "../lib/document-render.js";
 import { LEGAL_SCOPES, requestDocuments } from "../lib/legal.js";
 import { NAME_FIELDS, accountNameTh, fullNameTh } from "../lib/person-name.js";
+import {
+  MAX_ADDRESS_LINE,
+  organizationDraftSchema as draftSchema,
+  toRequestData,
+} from "../lib/organization-form.js";
 import { nextOrganizationCode, nextOrganizationRequestNumber } from "../lib/request-number.js";
 import { buildJourneyProgress, summariseMany } from "../lib/journey-steps.js";
 import { REVIEW_TASK_TYPE_LABELS, ROLE_LABELS, isBdiStaff } from "../lib/roles.js";
@@ -175,73 +182,6 @@ const upload = multer({
 });
 
 // ---------------------------------------------------------------- schemas
-
-/**
- * ความยาวสูงสุดของช่องที่อยู่
- *
- * เดิม schema จำกัดไว้ 300 ตัวอักษรทั้งที่คอลัมน์รับได้ 500 — ที่อยู่ราชการเต็มรูปแบบ
- * (ชื่ออาคาร ชั้น เลขห้อง ซอย แขวง พร้อมวงเล็บอธิบายทางเข้า) ชนเพดานนั้นได้จริง และ
- * เพดานฝั่ง schema ทำให้ผู้ใช้เจอ error ทั้งที่คอลัมน์ยังว่างอยู่อีกมาก ตอนนี้ทั้ง
- * schema และคอลัมน์เป็น 2000 เท่ากัน (migration 20260829120000_widen_address_line)
- * ค่านี้ถูกคัดลอกไว้ที่ frontend/lib/organization-form.ts ด้วย — แก้พร้อมกันเสมอ
- */
-const MAX_ADDRESS_LINE = 2000;
-
-/**
- * ตอนบันทึกร่างยอมให้ว่างได้ ตอนนำส่งต้องครบ — จึงแยกเป็นสองชุด
- *
- * ชื่อฟิลด์ฝั่ง API ยังเป็นชุดเดิม (name / signatory* / contact*) เพื่อไม่ให้ frontend
- * ต้องแก้ทั้งฟอร์ม การแปลงไปเป็นคอลัมน์ snapshot ของดีไซน์ (organization_name_th /
- * approver_* / user_*) เกิดที่ toRequestData() ข้างล่าง
- */
-const draftSchema = z.object({
-  /**
-   * รหัสหน่วยงาน — **อ่านอย่างเดียว** รับมาเพื่อเทียบว่าตรงกับของเดิมเท่านั้น
-   *
-   * ค่านี้ไม่ได้ถูกแปลงลง snapshot ที่ toRequestData() อีกแล้ว ฟอร์มจึงเขียนทับไม่ได้
-   * แม้จะส่งมา — ดู assertOrganizationCodeUnchanged() ว่าทำไมถึงตอบ 400 แทนที่จะ
-   * เงียบ ๆ เมื่อค่าที่ส่งมาไม่ตรงกับของเดิม
-   */
-  organizationCode: z.string().trim().max(64).optional(),
-  name: z.string().trim().max(200).optional(),
-  nameEn: z.string().trim().max(200).optional(),
-  organizationType: z.string().trim().max(64).optional(),
-  addressLine: z.string().trim().max(MAX_ADDRESS_LINE).optional(),
-  road: z.string().trim().max(255).optional(),
-  province: z.string().trim().optional(),
-  district: z.string().trim().optional(),
-  subdistrict: z.string().trim().optional(),
-  postalCode: z.string().trim().optional(),
-  phone: z.string().trim().optional(),
-  /**
-   * เลขต่อตรวจตั้งแต่บันทึกร่าง ไม่รอถึงตอนนำส่งแบบช่องอื่น — กฎมันสั้น (ตัวเลขล้วน) และ
-   * ค่าที่ผิดกฎเป็นค่าที่เก็บไว้ก็ไม่มีประโยชน์ ต่างจากเบอร์ที่ค่าครึ่ง ๆ กลาง ๆ ยังเป็นร่างได้
-   * ค่าว่างผ่านและกลายเป็น null: ผู้ใช้ลบเลขต่อออกแล้วบันทึก ต้องลบออกจากคอลัมน์จริง ๆ
-   */
-  phoneExtension: phoneExtensionSchema,
-  email: draftEmailSchema,
-  websiteUrl: z.string().trim().max(500).optional(),
-
-  signatoryPrefix: z.string().trim().optional(),
-  signatoryFirstName: z.string().trim().optional(),
-  signatoryLastName: z.string().trim().optional(),
-  signatoryPosition: z.string().trim().optional(),
-  signatoryEmail: draftEmailSchema,
-  signatoryNationalId: z.string().trim().optional(),
-  signatoryPhone: z.string().trim().optional(),
-  signatoryPhoneExtension: phoneExtensionSchema,
-  signatoryDepartment: z.string().trim().optional(),
-
-  contactPrefix: z.string().trim().optional(),
-  contactFirstName: z.string().trim().optional(),
-  contactLastName: z.string().trim().optional(),
-  contactPosition: z.string().trim().optional(),
-  contactDepartment: z.string().trim().optional(),
-  contactEmail: draftEmailSchema,
-  contactPhone: z.string().trim().optional(),
-  contactPhoneExtension: phoneExtensionSchema,
-  contactNationalId: z.string().trim().optional(),
-});
 
 const submitSchema = z
   .object({
@@ -333,68 +273,6 @@ type RequestRow = Prisma.OrganizationRegistrationRequestGetPayload<{
 }>;
 
 // ---------------------------------------------------------------- mapping
-
-/** แปลงชื่อฟิลด์ฝั่ง API เป็นคอลัมน์ snapshot ตามดีไซน์ */
-async function toRequestData(input: z.infer<typeof draftSchema>) {
-  const codes = await resolveAddressCodes(prisma, input);
-
-  const postalCode =
-    input.postalCode ||
-    (input.province && input.district && input.subdistrict
-      ? (lookupZipcode(input.province, input.district, input.subdistrict) ?? undefined)
-      : undefined);
-
-  /**
-   * เก็บเบอร์ในรูปตัวเลขล้วนเสมอ ไม่ว่าผู้ใช้จะพิมพ์ขีดหรือ +66 มา
-   *
-   * เบอร์เดียวกันที่เก็บคนละรูปทำให้ค้นไม่เจอและพิมพ์ลงเอกสาร A0 ไม่เหมือนกันสองใบ
-   * ค่าที่อ่านเป็นเบอร์ไม่ได้เลยปล่อยผ่านตามเดิม เพื่อให้ตอนนำส่ง phoneSchema เป็นคน
-   * บอกว่าผิดตรงไหน แทนที่จะกลายเป็นค่าว่างเงียบ ๆ ระหว่างบันทึกร่าง
-   */
-  const phone = (value?: string) => (value ? (normaliseThaiPhone(value) ?? value) : value);
-
-  return {
-    /**
-     * ไม่มี organizationCode ที่นี่โดยตั้งใจ — รหัสหน่วยงานแก้ผ่านฟอร์มไม่ได้
-     * ค่าที่ถูกต้องมาจากแถว organization เท่านั้น (prefillFromOrganization ตอนเปิดคำขอ
-     * หรือ nextOrganizationCode ตอนสร้างหน่วยงานใหม่)
-     */
-    organizationType: input.organizationType,
-    organizationNameTh: input.name,
-    organizationNameEn: input.nameEn,
-    organizationAddressLine: input.addressLine,
-    organizationRoad: input.road,
-    organizationProvinceCode: codes.provinceCode,
-    organizationDistrictCode: codes.districtCode,
-    organizationSubdistrictCode: codes.subDistrictCode,
-    organizationPostalCode: postalCode,
-    organizationPhone: phone(input.phone),
-    // phoneExtensionSchema แปลง "" เป็น null ให้แล้ว — undefined (ไม่ได้ส่งมา) คงค่าเดิมไว้
-    organizationPhoneExtension: input.phoneExtension,
-    organizationEmail: input.email,
-    organizationWebsite: input.websiteUrl,
-
-    approverPrefixTh: input.signatoryPrefix,
-    approverFirstnameTh: input.signatoryFirstName,
-    approverLastnameTh: input.signatoryLastName,
-    approverPositionTh: input.signatoryPosition,
-    approverEmail: input.signatoryEmail,
-    approverCid: input.signatoryNationalId,
-    approverPhoneNumber: phone(input.signatoryPhone),
-    approverPhoneNumberExtension: input.signatoryPhoneExtension,
-    approverDepartmentTh: input.signatoryDepartment,
-
-    userPrefixTh: input.contactPrefix,
-    userFirstnameTh: input.contactFirstName,
-    userLastnameTh: input.contactLastName,
-    userPositionTh: input.contactPosition,
-    userDepartmentTh: input.contactDepartment,
-    userEmail: input.contactEmail,
-    userPhoneNumber: phone(input.contactPhone),
-    userPhoneNumberExtension: input.contactPhoneExtension,
-    userCid: input.contactNationalId,
-  };
-}
 
 /**
  * ค่าตั้งต้นของคำขอ คัดจากแถว organization ที่ admin สร้างไว้ล่วงหน้า
@@ -512,40 +390,6 @@ function contactAccount(request: { createdBy: string }) {
   return prisma.userAccount.findUnique({
     where: { id: request.createdBy },
     select: CONTACT_ACCOUNT_SELECT,
-  });
-}
-
-/**
- * ผู้มีอำนาจอนุมัติของหน่วยงานที่**เปิดใช้งานบัญชีแล้ว**และนั่งที่นั่งของหน่วยงานนี้อยู่ —
- * `null` ถ้าคำขอยังไม่เดินไปถึงขั้นนั้น
- *
- * เมื่อเขาเปิดใช้งานบัญชีแล้ว อีเมลนั้นรับลิงก์ได้จริงและ ThaID ยืนยันเลขบัตรไปแล้ว
- * สองช่องนี้จึงเป็นข้อเท็จจริงของบัญชี ไม่ใช่ของฟอร์มอีกต่อไป — เหตุผลเดียวกับที่
- * `recallRefusal()` ปฏิเสธการยกเลิกผลตรวจสอบหลังจากนั้น และเป็นคู่ของ `contactFromAccount()`
- * สำหรับส่วนที่ 2: ค่าจากบัญชีมาก่อน snapshot และฟอร์มแก้ไม่ได้ (การ์ด "BUG ส่งชื่อ approver
- * ไม่ได้": "ถ้า org approver activate แล้ว ให้ disable email และ cid ไม่ให้แก้ไข")
- *
- * ต้องถือ role ของ**หน่วยงานนี้**ด้วย ไม่ใช่แค่บัญชี ACTIVE — ร่างที่กรอกอีเมลของผู้มีอำนาจฯ
- * หน่วยงานอื่นเข้ามาต้องยังแก้ช่องนั้นได้ ไม่งั้นคนกรอกติดอยู่กับค่าที่ `approverConflict()`
- * จะปฏิเสธและแก้ไม่ได้
- *
- * ค้นแบบไม่สนตัวพิมพ์ เพราะร่างที่บันทึกก่อน 2026-09-18 เก็บอีเมลตามที่พิมพ์มา
- */
-async function activatedApprover(
-  db: Db,
-  request: { approverEmail: string | null; organizationId: string },
-) {
-  if (!request.approverEmail) return null;
-  const roleId = await roleIdByCode(db, ROLE_CODES.ORGANIZATION_APPROVER);
-  return db.userAccount.findFirst({
-    where: {
-      email: { equals: request.approverEmail, mode: "insensitive" },
-      status: UserAccountStatus.ACTIVE,
-      roleAssignments: {
-        some: { roleId, organizationId: request.organizationId, ...activeAssignmentWhere() },
-      },
-    },
-    select: { id: true, email: true, cid: true },
   });
 }
 
@@ -2600,7 +2444,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
         releasedSeat = await releaseApproverSeat(tx, {
           email: request.approverEmail,
           organizationId: request.organizationId,
-          taskId: task.id,
+          taskIds: [task.id],
           actorId: session.sub,
           reason: note ?? "ยกเลิกผลการตรวจสอบ",
         });
@@ -3187,134 +3031,6 @@ async function recallRefusal(
   }
 
   return null;
-}
-
-/** ที่นั่งผู้มีอำนาจฯ ที่ถูกปล่อยคืน — ผู้เรียกเอาไปเขียน audit หลัง commit */
-interface ReleasedSeat {
-  accountId: string;
-  email: string;
-  cid: string | null;
-  displayName: string;
-  status: UserAccountStatus;
-  accountDeleted: boolean;
-  keptBecause: string | null;
-}
-
-/**
- * ปล่อยที่นั่งผู้มีอำนาจกระทำการแทนที่คำขอใบนี้จองไว้ ให้หน่วยงานกรอกใหม่ได้
- *
- * **เพิกถอน activation key อย่างเดียวไม่พอ** บัญชี PENDING ที่ `ensureApproverAccount()`
- * สร้างขึ้นยึด `email` และ `cid` เอาไว้ ซึ่ง unique ทั้งคู่ ถ้าไม่ลบทิ้ง พอผู้ดำเนินการแก้อีเมล
- * แล้วนำส่งใหม่ `approverConflict()` จะหาบัญชีจากอีเมลใหม่ไม่เจอ แล้วไปเจอบัญชีนี้จากเลขบัตร
- * และตอบว่า "เลขบัตรประชาชนนี้ใช้ไม่ได้" ทั้งที่เป็นเลขที่ถูกต้อง — คำขอติดค้างที่เดิมโดยที่
- * คนกรอกไม่มีทางเดาได้ว่าติดอะไร นี่คือเหตุผลทั้งหมดที่ฟังก์ชันนี้มีอยู่
- *
- * `review_task.assigned_user_id` เป็น FK แบบ `Restrict` จึงต้องปลดออกจากด่านที่เพิ่งปิดก่อน
- * ไม่งั้นลบบัญชีไม่ผ่าน ตัวตนของผู้ถูกเชิญไม่ได้หายไปไหน — `completed_by` บันทึกว่าเจ้าหน้าที่
- * BDI เป็นคนปิดด่าน และ `APPROVER_INVITATION_RECALLED` เก็บอีเมลกับเลขบัตรไว้ครบ
- */
-async function releaseApproverSeat(
-  tx: Prisma.TransactionClient,
-  params: {
-    email: string | null;
-    organizationId: string;
-    taskId: string;
-    actorId: string;
-    reason: string;
-  },
-): Promise<ReleasedSeat | null> {
-  const { email, organizationId, taskId, actorId } = params;
-  if (!email) return null;
-
-  const found = await tx.userAccount.findUnique({ where: { email }, select: { id: true } });
-  if (!found) return null;
-
-  // ปลดการมอบหมายออกจากด่านที่เพิ่งปิด **ก่อน** นับว่าบัญชีนี้ยังมีอะไรผูกอยู่บ้าง
-  await tx.reviewTask.updateMany({
-    where: { id: taskId, assignedUserId: found.id },
-    data: { assignedUserId: null, updatedBy: actorId },
-  });
-
-  const account = await tx.userAccount.findUniqueOrThrow({
-    where: { id: found.id },
-    select: {
-      id: true,
-      email: true,
-      cid: true,
-      displayName: true,
-      status: true,
-      _count: {
-        select: {
-          roleAssignments: true,
-          assignedReviewTasks: true,
-          legalAcceptances: true,
-          signatures: true,
-        },
-      },
-    },
-  });
-
-  /**
-   * ตาข่ายของ `recallRefusal()` ข้อ 4 ไม่ใช่ทางเลือกที่นี่ — ลบบัญชีที่เปิดใช้งานแล้วคือ
-   * ลบคนจริงออกจากระบบ ถ้าวันไหนมีผู้เรียกใหม่ที่ลืมเช็ค ให้ล้มทั้ง transaction ดีกว่า
-   */
-  if (account.status === UserAccountStatus.ACTIVE) {
-    throw new WorkflowError(
-      "approver_active",
-      "บัญชีผู้มีอำนาจอนุมัติเปิดใช้งานแล้ว ปล่อยที่นั่งด้วยวิธีนี้ไม่ได้",
-      409,
-    );
-  }
-
-  /**
-   * ลบได้เฉพาะบัญชีที่ "เกิดมาเพราะคำเชิญใบนี้ และยังไม่ได้ทำอะไรเลย" — เงื่อนไขเดียวกับ
-   * `DELETE /api/admin/invitations/:id` บวกอีกข้อ: ต้องไม่มีคำเชิญของหน่วยงานอื่นค้างอยู่
-   * ไม่งั้นการล้างที่นั่งของหน่วยงานนี้จะไปลบคำเชิญของหน่วยงานอื่นทิ้งไปด้วย
-   */
-  const keysElsewhere = await tx.activationKey.count({
-    where: { userAccountId: account.id, NOT: { organizationId } },
-  });
-  const counts = account._count;
-  const keptBecause =
-    keysElsewhere > 0
-      ? "บัญชีนี้มีคำเชิญของหน่วยงานอื่นค้างอยู่"
-      : counts.roleAssignments > 0
-        ? "บัญชีนี้มีสิทธิ์ (role) ผูกอยู่แล้ว"
-        : counts.assignedReviewTasks > 0
-          ? "บัญชีนี้ยังถูกมอบหมายงานอื่นในสายอนุมัติอยู่"
-          : counts.legalAcceptances > 0 || counts.signatures > 0
-            ? "บัญชีนี้มีลายเซ็นหรือการยอมรับเอกสารบันทึกไว้แล้ว"
-            : null;
-
-  const base = {
-    accountId: account.id,
-    email: account.email,
-    cid: account.cid,
-    displayName: account.displayName,
-    status: account.status,
-  };
-
-  if (keptBecause) {
-    /**
-     * ลบไม่ได้ ก็ต้องอย่างน้อยทำให้ลิงก์ที่อยู่ในกล่องจดหมายผิด ๆ นั้นใช้ไม่ได้ —
-     * คนที่ได้เมลไปคือคนที่ไม่ควรได้ ปล่อยคีย์ที่ยังใช้ได้ทิ้งไว้คือปล่อยทางเข้าไว้ให้เขา
-     */
-    await tx.activationKey.updateMany({
-      where: { userAccountId: account.id, organizationId, status: ActivationKeyStatus.ISSUED },
-      data: {
-        status: ActivationKeyStatus.REVOKED,
-        revokedAt: new Date(),
-        revokedBy: actorId,
-        revokedReason: params.reason,
-        updatedBy: actorId,
-      },
-    });
-    return { ...base, accountDeleted: false, keptBecause };
-  }
-
-  // activation_key ตามไปเองด้วย onDelete: Cascade — ไม่ต้องลบแยก
-  await tx.userAccount.delete({ where: { id: account.id } });
-  return { ...base, accountDeleted: true, keptBecause: null };
 }
 
 async function dispatchReviewNotifications(

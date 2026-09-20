@@ -95,6 +95,28 @@ export const AuditAction = {
 
   REQUEST_SUBMITTED: "REQUEST_SUBMITTED",
   REQUEST_RETURNED: "REQUEST_RETURNED",
+
+  /**
+   * ผู้ดูแลระบบแก้ snapshot ของคำขอโดยตรง (`PUT /api/admin/registrations/...`)
+   * — เพิ่มจากรายการใน sheet พร้อมการ์ด "Admin API for registration" (2026-09-20)
+   *
+   * ไม่ใช่ `REQUEST_CREATED` และไม่ใช่ `ORGANIZATION_UPDATED`: เส้นทางนี้เขียนทับค่าที่
+   * ฟอร์มของหน่วยงานล็อกไว้ (รหัสหน่วยงาน · ส่วนผู้ดำเนินการ · อีเมลกับเลขบัตรของ
+   * ผู้มีอำนาจฯ) และทำได้ทุกสถานะ รวมถึงตอนคำขอค้างอยู่ในคิวของผู้ตรวจ ทุกครั้งจึงต้อง
+   * ตอบได้ว่าช่องไหนเปลี่ยนจากอะไรเป็นอะไร — `before`/`after` เก็บเฉพาะช่องที่เปลี่ยนจริง
+   * (`diffFields()`) เพราะเก็บทั้งใบทุกครั้งทำให้ log อ่านไม่ออก
+   */
+  REQUEST_UPDATED: "REQUEST_UPDATED",
+
+  /**
+   * ผู้ดูแลระบบพาคำขอกลับไปเป็นฉบับร่าง (`POST /api/admin/registrations/.../reset`)
+   *
+   * แยกจาก `REQUEST_RETURNED` เพราะคนละคนสั่งและคนละความหมาย: การส่งกลับเป็น**ผล**
+   * ของด่านหนึ่ง มีผู้ตัดสินและเหตุผลที่หน่วยงานอ่านได้ ส่วนอันนี้คือการลบรอบที่กำลัง
+   * เดินอยู่ทิ้งทั้งรอบ ด่านที่ค้างถูกปิดเป็น `CANCELLED` ไม่มีผลการตรวจใด ๆ เกิดขึ้น
+   * `metadata_json` เก็บสถานะเดิม ด่านที่ถูกยกเลิก และสิ่งที่เกิดกับผู้มีอำนาจฯ
+   */
+  REQUEST_RESET_TO_DRAFT: "REQUEST_RESET_TO_DRAFT",
   REQUEST_APPROVED: "REQUEST_APPROVED",
   REQUEST_REJECTED: "REQUEST_REJECTED",
 
