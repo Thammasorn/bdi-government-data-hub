@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SelectField, TextAreaField, TextField } from "@/components/ui/Field";
 import { FileUpload, type UploadedFile } from "@/components/ui/FileUpload";
+import { IncompleteGate, type IncompleteItem } from "@/components/ui/IncompleteGate";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
@@ -30,8 +31,8 @@ import {
 } from "@/lib/dataset-form";
 import type { DatasetRequest } from "@/lib/types";
 
-/** ผูกปุ่มที่กดไม่ได้เข้ากับบรรทัดที่บอกว่าทำไม โปรแกรมอ่านหน้าจอจึงอ่านเหตุผลได้ด้วย */
-const DICTIONARY_HINT_ID = "dataset-dictionary-required";
+/** ผูกปุ่มที่กดไม่ได้เข้ากับกล่องที่บอกว่าทำไม โปรแกรมอ่านหน้าจอจึงอ่านเหตุผลได้ด้วย */
+const INCOMPLETE_HINT_ID = "dataset-form-incomplete";
 
 const SECTIONS = [
   { id: "section-1", tag: "ส่วนที่ 1", title: "ข้อมูลทั่วไปของชุดข้อมูล" },
@@ -95,6 +96,60 @@ const FIELDS_BY_SECTION: Record<string, FormField[]> = {
     "allowAggregatedDataSharing",
     "authorizePersonalDataAnonymization",
   ],
+};
+
+/**
+ * ป้ายของแต่ละช่องอย่างที่เขียนอยู่บนฟอร์ม สำหรับกล่องที่บอกว่ายังต้องแก้อะไรบ้าง
+ *
+ * `clientErrors` ให้มาแต่ข้อความ ซึ่งบอกไม่ได้ว่าเป็นช่องไหน — "กรุณาเลือก" ตรงกับได้หลายช่อง
+ * ในฟอร์มเดียว ป้ายคู่กับเลขส่วนจึงเป็นสิ่งที่บอกว่าต้องเลื่อนไปแก้ตรงไหน **แก้พร้อมกับป้ายบน
+ * ฟอร์มเสมอ** ป้ายสองที่ที่พูดไม่ตรงกันทำให้ผู้ใช้หาช่องที่ระบบอ้างถึงไม่เจอ
+ *
+ * ข้อยกเว้นคือส่วนที่ 4: ป้ายของมันเป็นคำถามเต็มประโยคยาวเป็นบรรทัด ๆ ("ท่านอนุญาตให้สำนักงาน
+ * ยังคงจัดเก็บ…หรือไม่") ที่นี่จึงเก็บเป็นชื่อเรื่องของคำถามแทน กล่องที่ยัดคำถามเต็มเจ็ดข้อจะยาว
+ * กว่าหน้าจอและอ่านไม่ออก ตราบใดที่ชื่อเรื่องยังชี้ไปที่คำถามเดียวกันได้ก็พอ
+ *
+ * `DATA_DICTIONARY` ไม่ใช่ช่องใน `FormState` แต่เป็นไฟล์แนบที่บังคับ — มันไม่เคยอยู่ใน
+ * `clientErrors` (ดู `missing` ข้างล่าง) จึงต้องมีป้ายของตัวเองที่นี่
+ */
+const FIELD_LABELS: Record<FormField | "DATA_DICTIONARY", string> = {
+  dataType: "ประเภทข้อมูล",
+  dataTopic: "ประเด็น",
+  dataTopicOther: "ระบุประเด็นอื่น ๆ",
+  title: "ชื่อชุดข้อมูล (ภาษาไทย)",
+  name: "ชื่อชุดข้อมูล (ภาษาอังกฤษ)",
+  dataFields: "รายการข้อมูล (ฟิลด์ข้อมูล) ที่ประสงค์จะนำส่ง",
+  maintainer: "ชื่อผู้ติดต่อ",
+  maintainerEmail: "อีเมลผู้ติดต่อ",
+  tagString: "คำสำคัญ หรือคำค้น",
+  notes: "รายละเอียด",
+  objective: "วัตถุประสงค์",
+  objectiveOther: "ระบุวัตถุประสงค์อื่น ๆ",
+  updateFrequencyUnit: "หน่วยความถี่ของการปรับปรุงข้อมูลต้นทาง",
+  updateFrequencyInterval: "ค่าความถี่ของการปรับปรุงข้อมูลต้นทาง",
+  deliveryFrequency: "ความถี่ของการนำส่งข้อมูลเข้าสู่ระบบกลาง",
+  geoCoverage: "ความละเอียดเชิงภูมิศาสตร์",
+  geoCoverageOther: "ระบุความละเอียดเชิงภูมิศาสตร์อื่น ๆ",
+  dataSource: "แหล่งที่มาของข้อมูล",
+  dataFormat: "รูปแบบการนำส่งข้อมูล",
+  dataFormatOther: "ชื่อระบบเชื่อมโยงข้อมูล",
+  dataCategory: "หมวดหมู่ข้อมูลตามธรรมาภิบาลข้อมูลภาครัฐ",
+  containsPersonalData: "ชุดข้อมูลนี้มีข้อมูลส่วนบุคคลหรือไม่",
+  personalDataTypes: "ประเภทของข้อมูลส่วนบุคคล",
+  dataSubjectCategories: "กลุ่มหรือประเภทของเจ้าของข้อมูลส่วนบุคคล",
+  personalDataProcessingPeriod: "ระยะเวลาประมวลผลข้อมูลส่วนบุคคล",
+  personalDataProcessingPeriodYear: "จำนวนปี",
+  personalDataProcessingPeriodMonth: "จำนวนเดือน",
+  dataClassification: "ระดับชั้นข้อมูล",
+  licenseId: "สัญญาอนุญาตให้ใช้ข้อมูล",
+  allowOriginalRawDataRetention: "การจัดเก็บข้อมูลดิบต้นฉบับ",
+  allowOriginalRawDataSharing: "การส่งต่อข้อมูลดิบต้นฉบับแก่หน่วยงานของรัฐอื่น",
+  allowTransformedRawDataSharing: "การส่งต่อข้อมูลดิบแปลงสภาพไปยังระบบเชื่อมโยงข้อมูลอื่น",
+  allowTransformedRawDataSharingSpecifiedPlatforms: "ระบบเชื่อมโยงข้อมูลที่อนุญาต",
+  allowTransformedRawDataGdxSharing: "การส่งต่อข้อมูลดิบแปลงสภาพไปยัง GDX",
+  allowAggregatedDataSharing: "การส่งต่อข้อมูลรวม (aggregated data)",
+  authorizePersonalDataAnonymization: "การมอบหมายให้ประมวลผลข้อมูลส่วนบุคคลให้ไม่ระบุตัวตน",
+  DATA_DICTIONARY: "พจนานุกรมข้อมูล (Data Dictionary)",
 };
 
 export default function EditDatasetRequestPage() {
@@ -237,6 +292,36 @@ export default function EditDatasetRequestPage() {
     return done;
   }, [clientErrors, dictionary]);
 
+  /**
+   * ทุกอย่างที่ยังขวางไม่ให้กด "ตรวจสอบคำขอ" เรียงตามลำดับที่อยู่บนฟอร์ม
+   *
+   * อ่านจาก `clientErrors` ชุดเดียวกับขอบแดงใต้ช่องและเครื่องหมายถูกของแถบซ้าย ปุ่มจึงปิดอยู่
+   * ก็ต่อเมื่อมีช่องที่หน้าจอทำเครื่องหมายไว้จริง ๆ — ปุ่มที่ปิดโดยไม่มีอะไรแดงเลยอ่านว่าหน้าเว็บพัง
+   * ช่องที่ชีท conditions ไม่ได้ถาม `validateDatasetField()` คืน null อยู่แล้ว จึงไม่โผล่มาที่นี่
+   * โดยไม่ต้องแยกกรณีเพิ่ม
+   *
+   * เดิมปุ่มนี้ปิดเมื่อไม่มีพจนานุกรมข้อมูลอย่างเดียว (การ์ด "Disable ปุ่มตรวจสอบคำขอ ถ้าไม่แนบ
+   * ไฟล์ data dict") ตอนนี้ไฟล์นั้นเป็นหนึ่งรายการในลิสต์นี้ ไม่ใช่เงื่อนไขเดียวอีกต่อไป
+   */
+  const missing = useMemo<IncompleteItem[]>(() => {
+    const items: IncompleteItem[] = [];
+    for (const section of SECTIONS) {
+      for (const key of FIELDS_BY_SECTION[section.id] ?? []) {
+        const message = clientErrors[key];
+        if (message) items.push({ key, section: section.tag, label: FIELD_LABELS[key], message });
+      }
+      if (section.id === "section-5" && !dictionary) {
+        items.push({
+          key: "DATA_DICTIONARY",
+          section: section.tag,
+          label: FIELD_LABELS.DATA_DICTIONARY,
+          message: "กรุณาอัปโหลดไฟล์",
+        });
+      }
+    }
+    return items;
+  }, [clientErrors, dictionary]);
+
   // ---------- actions ----------
   const persist = () =>
     api.patch<{ request: DatasetRequest }>(`/api/dataset-requests/${id}`, toPayload(form));
@@ -282,7 +367,7 @@ export default function EditDatasetRequestPage() {
    * ลบไฟล์ต้องยิงถึง API ไม่ใช่ล้างแต่ state — บั๊กเดียวกับฟอร์มลงทะเบียนหน่วยงาน
    * (การ์ด "Bug ลบไฟล์ในฟอร์มแล้วไม่หาย")
    *
-   * ที่นี่มีผลกับปุ่ม "ตรวจสอบคำขอ" ด้วย: มันปิดตัวเองเมื่อ `dictionary` เป็น null ซึ่งก่อน
+   * ที่นี่มีผลกับปุ่ม "ตรวจสอบคำขอ" ด้วย: `dictionary` ที่เป็น null เป็นหนึ่งใน `missing` ซึ่งก่อน
    * หน้านี้เป็นการปิดตามสิ่งที่หน้าเว็บคิดว่าเกิดขึ้น ขณะที่เซิร์ฟเวอร์ยังเก็บไฟล์อยู่และ
    * ยอมให้นำส่ง ตอนนี้ทั้งสองฝั่งพูดเรื่องเดียวกัน
    */
@@ -912,29 +997,23 @@ export default function EditDatasetRequestPage() {
 
           {/* ทึบเต็ม ไม่ใช้ความโปร่ง — เนื้อหาข้างหลังทะลุมาแล้วอ่านยาก */}
           <div className="sticky bottom-0 -mx-4 flex flex-col gap-3 rounded-t-2xl border-t border-line bg-white px-4 py-4 shadow-[0_-4px_16px_rgb(20_26_51_/_0.06)] sm:mx-0 sm:flex-row sm:justify-end sm:px-6">
-            {dictionary ? null : (
-              /*
-               * ปุ่มที่กดไม่ได้ต้องบอกเหตุผลด้วย ไม่งั้นอ่านว่าหน้าเว็บเสีย — เหมือนกล่องขั้นตอน
-               * ที่ถูกปิดในหน้ารายการคำขอ ซึ่งมีบรรทัดบอกเหตุผลอยู่ข้าง ๆ เสมอ
-               */
-              <p
-                id={DICTIONARY_HINT_ID}
-                className="text-[13px] leading-relaxed text-ink-muted sm:mr-auto sm:self-center"
-              >
-                แนบพจนานุกรมข้อมูล (Data Dictionary) ในส่วนที่ 5 ก่อน จึงจะตรวจสอบคำขอได้
-              </p>
-            )}
             <Button type="button" variant="secondary" loading={saving} onClick={saveDraft}>
               บันทึกแบบร่าง
             </Button>
-            <Button
-              type="submit"
-              loading={generating}
-              disabled={!dictionary}
-              aria-describedby={dictionary ? undefined : DICTIONARY_HINT_ID}
-            >
-              ตรวจสอบคำขอ
-            </Button>
+            {/*
+              บรรทัดที่เคยบอกเรื่องพจนานุกรมข้อมูลอย่างเดียวถูกแทนด้วยกล่องของ IncompleteGate
+              ซึ่งพูดแทนทุกเงื่อนไขรวมถึงไฟล์นั้น — คำอธิบายสองชุดของปุ่มเดียวกันจะขัดกันเอง
+            */}
+            <IncompleteGate items={missing} actionLabel="ตรวจสอบคำขอ" hintId={INCOMPLETE_HINT_ID}>
+              <Button
+                type="submit"
+                loading={generating}
+                disabled={missing.length > 0}
+                aria-describedby={missing.length > 0 ? INCOMPLETE_HINT_ID : undefined}
+              >
+                ตรวจสอบคำขอ
+              </Button>
+            </IncompleteGate>
           </div>
         </form>
       </div>
