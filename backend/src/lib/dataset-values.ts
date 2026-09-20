@@ -95,20 +95,21 @@ export function datasetDocumentValues(input: DatasetDocumentInput): Record<strin
     // ── ชุดข้อมูล ──
     "dataset.title": input.title ?? "",
     "dataset.nameEn": input.name ?? "",
-    /* รายการฟิลด์เป็นชิปเหมือนคำสำคัญ เก็บเป็นสตริงเดียวคั่นด้วยจุลภาค จึงผ่าน
+    /* รายการฟิลด์กับคำสำคัญเป็นชิปทั้งคู่ เก็บเป็นสตริงเดียวคั่นด้วยจุลภาค จึงผ่าน
        splitTags แล้วต่อกลับ — จุลภาคที่ผู้กรอกทิ้งไว้ท้ายบรรทัดจะไม่ไปโผล่บนเอกสาร
-       บนเอกสารยังคั่นด้วย ", " ตามตัวอย่างใน template ไม่ใช่จุดกลางแบบคำสำคัญ */
+       ทุกค่าที่มีหลายรายการคั่นด้วย ", " ตามตัวอย่างใน template — คำสำคัญกับวัตถุประสงค์
+       เคยคั่นด้วยจุดกลาง (·) แต่ผู้อ่านงง (BDI 2026-09-20) จึงใช้จุลภาคเหมือนกันหมด */
     "dataset.dataFields": splitTags(input.dataFields).join(", "),
     "dataset.maintainer": input.maintainer ?? "",
     "dataset.maintainerEmail": input.maintainerEmail ?? "",
-    "dataset.tags": splitTags(input.tagString).join(" · "),
+    "dataset.tags": splitTags(input.tagString).join(", "),
     "dataset.notes": input.notes ?? "",
     /* ข้อ 8 เป็นรหัสเลือกได้หลายข้อตั้งแต่ชุด 2026-09-20 — ช่องติ๊ก {{tick.objective.<รหัส>}}
-       คือคำตอบหลักบนเอกสาร ตัวแปรนี้พิมพ์ป้ายของข้อที่เลือกคั่นด้วยจุดกลาง สำหรับ template
+       คือคำตอบหลักบนเอกสาร ตัวแปรนี้พิมพ์ป้ายของข้อที่เลือกคั่นด้วยจุลภาค สำหรับ template
        ที่วางไว้บนบรรทัดหัวข้อ (A4 ฉบับ 2026-09-20 ยังวางไว้) ไม่ใช่ข้อความอิสระอีกต่อไป */
     "dataset.objective": splitTags(input.objective)
       .map((code) => choiceLabel("objective", code))
-      .join(" · "),
+      .join(", "),
     "dataset.objectiveOther": input.objectiveOther ?? "",
     "dataset.dataSource": input.dataSource ?? "",
     "dataset.dataTopicOther": input.dataTopicOther ?? "",

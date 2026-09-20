@@ -652,22 +652,23 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
               ["ชื่อชุดข้อมูล (ภาษาอังกฤษ)", request.name],
               [
                 "รายการข้อมูล (ฟิลด์ข้อมูล) ที่ประสงค์จะนำส่ง",
-                /* คั่นด้วยจุดกลางเหมือนคำสำคัญ — ทั้งคู่กรอกเป็นชิป จุลภาคในบรรทัดเดียว
-                   อ่านไม่ออกว่าเป็นตัวคั่นหรือเป็นส่วนหนึ่งของชื่อฟิลด์ */
-                splitTags(request.dataFields).join(" · "),
+                /* คั่นด้วย ", " เหมือนคำสำคัญ — เดิมใช้จุดกลาง (·) เพราะกลัวว่าจุลภาคจะปน
+                   กับชื่อฟิลด์ แต่ผู้ใช้อ่านจุดกลางแล้วงง (BDI 2026-09-20) ทุกช่องที่มีหลาย
+                   รายการจึงคั่นด้วยจุลภาคเหมือนที่กรอกมา และเหมือนบนเอกสาร A4 */
+                splitTags(request.dataFields).join(", "),
               ],
               ["องค์กร", request.organization.name],
               ["ชื่อผู้ติดต่อ", request.maintainer],
               ["อีเมลผู้ติดต่อ", request.maintainerEmail],
-              ["คำสำคัญ", splitTags(request.tagString).join(" · ")],
+              ["คำสำคัญ", splitTags(request.tagString).join(", ")],
               ["รายละเอียด", request.notes],
               [
                 "วัตถุประสงค์",
-                /* ข้อ 8 เลือกได้หลายข้อ (ชุด 2026-09-20) — ป้ายของทุกข้อที่เลือก คั่นด้วยจุดกลาง
+                /* ข้อ 8 เลือกได้หลายข้อ (ชุด 2026-09-20) — ป้ายของทุกข้อที่เลือก คั่นด้วยจุลภาค
                    เหมือนคำสำคัญ */
                 splitTags(request.objective)
                   .map((code) => labelOf(choices.objective, code) ?? code)
-                  .join(" · "),
+                  .join(", "),
               ],
               ...(rules.objectiveOther.visible
                 ? ([["วัตถุประสงค์อื่น ๆ", request.objectiveOther]] as DetailRow[])
