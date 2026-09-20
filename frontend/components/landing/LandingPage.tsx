@@ -11,11 +11,16 @@
  *
  * เนื้อหามาจาก assets/info_page/25690806_D2 info page.pptx ครบทุกหัวข้อ
  *
- * แถบนำทางหัวข้ออยู่ **ทางซ้าย** ตามที่ BDI ขอ ซึ่งกลับไปตรงกับสไลด์ต้นทาง เดิมที่นี่เป็น
- * แถบบนแบบโปร่งเบลอ ด้วยเหตุผลว่าคอลัมน์ซ้ายกิน 264px ตลอดเวลา — เหตุผลนั้นยังจริง แต่
- * แลกมาด้วยสิ่งที่จำเป็นกว่าเมื่อหน้านี้ไปอยู่หลังล็อกอิน: แถบบนสองแถบซ้อนกัน (ของแอป
- * กับของหน้านี้) อ่านไม่ออกว่าอันไหนเป็นเมนูอะไร ส่วนคอลัมน์ซ้ายไม่ชนกับแถบหัวของแอปเลย
- * และยังกางได้ครบสิบหัวข้อโดยไม่ต้องเลื่อนแนวนอนหรือยุบเป็น hamburger บนจอ 1280
+ * **แถบนำทางหัวข้ออยู่คนละที่กันในสองโหมด** และนั่นคือประเด็นทั้งหมดของหน้านี้:
+ *
+ * - `public` — แถบบนเหมือนเดิม เพราะหน้าแรกของคนนอกไม่มีเมนูอื่นมาแย่งที่ แถบบนจึงเป็น
+ *   เมนูเดียวของหน้าและกวาดตาเห็นทั้งสิบหัวข้อพร้อมกัน BDI ยืนยันเมื่อ 2026-09-20 ให้คงไว้
+ *   หลังจากที่รอบแรกย้ายไปซ้ายทั้งสองโหมด
+ * - `embedded` — คอลัมน์ซ้าย เพราะแถบบนของหน้านี้ถูกแถบหัวของแอปยึดไปแล้ว (หน้าแรก ·
+ *   คำขอลงทะเบียนหน่วยงาน · คำขอส่งชุดข้อมูล · ข้อมูลโครงการ) วางแถบหัวข้อไว้ข้างใต้อีกชั้น
+ *   จะได้แถบติดหนึบสองแถบที่ดูไม่ออกว่าอันไหนเมนูอะไร
+ *
+ * เนื้อหาของทั้งสองโหมดเป็นชุดเดียวกัน ต่างกันแค่ที่ทางของแถบนำทางกับ chrome รอบนอก
  *
  * แต่ละหัวข้อจงใจใช้รูปแบบต่างกัน (การ์ด · แผงสีเข้ม · ไทม์ไลน์ · รายการเอกสาร)
  * เพราะสิบหัวข้อที่หน้าตาเหมือนกันหมดจะกลายเป็นผนังเดียวที่กวาดตาหาอะไรไม่เจอ
@@ -87,20 +92,27 @@ export function LandingPage({ variant = "public" }: { variant?: LandingVariant }
            * 5.25rem = แถบหัวของ AppShell (เส้น gradient 3px + h-20 + เส้นขอบ)
            */
           "--landing-top": embedded ? "5.25rem" : "0px",
-          "--landing-scroll-mt": embedded ? "9.5rem" : "8rem",
-          "--landing-scroll-mt-lg": embedded ? "6.5rem" : "1.5rem",
+          // โหมด public กลับไปใช้ระยะเดิมของแถบบน (scroll-mt-20) ทั้งสองขนาดจอ
+          "--landing-scroll-mt": embedded ? "9.5rem" : "5rem",
+          "--landing-scroll-mt-lg": embedded ? "6.5rem" : "5rem",
         } as CSSProperties
       }
     >
-      {/* items-start ไม่ใช่ของประดับ: flex item ที่ถูกยืดเต็มความสูงคอนเทนเนอร์จะ sticky ไม่ได้ */}
-      <div className="lg:flex lg:items-start">
-        <SectionNav active={active} embedded={embedded} />
-        <div className="min-w-0 flex-1">
-          {/* หลังล็อกอินหน้านี้อยู่ใน <main> ของ AppShell อยู่แล้ว ซ้อนอีกชั้นคือ HTML ที่ผิด */}
-          {embedded ? sections : <main>{sections}</main>}
-          {embedded ? null : <SiteFooter />}
+      {embedded ? (
+        // items-start ไม่ใช่ของประดับ: flex item ที่ถูกยืดเต็มความสูงคอนเทนเนอร์จะ sticky ไม่ได้
+        <div className="lg:flex lg:items-start">
+          <SectionNav active={active} />
+          {/* หน้านี้อยู่ใน <main> ของ AppShell อยู่แล้ว ซ้อนอีกชั้นคือ HTML ที่ผิด
+              และ footer ก็เป็นของ AppShell เช่นกัน */}
+          <div className="min-w-0 flex-1">{sections}</div>
         </div>
-      </div>
+      ) : (
+        <>
+          <TopNav active={active} />
+          <main>{sections}</main>
+          <SiteFooter />
+        </>
+      )}
     </div>
   );
 }
@@ -208,6 +220,163 @@ function groupSections(): { title: string; sections: Section[] }[] {
  */
 const SCROLL_MARGIN = "scroll-mt-[var(--landing-scroll-mt)] lg:scroll-mt-[var(--landing-scroll-mt-lg)]";
 
+/**
+ * แถบบน — สองหน้าตาตามความกว้าง
+ *
+ * ตั้งแต่ `xl` (1280px) ขึ้นไป สิบหัวข้อเรียงเป็นเม็ดยาในแถวเดียว ต่ำกว่านั้นยุบเป็นปุ่ม
+ * hamburger ที่กางรายการลงมาใต้แถบ เดิมแถวนี้เป็น `overflow-x-auto` ที่ซ่อน scrollbar
+ * ไว้ทุกขนาดจอ — บนจอแคบหัวข้อท้าย ๆ จึงถูกตัดหายไปนอกขอบโดยไม่มีอะไรบอกว่าเลื่อนได้
+ * ผู้ใช้เห็นแค่สามสี่หัวข้อแรกแล้วกดที่เหลือไม่ได้ (รายงาน 2026-09-18) การเลื่อนแนวนอน
+ * ยังเก็บไว้เป็นตาข่ายรองรับบนจอกว้างที่ฟอนต์ใหญ่ผิดปกติ แต่ไม่ใช่ทางหลักอีกแล้ว
+ *
+ * 1280 ไม่ใช่ตัวเลขสุ่ม: โลโก้ + สิบเม็ดยาภาษาไทย + ปุ่มเข้าสู่ระบบ กินราว 1,200px
+ * ที่ `lg` (1024) ยังไม่พอ
+ */
+function TopNav({ active }: { active: string }) {
+  const listRef = useRef<HTMLUListElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
+  const [open, setOpen] = useState(false);
+
+  // แถบเลื่อนแนวนอนต้องเลื่อนตามหัวข้อที่ active ไม่งั้นผู้ใช้ไม่เห็นว่าอยู่ตรงไหน
+  useEffect(() => {
+    listRef.current
+      ?.querySelector(`[data-nav="${active}"]`)
+      ?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
+  }, [active]);
+
+  /**
+   * เมนูที่กางอยู่ปิดได้สามทาง — Esc, คลิกนอกแถบ, และจอถูกขยายจนข้ามไปเป็นแบบเม็ดยา
+   * ทางที่สามสำคัญกว่าที่คิด: ถ้าไม่ปิด state จะค้างเป็น `open` ทั้งที่ปุ่มมองไม่เห็นแล้ว
+   * และพอย่อจอกลับมาเมนูก็เด้งกางเองโดยไม่มีใครกด
+   */
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    const onClick = (e: MouseEvent) => {
+      if (!headerRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const wide = window.matchMedia("(min-width: 1280px)");
+    const onWide = (e: MediaQueryListEvent) => {
+      if (e.matches) setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onClick);
+    wide.addEventListener("change", onWide);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onClick);
+      wide.removeEventListener("change", onWide);
+    };
+  }, [open]);
+
+  return (
+    <header
+      ref={headerRef}
+      className="sticky top-0 z-30 border-b border-line/70 bg-white/80 frost-12"
+    >
+      <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3 sm:px-6">
+        <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="หน้าแรก D2">
+          <LogoImage className="h-14" />
+          <D2Mark className="h-9" />
+        </Link>
+
+        <nav aria-label="หัวข้อในหน้านี้" className="hidden min-w-0 flex-1 xl:block">
+          <ul
+            ref={listRef}
+            className="flex gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
+            {SECTIONS.map((section) => {
+              const current = active === section.id;
+              return (
+                <li key={section.id} className="shrink-0">
+                  <a
+                    href={`#${section.id}`}
+                    data-nav={section.id}
+                    aria-current={current ? "true" : undefined}
+                    className={clsx(
+                      "block whitespace-nowrap rounded-full px-3 py-1.5 text-[14px] transition-colors",
+                      current
+                        ? "bg-navy-800 font-medium text-white"
+                        : "text-ink-muted hover:bg-navy-50 hover:text-navy-800",
+                    )}
+                  >
+                    {section.navLabel}
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+
+        {/* ต่ำกว่า xl โลโก้อยู่ซ้าย ปุ่มสองปุ่มชิดขวา — ml-auto ดันแทนที่ flex-1 ของ nav ที่ซ่อนไป */}
+        <Link
+          href="/login"
+          className="ml-auto shrink-0 rounded-full bg-coral-500 px-5 py-2 text-[14px] font-medium text-white transition-colors hover:bg-coral-600 xl:ml-0"
+        >
+          เข้าสู่ระบบ
+        </Link>
+
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-controls="landing-nav-menu"
+          aria-label={open ? "ปิดเมนูหัวข้อ" : "เปิดเมนูหัวข้อ"}
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-navy-800 transition-colors hover:bg-navy-50 xl:hidden"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            className="h-6 w-6"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            aria-hidden="true"
+          >
+            {open ? (
+              <path d="M6 6l12 12M18 6 6 18" strokeLinecap="round" />
+            ) : (
+              <path d="M4 7h16M4 12h16M4 17h16" strokeLinecap="round" />
+            )}
+          </svg>
+        </button>
+      </div>
+
+      {open ? (
+        <nav
+          id="landing-nav-menu"
+          aria-label="หัวข้อในหน้านี้"
+          className="animate-in-up absolute inset-x-0 top-full max-h-[calc(100vh-5rem)] overflow-y-auto border-b border-line bg-white shadow-pop xl:hidden"
+        >
+          <ul className="mx-auto max-w-7xl px-4 py-2 sm:px-6">
+            {SECTIONS.map((section) => {
+              const current = active === section.id;
+              return (
+                <li key={section.id}>
+                  <a
+                    href={`#${section.id}`}
+                    aria-current={current ? "true" : undefined}
+                    onClick={() => setOpen(false)}
+                    className={clsx(
+                      "block rounded-xl px-4 py-2.5 text-[15px] transition-colors",
+                      current
+                        ? "bg-navy-800 font-medium text-white"
+                        : "text-ink hover:bg-navy-50 hover:text-navy-800",
+                    )}
+                  >
+                    {section.navLabel}
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+      ) : null}
+    </header>
+  );
+}
+
 /** รายการหัวข้อ — ใช้ทั้งในคอลัมน์ซ้ายและในเมนูที่กางจากแถบบนของจอแคบ */
 function SectionList({ active, onNavigate }: { active: string; onNavigate?: () => void }) {
   return (
@@ -253,14 +422,17 @@ function SectionList({ active, onNavigate }: { active: string; onNavigate?: () =
 }
 
 /**
- * แถบนำทางหัวข้อ — คอลัมน์ซ้ายบนจอกว้าง แถบที่กางลงมาบนจอแคบ
+ * แถบนำทางหัวข้อของโหมด embedded — คอลัมน์ซ้ายบนจอกว้าง แถบที่กางลงมาบนจอแคบ
  *
- * ตัดที่ `lg` (1024px) ไม่ใช่ `xl` เหมือนแถบบนเดิม: คอลัมน์ตั้งกว้าง 17.5rem กางหัวข้อ
- * ภาษาไทยได้ครบสิบหัวข้อโดยไม่ต้องแข่งที่กับโลโก้และปุ่มเข้าสู่ระบบบนบรรทัดเดียวกัน
- * ต่ำกว่านั้นคอลัมน์ซ้ายกินที่จนเนื้อหาเหลือนิดเดียว จึงยุบเป็นแถบเดียวที่บอกหัวข้อที่กำลังอ่าน
+ * ไม่มีโลโก้และไม่มีปุ่มเข้าสู่ระบบ เพราะแถบหัวของ AppShell มีให้แล้วทั้งคู่ และคนอ่านก็
+ * ล็อกอินอยู่ — เหลือแต่หัวข้อล้วน ๆ ซึ่งเป็นสิ่งเดียวที่หน้านี้ต้องการจากแถบนำทาง
+ *
+ * ตัดที่ `lg` (1024px) ไม่ใช่ `xl` เหมือนแถบบนของโหมด public: คอลัมน์ตั้งกว้าง 17.5rem
+ * กางหัวข้อภาษาไทยได้ครบสิบหัวข้อโดยไม่ต้องแข่งที่กับอะไรบนบรรทัดเดียวกัน ต่ำกว่านั้น
+ * คอลัมน์ซ้ายกินที่จนเนื้อหาเหลือนิดเดียว จึงยุบเป็นแถบเดียวที่บอกหัวข้อที่กำลังอ่าน
  * แล้วกางรายการลงมาทับเนื้อหา (absolute) ไม่ใช่ดันเนื้อหาลง
  */
-function SectionNav({ active, embedded }: { active: string; embedded: boolean }) {
+function SectionNav({ active }: { active: string }) {
   const [open, setOpen] = useState(false);
   const barRef = useRef<HTMLDivElement>(null);
   const activeLabel = SECTIONS.find((s) => s.id === active)?.navLabel ?? SECTIONS[0]!.navLabel;
@@ -299,39 +471,17 @@ function SectionNav({ active, embedded }: { active: string; embedded: boolean })
         style={{ top: "var(--landing-top)", height: "calc(100dvh - var(--landing-top))" }}
         className="sticky hidden w-[17.5rem] shrink-0 flex-col self-start border-r border-line bg-white lg:flex"
       >
-        {embedded ? (
-          <div className="border-b border-line px-6 py-5">
-            <p className="font-heading text-[11px] font-semibold uppercase tracking-[0.14em] text-coral-500">
-              ข้อมูลโครงการ
-            </p>
-            <p className="mt-1 font-heading text-[18px] font-semibold text-navy-800">รู้จัก D2</p>
-          </div>
-        ) : (
-          <Link
-            href="/"
-            className="flex shrink-0 items-center gap-2.5 border-b border-line px-6 py-5"
-            aria-label="หน้าแรก D2"
-          >
-            <LogoImage className="h-12" />
-            <D2Mark className="h-8" />
-          </Link>
-        )}
+        <div className="border-b border-line px-6 py-5">
+          <p className="font-heading text-[11px] font-semibold uppercase tracking-[0.14em] text-coral-500">
+            ข้อมูลโครงการ
+          </p>
+          <p className="mt-1 font-heading text-[18px] font-semibold text-navy-800">รู้จัก D2</p>
+        </div>
 
         {/* min-h-0 คือสิ่งที่ทำให้รายการเลื่อนเองได้ — flex item ไม่ยอมหดต่ำกว่าเนื้อหาถ้าไม่บอก */}
         <nav className="min-h-0 flex-1 overflow-y-auto px-3 py-6">
           <SectionList active={active} />
         </nav>
-
-        {embedded ? null : (
-          <div className="shrink-0 border-t border-line p-4">
-            <Link
-              href="/login"
-              className="block rounded-full bg-coral-500 px-5 py-2.5 text-center text-[14px] font-medium text-white transition-colors hover:bg-coral-600"
-            >
-              เข้าสู่ระบบ
-            </Link>
-          </div>
-        )}
       </aside>
 
       <div
@@ -339,21 +489,7 @@ function SectionNav({ active, embedded }: { active: string; embedded: boolean })
         style={{ top: "var(--landing-top)" }}
         className="sticky z-30 border-b border-line bg-white/90 frost-12 lg:hidden"
       >
-        {embedded ? null : (
-          <div className="flex items-center gap-3 px-4 py-2.5 sm:px-6">
-            <Link href="/" className="flex shrink-0 items-center gap-2" aria-label="หน้าแรก D2">
-              <LogoImage className="h-11" />
-              <D2Mark className="h-7" />
-            </Link>
-            <Link
-              href="/login"
-              className="ml-auto shrink-0 rounded-full bg-coral-500 px-4 py-2 text-[14px] font-medium text-white transition-colors hover:bg-coral-600"
-            >
-              เข้าสู่ระบบ
-            </Link>
-          </div>
-        )}
-        <div className={clsx("px-4 py-2.5 sm:px-6", embedded ? null : "border-t border-line/70")}>
+        <div className="px-4 py-2.5 sm:px-6">
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
