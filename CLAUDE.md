@@ -41,13 +41,14 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   Sarabun faces from `assets/theme_ci_design/Font/Sarabun.zip` **embedded**, rebuilt by
   `docs/tools/manual-to-docx.py`; the Markdown stays the source, so never hand-edit the .docx
 - `docs/18-document-template-variables.md` — **คู่มือสำหรับผู้เขียนเอกสาร** (ไม่ใช่ผู้เขียนโค้ด):
-  ตัวแปรทั้ง 81 ตัวที่ template ใช้ได้ พร้อมตัวอย่างค่า วิธีพิมพ์ placeholder ให้ไม่พลาด
+  ตัวแปรทั้ง 82 ตัวที่ template ใช้ได้ พร้อมตัวอย่างค่า วิธีพิมพ์ placeholder ให้ไม่พลาด
   วิธีอัปโหลดเวอร์ชันใหม่ และเส้นแบ่งว่าอะไรแก้เองได้ อะไรต้องให้ทีมพัฒนาทำก่อน
   §3.1 คือตารางชื่อเดิม→ชื่อใหม่ของการเปลี่ยนชื่อเมื่อ 2026-08-24 · §3.2 คือชุดเอกสาร
-  2026-08-31 ที่สลับเลขผนวก · §3.4 คือ `shortname` / `legalNotice` / `isRequired` — มีฉบับ .docx
+  2026-08-31 ที่สลับเลขผนวก · §3.4 คือ `shortname` / `legalNotice` / `isRequired` · §3.5 คือชุด
+  2026-09-20 ที่วัตถุประสงค์กลายเป็นช่องติ๊กและ A0 ตัดตราเห็นชอบออก — มีฉบับ .docx
   อยู่ที่ `docs/manuals-docx/18-document-template-variables.docx` สร้างจากตัวเดียวกับคู่มือผู้ทดสอบ
-- `docs/manuals-pdf/คู่มือ-เอกสารต้นแบบ-v1.0.pdf` — **คู่มือ A4 ฉบับส่งมอบ** ของเรื่องเดียวกัน
-  18 หน้า พร้อมภาพหน้าจอจริง: ตารางตัวแปรทั้ง 77 ตัวแยกตามกลุ่มพร้อมคอลัมน์ว่าใช้กับ A0–A3
+- `docs/manuals-pdf/คู่มือ-เอกสารต้นแบบ-v1.1.pdf` — **คู่มือ A4 ฉบับส่งมอบ** ของเรื่องเดียวกัน
+  พร้อมภาพหน้าจอจริง: ตารางตัวแปรทั้ง 82 ตัวแยกตามกลุ่มพร้อมคอลัมน์ว่าใช้กับ A0–A3
   หรือ A4, ช่องติ๊กของ A4, และบทที่ 5 ที่แยก "แก้เนื้อไฟล์" (อัปโหลด .docx) ออกจาก "แก้ข้อมูล
   ประจำตัว" (`shortname` · `legalNotice` · `isRequired`) สร้างด้วย
   `docs/tools/build-template-manual.py` แล้วพิมพ์ด้วย `../../render-manual-pdf.py` —
@@ -137,6 +138,12 @@ between the two files. Those two tables took three more columns from the **2026-
 of `metadata_mapping.xlsx` (`data_fields`, `geo_coverage_other`,
 `allow_transformed_raw_data_sharing_specified_platforms`); the same sheet retired the three
 "ระบุหน่วยงานปลายทาง" answers, so `EXTRA_METADATA_KEYS` in `lib/dataset.ts` is now **empty** —
+and on **2026-09-20** a table on the Task Board card (no workbook came with it) turned `objective`
+into a **multi-select code list** stored comma-separated in the same column (`objective_other`
+beside it, `MULTI_SELECT_FIELDS` tells the A4 ticks to tick every chosen code) and renumbered
+`data_format` 2–4 → 3–5 to make room for "วางไฟล์ในพื้นที่ที่ BDI กำหนด"; the migration shifted
+the stored codes and the `dataset_choice` rows together, and moved old free-text objectives to
+`objective_other` under code 99. `docs/11` §2.1 has it —
 kept, not deleted, because the sheet can add another column-less field at any time, and
 `toMetadataColumns()` still passes a row's existing `additional_metadata_json` through untouched
 so what old requests answered stays readable. `docs/11` §2 has the whole of it. Together: 20 tables across 10 Postgres schemas (`iam`, `organization`, `dataset`, `review`,
@@ -934,7 +941,7 @@ per view, `LegalDocumentsCard` lists the documents and renders one only when the
 **The variable catalogue is the contract between documents and code.**
 `TEMPLATE_VARIABLES` in `lib/document-render.ts` is the single source for validation, the admin
 API listing and `docs/18-document-template-variables.md`; `lib/legal-values.ts` fills every entry.
-It covers 81 variables across organisation, org approver, org officer, request, dataset, signature,
+It covers 82 variables across organisation, org approver, org officer, request, dataset, signature,
 BDI, document-version and system data — deliberately wider than A0 uses, so a new document can pull
 data it needs without a code change. Adding a *name* still needs code, and upload validation rejects unknown names for
 exactly that reason. `bdi.address` / `bdi.directorName` are constants (`OFFICE_DEFAULTS`)
@@ -962,6 +969,17 @@ database column names in angle brackets, so both are produced by a script rather
 `docs/tools/build-a4-template.py` for A4, whose tables are paragraph indices and therefore have
 to be re-derived whenever the legal team moves anything. Neither template is edited by hand; run
 the script and publish what it writes.
+
+**The 2026-09-20 set arrived as edits of the live templates**, not of blank drafts — the legal
+team opened `docs/A0-template.docx` / `docs/A4-template.docx` and typed the new
+`{{tick.objective.NN}}` lines and five `{{tick.dataFormat.N}}` options themselves. For that shape
+the script is `docs/tools/normalise-template.py`: it finds every paragraph that starts with a tick
+placeholder by *text*, not by index, and rewrites it into the canonical option paragraph (mark in
+its own DejaVu Sans run, option text in TH SarabunPSK, `ListParagraph` indent), then strips the
+highlight. Everything else in the file is left exactly as typed, which is the point: BDI wants
+the `…` the legal team put around `{{dataset.objectiveOther}}` to print. A0 that round dropped
+`{{bdi_approver.endorsement}}` and it was **not** filled back — a deliberate edit of a file that
+had it, unlike the 9 September draft that had simply never marked it. `docs/18` §3.5.
 
 **Production carries exactly one version per document, numbered 1** — reset on 2026-09-10 once
 the 9 September set was published. The versions removed were superseded drafts from August; the

@@ -3,24 +3,29 @@
     python3 docs/tools/build-template-manual.py \
         --data /tmp/vars.json \
         --images sit-evidence/document-template-manual-20260913 \
-        --out docs/manuals-pdf/คู่มือ-เอกสารต้นแบบ-v1.0.html
+        --out docs/manuals-pdf/คู่มือ-เอกสารต้นแบบ-v1.1.html
 
 แล้วพิมพ์เป็น PDF ด้วย `render-manual-pdf.py` (Chrome DevTools Protocol) — CSS `@media print`
 ในไฟล์นี้เป็นตัวกำหนดขนาดหน้า A4 ขอบกระดาษ และการขึ้นหน้าใหม่ของแต่ละบท
 
 **ตารางตัวแปรไม่ได้พิมพ์ด้วยมือ** มันมาจาก `TEMPLATE_VARIABLES` ในโค้ดโดยตรง ซึ่งเป็น
 รายการเดียวกับที่ API ใช้ตรวจตอนอัปโหลด template คู่มือจึงไม่มีทางบอกชื่อที่ระบบไม่รู้จัก
-ดึงออกมาเป็น JSON จาก checkout ที่รันอยู่:
+ดึงออกมาเป็น JSON จาก checkout ที่รันอยู่ — `tickFields()` ต้องโหลดตัวเลือกจากฐานข้อมูลก่อน
+ไม่งั้นได้ค่าตั้งต้นในโค้ด ไม่ใช่รายการที่ระบบใช้จริง:
 
     cat > /tmp/dumpvars.ts <<'TS'
-    import { TEMPLATE_VARIABLES, VARIABLE_GROUPS, DEPRECATED_PLACEHOLDERS } from "./src/lib/document-render.js";
+    import { TEMPLATE_VARIABLES, VARIABLE_GROUPS, DEPRECATED_PLACEHOLDERS, tickFields } from "./src/lib/document-render.js";
+    import { loadChoices } from "./src/lib/dataset-choices.js";
+    await loadChoices();
     process.stdout.write("JSONSTART" + JSON.stringify({
       groups: VARIABLE_GROUPS,
       variables: Object.entries(TEMPLATE_VARIABLES).map(([name, s]) => ({
         name, group: s.group, scope: s.scope ?? "both", description: s.description, example: s.example,
       })),
       deprecated: DEPRECATED_PLACEHOLDERS,
+      tickFields: Object.entries(tickFields()).map(([f, codes]) => [f, codes.join(" · ")]),
     }) + "JSONEND");
+    process.exit(0);
     TS
     docker compose cp /tmp/dumpvars.ts backend:/app/dumpvars.ts
     docker compose exec -T backend npx tsx dumpvars.ts \
@@ -156,11 +161,11 @@ def build(data, images: Path, style_src: Path, page_of=None) -> str:
 <div class="tw"><table class="doc-table"><thead><tr>
 <th>รหัส</th><th>เอกสาร</th><th>ใช้กับเส้นทาง</th><th>วันนี้มีตัวแปรกี่ตัว</th>
 </tr></thead><tbody>
-<tr><td><span class="var">A0</span></td><td>ข้อตกลงหลักในการบริหารจัดการและการแบ่งปันข้อมูล</td><td class="dim">ลงทะเบียนหน่วยงาน</td><td>20</td></tr>
+<tr><td><span class="var">A0</span></td><td>ข้อตกลงหลักในการบริหารจัดการและการแบ่งปันข้อมูล</td><td class="dim">ลงทะเบียนหน่วยงาน</td><td>19</td></tr>
 <tr><td><span class="var">A1</span></td><td>ผนวก 1 สัญญารักษาความลับ (NDA)</td><td class="dim">ลงทะเบียนหน่วยงาน</td><td>0</td></tr>
 <tr><td><span class="var">A2</span></td><td>ผนวก 2 ข้อตกลงการประมวลผลข้อมูล (DPA)</td><td class="dim">ลงทะเบียนหน่วยงาน</td><td>0</td></tr>
 <tr><td><span class="var">A3</span></td><td>ผนวก 3 ข้อตกลงประมวลผลข้อมูลส่วนบุคคล (PDPA)</td><td class="dim">ลงทะเบียนหน่วยงาน</td><td>0</td></tr>
-<tr><td><span class="var">A4</span></td><td>แบบนำส่งข้อมูล</td><td class="dim">ลงทะเบียนชุดข้อมูล</td><td>100</td></tr>
+<tr><td><span class="var">A4</span></td><td>แบบนำส่งข้อมูล</td><td class="dim">ลงทะเบียนชุดข้อมูล</td><td>116</td></tr>
 </tbody></table></div>
 <p class="tabcap">ผนวก 1–3 ยังไม่มีตัวแปรเลยแม้ตัวเดียว ใส่เพิ่มได้ทันทีถ้าต้องการ เช่นให้ทุกผนวกมี
 <code>{{{{org.name}}}}</code> กับ <code>{{{{requestNumber}}}}</code> ที่หัวกระดาษ</p>
@@ -202,8 +207,13 @@ def build(data, images: Path, style_src: Path, page_of=None) -> str:
 {{{{tick.dataType.3}}}} ข้อมูลรวม (สถิติ)
 {{{{tick.dataType.9}}}} ข้อมูลอื่น ๆ</code></pre>
 
-<p>ได้ผลเป็น <b>✔</b> สำหรับข้อที่ตรงกับคำขอ และ <b>☐</b> สำหรับข้อที่ไม่ตรง — ตัวเลือกทุกข้อยัง
+<p>ได้ผลเป็น <b>✔</b> สำหรับข้อที่ตรงกับคำขอ และ <b>○</b> สำหรับข้อที่ไม่ตรง — ตัวเลือกทุกข้อยัง
 พิมพ์ออกมาครบ ผู้อ่านจึงเห็นว่ามีตัวเลือกอะไรและไม่ได้เลือกอะไร เหมือนแบบฟอร์มกระดาษ</p>
+
+<div class="note"><b>ช่องที่เลือกได้หลายข้อ</b> — ข้อ 8 วัตถุประสงค์ (ตั้งแต่ชุด 20 กันยายน 2569)
+กา ✔ <b>ทุกข้อ</b>ที่ผู้กรอกเลือก เขียนบรรทัดละรหัสเหมือนช่องอื่น
+<code>{{{{tick.objective.01}}}}</code> … <code>{{{{tick.objective.99}}}}</code> และมี
+<code>{{{{dataset.objectiveOther}}}}</code> สำหรับข้อความที่ระบุเมื่อเลือก "อื่น ๆ"</div>
 
 <div class="note caution"><span class="nlabel">รหัส ไม่ใช่ข้อความบนฟอร์ม</span>
 รหัสที่ใส่ต่อท้ายคือ<b>รหัสที่เก็บในฐานข้อมูล</b> ไม่ใช่ข้อความที่พิมพ์บนกระดาษ ฟิลด์ที่เป็น
@@ -257,6 +267,19 @@ Word แบ่งข้อความเป็นชิ้นเล็ก ๆ �
 <div class="note"><b>อย่าแก้ <code>.docx</code> ด้วยมือแล้วอัปโหลด</b> ถ้าไฟล์มาในรูปแบบนั้น —
 ส่วน A4 สร้างด้วย <code>docs/tools/build-a4-template.py</code> ซึ่งตรึงฟอนต์ของช่องติ๊กไว้ด้วย
 ซึ่งการแก้มือทำตกได้ง่าย</div>
+
+<h3>ถ้าไฟล์ที่ได้มาแก้ต่อจากฉบับที่ระบบใช้อยู่</h3>
+<p>ชุด 20 กันยายน 2569 มาอีกแบบ: ฝ่ายกฎหมายเปิดไฟล์ที่ระบบใช้อยู่แล้วพิมพ์บรรทัดช่องติ๊กเพิ่มเอง
+ใน Word ตัวแปรจึงครบอยู่แล้ว แต่ Word ไม่รู้ว่าเครื่องหมายต้องอยู่ใน run ของตัวเองด้วยฟอนต์
+ตายตัว (ไม่งั้นวงกลมโตไม่เท่ากันทั้งหน้า) และย่อหน้าที่พิมพ์ใหม่มักย่อไม่เท่ากับรายการเดิม —
+ใช้สคริปต์นี้จัดให้ก่อนอัปโหลด:</p>
+
+<pre><code>python3 docs/tools/normalise-template.py "A4-template-example.docx" A4.docx</code></pre>
+
+<p>สคริปต์หาย่อหน้าที่ขึ้นต้นด้วย <code>{{{{tick.…}}}}</code> จาก<b>ข้อความ</b> ไม่ใช่ตำแหน่ง แล้วเขียน
+ย่อหน้านั้นใหม่ให้เหมือนบรรทัดตัวเลือกอื่นทุกประการ ย่อหน้าที่เหลือไม่แตะนอกจากลบไฮไลต์ —
+ถ้อยคำ ช่องว่าง และจุดไข่ปลาที่วางไว้รอบช่องกรอก (<code>…{{{{dataset.objectiveOther}}}}…</code>)
+จึงพิมพ์ออกมาตามที่เขียนไว้ ใช้กับ A0 ได้ด้วย (จะโดนแค่ขั้นลบไฮไลต์)</p>
 """
 
     # ── บทที่ 5 — วิธีอัปเดตเอกสาร ─────────────────────────────────────────
@@ -453,8 +476,8 @@ figure,.figbox,.shot{break-inside:avoid;page-break-inside:avoid;}
   <div class="cover-sys">ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)</div>
   <div class="doc-control"><dl>
     <dt>สำหรับ</dt><dd>ผู้เขียนเอกสารและผู้ดูแลระบบ — ไม่ต้องเขียนโค้ด</dd>
-    <dt>ฉบับ</dt><dd>1.0</dd>
-    <dt>วันที่</dt><dd>13 กันยายน 2569</dd>
+    <dt>ฉบับ</dt><dd>1.1</dd>
+    <dt>วันที่</dt><dd>20 กันยายน 2569</dd>
     <dt>ตัวแปรทั้งหมด</dt><dd>{total} ตัว</dd>
     <dt>เอกสารที่ครอบคลุม</dt><dd>A0 · A1 · A2 · A3 · A4</dd>
   </dl></div>
