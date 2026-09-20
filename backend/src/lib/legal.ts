@@ -29,6 +29,7 @@ import {
   ConfirmationType,
   LegalDocumentStatus,
   LegalDocumentVersionStatus,
+  ReviewResult,
   ReviewTaskStatus,
   ReviewTaskType,
   type Prisma,
@@ -156,16 +157,48 @@ export interface DocumentSubject {
  * เทียบด้วยรหัสเพราะการตัดสินใจของหน่วยงานเป็นเรื่องของ**ตัวเอกสาร** ไม่ใช่ของเวอร์ชัน —
  * เขาบอกว่า "A3 ไม่เกี่ยวกับหน่วยงานเรา" ไม่ได้บอกว่า "A3 ฉบับลงวันที่นี้ไม่เกี่ยว"
  * ถ้าฝ่ายกฎหมายเผยแพร่ A3 เวอร์ชันใหม่หลังจากนั้น มันต้องยังถูกข้ามอยู่ ไม่ใช่โผล่กลับมา
+ *
+ * **แต่การกดนั้นมีอายุเท่ารอบของมัน** — รอบที่ถูกยกเลิกไม่เหลือการตัดสินใจอะไรไว้เลย
  */
 async function skippedDocumentCodes(db: Db, subject: DocumentSubject): Promise<Set<string>> {
   const confirmation = await db.signatureConfirmation.findFirst({
     where: { ...subject, confirmationType: ConfirmationType.ORGANIZATION_APPROVAL },
     orderBy: { confirmedAt: "desc" },
-    select: { confirmationPayloadJson: true },
+    select: {
+      confirmationPayloadJson: true,
+      reviewTask: { select: { sequenceNumber: true } },
+    },
   });
+  if (!confirmation) return new Set();
+
+  /**
+   * ผู้อนุมัติ BDI ส่งกลับ = ยกเลิกการเห็นชอบ**และการตัดสินใจทั้งหมด**ของผู้มีอำนาจของ
+   * หน่วยงานไปด้วย (BDI ตัดสินเมื่อ 2026-09-20) ชุดเอกสารจึงกลับมาครบทุกฉบับ ผนวก 3 รวมอยู่ด้วย
+   *
+   * ทุกแถวที่ `sequence_number` ไม่เกินการส่งกลับครั้งล่าสุดเป็นของรอบที่การส่งกลับนั้นล้างทิ้ง
+   * กฎเดียวกับ `lastReturnSequence()` ใน lib/journey-steps.ts ซึ่งตัดสินเรื่องเดียวกันให้ stepper
+   * และเป็นเหตุผลที่เทียบด้วยลำดับ ไม่ใช่เวลา — `confirmed_at` กับ `completed_at` เขียนคนละ
+   * จังหวะกันในทรานแซกชันเดียว ส่วน `signature_confirmation.review_task_id` เป็น FK จริง
+   *
+   * นับ `CANCELLED` ด้วย ไม่ใช่แค่ `RETURNED` เพราะ reset ของแอดมิน
+   * (`/api/admin/registrations/.../reset`) กับ `revertStrandedWork()` ปิดด่านแบบนั้นและไม่ทิ้งแถว
+   * `RETURNED` ไว้เลย — รอบก็ถูกยกเลิกเหมือนกัน การ recall ของเจ้าหน้าที่ BDI ปิดแบบนั้นเช่นกัน
+   * แต่ `recallRefusal()` ยอมเฉพาะตอน task ยัง `PENDING` ซึ่งยังไม่มีใบลงนามให้ยกเลิกอยู่แล้ว
+   */
+  const lastVoid = await db.reviewTask.findFirst({
+    where: {
+      ...subject,
+      OR: [{ result: ReviewResult.RETURNED }, { status: ReviewTaskStatus.CANCELLED }],
+    },
+    orderBy: { sequenceNumber: "desc" },
+    select: { sequenceNumber: true },
+  });
+  if (lastVoid && confirmation.reviewTask.sequenceNumber <= lastVoid.sequenceNumber) {
+    return new Set();
+  }
 
   // การลงนามที่เกิดก่อนมีฟีเจอร์นี้ไม่มีคีย์นี้ใน payload — ไม่ได้ข้ามอะไรไว้
-  const payload = confirmation?.confirmationPayloadJson as { notApplicableVersionIds?: unknown } | null;
+  const payload = confirmation.confirmationPayloadJson as { notApplicableVersionIds?: unknown } | null;
   const ids = Array.isArray(payload?.notApplicableVersionIds)
     ? payload.notApplicableVersionIds.filter((v): v is string => typeof v === "string")
     : [];
@@ -188,6 +221,11 @@ async function skippedDocumentCodes(db: Db, subject: DocumentSubject): Promise<S
  * **ระหว่างที่ด่านผู้มีอำนาจของหน่วยงานยังเปิดอยู่ ไม่กรองอะไรทั้งนั้น** — คำขอที่ถูกตีกลับ
  * มาให้แก้แล้วส่งกลับขึ้นไปใหม่ จะเปิด task ลงนามใบใหม่ให้เขาเลือกทั้งชุดอีกครั้ง ถ้ายึด
  * การกด "ไม่เกี่ยวข้อง" ของรอบก่อนไว้ เขาจะเปลี่ยนใจกลับมาเห็นชอบฉบับนั้นไม่ได้เลย
+ *
+ * ด่านที่ยังเปิดอยู่เป็นแค่ครึ่งเดียวของกฎนั้น อีกครึ่งอยู่ใน `skippedDocumentCodes()` —
+ * ตั้งแต่วินาทีที่ผู้อนุมัติ BDI กดส่งกลับ จนถึงวินาทีที่ด่านลงนามใบใหม่เปิด **ไม่มี task
+ * ไหนเปิดอยู่เลย** ช่วงนั้นคือตอนที่หน่วยงานกำลังแก้ฟอร์มและเปิดดูเอกสารของตัวเอง ซึ่งเคย
+ * เห็นแค่ 3 ฉบับเพราะยังยึดการกดข้ามของรอบที่ถูกยกเลิกไปแล้ว
  */
 export async function requestDocuments(
   db: Db,

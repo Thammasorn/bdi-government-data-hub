@@ -1112,6 +1112,24 @@ each signature, **outside** the transaction (LibreOffice takes seconds, Prisma's
 timeout is 5) — if that render fails the signature still stands, because the evidence is in the
 database and the document can always be rebuilt from it.
 
+**A "ไม่เกี่ยวข้อง" lives exactly as long as the round that recorded it.** Only A3 is
+`is_required = false`, so only A3 can be skipped, and the skip is stored in the
+`ORGANIZATION_APPROVAL` confirmation's `confirmationPayloadJson.notApplicableVersionIds`.
+`requestDocuments()` in `lib/legal.ts` stops filtering while that gate is *open*, so the
+signatory can change their mind on the next round — but between the BDI approver pressing
+ส่งกลับแก้ไข and the new signing gate opening, **no gate is open at all**, and that is precisely
+the window in which the organisation is editing the form and reading its own documents. It saw
+three documents and a grey "หน่วยงานระบุว่า …" line for a decision that the return had already
+voided. `skippedDocumentCodes()` therefore compares the `sequence_number` of the `review_task`
+the confirmation hangs off (`signature_confirmation.review_task_id` is a real FK) against the
+latest row that threw a round away — `result = RETURNED`, **or** `status = CANCELLED` for the
+admin reset and `revertStrandedWork()`, which leave no `RETURNED` row at all. Same rule as
+`lastReturnSequence()` in `journey-steps.ts`, and by sequence rather than by time because
+`confirmed_at` and `completed_at` are written at different moments of one transaction. Nothing
+is deleted: both tables stay as evidence, and the next signature re-establishes the filter on
+its own. The grey `เห็นชอบเมื่อ` caption under each document went with it — it read
+`legal_acceptance.accepted_at` from the same voided round. BDI settled both on 2026-09-20.
+
 `acknowledgedVersionIds` is a list of **version ids**, not `A0`/`A1` codes. That is what closes
 the race where the legal team publishes a new version while an approver has the page open: the
 ids no longer match what is published, and the answer is 400 with "reload and read again" rather
