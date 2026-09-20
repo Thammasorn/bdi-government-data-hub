@@ -54,8 +54,10 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   (หน้าคอนโซล, บริการ init), พอร์ตกับ `new-dev.sh` ที่ยังต้องแก้ตอน merge, และไฟล์เก่าที่
   **ยังไม่ได้ย้าย**
 - `docs/bdi-admin-portal.postman_collection.json` — Journey A as a runnable collection,
-  with three `*.postman_environment.json` files beside it (dev checkout / main / public).
-  The admin token is left empty in the last two on purpose — it is a real secret from `.env`
+  plus `/api/admin/users` (**U1–U15**), the legal documents (**L1–L3**) and the registration
+  requests (**R1–R5**), with three `*.postman_environment.json` files beside it (dev checkout /
+  main / public). The admin token is left empty in the last two on purpose — it is a real
+  secret from `.env`
 
 Read `docs/01-user-journey.md` before touching anything in `backend/src/routes/organizations.ts`
 or `backend/src/routes/dataset-requests.ts`.
