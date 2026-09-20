@@ -963,8 +963,12 @@ model DatasetRegistrationMetadata {
   tagString String? @map("tag_string")
   /// 7 รายละเอียด
   notes     String?
-  /// 8 วัตถุประสงค์
-  objective String?
+  /// 8 วัตถุประสงค์ — ตั้งแต่ชุด 2026-09-20 เป็นรหัสเลือกได้หลายข้อ (01–12 · 98 ไม่ทราบ · 99 อื่น ๆ)
+  /// คั่นด้วย "," แบบเดียวกับ tag_string ก่อนหน้านั้นเป็นข้อความอิสระ 1,000 ตัวอักษร —
+  /// migration 20260920120000 ย้ายข้อความเดิมไป objective_other แล้วตั้งรหัสเป็น 99
+  objective      String?
+  /// 8 กรณีเลือก 99 อื่น ๆ ให้ระบุเอง
+  objectiveOther String? @map("objective_other") @db.VarChar(200)
 
   /// 9.1 / 9.2 หน่วยและค่าความถี่ของการปรับปรุงข้อมูลต้นทาง เช่น A + 2 = ทุก 2 ปี
   updateFrequencyUnit     String? @map("update_frequency_unit") @db.VarChar(8)
@@ -979,7 +983,9 @@ model DatasetRegistrationMetadata {
   /// 11 แหล่งที่มาของข้อมูล
   dataSource       String? @map("data_source")
 
-  /// 12.1 รูปแบบการนำส่งข้อมูล — 1 วางไฟล์ · 2 database sync · 3 batch API · 4 ระบบอื่น
+  /// 12.1 รูปแบบการนำส่งข้อมูล — 1 วางไฟล์ในพื้นที่ที่หน่วยงานกำหนด · 2 วางไฟล์ในพื้นที่ที่ BDI กำหนด ·
+  /// 3 database sync · 4 batch API · 5 ระบบอื่น (ชุด 2026-09-20 แยก "วางไฟล์" เป็นสองข้อ
+  /// รหัส 2–4 เดิมจึงเลื่อนเป็น 3–5 — migration 20260920120000 เลื่อนให้แถวเดิมแล้ว)
   dataFormat      String? @map("data_format") @db.VarChar(8)
   dataFormatOther String? @map("data_format_other") @db.VarChar(150)
 
@@ -1115,8 +1121,9 @@ model DatasetMetadata {
   maintainerEmail String? @map("maintainer_email") @db.VarChar(50)
 
   tagString String? @map("tag_string")
-  notes     String?
-  objective String?
+  notes          String?
+  objective      String?
+  objectiveOther String? @map("objective_other") @db.VarChar(200)
 
   updateFrequencyUnit     String? @map("update_frequency_unit") @db.VarChar(8)
   updateFrequencyInterval Int?    @map("update_frequency_interval")

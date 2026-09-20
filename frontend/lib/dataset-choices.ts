@@ -23,6 +23,7 @@ import { api } from "./api";
 export const CHOICE_FIELD_KEYS = [
   "dataType",
   "dataTopic",
+  "objective",
   "updateFrequencyUnit",
   "deliveryFrequency",
   "geoCoverage",

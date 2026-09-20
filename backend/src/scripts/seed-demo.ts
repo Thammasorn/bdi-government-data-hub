@@ -652,14 +652,15 @@ async function main() {
       maintainerEmail: "user@nso.go.th",
       tagString: "สถิติ,ราชการ",
       notes: `${spec.title} — ชุดข้อมูลตัวอย่างสำหรับสาธิตระบบ จัดทำโดยสำนักงานสถิติแห่งชาติ เพื่อใช้ทดสอบกระบวนการลงทะเบียนชุดข้อมูลตั้งแต่ต้นจนจบ`,
-      objective:
-        "ใช้สาธิตกระบวนการลงทะเบียนชุดข้อมูลตั้งแต่ร่างจนถึงอนุมัติ และใช้ทดสอบการแสดงผลของแบบฟอร์มที่ระบบสร้าง",
+      // ข้อ 8 เป็นรหัสเลือกได้หลายข้อ (ชุด 2026-09-20) — เลือก "อื่น ๆ" ด้วย จะได้เห็นช่องระบุบนเอกสาร
+      objective: "09,11,99",
+      objectiveOther: "ใช้สาธิตกระบวนการลงทะเบียนชุดข้อมูลตั้งแต่ร่างจนถึงอนุมัติ",
       updateFrequencyUnit: "M",
       updateFrequencyInterval: 1,
       deliveryFrequency: "2",
       geoCoverage: "06",
       dataSource: "สำมะโนประชากรและเคหะ (สำนักงานสถิติแห่งชาติ)",
-      dataFormat: "3",
+      dataFormat: "4",
       dataCategory: "a",
       ...spec.metadata,
     });
@@ -719,7 +720,7 @@ async function main() {
         dataTopicOther: "การกำกับดูแลผู้ประกอบการขนส่ง",
         dataCategory: "c",
         dataClassification: "04",
-        dataFormat: "4",
+        dataFormat: "5",
         dataFormatOther: "ระบบเชื่อมโยงข้อมูลของกรมการขนส่งทางบก",
         updateFrequencyUnit: "U",
         allowOriginalRawDataRetention: false,

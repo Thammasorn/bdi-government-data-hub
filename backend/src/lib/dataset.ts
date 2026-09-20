@@ -36,8 +36,18 @@ import { containsEnglish, containsThai } from "./validation.js";
  */
 export const FREQUENCY_UNITS_WITHOUT_INTERVAL = ["R", "O", "U"];
 
-/** รูปแบบการนำส่งที่ต้องระบุชื่อระบบเชื่อมโยง */
-export const DATA_FORMAT_OTHER_CODE = "4";
+/** รูปแบบการนำส่งที่ต้องระบุชื่อระบบเชื่อมโยง — เดิม "4" ชุด 2026-09-20 เลื่อนเป็น "5" */
+export const DATA_FORMAT_OTHER_CODE = "5";
+
+/** 8 วัตถุประสงค์ รหัส "อื่น ๆ" ที่ต้องระบุต่อ — บังเอิญเป็น 99 เท่ากับข้อ 1.2 และ 10 แต่คนละรายการรหัส */
+export const OBJECTIVE_OTHER_CODE = "99";
+
+/**
+ * ช่องที่เลือกได้หลายข้อ — ค่าเป็นรหัสหลายตัวคั่นด้วย "," ไม่ใช่รหัสเดียว
+ * ช่องติ๊กบน A4 (`tickValues()` ใน lib/dataset-values.ts) ต้องรู้ จะได้ติ๊ก ✔ ทุกข้อที่เลือก
+ * ไม่ใช่เทียบทั้งสตริงกับรหัสเดียวแล้วไม่ตรงสักข้อ
+ */
+export const MULTI_SELECT_FIELDS: ReadonlySet<keyof MetadataValues> = new Set(["objective"]);
 
 /** 13.2.3 ตัวเลือก b ต้องระบุจำนวนปีและเดือน */
 export const PERSONAL_DATA_PERIOD_FIXED = "b";
@@ -97,7 +107,14 @@ export interface MetadataValues {
   maintainerEmail: string | null;
   tagString: string | null;
   notes: string | null;
+  /**
+   * 8 วัตถุประสงค์ — รหัสเลือกได้หลายข้อ คั่นด้วย "," แบบเดียวกับ tagString (ชุด 2026-09-20)
+   * เก็บเป็นสตริงเดียวไม่ใช่ string[] เพราะ API หน้าเว็บ และคอลัมน์เดิมใช้รูปนั้นอยู่แล้ว
+   * อ่านเป็นรายการด้วย splitTags() เสมอ อย่า split เอง
+   */
   objective: string | null;
+  /** 8 กรณีเลือก 99 อื่น ๆ ให้ระบุเอง — 200 ตัวอักษร */
+  objectiveOther: string | null;
   updateFrequencyUnit: string | null;
   updateFrequencyInterval: number | null;
   deliveryFrequency: string | null;
@@ -137,6 +154,7 @@ export const EMPTY_METADATA: MetadataValues = {
   tagString: null,
   notes: null,
   objective: null,
+  objectiveOther: null,
   updateFrequencyUnit: null,
   updateFrequencyInterval: null,
   deliveryFrequency: null,
@@ -212,6 +230,8 @@ export interface MetadataRules {
   /** 10 ระบุความละเอียดเชิงภูมิศาสตร์อื่น ๆ */
   geoCoverageOther: FieldRule<never>;
   dataTopicOther: FieldRule<never>;
+  /** 8 ระบุวัตถุประสงค์อื่น ๆ — ถามเมื่อรายการที่เลือกมี 99 */
+  objectiveOther: FieldRule<never>;
   dataFormatOther: FieldRule<never>;
   updateFrequencyInterval: FieldRule<never>;
 }
@@ -229,6 +249,7 @@ export type MetadataRuleInput = Partial<
     | "containsPersonalData"
     | "dataClassification"
     | "dataTopic"
+    | "objective"
     | "dataFormat"
     | "geoCoverage"
     | "updateFrequencyUnit"
@@ -329,6 +350,7 @@ export function metadataRules(v: MetadataRuleInput): MetadataRules {
     ),
     geoCoverageOther: free(v.geoCoverage === GEO_COVERAGE_OTHER_CODE),
     dataTopicOther: free(v.dataTopic === DATA_TOPIC_OTHER_CODE),
+    objectiveOther: free(splitTags(v.objective).includes(OBJECTIVE_OTHER_CODE)),
     dataFormatOther: free(v.dataFormat === DATA_FORMAT_OTHER_CODE),
     updateFrequencyInterval: free(
       Boolean(v.updateFrequencyUnit) &&
@@ -391,6 +413,10 @@ export function normaliseMetadata(input: MetadataValues): MetadataValues {
     v.authorizePersonalDataAnonymization = null;
   }
   if (!rules.dataTopicOther.visible) v.dataTopicOther = null;
+  // รหัสวัตถุประสงค์เก็บเป็นชุดที่ไม่ซ้ำ เรียงตามรหัส — ค่าเดียวกันต้องได้สตริงเดียวกัน
+  // ไม่ว่าผู้ใช้จะติ๊กลำดับไหน ไม่งั้นการเทียบ "เปลี่ยนหรือยัง" กับการ diff ในบันทึกจะเพี้ยน
+  v.objective = normaliseCodeList(v.objective);
+  if (!rules.objectiveOther.visible) v.objectiveOther = null;
   if (!rules.dataFormatOther.visible) v.dataFormatOther = null;
   if (!rules.updateFrequencyInterval.visible) v.updateFrequencyInterval = null;
   if (!rules.geoCoverageOther.visible) v.geoCoverageOther = null;
@@ -427,6 +453,18 @@ const optionalCode = (fieldKey: ChoiceFieldKey) =>
     .refine((code) => allCodes(fieldKey).has(code), { error: CODE_OUT_OF_RANGE })
     .nullable()
     .optional();
+/**
+ * ช่องเลือกได้หลายข้อ (ข้อ 8) มาเป็นสตริงคั่นด้วย "," — ทุกรหัสต้องอยู่ในรายการ
+ * ตรวจแบบเดียวกับ optionalCode() คือเปิดหา allCodes() ข้างใน refine ด้วยเหตุผลเดียวกัน
+ */
+const optionalCodeList = (fieldKey: ChoiceFieldKey) =>
+  z
+    .string({ error: CODE_OUT_OF_RANGE })
+    .refine((value) => splitTags(value).every((code) => allCodes(fieldKey).has(code)), {
+      error: CODE_OUT_OF_RANGE,
+    })
+    .nullable()
+    .optional();
 const optionalFlag = z.boolean().nullable().optional();
 const optionalCount = (max?: number, maxMessage?: string) => {
   const base = z.number().int("ต้องเป็นจำนวนเต็ม").min(0, "ต้องไม่ติดลบ");
@@ -447,7 +485,8 @@ export const datasetDraftSchema = z.object({
   maintainerEmail: optionalText(50),
   tagString: optionalText(200),
   notes: optionalText(1000),
-  objective: optionalText(1000),
+  objective: optionalCodeList("objective"),
+  objectiveOther: optionalText(200),
   updateFrequencyUnit: optionalCode("updateFrequencyUnit"),
   updateFrequencyInterval: optionalCount(),
   deliveryFrequency: optionalCode("deliveryFrequency"),
@@ -530,6 +569,15 @@ export function fromMetadataRow(
 const required = (message: string) => z.string({ error: message }).trim().min(1, message);
 const requiredCode = (fieldKey: ChoiceFieldKey, message: string) =>
   z.string({ error: message }).refine((code) => allCodes(fieldKey).has(code), { error: message });
+/** อย่างน้อยหนึ่งรหัส และทุกรหัสต้องอยู่ในรายการ — ข้อความเดียวกันทั้งสองกรณี ผู้ใช้แก้ด้วยการเลือกใหม่เหมือนกัน */
+const requiredCodeList = (fieldKey: ChoiceFieldKey, message: string) =>
+  z.string({ error: message }).refine(
+    (value) => {
+      const codes = splitTags(value);
+      return codes.length > 0 && codes.every((code) => allCodes(fieldKey).has(code));
+    },
+    { error: message },
+  );
 const requiredFlag = (message: string) => z.boolean({ error: message });
 
 const requiredEmail = (message: string) =>
@@ -566,9 +614,8 @@ export const datasetSubmitSchema = z
     notes: required("กรุณากรอกรายละเอียดของชุดข้อมูล")
       .min(30, "รายละเอียดต้องมีอย่างน้อย 30 ตัวอักษร")
       .max(1000, "รายละเอียดต้องยาวไม่เกิน 1,000 ตัวอักษร"),
-    objective: required("กรุณากรอกวัตถุประสงค์ของการจัดทำชุดข้อมูล")
-      .min(30, "วัตถุประสงค์ต้องมีอย่างน้อย 30 ตัวอักษร")
-      .max(1000, "วัตถุประสงค์ต้องยาวไม่เกิน 1,000 ตัวอักษร"),
+    objective: requiredCodeList("objective", "กรุณาเลือกวัตถุประสงค์ของการจัดทำชุดข้อมูลอย่างน้อย 1 ข้อ"),
+    objectiveOther: optionalText(200),
     updateFrequencyUnit: requiredCode(
       "updateFrequencyUnit",
       "กรุณาเลือกหน่วยความถี่ของการปรับปรุงข้อมูลต้นทาง",
@@ -616,6 +663,9 @@ export const datasetSubmitSchema = z
 
     if (rules.dataTopicOther.visible && !value.dataTopicOther) {
       missing("dataTopicOther", "เลือกประเด็นเป็น “อื่น ๆ” แล้วต้องระบุประเด็นด้วย");
+    }
+    if (rules.objectiveOther.visible && !value.objectiveOther) {
+      missing("objectiveOther", "เลือกวัตถุประสงค์เป็น “อื่น ๆ” แล้วต้องระบุวัตถุประสงค์ด้วย");
     }
     if (rules.dataFormatOther.visible && !value.dataFormatOther) {
       missing("dataFormatOther", "เลือกนำส่งผ่านระบบเชื่อมโยงข้อมูลอื่น แล้วต้องระบุชื่อระบบด้วย");
@@ -671,6 +721,15 @@ export const splitTags = (value: string | null | undefined): string[] =>
     .split(",")
     .map((t) => t.trim())
     .filter(Boolean);
+
+/**
+ * รายการรหัส (ข้อ 8) ในรูปที่เก็บลงฐานข้อมูล — ไม่ซ้ำ เรียงตามรหัส คั่นด้วย ","
+ * คืน null เมื่อไม่มีรหัสเลย ให้เท่ากับ "ยังไม่ได้ตอบ" ไม่ใช่สตริงว่าง
+ */
+export const normaliseCodeList = (value: string | null | undefined): string | null => {
+  const codes = [...new Set(splitTags(value))].sort();
+  return codes.length > 0 ? codes.join(",") : null;
+};
 
 /** 9.1 + 9.2 อ่านคู่กันเสมอ — "ทุก 2 ปี" ไม่ใช่ "ปี" กับ "2" คนละบรรทัด */
 export function formatUpdateFrequency(

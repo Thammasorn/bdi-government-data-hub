@@ -317,7 +317,9 @@ export interface DatasetRequest {
   maintainerEmail: string | null;
   tagString: string | null;
   notes: string | null;
+  /** ข้อ 8 — รหัสเลือกได้หลายข้อคั่นด้วย "," (ชุด 2026-09-20) อ่านด้วย splitTags() */
   objective: string | null;
+  objectiveOther: string | null;
   updateFrequencyUnit: string | null;
   updateFrequencyInterval: number | null;
   deliveryFrequency: string | null;
