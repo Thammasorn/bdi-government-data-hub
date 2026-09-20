@@ -9,15 +9,14 @@ import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
 import { documentLabel } from "@/lib/legal-document";
-import { formatThaiDate } from "@/lib/status";
 import type { LegalDocument, SkippedLegalDocument } from "@/lib/types";
 
 /**
  * โหลดชุดเอกสารกฎหมายของคำขอหนึ่งใบ — ใช้ทั้งหน้าตรวจสอบก่อนนำส่งและหน้ารายละเอียด
  *
- * คืน `reload` มาด้วยเพราะการลงนามเปลี่ยนสองอย่างในรายการนี้: เอกสารแต่ละฉบับได้
- * `acceptedAt` และไฟล์ A0 ถูกสร้างทับด้วยฉบับที่มีลายมือชื่อ ถ้าไม่โหลดใหม่ ผู้ใช้ที่เพิ่ง
- * กดลงนามจะเห็นหน้าเดิมทุกอย่างและไม่รู้ว่าการลงนามมีผลแล้วหรือยัง
+ * คืน `reload` มาด้วยเพราะการลงนามเปลี่ยนรายการนี้: ไฟล์ A0 ถูกสร้างทับด้วยฉบับที่มี
+ * ลายมือชื่อ และฉบับที่กด "ไม่เกี่ยวข้อง" หายออกจากชุด ถ้าไม่โหลดใหม่ ผู้ใช้ที่เพิ่งกด
+ * ลงนามจะเห็นหน้าเดิมทุกอย่างและไม่รู้ว่าการลงนามมีผลแล้วหรือยัง
  */
 export function useLegalDocuments(
   requestId: string | null,
@@ -170,13 +169,13 @@ export function LegalDocumentsCard({
             key={doc.versionId}
             className="flex flex-wrap items-center justify-between gap-3 px-6 py-4"
           >
+            {/*
+              ไม่มีบรรทัด "เห็นชอบเมื่อ ..." ใต้ชื่อเอกสารอีกแล้ว (BDI สั่งเมื่อ 2026-09-20)
+              `legal_acceptance` ไม่ถูกลบเมื่อผู้อนุมัติ BDI ส่งกลับ วันที่ที่พิมพ์ออกมาจึงเป็น
+              ของรอบที่ถูกยกเลิกไปแล้ว — ขัดกับชุดเอกสารที่กลับมาครบและรอการเห็นชอบใหม่ทั้งชุด
+            */}
             <div className="min-w-0">
               <p className="text-[15px] font-medium text-navy-800">{documentLabel(doc)}</p>
-              {doc.acceptedAt ? (
-                <p className="mt-0.5 text-[13px] text-ink-muted">
-                  เห็นชอบเมื่อ {formatThaiDate(doc.acceptedAt)}
-                </p>
-              ) : null}
             </div>
             {doc.fileUrl ? (
               <Button size="sm" variant="secondary" onClick={() => setOpen(doc)}>
