@@ -49,7 +49,6 @@ interface HistoryRow {
   actor: string | null;
   at: string;
   note?: string | null;
-  round?: number;
 }
 
 /**
@@ -70,8 +69,8 @@ interface HistoryRow {
  * เป็นแถวที่สองเสมอทั้งที่ถือเวลาของรอบล่าสุด จึงใหม่กว่าบรรทัดที่อยู่ข้างล่างมัน
  *
  * แถว `BDI_OFFICER_REVIEW` ตอบได้ครบทั้งสาม — ด่านนั้นถูกเปิดจาก `POST /:id/submit` ที่เดียว
- * ทั้งสองเส้นทาง **หนึ่งแถวจึงเท่ากับการนำส่งหนึ่งครั้ง** พร้อมเวลา (`assignedAt`) ผู้กด
- * (`openedBy` มาจาก `created_by`) และรอบที่ (`roundNumber`) ครบในแถวเดียว
+ * ทั้งสองเส้นทาง **หนึ่งแถวจึงเท่ากับการนำส่งหนึ่งครั้ง** พร้อมเวลา (`assignedAt`) และผู้กด
+ * (`openedBy` มาจาก `created_by`) ครบในแถวเดียว
  */
 export function Timeline({
   events,
@@ -124,7 +123,6 @@ export function Timeline({
         label: `${ROLE_LABELS.ORGANIZATION_USER}นำส่งคำขอ`,
         actor: e.openedBy ? e.openedBy.name || e.openedBy.email : null,
         at: e.assignedAt ?? e.createdAt,
-        round: e.roundNumber,
       });
     }
 
@@ -136,7 +134,6 @@ export function Timeline({
       actor: e.actor ? e.actor.name || e.actor.email : null,
       at: e.completedAt ?? e.createdAt,
       note: e.note,
-      round: e.roundNumber,
     });
   }
 
@@ -178,14 +175,7 @@ export function Timeline({
               } ring-1 ring-line`}
             />
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-ink">
-                {row.label}
-                {row.round && row.round > 1 ? (
-                  <span className="ml-1.5 text-[13px] font-normal text-ink-muted">
-                    (รอบที่ {row.round})
-                  </span>
-                ) : null}
-              </p>
+              <p className="text-sm font-medium text-ink">{row.label}</p>
               {/* ไม่มีชื่อก็เหลือแค่เวลา — ดีกว่าเติม "ระบบ" ให้กับสิ่งที่คนเป็นคนทำ */}
               <p className="mt-0.5 text-[13px] text-ink-muted">
                 {row.actor ? `${row.actor} · ` : ""}
