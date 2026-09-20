@@ -44,8 +44,14 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   ตัวแปรทั้ง 81 ตัวที่ template ใช้ได้ พร้อมตัวอย่างค่า วิธีพิมพ์ placeholder ให้ไม่พลาด
   วิธีอัปโหลดเวอร์ชันใหม่ และเส้นแบ่งว่าอะไรแก้เองได้ อะไรต้องให้ทีมพัฒนาทำก่อน
   §3.1 คือตารางชื่อเดิม→ชื่อใหม่ของการเปลี่ยนชื่อเมื่อ 2026-08-24 · §3.2 คือชุดเอกสาร
-  2026-08-31 ที่สลับเลขผนวก — มีฉบับ .docx อยู่ที่
-  `docs/manuals-docx/18-document-template-variables.docx` สร้างจากตัวเดียวกับคู่มือผู้ทดสอบ
+  2026-08-31 ที่สลับเลขผนวก · §3.4 คือ `shortname` / `legalNotice` / `isRequired` — มีฉบับ .docx
+  อยู่ที่ `docs/manuals-docx/18-document-template-variables.docx` สร้างจากตัวเดียวกับคู่มือผู้ทดสอบ
+- `docs/manuals-pdf/คู่มือ-เอกสารต้นแบบ-v1.0.pdf` — **คู่มือ A4 ฉบับส่งมอบ** ของเรื่องเดียวกัน
+  18 หน้า พร้อมภาพหน้าจอจริง: ตารางตัวแปรทั้ง 77 ตัวแยกตามกลุ่มพร้อมคอลัมน์ว่าใช้กับ A0–A3
+  หรือ A4, ช่องติ๊กของ A4, และบทที่ 5 ที่แยก "แก้เนื้อไฟล์" (อัปโหลด .docx) ออกจาก "แก้ข้อมูล
+  ประจำตัว" (`shortname` · `legalNotice` · `isRequired`) สร้างด้วย
+  `docs/tools/build-template-manual.py` แล้วพิมพ์ด้วย `../../render-manual-pdf.py` —
+  **ตารางตัวแปรมาจาก `TEMPLATE_VARIABLES` ในโค้ดโดยตรง อย่าพิมพ์เพิ่มด้วยมือ**
 - `docs/17-legal-document-rendering.md` — เอกสารข้อตกลง A0–A3: ทำไมต้องเดินทาง
   `.docx` → LibreOffice → PDF, template อยู่ในฐานข้อมูลไม่ใช่ใน repo, รายชื่อ placeholder
   ที่ใช้ได้, การลงนามที่ฝังอยู่ใน `POST /:id/review`, และคำถามที่ยังค้าง
@@ -55,7 +61,10 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   **ยังไม่ได้ย้าย**
 - `docs/bdi-admin-portal.postman_collection.json` — Journey A as a runnable collection,
   with three `*.postman_environment.json` files beside it (dev checkout / main / public).
-  The admin token is left empty in the last two on purpose — it is a real secret from `.env`
+  The admin token is left empty in the last two on purpose — it is a real secret from `.env`.
+  **L1–L4 are the legal documents**: L1 writes `shortname` / `legalNotice` / `isRequired`,
+  L2 clears the first two, L3 lists everything plus the variable catalogue, L4 publishes a
+  new `.docx`
 
 Read `docs/01-user-journey.md` before touching anything in `backend/src/routes/organizations.ts`
 or `backend/src/routes/dataset-requests.ts`.
