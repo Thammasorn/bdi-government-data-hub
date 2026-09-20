@@ -661,7 +661,17 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
               ["อีเมลผู้ติดต่อ", request.maintainerEmail],
               ["คำสำคัญ", splitTags(request.tagString).join(" · ")],
               ["รายละเอียด", request.notes],
-              ["วัตถุประสงค์", request.objective],
+              [
+                "วัตถุประสงค์",
+                /* ข้อ 8 เลือกได้หลายข้อ (ชุด 2026-09-20) — ป้ายของทุกข้อที่เลือก คั่นด้วยจุดกลาง
+                   เหมือนคำสำคัญ */
+                splitTags(request.objective)
+                  .map((code) => labelOf(choices.objective, code) ?? code)
+                  .join(" · "),
+              ],
+              ...(rules.objectiveOther.visible
+                ? ([["วัตถุประสงค์อื่น ๆ", request.objectiveOther]] as DetailRow[])
+                : []),
             ]}
           />
         </Card>

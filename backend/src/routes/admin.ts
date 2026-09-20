@@ -1219,23 +1219,57 @@ const templateUpload = multer({
 });
 
 /**
- * ตั้งเอกสารเป็นบังคับหรือไม่บังคับ — `PATCH /api/admin/legal-documents/:code`
+ * แก้ข้อมูลประจำตัวของเอกสาร — `PATCH /api/admin/legal-documents/:code`
  *
- * `legal_document.is_required` มีในสคีมามาตั้งแต่ต้น ("ผู้ใช้ต้องยอมรับเอกสารนี้หรือไม่")
- * แต่ไม่เคยมีโค้ดไหนอ่านมัน — `seed-masters.ts` ตั้ง true ให้ทุกฉบับแล้วจบ ที่นี่คือที่ที่
- * แอดมินสลับได้ โดยไม่ต้องแก้โค้ดหรือ seed ใหม่
+ * สามช่องที่ฝ่ายกฎหมายสั่งเปลี่ยนได้โดยไม่ต้องแก้โค้ดและไม่ต้อง seed ใหม่ — ส่งมาช่องเดียว
+ * หรือหลายช่องพร้อมกันก็ได้ ช่องที่ไม่ได้ส่งมาไม่ถูกแตะ
  *
- * ฉบับที่ไม่บังคับจะมีปุ่ม "ไม่เกี่ยวข้อง" ให้ผู้มีอำนาจกดข้ามตอนลงนาม และฉบับที่ถูกข้าม
- * จะไม่ถูกส่งต่อไปให้ฝ่าย BDI เห็นชอบด้วย
+ * - **`shortname`** ชื่อสั้นที่ผู้ใช้เห็นแทนรหัส (`ผนวก 1`) รหัส `A0`–`A4` เป็นของภายใน
+ *   ระบบไม่พิมพ์ออกหน้าจอ ฉบับที่ไม่มีชื่อสั้นตกกลับไปใช้ชื่อเต็ม ไม่ใช่ตกกลับไปใช้รหัส
+ *   (`documentLabel()` ที่ `frontend/lib/legal-document.ts`) — **unique** ทั้งตาราง
+ * - **`legalNotice`** คำเตือนใต้บรรทัด "เอกสารฉบับที่ n จาก m" ในกล่องอ่าน/ลงนามของ
+ *   ผู้มีอำนาจ **ไม่ใช่เนื้อเอกสาร** และไม่เข้าไปอยู่ใน .docx — ของ A3 คือบรรทัดที่บอกว่า
+ *   หน่วยงานที่ไม่มีการแบ่งปันข้อมูลส่วนบุคคลกดข้ามได้
+ * - **`isRequired`** ฉบับที่ไม่บังคับจะมีปุ่ม "ไม่เกี่ยวข้อง" ให้ผู้มีอำนาจกดข้ามตอนลงนาม
+ *   และฉบับที่ถูกข้ามจะไม่ถูกส่งต่อไปให้ฝ่าย BDI เห็นชอบด้วย
+ *
+ * `is_required` มีในสคีมามาตั้งแต่ต้นแต่ไม่เคยมีโค้ดไหนอ่านมัน — `seed-masters.ts` เคยตั้ง
+ * true ให้ทุกฉบับแล้วจบ ที่นี่คือที่ที่แอดมินสลับได้ และ `seed-masters.ts` จงใจไม่ใส่
+ * `isRequired` ไว้ใน `update` ของ upsert เพื่อไม่ให้การ seed รอบถัดไปล้างสิ่งที่ตั้งไว้ที่นี่
+ * **`shortname` กับ `legalNotice` ยังอยู่ใน `update` นั้น** การรัน `seed:masters` จึงดึงสอง
+ * ช่องนี้กลับไปเป็นค่าในโค้ด — แก้ถาวรต้องแก้ `LEGAL_DOCUMENTS` ในสคริปต์นั้นด้วย
  *
  * **ไม่ย้อนหลัง** — คำขอที่ลงนามไปแล้วเก็บรายการเอกสารของตัวเองไว้ใน
  * `signature_confirmation.confirmation_payload_json` และ `legal_acceptance` แล้ว
- * การสลับค่านี้จึงมีผลกับคำขอที่ยังไม่ลงนามเท่านั้น
+ * การแก้ค่าเหล่านี้จึงมีผลกับคำขอที่ยังไม่ลงนามเท่านั้น
  */
+
+/** ค่าที่ส่งมาเป็นช่องว่างล้วนนับเป็น "ไม่มี" — `legalNoticeOf()` ฝั่งหน้าจอนับแบบเดียวกัน
+ *  และ `shortname` ที่เป็นสตริงว่างจะชนกันเองที่ดัชนี unique ตั้งแต่ฉบับที่สอง */
+const blankToNull = (value: string | null | undefined) =>
+  value === undefined ? undefined : (value?.trim() ? value.trim() : null);
+
+const legalDocumentPatchSchema = z
+  .object({
+    shortname: z
+      .string()
+      .max(200, { error: "ชื่อสั้นยาวได้ไม่เกิน 200 ตัวอักษร" })
+      .nullable()
+      .optional(),
+    legalNotice: z.string().nullable().optional(),
+    isRequired: z.boolean({ error: "ต้องระบุ isRequired เป็น true หรือ false" }).optional(),
+  })
+  .refine(
+    (body) =>
+      body.shortname !== undefined || body.legalNotice !== undefined || body.isRequired !== undefined,
+    { error: "ต้องส่งอย่างน้อยหนึ่งช่อง: shortname, legalNotice หรือ isRequired" },
+  );
+
+/** ช่องที่แก้ได้ พร้อมถ้อยคำที่ใช้รายงานกลับไป — ลำดับเดียวกับที่ตอบใน `changed` */
+const PATCHABLE_FIELDS = ["shortname", "legalNotice", "isRequired"] as const;
+
 adminRouter.patch("/legal-documents/:code", async (req, res) => {
-  const parsed = z
-    .object({ isRequired: z.boolean({ error: "ต้องระบุ isRequired เป็น true หรือ false" }) })
-    .safeParse(req.body ?? {});
+  const parsed = legalDocumentPatchSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;
@@ -1243,39 +1277,105 @@ adminRouter.patch("/legal-documents/:code", async (req, res) => {
 
   const document = await prisma.legalDocument.findUnique({
     where: { documentCode: req.params.code },
-    select: { id: true, documentCode: true, nameTh: true, isRequired: true },
+    select: {
+      id: true,
+      documentCode: true,
+      nameTh: true,
+      shortname: true,
+      legalNotice: true,
+      isRequired: true,
+    },
   });
   if (!document) {
     res.status(404).json({ error: "not_found", message: "ไม่พบเอกสารรหัสนี้" });
     return;
   }
 
-  if (document.isRequired === parsed.data.isRequired) {
-    res.json({ document, changed: false });
+  const wanted = {
+    shortname: blankToNull(parsed.data.shortname),
+    legalNotice: blankToNull(parsed.data.legalNotice),
+    isRequired: parsed.data.isRequired,
+  };
+
+  // ส่งค่าเดิมกลับมาไม่นับเป็นการแก้ — ไม่เขียนแถวและไม่เขียน audit ให้เปล่า ๆ
+  const changed = PATCHABLE_FIELDS.filter(
+    (field) => wanted[field] !== undefined && wanted[field] !== document[field],
+  );
+  if (changed.length === 0) {
+    res.json({ document, changed: false, changedFields: [] });
     return;
   }
 
-  const updated = await prisma.legalDocument.update({
-    where: { id: document.id },
-    data: { isRequired: parsed.data.isRequired },
-    select: { id: true, documentCode: true, nameTh: true, isRequired: true },
-  });
+  const data = Object.fromEntries(changed.map((field) => [field, wanted[field]]));
+
+  let updated;
+  try {
+    updated = await prisma.legalDocument.update({
+      where: { id: document.id },
+      data,
+      select: {
+        id: true,
+        documentCode: true,
+        nameTh: true,
+        shortname: true,
+        legalNotice: true,
+        isRequired: true,
+      },
+    });
+  } catch (error) {
+    // shortname เป็น unique ทั้งตาราง — ชื่อซ้ำต้องบอกว่าซ้ำกับใคร ไม่ใช่ 500
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      const owner = await prisma.legalDocument.findFirst({
+        where: { shortname: wanted.shortname },
+        select: { documentCode: true },
+      });
+      res.status(409).json({
+        error: "conflict",
+        message: `ชื่อสั้น "${wanted.shortname}" ถูกใช้กับเอกสาร ${owner?.documentCode ?? "ฉบับอื่น"} อยู่แล้ว`,
+        fields: { shortname: "ชื่อสั้นต้องไม่ซ้ำกับเอกสารฉบับอื่น" },
+      });
+      return;
+    }
+    throw error;
+  }
 
   await logAudit({
     action: AuditAction.LEGAL_DOCUMENT_PUBLISHED,
     subjectType: AuditSubject.LEGAL_DOCUMENT,
     subjectId: document.id,
-    before: { isRequired: document.isRequired },
-    after: { isRequired: updated.isRequired },
+    before: Object.fromEntries(changed.map((field) => [field, document[field]])),
+    after: Object.fromEntries(changed.map((field) => [field, updated[field]])),
     metadata: { document_code: document.documentCode, changed_via: "ADMIN_API" },
   });
+
+  const messages: string[] = [];
+  if (changed.includes("shortname")) {
+    messages.push(
+      updated.shortname
+        ? `หน้าจอจะเรียกเอกสารฉบับนี้ว่า "${updated.shortname}"`
+        : `ล้างชื่อสั้นแล้ว หน้าจอจะเรียกเอกสารฉบับนี้ด้วยชื่อเต็ม "${updated.nameTh}"`,
+    );
+  }
+  if (changed.includes("legalNotice")) {
+    messages.push(
+      updated.legalNotice
+        ? "คำเตือนใหม่จะขึ้นในกล่องอ่าน/ลงนามของผู้มีอำนาจ"
+        : "ลบคำเตือนแล้ว กล่องอ่าน/ลงนามจะไม่มีบรรทัดเตือนของฉบับนี้",
+    );
+  }
+  if (changed.includes("isRequired")) {
+    messages.push(
+      updated.isRequired
+        ? `${document.documentCode} กลับเป็นเอกสารบังคับแล้ว ผู้มีอำนาจต้องเห็นชอบทุกครั้ง`
+        : `${document.documentCode} เป็นเอกสารไม่บังคับแล้ว ผู้มีอำนาจกด "ไม่เกี่ยวข้อง" ข้ามได้`,
+    );
+  }
 
   res.json({
     document: updated,
     changed: true,
-    message: updated.isRequired
-      ? `${document.documentCode} กลับเป็นเอกสารบังคับแล้ว ผู้มีอำนาจต้องเห็นชอบทุกครั้ง`
-      : `${document.documentCode} เป็นเอกสารไม่บังคับแล้ว ผู้มีอำนาจกด "ไม่เกี่ยวข้อง" ข้ามได้`,
+    changedFields: changed,
+    message: messages.join(" · "),
   });
 });
 
@@ -1301,10 +1401,13 @@ adminRouter.get("/legal-documents", async (_req, res) => {
     documents: documents.map((doc) => ({
       code: doc.documentCode,
       name: doc.nameTh,
+      /** สามช่องที่ PATCH แก้ได้ — อ่านค่าปัจจุบันจากที่นี่ก่อนสั่งแก้ */
+      shortname: doc.shortname,
+      legalNotice: doc.legalNotice,
+      isRequired: doc.isRequired,
       scope: doc.applicationScope,
       status: doc.status,
       displayOrder: doc.displayOrder,
-      isRequired: doc.isRequired,
       versions: doc.versions.map((v) => ({
         id: v.id,
         versionNumber: v.versionNumber,

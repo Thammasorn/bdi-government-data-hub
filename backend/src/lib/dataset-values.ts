@@ -8,8 +8,9 @@
  * ทุกตัวเลือกยังพิมพ์ออกมาครบ ข้อที่ตรงกับคำขอได้ ✔ ข้อที่ไม่ตรงได้ ☐ ผู้อ่านจึงเห็นว่า
  * ตัวเลือกอื่นมีอะไรและไม่ได้เลือกอะไร ซึ่งเป็นสิ่งที่แบบฟอร์มกระดาษสื่อ
  */
+import { choiceLabel } from "./dataset-choices.js";
 import { SYSTEM_NAME, tickFields } from "./document-render.js";
-import { splitTags, type MetadataValues } from "./dataset.js";
+import { MULTI_SELECT_FIELDS, splitTags, type MetadataValues } from "./dataset.js";
 import { thaiLongDate, thaiLongDateTime } from "./legal-values.js";
 
 /**
@@ -70,9 +71,15 @@ function tickValues(metadata: MetadataValues): Record<string, string> {
   for (const [field, codes] of Object.entries(tickFields())) {
     const raw = (metadata as unknown as Record<string, unknown>)[field];
     // boolean เก็บเป็น true/false ส่วน code list เก็บเป็นสตริงรหัส
-    const selected = raw === null || raw === undefined ? null : String(raw);
+    // ช่องที่เลือกได้หลายข้อ (ข้อ 8) เก็บหลายรหัสคั่นด้วย "," — ติ๊กทุกข้อที่อยู่ในรายการ
+    const selected =
+      raw === null || raw === undefined
+        ? new Set<string>()
+        : MULTI_SELECT_FIELDS.has(field as keyof MetadataValues)
+          ? new Set(splitTags(String(raw)))
+          : new Set([String(raw)]);
     for (const code of codes) {
-      out[`tick.${field}.${code}`] = selected === code ? TICKED : UNTICKED;
+      out[`tick.${field}.${code}`] = selected.has(code) ? TICKED : UNTICKED;
     }
   }
   return out;
@@ -96,7 +103,13 @@ export function datasetDocumentValues(input: DatasetDocumentInput): Record<strin
     "dataset.maintainerEmail": input.maintainerEmail ?? "",
     "dataset.tags": splitTags(input.tagString).join(" · "),
     "dataset.notes": input.notes ?? "",
-    "dataset.objective": input.objective ?? "",
+    /* ข้อ 8 เป็นรหัสเลือกได้หลายข้อตั้งแต่ชุด 2026-09-20 — ช่องติ๊ก {{tick.objective.<รหัส>}}
+       คือคำตอบหลักบนเอกสาร ตัวแปรนี้พิมพ์ป้ายของข้อที่เลือกคั่นด้วยจุดกลาง สำหรับ template
+       ที่วางไว้บนบรรทัดหัวข้อ (A4 ฉบับ 2026-09-20 ยังวางไว้) ไม่ใช่ข้อความอิสระอีกต่อไป */
+    "dataset.objective": splitTags(input.objective)
+      .map((code) => choiceLabel("objective", code))
+      .join(" · "),
+    "dataset.objectiveOther": input.objectiveOther ?? "",
     "dataset.dataSource": input.dataSource ?? "",
     "dataset.dataTopicOther": input.dataTopicOther ?? "",
     "dataset.dataFormatOther": input.dataFormatOther ?? "",

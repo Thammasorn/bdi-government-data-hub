@@ -63,6 +63,7 @@ const FIELDS_BY_SECTION: Record<string, FormField[]> = {
     "tagString",
     "notes",
     "objective",
+    "objectiveOther",
   ],
   "section-2": [
     "updateFrequencyUnit",
@@ -494,20 +495,29 @@ export default function EditDatasetRequestPage() {
                 />
               </Wrap>
               <Wrap name="objective">
-                <TextAreaField
+                <MultiChoice
                   label="วัตถุประสงค์"
                   required
-                  maxLength={1000}
                   value={form.objective}
-                  onChange={(e) => set("objective", e.target.value)}
-                  {...fieldProps("objective")}
-                  hint={counterHint(
-                    form.objective,
-                    1000,
-                    "ที่มาและวัตถุประสงค์ของการจัดทำชุดข้อมูล เช่น กฎหมาย ภารกิจ หรือโครงการตามแผนยุทธศาสตร์ (อย่างน้อย 30 ตัวอักษร)",
-                  )}
+                  onChange={(v) => choose("objective", v)}
+                  {...answerProps("objective")}
+                  options={optionsFor(choices.objective)}
+                  hint="ที่มาและวัตถุประสงค์ของการจัดทำชุดข้อมูล เช่น กฎหมาย ภารกิจ หรือโครงการตามแผนยุทธศาสตร์ — เลือกได้มากกว่า 1 ข้อ"
                 />
               </Wrap>
+              {rules.objectiveOther.visible ? (
+                <Wrap name="objectiveOther">
+                  <TextField
+                    label="ระบุวัตถุประสงค์อื่น ๆ"
+                    required
+                    maxLength={200}
+                    value={form.objectiveOther}
+                    onChange={(e) => set("objectiveOther", e.target.value)}
+                    {...fieldProps("objectiveOther")}
+                    hint={counterHint(form.objectiveOther, 200, "วัตถุประสงค์ที่ไม่อยู่ในรายการข้างบน")}
+                  />
+                </Wrap>
+              ) : null}
             </div>
           </Card>
 
@@ -990,6 +1000,80 @@ function Choice({
         </option>
       ))}
     </SelectField>
+  );
+}
+
+/**
+ * ช่องเลือกได้หลายข้อ (ข้อ 8 วัตถุประสงค์ — ช่องเดียวในฟอร์มที่เป็น multi-select ตั้งแต่ชุด
+ * 2026-09-20) เป็นกล่องติ๊กในกรอบเดียวกับคำถามใช่/ไม่ใช่ ไม่ใช่ dropdown ที่กด Ctrl ค้าง
+ *
+ * ค่าเป็นรหัสคั่นด้วย "," รูปเดียวกับที่ API เก็บ (`splitTags()` อ่าน) เรียงตามรหัสทุกครั้ง
+ * ที่ติ๊ก จะได้ตรงกับที่ backend normalise แล้วส่งกลับมา — ฟอร์มจึงไม่เห็นค่า "เปลี่ยน" ทั้งที่
+ * ผู้ใช้แค่ติ๊กลำดับต่างกัน
+ */
+function MultiChoice({
+  label,
+  required,
+  value,
+  onChange,
+  error,
+  onBlur,
+  options,
+  hint,
+}: {
+  label: string;
+  required?: boolean;
+  value: string;
+  onChange: (value: string) => void;
+  error?: string;
+  onBlur?: () => void;
+  options: Array<[string, string]>;
+  hint?: string;
+}) {
+  const selected = new Set(splitTags(value));
+  const toggle = (code: string) => {
+    const next = new Set(selected);
+    if (next.has(code)) next.delete(code);
+    else next.add(code);
+    onChange([...next].sort().join(","));
+  };
+  return (
+    <fieldset
+      className={clsx("rounded-xl border p-4", error ? "border-danger" : "border-line")}
+      aria-invalid={error ? true : undefined}
+    >
+      <legend className="px-1 text-sm font-medium leading-relaxed text-ink">
+        {label}
+        {required ? <span className="ml-1 text-coral-500">*</span> : null}
+      </legend>
+      {options.length === 0 ? (
+        <p className="mt-2 text-[13px] text-ink-muted">ยังไม่มีตัวเลือกให้เลือก</p>
+      ) : (
+        <div className="mt-2 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+          {options.map(([code, text]) => (
+            <label key={code} className="flex cursor-pointer items-start gap-2 text-[15px] text-ink">
+              <input
+                type="checkbox"
+                name={label}
+                value={code}
+                checked={selected.has(code)}
+                onChange={() => toggle(code)}
+                onBlur={onBlur}
+                className="mt-1 h-4 w-4 shrink-0 rounded border-line text-coral-500 focus:ring-2 focus:ring-navy-100"
+              />
+              <span>{text}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      {error ? (
+        <p className="mt-2 text-[13px] text-danger" role="alert">
+          {error}
+        </p>
+      ) : hint ? (
+        <p className="mt-2 text-[13px] text-ink-muted">{hint}</p>
+      ) : null}
+    </fieldset>
   );
 }
 

@@ -26,8 +26,11 @@ import { labelOf, type ChoiceOption } from "./dataset-choices";
 /** หน่วยที่ไม่มี "ทุก ๆ กี่หน่วย" ให้กรอก */
 export const FREQUENCY_UNITS_WITHOUT_INTERVAL: string[] = ["R", "O", "U"];
 
-export const DATA_FORMAT_OTHER_CODE = "4";
+/** เดิม "4" — ชุด 2026-09-20 แยก "วางไฟล์" เป็นสองข้อ รหัสจึงเลื่อนเป็น "5" */
+export const DATA_FORMAT_OTHER_CODE = "5";
 export const DATA_TOPIC_OTHER_CODE = "99";
+/** ข้อ 8 รหัส "อื่น ๆ" — คนละรายการรหัสกับข้อ 1.2 และ 10 ถึงจะเลขเท่ากัน */
+export const OBJECTIVE_OTHER_CODE = "99";
 /** ข้อ 10 รหัส "อื่น ๆ" — คนละรายการรหัสกับข้อ 1.2 ถึงจะเลขเท่ากัน */
 export const GEO_COVERAGE_OTHER_CODE = "99";
 
@@ -52,7 +55,9 @@ export interface FormState {
   maintainerEmail: string;
   tagString: string;
   notes: string;
+  /** ข้อ 8 เลือกได้หลายข้อ — รหัสคั่นด้วย "," เหมือนที่ API เก็บ อ่านด้วย splitTags() */
   objective: string;
+  objectiveOther: string;
   updateFrequencyUnit: string;
   updateFrequencyInterval: string;
   deliveryFrequency: string;
@@ -94,6 +99,7 @@ export const EMPTY_FORM: FormState = {
   tagString: "",
   notes: "",
   objective: "",
+  objectiveOther: "",
   updateFrequencyUnit: "",
   updateFrequencyInterval: "",
   deliveryFrequency: "",
@@ -169,6 +175,8 @@ export interface FormRules {
   allowTransformedRawDataSharingSpecifiedPlatforms: FieldRule;
   geoCoverageOther: FieldRule;
   dataTopicOther: FieldRule;
+  /** 8 ระบุวัตถุประสงค์อื่น ๆ — ถามเมื่อรายการที่เลือกมี 99 */
+  objectiveOther: FieldRule;
   dataFormatOther: FieldRule;
   updateFrequencyInterval: FieldRule;
 }
@@ -247,6 +255,7 @@ export function formRules(f: FormState): FormRules {
     ),
     geoCoverageOther: free(f.geoCoverage === GEO_COVERAGE_OTHER_CODE),
     dataTopicOther: free(f.dataTopic === DATA_TOPIC_OTHER_CODE),
+    objectiveOther: free(splitTags(f.objective).includes(OBJECTIVE_OTHER_CODE)),
     dataFormatOther: free(f.dataFormat === DATA_FORMAT_OTHER_CODE),
     updateFrequencyInterval: free(
       f.updateFrequencyUnit !== "" &&
@@ -319,6 +328,7 @@ export function applyRules(input: FormState, previous?: FormState): FormState {
   }
   if (!rules.authorizePersonalDataAnonymization.visible) f.authorizePersonalDataAnonymization = "";
   if (!rules.dataTopicOther.visible) f.dataTopicOther = "";
+  if (!rules.objectiveOther.visible) f.objectiveOther = "";
   if (!rules.dataFormatOther.visible) f.dataFormatOther = "";
   if (!rules.updateFrequencyInterval.visible) f.updateFrequencyInterval = "";
   if (!rules.geoCoverageOther.visible) f.geoCoverageOther = "";
@@ -482,11 +492,10 @@ export function validateDatasetField(
         tooLong(value, 1000, "รายละเอียดต้องยาวไม่เกิน 1,000 ตัวอักษร")
       );
     case "objective":
-      return (
-        required(value, "กรุณากรอกวัตถุประสงค์ของการจัดทำชุดข้อมูล") ??
-        tooShort(value, 30, "วัตถุประสงค์ต้องมีอย่างน้อย 30 ตัวอักษร") ??
-        tooLong(value, 1000, "วัตถุประสงค์ต้องยาวไม่เกิน 1,000 ตัวอักษร")
-      );
+      return required(value, "กรุณาเลือกวัตถุประสงค์ของการจัดทำชุดข้อมูลอย่างน้อย 1 ข้อ");
+    case "objectiveOther":
+      if (!rules.objectiveOther.visible) return null;
+      return required(value, "เลือกวัตถุประสงค์เป็น “อื่น ๆ” แล้วต้องระบุวัตถุประสงค์ด้วย");
 
     // ---------------- ส่วนที่ 2
     case "updateFrequencyUnit":
