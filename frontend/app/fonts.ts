@@ -3,6 +3,11 @@ import localFont from "next/font/local";
 /**
  * ฟอนต์จากชุด CI ที่ให้มาใน assets/theme_ci_design/Font
  * self-host ทั้งหมด ไม่เรียก Google Fonts เพื่อให้ทำงานได้หลัง firewall
+ *
+ * Sarabun ทั้งสี่ไฟล์ **ไม่ใช่ไฟล์ดิบจาก CI** — descender ถูกขยายจาก -232 เป็น -330 ด้วย
+ * `docs/tools/fix-sarabun-descender.py` เพราะฟอนต์วาด `_` ต่ำกว่า descender ที่ประกาศไว้
+ * และ Chrome ตัดข้อความใน <input> ไว้ที่กล่อง ascent+descent ตัว `_` จึงหายไปเป็นช่องว่าง
+ * (feedback 2026-09-21) ถ้าได้ฟอนต์ชุดใหม่จาก CI ให้รันสคริปต์นั้นซ้ำก่อนวางทับ
  */
 export const prompt = localFont({
   variable: "--font-prompt",
