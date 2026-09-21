@@ -443,6 +443,21 @@ rebuilds the email from `subject_type`/`subject_id` at send time (`src/workers/r
 no token or credential is ever stored in plain text. Activation-key emails are the exception —
 they are sent inline because the raw key only exists in memory at that moment.
 
+**The outbox is also how two e-mails from one click are kept in order.** When the BDI officer
+passes an organisation whose signatory has no active account, `ensureApproverAccount()` sends
+the invitation inline (raw key) and the "ขอความเห็นชอบ" request used to go out inline right
+after it — same second, and mail clients showed them in either order (feedback 2026-09-21). The
+request now goes through `notifyUsers()` with `scheduledAt` set `SIGNATORY_REQUEST_DELAY_MS`
+(one minute) later **only when an invitation was just issued**; an approver who already has an
+account gets it at once. Waiting for the approver to activate instead was rejected: the home
+page already tells them to approve the moment they log in, so a mail sent then says nothing.
+`workers/render.ts` picks `sendSignatoryRequest()` by **recipient** (`destination` equals the
+request's `approverEmail`), not by the open gate — an existing approver can close the gate
+inside that minute, and the open-gate test would then hand them the BDI "รอลงนาม" mail. A
+recall inside the minute cancels the mail on its own: the `PENDING` account is deleted and
+`notification` / `notification_delivery` cascade from it. The approver also gets an in-app
+notification out of this, which `sendSignatoryRequest()` alone never gave them.
+
 Notifications need not be real time, so the bell fetches on page load and on navigation — there
 is no polling loop, no websocket. Don't add one without a requirement.
 

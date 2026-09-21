@@ -80,6 +80,15 @@ interface NotifyInput {
    * ตั้ง false สำหรับข้อความที่ไม่ควรออกไปทางอีเมล
    */
   email?: boolean;
+  /**
+   * เวลาที่เร็วที่สุดที่ worker จะหยิบอีเมลฉบับนี้ไปส่ง (ค่าเริ่มต้น: ทันที)
+   *
+   * มีไว้จัดลำดับอีเมลที่ต้องมาถึงหลังอีกฉบับหนึ่ง — คำเชิญเข้าใช้งานระบบส่งเองใน
+   * request handler เพราะถือ raw key แต่คำขอความเห็นชอบเดินผ่านคิวนี้ ถ้าไม่หน่วงไว้
+   * สองฉบับถึงกล่องจดหมายในวินาทีเดียวกันและเรียงสลับกันได้ (feedback 2026-09-21)
+   * มีผลกับ delivery ทางอีเมลเท่านั้น notification ในระบบขึ้นทันทีเหมือนเดิม
+   */
+  scheduledAt?: Date;
 }
 
 /**
@@ -122,7 +131,7 @@ export async function notifyUsers(userIds: Array<string | null | undefined>, inp
             channel: DeliveryChannel.EMAIL,
             destination: recipient.email,
             status: DeliveryStatus.PENDING,
-            scheduledAt: new Date(),
+            scheduledAt: input.scheduledAt ?? new Date(),
             correlationId: correlation,
           },
         });
