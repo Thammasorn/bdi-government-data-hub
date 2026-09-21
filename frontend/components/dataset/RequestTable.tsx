@@ -58,13 +58,16 @@ export function DatasetRequestTable({
 
   /**
    * ปุ่มลบมีเฉพาะฝั่งหน่วยงาน และเฉพาะแถวที่ยังเป็นฉบับร่าง — เงื่อนไขเดียวกับที่
-   * `DELETE /api/dataset-requests/:id` ใช้ (mayEdit + status DRAFT) ปุ่มที่กดแล้วได้ 404
+   * `DELETE /api/dataset-requests/:id` ใช้ (mayEdit + role + status DRAFT) ปุ่มที่กดแล้วไม่ผ่าน
    * แย่กว่าไม่มีปุ่ม เจ้าหน้าที่ BDI จึงไม่เห็นมันเลยแม้จะเห็นแถวนั้นอยู่ในรายการของตัวเอง
    *
-   * กดได้ทุกคนในหน่วยงานเหมือนสิทธิ์แก้ไข ไม่ใช่เฉพาะคนที่กดสร้าง — แถวในรายการ
-   * ไม่ได้ส่ง id ของผู้สร้างมาด้วย และฝั่ง server ก็ไม่ได้แคบกว่านี้
+   * ลบได้เฉพาะ **ผู้ประสานงานของหน่วยงาน** ไม่ใช่ทุกคนในหน่วยงานเหมือนสิทธิ์แก้ไข —
+   * ผู้มีอำนาจอนุมัติเห็นแถวเดียวกันและแก้ไขร่างได้ แต่ฝั่ง server ตอบ 403 ให้เขา
+   * ยังไม่แคบถึงเฉพาะคนที่กดสร้าง — แถวในรายการไม่ได้ส่ง id ของผู้สร้างมาด้วย
+   * และฝั่ง server ก็ไม่ได้แคบกว่านี้
    */
-  const canDelete = !isBdiStaff(user?.roles ?? []);
+  const canDelete =
+    !isBdiStaff(user?.roles ?? []) && (user?.roles.includes("ORGANIZATION_USER") ?? false);
 
   async function confirmDelete() {
     if (!pendingDelete) return;
