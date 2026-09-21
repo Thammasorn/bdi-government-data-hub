@@ -37,6 +37,7 @@ import {
   sendRaw,
   sendRequestProgressed,
   sendRoleRemoved,
+  sendSignatoryRequest,
 } from "../lib/mail.js";
 import { buildJourneyProgress, type JourneyProgress } from "../lib/journey-steps.js";
 import { NotificationType, linkFor } from "../lib/notify.js";
@@ -270,6 +271,7 @@ export async function renderAndSend(
         organizationCode: true,
         userFirstnameTh: true,
         userLastnameTh: true,
+        approverEmail: true,
         organization: { select: { nameTh: true, organizationCode: true } },
       },
     });
@@ -291,6 +293,18 @@ export async function renderAndSend(
       );
       switch (n.notificationType) {
         case NotificationType.REQUEST_SUBMITTED: {
+          /**
+           * ผู้รับคือผู้มีอำนาจฯ ของคำขอ → คำขอความเห็นชอบ ตัดสินจาก **ผู้รับ** ไม่ใช่จากด่านที่
+           * เปิดอยู่ เพราะฉบับนี้ถูกหน่วงไว้ให้ตามหลังคำเชิญ (`scheduled_at`, ดู
+           * SIGNATORY_REQUEST_DELAY_MS ใน routes/organizations.ts) และในหนึ่งนาทีนั้นผู้มีอำนาจฯ
+           * ที่มีบัญชีอยู่แล้วอาจเห็นชอบไปก่อน — ด่านขยับไป BDI_FINAL_APPROVAL แล้วเขาจะได้
+           * อีเมล "รอลงนาม" ของฝั่ง BDI แทน อีเมลของเขาต้องเป็นฉบับเดิมไม่ว่าด่านจะอยู่ตรงไหน
+           * (ถ้าคำเชิญถูกถอนก่อนถึงเวลา บัญชี PENDING ถูกลบและแถวคิวหายไปด้วย cascade)
+           */
+          if (request.approverEmail && destination.toLowerCase() === request.approverEmail.toLowerCase()) {
+            await sendSignatoryRequest(destination, org, request.id, undefined, progress);
+            return;
+          }
           const active = await prisma.reviewTask.findFirst({
             where: {
               subjectType: SubjectType.ORGANIZATION_REGISTRATION_REQUEST,

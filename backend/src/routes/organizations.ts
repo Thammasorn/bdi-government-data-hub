@@ -68,7 +68,6 @@ import {
   sendFinalApprovalRequest,
   sendInvitationEmail,
   sendRevisionRequested,
-  sendSignatoryRequest,
   sendSubmittedToOfficers,
 } from "../lib/mail.js";
 import {
@@ -2423,6 +2422,8 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
     let replacedHolders: RevokedAssignment[] = [];
     /** ที่นั่งผู้มีอำนาจฯ ที่ recall ปล่อยคืน — เขียน audit หลัง commit */
     let releasedSeat: ReleasedSeat | null = null;
+    /** ผู้มีอำนาจฯ ที่ด่านถัดไปเปิดให้ และเพิ่งได้รับคำเชิญหรือไม่ — ใช้จัดลำดับอีเมลหลัง commit */
+    let approverToNotify: ApproverToNotify | null = null;
 
     const outcome = await prisma.$transaction(async (tx) => {
       /**
@@ -2548,6 +2549,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
       if (result === ReviewResult.PASSED && task.taskType === ReviewTaskType.BDI_OFFICER_REVIEW) {
         const approver = await ensureApproverAccount(tx, request);
         replacedHolders = approver.replaced;
+        approverToNotify = { id: approver.id, invited: approver.invited };
         await openTask(tx, {
           subjectType: SUBJECT,
           subjectId: request.id,
@@ -2663,7 +2665,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
 
     await announceRoleReplacement(replacedHolders);
 
-    await dispatchReviewNotifications(request, task.taskType, result, note);
+    await dispatchReviewNotifications(request, task.taskType, result, note, approverToNotify);
 
     const fresh = await prisma.organizationRegistrationRequest.findUniqueOrThrow({
       where: { id: request.id },
@@ -2870,7 +2872,7 @@ async function approverConflict(
 async function ensureApproverAccount(
   tx: Prisma.TransactionClient,
   request: RequestRow,
-): Promise<{ id: string; replaced: RevokedAssignment[] }> {
+): Promise<{ id: string; replaced: RevokedAssignment[]; invited: boolean }> {
   /**
    * ตัวพิมพ์เล็กเสมอ — บัญชีที่สร้างตรงนี้คือบัญชีที่ล็อกอิน (`emailSchema`) และ
    * `approverConflict()` จะค้นหาด้วยตัวพิมพ์เล็ก ร่างเก่าที่เก็บ "Somchai@x.go.th" ไว้
@@ -2938,6 +2940,8 @@ async function ensureApproverAccount(
     }));
 
   let replaced: RevokedAssignment[] = [];
+  /** ออกคำเชิญให้ในรอบนี้หรือไม่ — ผู้เรียกใช้ตัดสินว่าต้องหน่วงอีเมลฉบับถัดไป */
+  let invited = false;
 
   if (account.status === UserAccountStatus.ACTIVE) {
     // มีบัญชีอยู่แล้ว — ผูก role ผู้มีอำนาจให้กับหน่วยงานนี้ ผู้ถือคนเดิม (ถ้ามี) เสียสิทธิ์
@@ -2963,9 +2967,10 @@ async function ensureApproverAccount(
       expiresAt: record.expiresAt,
       internal: false,
     });
+    invited = true;
   }
 
-  return { id: account.id, replaced };
+  return { id: account.id, replaced, invited };
 }
 
 /**
@@ -3033,11 +3038,29 @@ async function recallRefusal(
   return null;
 }
 
+/** ผู้มีอำนาจฯ ที่ต้องได้รับคำขอความเห็นชอบ และเพิ่งถูกออกคำเชิญให้ในรอบเดียวกันหรือไม่ */
+interface ApproverToNotify {
+  id: string;
+  invited: boolean;
+}
+
+/**
+ * ระยะห่างระหว่างอีเมลคำเชิญเข้าใช้งานระบบกับอีเมลขอความเห็นชอบ เมื่อสองฉบับเกิดจากการกดครั้งเดียว
+ *
+ * คำเชิญส่งเองทันทีจาก `ensureApproverAccount()` (ถือ raw key) ส่วนคำขอความเห็นชอบเดินผ่าน
+ * outbox — ถ้าไม่หน่วง ทั้งสองถึงกล่องจดหมายในวินาทีเดียวกันและเรียงสลับกันได้ ผู้รับเห็น
+ * "ขอความเห็นชอบ" ก่อน "คำเชิญ" ทั้งที่ยังไม่มีบัญชี (feedback 2026-09-21) ตัดสินใจหน่วงหนึ่งนาที
+ * แทนการรอจนเขาลงทะเบียนเสร็จ เพราะพอเขา login เข้ามาก็เจอหน้าที่บอกให้เห็นชอบอยู่แล้ว
+ * การรอจึงทำให้ฉบับที่สองไม่มีความหมาย
+ */
+const SIGNATORY_REQUEST_DELAY_MS = 60_000;
+
 async function dispatchReviewNotifications(
   request: RequestRow,
   taskType: ReviewTaskType,
   result: ReviewResult,
   note: string | undefined,
+  approver: ApproverToNotify | null = null,
 ) {
   const name = request.organizationNameTh ?? request.organization.nameTh;
   /** ชื่อกับรหัสเดินทางไปกับอีเมลด้วยกันเสมอ — snapshot ของคำขอมาก่อน แล้วค่อยถอยไปที่หน่วยงาน */
@@ -3081,8 +3104,21 @@ async function dispatchReviewNotifications(
     return;
   }
 
-  if (taskType === ReviewTaskType.BDI_OFFICER_REVIEW && request.approverEmail) {
-    await sendSignatoryRequest(request.approverEmail, org, request.id, undefined, progress);
+  if (taskType === ReviewTaskType.BDI_OFFICER_REVIEW && approver) {
+    /**
+     * ผ่าน outbox ไม่ใช่ `sendSignatoryRequest()` ตรง ๆ — คิวมี `scheduled_at` ให้จัดลำดับ
+     * ตามคำเชิญได้ และผู้มีอำนาจฯ ได้ notification ในระบบด้วย (บัญชี PENDING รับได้ ตาม sheet)
+     * ตัวอีเมลประกอบตอนส่งใน workers/render.ts จากด่านที่เปิดอยู่จริง จึงพา progress ไปเอง
+     */
+    await notifyUsers([approver.id], {
+      type: NotificationType.REQUEST_SUBMITTED,
+      title: "มีคำขอลงทะเบียนหน่วยงานรอความเห็นชอบจากคุณ",
+      message: name,
+      subjectType: SUBJECT,
+      subjectId: request.id,
+      organizationId: request.organizationId,
+      scheduledAt: approver.invited ? new Date(Date.now() + SIGNATORY_REQUEST_DELAY_MS) : undefined,
+    });
     return;
   }
 
