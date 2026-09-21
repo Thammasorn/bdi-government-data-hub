@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 /**
  * รายการเดียวที่ยังต้องแก้ก่อนกดปุ่มได้
@@ -28,6 +28,12 @@ export interface IncompleteGateProps {
   children: React.ReactNode;
 }
 
+/** ระยะห่างระหว่างปุ่มกับกล่อง — ค่าเดียวกับ `GAP` ใน components/list/RowDetailCard.tsx */
+const GAP = 8;
+
+/** ยึดจากขอบบนหรือขอบล่างของ viewport อย่างใดอย่างหนึ่ง ไม่ใช่ทั้งคู่ */
+type Placement = { left: number; top: number } | { left: number; bottom: number };
+
 /**
  * ปุ่มที่กดไม่ได้ พร้อมรายการว่าต้องไปแก้อะไรบ้าง
  *
@@ -43,10 +49,64 @@ export interface IncompleteGateProps {
  * **ทำไมกล่องอยู่ใน DOM เสมอ:** `aria-describedby` ของปุ่มต้องชี้ไปยัง element ที่มีอยู่จริง กล่องที่
  * ถูกสร้างตอน hover เท่านั้นจึงไม่มีอะไรให้โปรแกรมอ่านหน้าจออ่าน ซ่อนด้วย `opacity-0` ไม่ใช่
  * `hidden`/`invisible` ด้วยเหตุผลเดียวกัน
+ *
+ * **ทำไม `fixed` แล้ววัดตำแหน่งเอง ไม่ใช่ `absolute top-full`:** การ์ดขอให้กล่องไปอยู่ *ใต้* ปุ่ม
+ * แต่แถบปุ่มเป็น `sticky bottom-0` ระหว่างที่ผู้ใช้อยู่กลางฟอร์มมันจึงถูกตรึงติดขอบล่างของ viewport
+ * โดยไม่มีที่ว่างใต้มันเลย กล่องที่วางด้วย `top-full` ตรงนั้นจะไปอยู่ใต้ขอบจอ และ **เลื่อนลงไปดูไม่ได้
+ * ด้วย** เพราะระยะที่ sticky เลื่อนไม่นับเป็นพื้นที่ scroll — hover กับบรรทัดสรุปจะกลายเป็นกดแล้วไม่มี
+ * อะไรเกิดขึ้น อีกข้อคือกล่องนี้อยู่ใน DOM เสมอ (ดูย่อหน้าบน) กล่องแบบ `absolute` ที่ห้อยลงล่างจึง
+ * เพิ่มพื้นที่ scroll เปล่า ๆ ท้ายหน้าทั้งสองฟอร์มตลอดเวลา แม้ตอนปิดอยู่ ส่วน `fixed` ไม่นับเป็นพื้นที่
+ * scroll เลย จึงไม่มีปัญหานั้น
+ *
+ * วิธีนี้ลอกมาจาก `components/list/RowDetailCard.tsx` ซึ่งเป็นกล่องลอยตัวเดียวในโปรเจกต์ที่หลบขอบจอ
+ * อยู่แล้ว — `fixed` + วัด `DOMRect` ของตัวยึด หนีบซ้ายขวาไม่ให้ล้น และพลิกขึ้นบนเมื่อข้างล่างไม่พอ
+ * (โปรเจกต์นี้ไม่มีไลบรารีจัดตำแหน่งและไม่ใช้ portal ที่ไหนเลย) ข้อแลกเปลี่ยนเหมือนกัน: ถ้าวันหลัง
+ * มีใครใส่ `transform`/`filter`/`will-change`/`contain` ให้ ancestor ตัวไหน `fixed` จะยึดกับตัวนั้น
+ * แทน viewport แล้วกล่องจะเพี้ยนแบบเงียบ ๆ วันนี้ไล่ตั้งแต่ `body` ถึงแถบปุ่มแล้วไม่มี
  */
 export function IncompleteGate({ items, actionLabel, hintId, children }: IncompleteGateProps) {
   const [open, setOpen] = useState(false);
   const summaryId = useId();
+  const anchorRef = useRef<HTMLSpanElement>(null);
+  const panelRef = useRef<HTMLSpanElement>(null);
+  const [placement, setPlacement] = useState<Placement | null>(null);
+
+  /**
+   * วัดใหม่ทุกครั้งที่เปิด และระหว่างเปิดก็วัดซ้ำตอน scroll หรือย่อขยายจอ
+   *
+   * `RowDetailCard` เลือก *ปิด* กล่องตอน scroll เพราะ rect ที่มันจับไว้จะเก่า แต่ที่นี่ตัวยึดอยู่ใน
+   * แถบ sticky การเลื่อนลงไปสุดหน้าคือจังหวะที่ข้างล่างเพิ่งจะมีที่ว่างพอดี กล่องจึงควรพลิกลงล่าง
+   * ตามที่การ์ดขอ ไม่ใช่หายไป · ใช้ capture เพราะ scroll ของ element ไม่ bubble
+   */
+  useEffect(() => {
+    if (!open) return;
+
+    const place = () => {
+      const anchor = anchorRef.current;
+      const panel = panelRef.current;
+      if (!anchor || !panel) return;
+
+      const rect = anchor.getBoundingClientRect();
+      const { offsetWidth: width, offsetHeight: height } = panel;
+      // ชิดขวาให้ตรงกับขอบขวาของปุ่ม แล้วหนีบไม่ให้ล้นจอทั้งสองข้าง
+      const left = Math.min(Math.max(GAP, rect.right - width), window.innerWidth - width - GAP);
+      const below = rect.bottom + GAP;
+
+      setPlacement(
+        below + height <= window.innerHeight - GAP
+          ? { left, top: below }
+          : { left, bottom: window.innerHeight - rect.top + GAP },
+      );
+    };
+
+    place();
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open, items.length]);
 
   // ฟอร์มที่กรอกครบแล้วไม่ต้องมีอะไรมาครอบ ปุ่มกลับไปเป็นปุ่มธรรมดา
   if (items.length === 0) return <>{children}</>;
@@ -55,7 +115,7 @@ export function IncompleteGate({ items, actionLabel, hintId, children }: Incompl
     <>
       {/*
         `order-first` ไม่ใช่การวางไว้ต้นสุดใน DOM — ตัวครอบปุ่มต้องอยู่ติดกับปุ่มจริง ๆ เพื่อให้
-        กล่องวางตำแหน่งจากปุ่มได้ บรรทัดนี้จึงถูกย้ายด้วย CSS ให้ไปอยู่ซ้ายสุด (บนสุดเมื่อจอแคบ)
+        วัดตำแหน่งจากปุ่มได้ บรรทัดนี้จึงถูกย้ายด้วย CSS ให้ไปอยู่ซ้ายสุด (บนสุดเมื่อจอแคบ)
       */}
       <button
         type="button"
@@ -71,17 +131,26 @@ export function IncompleteGate({ items, actionLabel, hintId, children }: Incompl
         </svg>
       </button>
 
+      {/* ไม่ต้อง `relative` แล้ว กล่องยึดกับ viewport ไม่ได้ยึดกับตัวครอบ — มีไว้รับเมาส์กับให้ rect วัด */}
       <span
-        className="relative inline-flex"
+        ref={anchorRef}
+        className="inline-flex"
         onMouseEnter={() => setOpen(true)}
         onMouseLeave={() => setOpen(false)}
       >
+        {/*
+          `placement` ยังเป็น null แปลว่ายังไม่ได้วัด — กล่องจะอยู่ที่ตำแหน่ง static ของมัน จึงค่อย
+          เปลี่ยนเป็นทึบหลังวัดเสร็จ ไม่งั้นจะเห็นมันแวบอยู่ผิดที่หนึ่งเฟรม · ตอนปิดไม่ล้าง
+          `placement` ทิ้ง กล่องจะได้จางหายตรงที่เดิม
+        */}
         <span
+          ref={panelRef}
           id={hintId}
           role="tooltip"
+          style={placement ?? undefined}
           className={clsx(
-            "absolute bottom-full right-0 z-10 mb-2 w-[min(22rem,calc(100vw-3rem))] rounded-xl border border-line bg-white p-4 text-left shadow-pop transition-opacity duration-150",
-            open ? "opacity-100" : "pointer-events-none opacity-0",
+            "fixed z-40 w-[min(22rem,calc(100vw-3rem))] rounded-xl border border-line bg-white p-4 text-left shadow-pop transition-opacity duration-150",
+            open && placement ? "opacity-100" : "pointer-events-none opacity-0",
           )}
         >
           <span className="block text-[13px] font-semibold text-navy-800">
