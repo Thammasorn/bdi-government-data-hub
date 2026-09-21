@@ -289,6 +289,14 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
     (request.createdBy?.id === user.id ||
       (user.roles.includes("ORGANIZATION_USER") && user.organizationId === request.organization.id));
 
+  /**
+   * ลบร่างแคบกว่าสิทธิ์แก้ไขหนึ่งชั้น — ผู้มีอำนาจอนุมัติของหน่วยงานแก้ไขได้ แต่ลบไม่ได้
+   * ตรงกับด่าน role ที่ `DELETE /api/dataset-requests/:id` เพิ่มไว้ (`mayEdit` ฝั่ง server
+   * ไม่ได้แคบลงตาม เพราะอีกห้าเส้นทางใช้ร่วมกันอยู่) คนที่สร้างร่างไว้แล้วถูกถอด role
+   * ออกภายหลังจึงยังแก้ไขร่างของตัวเองได้ แต่ลบไม่ได้แล้ว
+   */
+  const mayDeleteDraft = mayEdit && user.roles.includes("ORGANIZATION_USER");
+
   // §4.8 — เมื่อถูกส่งกลับต้องบอกให้ครบว่าแก้เรื่องอะไร โดยใคร เมื่อไหร่
   // "ขอให้ปรับปรุง" = review_task ที่ปิดด้วย result = RETURNED
   const lastRevision = [...request.events].reverse().find((e) => e.result === "RETURNED");
@@ -406,7 +414,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
   /**
    * ลบคำขอฉบับร่างทิ้ง — ปุ่มเดียวกับที่อยู่ในรายการ ให้คนที่เปิดร่างที่กดมาเกินอยู่แล้ว
    * ไม่ต้องย้อนกลับไปหาแถวของมันในตารางก่อน เงื่อนไขทั้งหมดอยู่ฝั่ง server
-   * (DRAFT + mayEdit) ที่นี่แค่ไม่แสดงปุ่มเมื่อรู้แน่อยู่แล้วว่ากดไม่ผ่าน
+   * (DRAFT + mayEdit + role ผู้ประสานงานของหน่วยงาน) ที่นี่แค่ไม่แสดงปุ่มเมื่อรู้แน่อยู่แล้วว่ากดไม่ผ่าน
    */
   const removeDraft = async () => {
     setBusy(true);
@@ -548,9 +556,11 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
             <div className="flex shrink-0 flex-wrap gap-3">
               {/* ลบอยู่ซ้ายของปุ่มหลักและเป็น secondary — ปุ่มที่ทำลายของไม่ควรเป็น
                   ปุ่มที่มือไปตกใส่ก่อน ส่วนสีแดงเก็บไว้ที่ปุ่มยืนยันในกล่อง */}
-              <Button variant="secondary" onClick={() => setModal("delete")}>
-                ลบคำขอ
-              </Button>
+              {mayDeleteDraft ? (
+                <Button variant="secondary" onClick={() => setModal("delete")}>
+                  ลบคำขอ
+                </Button>
+              ) : null}
               <Button onClick={() => router.push(`/datasets/${id}/edit`)}>กรอกข้อมูลต่อ</Button>
             </div>
           </div>

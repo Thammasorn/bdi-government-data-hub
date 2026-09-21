@@ -840,6 +840,11 @@ datasetRequestRouter.patch("/:id", async (req, res) => {
  * แถว metadata หายตาม FK (`onDelete: Cascade`) ส่วน `attachment` เป็น polymorphic ไม่มี
  * FK จริง จึงไม่มีอะไรตามไปปิดให้ ต้องปิดเองก่อนลบ และปิดแบบ soft delete ตามกฎของ
  * lib/attachment.ts — ไฟล์ใน object storage ไม่เคยถูกลบ ที่นี่ก็ไม่ใช่ข้อยกเว้น
+ *
+ * **เฉพาะผู้ประสานงานของหน่วยงาน** (`ORGANIZATION_USER`) ผู้มีอำนาจอนุมัติของหน่วยงานอยู่ใน
+ * หน่วยงานเดียวกันจึงผ่าน `mayEdit` เหมือนกัน (ยังแก้ไขและนำส่งร่างได้) แต่การเก็บกวาดร่างที่
+ * กดมาเกินเป็นงานของฝ่ายที่กรอกคำขอ ไม่ใช่ของฝ่ายที่ลงนาม ด่าน role จึงอยู่ในเส้นทางนี้
+ * เส้นทางเดียว ไม่ใช่ใน `mayEdit` ซึ่งอีกห้าเส้นทางในไฟล์นี้ใช้ร่วมกันอยู่
  */
 const DRAFT_DELETED_REASON = "เจ้าของคำขอลบคำขอฉบับร่างทิ้ง";
 
@@ -862,6 +867,16 @@ datasetRequestRouter.delete("/:id", async (req, res, next) => {
   // 404 ไม่ใช่ 403 เหมือนทุกเส้นทางฝั่งหน่วยงานในไฟล์นี้ — ไม่บอกคนนอกว่าคำขอนี้มีอยู่
   if (!request || !mayEdit(session, request)) {
     res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
+    return;
+  }
+  // 403 ไม่ใช่ 404 ตรงนี้ และไม่ขัดกับบรรทัดบน: คนนอกหน่วยงานถูกตัดไปตั้งแต่ด่านแรกแล้ว
+  // คนที่มาถึงบรรทัดนี้เห็นคำขอใบนี้อยู่ในรายการของตัวเอง การบอกว่า "ไม่พบ" จึงเป็นคำโกหก
+  // ไม่ใช่การปกปิด — และไม่บอกด้วยว่าต้องเป็นใครถึงจะลบได้
+  if (!session.roles.includes(ROLE_CODES.ORGANIZATION_USER)) {
+    res.status(403).json({
+      error: "forbidden",
+      message: "เฉพาะผู้ประสานงานของหน่วยงานเท่านั้นที่ลบคำขอฉบับร่างได้",
+    });
     return;
   }
   if (request.status !== RequestStatus.DRAFT || request.submittedAt) {
