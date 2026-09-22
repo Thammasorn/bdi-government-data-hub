@@ -996,15 +996,25 @@ export default function EditDatasetRequestPage() {
           </Card>
 
           {/* ทึบเต็ม ไม่ใช้ความโปร่ง — เนื้อหาข้างหลังทะลุมาแล้วอ่านยาก */}
-          <div className="sticky bottom-0 -mx-4 flex flex-col gap-3 rounded-t-2xl border-t border-line bg-white px-4 py-4 shadow-[0_-4px_16px_rgb(20_26_51_/_0.06)] sm:mx-0 sm:flex-row sm:justify-end sm:px-6">
-            <Button type="button" variant="secondary" loading={saving} onClick={saveDraft}>
-              บันทึกแบบร่าง
-            </Button>
+          <div className="sticky bottom-0 -mx-4 rounded-t-2xl border-t border-line bg-white px-4 py-4 shadow-[0_-4px_16px_rgb(20_26_51_/_0.06)] sm:mx-0 sm:px-6">
             {/*
               บรรทัดที่เคยบอกเรื่องพจนานุกรมข้อมูลอย่างเดียวถูกแทนด้วยกล่องของ IncompleteGate
               ซึ่งพูดแทนทุกเงื่อนไขรวมถึงไฟล์นั้น — คำอธิบายสองชุดของปุ่มเดียวกันจะขัดกันเอง
+
+              แถวปุ่มทั้งแถวเป็นของ IncompleteGate เพราะกล่องรายการต้องงอกลงมา *ใต้แถว* ในแถบนี้
+              (เหตุผลอยู่ในหัวคอมโพเนนต์) "บันทึกแบบร่าง" จึงเข้าไปเป็น secondaryAction แทนที่จะ
+              วางไว้ข้าง ๆ ตรงนี้
             */}
-            <IncompleteGate items={missing} actionLabel="ตรวจสอบคำขอ" hintId={INCOMPLETE_HINT_ID}>
+            <IncompleteGate
+              items={missing}
+              actionLabel="ตรวจสอบคำขอ"
+              hintId={INCOMPLETE_HINT_ID}
+              secondaryAction={
+                <Button type="button" variant="secondary" loading={saving} onClick={saveDraft}>
+                  บันทึกแบบร่าง
+                </Button>
+              }
+            >
               <Button
                 type="submit"
                 loading={generating}

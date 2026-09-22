@@ -25,14 +25,18 @@ export interface IncompleteGateProps {
   actionLabel: string;
   /** id ของกล่อง ต้องเป็นค่าเดียวกับ `aria-describedby` ของปุ่มข้างใน */
   hintId: string;
+  /**
+   * ปุ่มอื่นในแถบเดียวกันที่ไม่เกี่ยวกับการตรวจ (วันนี้คือ "บันทึกแบบร่าง" ของทั้งสองฟอร์ม)
+   *
+   * รับเข้ามาแทนที่จะให้หน้าวางเองข้าง ๆ เพราะกล่องต้องไปอยู่ *ใต้ทั้งแถบ* ไม่ใช่ใต้ปุ่มเดียว
+   * ตัวคอมโพเนนต์จึงต้องเป็นเจ้าของแถวนั้นทั้งแถว
+   */
+  secondaryAction?: React.ReactNode;
   children: React.ReactNode;
 }
 
-/** ระยะห่างระหว่างปุ่มกับกล่อง — ค่าเดียวกับ `GAP` ใน components/list/RowDetailCard.tsx */
-const GAP = 8;
-
-/** ยึดจากขอบบนหรือขอบล่างของ viewport อย่างใดอย่างหนึ่ง ไม่ใช่ทั้งคู่ */
-type Placement = { left: number; top: number } | { left: number; bottom: number };
+/** หน่วงก่อนปิดตอนเมาส์ออก — ให้เมาส์เดินจากปุ่มลงไปถึงกล่องได้โดยกล่องไม่ปิดเสียก่อน */
+const CLOSE_DELAY = 120;
 
 /**
  * ปุ่มที่กดไม่ได้ พร้อมรายการว่าต้องไปแก้อะไรบ้าง
@@ -47,131 +51,127 @@ type Placement = { left: number; top: number } | { left: number; bottom: number 
  * ว่าหน้าเว็บพัง บรรทัดสรุปจึงเป็นปุ่มจริงที่กดเปิด/ปิดกล่องเดียวกันได้
  *
  * **ทำไมกล่องอยู่ใน DOM เสมอ:** `aria-describedby` ของปุ่มต้องชี้ไปยัง element ที่มีอยู่จริง กล่องที่
- * ถูกสร้างตอน hover เท่านั้นจึงไม่มีอะไรให้โปรแกรมอ่านหน้าจออ่าน ซ่อนด้วย `opacity-0` ไม่ใช่
- * `hidden`/`invisible` ด้วยเหตุผลเดียวกัน
+ * ถูกสร้างตอน hover เท่านั้นจึงไม่มีอะไรให้โปรแกรมอ่านหน้าจออ่าน ย่อด้วย `grid-rows-[0fr]` +
+ * `opacity-0` ไม่ใช่ `hidden`/`invisible` ด้วยเหตุผลเดียวกัน (และได้อนิเมชันย่อ/ขยายมาด้วย)
  *
- * **ทำไม `fixed` แล้ววัดตำแหน่งเอง ไม่ใช่ `absolute top-full`:** การ์ดขอให้กล่องไปอยู่ *ใต้* ปุ่ม
- * แต่แถบปุ่มเป็น `sticky bottom-0` ระหว่างที่ผู้ใช้อยู่กลางฟอร์มมันจึงถูกตรึงติดขอบล่างของ viewport
- * โดยไม่มีที่ว่างใต้มันเลย กล่องที่วางด้วย `top-full` ตรงนั้นจะไปอยู่ใต้ขอบจอ และ **เลื่อนลงไปดูไม่ได้
- * ด้วย** เพราะระยะที่ sticky เลื่อนไม่นับเป็นพื้นที่ scroll — hover กับบรรทัดสรุปจะกลายเป็นกดแล้วไม่มี
- * อะไรเกิดขึ้น อีกข้อคือกล่องนี้อยู่ใน DOM เสมอ (ดูย่อหน้าบน) กล่องแบบ `absolute` ที่ห้อยลงล่างจึง
- * เพิ่มพื้นที่ scroll เปล่า ๆ ท้ายหน้าทั้งสองฟอร์มตลอดเวลา แม้ตอนปิดอยู่ ส่วน `fixed` ไม่นับเป็นพื้นที่
- * scroll เลย จึงไม่มีปัญหานั้น
+ * **ทำไมกล่องอยู่ใน flow ของแถบปุ่ม ไม่ใช่กล่องลอย `fixed`:** การ์ดขอให้กล่องอยู่ *ใต้* ปุ่มเสมอ
+ * แต่แถบปุ่มเป็น `sticky bottom-0` — ระหว่างที่ผู้ใช้อยู่กลางฟอร์มมันถูกตรึงติดขอบล่างของ viewport
+ * โดยใต้มัน **ไม่มีที่ว่างเหลืออยู่เลยแม้แต่พิกเซลเดียว** กล่องลอยที่วางลงล่างตรงนั้นจะไปอยู่ใต้ขอบจอ
+ * และเลื่อนลงไปดูไม่ได้ด้วย (ระยะที่ sticky เลื่อนไม่นับเป็นพื้นที่ scroll) รุ่นก่อนหน้านี้จึงต้องพลิก
+ * ขึ้นบนเมื่อที่ไม่พอ ซึ่งแปลว่าในทางปฏิบัติมันอยู่บนเกือบตลอดเวลา
  *
- * วิธีนี้ลอกมาจาก `components/list/RowDetailCard.tsx` ซึ่งเป็นกล่องลอยตัวเดียวในโปรเจกต์ที่หลบขอบจอ
- * อยู่แล้ว — `fixed` + วัด `DOMRect` ของตัวยึด หนีบซ้ายขวาไม่ให้ล้น และพลิกขึ้นบนเมื่อข้างล่างไม่พอ
- * (โปรเจกต์นี้ไม่มีไลบรารีจัดตำแหน่งและไม่ใช้ portal ที่ไหนเลย) ข้อแลกเปลี่ยนเหมือนกัน: ถ้าวันหลัง
- * มีใครใส่ `transform`/`filter`/`will-change`/`contain` ให้ ancestor ตัวไหน `fixed` จะยึดกับตัวนั้น
- * แทน viewport แล้วกล่องจะเพี้ยนแบบเงียบ ๆ วันนี้ไล่ตั้งแต่ `body` ถึงแถบปุ่มแล้วไม่มี
+ * ที่ว่างใต้ปุ่มจึงต้อง **ถูกสร้างขึ้นมา** ไม่ใช่ไปหาเอา วิธีที่ทำได้คือให้กล่องอยู่ในแถบปุ่มเอง แถบที่
+ * สูงขึ้นแต่ขอบล่างถูกตรึงไว้จะ "งอก" ขึ้นบน ปุ่มเลื่อนขึ้นไปและกล่องเข้ามาแทนที่เดิมของปุ่มพอดี —
+ * กล่องจึงอยู่ใต้ปุ่มจริงทุกจังหวะ ไม่ว่าจะเลื่อนหน้าอยู่ตรงไหน และไม่มีทางหลุดขอบจอ
+ *
+ * ผลพลอยได้: ไม่ต้องวัด `DOMRect` ไม่ต้องฟัง scroll/resize และไม่ต้องรับข้อแลกเปลี่ยนของ `fixed`
+ * (ancestor ที่มี `transform`/`filter`/`will-change`/`contain` จะกลายเป็นกรอบอ้างอิงแทน viewport)
+ * ที่ต้องระวังแทนคือ **เมาส์**: ปุ่มเลื่อนหนีจากใต้เคอร์เซอร์ตอนกล่องเปิด ถ้าปิดทันทีที่เมาส์ออกจากปุ่ม
+ * มันจะเปิด-ปิดสลับกันไม่รู้จบ กล่องจึงรับ hover ต่อจากปุ่ม และการปิดถูกหน่วงไว้ `CLOSE_DELAY`
  */
-export function IncompleteGate({ items, actionLabel, hintId, children }: IncompleteGateProps) {
+export function IncompleteGate({
+  items,
+  actionLabel,
+  hintId,
+  secondaryAction,
+  children,
+}: IncompleteGateProps) {
   const [open, setOpen] = useState(false);
   const summaryId = useId();
-  const anchorRef = useRef<HTMLSpanElement>(null);
-  const panelRef = useRef<HTMLSpanElement>(null);
-  const [placement, setPlacement] = useState<Placement | null>(null);
+  const closeTimer = useRef<number | null>(null);
 
-  /**
-   * วัดใหม่ทุกครั้งที่เปิด และระหว่างเปิดก็วัดซ้ำตอน scroll หรือย่อขยายจอ
-   *
-   * `RowDetailCard` เลือก *ปิด* กล่องตอน scroll เพราะ rect ที่มันจับไว้จะเก่า แต่ที่นี่ตัวยึดอยู่ใน
-   * แถบ sticky การเลื่อนลงไปสุดหน้าคือจังหวะที่ข้างล่างเพิ่งจะมีที่ว่างพอดี กล่องจึงควรพลิกลงล่าง
-   * ตามที่การ์ดขอ ไม่ใช่หายไป · ใช้ capture เพราะ scroll ของ element ไม่ bubble
-   */
+  const cancelClose = () => {
+    if (closeTimer.current !== null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  };
+  const openNow = () => {
+    cancelClose();
+    setOpen(true);
+  };
+  const closeSoon = () => {
+    cancelClose();
+    closeTimer.current = window.setTimeout(() => setOpen(false), CLOSE_DELAY);
+  };
+
+  useEffect(() => cancelClose, []);
+
+  // กรอกครบแล้วก็ไม่เหลืออะไรให้บอก ปิดกล่องทิ้งไว้ไม่ได้ ไม่งั้นมันค้างอยู่ตอนแถวหายไป
   useEffect(() => {
-    if (!open) return;
+    if (items.length === 0) setOpen(false);
+  }, [items.length]);
 
-    const place = () => {
-      const anchor = anchorRef.current;
-      const panel = panelRef.current;
-      if (!anchor || !panel) return;
-
-      const rect = anchor.getBoundingClientRect();
-      const { offsetWidth: width, offsetHeight: height } = panel;
-      // ชิดขวาให้ตรงกับขอบขวาของปุ่ม แล้วหนีบไม่ให้ล้นจอทั้งสองข้าง
-      const left = Math.min(Math.max(GAP, rect.right - width), window.innerWidth - width - GAP);
-      const below = rect.bottom + GAP;
-
-      setPlacement(
-        below + height <= window.innerHeight - GAP
-          ? { left, top: below }
-          : { left, bottom: window.innerHeight - rect.top + GAP },
-      );
-    };
-
-    place();
-    window.addEventListener("scroll", place, true);
-    window.addEventListener("resize", place);
-    return () => {
-      window.removeEventListener("scroll", place, true);
-      window.removeEventListener("resize", place);
-    };
-  }, [open, items.length]);
-
-  // ฟอร์มที่กรอกครบแล้วไม่ต้องมีอะไรมาครอบ ปุ่มกลับไปเป็นปุ่มธรรมดา
-  if (items.length === 0) return <>{children}</>;
-
-  return (
-    <>
-      {/*
-        `order-first` ไม่ใช่การวางไว้ต้นสุดใน DOM — ตัวครอบปุ่มต้องอยู่ติดกับปุ่มจริง ๆ เพื่อให้
-        วัดตำแหน่งจากปุ่มได้ บรรทัดนี้จึงถูกย้ายด้วย CSS ให้ไปอยู่ซ้ายสุด (บนสุดเมื่อจอแคบ)
-      */}
-      <button
-        type="button"
-        id={summaryId}
-        aria-expanded={open}
-        aria-controls={hintId}
-        onClick={() => setOpen((o) => !o)}
-        className="order-first inline-flex items-center gap-1.5 self-start rounded-md text-left text-[13px] leading-relaxed text-ink-muted underline decoration-dotted underline-offset-4 hover:text-ink sm:mr-auto sm:self-center"
-      >
-        ยังกรอกไม่ครบ {items.length} รายการ — ดูว่าต้องแก้อะไรบ้าง
-        <svg viewBox="0 0 16 16" className={clsx("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-180")} aria-hidden="true">
-          <path d="M4 6.5 8 10.5l4-4" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-
-      {/* ไม่ต้อง `relative` แล้ว กล่องยึดกับ viewport ไม่ได้ยึดกับตัวครอบ — มีไว้รับเมาส์กับให้ rect วัด */}
-      <span
-        ref={anchorRef}
-        className="inline-flex"
-        onMouseEnter={() => setOpen(true)}
-        onMouseLeave={() => setOpen(false)}
-      >
-        {/*
-          `placement` ยังเป็น null แปลว่ายังไม่ได้วัด — กล่องจะอยู่ที่ตำแหน่ง static ของมัน จึงค่อย
-          เปลี่ยนเป็นทึบหลังวัดเสร็จ ไม่งั้นจะเห็นมันแวบอยู่ผิดที่หนึ่งเฟรม · ตอนปิดไม่ล้าง
-          `placement` ทิ้ง กล่องจะได้จางหายตรงที่เดิม
-        */}
-        <span
-          ref={panelRef}
-          id={hintId}
-          role="tooltip"
-          style={placement ?? undefined}
-          className={clsx(
-            "fixed z-40 w-[min(22rem,calc(100vw-3rem))] rounded-xl border border-line bg-white p-4 text-left shadow-pop transition-opacity duration-150",
-            open && placement ? "opacity-100" : "pointer-events-none opacity-0",
-          )}
+  const row = (
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+      {items.length > 0 ? (
+        <button
+          type="button"
+          id={summaryId}
+          aria-expanded={open}
+          aria-controls={hintId}
+          onClick={() => setOpen((o) => !o)}
+          className="inline-flex items-center gap-1.5 self-start rounded-md text-left text-[13px] leading-relaxed text-ink-muted underline decoration-dotted underline-offset-4 hover:text-ink sm:mr-auto sm:self-center"
         >
-          <span className="block text-[13px] font-semibold text-navy-800">
-            ต้องแก้ {items.length} รายการก่อนกด &ldquo;{actionLabel}&rdquo;
-          </span>
-          <ul className="mt-2 flex max-h-[min(50vh,18rem)] flex-col gap-1.5 overflow-y-auto text-[13px] leading-relaxed text-ink-muted">
-            {items.map((item) => (
-              <li key={item.key} className="flex gap-1.5">
-                <span aria-hidden="true" className="mt-[0.6em] h-1 w-1 shrink-0 rounded-full bg-coral-500" />
-                <span>
-                  <span className="font-medium text-ink">
-                    {item.section} {item.label}
-                  </span>{" "}
-                  — {item.message}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </span>
+          ยังกรอกไม่ครบ {items.length} รายการ — ดูว่าต้องแก้อะไรบ้าง
+          <svg
+            viewBox="0 0 16 16"
+            className={clsx("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-180")}
+            aria-hidden="true"
+          >
+            <path d="M4 6.5 8 10.5l4-4" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      ) : null}
+      {secondaryAction}
+      {/* ตัวครอบรับ hover แทนปุ่มที่ถูก disable — ดูเหตุผลข้างบน */}
+      <span className="inline-flex" onMouseEnter={openNow} onMouseLeave={closeSoon}>
         {children}
       </span>
-    </>
+    </div>
+  );
+
+  // ฟอร์มที่กรอกครบแล้วเหลือแค่แถวปุ่มธรรมดา ไม่มีอะไรให้ย่อ/ขยาย
+  if (items.length === 0) return row;
+
+  return (
+    <div className="flex flex-col gap-3">
+      {row}
+      {/*
+        `grid-rows-[0fr]` → `[1fr]` ย่อ/ขยายได้ตามความสูงจริงของเนื้อหา โดยไม่ต้องรู้ค่าความสูง
+        ล่วงหน้าเหมือน `max-height` — ตอนย่ออยู่กินที่ 0px แถบปุ่มจึงสูงเท่าเดิมเป๊ะ
+      */}
+      <span
+        id={hintId}
+        role="tooltip"
+        onMouseEnter={openNow}
+        onMouseLeave={closeSoon}
+        className={clsx(
+          "grid transition-[grid-template-rows,opacity] duration-150",
+          open ? "grid-rows-[1fr] opacity-100" : "pointer-events-none grid-rows-[0fr] opacity-0",
+        )}
+      >
+        <span className="overflow-hidden">
+          <span className="block w-full rounded-xl border border-line bg-white p-4 text-left shadow-pop sm:ml-auto sm:w-[22rem]">
+            <span className="block text-[13px] font-semibold text-navy-800">
+              ต้องแก้ {items.length} รายการก่อนกด &ldquo;{actionLabel}&rdquo;
+            </span>
+            <ul className="mt-2 flex max-h-[min(50vh,18rem)] flex-col gap-1.5 overflow-y-auto text-[13px] leading-relaxed text-ink-muted">
+              {items.map((item) => (
+                <li key={item.key} className="flex gap-1.5">
+                  <span aria-hidden="true" className="mt-[0.6em] h-1 w-1 shrink-0 rounded-full bg-coral-500" />
+                  <span>
+                    <span className="font-medium text-ink">
+                      {item.section} {item.label}
+                    </span>{" "}
+                    — {item.message}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </span>
+        </span>
+      </span>
+    </div>
   );
 }
