@@ -2262,8 +2262,21 @@ async function dispatchDatasetNotifications(
    * หน่วยงานลงนามแล้ว → ด่านอนุมัติของ BDI เปิดขึ้นทันที
    *
    * ผู้รับคือ **ผู้อนุมัติ BDI** ไม่ใช่เจ้าหน้าที่ — เดิมด่านนี้ส่งต่อไปให้เจ้าหน้าที่ตรวจซ้ำ
-   * ก่อน ซึ่งถูกยกเลิกไปแล้ว อีเมลจึงถูกส่งอินไลน์เหมือนเดิมเพราะเป็นฉบับเดียวที่บอก
-   * **ชื่อผู้ลงนาม** ได้ ซึ่ง template กลางของ worker ไม่รู้จัก
+   * ก่อน ซึ่งถูกยกเลิกไปแล้ว
+   *
+   * ฉบับนี้เคยถูกส่งอินไลน์ตรงนี้ด้วย `sendDatasetSignedPendingApproval()` เพราะเป็นฉบับ
+   * เดียวที่บอก **ชื่อผู้ลงนาม** ได้ ซึ่ง template กลางของ worker ไม่รู้จัก — **เลิกทำแล้ว
+   * เมื่อ 2026-09-22 อย่าเอากลับมา**: `sendMany()` เปิด SMTP connection หนึ่งเส้นต่อผู้รับ
+   * หนึ่งคนพร้อมกันทั้งหมด ส่วน Office 365 จำกัดไว้ราวสามเส้นต่อกล่อง พอจำนวนผู้อนุมัติ BDI
+   * โตขึ้นจึงได้ `432 4.3.2 Concurrent connections limit exceeded` กลับมาเกือบทุกครั้ง
+   *
+   * และเพราะมันอยู่ **หลัง** transaction ที่ปิดด่านไปแล้ว error จึงลอยไปถึงตะแกรงสุดท้ายใน
+   * index.ts กลายเป็น 500 "เกิดข้อผิดพลาดภายในระบบ" บนหน้าจอของผู้ลงนาม ทั้งที่ลายมือชื่อ
+   * commit ไปเรียบร้อย — แล้วเขากดยืนยันซ้ำไม่ได้อีกเพราะด่านปิดแล้ว (ตอบ 409)
+   *
+   * ตอนนี้เดินผ่าน outbox เหมือนฉบับอื่น worker ส่งทีละปลายทางและ retry ให้เอง ราคาที่จ่าย
+   * คือจดหมายไม่มีแถว "ผู้ลงนามเห็นชอบ" อีกต่อไป — ชื่อผู้ลงนามดูได้จากไทม์ไลน์ของคำขอ
+   * และหลักฐานยังอยู่ครบใน signature_confirmation
    */
   if (taskType === ReviewTaskType.ORGANIZATION_APPROVAL && result === ReviewResult.APPROVED) {
     const approvers = await bdiApproverIds();
@@ -2274,12 +2287,7 @@ async function dispatchDatasetNotifications(
       subjectType: SUBJECT,
       subjectId: request.id,
       organizationId: request.organizationId,
-      email: false,
     });
-    const emails = await emailsOf(approvers);
-    if (emails.length > 0) {
-      await sendDatasetSignedPendingApproval(emails, { ...info, signedBy: actorName }, progress);
-    }
     return;
   }
 

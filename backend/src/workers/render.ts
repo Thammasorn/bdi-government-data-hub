@@ -153,6 +153,21 @@ export async function renderAndSend(
             await sendDatasetPendingBdiApproval(to, info, progress);
             return;
           }
+          /**
+           * ไม่มีด่านไหนค้างอยู่แล้ว = คำขอถูกปิดไประหว่างที่แถวนี้รออยู่ในคิว
+           *
+           * ห้ามตกไปที่ `sendDatasetSubmitted()` ข้างล่าง เพราะมันเล่าว่าคำขอ "รอตรวจสอบ"
+           * พร้อมชื่อผู้นำส่งที่เติมเอง — ส่งหาคนที่เพิ่งกดอนุมัติใบนั้นไปเมื่อกี้ จดหมายจะขัด
+           * กับ stepper ที่อยู่ใต้มันเอง ด่านถูกอ่าน **ตอนส่ง** ไม่ใช่ตอนเข้าคิว และช่องว่าง
+           * ระหว่างสองเวลานั้นคือรอบ poll ของ worker บวก backoff ของ retry
+           *
+           * ใช้ title/message ที่เก็บไว้ตอนเหตุการณ์เกิดแทน — มันจริงเสมอ เพราะเล่าสิ่งที่
+           * เกิดขึ้น ไม่ได้อ้างสถานะปัจจุบัน
+           */
+          if (!active) {
+            await sendRaw(destination, n.title, n.message);
+            return;
+          }
           await sendDatasetSubmitted(to, { ...info, submitter: "ผู้ใช้จากหน่วยงาน" }, progress);
           return;
         }
