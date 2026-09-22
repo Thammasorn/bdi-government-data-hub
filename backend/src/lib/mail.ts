@@ -869,9 +869,14 @@ export async function sendDatasetPendingOrgApprover(
 /**
  * หน่วยงานลงนามแล้ว รอผู้อนุมัติ BDI
  *
- * ต่างจาก `sendDatasetPendingBdiApproval()` ตรงที่บอก **ชื่อผู้ลงนาม** ซึ่งเป็นข้อมูลที่
- * ผู้อนุมัติต้องใช้ตัดสิน — ฉบับนั้นเป็น template กลางที่ delivery worker ประกอบเองจาก
- * subject_id จึงไม่รู้จักชื่อคน ฉบับนี้จึงถูกส่งอินไลน์จาก route
+ * ต่างจาก `sendDatasetPendingBdiApproval()` ตรงที่บอก **ชื่อผู้ลงนาม** ซึ่ง template กลางที่
+ * delivery worker ประกอบเองจาก subject_id ไม่รู้จัก
+ *
+ * **ไม่มีใครเรียกแล้วตั้งแต่ 2026-09-22** — เดิม routes/dataset-requests.ts เรียกอินไลน์
+ * หลัง transaction แล้วโดน Office 365 ตอบ 432 (connection พร้อมกันเกินโควตา) กลายเป็น 500
+ * บนหน้าจอของผู้ลงนามที่ลงนามสำเร็จไปแล้ว ฉบับที่ส่งจริงตอนนี้คือ
+ * `sendDatasetPendingBdiApproval()` ผ่าน outbox เก็บตัวนี้ไว้เผื่อวันที่ worker อ่าน
+ * ชื่อผู้ลงนามจาก signature_confirmation ได้เอง — อย่าเรียกจาก request handler อีก
  */
 export async function sendDatasetSignedPendingApproval(
   to: string[],
