@@ -152,11 +152,17 @@ export function IncompleteGate({
         )}
       >
         <span className="overflow-hidden">
-          <span className="block w-full rounded-xl border border-line bg-white p-4 text-left shadow-pop sm:ml-auto sm:w-[22rem]">
+          <span className="block w-full rounded-xl border border-line bg-white p-4 text-left shadow-pop">
             <span className="block text-[13px] font-semibold text-navy-800">
               ต้องแก้ {items.length} รายการก่อนกด &ldquo;{actionLabel}&rdquo;
             </span>
-            <ul className="mt-2 flex max-h-[min(50vh,18rem)] flex-col gap-1.5 overflow-y-auto text-[13px] leading-relaxed text-ink-muted">
+            {/*
+              กล่องกว้างเท่าแถบปุ่ม รายการจึงเดินสองคอลัมน์ตั้งแต่ `sm` ขึ้นไป — บรรทัดละรายการ
+              บนความกว้างเท่านี้จะเหลือที่ว่างท้ายบรรทัดครึ่งจอ และดันรายการที่เหลือลงไปใต้เส้น
+              scroll มากกว่าเดิมเท่าตัว · ใช้ grid ไม่ใช่ `columns` เพราะ multi-column ในกล่องที่
+              จำกัดความสูงจะล้นออกไป *ทางขวา* กลายเป็น scroll แนวนอนแทน
+            */}
+            <ul className="mt-2 grid max-h-[min(50vh,18rem)] grid-cols-1 gap-x-6 gap-y-1.5 overflow-y-auto text-[13px] leading-relaxed text-ink-muted sm:grid-cols-2">
               {items.map((item) => (
                 <li key={item.key} className="flex gap-1.5">
                   <span aria-hidden="true" className="mt-[0.6em] h-1 w-1 shrink-0 rounded-full bg-coral-500" />
