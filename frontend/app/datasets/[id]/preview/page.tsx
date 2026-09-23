@@ -10,6 +10,7 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import { stashSubmitErrors } from "@/lib/submit-errors";
 import { useRequireAuth } from "@/lib/require-auth";
 import {
   DATASET_ATTACHMENT_LABELS,
@@ -61,6 +62,19 @@ export default function DatasetPreviewPage() {
       });
       router.push(`/datasets/${id}`);
     } catch (err) {
+      // เหตุผลเดียวกับหน้าตรวจสอบของเส้นทางจดทะเบียนหน่วยงาน — ดู lib/submit-errors.ts
+      const fields = err instanceof ApiError ? err.fields : {};
+      const count = Object.keys(fields).length;
+      if (count > 0) {
+        stashSubmitErrors(String(id), fields);
+        show({
+          tone: "error",
+          title: "นำส่งไม่สำเร็จ — ข้อมูลยังไม่ถูกต้อง",
+          detail: `กรุณาตรวจสอบ ${count} รายการที่ทำเครื่องหมายไว้ในแบบฟอร์ม`,
+        });
+        router.push(`/datasets/${id}/edit`);
+        return;
+      }
       show({
         tone: "error",
         title: "นำส่งไม่สำเร็จ",

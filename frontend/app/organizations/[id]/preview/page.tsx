@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import { stashSubmitErrors } from "@/lib/submit-errors";
 import { useRequireAuth } from "@/lib/require-auth";
 import type { Organization } from "@/lib/types";
 
@@ -76,6 +77,29 @@ export default function PreviewPage() {
       });
       router.push(`/organizations/${id}`);
     } catch (err) {
+      /**
+       * `POST /:id/submit` ตรวจ snapshot ด้วย `submitSchema` แล้วตอบ
+       * `{ error: "validation", fields: {...} }` — **ไม่มี `message`** ในกรณีนั้น
+       * `ApiError` จึงตกกลับไปใช้ข้อความกลาง ๆ ของมันเอง และหน้านี้เคยแสดงแค่นั้น
+       * ผู้ใช้อ่านได้แค่ "เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง" ทั้งที่ server รู้อยู่แล้วว่า
+       * ช่องไหนผิดและผิดยังไง (feedback 2026-09-23 แถว 6)
+       *
+       * หน้านี้ไม่มีช่องกรอกให้ระบายสี จึงฝากข้อความไว้แล้วพากลับไปที่ฟอร์ม ซึ่งเป็น
+       * ที่เดียวที่แก้ได้ — แบบเดียวกับที่ `handleApiError()` ของหน้าฟอร์มทำอยู่แล้ว
+       * เมื่อกด "ตรวจสอบข้อมูล" ไม่ผ่าน
+       */
+      const fields = err instanceof ApiError ? err.fields : {};
+      const count = Object.keys(fields).length;
+      if (count > 0) {
+        stashSubmitErrors(String(id), fields);
+        show({
+          tone: "error",
+          title: "นำส่งไม่สำเร็จ — ข้อมูลยังไม่ถูกต้อง",
+          detail: `กรุณาตรวจสอบ ${count} รายการที่ทำเครื่องหมายไว้ในแบบฟอร์ม`,
+        });
+        router.push(`/organizations/${id}/edit`);
+        return;
+      }
       show({
         tone: "error",
         title: "นำส่งไม่สำเร็จ",
