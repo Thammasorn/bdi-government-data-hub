@@ -20,7 +20,13 @@ import { useRequireAuth } from "@/lib/require-auth";
 import { formatThaiDate } from "@/lib/status";
 import { useOrganizationRegistration } from "@/lib/use-organization-registration";
 import { describeState, movedMessage, useRequestWatch } from "@/lib/use-request-watch";
-import { ATTACHMENT_LABELS, fullName, phoneWithExtension, type Organization } from "@/lib/types";
+import {
+  ATTACHMENT_LABELS,
+  fullName,
+  phoneWithExtension,
+  sortAttachments,
+  type Organization,
+} from "@/lib/types";
 
 /** ผู้ใช้ปัจจุบันตัดสินใจกับคำขอนี้ได้หรือไม่ ขึ้นกับสถานะ + role */
 /**
@@ -253,7 +259,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
   if (!org || !user) return <Spinner />;
 
   const ability = decideAbility(org, user.roles);
-  const supporting = org.attachments.filter((a) => a.kind !== "GENERATED_FORM");
+  const supporting = sortAttachments(org.attachments.filter((a) => a.kind !== "GENERATED_FORM"));
   const isOwner = org.createdBy?.id === user.id;
   // เทียบกับ `org.organizationId` ไม่ใช่ `org.id` — `org.id` คือ id ของคำขอ การ์ด
   // "ลงทะเบียนชุดข้อมูล" จึงไม่เคยขึ้นให้ผู้ใช้หน่วยงานเห็นเลย

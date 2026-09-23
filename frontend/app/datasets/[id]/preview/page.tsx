@@ -11,7 +11,12 @@ import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
 import { useRequireAuth } from "@/lib/require-auth";
-import { DATASET_ATTACHMENT_LABELS, datasetTitle, type DatasetRequest } from "@/lib/types";
+import {
+  DATASET_ATTACHMENT_LABELS,
+  datasetTitle,
+  sortDatasetAttachments,
+  type DatasetRequest,
+} from "@/lib/types";
 
 export default function DatasetPreviewPage() {
   const { id } = useParams<{ id: string }>();
@@ -41,7 +46,9 @@ export default function DatasetPreviewPage() {
   if (!request) return <Spinner />;
 
   const form = request.attachments.find((a) => a.kind === "GENERATED_FORM");
-  const supporting = request.attachments.filter((a) => a.kind !== "GENERATED_FORM");
+  const supporting = sortDatasetAttachments(
+    request.attachments.filter((a) => a.kind !== "GENERATED_FORM"),
+  );
 
   const submit = async () => {
     setSubmitting(true);

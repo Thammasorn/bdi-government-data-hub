@@ -241,6 +241,43 @@ export const ATTACHMENT_LABELS: Record<Attachment["kind"], string> = {
 };
 
 /**
+ * ลำดับที่เอกสารแนบขึ้นบนหน้าจอ — ฉบับที่บังคับมาก่อนฉบับที่แนบหรือไม่แนบก็ได้
+ *
+ * API เรียงเอกสารแนบตามเวลาอัปโหลด (`activeAttachments()` ฝั่ง backend) ซึ่งเป็นลำดับที่
+ * ผู้ใช้เผอิญกดอัปโหลด ไม่ใช่ลำดับของแบบฟอร์ม คนที่แนบฉบับ "ถ้ามี" ก่อนจึงเห็นมันอยู่
+ * บรรทัดแรกของการ์ดเอกสารแนบ แล้วฉบับที่บังคับตกลงไปอยู่ล่าง (feedback 2026-09-23 แถว 4)
+ *
+ * ลำดับนี้คือลำดับเดียวกับช่องแนบไฟล์บนหน้าฟอร์ม — คนที่กรอกฟอร์มมาแล้วจึงอ่านการ์ดนี้
+ * ด้วยสายตาชุดเดิม ไม่ใช่เรียงตาม `isRequired` ที่คำนวณเอง เพราะฝั่งหน้าจอไม่มีค่านั้น
+ * (ธงบังคับอยู่ในโค้ดของฟอร์ม ไม่ได้ส่งมากับเอกสารแนบ)
+ */
+const ATTACHMENT_ORDER: readonly Attachment["kind"][] = [
+  "AUTHORIZED_REPRESENTATIVE_APPOINTMENT_ORDER",
+  "POWER_OF_ATTORNEY",
+  "GENERATED_FORM",
+];
+
+/**
+ * เรียงตามลำดับที่กำหนด แล้วคงลำดับเดิมไว้สำหรับชนิดที่ไม่รู้จัก
+ *
+ * ชนิดที่ไม่อยู่ในตาราง (ค่าใหม่ที่ API ส่งมาก่อนหน้าจอจะรู้จัก) ได้ลำดับท้ายสุด ไม่ใช่
+ * `indexOf` ที่คืน -1 แล้วดันมันขึ้นไปอยู่บนสุดแทน
+ */
+const byKindOrder =
+  <K extends string>(order: readonly K[]) =>
+  (a: { kind: K }, b: { kind: K }) => {
+    const rank = (kind: K) => {
+      const at = order.indexOf(kind);
+      return at === -1 ? order.length : at;
+    };
+    return rank(a.kind) - rank(b.kind);
+  };
+
+/** เอกสารแนบของคำขอลงทะเบียนหน่วยงาน เรียงตามลำดับของแบบฟอร์ม — คืนชุดใหม่ ไม่แก้ของเดิม */
+export const sortAttachments = <T extends { kind: Attachment["kind"] }>(list: T[]): T[] =>
+  [...list].sort(byKindOrder(ATTACHMENT_ORDER));
+
+/**
  * เอกสารกฎหมายหนึ่งฉบับของคำขอ — GET /api/organizations/:id/legal-documents
  *
  * `versionId` คือสิ่งที่ต้องส่งกลับตอนลงนาม ไม่ใช่ `code` เพราะหลักฐานต้องบอกว่ายอมรับ
@@ -423,6 +460,18 @@ export const DATASET_ATTACHMENT_LABELS: Record<DatasetAttachment["kind"], string
   EXAMPLE_DATA: "ตัวอย่างข้อมูล",
   GENERATED_FORM: "แบบฟอร์มที่ระบบสร้าง",
 };
+
+/** ลำดับเดียวกับช่องแนบไฟล์ในส่วนที่ 5 ของฟอร์มชุดข้อมูล — ดู `ATTACHMENT_ORDER` */
+const DATASET_ATTACHMENT_ORDER: readonly DatasetAttachment["kind"][] = [
+  "DATA_DICTIONARY",
+  "EXAMPLE_DATA",
+  "GENERATED_FORM",
+];
+
+/** เอกสารแนบของคำขอลงทะเบียนชุดข้อมูล เรียงตามลำดับของแบบฟอร์ม — คืนชุดใหม่ ไม่แก้ของเดิม */
+export const sortDatasetAttachments = <T extends { kind: DatasetAttachment["kind"] }>(
+  list: T[],
+): T[] => [...list].sort(byKindOrder(DATASET_ATTACHMENT_ORDER));
 
 export interface AppNotification {
   id: string;
