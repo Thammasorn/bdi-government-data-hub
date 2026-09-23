@@ -127,6 +127,8 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล <no-reply@bdi.or.th>}
+      # ไม่ตั้ง = ไม่มีหัวข้อ Reply-To ในอีเมล — ไม่มีค่าตั้งต้น ต่างจาก SUPPORT_EMAIL ข้างล่าง
+      SMTP_REPLY_TO: ${SMTP_REPLY_TO:-}
       # ช่องทางติดต่อที่พิมพ์ท้ายอีเมลทุกฉบับ — ต้องส่งให้ทั้ง backend และ worker เพราะทั้งคู่
       # ประกอบอีเมลเอง ค่าตั้งต้นคือช่องทางจริงของ BDI ไม่ต้องมีใน .env ก็ถูกอยู่แล้ว
       SUPPORT_EMAIL: ${SUPPORT_EMAIL:-d2share-support@bdi.or.th}
@@ -183,6 +185,8 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล <no-reply@bdi.or.th>}
+      # ไม่ตั้ง = ไม่มีหัวข้อ Reply-To ในอีเมล — ไม่มีค่าตั้งต้น ต่างจาก SUPPORT_EMAIL ข้างล่าง
+      SMTP_REPLY_TO: ${SMTP_REPLY_TO:-}
       # ช่องทางติดต่อที่พิมพ์ท้ายอีเมลทุกฉบับ — ต้องส่งให้ทั้ง backend และ worker เพราะทั้งคู่
       # ประกอบอีเมลเอง ค่าตั้งต้นคือช่องทางจริงของ BDI ไม่ต้องมีใน .env ก็ถูกอยู่แล้ว
       SUPPORT_EMAIL: ${SUPPORT_EMAIL:-d2share-support@bdi.or.th}

@@ -227,6 +227,17 @@ async function send(to: string, subject: string, html: string): Promise<void> {
   }
   await tx.sendMail({
     from: env.smtp.from,
+    /**
+     * คำตอบต้องไปที่กล่องที่มีคนอ่าน ไม่ใช่กล่องที่ระบบใช้ส่ง (feedback 2026-09-23 แถว 2)
+     *
+     * `SMTP_FROM` เขียนว่า no-reply@ แต่ Exchange เขียน From ทับด้วยบัญชีที่ล็อกอิน
+     * (`SMTP_USER`) เมื่อบัญชีนั้นไม่มีสิทธิ์ send-as ผู้รับที่กด reply จึงได้กล่องส่งของ
+     * ระบบ Reply-To ไม่ถูกเขียนทับแบบนั้น และไคลเอนต์ทุกตัวเคารพมันเหนือ From
+     *
+     * ไม่ตั้ง `SMTP_REPLY_TO` = ไม่ส่งหัวข้อนี้เลย (`undefined` ไม่ใช่สตริงว่าง — สตริงว่าง
+     * จะกลายเป็นหัวข้อ `Reply-To:` เปล่า ๆ ที่ไคลเอนต์บางตัวอ่านเป็นที่อยู่ผิดรูป)
+     */
+    replyTo: env.smtp.replyTo || undefined,
     to,
     subject,
     html,
