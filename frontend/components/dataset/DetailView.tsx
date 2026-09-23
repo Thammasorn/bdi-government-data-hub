@@ -30,6 +30,7 @@ import {
   DATASET_ATTACHMENT_LABELS,
   datasetTitle,
   fullName,
+  sortDatasetAttachments,
   type DatasetRequest,
   type SpecialistOption,
 } from "@/lib/types";
@@ -282,7 +283,9 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
   // ชีท conditions ตัดสินว่าช่องไหนถูกถามจริง — หน้ารายละเอียดจึงไม่ขึ้นหัวข้อที่ระบบไม่ได้ถาม
   // (เช่น รายละเอียดข้อมูลส่วนบุคคล เมื่อชุดข้อมูลตอบว่าไม่มีข้อมูลส่วนบุคคล)
   const rules = formRules(toFormState(request as unknown as Record<string, unknown>));
-  const supporting = request.attachments.filter((a) => a.kind !== "GENERATED_FORM");
+  const supporting = sortDatasetAttachments(
+    request.attachments.filter((a) => a.kind !== "GENERATED_FORM"),
+  );
   const editable = request.status === "DRAFT" || request.status === "RETURNED";
   const mayEdit =
     editable &&
