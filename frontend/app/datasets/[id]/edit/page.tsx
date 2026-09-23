@@ -12,6 +12,7 @@ import { IncompleteGate, type IncompleteItem } from "@/components/ui/IncompleteG
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import { takeSubmitErrors, touchedFromValues } from "@/lib/submit-errors";
 import { useRequireAuth } from "@/lib/require-auth";
 import { labelOf, useDatasetChoices } from "@/lib/dataset-choices";
 import {
@@ -185,7 +186,20 @@ export default function EditDatasetRequestPage() {
     api
       .get<{ request: DatasetRequest }>(`/api/dataset-requests/${id}`)
       .then(({ request }) => {
-        setForm(toFormState(request as unknown as Partial<Record<FormField, unknown>>));
+        const next = toFormState(request as unknown as Partial<Record<FormField, unknown>>);
+        setForm(next);
+        // ช่องที่มีคำตอบอยู่แล้วนับว่าแตะแล้ว — เหตุผลเต็มอยู่ใน lib/submit-errors.ts
+        setTouched(touchedFromValues(next));
+        // ข้อความรายช่องที่หน้าตรวจสอบฝากไว้ตอนนำส่งไม่ผ่าน (feedback 2026-09-23 แถว 6)
+        const carried = takeSubmitErrors(String(id));
+        if (Object.keys(carried).length > 0) {
+          setFields(carried);
+          requestAnimationFrame(() => {
+            formRef.current
+              ?.querySelector<HTMLElement>(`[data-field="${Object.keys(carried)[0]}"]`)
+              ?.scrollIntoView({ behavior: "smooth", block: "center" });
+          });
+        }
         setRevisionNote(request.revisionNote);
         setRequestNumber(request.requestNumber);
         setOrganizationName(request.organization?.name ?? "");
@@ -204,6 +218,16 @@ export default function EditDatasetRequestPage() {
   const set = (key: FormField, value: string) => {
     setForm((f) => applyRules({ ...f, [key]: value }, f));
     clearError(key);
+    /**
+     * พิมพ์ลงช่องไหน = ตอบช่องนั้นแล้ว ไม่ต้องรอ blur ก่อนจึงจะยอมบอกว่าผ่านหรือไม่ผ่าน
+     *
+     * ฟอร์มลงทะเบียนหน่วยงานทำแบบนี้มาตั้งแต่ต้น (`set()` ใน
+     * `app/organizations/[id]/edit/page.tsx`) ฟอร์มนี้ไม่ทำ ผลคือคนที่กำลังไล่แก้อีเมล
+     * หรือเบอร์โทรตามที่ API ทักมา เห็นข้อความเดิมหายไปตอนพิมพ์ตัวแรก แล้วไม่มีอะไรมาแทน
+     * จนกว่าจะออกจากช่อง — อ่านว่า "ไม่มี UI validation ว่าผ่านแล้ว" (feedback 2026-09-23
+     * แถว 6) สองฟอร์มนี้ต้องให้ feedback แบบเดียวกัน
+     */
+    touch(key);
   };
 
   /** ล้าง error ของช่องที่เพิ่งแก้ ไม่งั้นขอบแดงค้างทั้งที่ผู้ใช้แก้ให้ถูกแล้ว */

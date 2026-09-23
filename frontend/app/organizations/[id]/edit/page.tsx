@@ -13,6 +13,7 @@ import { IncompleteGate, type IncompleteItem } from "@/components/ui/IncompleteG
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import { takeSubmitErrors, touchedFromValues } from "@/lib/submit-errors";
 import {
   MAX_ADDRESS_LINE,
   MAX_PHONE_EXTENSION,
@@ -299,8 +300,28 @@ export default function EditOrganizationPage() {
         setNameLocked(Boolean(organization.nameLocked));
         setContactLocked((organization.contactLocked as ContactLocked | undefined) ?? {});
         setApproverLocked((organization.approverLocked as ApproverLocked | undefined) ?? {});
-        // ค่าที่โหลดมาจากคำขอเดิมยังไม่ใช่สิ่งที่ผู้ใช้เพิ่งพิมพ์ ยังไม่ระบายสีจนกว่าจะแตะ
-        setTouched({});
+        /**
+         * ช่องที่มีคำตอบอยู่แล้วนับว่าแตะแล้ว ช่องที่ยังว่างไม่นับ
+         *
+         * เดิมบรรทัดนี้เป็น `setTouched({})` ทั้งชุด ด้วยเหตุผลว่าค่าที่โหลดมาไม่ใช่สิ่งที่
+         * ผู้ใช้เพิ่งพิมพ์ ซึ่งยังถูกสำหรับช่องว่าง — ฟอร์มเปล่าต้องไม่แดงทั้งหน้า — แต่ผิด
+         * สำหรับช่องที่มีคำตอบ: คนที่ถูกส่งกลับมาแก้ หรือคนที่เพิ่งถูกเด้งกลับมาจากหน้า
+         * ตรวจสอบเพราะนำส่งไม่ผ่าน เห็นฟอร์มที่ไม่มีทั้งขอบแดงและขอบเขียว ทั้งที่ระบบ
+         * ตัดสินทุกช่องได้อยู่แล้ว (feedback 2026-09-23 แถว 6) — ดู lib/submit-errors.ts
+         */
+        setTouched(touchedFromValues(next));
+        /**
+         * ข้อความรายช่องที่หน้าตรวจสอบฝากไว้ตอนนำส่งไม่ผ่าน — มีเฉพาะรอบที่เพิ่งถูกเด้งกลับมา
+         *
+         * ต้องเอาของ API มาด้วย ไม่ใช่พึ่ง `clientErrors` อย่างเดียว เพราะมีข้อที่หน้าเว็บ
+         * รู้เองไม่ได้ เช่น "รหัสหน่วยงานนี้ถูกใช้กับหน่วยงานอื่นแล้ว" หรือข้อความชนบัญชี
+         * ของผู้มีอำนาจอนุมัติ ซึ่งต้องถามฐานข้อมูลถึงจะตอบได้
+         */
+        const carried = takeSubmitErrors(String(orgId));
+        if (Object.keys(carried).length > 0) {
+          setFields(carried);
+          scrollToField(Object.keys(carried)[0]);
+        }
         setRevisionNote((organization.revisionNote as string | null) ?? null);
         const find = (slot: AttachmentSlot) =>
           organization.attachments.find((a) => a.kind === ATTACHMENT_KIND[slot]) ?? null;
