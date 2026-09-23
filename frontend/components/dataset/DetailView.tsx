@@ -16,6 +16,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import { closeActionFor } from "@/lib/dataset-close-action";
 import { useRequireAuth } from "@/lib/require-auth";
 import { ROLE_LABELS, taskEventLabel, formatThaiDate } from "@/lib/status";
 import { describeState, movedMessage, useRequestWatch } from "@/lib/use-request-watch";
@@ -297,6 +298,12 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
    */
   const mayDeleteDraft = mayEdit && user.roles.includes("ORGANIZATION_USER");
 
+  /**
+   * ปุ่มเดียวกันนี้ "ลบ" หรือ "ยกเลิก" — ตัดสินจาก `submittedAt` เหมือนที่ server ทำ
+   * ดู lib/dataset-close-action.ts
+   */
+  const closeAction = closeActionFor(request);
+
   // §4.8 — เมื่อถูกส่งกลับต้องบอกให้ครบว่าแก้เรื่องอะไร โดยใคร เมื่อไหร่
   // "ขอให้ปรับปรุง" = review_task ที่ปิดด้วย result = RETURNED
   const lastRevision = [...request.events].reverse().find((e) => e.result === "RETURNED");
@@ -422,15 +429,15 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
       await api.del(`/api/dataset-requests/${id}`);
       show({
         tone: "success",
-        title: "ลบคำขอแล้ว",
-        detail: `${request?.requestNumber ?? ""} ถูกลบออกจากรายการเรียบร้อย`,
+        title: closeAction.doneTitle,
+        detail: closeAction.doneDetail(request?.requestNumber ?? ""),
       });
       // ออกจากหน้าไปเลย — คำขอที่เพิ่งลบไม่มีอะไรให้ดูอีก และการโหลดหน้านี้ใหม่จะได้ 404
       router.push(backHref ?? "/datasets");
     } catch (err) {
       show({
         tone: "error",
-        title: "ลบคำขอไม่สำเร็จ",
+        title: closeAction.failTitle,
         detail: err instanceof ApiError ? err.message : undefined,
       });
       closeModal();
@@ -504,12 +511,22 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         <RequestMovedNotice message={movedNotice} onDismiss={() => setMovedNotice(null)} />
       ) : null}
 
-      {request.status === "RETURNED" && request.revisionNote ? (
+      {/*
+        กล่องนี้ไม่ผูกกับการมีข้อความส่งกลับอีกแล้ว — มันเป็นที่อยู่ของปุ่ม "ยกเลิกคำขอ" ด้วย
+        ใบที่ถูกส่งกลับโดยไม่มีข้อความ (ไม่ควรเกิด แต่เกิดได้) เคยไม่มีทั้งกล่องและทั้งปุ่ม
+      */}
+      {request.status === "RETURNED" ? (
         <div className="mb-6 rounded-xl border-l-[3px] border-danger bg-danger-bg p-5">
-          <p className="text-[13px] font-semibold text-danger">สิ่งที่ต้องแก้ไข</p>
-          <p className="mt-1.5 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-ink">
-            {request.revisionNote}
-          </p>
+          {request.revisionNote ? (
+            <>
+              <p className="text-[13px] font-semibold text-danger">สิ่งที่ต้องแก้ไข</p>
+              <p className="mt-1.5 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-ink">
+                {request.revisionNote}
+              </p>
+            </>
+          ) : (
+            <p className="text-[13px] font-semibold text-danger">คำขอนี้ถูกส่งกลับให้แก้ไข</p>
+          )}
           {lastRevision ? (
             <p className="mt-2 text-[13px] text-ink-muted">
               โดย{" "}
@@ -517,11 +534,19 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
               · {formatThaiDate(lastRevision.completedAt ?? lastRevision.createdAt)}
             </p>
           ) : null}
-          {mayEdit ? (
-            <Button size="sm" className="mt-4" onClick={() => router.push(`/datasets/${id}/edit`)}>
-              แก้ไขคำขอ
-            </Button>
-          ) : null}
+          <div className="mt-4 flex flex-wrap gap-3">
+            {mayEdit ? (
+              <Button size="sm" onClick={() => router.push(`/datasets/${id}/edit`)}>
+                แก้ไขคำขอ
+              </Button>
+            ) : null}
+            {/* ไม่แก้ต่อแล้วก็ปิดเรื่องได้ — ใบนี้เคยนำส่ง จึงเป็นการยกเลิก ไม่ใช่การลบ */}
+            {mayDeleteDraft ? (
+              <Button size="sm" variant="secondary" onClick={() => setModal("delete")}>
+                {closeAction.short}คำขอ
+              </Button>
+            ) : null}
+          </div>
         </div>
       ) : null}
 
@@ -558,7 +583,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
                   ปุ่มที่มือไปตกใส่ก่อน ส่วนสีแดงเก็บไว้ที่ปุ่มยืนยันในกล่อง */}
               {mayDeleteDraft ? (
                 <Button variant="secondary" onClick={() => setModal("delete")}>
-                  ลบคำขอ
+                  {closeAction.short}คำขอ
                 </Button>
               ) : null}
               <Button onClick={() => router.push(`/datasets/${id}/edit`)}>กรอกข้อมูลต่อ</Button>
@@ -995,22 +1020,22 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
       <Modal
         open={modal === "delete"}
         onClose={() => (busy ? undefined : closeModal())}
-        title="ลบคำขอฉบับร่าง"
-        description="คำขอและข้อมูลที่กรอกไว้จะถูกลบออกจากระบบ และกู้คืนไม่ได้"
+        title={closeAction.modalTitle}
+        description={closeAction.modalDescription}
       >
         <p className="text-[15px] leading-relaxed text-ink-muted">
-          ต้องการลบ <span className="font-medium text-ink">{datasetTitle(request)}</span>
+          ต้องการ{closeAction.verb} <span className="font-medium text-ink">{datasetTitle(request)}</span>
           {/* ร่างที่ยังไม่มีชื่อถูกเรียกว่า "คำขอ <เลขที่>" อยู่แล้ว — ไม่ต่อเลขซ้ำ */}
           {request.title?.trim() ? ` (${request.requestNumber})` : ""} ใช่หรือไม่
           <br />
-          คำขอนี้ยังไม่ได้นำส่ง จึงยังไม่มีผู้ตรวจสอบท่านใดเห็นข้อมูลในคำขอ
+          {closeAction.note}
         </p>
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="secondary" disabled={busy} onClick={closeModal}>
-            ยกเลิก
+            ปิด
           </Button>
           <Button variant="danger" loading={busy} onClick={removeDraft}>
-            ยืนยันลบคำขอ
+            {closeAction.confirmLabel}
           </Button>
         </div>
       </Modal>

@@ -93,6 +93,15 @@ export const AuditAction = {
    */
   REQUEST_DELETED: "REQUEST_DELETED",
 
+  /**
+   * หน่วยงานยกเลิกคำขอของตัวเองที่เคยนำส่งไปแล้ว (`DELETE /api/dataset-requests/:id`
+   * เส้นทางยกเลิก) — คนละอย่างกับ `REQUEST_DELETED` ข้างบน ตรงที่แถวยังอยู่
+   *
+   * และคนละอย่างกับ `REQUEST_REJECTED`: ที่นี่ผู้ยื่นเป็นคนถอนเรื่องเอง ไม่ใช่ผู้ตรวจ
+   * ปฏิเสธ — `actor_id` จึงเป็นผู้ประสานงานของหน่วยงาน ไม่ใช่เจ้าหน้าที่ BDI
+   */
+  REQUEST_CANCELLED: "REQUEST_CANCELLED",
+
   REQUEST_SUBMITTED: "REQUEST_SUBMITTED",
   REQUEST_RETURNED: "REQUEST_RETURNED",
 
