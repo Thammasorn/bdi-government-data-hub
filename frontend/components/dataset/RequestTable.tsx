@@ -31,6 +31,13 @@ import { datasetTitle, fullName, type DatasetRequestListItem } from "@/lib/types
 import { useRequestList } from "@/lib/use-request-list";
 
 /**
+ * ช่องขวาสุดที่กันไว้ให้ปุ่มลบ/ยกเลิกวางทับ ต้องกว้างพอกับป้ายที่ **ยาวที่สุด** ไม่ใช่ป้ายแรกที่มี —
+ * เดิม pr-24 (6rem) พอดีกับ "ลบ" แต่ "ยกเลิก" + ไอคอน + right-5 ยาวราว 6.6rem ปุ่มจึงทับ
+ * วันที่ "อัปเดตล่าสุด" ที่ชิดขวาอยู่ (feedback 2026-09-24) 9rem เผื่อช่องไฟให้วันที่หายใจได้
+ */
+const RESERVE_CLOSE_BUTTON = "pr-36";
+
+/**
  * ตารางคำขอที่ใช้ร่วมกันทั้งฝั่งหน่วยงานและฝั่ง BDI
  * ต่างกันแค่ปลายทางของลิงก์และคอลัมน์ "หน่วยงาน" ที่ฝั่งหน่วยงานไม่ต้องเห็น
  *
@@ -180,7 +187,7 @@ export function DatasetRequestTable({
                 "hidden gap-4 border-b border-line px-6 py-3 text-[12px] font-semibold uppercase tracking-wide text-ink-subtle md:grid",
                 // ช่องว่างขวาสุดที่ปุ่มลบไปนั่งทับ — หัวตารางกับแถวเป็นคนละ grid
                 // ถ้าเว้นข้างเดียวคอลัมน์วันที่ของหัวกับของแถวจะเหลื่อมกันทั้งตาราง
-                canDelete && "pr-24",
+                canDelete && RESERVE_CLOSE_BUTTON,
                 columns,
               )}
             >
@@ -194,7 +201,7 @@ export function DatasetRequestTable({
               {list.rows.map((row) => (
                 /* ปุ่มลบเป็น "พี่น้อง" ของปุ่มแถว ไม่ใช่ลูก — ทั้งแถวเป็น <button> อยู่แล้ว
                    ซ้อนปุ่มไว้ข้างในไม่ได้ (ดู RowDetailCard.tsx) จึงวางทับด้วย absolute
-                   บนช่องว่างที่ pr-24 กันไว้ แทนที่จะรื้อแถวเป็นลิงก์คลุมทั้งกล่อง */
+                   บนช่องว่างที่ RESERVE_CLOSE_BUTTON กันไว้ แทนที่จะรื้อแถวเป็นลิงก์คลุมทั้งกล่อง */
                 <li key={row.id} className="relative">
                   <button
                     type="button"
@@ -213,7 +220,7 @@ export function DatasetRequestTable({
                     onBlur={() => setDetail(null)}
                     className={clsx(
                       "grid w-full grid-cols-1 items-center gap-2 px-6 py-4 text-left transition-colors hover:bg-navy-50/60 md:gap-4",
-                      canDelete && "pr-24",
+                      canDelete && RESERVE_CLOSE_BUTTON,
                       columns,
                     )}
                   >
