@@ -20,6 +20,8 @@
 import { z } from "zod";
 import {
   ActivationKeyStatus,
+  AttachmentOwnerType,
+  AttachmentStatus,
   Prisma,
   RequestStatus,
   ReviewTaskStatus,
@@ -31,6 +33,7 @@ import {
 import { prisma } from "../db.js";
 import { Router } from "../lib/async-route.js";
 import { releaseApproverSeat, type ReleasedSeat } from "../lib/approver-seat.js";
+import { softDeleteAttachment } from "../lib/attachment.js";
 import { AuditAction, AuditSubject, diffFields, logAudit } from "../lib/audit.js";
 import {
   datasetDraftSchema,
@@ -884,6 +887,343 @@ adminRegistrationRouter.post("/datasets/:id/reset", async (req, res) => {
       ? { id: outcome.cancelled.id, taskType: outcome.cancelled.taskType }
       : null,
     message: "คำขอกลับไปเป็นฉบับร่างแล้ว ประวัติการตรวจสอบยังอยู่ครบ และขั้นตอนย้อนกลับไปขั้นที่ 1",
+  });
+});
+
+/**
+ * สถานะที่สั่งยกเลิกไม่ได้ — คนละชุดกับ `resetRefusal()` โดยตั้งใจ
+ *
+ * `DRAFT` **ยกเลิกได้** ต่างจาก reset ที่ปฏิเสธ (ร่างไม่มีรอบให้ถอย) — ร่างที่ไม่มีใครจะกรอก
+ * ต่อคือกรณีหลักของเส้นทางนี้ · `SUBMITTED` / `UNDER_REVIEW` **ยกเลิกได้** ซึ่งเป็นความต่าง
+ * ทั้งหมดจากปุ่มของหน่วยงาน (ที่นั่นตอบ 409 เพราะการดึงกลับตอนเจ้าหน้าที่กำลังอ่านคือการปิด
+ * ด่านของคนอื่นใต้มือเขา — ตัดสิน 2026-09-23) ผู้ดูแลระบบคือคนที่ถูกโทรหาเมื่อหน่วยงานขอ
+ * ถอนเรื่องที่ค้างอยู่ที่ BDI และ `reason` บังคับให้บอกว่าใครขอ · `REJECTED` ยกเลิกได้
+ * เพราะไม่มีของที่ถูกคัดลอกออกไป และ `POST /:id/reset` เป็นทางกลับที่แท้จริง
+ *
+ * `APPROVED` ถูกกันไว้ด้วยเหตุผลที่หนักกว่าของ reset: คำขอจะอ่านว่า "ยกเลิกแล้ว" ขณะที่แถว
+ * `dataset` ที่งอกจากมันยังใช้งานอยู่ — สองที่ตอบไม่ตรงกัน การเอาชุดข้อมูลที่ลงทะเบียนแล้ว
+ * ออกจากระบบคือ `DELETE` ข้างล่าง ซึ่งลบ `dataset` ไปพร้อมกัน
+ */
+function cancelRefusal(status: RequestStatus): { error: string; message: string } | null {
+  if (status === RequestStatus.CANCELLED) {
+    return { error: "already_cancelled", message: "คำขอนี้ถูกยกเลิกไปแล้ว" };
+  }
+  if (status === RequestStatus.APPROVED) {
+    return {
+      error: "already_approved",
+      message:
+        "คำขอนี้ได้รับอนุมัติแล้ว และมีชุดข้อมูลที่ใช้งานอยู่งอกจากมัน — การยกเลิกเฉพาะคำขอจะทำให้" +
+        "คำขออ่านว่ายกเลิกแล้วทั้งที่ชุดข้อมูลยังอยู่ ถ้าต้องเอาออกจากระบบทั้งชุด ให้ใช้ " +
+        "DELETE /api/admin/registrations/datasets/:id",
+    };
+  }
+  return null;
+}
+
+/**
+ * ยกเลิกคำขอลงทะเบียนชุดข้อมูลแทนหน่วยงาน — แถวยังอยู่ สถานะเป็น `CANCELLED`
+ *
+ * ต่างจาก `POST /:id/reset` ที่ทิศทาง: reset พาคำขอกลับไปอยู่ในมือหน่วยงานเพื่อให้แก้แล้ว
+ * นำส่งใหม่ ส่วนอันนี้ปิดเรื่อง ไม่มีใครต้องทำอะไรต่อ — และ reset เป็นทางกลับของมัน
+ * (`DRAFT_RESET_COLUMNS` ล้าง `cancelled_at` ให้) คำสั่งที่ถอยกลับได้คือคำสั่งที่ปล่อยให้เรียกได้
+ *
+ * ไม่มีด่านกัน race เหมือนฝั่งหน่วยงาน (ที่นั่นเงื่อนไขอยู่ใน WHERE ของ `updateMany`) ด้วย
+ * เหตุผลเดียวกับ reset: ผู้เรียกคือสคริปต์ของผู้ดูแลระบบที่อ่านคำตอบแล้วตัดสินใจเอง ไม่ใช่
+ * ปุ่มบนหน้าจอที่อีกแท็บหนึ่งกดแทรกได้
+ */
+adminRegistrationRouter.post("/datasets/:id/cancel", async (req, res) => {
+  const parsed = z.object({ reason: reasonSchema }).safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+    return;
+  }
+  const { reason } = parsed.data;
+
+  const request = await prisma.datasetRegistrationRequest.findFirst({
+    where: byIdOrNumber(req.params.id),
+  });
+  if (!request) {
+    notFound(res, "ไม่พบคำขอลงทะเบียนชุดข้อมูลนี้");
+    return;
+  }
+
+  const refusal = cancelRefusal(request.status);
+  if (refusal) {
+    res.status(409).json(refusal);
+    return;
+  }
+
+  const outcome = await prisma.$transaction(async (tx) => {
+    const cancelled = await cancelActiveTask(tx, {
+      subjectType: DATASET_SUBJECT,
+      subjectId: request.id,
+      actorId: SYSTEM_USER_ID,
+      reason,
+    });
+    await tx.datasetRegistrationRequest.update({
+      where: { id: request.id },
+      data: {
+        cancelledAt: new Date(),
+        // admin token ไม่ใช่ตัวบุคคล — `cancelled_by` จึงเป็น SYSTEM และเหตุผลที่พิมพ์มา
+        // คือสิ่งเดียวที่ตอบได้ว่าใครสั่ง (กติกาเดียวกับทุก endpoint ในไฟล์นี้)
+        cancelledBy: SYSTEM_USER_ID,
+        cancellationReason: reason,
+        updatedBy: SYSTEM_USER_ID,
+      },
+    });
+    // สถานะไม่ได้เขียนด้วยมือ — `cancelled: true` ทำให้ requestStatusFor() ตอบ CANCELLED
+    // ทันที ไม่ว่าคำขอจะเคยนำส่งหรือยัง
+    const status = await deriveRequestStatus(tx, {
+      subjectType: DATASET_SUBJECT,
+      subjectId: request.id,
+      hasSubmitted: Boolean(request.submittedAt),
+      cancelled: true,
+    });
+    const updated = await tx.datasetRegistrationRequest.update({
+      where: { id: request.id },
+      data: { status, updatedBy: SYSTEM_USER_ID },
+    });
+    return { updated, cancelled };
+  });
+
+  await logAudit({
+    action: AuditAction.REQUEST_CANCELLED,
+    subjectType: AuditSubject.DATASET_REGISTRATION_REQUEST,
+    subjectId: request.id,
+    organizationId: request.organizationId,
+    before: { status: request.status },
+    after: { status: outcome.updated.status },
+    metadata: {
+      reason,
+      cancelled_via: "ADMIN_API",
+      request_number: request.requestNumber,
+      cancelled_task_type: outcome.cancelled?.taskType ?? null,
+    },
+  });
+
+  res.json({
+    registration: datasetShape(outcome.updated),
+    progress: await progressOf(DATASET_SUBJECT, outcome.updated),
+    cancelledTask: outcome.cancelled
+      ? { id: outcome.cancelled.id, taskType: outcome.cancelled.taskType }
+      : null,
+    message:
+      "ยกเลิกคำขอแล้ว — แถวยังอยู่ในสถานะ “ยกเลิกแล้ว” และประวัติการตรวจสอบครบตามเดิม " +
+      "ถ้าสั่งผิด ให้ใช้ POST /api/admin/registrations/datasets/:id/reset พากลับเป็นฉบับร่าง",
+  });
+});
+
+/**
+ * ลบคำขอลงทะเบียนชุดข้อมูลออกจากระบบทั้งใบ — **ทุกสถานะ รวมถึง `APPROVED`**
+ *
+ * ทางเดียวที่แถวคำขอหายไปจากฐานข้อมูลได้ หลังจากปุ่มของหน่วยงานกลายเป็น "ยกเลิก" ทั้งหมด
+ * เมื่อ 2026-09-25 และมีไว้ด้วยเหตุผลเดียวกับ `DELETE /api/admin/invitations/:id`: ทางออก
+ * ก่อนหน้านี้คือเข้าไปลบแถวในฐานข้อมูลด้วยมือ ซึ่ง `docs/08-database-access.md` ห้ามไว้
+ *
+ * **ไม่ใช่การยกเลิก** ใบที่ยกเลิกยังอ่านย้อนหลังได้ทั้งใบ อันนี้คือ "ใบนี้ไม่ควรมีอยู่" — กรอกผิด
+ * หน่วยงาน ยิงสคริปต์ซ้ำ หรือชุดข้อมูลทดสอบที่หลุดขึ้น production
+ *
+ * ### ลำดับการลบ — เรียงเอง เพราะสามตารางเป็น FK แบบ Restrict และอีกสี่เป็น polymorphic
+ *
+ *   1. `legal_acceptance`        FK → review_task (Restrict) · subject ชี้คำขอ (ไม่มี FK)
+ *   2. `signature_confirmation`  FK → review_task (Restrict)
+ *   3. `review_task`             polymorphic · self-FK ของการ reassign เป็น SetNull
+ *   4. `notification`            polymorphic · `notification_delivery` หายตาม Cascade
+ *   5. `integration_operation`   polymorphic · งานส่ง DII ของ dataset ที่กำลังหายไป
+ *   6. `attachment`              **soft delete ไม่ใช่ลบแถว** (ดูย่อหน้าถัดไป)
+ *   7. `dataset`                 **FK Restrict — ตัวที่กันใบ APPROVED ไว้**
+ *                                (`dataset_metadata` Cascade · `created_dataset_id` SetNull)
+ *   8. คำขอ                      (`dataset_registration_metadata` Cascade)
+ *
+ * `attachment` ถูกปิดแบบ soft delete ตามกฎของ `lib/attachment.ts` ที่ว่า **object ใน storage
+ * ไม่เคยถูกลบ** — แถวที่เหลือไว้คือสิ่งเดียวที่ยังชี้ไปหาไฟล์เหล่านั้นได้ด้วยคิวรี ถ้าวันหนึ่ง
+ * ต้องไปเก็บกวาด bucket จริง ๆ (`storage_key` ถูกเก็บซ้ำไว้ในแถว audit ด้วย เผื่อกรณีที่แถว
+ * attachment ถูกลบทีหลัง)
+ *
+ * `audit_event` **ไม่ถูกลบ** โดยตั้งใจ — `REQUEST_DELETED` ที่เก็บเลขที่คำขอ ชื่อชุดข้อมูล และ
+ * รหัส dataset ที่หายไปด้วย คือหลักฐานชิ้นเดียวที่เหลือ เหมือนที่ `INVITATION_DELETED` ทำ
+ *
+ * **ไม่แจ้งเตือนหน่วยงาน** ต่างจาก reset: การแจ้งเตือนต้องลิงก์ไปที่คำขอ ซึ่งอีกสองวินาทีก็ไม่มี
+ * แล้ว และแถวแจ้งเตือนเก่าของคำขอใบนี้ก็ถูกลบด้วยเหตุผลเดียวกัน
+ */
+adminRegistrationRouter.delete("/datasets/:id", async (req, res) => {
+  const parsed = z.object({ reason: reasonSchema }).safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+    return;
+  }
+  const { reason } = parsed.data;
+
+  const request = await prisma.datasetRegistrationRequest.findFirst({
+    where: byIdOrNumber(req.params.id),
+    include: { metadata: { select: { title: true } } },
+  });
+  if (!request) {
+    notFound(res, "ไม่พบคำขอลงทะเบียนชุดข้อมูลนี้");
+    return;
+  }
+
+  const removed = await prisma.$transaction(async (tx) => {
+    const datasets = await tx.dataset.findMany({
+      where: { sourceDatasetRegistrationRequestId: request.id },
+      select: { id: true, datasetCode: true, status: true },
+    });
+    const datasetIds = datasets.map((d) => d.id);
+
+    const taskIds = (
+      await tx.reviewTask.findMany({
+        where: { subjectType: DATASET_SUBJECT, subjectId: request.id },
+        select: { id: true },
+      })
+    ).map((t) => t.id);
+
+    // อ่าน storage key ไว้ก่อน — แถว attachment จะถูกปิด ไม่ได้ถูกลบ แต่ `owner_id` ของมัน
+    // จะชี้ไปยังคำขอที่ไม่มีอยู่แล้ว แถว audit จึงเป็นที่เดียวที่อ่านง่ายว่าไฟล์ไหนถูกถอดออก
+    const attachments = await tx.attachment.findMany({
+      where: {
+        status: AttachmentStatus.ACTIVE,
+        OR: [
+          { ownerType: AttachmentOwnerType.DATASET_REGISTRATION_REQUEST, ownerId: request.id },
+          ...(datasetIds.length > 0
+            ? [{ ownerType: AttachmentOwnerType.DATASET, ownerId: { in: datasetIds } }]
+            : []),
+        ],
+      },
+      select: {
+        id: true,
+        attachmentType: true,
+        storageBucket: true,
+        storageKey: true,
+        originalFileName: true,
+      },
+    });
+
+    // 1 — legal_acceptance ต้องไปก่อน review_task (FK Restrict)
+    const legalAcceptances = await tx.legalAcceptance.deleteMany({
+      where: {
+        OR: [
+          { subjectType: DATASET_SUBJECT, subjectId: request.id },
+          ...(taskIds.length > 0 ? [{ reviewTaskId: { in: taskIds } }] : []),
+        ],
+      },
+    });
+
+    // 2 — signature_confirmation: FK → review_task แบบ Restrict เหมือนกัน
+    const signatures = await tx.signatureConfirmation.deleteMany({
+      where: {
+        OR: [
+          { subjectType: DATASET_SUBJECT, subjectId: request.id },
+          ...(taskIds.length > 0 ? [{ reviewTaskId: { in: taskIds } }] : []),
+        ],
+      },
+    });
+
+    // 3 — review_task: ไม่มี FK จากคำขอมาถึงมัน (polymorphic) จึงไม่มีอะไรตามไปลบให้
+    const reviewTasks = await tx.reviewTask.deleteMany({
+      where: { subjectType: DATASET_SUBJECT, subjectId: request.id },
+    });
+
+    // 4 — notification: ถ้าเหลือไว้ กระดิ่งจะมีรายการที่กดแล้วไปหน้า 404
+    // subject ของ dataset เก็บเป็นสตริง "DATASET" ไม่ใช่สมาชิกของ enum SubjectType
+    const notifications = await tx.notification.deleteMany({
+      where: {
+        OR: [
+          { subjectType: DATASET_SUBJECT, subjectId: request.id },
+          ...(datasetIds.length > 0
+            ? [{ subjectType: "DATASET", subjectId: { in: datasetIds } }]
+            : []),
+        ],
+      },
+    });
+
+    // 5 — integration_operation: งานส่ง DII ที่เข้าคิวไว้ตอนอนุมัติ ถ้าปล่อยไว้ worker จะหยิบ
+    // ชุดข้อมูลที่ไม่มีอยู่แล้วขึ้นมาทำ
+    const integrationOperations = await tx.integrationOperation.deleteMany({
+      where: {
+        OR: [
+          { subjectType: DATASET_SUBJECT, subjectId: request.id },
+          ...(datasetIds.length > 0
+            ? [{ subjectType: "DATASET", subjectId: { in: datasetIds } }]
+            : []),
+        ],
+      },
+    });
+
+    // 6 — attachment: ปิดแถว ไม่ลบ และไม่แตะ object ใน storage
+    for (const file of attachments) {
+      await softDeleteAttachment(tx, file.id, {
+        deletedBy: SYSTEM_USER_ID,
+        reason: `ผู้ดูแลระบบลบคำขอ ${request.requestNumber} ออกจากระบบ: ${reason}`,
+      });
+    }
+
+    // 7 — dataset: FK `source_dataset_registration_request_id` ไม่ได้ประกาศ onDelete จึงเป็น
+    // Restrict และเป็นตัวเดียวที่กันการลบใบ APPROVED ไว้ทั้งใบ
+    if (datasetIds.length > 0) {
+      await tx.dataset.deleteMany({ where: { id: { in: datasetIds } } });
+    }
+
+    // 8 — คำขอ: `dataset_registration_metadata` หายตาม Cascade
+    await tx.datasetRegistrationRequest.delete({ where: { id: request.id } });
+
+    return {
+      datasets,
+      attachments,
+      counts: {
+        legalAcceptances: legalAcceptances.count,
+        signatures: signatures.count,
+        reviewTasks: reviewTasks.count,
+        notifications: notifications.count,
+        integrationOperations: integrationOperations.count,
+        attachments: attachments.length,
+        datasets: datasets.length,
+      },
+    };
+  });
+
+  await logAudit({
+    action: AuditAction.REQUEST_DELETED,
+    subjectType: AuditSubject.DATASET_REGISTRATION_REQUEST,
+    subjectId: request.id,
+    organizationId: request.organizationId,
+    before: {
+      requestNumber: request.requestNumber,
+      status: request.status,
+      title: request.metadata?.title ?? request.proposedTitle,
+      createdAt: request.createdAt.toISOString(),
+      createdBy: request.createdBy,
+      submittedAt: request.submittedAt?.toISOString() ?? null,
+      approvedAt: request.approvedAt?.toISOString() ?? null,
+      datasets: removed.datasets,
+      // ไฟล์ยังอยู่ใน bucket — เก็บ key ไว้ให้ตามไปเก็บกวาดได้ ถ้าวันหนึ่งต้องลบของจริง
+      attachments: removed.attachments,
+    },
+    metadata: {
+      reason,
+      deleted_via: "ADMIN_API",
+      request_number: request.requestNumber,
+      removed_counts: removed.counts,
+    },
+  });
+
+  res.json({
+    ok: true,
+    removed: {
+      registrationRequest: {
+        id: request.id,
+        requestNumber: request.requestNumber,
+        status: request.status,
+      },
+      datasets: removed.datasets,
+      counts: removed.counts,
+    },
+    message:
+      `ลบคำขอ ${request.requestNumber} ออกจากระบบแล้ว` +
+      (removed.datasets.length > 0
+        ? ` พร้อมชุดข้อมูล ${removed.datasets.map((d) => d.datasetCode).join(", ")} และ metadata ของมัน`
+        : "") +
+      ` — เหลือไว้แต่แถว audit_event (REQUEST_DELETED) และไฟล์ ${removed.counts.attachments} รายการ` +
+      " ที่ยังอยู่ใน object storage",
   });
 });
 

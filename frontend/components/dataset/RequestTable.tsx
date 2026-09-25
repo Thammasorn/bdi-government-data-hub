@@ -20,11 +20,7 @@ import { Modal } from "@/components/ui/Modal";
 import { SkeletonRows } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { ApiError, api } from "@/lib/api";
-import {
-  CLOSEABLE_STATUSES,
-  DEFAULT_CLOSE_ACTION,
-  closeActionFor,
-} from "@/lib/dataset-close-action";
+import { CLOSE_ACTION, CLOSEABLE_STATUSES } from "@/lib/dataset-close-action";
 import { isBdiStaff } from "@/lib/status";
 import { hasOwnQueue } from "@/lib/stage";
 import { datasetTitle, fullName, type DatasetRequestListItem } from "@/lib/types";
@@ -81,27 +77,23 @@ export function DatasetRequestTable({
   const canDelete =
     !isBdiStaff(user?.roles ?? []) && (user?.roles.includes("ORGANIZATION_USER") ?? false);
 
-  /** คำของแถวที่กำลังจะถูกปิด — กล่องที่ปิดอยู่ยังต้อง render จึงต้องมีค่าตั้งต้น */
-  const pending = pendingDelete ? closeActionFor(pendingDelete) : DEFAULT_CLOSE_ACTION;
-  const actionOf = closeActionFor;
 
   async function confirmDelete() {
     if (!pendingDelete) return;
-    const action = closeActionFor(pendingDelete);
     setDeleting(true);
     try {
       await api.del(`/api/dataset-requests/${pendingDelete.id}`);
       show({
         tone: "success",
-        title: action.doneTitle,
-        detail: action.doneDetail(pendingDelete.requestNumber),
+        title: CLOSE_ACTION.doneTitle,
+        detail: CLOSE_ACTION.doneDetail(pendingDelete.requestNumber),
       });
       setPendingDelete(null);
       list.reload();
     } catch (err) {
       show({
         tone: "error",
-        title: action.failTitle,
+        title: CLOSE_ACTION.failTitle,
         detail: err instanceof ApiError ? err.message : undefined,
       });
       // 404/409 แปลว่าแถวบนจอเก่าไปแล้ว (อีกแท็บกดนำส่งหรือลบไปก่อน) — โหลดรายการใหม่
@@ -295,11 +287,11 @@ export function DatasetRequestTable({
                     <button
                       type="button"
                       onClick={() => setPendingDelete(row)}
-                      aria-label={`${actionOf(row).verb}${datasetTitle(row)}`}
+                      aria-label={`${CLOSE_ACTION.verb}${datasetTitle(row)}`}
                       className="absolute right-5 top-4 z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] font-medium text-ink-subtle transition-colors hover:bg-danger/10 hover:text-danger focus-visible:bg-danger/10 focus-visible:text-danger md:top-1/2 md:-translate-y-1/2"
                     >
                       <TrashIcon />
-                      {actionOf(row).short}
+                      {CLOSE_ACTION.short}
                     </button>
                   ) : null}
                 </li>
@@ -314,11 +306,11 @@ export function DatasetRequestTable({
       <Modal
         open={pendingDelete !== null}
         onClose={() => (deleting ? undefined : setPendingDelete(null))}
-        title={pending.modalTitle}
-        description={pending.modalDescription}
+        title={CLOSE_ACTION.modalTitle}
+        description={CLOSE_ACTION.modalDescription}
       >
         <p className="text-[15px] leading-relaxed text-ink-muted">
-          ต้องการ{pending.verb}{" "}
+          ต้องการ{CLOSE_ACTION.verb}{" "}
           <span className="font-medium text-ink">
             {pendingDelete ? datasetTitle(pendingDelete) : ""}
           </span>
@@ -326,14 +318,14 @@ export function DatasetRequestTable({
               จึงกลายเป็นเลขเดิมสองครั้งในประโยคเดียว */}
           {pendingDelete?.title?.trim() ? ` (${pendingDelete.requestNumber})` : ""} ใช่หรือไม่
           <br />
-          {pending.note}
+          {CLOSE_ACTION.note}
         </p>
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="secondary" disabled={deleting} onClick={() => setPendingDelete(null)}>
             ปิด
           </Button>
           <Button variant="danger" loading={deleting} onClick={confirmDelete}>
-            {pending.confirmLabel}
+            {CLOSE_ACTION.confirmLabel}
           </Button>
         </div>
       </Modal>

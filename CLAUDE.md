@@ -657,13 +657,15 @@ API says; changing who the signatory is stays an administrator's job (`recallRef
 
 **That administrator's job is now an API** — `/api/admin/registrations`, card "Admin API for
 registration" (2026-09-20), `routes/admin-registrations.ts`, admin token like every other
-`/api/admin/*`. Four endpoints, two per journey:
+`/api/admin/*`. Six endpoints: two per journey, plus the two that only Journey C has.
 
 ```
-PUT  /api/admin/registrations/organizations/:id        แก้ snapshot ของคำขอ
-POST /api/admin/registrations/organizations/:id/reset  พากลับไปเป็นฉบับร่าง
-PUT  /api/admin/registrations/datasets/:id
-POST /api/admin/registrations/datasets/:id/reset
+PUT    /api/admin/registrations/organizations/:id        แก้ snapshot ของคำขอ
+POST   /api/admin/registrations/organizations/:id/reset  พากลับไปเป็นฉบับร่าง
+PUT    /api/admin/registrations/datasets/:id
+POST   /api/admin/registrations/datasets/:id/reset
+POST   /api/admin/registrations/datasets/:id/cancel      ปิดเรื่อง — แถวยังอยู่
+DELETE /api/admin/registrations/datasets/:id             ลบออกจากระบบทั้งใบ
 ```
 
 `:id` is the **request** id or its request number — an operator holds the number, never the
@@ -680,6 +682,40 @@ have already been copied out into the live `organization` / `dataset` rows, and 
 back is a different job. `DRAFT` is refused too — *unless* the call is `is_remove_approver` with
 an activated approver still holding the seat, which is the one case where a draft request still
 has work to do (and the previous reset's own response tells the operator to make that call).
+
+**Cancel and delete are Journey C only, and they are the other half of the organisation's own
+button.** `DELETE /api/dataset-requests/:id` always cancels now (card 2026-09-25) — including a
+draft nobody ever submitted, which it used to hard-delete — because "it just disappeared" is not
+an answer a registration system can give: after a hard delete only `audit_event` was left, and no
+screen reads it. `requestStatusFor()` already answered `CANCELLED` whenever `cancelled` is true
+regardless of `submitted_at`, so the existing machinery needed nothing. The organisation's button
+still refuses `SUBMITTED` / `UNDER_REVIEW` with 409 (withdrawing while an officer is reading it
+closes someone else's gate under their hand, settled 2026-09-23), and the 409 text now says
+something true per status — `APPROVED` and `REJECTED` no longer claim BDI is still reading. The
+price is that an empty draft opened by a slipped finger now stays in the list as a `CANCELLED`
+row, which is what the delete button was added to prevent in the first place; the card accepted
+that trade, and `DELETE` below is the only cleanup path left.
+
+So the admin API carries the two things the organisation cannot do. **`POST …/cancel`** closes any
+request that is not already `CANCELLED` or `APPROVED` — `DRAFT` and the in-flight ones included —
+and `reset` is its inverse, because `DRAFT_RESET_COLUMNS` clears `cancelled_at`. `APPROVED` is
+refused (409 `already_approved`, the same code as reset) for a sharper reason than reset's: the
+request would read `CANCELLED` while the `dataset` row it produced stays live.
+
+**`DELETE` is the only path in the system that removes a request row**, and it works on an
+`APPROVED` one, which means it removes the derived `dataset` as well. Eight steps in one
+transaction, ordered by the three `Restrict` FKs — `legal_acceptance` and `signature_confirmation`
+both point at `review_task`, and `dataset.source_dataset_registration_request_id` points at the
+request: `legal_acceptance` → `signature_confirmation` → `review_task` → `notification` →
+`integration_operation` → `attachment` (soft-closed, not deleted) → `dataset` → the request. Four
+of those are polymorphic with no FK at all; `dataset_metadata`, `dataset_registration_metadata`
+and `notification_delivery` come along by cascade, and `created_dataset_id` nulls itself. The
+notifications have to go or the bell keeps an entry whose link resolves to a 404, and the queued
+DII operation has to go or the worker picks up a dataset that no longer exists. `audit_event` is
+kept on purpose: `REQUEST_DELETED`, carrying the request number, the dataset codes and the storage
+keys of every file that was detached, is the only evidence left — the same arrangement as
+`INVITATION_DELETED`. Nobody is notified, because the notification would link to the request that
+is about to stop existing.
 
 **The approver seat has three outcomes, and which one you get depends on the account, not the
 flag.** Not activated → `releaseApproverSeat()` (now `lib/approver-seat.ts`, shared with the
