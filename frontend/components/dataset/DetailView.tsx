@@ -16,7 +16,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
-import { closeActionFor } from "@/lib/dataset-close-action";
+import { CLOSE_ACTION } from "@/lib/dataset-close-action";
 import { useRequireAuth } from "@/lib/require-auth";
 import { ROLE_LABELS, taskEventLabel, formatThaiDate } from "@/lib/status";
 import { describeState, movedMessage, useRequestWatch } from "@/lib/use-request-watch";
@@ -294,18 +294,12 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
       (user.roles.includes("ORGANIZATION_USER") && user.organizationId === request.organization.id));
 
   /**
-   * ลบร่างแคบกว่าสิทธิ์แก้ไขหนึ่งชั้น — ผู้มีอำนาจอนุมัติของหน่วยงานแก้ไขได้ แต่ลบไม่ได้
+   * ยกเลิกแคบกว่าสิทธิ์แก้ไขหนึ่งชั้น — ผู้มีอำนาจอนุมัติของหน่วยงานแก้ไขได้ แต่ปิดเรื่องไม่ได้
    * ตรงกับด่าน role ที่ `DELETE /api/dataset-requests/:id` เพิ่มไว้ (`mayEdit` ฝั่ง server
    * ไม่ได้แคบลงตาม เพราะอีกห้าเส้นทางใช้ร่วมกันอยู่) คนที่สร้างร่างไว้แล้วถูกถอด role
-   * ออกภายหลังจึงยังแก้ไขร่างของตัวเองได้ แต่ลบไม่ได้แล้ว
+   * ออกภายหลังจึงยังแก้ไขร่างของตัวเองได้ แต่ยกเลิกไม่ได้แล้ว
    */
-  const mayDeleteDraft = mayEdit && user.roles.includes("ORGANIZATION_USER");
-
-  /**
-   * ปุ่มเดียวกันนี้ "ลบ" หรือ "ยกเลิก" — ตัดสินจาก `submittedAt` เหมือนที่ server ทำ
-   * ดู lib/dataset-close-action.ts
-   */
-  const closeAction = closeActionFor(request);
+  const mayCancelRequest = mayEdit && user.roles.includes("ORGANIZATION_USER");
 
   // §4.8 — เมื่อถูกส่งกลับต้องบอกให้ครบว่าแก้เรื่องอะไร โดยใคร เมื่อไหร่
   // "ขอให้ปรับปรุง" = review_task ที่ปิดด้วย result = RETURNED
@@ -432,15 +426,15 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
       await api.del(`/api/dataset-requests/${id}`);
       show({
         tone: "success",
-        title: closeAction.doneTitle,
-        detail: closeAction.doneDetail(request?.requestNumber ?? ""),
+        title: CLOSE_ACTION.doneTitle,
+        detail: CLOSE_ACTION.doneDetail(request?.requestNumber ?? ""),
       });
       // ออกจากหน้าไปเลย — คำขอที่เพิ่งลบไม่มีอะไรให้ดูอีก และการโหลดหน้านี้ใหม่จะได้ 404
       router.push(backHref ?? "/datasets");
     } catch (err) {
       show({
         tone: "error",
-        title: closeAction.failTitle,
+        title: CLOSE_ACTION.failTitle,
         detail: err instanceof ApiError ? err.message : undefined,
       });
       closeModal();
@@ -544,9 +538,9 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
               </Button>
             ) : null}
             {/* ไม่แก้ต่อแล้วก็ปิดเรื่องได้ — ใบนี้เคยนำส่ง จึงเป็นการยกเลิก ไม่ใช่การลบ */}
-            {mayDeleteDraft ? (
+            {mayCancelRequest ? (
               <Button size="sm" variant="secondary" onClick={() => setModal("delete")}>
-                {closeAction.short}คำขอ
+                {CLOSE_ACTION.short}คำขอ
               </Button>
             ) : null}
           </div>
@@ -584,9 +578,9 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
             <div className="flex shrink-0 flex-wrap gap-3">
               {/* ลบอยู่ซ้ายของปุ่มหลักและเป็น secondary — ปุ่มที่ทำลายของไม่ควรเป็น
                   ปุ่มที่มือไปตกใส่ก่อน ส่วนสีแดงเก็บไว้ที่ปุ่มยืนยันในกล่อง */}
-              {mayDeleteDraft ? (
+              {mayCancelRequest ? (
                 <Button variant="secondary" onClick={() => setModal("delete")}>
-                  {closeAction.short}คำขอ
+                  {CLOSE_ACTION.short}คำขอ
                 </Button>
               ) : null}
               <Button onClick={() => router.push(`/datasets/${id}/edit`)}>กรอกข้อมูลต่อ</Button>
@@ -1023,22 +1017,22 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
       <Modal
         open={modal === "delete"}
         onClose={() => (busy ? undefined : closeModal())}
-        title={closeAction.modalTitle}
-        description={closeAction.modalDescription}
+        title={CLOSE_ACTION.modalTitle}
+        description={CLOSE_ACTION.modalDescription}
       >
         <p className="text-[15px] leading-relaxed text-ink-muted">
-          ต้องการ{closeAction.verb} <span className="font-medium text-ink">{datasetTitle(request)}</span>
+          ต้องการ{CLOSE_ACTION.verb} <span className="font-medium text-ink">{datasetTitle(request)}</span>
           {/* ร่างที่ยังไม่มีชื่อถูกเรียกว่า "คำขอ <เลขที่>" อยู่แล้ว — ไม่ต่อเลขซ้ำ */}
           {request.title?.trim() ? ` (${request.requestNumber})` : ""} ใช่หรือไม่
           <br />
-          {closeAction.note}
+          {CLOSE_ACTION.note}
         </p>
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="secondary" disabled={busy} onClick={closeModal}>
             ปิด
           </Button>
           <Button variant="danger" loading={busy} onClick={removeDraft}>
-            {closeAction.confirmLabel}
+            {CLOSE_ACTION.confirmLabel}
           </Button>
         </div>
       </Modal>

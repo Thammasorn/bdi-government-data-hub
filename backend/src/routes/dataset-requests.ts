@@ -271,6 +271,26 @@ async function syncStatus(
   });
 }
 
+/**
+ * ข้อความ 409 ของทุกเส้นทางที่แก้ไขคำขอได้เฉพาะตอนคำขออยู่ในมือหน่วยงาน
+ *
+ * ตั้งแต่การปิดคำขอกลายเป็นการยกเลิกทั้งหมด (2026-09-25) ใบที่ **ยังไม่เคยนำส่ง** ก็เป็น
+ * `CANCELLED` ได้ และมันยังนอนอยู่ในรายการของหน่วยงานให้กดเข้าไปได้ — ข้อความเดิมที่บอกว่า
+ * "อยู่ระหว่างการตรวจสอบ" จึงกลายเป็นคำโกหกสำหรับใบที่ไม่มีใครนอกหน่วยงานเคยเห็น
+ */
+function editLockedMessage(status: RequestStatus): string {
+  switch (status) {
+    case RequestStatus.CANCELLED:
+      return "คำขอนี้ถูกยกเลิกแล้ว แก้ไขไม่ได้";
+    case RequestStatus.APPROVED:
+      return "คำขอนี้ได้รับอนุมัติแล้ว แก้ไขไม่ได้";
+    case RequestStatus.REJECTED:
+      return "คำขอนี้ไม่ได้รับอนุมัติ แก้ไขไม่ได้";
+    default:
+      return "คำขออยู่ระหว่างการตรวจสอบ แก้ไขไม่ได้";
+  }
+}
+
 /** รูปข้อมูลที่ frontend และ zod ชุด submit ใช้ */
 function toApiShape(request: RequestRow, extra?: Record<string, unknown>) {
   const metadata = fromMetadataRow(request.metadata);
@@ -781,7 +801,7 @@ datasetRequestRouter.patch("/:id", async (req, res) => {
     return;
   }
   if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
-    res.status(409).json({ error: "locked", message: "คำขออยู่ระหว่างการตรวจสอบ แก้ไขไม่ได้" });
+    res.status(409).json({ error: "locked", message: editLockedMessage(request.status) });
     return;
   }
 
@@ -821,42 +841,52 @@ datasetRequestRouter.patch("/:id", async (req, res) => {
   res.json({ request: toApiShape(updated) });
 });
 
-// -------------------------------------------------------------- ลบฉบับร่าง
+// ------------------------------------------------------------- ยกเลิกคำขอ
 
 /**
- * ลบคำขอที่ยังเป็นฉบับร่างทิ้ง
+ * ยกเลิกคำขอของตัวเอง — ฝั่งหน่วยงาน **ไม่มีเส้นทางลบแถวทิ้งอีกต่อไป**
  *
- * `POST /` สร้างแถวใหม่ทุกครั้งที่กด ไม่เคยใช้ร่างเดิมซ้ำ (ต่างจากเส้นทางหน่วยงาน ซึ่ง
- * มองหาคำขอที่ค้างอยู่ก่อน) มือลั่นกดสองทีจึงได้ร่างเปล่าสองใบที่ไม่มีทางหายไปจากรายการ
+ * `POST /` สร้างแถวใหม่ทุกครั้งที่กด ไม่เคยใช้ร่างเดิมซ้ำ มือลั่นกดสองทีจึงได้ร่างเปล่า
+ * สองใบ ปุ่มนี้เกิดมาเพื่อเก็บกวาดใบที่เกินมา และเคย **ลบทิ้งจริง** เมื่อคำขอยังไม่เคย
+ * นำส่ง (2026-09-16) ต่อมาแยกเป็นสองทางตาม `submitted_at` (2026-09-23) และตั้งแต่
+ * 2026-09-25 เหลือทางเดียวคือ **ยกเลิกเสมอ** ไม่ว่าจะกดตั้งแต่ร่างแรกที่ยังไม่เคยนำส่ง
+ * หรือกดตอนที่ถูกส่งกลับมาแก้ — แถวไม่หายออกจากระบบอีกแล้ว
  *
- * **ลบจริง ไม่ใช่ยกเลิก** คำขอที่ยกเลิกแล้วยังนอนอยู่ในรายการพร้อมป้าย "ยกเลิกแล้ว" ซึ่ง
- * ไม่ได้แก้เรื่องที่ขอมา — สิ่งที่ต้องหายไปคือแถวที่กดมาเกิน
+ * สิ่งที่แลกไปคือร่างเปล่าที่กดพลาดจะค้างอยู่ในรายการในสถานะ "ยกเลิกแล้ว" ตลอดไป ซึ่ง
+ * ตรงข้ามกับเหตุผลที่ปุ่มนี้เกิดมา การ์ด 2026-09-25 ยอมรับข้อแลกเปลี่ยนนี้แล้ว และทางออก
+ * ของความรกย้ายไปอยู่ที่ `DELETE /api/admin/registrations/datasets/:id` ซึ่งเป็นเส้นทาง
+ * เดียวที่ลบแถวออกจากระบบได้จริง — อยู่ในมือผู้ดูแลระบบ ไม่ใช่ในมือผู้ใช้
  *
- * เงื่อนไขจึงแคบที่สุดเท่าที่พอ: DRAFT เท่านั้น ยังไม่เคยนำส่ง และยังไม่มี review_task
- * ใบใดผูกอยู่ แปลว่าไม่มีใครนอกหน่วยงานเคยเห็นคำขอนี้ และไม่มีด่านไหนถูกลบตามไปด้วย
- * **RETURNED ไม่เข้าข่าย** — มันเดินผ่านการตรวจมาแล้ว ปุ่มนี้จะกลืนงานของผู้ตรวจไปด้วย
- * ส่วนคำขอที่อนุมัติแล้วถูก FK ของ `dataset` (ON DELETE RESTRICT) กันไว้อีกชั้นอยู่แล้ว
- *
- * แถว metadata หายตาม FK (`onDelete: Cascade`) ส่วน `attachment` เป็น polymorphic ไม่มี
- * FK จริง จึงไม่มีอะไรตามไปปิดให้ ต้องปิดเองก่อนลบ และปิดแบบ soft delete ตามกฎของ
- * lib/attachment.ts — ไฟล์ใน object storage ไม่เคยถูกลบ ที่นี่ก็ไม่ใช่ข้อยกเว้น
+ * ยกเลิกได้เฉพาะตอนที่คำขออยู่ในมือหน่วยงาน คือ `DRAFT` หรือ `RETURNED` (ตัดสิน
+ * 2026-09-23 ยืนยันอีกครั้ง 2026-09-25) — `SUBMITTED` / `UNDER_REVIEW` คือใบที่ค้างอยู่ที่
+ * ด่านของ BDI มีคนกำลังอ่านมันอยู่ การดึงกลับระหว่างนั้นคือการปิดด่านของคนอื่นใต้มือเขา
+ * ส่วนสถานะปลายทางไม่มีอะไรให้ยกเลิกแล้ว ถ้าจำเป็นต้องปิดใบที่ค้างอยู่ที่ BDI จริง ๆ
+ * มี `POST /api/admin/registrations/datasets/:id/cancel` ให้ผู้ดูแลระบบสั่งข้ามด่าน
  *
  * **เฉพาะผู้ประสานงานของหน่วยงาน** (`ORGANIZATION_USER`) ผู้มีอำนาจอนุมัติของหน่วยงานอยู่ใน
- * หน่วยงานเดียวกันจึงผ่าน `mayEdit` เหมือนกัน (ยังแก้ไขและนำส่งร่างได้) แต่การเก็บกวาดร่างที่
- * กดมาเกินเป็นงานของฝ่ายที่กรอกคำขอ ไม่ใช่ของฝ่ายที่ลงนาม ด่าน role จึงอยู่ในเส้นทางนี้
- * เส้นทางเดียว ไม่ใช่ใน `mayEdit` ซึ่งอีกห้าเส้นทางในไฟล์นี้ใช้ร่วมกันอยู่
+ * หน่วยงานเดียวกันจึงผ่าน `mayEdit` เหมือนกัน (ยังแก้ไขและนำส่งร่างได้) แต่การปิดคำขอทิ้ง
+ * เป็นงานของฝ่ายที่กรอกคำขอ ไม่ใช่ของฝ่ายที่ลงนาม ด่าน role จึงอยู่ในเส้นทางนี้เส้นทางเดียว
+ * ไม่ใช่ใน `mayEdit` ซึ่งอีกห้าเส้นทางในไฟล์นี้ใช้ร่วมกันอยู่
  */
-const DRAFT_DELETED_REASON = "เจ้าของคำขอลบคำขอฉบับร่างทิ้ง";
 
 /**
  * เหตุผลที่เขียนลง `cancellation_reason` และลงด่านที่ปิด เมื่อหน่วยงานถอนคำขอของตัวเอง
  *
- * เป็นข้อความคงที่ ไม่ได้ให้ผู้ใช้พิมพ์ — feedback ที่สั่งงานนี้ขอแค่ให้ใบที่เคยนำส่งไปโผล่
- * ในตัวกรอง "ยกเลิกแล้ว" ไม่ได้ขอช่องกรอกเหตุผล และเส้นทางของผู้ดูแลระบบที่บังคับให้พิมพ์
- * เหตุผลสิบตัวอักษรบังคับเพราะ admin token ไม่ใช่ตัวบุคคล ที่นี่ `cancelled_by` เป็น uuid
- * ของคนที่กดจริง ประวัติจึงตอบได้อยู่แล้วว่าใครถอน
+ * เป็นข้อความคงที่ ไม่ได้ให้ผู้ใช้พิมพ์ — feedback ที่สั่งงานนี้ขอแค่ให้ใบที่ปิดไปโผล่ใน
+ * ตัวกรอง "ยกเลิกแล้ว" ไม่ได้ขอช่องกรอกเหตุผล ส่วนเส้นทางของผู้ดูแลระบบบังคับให้พิมพ์
+ * เหตุผลสิบตัวอักษร เพราะ admin token ไม่ใช่ตัวบุคคล ที่นี่ `cancelled_by` เป็น uuid ของ
+ * คนที่กดจริง ประวัติจึงตอบได้อยู่แล้วว่าใครถอน
  */
 const CANCELLED_BY_ORGANIZATION_REASON = "หน่วยงานยกเลิกคำขอเอง";
+
+/** ข้อความปฏิเสธที่ตรงกับสถานะจริง — ของเดิมตอบ "BDI กำลังตรวจ" กับทุกสถานะที่ปิดไม่ได้ */
+function cancelRefusal(status: RequestStatus): string {
+  if (status === RequestStatus.CANCELLED) return "คำขอนี้ถูกยกเลิกไปแล้ว";
+  if (status === RequestStatus.APPROVED)
+    return "คำขอนี้ได้รับอนุมัติแล้ว ยกเลิกไม่ได้ — กรุณาติดต่อผู้ประสานงานของ BDI";
+  if (status === RequestStatus.REJECTED) return "คำขอนี้สิ้นสุดแล้ว ไม่ต้องยกเลิกอีก";
+  return "คำขอนี้อยู่ระหว่างการตรวจสอบของ BDI ยกเลิกไม่ได้ — กรุณาติดต่อผู้ประสานงานของ BDI";
+}
 
 datasetRequestRouter.delete("/:id", async (req, res, next) => {
   const session = req.session! as Session;
@@ -866,12 +896,9 @@ datasetRequestRouter.delete("/:id", async (req, res, next) => {
       id: true,
       organizationId: true,
       createdBy: true,
-      createdAt: true,
       status: true,
       submittedAt: true,
       requestNumber: true,
-      proposedTitle: true,
-      metadata: { select: { title: true } },
     },
   });
   // 404 ไม่ใช่ 403 เหมือนทุกเส้นทางฝั่งหน่วยงานในไฟล์นี้ — ไม่บอกคนนอกว่าคำขอนี้มีอยู่
@@ -881,152 +908,54 @@ datasetRequestRouter.delete("/:id", async (req, res, next) => {
   }
   // 403 ไม่ใช่ 404 ตรงนี้ และไม่ขัดกับบรรทัดบน: คนนอกหน่วยงานถูกตัดไปตั้งแต่ด่านแรกแล้ว
   // คนที่มาถึงบรรทัดนี้เห็นคำขอใบนี้อยู่ในรายการของตัวเอง การบอกว่า "ไม่พบ" จึงเป็นคำโกหก
-  // ไม่ใช่การปกปิด — และไม่บอกด้วยว่าต้องเป็นใครถึงจะลบได้
+  // ไม่ใช่การปกปิด — และไม่บอกด้วยว่าต้องเป็นใครถึงจะยกเลิกได้
   if (!session.roles.includes(ROLE_CODES.ORGANIZATION_USER)) {
     res.status(403).json({
       error: "forbidden",
-      message: "เฉพาะผู้ประสานงานของหน่วยงานเท่านั้นที่ลบคำขอฉบับร่างได้",
+      message: "เฉพาะผู้ประสานงานของหน่วยงานเท่านั้นที่ยกเลิกคำขอได้",
     });
     return;
   }
-  /**
-   * ปุ่มเดียว สองผลลัพธ์ — เส้นแบ่งคือ "เคยนำส่งไปแล้วหรือยัง" ไม่ใช่สถานะปัจจุบัน
-   *
-   * ร่างที่ยังไม่เคยนำส่งไม่มีใครนอกหน่วยงานเคยเห็น การลบทิ้งจึงไม่ได้ลบประวัติของใคร
-   * แต่ใบที่เคยนำส่งแล้วมีเจ้าหน้าที่ BDI อ่านไปแล้ว มีแถว `review_task` เป็นไทม์ไลน์
-   * และอาจมีลายเซ็น การลบทิ้งทำให้มันหายไปจากทุกหน้าจอโดยไม่เหลืออะไรนอกจาก
-   * `audit_event` ซึ่งไม่มีหน้าจอไหนอ่าน — นั่นคืออาการที่ feedback 2026-09-23 แถว 8
-   * รายงานว่า "ลบชุดข้อมูลแล้ว หายไปเลย ไม่อยู่ใน ยกเลิกแล้ว"
-   *
-   * ใบที่เคยนำส่งจึงถูก**ยกเลิก** ไม่ใช่ลบ: แถวยังอยู่ สถานะเป็น `CANCELLED` และ
-   * ตัวกรอง "ยกเลิกแล้ว" ที่มีอยู่แล้วใน `lib/queue.ts` หยิบมันขึ้นมาได้
-   */
-  const hasSubmitted = Boolean(request.submittedAt);
-  const cancellable =
-    request.status === RequestStatus.DRAFT || request.status === RequestStatus.RETURNED;
-
-  if (hasSubmitted) {
-    /**
-     * ยกเลิกได้เฉพาะตอนที่คำขอกลับมาอยู่ที่หน่วยงานแล้ว (ตัดสิน 2026-09-23)
-     *
-     * `SUBMITTED` / `UNDER_REVIEW` คือใบที่ค้างอยู่ที่ด่านของ BDI — มีคนกำลังอ่านมันอยู่
-     * และการดึงกลับระหว่างนั้นเป็นการปิดด่านของคนอื่นใต้มือเขา ส่วนสถานะปลายทาง
-     * (`APPROVED` / `REJECTED` / `CANCELLED`) ไม่มีอะไรให้ยกเลิกแล้ว
-     */
-    if (!cancellable) {
-      res.status(409).json({
-        error: "locked",
-        message:
-          request.status === RequestStatus.CANCELLED
-            ? "คำขอนี้ถูกยกเลิกไปแล้ว"
-            : "คำขอนี้อยู่ระหว่างการตรวจสอบของ BDI ยกเลิกไม่ได้ — กรุณาติดต่อผู้ประสานงานของ BDI",
-      });
-      return;
-    }
-
-    try {
-      await prisma.$transaction(async (tx) => {
-        /**
-         * ปิดด่านที่ค้างก่อน แล้วค่อยให้ `syncStatus()` คำนวณสถานะใหม่
-         *
-         * ใบที่ `RETURNED` ไม่มีด่านเปิดอยู่ `cancelActiveTask()` จึงคืน null เป็นปกติ
-         * ที่ต้องเรียกเพราะใบที่ถูก admin reset มาเป็น `DRAFT` ยังเปิดด่านค้างไว้ได้
-         */
-        await cancelActiveTask(tx, {
-          subjectType: SUBJECT,
-          subjectId: request.id,
-          actorId: session.sub,
-          reason: CANCELLED_BY_ORGANIZATION_REASON,
-        });
-
-        // เงื่อนไขอยู่ใน WHERE เหมือนเส้นทางลบ — อีกแท็บกดนำส่งใหม่แทรกเข้ามาได้
-        const { count } = await tx.datasetRegistrationRequest.updateMany({
-          where: {
-            id: request.id,
-            cancelledAt: null,
-            status: { in: [RequestStatus.DRAFT, RequestStatus.RETURNED] },
-          },
-          data: {
-            cancelledAt: new Date(),
-            cancelledBy: session.sub,
-            cancellationReason: CANCELLED_BY_ORGANIZATION_REASON,
-            updatedBy: session.sub,
-          },
-        });
-        if (count === 0) throw new WorkflowError("locked", TASK_TAKEN_MESSAGE, 409);
-
-        // สถานะไม่ได้เขียนด้วยมือ — `requestStatusFor()` อ่าน cancelledAt แล้วตอบ CANCELLED
-        await syncStatus(tx, { ...request, cancelledAt: new Date() });
-      });
-    } catch (err) {
-      if (err instanceof WorkflowError) {
-        res.status(err.status).json({ error: err.code, message: err.message });
-        return;
-      }
-      next(err);
-      return;
-    }
-
-    await logAudit({
-      action: AuditAction.REQUEST_CANCELLED,
-      subjectType: AuditSubject.DATASET_REGISTRATION_REQUEST,
-      subjectId: request.id,
-      organizationId: request.organizationId,
-      after: { status: RequestStatus.CANCELLED, reason: CANCELLED_BY_ORGANIZATION_REASON },
-    });
-
-    // 200 ไม่ใช่ 204 — ผู้เรียกต้องแยกออกว่าใบนี้ถูกยกเลิกไว้ ไม่ได้หายไป
-    res.status(200).json({ outcome: "cancelled", status: RequestStatus.CANCELLED });
+  if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
+    res.status(409).json({ error: "locked", message: cancelRefusal(request.status) });
     return;
   }
 
-  if (request.status !== RequestStatus.DRAFT) {
-    res.status(409).json({
-      error: "locked",
-      message: "คำขอนี้ลบไม่ได้ — ลบได้เฉพาะคำขอที่ยังเป็นฉบับร่างและยังไม่เคยนำส่ง",
-    });
-    return;
-  }
-
+  const cancelledAt = new Date();
   try {
     await prisma.$transaction(async (tx) => {
-      // ตาข่ายชั้นที่สอง ไม่ใช่การเช็คซ้ำเปล่า ๆ: ฉบับร่างไม่ควรมี review_task อยู่แล้ว
-      // ถ้าวันไหนมีเส้นทางใหม่ที่เปิดด่านตั้งแต่ยังเป็นร่าง ให้ล้มทั้ง transaction
-      // ดีกว่าลบด่านของคนอื่นทิ้งไปเงียบ ๆ (review_task เป็น polymorphic ไม่มี FK กัน)
-      const tasks = await tx.reviewTask.count({
-        where: { subjectType: SUBJECT, subjectId: request.id },
+      /**
+       * ปิดด่านที่ค้างก่อน แล้วค่อยให้ `syncStatus()` คำนวณสถานะใหม่
+       *
+       * ร่างที่ไม่เคยนำส่งและใบที่ `RETURNED` ไม่มีด่านเปิดอยู่ `cancelActiveTask()` จึงคืน
+       * null เป็นปกติ ที่ต้องเรียกเพราะใบที่ถูก admin reset มาเป็น `DRAFT` ยังเปิดด่านค้างได้
+       */
+      await cancelActiveTask(tx, {
+        subjectType: SUBJECT,
+        subjectId: request.id,
+        actorId: session.sub,
+        reason: CANCELLED_BY_ORGANIZATION_REASON,
       });
-      if (tasks > 0) {
-        throw new WorkflowError(
-          "locked",
-          "คำขอนี้เข้าสู่ขั้นตอนการตรวจสอบแล้ว ลบไม่ได้",
-          409,
-        );
-      }
 
-      const attachments = await tx.attachment.findMany({
+      // เงื่อนไขอยู่ใน WHERE ไม่ใช่ใน if ข้างบนอย่างเดียว — อีกแท็บกดนำส่งแทรกเข้ามาได้
+      const { count } = await tx.datasetRegistrationRequest.updateMany({
         where: {
-          ownerType: AttachmentOwnerType.DATASET_REGISTRATION_REQUEST,
-          ownerId: request.id,
-          status: AttachmentStatus.ACTIVE,
+          id: request.id,
+          cancelledAt: null,
+          status: { in: [RequestStatus.DRAFT, RequestStatus.RETURNED] },
         },
-        select: { id: true },
+        data: {
+          cancelledAt,
+          cancelledBy: session.sub,
+          cancellationReason: CANCELLED_BY_ORGANIZATION_REASON,
+          updatedBy: session.sub,
+        },
       });
-      for (const file of attachments) {
-        await softDeleteAttachment(tx, file.id, {
-          deletedBy: session.sub,
-          reason: DRAFT_DELETED_REASON,
-        });
-      }
+      if (count === 0) throw new WorkflowError("locked", TASK_TAKEN_MESSAGE, 409);
 
-      // เงื่อนไขอยู่ใน WHERE ไม่ใช่ใน if ข้างบนอย่างเดียว — อีกแท็บหนึ่งกดนำส่งแทรกเข้ามา
-      // ระหว่างนี้ได้ ถ้าเกิดขึ้น ให้ลบไม่ติดแล้วล้มทั้งก้อน ดีกว่าลบคำขอที่นำส่งไปแล้ว
-      const removed = await tx.datasetRegistrationRequest.deleteMany({
-        where: { id: request.id, status: RequestStatus.DRAFT, submittedAt: null },
-      });
-      if (removed.count === 0) {
-        throw new WorkflowError("locked", TASK_TAKEN_MESSAGE, 409);
-      }
+      // สถานะไม่ได้เขียนด้วยมือ — `requestStatusFor()` อ่าน cancelledAt แล้วตอบ CANCELLED
+      // ทั้งใบที่เคยนำส่งและร่างที่ไม่เคยนำส่ง (workflow.ts: เช็ค cancelled ก่อน hasSubmitted)
+      await syncStatus(tx, { ...request, cancelledAt });
     });
   } catch (err) {
     if (err instanceof WorkflowError) {
@@ -1037,22 +966,24 @@ datasetRequestRouter.delete("/:id", async (req, res, next) => {
     return;
   }
 
-  // หลัง commit และเก็บค่าที่หายไปไว้ใน `before` — หลังจากนี้แถว audit คือหลักฐาน
-  // ชิ้นเดียวที่เหลือว่าเคยมีคำขอเลขนี้ (แบบเดียวกับ INVITATION_DELETED)
   await logAudit({
-    action: AuditAction.REQUEST_DELETED,
+    action: AuditAction.REQUEST_CANCELLED,
     subjectType: AuditSubject.DATASET_REGISTRATION_REQUEST,
     subjectId: request.id,
     organizationId: request.organizationId,
-    before: {
-      requestNumber: request.requestNumber,
-      title: request.metadata?.title ?? request.proposedTitle,
-      createdAt: request.createdAt.toISOString(),
-      createdBy: request.createdBy,
+    before: { status: request.status, submittedAt: request.submittedAt?.toISOString() ?? null },
+    after: { status: RequestStatus.CANCELLED, reason: CANCELLED_BY_ORGANIZATION_REASON },
+    // `had_submitted` คือเส้นแบ่งที่เคยตัดสินว่าใบนี้จะถูกลบหรือถูกยกเลิก — เก็บไว้เพราะหลัง
+    // 2026-09-25 มันไม่เปลี่ยนผลอีกแล้ว แต่ยังตอบได้ว่าใบไหนเคยเดินผ่านการตรวจมาก่อน
+    metadata: {
+      request_number: request.requestNumber,
+      cancelled_via: "ORGANIZATION",
+      had_submitted: Boolean(request.submittedAt),
     },
   });
 
-  res.status(204).end();
+  // 200 ไม่ใช่ 204 — ผู้เรียกต้องแยกออกว่าใบนี้ถูกยกเลิกไว้ ไม่ได้หายไป
+  res.status(200).json({ outcome: "cancelled", status: RequestStatus.CANCELLED });
 });
 
 // ---------------------------------------------------------------- attachments
@@ -1092,7 +1023,7 @@ datasetRequestRouter.post("/:id/attachments", upload.single("file"), async (req,
    * สถานะแล้ว การอัปโหลดทับที่ยังไม่ถูกกั้นก็ให้ผลเดียวกันคือเปลี่ยนไฟล์ของคำขอที่ล็อกอยู่
    */
   if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
-    res.status(409).json({ error: "locked", message: "คำขออยู่ระหว่างการตรวจสอบ แก้ไขไม่ได้" });
+    res.status(409).json({ error: "locked", message: editLockedMessage(request.status) });
     return;
   }
 
@@ -1188,7 +1119,7 @@ datasetRequestRouter.delete("/:id/attachments/:attachmentId", async (req, res) =
   }
   // เงื่อนไขเดียวกับ PATCH /:id — นำส่งไปแล้วห้ามถอนไฟล์ออกจากคำขอที่ผู้ตรวจกำลังอ่าน
   if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
-    res.status(409).json({ error: "locked", message: "คำขออยู่ระหว่างการตรวจสอบ แก้ไขไม่ได้" });
+    res.status(409).json({ error: "locked", message: editLockedMessage(request.status) });
     return;
   }
 
@@ -1368,7 +1299,13 @@ datasetRequestRouter.post("/:id/submit", async (req, res) => {
     return;
   }
   if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
-    res.status(409).json({ error: "locked", message: "คำขอนี้นำส่งไปแล้ว" });
+    res.status(409).json({
+      error: "locked",
+      message:
+        request.status === RequestStatus.CANCELLED
+          ? "คำขอนี้ถูกยกเลิกแล้ว นำส่งไม่ได้"
+          : "คำขอนี้นำส่งไปแล้ว",
+    });
     return;
   }
 
