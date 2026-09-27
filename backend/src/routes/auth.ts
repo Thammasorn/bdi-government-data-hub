@@ -62,6 +62,7 @@ import {
   purposeOf,
   startThaidOperation,
   succeedThaidOperation,
+  thaidCallbackErrorCode,
 } from "../lib/thaid-flow.js";
 import {
   emailSchema,
@@ -338,11 +339,13 @@ authRouter.post("/thaid/callback", async (req, res) => {
   }
 
   if (parsed.data.error) {
-    await failThaidOperation(operation, parsed.data.error, parsed.data.errorDescription ?? "");
+    // มาจาก query string ผ่านเบราว์เซอร์ ใครก็ใส่อะไรก็ได้ — เก็บและตอบกลับเฉพาะค่าที่เป็นรูปรหัส
+    const code = thaidCallbackErrorCode(parsed.data.error);
+    await failThaidOperation(operation, code, parsed.data.errorDescription ?? "");
     res.status(400).json({
-      error: parsed.data.error,
+      error: code,
       message:
-        parsed.data.error === "user_denied"
+        code === "user_denied"
           ? "คุณไม่ได้ให้ความยินยอมกับ ThaID การยืนยันตัวตนจึงไม่สำเร็จ"
           : "ยืนยันตัวตนกับ ThaID ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
     });

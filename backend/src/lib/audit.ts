@@ -192,7 +192,8 @@ export const AuditAction = {
    * (`metadata.purpose` บอกว่าขาไหน) และเขียนจากที่เดียว: `failThaidOperation()` ใน
    * lib/thaid-flow.ts ซึ่งเป็นจุดที่ทุกความล้มเหลวต้องผ่านอยู่แล้วเพื่อปิดแถว
    * integration_operation — `failure_reason` จึงเป็นรหัสเดียวกับ `last_error_code` ของแถวนั้น
-   * และไม่เก็บ `error_description` ที่ ThaID ส่งมา (เป็นข้อความอิสระที่เราคุมไม่ได้)
+   * และไม่เก็บ `error_description` ที่ ThaID ส่งมา (เป็นข้อความอิสระที่เราคุมไม่ได้) ส่วน `error`
+   * ที่ไม่ใช่รูปรหัส OAuth ลงเป็น `thaid_error_unrecognised` (ดู `thaidCallbackErrorCode()`)
    * ยกเว้นสองกรณีที่เขียนแถวของตัวเองอยู่แล้ว (CID_MISMATCH และ LOGIN_FAILED ตอนไม่พบบัญชี)
    * กับ `state_*` ที่ callback เขียนเองเพราะบางกรณีไม่มีแถว integration_operation ให้ปิด
    */

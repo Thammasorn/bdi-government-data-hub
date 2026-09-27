@@ -144,6 +144,33 @@ export async function succeedThaidOperation(
   });
 }
 
+/** ค่าที่ใช้แทน `error` จาก callback ที่ไม่ใช่รูปของรหัส OAuth */
+export const UNRECOGNISED_THAID_ERROR = "thaid_error_unrecognised";
+
+/**
+ * รหัส OAuth ทุกตัว (access_denied, invalid_request, …) และ `user_denied` ที่ ThaID ส่งจริง
+ * เป็นตัวพิมพ์เล็กกับ `_` ล้วน — ไม่มีตัวเลข รูปนี้จึงรับรหัสของ ThaID ที่เรายังไม่รู้จักได้
+ * แต่ไม่มีทางพาเลข 13 หลักติดมาด้วย
+ */
+const OAUTH_ERROR_CODE = /^[a-z][a-z_]{0,39}$/;
+
+/**
+ * `error` ของ callback → รหัสที่เก็บได้
+ *
+ * ค่านี้ **ไม่ได้มาจาก ThaID โดยตรง** — หน้า callback อ่านจาก query string แล้วส่งต่อมา ใครที่
+ * เรียก /thaid/start ได้ state ของตัวเองแล้วยิง callback เองด้วยข้อความอะไรก็ได้ ถ้าเก็บตามที่ส่งมา
+ * ข้อความนั้นจะกลายเป็น `failure_reason` (และ `last_error_code`) ทำให้รายการรหัสที่ใช้จัดกลุ่ม
+ * เลอะ และฝังเลขบัตรลงคอลัมน์ที่ไม่มีใครคิดจะปิดบังได้ ค่าที่ไม่ใช่รูปของรหัสจึงเหลือค่าคงที่ค่าเดียว
+ * ไม่เก็บค่าดิบไว้ที่ไหนเลย — `error_description` ยังลง `last_error_message` เหมือนเดิม
+ *
+ * รหัสอื่นที่ส่งเข้า `failThaidOperation()` ไม่ต้องผ่านตรงนี้: เป็นค่าคงที่ของเราเอง หรือ `error`
+ * ที่ endpoint token ของ ThaID ตอบกลับมาทาง server-to-server (บางตัวมีตัวเลข เช่น `http_502`)
+ */
+export function thaidCallbackErrorCode(raw: string): string {
+  const code = raw.trim().toLowerCase();
+  return OAUTH_ERROR_CODE.test(code) ? code : UNRECOGNISED_THAID_ERROR;
+}
+
 /**
  * ปิดงานเป็น FAILED **และเขียน `IDENTITY_VERIFICATION_FAILED`** ในที่เดียว
  *
@@ -178,6 +205,7 @@ export async function failThaidOperation(
  *
  * เก็บแค่รหัส (ตัดที่ 64 ตัวเท่ากับ `last_error_code`) **ไม่เก็บ message** — ข้อความจาก
  * `error_description` ของ ThaID เป็นข้อความอิสระที่มาทาง query string คุมเนื้อหาไม่ได้
+ * ส่วน `error` ที่มาทางเดียวกัน callback แปลงผ่าน `thaidCallbackErrorCode()` ก่อนถึงตรงนี้
  *
  * subject ตามขา: activate ชี้ activation key (ตรงกับ `IDENTITY_VERIFIED` และแถว CID_MISMATCH
  * ที่มีอยู่ก่อน — เรื่องราวของคีย์หนึ่งใบจึงอ่านได้จาก subject เดียว) ส่วน login ยังไม่รู้ว่าเป็น
