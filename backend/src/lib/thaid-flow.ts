@@ -161,7 +161,9 @@ const OAUTH_ERROR_CODE = /^[a-z][a-z_]{0,39}$/;
  * เรียก /thaid/start ได้ state ของตัวเองแล้วยิง callback เองด้วยข้อความอะไรก็ได้ ถ้าเก็บตามที่ส่งมา
  * ข้อความนั้นจะกลายเป็น `failure_reason` (และ `last_error_code`) ทำให้รายการรหัสที่ใช้จัดกลุ่ม
  * เลอะ และฝังเลขบัตรลงคอลัมน์ที่ไม่มีใครคิดจะปิดบังได้ ค่าที่ไม่ใช่รูปของรหัสจึงเหลือค่าคงที่ค่าเดียว
- * ไม่เก็บค่าดิบไว้ที่ไหนเลย — `error_description` ยังลง `last_error_message` เหมือนเดิม
+ * ไม่เก็บค่าดิบไว้ที่ไหนเลย — ส่วน `error_description` ยังลง `last_error_message` เป็นข้อความอิสระ
+ * ที่ผู้ยิงเลือกเองได้ (`failThaidOperation()` ตัดความยาวให้ แต่ไม่ได้กรองเนื้อหา) อย่าอ่านคอลัมน์นั้น
+ * ว่าเป็นคำของ ThaID
  *
  * รหัสอื่นที่ส่งเข้า `failThaidOperation()` ไม่ต้องผ่านตรงนี้: เป็นค่าคงที่ของเราเอง หรือ `error`
  * ที่ endpoint token ของ ThaID ตอบกลับมาทาง server-to-server (บางตัวมีตัวเลข เช่น `http_502`)
@@ -192,7 +194,9 @@ export async function failThaidOperation(
     data: {
       status: IntegrationStatus.FAILED,
       lastErrorCode: code.slice(0, 64),
-      lastErrorMessage: message,
+      // `error_description` ของ callback มาทาง query string ยาวได้เท่าเพดาน body (1 MB) — ข้อความ
+      // ของเราเองกับของ endpoint token สั้นกว่านี้มาก ตัดที่ 500 เท่ากับ delivery worker
+      lastErrorMessage: message.slice(0, 500),
       completedAt: new Date(),
     },
   });
