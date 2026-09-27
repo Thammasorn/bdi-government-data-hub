@@ -1025,12 +1025,14 @@ authRouter.post("/login/verify-otp", async (req, res) => {
    * ขั้น OTP ล้มเหลว — หาบัญชีจากอีเมล **เฉพาะในทางที่ล้มเหลวเท่านั้น** ทางที่สำเร็จอ่านบัญชี
    * อยู่แล้วข้างล่าง ไม่ต้องเพิ่ม query ให้ทุกการเข้าสู่ระบบ อีเมลที่พิมพ์มาเก็บไว้ด้วยเหมือน
    * INVALID_CREDENTIAL เพราะอีเมลที่ไม่มีบัญชีก็ยังต้องตอบได้ว่าถูกลองกี่ครั้ง
+   *
+   * query นี้มีไว้ให้ audit อย่างเดียว จึงกลืน error แบบเดียวกับ logAudit — ฐานข้อมูลสะดุด
+   * ตรงนี้ได้แถวที่ไม่มี subject ไม่ใช่ 500 แทนคำตอบ "รหัสไม่ถูกต้อง" ที่ผู้ใช้ควรได้
    */
   const otpFailed = async (failureReason: string, extra: Record<string, unknown>) => {
-    const account = await prisma.userAccount.findUnique({
-      where: { email: parsed.data.email },
-      select: { id: true },
-    });
+    const account = await prisma.userAccount
+      .findUnique({ where: { email: parsed.data.email }, select: { id: true } })
+      .catch(() => null);
     await logAudit({
       action: AuditAction.LOGIN_FAILED,
       subjectType: AuditSubject.USER_ACCOUNT,
@@ -1130,10 +1132,10 @@ authRouter.post("/login/resend-otp", async (req, res) => {
     return;
   }
   // รหัสค้างอยู่ = ขั้นรหัสผ่านผ่านมาแล้ว บัญชีจึงมีอยู่จริง — อ่านมาเพื่อเป็น subject ของ audit
-  const account = await prisma.userAccount.findUnique({
-    where: { email: parsed.data.email },
-    select: { id: true },
-  });
+  // อย่างเดียว อ่านไม่ได้ก็ส่งรหัสใหม่ตามปกติ แถวแค่ไม่มี subject
+  const account = await prisma.userAccount
+    .findUnique({ where: { email: parsed.data.email }, select: { id: true } })
+    .catch(() => null);
   await issueOtp(parsed.data.email, OtpPurpose.LOGIN, {
     userAccountId: account?.id ?? null,
     resend: true,
