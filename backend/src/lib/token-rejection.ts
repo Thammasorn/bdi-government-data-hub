@@ -21,6 +21,10 @@
  * IP เองได้ทุกคำขอ แต่ละค่าได้หน้าต่างใหม่และแถวใหม่ ตัวที่คุมจำนวนแถวจริงคืองบรวม
  * `MAX_IMMEDIATE_ROWS` ต่อ 10 นาที — IP ในแถวเหล่านี้จึงเชื่อได้เท่าที่ X-Forwarded-For เชื่อได้
  *
+ * แถวของถังรวม (`throttle_overflow`) ทั้งแถวทันทีและแถวสรุปจึง **ไม่มี IP และ user agent**:
+ * ถังนั้นรวมทุกแหล่งที่มาหลังงบหมด และเกิดได้เฉพาะตอนถูกยิงจากหลายที่ ซึ่งคือตอนที่ IP ถูกปลอมได้
+ * ถ้าแถวทันทีใส่ IP ของคำขอแรกที่ตกลงถังไว้ คนอ่านจะโยนทั้งถังให้ที่อยู่เดียวซึ่งสุ่มมาและอาจปลอม
+ *
  * ค่าทั้งหมดอยู่ในหน่วยความจำของ process เดียว — backend หลาย replica นับแยกกัน ตัวเลขจึงเป็น
  * ค่าประมาณ (ยอมรับไว้ในแผน) รีสตาร์ตแล้วตัวนับหาย `flushTokenRejections()` ตอน shutdown
  * เขียนสรุปที่ค้างอยู่ให้เท่าที่ทัน
@@ -189,6 +193,12 @@ export function createTokenRejectionRecorder(
 
         const ctx = currentContext();
         const overflow = key === OVERFLOW_KEY;
+        // ที่มาของหน้าต่าง — ถังรวมไม่ใช่ของ client ไหน จึงไม่มีทั้งสองค่า (ดูหัวไฟล์)
+        const origin = {
+          ipAddress: overflow ? null : (ctx?.ipAddress ?? req.ip ?? null),
+          userAgent: overflow ? null : (ctx?.userAgent ?? null),
+          sourceComponent: ctx?.sourceComponent ?? "web-portal",
+        };
         windows.set(key, {
           startedAt: now,
           lastAt: now,
@@ -197,9 +207,7 @@ export function createTokenRejectionRecorder(
           paths: new Set(),
           truncated: { tokenFps: false, paths: false },
           overflow,
-          ipAddress: overflow ? null : (ctx?.ipAddress ?? req.ip ?? null),
-          userAgent: ctx?.userAgent ?? null,
-          sourceComponent: ctx?.sourceComponent ?? "web-portal",
+          ...origin,
         });
         if (!sweeper) {
           sweeper = setInterval(() => sweep(Date.now()), SWEEP_MS);
@@ -207,19 +215,24 @@ export function createTokenRejectionRecorder(
           sweeper.unref();
         }
 
-        void logAudit({
-          action,
-          subjectType,
-          actorType: "ANONYMOUS",
-          result: "FAILURE",
-          metadata: {
-            method: req.method,
-            path,
-            token_present: Boolean(provided),
-            token_fp: fp,
-            ...(overflow ? { throttle_overflow: true } : {}),
-          },
-        });
+        // เขียนจากที่มาของหน้าต่าง ไม่ใช่จากบริบทของคำขอ — ไม่งั้นแถวทันทีของถังรวมได้ IP ของคำขอนี้
+        // ไปจาก ALS ทั้งที่แถวสรุปของถังเดียวกันไม่มี ส่วน correlation id ยังเป็นของคำขอนี้ ตรงกับ
+        // header ที่ตอบกลับไป
+        void runWithContext({ ...origin, correlationId: ctx?.correlationId }, () =>
+          logAudit({
+            action,
+            subjectType,
+            actorType: "ANONYMOUS",
+            result: "FAILURE",
+            metadata: {
+              method: req.method,
+              path,
+              token_present: Boolean(provided),
+              token_fp: fp,
+              ...(overflow ? { throttle_overflow: true } : {}),
+            },
+          }),
+        );
       } catch (err) {
         // การบันทึกต้องไม่ทำให้คำตอบ 401 พัง — logAudit กลืน error ของตัวเองอยู่แล้ว ที่นี่กันส่วนที่เหลือ
         console.error("[audit] บันทึกการปฏิเสธ token ไม่สำเร็จ:", err);
