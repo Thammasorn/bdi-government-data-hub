@@ -16,6 +16,11 @@
  * ที่เต็มแล้วตัดทิ้งเงียบ ๆ ไม่ได้ — `token_fps_truncated` บอกว่ามีค่าที่ไม่ได้อยู่ในรายการ
  * คนอ่านจะได้ไม่สรุปผิดว่า token เก่าไม่ถูกลอง ทั้งที่แค่ไม่มีที่ให้จด
  *
+ * หน้าต่างต่อ IP อย่างเดียวคุมจำนวนแถวไม่ได้: `trust proxy 1` ทำให้ `req.ip` มาจาก
+ * X-Forwarded-For และ backend ของ main เปิดตรงที่ 0.0.0.0:4000 คนที่ยิงตรงไม่ผ่าน proxy จึงตั้ง
+ * IP เองได้ทุกคำขอ แต่ละค่าได้หน้าต่างใหม่และแถวใหม่ ตัวที่คุมจำนวนแถวจริงคืองบรวม
+ * `MAX_IMMEDIATE_ROWS` ต่อ 10 นาที — IP ในแถวเหล่านี้จึงเชื่อได้เท่าที่ X-Forwarded-For เชื่อได้
+ *
  * ค่าทั้งหมดอยู่ในหน่วยความจำของ process เดียว — backend หลาย replica นับแยกกัน ตัวเลขจึงเป็น
  * ค่าประมาณ (ยอมรับไว้ในแผน) รีสตาร์ตแล้วตัวนับหาย `flushTokenRejections()` ตอน shutdown
  * เขียนสรุปที่ค้างอยู่ให้เท่าที่ทัน
@@ -29,10 +34,15 @@ import { currentContext, runWithContext } from "./context.js";
 const WINDOW_MS = 10 * 60_000;
 const SWEEP_MS = 60_000;
 /**
- * เกินจำนวนนี้ IP ใหม่ทั้งหมดไปรวมกันในถังเดียว (`OVERFLOW_KEY`) — ยังนับและยังได้แถวสรุป
- * แต่แผนที่ในหน่วยความจำไม่โตตามจำนวน IP ของคนที่ยิงกระจายมาจากหลายเครื่อง
+ * แถวที่เขียนทันที (ครั้งแรกของหน้าต่าง) ได้ไม่เกินเท่านี้ต่อ 10 นาที **รวมทุก IP** — เกินแล้ว IP
+ * ที่ยังไม่มีหน้าต่างไปรวมกันในถังเดียว (`OVERFLOW_KEY`) ซึ่งยังนับและยังได้แถวสรุป
+ *
+ * กรณีที่ใช้จริง (คนตั้งค่า Postman ผิด token เก่าหลังหมุน) มาจากไม่กี่ที่ 20 แหล่งใน 10 นาทีคือ
+ * การยิงแล้ว ตัวเลขนี้จึงไม่บังของจริง แต่ต่อให้ปลอม IP ทุกคำขอ แถวก็ไม่เกินราว 40 ต่อ 10 นาที
+ * (ทันที + สรุป + ของถังรวม) ไม่ใช่หนึ่งแถวต่อ IP ปลอม — และเพราะหน้าต่างใหม่เปิดได้เฉพาะตอนที่ยัง
+ * มีงบ แผนที่ในหน่วยความจำจึงไม่โตเกินหลักสิบไปด้วย ไม่ต้องมีเพดานจำนวน IP แยกอีกตัว
  */
-const MAX_TRACKED_IPS = 5_000;
+const MAX_IMMEDIATE_ROWS = 20;
 const OVERFLOW_KEY = "\u0000overflow";
 /** รายการในแถวสรุป (fingerprint · เส้นทาง) เก็บได้ไม่เกินเท่านี้ต่อหน้าต่าง */
 const MAX_LISTED = 20;
@@ -49,7 +59,7 @@ interface RejectionWindow {
   paths: Set<string>;
   /** มีค่าที่ไม่ได้จดเพราะรายการเต็ม — ต้องบอกในแถวสรุป ไม่ใช่ทิ้งเงียบ ๆ */
   truncated: { tokenFps: boolean; paths: boolean };
-  /** ถังรวมของ IP ที่เกิน `MAX_TRACKED_IPS` — ไม่ได้เป็นของ IP ไหน */
+  /** ถังรวมของ IP ที่มาหลังงบ `MAX_IMMEDIATE_ROWS` หมด — ไม่ได้เป็นของ IP ไหน */
   overflow: boolean;
   /** บริบทของครั้งแรก — แถวสรุปเขียนจาก timer ซึ่งไม่มี request ให้อ่าน */
   ipAddress: string | null;
@@ -87,6 +97,15 @@ export function createTokenRejectionRecorder(
 ): TokenRejectionRecorder {
   const windows = new Map<string, RejectionWindow>();
   let sweeper: NodeJS.Timeout | null = null;
+  /** งบแถวทันทีของ 10 นาทีปัจจุบัน รวมทุก IP — ดู `MAX_IMMEDIATE_ROWS` */
+  let budget = { startedAt: 0, used: 0 };
+
+  function takeBudget(now: number): boolean {
+    if (now - budget.startedAt >= WINDOW_MS) budget = { startedAt: now, used: 0 };
+    if (budget.used >= MAX_IMMEDIATE_ROWS) return false;
+    budget.used += 1;
+    return true;
+  }
 
   function summarise(window: RejectionWindow, now: number): Promise<void> {
     if (window.suppressed === 0) return Promise.resolve();
@@ -126,6 +145,25 @@ export function createTokenRejectionRecorder(
     }
   }
 
+  /**
+   * นับเข้าหน้าต่างที่ยังเปิดอยู่ของ `key` — คืน false ถ้าไม่มีหน้าต่างให้นับ ผู้เรียกต้องเปิดใหม่
+   * หน้าต่างที่หมดเวลาแต่ตัวกวาดยังไม่มาถึงถูกสรุปทิ้งตรงนี้ก่อน ลำดับแถวจะได้ถูก
+   */
+  function countInto(key: string, now: number, fp: string | null, entry: string): boolean {
+    const open = windows.get(key);
+    if (!open) return false;
+    if (now - open.startedAt >= WINDOW_MS) {
+      windows.delete(key);
+      void summarise(open, now);
+      return false;
+    }
+    open.suppressed += 1;
+    open.lastAt = now;
+    remember(open.tokenFps, fp, () => (open.truncated.tokenFps = true));
+    remember(open.paths, entry, () => (open.truncated.paths = true));
+    return true;
+  }
+
   flushers.push(async () => {
     const now = Date.now();
     const pending = [...windows.values()];
@@ -139,22 +177,14 @@ export function createTokenRejectionRecorder(
         const now = Date.now();
         const fp = provided ? tokenFingerprint(provided) : null;
         const path = pathPattern(req);
+        const entry = `${req.method} ${path}`;
 
         let key = req.ip ?? "unknown";
-        if (!windows.has(key) && windows.size >= MAX_TRACKED_IPS) key = OVERFLOW_KEY;
-
-        const open = windows.get(key);
-        if (open && now - open.startedAt < WINDOW_MS) {
-          open.suppressed += 1;
-          open.lastAt = now;
-          remember(open.tokenFps, fp, () => (open.truncated.tokenFps = true));
-          remember(open.paths, `${req.method} ${path}`, () => (open.truncated.paths = true));
-          return;
-        }
-        // หน้าต่างเก่าหมดเวลาแต่ตัวกวาดยังไม่มาถึง — สรุปก่อนเปิดใหม่ ลำดับแถวจะได้ถูก
-        if (open) {
-          windows.delete(key);
-          void summarise(open, now);
+        if (countInto(key, now, fp, entry)) return;
+        // หน้าต่างใหม่ = แถวทันทีหนึ่งแถว ใช้งบรวมหนึ่งหน่วย งบหมดแล้วนับรวมในถัง overflow แทน
+        if (!takeBudget(now)) {
+          key = OVERFLOW_KEY;
+          if (countInto(key, now, fp, entry)) return;
         }
 
         const ctx = currentContext();
