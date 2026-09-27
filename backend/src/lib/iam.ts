@@ -233,11 +233,13 @@ export async function assignRole(
     });
   }
 
+  // `created` บอกผู้เรียกว่ามีการมอบจริงหรือเป็น no-op — `ROLE_ASSIGNED` ต้องไม่ถูกเขียน
+  // ให้ assignment ที่มีอยู่ก่อนแล้ว ไม่งั้น log จะบอกเวลามอบผิด
   const existing = await db.userRoleAssignment.findFirst({
     where: { userAccountId, roleId, organizationId, ...activeAssignmentWhere() },
     select: { id: true },
   });
-  if (existing) return { id: existing.id, replaced };
+  if (existing) return { id: existing.id, created: false, replaced };
 
   const created = await db.userRoleAssignment.create({
     data: {
@@ -250,7 +252,7 @@ export async function assignRole(
     },
     select: { id: true },
   });
-  return { id: created.id, replaced };
+  return { id: created.id, created: true, replaced };
 }
 
 /**
@@ -502,10 +504,27 @@ async function evaluateActivationKey(record: ActivationKeyRecord) {
   }
   if (record.expiresAt < new Date()) {
     if (record.status !== ActivationKeyStatus.EXPIRED) {
-      await prisma.activationKey.update({
-        where: { id: record.id },
+      // เงื่อนไขสถานะเดิมอยู่ใน where — สองคำขอที่เปิดลิงก์เดียวกันพร้อมกันจะมีใบเดียว
+      // ที่พลิกได้จริง และ `ACTIVATION_KEY_EXPIRED` จึงมีแถวเดียวต่อคีย์
+      const { count } = await prisma.activationKey.updateMany({
+        where: { id: record.id, status: record.status },
         data: { status: ActivationKeyStatus.EXPIRED, updatedBy: SYSTEM_USER_ID },
       });
+      if (count > 0) {
+        await logAudit({
+          action: AuditAction.ACTIVATION_KEY_EXPIRED,
+          subjectType: AuditSubject.USER_ACTIVATION_KEY,
+          subjectId: record.id,
+          organizationId: record.organizationId,
+          before: { status: record.status },
+          after: { status: ActivationKeyStatus.EXPIRED },
+          metadata: {
+            user_account_id: record.userAccountId,
+            role: record.role.code,
+            expires_at: record.expiresAt,
+          },
+        });
+      }
     }
     return { key: null, reason: "expired" as ActivationLookupFailure };
   }
@@ -554,8 +573,7 @@ export async function completeActivation(
     },
   });
 
-  // ส่งกลับให้ผู้เรียกประกาศหลัง commit — คนที่ถูกแทนที่ต้องได้รู้ตัว
-  const { replaced } = await assignRole(db, {
+  const assignment = await assignRole(db, {
     userAccountId: params.userAccountId,
     roleCode: params.roleCode,
     organizationId: params.organizationId,
@@ -571,7 +589,16 @@ export async function completeActivation(
     },
   });
 
-  return { replaced };
+  /**
+   * ส่งกลับให้ผู้เรียกทำต่อหลัง commit ทั้งสองอย่าง — ที่นี่อยู่ใน transaction และทั้ง audit
+   * กับอีเมลเขียนผ่าน prisma ตัวหลัก: `replaced` คือคนที่ถูกแทนที่ซึ่งต้องได้รู้ตัว ส่วน id ของ
+   * assignment คือ subject ของ `ROLE_ASSIGNED` (ถ้า `assignRole()` มอบใหม่จริง ไม่ใช่ no-op)
+   */
+  return {
+    roleAssignmentId: assignment.id,
+    roleAssignmentCreated: assignment.created,
+    replaced: assignment.replaced,
+  };
 }
 
 /**

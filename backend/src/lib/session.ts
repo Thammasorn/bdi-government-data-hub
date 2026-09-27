@@ -125,22 +125,30 @@ async function expire(session: Session, kind: "expired" | "idle"): Promise<void>
   });
 }
 
-/** เพิกถอนใบเดียว — logout และการหมุนใบตอนออก session ใหม่ */
+/**
+ * เพิกถอนใบเดียว — logout และการหมุนใบตอนออก session ใหม่
+ *
+ * รับแถว session ทั้งแถว ไม่ใช่แค่ id เพื่อให้ audit บอกได้ว่าเป็น session ของ **บัญชีไหน**:
+ * `POST /logout` ไม่ผ่าน requireAuth จึงไม่มี actor ในบริบท แถว `SESSION_REVOKED` ที่มีแต่
+ * id ของ session ตอบคำถาม "คนนี้ออกจากระบบเมื่อไร" ไม่ได้เลยถ้าไม่ join กลับไปที่ `iam.session`
+ * บัญชีจึงอยู่ใน `metadata.user_account_id` — ไม่ได้ย้ายไปเป็น `actor_id` เพราะใครคือผู้กระทำ
+ * ของแถวในกลุ่มนี้เป็นเรื่องของการ์ด QA A4 ที่ยังค้างอยู่
+ */
 export async function revokeSession(
   db: Db,
-  sessionId: string,
+  session: Pick<Session, "id" | "userAccountId">,
   reason: SessionRevokeReason,
 ): Promise<number> {
   const { count } = await db.session.updateMany({
-    where: { id: sessionId, revokedAt: null },
+    where: { id: session.id, revokedAt: null },
     data: { revokedAt: new Date(), revokedReason: reason },
   });
   if (count > 0) {
     await logAudit({
       action: AuditAction.SESSION_REVOKED,
       subjectType: AuditSubject.SESSION,
-      subjectId: sessionId,
-      metadata: { reason, session_count: count },
+      subjectId: session.id,
+      metadata: { reason, session_count: count, user_account_id: session.userAccountId },
     });
   }
   return count;

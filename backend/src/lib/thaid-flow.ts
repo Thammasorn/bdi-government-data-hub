@@ -18,6 +18,7 @@ import { IntegrationStatus, IntegrationType, type IntegrationOperation } from "@
 
 import { prisma } from "../db.js";
 import { env } from "../env.js";
+import { AuditAction, AuditSubject, logAudit } from "./audit.js";
 import { correlationId } from "./context.js";
 import { generateNonce, generateState } from "./thaid.js";
 
@@ -88,21 +89,31 @@ export type StateFailure = "not_found" | "expired" | "already_used";
  *
  * `updateMany` ที่กรอง status = PENDING ทำให้การจองเป็น atomic — code หนึ่งใบถูกยิงซ้ำ
  * (ผู้ใช้กด refresh หน้า callback) จะได้ already_used แทนที่จะแลก token สองรอบ
+ *
+ * จองไม่ได้ก็ยังคืนแถวที่หาเจอ (`found`) ให้ผู้เรียก — `IDENTITY_VERIFICATION_FAILED`
+ * ของกรณี `state_*` ต้องบอกได้ว่าเป็นความพยายามครั้งไหน ของคีย์ไหน
  */
 export async function claimThaidState(
   state: string,
-): Promise<{ operation: IntegrationOperation; reason: null } | { operation: null; reason: StateFailure }> {
+): Promise<
+  | { operation: IntegrationOperation; reason: null; found: IntegrationOperation }
+  | { operation: null; reason: StateFailure; found: IntegrationOperation | null }
+> {
   const existing = await prisma.integrationOperation.findUnique({
     where: { idempotencyKey: `thaid:${state}` },
   });
-  if (!existing) return { operation: null, reason: "not_found" };
+  if (!existing) return { operation: null, reason: "not_found", found: null };
 
   const ageMs = Date.now() - existing.createdAt.getTime();
   if (ageMs > env.thaid.stateTtlMinutes * 60_000) {
     if (existing.status === IntegrationStatus.PENDING) {
-      await failThaidOperation(existing, "state_expired", "หมดเวลารอการยืนยันจาก ThaID");
+      // audit: false — callback เขียน `state_expired` เองทุกกรณี (รวมแถวที่ไม่ใช่ PENDING แล้ว)
+      // ถ้าเขียนตรงนี้ด้วย การหมดเวลาครั้งเดียวจะได้สองแถว
+      await failThaidOperation(existing, "state_expired", "หมดเวลารอการยืนยันจาก ThaID", {
+        audit: false,
+      });
     }
-    return { operation: null, reason: "expired" };
+    return { operation: null, reason: "expired", found: existing };
   }
 
   const claimed = await prisma.integrationOperation.updateMany({
@@ -114,9 +125,9 @@ export async function claimThaidState(
       attemptCount: { increment: 1 },
     },
   });
-  if (claimed.count === 0) return { operation: null, reason: "already_used" };
+  if (claimed.count === 0) return { operation: null, reason: "already_used", found: existing };
 
-  return { operation: existing, reason: null };
+  return { operation: existing, reason: null, found: existing };
 }
 
 export async function succeedThaidOperation(
@@ -133,10 +144,21 @@ export async function succeedThaidOperation(
   });
 }
 
+/**
+ * ปิดงานเป็น FAILED **และเขียน `IDENTITY_VERIFICATION_FAILED`** ในที่เดียว
+ *
+ * ทุกความล้มเหลวของ callback ต้องผ่านตรงนี้อยู่แล้วเพื่อปิดแถว integration_operation จึงเป็น
+ * ที่เดียวที่ audit ครบได้โดยไม่ต้องจำไปเติมทีละจุด — ทางออกใหม่ที่เขียนเพิ่มทีหลังได้ log เอง
+ *
+ * `{ audit: false }` สำหรับผู้เรียกที่เขียนแถวของตัวเองอยู่แล้ว ไม่งั้นเหตุการณ์เดียวได้สองแถว:
+ * `cid_mismatch` (แถวของมันมี `thaid_subject` ที่ตรงนี้ไม่มี) · `account_not_found` ของขา login
+ * (เขียนเป็น LOGIN_FAILED) · `state_expired` ใน `claimThaidState()` (callback เขียนเอง)
+ */
 export async function failThaidOperation(
   operation: IntegrationOperation,
   code: string,
   message: string,
+  options: { audit?: boolean } = {},
 ): Promise<void> {
   await prisma.integrationOperation.update({
     where: { id: operation.id },
@@ -145,6 +167,48 @@ export async function failThaidOperation(
       lastErrorCode: code.slice(0, 64),
       lastErrorMessage: message,
       completedAt: new Date(),
+    },
+  });
+  if (options.audit !== false) await logThaidFailure(operation, code);
+}
+
+/**
+ * แถว `IDENTITY_VERIFICATION_FAILED` หนึ่งแถว — `operation` เป็น null ได้เมื่อ state ที่ส่งมา
+ * ไม่ตรงกับแถวไหนเลย
+ *
+ * เก็บแค่รหัส (ตัดที่ 64 ตัวเท่ากับ `last_error_code`) **ไม่เก็บ message** — ข้อความจาก
+ * `error_description` ของ ThaID เป็นข้อความอิสระที่มาทาง query string คุมเนื้อหาไม่ได้
+ *
+ * subject ตามขา: activate ชี้ activation key (ตรงกับ `IDENTITY_VERIFIED` และแถว CID_MISMATCH
+ * ที่มีอยู่ก่อน — เรื่องราวของคีย์หนึ่งใบจึงอ่านได้จาก subject เดียว) ส่วน login ยังไม่รู้ว่าเป็น
+ * ใคร จึงชี้แถว integration_operation ของความพยายามครั้งนั้น
+ */
+export async function logThaidFailure(
+  operation: IntegrationOperation | null,
+  code: string,
+): Promise<void> {
+  const purpose = operation ? purposeOf(operation) : null;
+  const activationKeyId = operation && purpose === "activate" ? operation.subjectId : null;
+
+  // บัญชีของคีย์ — ให้ค้นประวัติของคนคนหนึ่งเจอความพยายามที่ล้มเหลวของเขาด้วย
+  const key = activationKeyId
+    ? await prisma.activationKey
+        .findUnique({ where: { id: activationKeyId }, select: { userAccountId: true } })
+        .catch(() => null)
+    : null;
+
+  await logAudit({
+    action: AuditAction.IDENTITY_VERIFICATION_FAILED,
+    subjectType: activationKeyId ? AuditSubject.USER_ACTIVATION_KEY : AuditSubject.INTEGRATION_JOB,
+    subjectId: activationKeyId ?? operation?.id ?? null,
+    organizationId: operation?.organizationId ?? null,
+    actorType: "ANONYMOUS",
+    result: "FAILURE",
+    metadata: {
+      failure_reason: code.slice(0, 64),
+      purpose,
+      integration_operation_id: operation?.id ?? null,
+      ...(key ? { user_account_id: key.userAccountId } : {}),
     },
   });
 }

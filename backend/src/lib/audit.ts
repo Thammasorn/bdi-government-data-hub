@@ -51,6 +51,11 @@ export const AuditAction = {
   ACTIVATION_KEY_ISSUED: "ACTIVATION_KEY_ISSUED",
   ACTIVATION_KEY_USED: "ACTIVATION_KEY_USED",
   ACTIVATION_KEY_REVOKED: "ACTIVATION_KEY_REVOKED",
+  /**
+   * คีย์เลยกำหนดแล้วถูกพลิกเป็น `EXPIRED` — ไม่มี job มาไล่เก็บ สถานะเปลี่ยนตอนมีคนเปิดลิงก์
+   * (`evaluateActivationKey()` ใน lib/iam.ts) แถวนี้จึงบอกด้วยว่ามีคนกดลิงก์ที่ตายแล้ว เขียน
+   * เฉพาะครั้งที่สถานะเปลี่ยนจริง การเปิดลิงก์เดิมซ้ำไม่เพิ่มแถว
+   */
   ACTIVATION_KEY_EXPIRED: "ACTIVATION_KEY_EXPIRED",
 
   /**
@@ -147,6 +152,18 @@ export const AuditAction = {
   LOGIN_FAILED: "LOGIN_FAILED",
 
   /**
+   * ออก OTP ทางอีเมลให้ขั้นที่สองของการเข้าสู่ระบบ — เพิ่มจากรายการตัวอย่างใน sheet
+   *
+   * ไม่มีแถวนี้ ช่วงระหว่าง "รหัสผ่านถูก" กับ `LOGIN_SUCCEEDED` มองไม่เห็นเลย: ตอบไม่ได้ว่า
+   * รหัสผ่านของบัญชีหนึ่งถูกใช้สำเร็จกี่ครั้งโดยที่ไม่มีใครผ่าน OTP ต่อ ซึ่งเป็นสัญญาณแรกว่า
+   * รหัสผ่านหลุด `metadata.resend` แยกการกดขอรหัสใหม่ออกจากรอบแรก
+   *
+   * **ไม่เก็บตัวรหัส** แม้แต่ hash และ "ออก" ไม่ได้แปลว่า "ส่งถึง" — แถวนี้เขียนก่อนส่งอีเมล
+   * เพราะการส่งทำ inline และล้มได้ (กติกาของทั้ง catalogue: audit มาก่อน SMTP ที่ throw ได้)
+   */
+  LOGIN_OTP_ISSUED: "LOGIN_OTP_ISSUED",
+
+  /**
    * ตั้งรหัสผ่านใหม่ผ่านลิงก์ที่ผู้ดูแลระบบสั่งออกให้ — เพิ่มจากรายการตัวอย่างใน sheet
    * (การ์ด "API ให้ system admin reset password ให้ user" 2026-09-18)
    *
@@ -170,9 +187,26 @@ export const AuditAction = {
    * ยืนยันตัวตนกับ ThaID — เพิ่มจากรายการตัวอย่างใน sheet
    * §2.4 สั่งให้ "บันทึก Log การทำรายการ" ตอนเลขบัตรไม่ตรงโดยเฉพาะ ซึ่งไม่มี action
    * เดิมอันไหนตรงความหมาย (LOGIN_FAILED คนละเรื่อง — ยังไม่มีบัญชีให้ล็อกอินด้วยซ้ำ)
+   *
+   * FAILED ครอบ **ทุก** ความล้มเหลวของ callback ทั้งขา activate และขา login
+   * (`metadata.purpose` บอกว่าขาไหน) และเขียนจากที่เดียว: `failThaidOperation()` ใน
+   * lib/thaid-flow.ts ซึ่งเป็นจุดที่ทุกความล้มเหลวต้องผ่านอยู่แล้วเพื่อปิดแถว
+   * integration_operation — `failure_reason` จึงเป็นรหัสเดียวกับ `last_error_code` ของแถวนั้น
+   * และไม่เก็บ `error_description` ที่ ThaID ส่งมา (เป็นข้อความอิสระที่เราคุมไม่ได้)
+   * ยกเว้นสองกรณีที่เขียนแถวของตัวเองอยู่แล้ว (CID_MISMATCH และ LOGIN_FAILED ตอนไม่พบบัญชี)
+   * กับ `state_*` ที่ callback เขียนเองเพราะบางกรณีไม่มีแถว integration_operation ให้ปิด
    */
   IDENTITY_VERIFIED: "IDENTITY_VERIFIED",
   IDENTITY_VERIFICATION_FAILED: "IDENTITY_VERIFICATION_FAILED",
+  /**
+   * พาผู้ใช้ออกไปยืนยันตัวตนที่ ThaID (`POST /api/auth/thaid/start`) — เพิ่มจากรายการตัวอย่างใน sheet
+   *
+   * คู่เปิดของสองตัวข้างบน: คนที่ไปถึงหน้า ThaID แล้วปิดแท็บทิ้งไม่เคยกลับมาที่ callback
+   * ถ้าไม่มีจุดเริ่ม ความพยายามแบบนั้นไม่เหลือร่องรอยใน audit เลย (เหลือแค่แถว PENDING ใน
+   * integration_operation) subject คือแถว integration_operation ไม่ใช่บัญชี เพราะขา login
+   * ยังไม่รู้ว่าเป็นใครจนกว่าจะกลับมาพร้อมเลขบัตร
+   */
+  IDENTITY_VERIFICATION_STARTED: "IDENTITY_VERIFICATION_STARTED",
 
   DATA_EXPORTED: "DATA_EXPORTED",
   DOCUMENT_DOWNLOADED: "DOCUMENT_DOWNLOADED",
