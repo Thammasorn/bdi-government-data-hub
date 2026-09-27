@@ -1470,6 +1470,13 @@ Two API base URLs, and they are not interchangeable:
   collection variables only; an environment carries `baseUrl` and `adminToken` and nothing
   else. The requests that depend on a captured id now refuse to send in a pre-request script
   that names the request to run first, so the next occurrence says what it is.
+- **An environment's `adminToken` is committed empty — run `python3 docs/tools/check-postman-secrets.py`
+  before committing any Postman file.** `0d0a0d4` (2026-09-24) committed the real production
+  token in `bdi-public`, and it reached Bitbucket and the public GitHub `origin` before anyone
+  noticed; the rule above was written down and did not stop it. The check goes by variable
+  *name*, not `type`, because `bdi-dev-checkout` declares its token `type: "default"`. The same
+  commit also blanked every value in `.env.example`, so `new-dev.sh` checkouts could not boot
+  until it was restored.
 - Prisma reports "cannot reach the database" as **two** classes that keep the code in different
   fields. A pool that was connected and then lost the server raises
   `PrismaClientKnownRequestError` with `code: "P1001"`; a client that never connected raises

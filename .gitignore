@@ -52,3 +52,7 @@ __pycache__/
 # Chrome profile that render-manual-pdf.py leaves next to the manuals
 docs/manuals-pdf/tmpd/
 docs/manuals-pdf/cr/
+
+# database / log-store dumps belong in /hdd1tb/bdi-project/backups/, never in this tree —
+# origin is a public repository
+backups/
