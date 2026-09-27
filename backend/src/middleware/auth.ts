@@ -5,10 +5,12 @@ import { RoleAssignmentStatus, SessionRevokeReason, UserAccountStatus } from "@p
 
 import { prisma } from "../db.js";
 import { env } from "../env.js";
+import { AuditAction } from "../lib/audit.js";
 import { SESSION_COOKIE, hashToken, type SessionPayload } from "../lib/auth.js";
 import { setActor } from "../lib/context.js";
 import { resolveSession, revokeSessionsFor } from "../lib/session.js";
 import { ORGANIZATION_SCOPED_ROLES, type RoleCode } from "../lib/system.js";
+import { createTokenRejectionRecorder } from "../lib/token-rejection.js";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -139,6 +141,9 @@ function secretMatches(provided: string, expected: string): boolean {
   );
 }
 
+/** ตัวนับการปฏิเสธ `x-admin-token` ของ process นี้ — ดู `requireAdminToken()` */
+const adminTokenRejections = createTokenRejectionRecorder(AuditAction.ADMIN_TOKEN_REJECTED);
+
 /**
  * สเปกระบุว่าขั้นตอนเชิญผู้ใช้ "ไม่มี UI แต่ต้องมี api" จึงป้องกันด้วย shared secret
  * แทนที่จะใช้ session — ผู้เรียกเป็นสคริปต์ฝั่ง admin ไม่ใช่เบราว์เซอร์
@@ -148,10 +153,14 @@ function secretMatches(provided: string, expected: string): boolean {
  * "ระบบทำ" การย้ายไปใช้บัญชีจริงที่มี role `SYSTEM_ADMINISTRATOR` เป็นงานของการ์ด
  * Admin Portal ซึ่งยังไม่มีหน้าจอ — ทำที่นี่จะพัง Postman collection และ notebook
  * ที่ใช้เส้นทางนี้อยู่ โดยที่ยังไม่มีอะไรมาแทน
+ *
+ * การปฏิเสธทุกครั้งถูกนับ และลง `audit_event` เป็น `ADMIN_TOKEN_REJECTED` แบบ throttle ต่อ IP
+ * (lib/token-rejection.ts) — ไม่ await: คำตอบ 401 ไม่รอฐานข้อมูล
  */
 export function requireAdminToken(req: Request, res: Response, next: NextFunction) {
   const provided = req.header("x-admin-token");
   if (!provided || !secretMatches(provided, env.auth.adminApiToken)) {
+    adminTokenRejections.record(req, provided);
     res.status(401).json({ error: "unauthenticated", message: "x-admin-token ไม่ถูกต้อง" });
     return;
   }

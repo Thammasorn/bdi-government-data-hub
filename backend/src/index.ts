@@ -9,6 +9,7 @@ import { env } from "./env.js";
 import { DocumentRenderError } from "./lib/document-render.js";
 import { correlationMiddleware } from "./lib/context.js";
 import { loadChoices } from "./lib/dataset-choices.js";
+import { flushTokenRejections } from "./lib/token-rejection.js";
 import { adminRegistrationRouter } from "./routes/admin-registrations.js";
 import { adminRouter } from "./routes/admin.js";
 import { adminUserRouter } from "./routes/admin-users.js";
@@ -170,6 +171,9 @@ async function main() {
   const shutdown = async (signal: string) => {
     console.log(`[backend] ${signal} received, shutting down`);
     server.close();
+    // แถวสรุปของ token ที่ถูกปฏิเสธยังค้างอยู่ในหน่วยความจำ — เขียนให้เท่าที่ทันภายใน 2 วินาที
+    // ไม่รอนานกว่านั้น เพราะ compose ให้เวลาทั้งหมด 10 วินาทีก่อน SIGKILL
+    await Promise.race([flushTokenRejections(), new Promise((resolve) => setTimeout(resolve, 2_000))]);
     await prisma.$disconnect();
     process.exit(0);
   };

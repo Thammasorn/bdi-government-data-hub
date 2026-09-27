@@ -208,6 +208,20 @@ export const AuditAction = {
    */
   IDENTITY_VERIFICATION_STARTED: "IDENTITY_VERIFICATION_STARTED",
 
+  /**
+   * `x-admin-token` ผิดหรือไม่ได้ส่งมา — เพิ่มจากรายการตัวอย่างใน sheet
+   *
+   * token นี้เปิดได้ทุกอย่างใต้ `/api/admin` ไม่หมดอายุ และเคยหลุดออกไปแล้วครั้งหนึ่ง (ดู Traps
+   * ใน CLAUDE.md) การเดาหรือการใช้ค่าเก่าหลังหมุนต้องมองเห็นได้ `metadata.token_fp` คือ 12
+   * ตัวแรกของ SHA-256 ของค่าที่ส่งมา — พอจับคู่กับ fingerprint ของ token เก่าที่รู้อยู่ได้
+   * โดยไม่ต้องเก็บค่าจริง
+   *
+   * เขียนแบบ throttle ต่อ IP (lib/token-rejection.ts): แถวแรกในหน้าต่าง 10 นาทีเขียนทันที
+   * ที่เหลือนับไว้แล้วเขียนแถวสรุปแถวเดียว (`suppressed_count`) ตอนหน้าต่างปิด — 401 เป็นสิ่งที่
+   * คนนอกยิงได้ไม่จำกัด และตารางนี้ไม่มี retention
+   */
+  ADMIN_TOKEN_REJECTED: "ADMIN_TOKEN_REJECTED",
+
   DATA_EXPORTED: "DATA_EXPORTED",
   DOCUMENT_DOWNLOADED: "DOCUMENT_DOWNLOADED",
 
@@ -266,6 +280,12 @@ export const AuditSubject = {
   DATASET_CHOICE: "DATASET_CHOICE",
   NOTIFICATION: "NOTIFICATION",
   INTEGRATION_JOB: "INTEGRATION_JOB",
+  /**
+   * API ฝั่งผู้ดูแลระบบทั้งก้อน (`/api/admin/*`) — ไม่มีใน sheet เพิ่มพร้อม `ADMIN_TOKEN_REJECTED`
+   * คำขอที่ถูกปฏิเสธไม่ได้แตะแถวไหนเลย `subject_id` จึงเป็น null เสมอ เส้นทางที่ถูกยิงอยู่ใน
+   * `metadata.path`
+   */
+  ADMIN_API: "ADMIN_API",
 } as const;
 
 export type AuditSubjectType = (typeof AuditSubject)[keyof typeof AuditSubject];
