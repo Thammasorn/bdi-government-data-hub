@@ -24,6 +24,14 @@ import { NAME_FIELDS, fullNameTh } from "./person-name.js";
 
 /** action code ตามตัวอย่างใน sheet `audit.audit_event` */
 export const AuditAction = {
+  /**
+   * สร้างบัญชี `PENDING` ให้คนที่ถูกเชิญ — `POST /api/admin/invitations` (`created_via: ADMIN_API`)
+   * หรือตอนผู้ประสานงานของ BDI ตรวจคำขอหน่วยงานผ่านแล้วผู้มีอำนาจฯ ยังไม่มีบัญชี (`REVIEW_API`,
+   * `ensureApproverAccount()` ใน routes/organizations.ts)
+   *
+   * บัญชีนี้ยึดอีเมลกับเลขบัตรไว้ตั้งแต่ตอนเชิญ (unique ทั้งคู่) แต่ก่อนหน้านี้ไม่มีแถวไหนบอกว่ามันเกิด
+   * เมื่อไรจากคำสั่งของใคร `after` คือค่าตอนสร้าง เลขบัตรผ่าน `sanitizeState()` แล้ว
+   */
   USER_ACCOUNT_CREATED: "USER_ACCOUNT_CREATED",
   USER_ACCOUNT_ACTIVATED: "USER_ACCOUNT_ACTIVATED",
   USER_ACCOUNT_DEACTIVATED: "USER_ACCOUNT_DEACTIVATED",
@@ -50,6 +58,18 @@ export const AuditAction = {
 
   ACTIVATION_KEY_ISSUED: "ACTIVATION_KEY_ISSUED",
   ACTIVATION_KEY_USED: "ACTIVATION_KEY_USED",
+  /**
+   * คีย์ที่ยังใช้ได้ถูกเพิกถอน — หนึ่งแถวต่อคีย์ เขียนหลัง commit ด้วย `logKeysRevoked()` ใน lib/iam.ts
+   *
+   * เดิมทุกทางที่เพิกถอนคีย์เปลี่ยนสถานะเงียบ ๆ เหลือแค่ `revoked_reason` บนแถวคีย์ ซึ่งตอบไม่ได้ว่าใคร
+   * สั่ง: `POST /api/admin/invitations/:id/revoke` · ออกใบใหม่แทน (resend และคำเชิญผู้มีอำนาจฯ รอบใหม่
+   * — `metadata.replaced_by_key_id` ชี้ใบใหม่) · ยุติบัญชี · สั่งคำขอกลับเป็นร่าง · ยกเลิกผลการตรวจสอบ
+   * `metadata.revoked_via` เป็นช่องทางเดียวกับแถวต้นเรื่อง (ADMIN_API · ADMIN_RESET_API · REVIEW_API)
+   * และ `metadata.reason` คือค่าเดียวกับ `revoked_reason` แถวต้นเรื่องหาได้จาก correlation id เดียวกัน
+   *
+   * คีย์ที่ถูกเพิกถอนตอนเลขบัตรจาก ThaID ไม่ตรง (§2.4) ไม่เขียนแถวนี้ — แถว CID_MISMATCH ของ
+   * `IDENTITY_VERIFICATION_FAILED` บันทึกเหตุการณ์นั้นแล้ว
+   */
   ACTIVATION_KEY_REVOKED: "ACTIVATION_KEY_REVOKED",
   /**
    * คีย์เลยกำหนดแล้วถูกพลิกเป็น `EXPIRED` — ไม่มี job มาไล่เก็บ สถานะเปลี่ยนตอนมีคนเปิดลิงก์
@@ -83,10 +103,40 @@ export const AuditAction = {
   ROLE_ASSIGNED: "ROLE_ASSIGNED",
   ROLE_REVOKED: "ROLE_REVOKED",
 
+  /**
+   * หน่วยงานใหม่ในทะเบียน — ผู้ดูแลระบบสร้างล่วงหน้า (`created_via: ADMIN_API`) หรือผู้ใช้เปิดคำขอ
+   * จดทะเบียนพร้อมหน่วยงานใหม่ (`WEB_FORM`, มี `REQUEST_CREATED` ของคำขอคู่กัน) subject คือแถว
+   * `organization` เสมอ `after` เก็บค่าที่เขียนลงทะเบียนตอนสร้าง ทุกช่องเป็นของหน่วยงาน ไม่มีข้อมูลบุคคล
+   *
+   * แถวทาง WEB_FORM ที่เขียนก่อนการ์ด activity log มี subject เป็น **คำขอ** และไม่มี `REQUEST_CREATED` คู่
+   */
   ORGANIZATION_CREATED: "ORGANIZATION_CREATED",
+  /**
+   * ผู้ดูแลระบบแก้ทะเบียนหน่วยงาน (`PATCH /api/admin/organizations/:id`) — before/after เป็นช่องที่
+   * เปลี่ยนจริง เทียบกับค่าที่ **เขียนลง** (ที่อยู่เป็นรหัส ไม่ใช่ชื่อที่ส่งมา) `metadata.fields` คือช่องที่ส่งมา
+   *
+   * แถวที่เขียนก่อนการ์ด activity log เก็บแค่รหัสกับชื่อไทยไม่ว่าจะแก้ช่องไหน และแถวที่ subject เป็น
+   * `ORGANIZATION_REGISTRATION_REQUEST` คือการเปิดคำขอจากหน่วยงานที่ admin สร้างไว้ ซึ่งตอนนี้เป็น
+   * `REQUEST_CREATED`
+   */
   ORGANIZATION_UPDATED: "ORGANIZATION_UPDATED",
+  /**
+   * หน่วยงานเปิดใช้งาน — BDI อนุมัติขั้นสุดท้ายของคำขอจดทะเบียน (`POST /api/organizations/:id/review`)
+   *
+   * ขั้นนี้ไม่ได้แค่เปลี่ยนสถานะ: ค่าในคำขอถูกเขียนทับทะเบียนหน่วยงานทั้งชุด (รหัส ชื่อ ที่อยู่ ช่องทาง
+   * ติดต่อ) ซึ่ง `REQUEST_APPROVED` ของคำขอไม่ได้บอก before/after จึงเป็น diff ของแถวหน่วยงานที่อ่าน
+   * ไว้ก่อน transaction กับค่าที่เขียนลง และ subject คือหน่วยงาน ไม่ใช่คำขอ
+   */
   ORGANIZATION_ACTIVATED: "ORGANIZATION_ACTIVATED",
 
+  /**
+   * เปิดคำขอใบใหม่ — ทั้งคำขอลงทะเบียนชุดข้อมูลและคำขอจดทะเบียนหน่วยงาน (`POST /api/organizations`)
+   *
+   * ฝั่งหน่วยงานมีสองแบบ: เปิดให้หน่วยงานที่ผู้ดูแลระบบสร้างไว้ (`metadata.prefilled_from` บอกว่าค่า
+   * ตั้งต้นคัดลอกมาจากทะเบียน) หรือเปิดพร้อมหน่วยงานใหม่ ซึ่งมี `ORGANIZATION_CREATED` และ
+   * `ROLE_ASSIGNED` ของผู้เปิดในคำขอเดียวกัน แถวก่อนการ์ด activity log ของสองกรณีนี้เป็น
+   * `ORGANIZATION_UPDATED` และ `ORGANIZATION_CREATED` ตามลำดับ
+   */
   REQUEST_CREATED: "REQUEST_CREATED",
 
   /**
@@ -306,8 +356,22 @@ export const AuditAction = {
    *
    * เนื้อความของเอกสารที่หน่วยงานลงนามเปลี่ยนได้โดยไม่ต้อง deploy จึงต้องมีร่องรอยว่า
    * ใครเปลี่ยนเป็นเวอร์ชันไหนเมื่อไร ไม่มี action เดิมอันไหนตรงความหมายนี้
+   *
+   * subject คือแถว **เวอร์ชัน** ที่เพิ่งออก `metadata.legal_document_id` จึงเก็บ id ของเอกสารไว้ด้วย
+   * ให้ค้นแถวนี้คู่กับ `LEGAL_DOCUMENT_UPDATED` ของเอกสารเดียวกันได้ (แถวก่อนการ์ด activity log ไม่มี)
    */
   LEGAL_DOCUMENT_PUBLISHED: "LEGAL_DOCUMENT_PUBLISHED",
+
+  /**
+   * แก้ข้อมูลประจำตัวของเอกสารกฎหมาย (`PATCH /api/admin/legal-documents/:code`: ชื่อสั้น คำเตือนใน
+   * กล่องลงนาม และบังคับหรือไม่) — เพิ่มจากรายการตัวอย่างใน sheet
+   *
+   * เดิมเส้นทางนี้เขียน `LEGAL_DOCUMENT_PUBLISHED` คนอ่าน log จึงเข้าใจว่ามีเนื้อความฉบับใหม่ออกมา
+   * ทั้งที่ไม่มีเวอร์ชันใหม่เกิดขึ้น สองอย่างนี้ต้องแยกกัน เพราะอันนั้นเปลี่ยนสิ่งที่หน่วยงานลงนาม ส่วนอันนี้
+   * เปลี่ยนป้าย คำเตือน และว่าผู้มีอำนาจฯ กดข้ามได้หรือไม่ subject คือแถว `legal_document` before/after
+   * เก็บเฉพาะช่องที่เปลี่ยน แถวก่อนการ์ด activity log ของเส้นทางนี้ยังเป็นรหัสเดิม
+   */
+  LEGAL_DOCUMENT_UPDATED: "LEGAL_DOCUMENT_UPDATED",
 
   /** ลงนามอิเล็กทรอนิกส์บนเอกสารข้อตกลง (signature.signature_confirmation) */
   DOCUMENT_SIGNED: "DOCUMENT_SIGNED",
@@ -615,7 +679,15 @@ export function sanitizeDiff(
 ): { before: Record<string, unknown>; after: Record<string, unknown> } | null {
   if (!diff) return null;
   return {
-    before: sanitizeValue(diff.before) as Record<string, unknown>,
-    after: sanitizeValue(diff.after) as Record<string, unknown>,
+    before: sanitizeState(diff.before),
+    after: sanitizeState(diff.after),
   };
+}
+
+/**
+ * กฎเดียวกับ `sanitizeDiff()` สำหรับแถวที่มีสถานะเดียว — การสร้าง (`USER_ACCOUNT_CREATED`,
+ * `ACTIVATION_KEY_ISSUED` ที่เพิ่มในการ์ด activity log) ไม่มี before ให้ diff แต่ `after` ยังถือเลขบัตรอยู่
+ */
+export function sanitizeState(state: object): Record<string, unknown> {
+  return sanitizeValue(state) as Record<string, unknown>;
 }

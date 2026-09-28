@@ -293,6 +293,8 @@ export async function publishVersion(
   params: { documentCode: string; docx: Buffer; filename: string; actorId: string },
 ): Promise<{
   versionId: string;
+  /** แถว `legal_document` ของเวอร์ชันนี้ — `LEGAL_DOCUMENT_PUBLISHED` เก็บไว้ให้ค้นตามเอกสารได้ */
+  documentId: string;
   versionNumber: number;
   placeholders: string[];
   deprecatedPlaceholders: string[];
@@ -400,5 +402,11 @@ export async function publishVersion(
     });
   }
 
-  return { versionId, versionNumber, placeholders, deprecatedPlaceholders: deprecated };
+  return {
+    versionId,
+    documentId: document.id,
+    versionNumber,
+    placeholders,
+    deprecatedPlaceholders: deprecated,
+  };
 }

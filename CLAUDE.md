@@ -439,8 +439,12 @@ instead; without that, old log rows change meaning when a user is renamed.
 (`…Cid`, `…NationalId`, `pid`, `thaid_subject`) become `{masked: "xxxxxxxxx1234", changed: true}`.
 The design column is "Sanitized state before/after" and the table has no retention, so a raw
 diff writes a CID on every save. Codes that predate the activity-log card (`REQUEST_UPDATED`,
-`INVITATION_DELETED`, `ACTIVATION_KEY_ISSUED`, …) still store the raw value until BDI decides
-whether to mask existing codes; don't change their payloads in passing. The officer's draft
+`INVITATION_DELETED`, `ACTIVATION_KEY_ISSUED`, …) still store the raw value **at the sites that
+wrote them before the card**, until BDI decides whether to mask existing codes; don't change their
+payloads in passing. A new site writing an old code is a new diff and goes through
+`sanitizeDiff()` / `sanitizeState()` — the approver invitation's `ACTIVATION_KEY_ISSUED` (written
+since 2026-09-29 when the BDI officer passes the first gate) is masked while
+`POST /api/admin/invitations`' is not. The officer's draft
 `PATCH` writes `REQUEST_DRAFT_SAVED`, diffed against what the route **writes**, never against the
 body: the organisation form sends only non-empty fields and the dataset form sends all of them, so
 neither body says what changed. `""` counts as null, and a save that changes nothing writes no row.
@@ -452,6 +456,18 @@ from the **account** over whatever the body carried; a change there goes in
 `metadata.synced_from_account`, not `fields_changed`, so the first save of a snapshot older than
 the account (a legacy or `seed:demo` draft, a renamed account) writes a row with
 `fields_changed: []` instead of crediting the officer with typing their own name.
+
+**Audit rows come before any inline send.** Activation-key, password-reset and OTP mails go out
+inline and can throw; a row written after them vanishes with the SMTP failure while the key or
+token it describes is already committed. **Revoke activation keys with `revokeIssuedKeys()`**
+(`lib/iam.ts`), never a bare `updateMany`: it returns the keys it revoked so the caller can write
+one `ACTIVATION_KEY_REVOKED` per key with `logKeysRevoked()` after commit — every revoke path used
+to change the status silently. Anything created inside a transaction (an account, a key, a role)
+comes out in the transaction's result and is audited after commit, never from inside the
+callback (`ensureApproverAccount()` returns what it made for that reason; the in-transaction
+`ROLE_REVOKED` of `revokeRoleAssignments()` is QA A4's and is left alone). `requireAdminToken`
+stamps the request `admin-portal` and `logAudit` adds `metadata.admin_token_fp`, since the actor
+on that path is always "system".
 
 **Email is no longer sent from request handlers.** `notifyUsers()` writes a `notification` row
 plus a `notification_delivery` row (the outbox), and `src/workers/delivery.ts` sends it — a

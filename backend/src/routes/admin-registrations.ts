@@ -19,7 +19,6 @@
  */
 import { z } from "zod";
 import {
-  ActivationKeyStatus,
   AttachmentOwnerType,
   AttachmentStatus,
   Prisma,
@@ -43,9 +42,12 @@ import {
 } from "../lib/dataset.js";
 import {
   activatedApprover,
+  logKeysRevoked,
+  revokeIssuedKeys,
   revokeRoleAssignments,
   roleIdByCode,
   roleSeatTaken,
+  type RevokedKey,
 } from "../lib/iam.js";
 import { buildJourneyProgress, summariseProgress } from "../lib/journey-steps.js";
 import { NotificationType, notifyUsers, organizationMemberIds } from "../lib/notify.js";
@@ -450,6 +452,8 @@ adminRegistrationRouter.post("/organizations/:id/reset", async (req, res) => {
   const outcome = await prisma.$transaction(async (tx) => {
     let releasedSeat: ReleasedSeat | null = null;
     let deactivated: { id: string; email: string; rolesRevoked: number } | null = null;
+    /** คีย์ของผู้มีอำนาจฯ ที่ถูกเพิกถอนทางใดทางหนึ่งข้างล่าง — `ACTIVATION_KEY_REVOKED` หลัง commit */
+    let revokedKeys: RevokedKey[] = [];
     const cancelled = await cancelActiveTask(tx, {
       subjectType: ORG_SUBJECT,
       subjectId: request.id,
@@ -463,16 +467,11 @@ adminRegistrationRouter.post("/organizations/:id/reset", async (req, res) => {
         actorId: SYSTEM_USER_ID,
         reason,
       });
-      await tx.activationKey.updateMany({
-        where: { userAccountId: approver.id, status: ActivationKeyStatus.ISSUED },
-        data: {
-          status: ActivationKeyStatus.REVOKED,
-          revokedAt: new Date(),
-          revokedBy: SYSTEM_USER_ID,
-          revokedReason: reason,
-          updatedBy: SYSTEM_USER_ID,
-        },
-      });
+      revokedKeys = await revokeIssuedKeys(
+        tx,
+        { userAccountId: approver.id },
+        { actorId: SYSTEM_USER_ID, reason },
+      );
       await revokeSessionsFor(tx, {
         userAccountId: approver.id,
         reason: SessionRevokeReason.ACCOUNT_SUSPENDED,
@@ -503,6 +502,7 @@ adminRegistrationRouter.post("/organizations/:id/reset", async (req, res) => {
         actorId: SYSTEM_USER_ID,
         reason,
       });
+      revokedKeys = releasedSeat?.revokedKeys ?? [];
     }
 
     await tx.organizationRegistrationRequest.update({
@@ -521,7 +521,7 @@ adminRegistrationRouter.post("/organizations/:id/reset", async (req, res) => {
       where: { id: request.id },
       data: { status, updatedBy: SYSTEM_USER_ID },
     });
-    return { updated, cancelled, releasedSeat, deactivated };
+    return { updated, cancelled, releasedSeat, deactivated, revokedKeys };
   });
 
   const seat = outcome.releasedSeat;
@@ -577,6 +577,9 @@ adminRegistrationRouter.post("/organizations/:id/reset", async (req, res) => {
       },
     });
   }
+
+  // คำเชิญที่ยังใช้ได้ของผู้มีอำนาจฯ ทั้งสองทางข้างบน (ปิดบัญชี หรือปล่อยที่นั่งแต่ลบบัญชีไม่ได้)
+  await logKeysRevoked(outcome.revokedKeys, { revokedVia: "ADMIN_RESET_API" });
 
   await announceReset({
     subjectType: ORG_SUBJECT,
