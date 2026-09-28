@@ -5,7 +5,7 @@ import { RoleAssignmentStatus, SessionRevokeReason, UserAccountStatus } from "@p
 
 import { prisma } from "../db.js";
 import { env } from "../env.js";
-import { AuditAction } from "../lib/audit.js";
+import { AuditAction, AuditSubject } from "../lib/audit.js";
 import { SESSION_COOKIE, hashToken, type SessionPayload } from "../lib/auth.js";
 import { setActor } from "../lib/context.js";
 import { resolveSession, revokeSessionsFor } from "../lib/session.js";
@@ -142,7 +142,11 @@ function secretMatches(provided: string, expected: string): boolean {
 }
 
 /** ตัวนับการปฏิเสธ `x-admin-token` ของ process นี้ — ดู `requireAdminToken()` */
-const adminTokenRejections = createTokenRejectionRecorder(AuditAction.ADMIN_TOKEN_REJECTED);
+const adminTokenRejections = createTokenRejectionRecorder(
+  AuditAction.ADMIN_TOKEN_REJECTED,
+  AuditSubject.ADMIN_API,
+  { watchedFps: env.auth.adminTokenWatchFps },
+);
 
 /**
  * สเปกระบุว่าขั้นตอนเชิญผู้ใช้ "ไม่มี UI แต่ต้องมี api" จึงป้องกันด้วย shared secret
@@ -154,8 +158,10 @@ const adminTokenRejections = createTokenRejectionRecorder(AuditAction.ADMIN_TOKE
  * Admin Portal ซึ่งยังไม่มีหน้าจอ — ทำที่นี่จะพัง Postman collection และ notebook
  * ที่ใช้เส้นทางนี้อยู่ โดยที่ยังไม่มีอะไรมาแทน
  *
- * การปฏิเสธทุกครั้งถูกนับ และลง `audit_event` เป็น `ADMIN_TOKEN_REJECTED` แบบ throttle ต่อ IP
- * (lib/token-rejection.ts) — ไม่ await: คำตอบ 401 ไม่รอฐานข้อมูล
+ * การปฏิเสธทุกครั้งถูกนับ และลง `audit_event` เป็น `ADMIN_TOKEN_REJECTED` แบบ throttle
+ * (lib/token-rejection.ts): หน้าต่าง 10 นาทีต่อ IP ภายใต้งบแถวทันที 20 แถวรวมทุก IP ส่วนที่มาหลัง
+ * งบหมดลงถังรวมที่ไม่มี IP (`throttle_overflow`) และ token ที่ปลดแล้วตาม `ADMIN_TOKEN_WATCH_FPS`
+ * ได้แถวของตัวเองนอกงบนั้น (`watched_token`) — ไม่ await: คำตอบ 401 ไม่รอฐานข้อมูล
  */
 export function requireAdminToken(req: Request, res: Response, next: NextFunction) {
   const provided = req.header("x-admin-token");

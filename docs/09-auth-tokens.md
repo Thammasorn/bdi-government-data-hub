@@ -240,6 +240,61 @@ OTP แบบ `REGISTRATION` อีกแล้ว
 คอลเลกชัน Postman ของ endpoint กลุ่มนี้อยู่ที่ `docs/bdi-admin-portal.postman_collection.json`
 (สร้างหน่วยงาน + ส่งลิงก์เปิดใช้งาน + ดู/ยกเลิกคำเชิญ)
 
+### 4.1 คำขอที่ถูกปฏิเสธ — และการเฝ้า token ตัวที่ปลดไปแล้ว
+
+`x-admin-token` ที่ผิดหรือไม่ได้ส่งมาถูกนับทุกครั้ง และลง `audit_event` เป็น `ADMIN_TOKEN_REJECTED`
+(`backend/src/lib/token-rejection.ts`) โดยไม่เก็บค่าที่ส่งมา เก็บแค่ `token_fp` คือ 12 ตัวแรกของ
+SHA-256 ของค่านั้น (`tokenFingerprint()` ใน `lib/auth.ts`) ซึ่งพอบอกได้ว่า "ค่านี้คือ token เก่าหรือ
+เปล่า" fingerprint แบบไม่มีกุญแจของค่าสั้น ๆ เดาย้อนกลับได้ token จึงต้องยาวอย่างน้อย 128 บิต
+(`openssl rand -hex 32`)
+
+ไม่ได้เขียนทุกครั้ง เพราะ 401 ใครก็ยิงได้ไม่จำกัด และตารางนี้ไม่มี retention:
+
+| สิ่งที่เกิด | แถวที่ได้ |
+|---|---|
+| ครั้งแรกจาก IP หนึ่งในหน้าต่าง 10 นาที | แถวทันทีหนึ่งแถว |
+| ครั้งถัดไปจาก IP เดิมในหน้าต่างเดิม | นับอย่างเดียว แล้วได้แถวสรุปแถวเดียวตอนหน้าต่างปิด (`suppressed_count` · `token_fps` · `paths`) |
+| แถวทันทีรวมทุก IP ครบ 20 แถวใน 10 นาทีแล้ว | IP ที่ยังไม่มีหน้าต่างนับรวมในถังเดียว แถวของถังมี `throttle_overflow: true` และไม่มี IP กับ user agent |
+| ค่าที่ได้เป็น IP มาไม่ใช่ IP | ทุกค่าใช้หน้าต่างเดียวกัน แถวไม่มี IP แต่มี `ip_unparsed: true` |
+| fingerprint อยู่ใน `ADMIN_TOKEN_WATCH_FPS` | แถวของตัวเองทันที มี `watched_token: true` และอยู่นอกงบข้างบน — ที่มาละแถวต่อนาที รวมไม่เกิน 60 แถวต่อ 10 นาที ส่วนที่เกินไปอยู่ในแถวสรุปเป็น `watched_suppressed_count` |
+
+IP ในแถวเหล่านี้เชื่อได้เท่าที่ X-Forwarded-For เชื่อได้: backend ยิงตรงได้ และ `trust proxy 1`
+อ่านที่อยู่จาก header นั้น `metadata.path` เป็นรูปแบบ ไม่ใช่ข้อความที่ผู้ยิงพิมพ์ — UUID → `:id`
+เลข 6 หลักขึ้นไป → `:n` ตัวอักษรนอก `A-Z a-z 0-9 / _ . : -` → `_` และยาวไม่เกิน 120 ตัว
+
+**ทุกครั้งที่ปลด token ให้เพิ่ม fingerprint ของตัวเก่าลง `ADMIN_TOKEN_WATCH_FPS`** แถวสรุปจด
+fingerprint ได้แค่ 20 ค่าต่อหน้าต่าง คนที่ยิงค่ามั่ว ๆ 20 ค่าก่อนแล้วค่อยใช้ token เก่า จะเหลือ
+ร่องรอยแค่ `token_fps_truncated: true` รายการเฝ้าทำให้ token เก่าได้แถวของตัวเองเสมอ
+
+คำนวณ **ก่อน** เปลี่ยนค่าใน `.env` จากไดเรกทอรีของ deployment นั้น คำสั่งนี้อ่านค่าจาก `.env`
+ทาง stdin ค่าจริงจึงไม่ขึ้นจอ ไม่อยู่ใน argv ของ process ไหน และไม่เข้า shell history ผลที่ได้
+เท่ากับ `tokenFingerprint()` ทุกตัวอักษร:
+
+```bash
+grep '^ADMIN_API_TOKEN=' .env | cut -d= -f2- | docker compose exec -T backend node -e 'let s="";process.stdin.on("data",(c)=>(s+=c)).on("end",()=>console.log(require("node:crypto").createHash("sha256").update(s.trim().replace(/^["\x27]|["\x27]$/g,"")).digest("hex").slice(0,12)))'
+```
+
+ถ้า token ที่จะเฝ้าไม่ได้อยู่ใน `.env` (เช่นหลุดมาจากไฟล์ Postman ของใครสักคน) ใช้
+`read -rs T && printf %s "$T" | node -e '…'` ด้วยสคริปต์เดียวกัน — `read -s` ไม่แสดงค่าที่วาง
+แล้วแก้ `.env` ครั้งเดียวให้ได้ทั้งสองบรรทัด:
+
+```bash
+ADMIN_API_TOKEN=<ค่าใหม่จาก openssl rand -hex 32>
+ADMIN_TOKEN_WATCH_FPS=<fingerprint ตัวที่เพิ่งปลด>,<fingerprint ที่เคยใส่ไว้ก่อนหน้า>
+```
+
+จากนั้น recreate container ของ backend (`restart` ไม่อ่าน `.env` ใหม่) แถวที่ได้ดูด้วย:
+
+```sql
+select occurred_at, ip_address, metadata_json->>'path' as path
+from audit.audit_event
+where action = 'ADMIN_TOKEN_REJECTED' and metadata_json->>'watched_token' = 'true'
+order by occurred_at desc limit 20;
+```
+
+ค่าที่ไม่ใช่ฐานสิบหก 12 ตัวถูกข้ามพร้อมคำเตือนตอนบูต (`[env] ADMIN_TOKEN_WATCH_FPS: ข้าม …`)
+โดยไม่พิมพ์ค่านั้นออกมา เผื่อเป็น token จริงที่วางผิดช่อง
+
 ## 5. โทเคนจาก ThaID — รับมาแล้วทิ้งทันที
 
 `resolveIdentity()` ใน `lib/thaid.ts` ทำสามอย่างแล้วจบ
@@ -326,6 +381,7 @@ ACTIVATION_KEY_TTL_DAYS=7
 ACTIVATION_KEY_SECRET=         # HMAC ของ activation key — บังคับบน production
 PASSWORD_RESET_TTL_MINUTES=60  # ลิงก์ตั้งรหัสผ่านใหม่ (ข้อ 3.1) hash ด้วย secret ตัวเดียวกัน
 ADMIN_API_TOKEN=               # ค่าใน header x-admin-token
+ADMIN_TOKEN_WATCH_FPS=         # fingerprint ของ token ที่ปลดแล้ว คั่นด้วย comma (ข้อ 4.1)
 THAID_STATE_TTL_MINUTES=15
 THAID_VERIFICATION_TTL_MINUTES=30
 THAID_REQUIRE_NONCE=false      # ดูข้อ 7

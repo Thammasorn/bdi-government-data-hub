@@ -31,6 +31,28 @@ function requiredInProduction(name: string, devFallback: string): string {
   return devFallback;
 }
 
+/**
+ * รายการ fingerprint ของ token (ฐานสิบหก 12 ตัว คั่นด้วย comma) — ค่าที่ผิดรูปถูกข้ามพร้อมคำเตือนตอนบูต
+ *
+ * ไม่ throw: รายการนี้ช่วยเฝ้าดู ไม่ใช่สิ่งที่ระบบขาดไม่ได้ พิมพ์ผิดตัวเดียวไม่ควรทำให้ API บูตไม่ขึ้น
+ * แต่ต้องบอก ไม่งั้นคนตั้งจะเชื่อว่ากำลังเฝ้าอยู่ทั้งที่ค่านั้นไม่มีวันตรง คำเตือน **ไม่พิมพ์ค่าที่ผิดรูป**
+ * เพราะความผิดที่น่าจะเกิดที่สุดคือวาง token จริงลงไปแทน fingerprint ของมัน
+ */
+function fingerprintList(name: string): string[] {
+  const entries = optional(name, "")
+    .split(",")
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean);
+  const valid = entries.filter((v) => /^[0-9a-f]{12}$/.test(v));
+  if (valid.length < entries.length) {
+    console.warn(
+      `[env] ${name}: ข้าม ${entries.length - valid.length} ค่าที่ไม่ใช่ fingerprint ฐานสิบหก 12 ตัว ` +
+        "(ไม่พิมพ์ค่านั้น เผื่อเป็น token จริง)",
+    );
+  }
+  return valid;
+}
+
 /** อ่านก่อนสร้าง env เพราะ redirect_uri ของ ThaID ตั้งต้นจากค่านี้ */
 const APP_URL = optional("APP_URL", "http://localhost:3000").replace(/\/$/, "");
 
@@ -67,6 +89,12 @@ export const env = {
     otpMaxAttempts: Number(optional("OTP_MAX_ATTEMPTS", "5")),
     /** shared secret สำหรับ API ฝั่ง admin ที่สเปกระบุว่ายังไม่มี UI */
     adminApiToken: required("ADMIN_API_TOKEN"),
+    /**
+     * fingerprint (`tokenFingerprint()`) ของ token ผู้ดูแลระบบที่ปลดไปแล้ว ว่างได้ — การปฏิเสธที่ตรง
+     * รายการนี้ได้แถว `ADMIN_TOKEN_REJECTED` ของตัวเองเสมอ (lib/token-rejection.ts) คนที่ยังถือค่าเก่า
+     * อยู่จึงไม่หายไปในแถวสรุป วิธีคำนวณ fingerprint อยู่ใน docs/09 §4.1
+     */
+    adminTokenWatchFps: fingerprintList("ADMIN_TOKEN_WATCH_FPS"),
     /**
      * server_secret ของ activation key
      * sheet `activation_key` กำหนดว่า key_hash = HMAC-SHA-256(server_secret, raw_activation_key)
