@@ -289,8 +289,14 @@ export const AuditAction = {
    *
    * สองเหตุการณ์ คนละคนทำ: REQUESTED คือแอดมินสั่งออกลิงก์ (actor = ระบบ เพราะมาทาง
    * `x-admin-token` ดู docs/09 §4) COMPLETED คือเจ้าของบัญชีกดลิงก์แล้วตั้งรหัสสำเร็จ
-   * ระยะห่างระหว่างสองแถวนี้ และแถว REQUESTED ที่ไม่มี COMPLETED ตามมา คือสิ่งที่ต้องดู
-   * เวลาสอบสวนว่าลิงก์ถูกส่งไปหาใครแล้วใครเป็นคนใช้
+   * ระยะห่างระหว่างสองแถวนี้ และแถว REQUESTED ที่ไม่มี COMPLETED **ที่ `result = SUCCESS`** ตามมา
+   * คือสิ่งที่ต้องดูเวลาสอบสวนว่าลิงก์ถูกส่งไปหาใครแล้วใครเป็นคนใช้
+   *
+   * COMPLETED มีแถว `result = FAILURE` ด้วย (ตั้งแต่การ์ด activity log): ลิงก์ที่กดแล้วใช้ไม่ได้ ได้ actor
+   * ANONYMOUS (คนถือลิงก์ยังไม่ได้พิสูจน์ว่าเป็นเจ้าของบัญชี) `failure_reason` เป็นรหัสเดียวกับ `error`
+   * ที่ตอบไป (`expired` · `revoked` · `used` · `inactive` · `not_found`) และ subject เป็นบัญชีของลิงก์นั้น
+   * (ว่างเมื่อ `not_found`) — REQUESTED ตามด้วย COMPLETED ที่ล้มเหลวแปลว่ามีคนกดลิงก์แต่รหัสผ่าน
+   * **ไม่ได้** เปลี่ยน คิวรีที่หา "ลิงก์ที่ไม่มีใครใช้" จึงต้องกรอง `result = 'SUCCESS'` เสมอ
    */
   PASSWORD_RESET_REQUESTED: "PASSWORD_RESET_REQUESTED",
   PASSWORD_RESET_COMPLETED: "PASSWORD_RESET_COMPLETED",

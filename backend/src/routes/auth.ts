@@ -19,7 +19,7 @@ import {
   hashPassword,
   verifyPassword,
 } from "../lib/auth.js";
-import { AuditAction, AuditSubject, diffFields, logAudit } from "../lib/audit.js";
+import { AuditAction, AuditSubject, diffFields, logAudit, sanitizeDiff } from "../lib/audit.js";
 import {
   ActivationKeyUnusableError,
   activeAssignmentWhere,
@@ -501,14 +501,19 @@ authRouter.post("/thaid/callback", async (req, res) => {
      * ชื่อบนบัญชีเปลี่ยนโดยไม่มีใครพิมพ์ — ต้องบอกได้ว่าเปลี่ยนจากอะไรเป็นอะไร เพราะชื่อที่
      * เจ้าหน้าที่กรอกไว้ตอนเชิญผู้มีอำนาจฯ ถูกเขียนทับตรงนี้ และชื่อนี้คือชื่อที่จะไปอยู่บน A0
      * เขียนเฉพาะช่องที่ต่างจากเดิมจริง บัตรที่ตรงกับที่กรอกไว้แล้วไม่ได้แถว
+     *
+     * ผ่าน `sanitizeDiff()` แม้ตอนนี้มีแค่ชื่อ: ใครเติม `pid` ของบัตรลง `fromCard` วันหลังจะได้เลขที่ถูกปิด
+     * เองโดยไม่ต้องรู้ว่าจุดนี้เคยเป็นข้อยกเว้น
      */
-    const changed = diffFields(
-      {
-        prefixTh: key.userAccount.prefixTh,
-        firstnameTh: key.userAccount.firstnameTh,
-        lastnameTh: key.userAccount.lastnameTh,
-      },
-      fromCard,
+    const changed = sanitizeDiff(
+      diffFields(
+        {
+          prefixTh: key.userAccount.prefixTh,
+          firstnameTh: key.userAccount.firstnameTh,
+          lastnameTh: key.userAccount.lastnameTh,
+        },
+        fromCard,
+      ),
     );
     if (changed) {
       await logAudit({

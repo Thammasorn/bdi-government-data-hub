@@ -213,7 +213,7 @@ OTP แบบ `REGISTRATION` อีกแล้ว
 | ใช้ที่ไหน | `GET /api/auth/password-reset?token=` ตรวจลิงก์ (410 `expired`/`used`/`revoked`/`not_found`) แล้ว `POST /api/auth/password-reset` `{ token, password, confirmPassword }` กฎรหัสผ่านชุดเดียวกับ `/activate` |
 | ผลข้างเคียง | เขียน `password_hash`, เผาโทเคน, **เพิกถอน session ทุกใบ** (`PASSWORD_CHANGED`) ใน transaction เดียว — `updateMany` ที่มี `used_at IS NULL` ใน WHERE กันสองคำขอพร้อมกันด้วยลิงก์เดียว |
 | ไม่ทำอะไร | **ไม่ออก session** ต้องไปเข้าสู่ระบบด้วยรหัสใหม่ + OTP เหมือนปกติ ไม่งั้นลิงก์ในอีเมลฉบับเดียวจะข้ามชั้นที่สองของการเข้าสู่ระบบไป |
-| audit | `PASSWORD_RESET_REQUESTED` (actor = ระบบ ตามข้อ 4) แล้ว `PASSWORD_RESET_COMPLETED` (actor = เจ้าของบัญชี) — ใบ REQUESTED ที่ไม่มี COMPLETED ตามมาคือลิงก์ที่ไม่มีใครใช้ |
+| audit | `PASSWORD_RESET_REQUESTED` (actor = ระบบ ตามข้อ 4) แล้ว `PASSWORD_RESET_COMPLETED` (actor = เจ้าของบัญชี) — ใบ REQUESTED ที่ไม่มี COMPLETED **`result = SUCCESS`** ตามมาคือลิงก์ที่ไม่มีใครใช้สำเร็จ ลิงก์ที่กดแล้วใช้ไม่ได้ก็ได้ `PASSWORD_RESET_COMPLETED` เหมือนกันแต่ `result = FAILURE`, actor `ANONYMOUS` และ `failure_reason` เป็นรหัสเดียวกับ `error` ที่ตอบไป (`expired` · `revoked` · `used` · `inactive` · `not_found`) subject เป็นบัญชีของลิงก์นั้น (ว่างเมื่อ `not_found`) — แถวนี้แปลว่ามีคนกดลิงก์ ไม่ได้แปลว่ารหัสผ่านเปลี่ยน |
 
 เป็นตารางของตัวเองเพราะ `activation_key` บังคับ `organization_id` + `role_id` และ `otp_code`
 เก็บ bcrypt ค้นด้วยโทเคนในลิงก์ตรง ๆ ไม่ได้ Postman: `U15`
