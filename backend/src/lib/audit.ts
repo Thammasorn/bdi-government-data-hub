@@ -461,16 +461,31 @@ interface AuditInput {
   metadata?: Record<string, unknown>;
 }
 
+/** surrogate ครึ่งคู่ — ตัวหน้าที่ไม่มีตัวหลังตาม หรือตัวหลังที่ไม่มีตัวหน้านำ (ไม่ใช้ flag `u` เพราะต้องเทียบทีละ code unit) */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/**
+ * ข้อความในรูปที่ Postgres เก็บได้ — ตัด U+0000 และแทน surrogate ครึ่งคู่ด้วย U+FFFD
+ *
+ * ทั้งสองอย่างทำให้ TEXT และ jsonb ปฏิเสธทั้งแถว: Postgres ไม่มี `\u0000` ใน UTF-8 และ surrogate ที่ไม่มีคู่
+ * ไม่ใช่ UTF-8 ที่ถูกต้อง (Prisma ล้มด้วย "unexpected end of hex escape") ค่าที่อ่านมาจากฐานข้อมูลไม่มีสองตัวนี้
+ * ตัวที่มาได้คือข้อความที่ผู้เรียกส่งมาใน JSON body (`"\ud83d"` เป็น JSON ที่ถูกต้อง) หรือการตัดความยาวที่ผ่า
+ * อีโมจิกลางคู่ ทำเองแทน `String.prototype.toWellFormed()` เพราะ lib ของ tsconfig เป็น ES2023 ซึ่งยังไม่มีตัวนั้น
+ */
+export function storableText(text: string): string {
+  return text.replaceAll("\u0000", "").replace(LONE_SURROGATE, "\uFFFD");
+}
+
 /**
  * Date และ undefined ลง Json column ไม่ได้ ต้องแปลงเป็นค่าที่ serialize ได้ก่อน
  *
- * ตัด U+0000 ออกจากทุก string ไปด้วย: jsonb ของ Postgres ไม่รับ `\u0000` แล้ว INSERT ล้มทั้งแถว
- * ค่าที่อ่านมาจากฐานข้อมูลไม่มีตัวนี้อยู่แล้ว ตัวที่มาได้คือข้อความที่ผู้เรียกส่งมาใน JSON body
+ * ทุก string ผ่าน `storableText()` ไปด้วย ไม่งั้นข้อความเดียวที่ jsonb ไม่รับทำให้ INSERT ล้มทั้งแถว
+ * และ logAudit กลืน error นั้นไว้ แถวจึงหายเงียบ ๆ
  */
 function toJson(value: unknown): Prisma.InputJsonValue | undefined {
   if (value === undefined || value === null) return undefined;
   const json = JSON.stringify(value, (_key, v: unknown) =>
-    typeof v === "string" ? v.replaceAll("\u0000", "") : v,
+    typeof v === "string" ? storableText(v) : v,
   );
   return JSON.parse(json) as Prisma.InputJsonValue;
 }

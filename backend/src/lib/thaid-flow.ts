@@ -18,7 +18,7 @@ import { IntegrationStatus, IntegrationType, type IntegrationOperation } from "@
 
 import { prisma } from "../db.js";
 import { env } from "../env.js";
-import { AuditAction, AuditSubject, logAudit } from "./audit.js";
+import { AuditAction, AuditSubject, logAudit, storableText } from "./audit.js";
 import { correlationId } from "./context.js";
 import { generateNonce, generateState } from "./thaid.js";
 
@@ -182,6 +182,10 @@ export function thaidCallbackErrorCode(raw: string): string {
  * `{ audit: false }` สำหรับผู้เรียกที่เขียนแถวของตัวเองอยู่แล้ว ไม่งั้นเหตุการณ์เดียวได้สองแถว:
  * `cid_mismatch` (แถวของมันมี `thaid_subject` ที่ตรงนี้ไม่มี) · `account_not_found` ของขา login
  * (เขียนเป็น LOGIN_FAILED) · `state_expired` ใน `claimThaidState()` (callback เขียนเอง)
+ *
+ * แถว audit อยู่ใน `finally` เพราะ hook นี้คือสิ่งที่ยืนยันว่าทุกความล้มเหลวมีแถว — ถ้า UPDATE ล้ม
+ * (ฐานข้อมูลสะดุด) คำขอยังตอบ 500 เหมือนเดิม แต่ความพยายามครั้งนั้นไม่หายไปจาก log ด้วย
+ * `logThaidFailure()` ไม่ throw จึงไม่บัง error ของ UPDATE
  */
 export async function failThaidOperation(
   operation: IntegrationOperation,
@@ -189,18 +193,23 @@ export async function failThaidOperation(
   message: string,
   options: { audit?: boolean } = {},
 ): Promise<void> {
-  await prisma.integrationOperation.update({
-    where: { id: operation.id },
-    data: {
-      status: IntegrationStatus.FAILED,
-      lastErrorCode: code.slice(0, 64),
-      // `error_description` ของ callback มาทาง query string ยาวได้เท่าเพดาน body (1 MB) — ข้อความ
-      // ของเราเองกับของ endpoint token สั้นกว่านี้มาก ตัดที่ 500 เท่ากับ delivery worker
-      lastErrorMessage: message.slice(0, 500),
-      completedAt: new Date(),
-    },
-  });
-  if (options.audit !== false) await logThaidFailure(operation, code);
+  try {
+    await prisma.integrationOperation.update({
+      where: { id: operation.id },
+      data: {
+        status: IntegrationStatus.FAILED,
+        lastErrorCode: code.slice(0, 64),
+        // `error_description` ของ callback มาทาง query string ยาวได้เท่าเพดาน body (1 MB) — ข้อความ
+        // ของเราเองกับของ endpoint token สั้นกว่านี้มาก ตัดที่ 500 เท่ากับ delivery worker
+        // `storableText()` หลังตัด: ผู้ยิงเลือกข้อความเองได้ และ U+0000 หรือ surrogate ครึ่งคู่ (ส่งมาตรง ๆ
+        // หรือเกิดจากการตัดที่ 500 กลางอีโมจิ) ทำให้ UPDATE ล้ม แถวค้าง PROCESSING และคำขอตอบ 500
+        lastErrorMessage: storableText(message.slice(0, 500)),
+        completedAt: new Date(),
+      },
+    });
+  } finally {
+    if (options.audit !== false) await logThaidFailure(operation, code);
+  }
 }
 
 /**
