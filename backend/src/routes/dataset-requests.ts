@@ -52,7 +52,7 @@ import {
   uploadedFile,
 } from "../lib/attachment.js";
 import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
-import { correlationId } from "../lib/context.js";
+import { clientIp, correlationId } from "../lib/context.js";
 import {
   DATASET_ALLOWED_MIME,
   DATASET_MAX_UPLOAD_BYTES,
@@ -1989,7 +1989,7 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
               signedLastName: signedLast,
               documentVersionIds: signedVersionIds,
             },
-            ipAddress: req.ip ?? null,
+            ipAddress: clientIp(req),
             userAgent: req.get("user-agent") ?? null,
             createdBy: session.sub,
           },
@@ -2013,7 +2013,7 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
               acceptanceContextJson: signature.attestationText
                 ? { attestationText: signature.attestationText }
                 : undefined,
-              ipAddress: req.ip ?? null,
+              ipAddress: clientIp(req),
               userAgent: req.get("user-agent") ?? null,
               createdBy: session.sub,
             })),

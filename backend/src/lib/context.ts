@@ -12,12 +12,16 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
+import { isIP } from "node:net";
 import type { NextFunction, Request, Response } from "express";
 
 export interface RequestContext {
   correlationId: string;
   actorId: string | null;
+  /** ผ่าน `parseClientIp()` แล้วเท่านั้น ไม่ใช่ `req.ip` ดิบ — เป็น IP จริงหรือ null */
   ipAddress: string | null;
+  /** `req.ip` มีค่าแต่ไม่ใช่ IP — logAudit จดเป็น `metadata.ip_unparsed` แทนการเก็บค่านั้น */
+  ipUnparsed: boolean;
   userAgent: string | null;
   /** ชื่อ service ที่เขียน log — คอลัมน์ source_component */
   sourceComponent: string;
@@ -48,11 +52,38 @@ export function runWithContext<T>(context: Partial<RequestContext>, fn: () => T)
       correlationId: context.correlationId ?? randomUUID(),
       actorId: context.actorId ?? null,
       ipAddress: context.ipAddress ?? null,
+      ipUnparsed: context.ipUnparsed ?? false,
       userAgent: context.userAgent ?? null,
       sourceComponent: context.sourceComponent ?? "request-service",
     },
     fn,
   );
+}
+
+/**
+ * ที่อยู่ของผู้เรียกในรูปที่เก็บลงฐานข้อมูลได้ — ค่าที่ไม่ใช่ IP ได้ `ip: null, unparsed: true`
+ *
+ * `trust proxy 1` ทำให้ `req.ip` คือค่าสุดท้ายของ X-Forwarded-For และ backend ยิงตรงได้โดยไม่ผ่าน
+ * proxy ค่านี้จึงเป็นข้อความอะไรก็ได้ที่ผู้เรียกพิมพ์มา ส่วนคอลัมน์ ip_address ทุกตัวเป็น VARCHAR(64)
+ * ค่าที่ยาวเกินทำให้ INSERT ล้ม: แถว audit ของคำขอนั้นหายทั้งแถว (logAudit กลืน error ไว้) คนเดา
+ * token หรือรหัสผ่านจึงยิงได้โดยไม่เหลือร่องรอย และการสร้าง session ก็ล้มจนเข้าสู่ระบบไม่ได้เลย
+ *
+ * ค่าที่ไม่ผ่านไม่ถูกเก็บไว้ที่ไหนเลย แม้จะตัดให้สั้นแล้ว: proxy จริงเขียน IP ที่ถูกรูปเสมอ ค่าที่ไม่ผ่าน
+ * จึงเป็นของที่ผู้เรียกแต่งเองทั้งหมด ไม่มีข้อมูลให้สอบสวน มีแต่ช่องให้เขียนข้อความลง audit
+ *
+ * zone ของ IPv6 (`fe80::1%eth0`) ถูกตัดหลังผ่าน `isIP()` แล้ว เพราะ `isIP()` รับ zone ยาวเท่าไรก็ได้
+ * และ zone ที่มากับ header ไม่มีความหมายกับเครื่องนี้ ค่าที่คืนจึงยาวไม่เกิน 45 ตัว ส่วน `::ffff:`
+ * ของ IPv4-mapped คงไว้ตามเดิม ให้ตรงกับแถวที่มีอยู่แล้ว
+ */
+export function parseClientIp(raw: string | undefined): { ip: string | null; unparsed: boolean } {
+  if (!raw) return { ip: null, unparsed: false };
+  if (isIP(raw) === 0) return { ip: null, unparsed: true };
+  return { ip: raw.split("%")[0] ?? null, unparsed: false };
+}
+
+/** IP ของคำขอสำหรับโค้ดที่เขียนคอลัมน์ ip_address เอง (เช่นการลงนาม) — ห้ามใช้ `req.ip` ตรง ๆ */
+export function clientIp(req: Request): string | null {
+  return parseClientIp(req.ip).ip;
 }
 
 /**
@@ -69,13 +100,15 @@ export function correlationMiddleware(req: Request, res: Response, next: NextFun
   const id = incoming && UUID_RE.test(incoming) ? incoming : randomUUID();
 
   res.setHeader("x-correlation-id", id);
+  const client = parseClientIp(req.ip);
 
   storage.run(
     {
       correlationId: id,
       // session ยังไม่ถูกอ่านตอนนี้ — requireAuth เติมทีหลังผ่าน setActor()
       actorId: null,
-      ipAddress: req.ip ?? null,
+      ipAddress: client.ip,
+      ipUnparsed: client.unparsed,
       userAgent: req.header("user-agent") ?? null,
       sourceComponent: "web-portal",
     },

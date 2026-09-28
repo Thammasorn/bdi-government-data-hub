@@ -20,6 +20,8 @@
  * X-Forwarded-For และ backend ของ main เปิดตรงที่ 0.0.0.0:4000 คนที่ยิงตรงไม่ผ่าน proxy จึงตั้ง
  * IP เองได้ทุกคำขอ แต่ละค่าได้หน้าต่างใหม่และแถวใหม่ ตัวที่คุมจำนวนแถวจริงคืองบรวม
  * `MAX_IMMEDIATE_ROWS` ต่อ 10 นาที — IP ในแถวเหล่านี้จึงเชื่อได้เท่าที่ X-Forwarded-For เชื่อได้
+ * ค่าที่ไม่ใช่ IP เลย (`parseClientIp()`) ใช้หน้าต่างเดียวกันหมด (`UNPARSED_KEY`) ไม่ใช่หน้าต่าง
+ * ละค่า และแถวของมันไม่มี IP แต่มี `ip_unparsed: true`
  *
  * แถวของถังรวม (`throttle_overflow`) ทั้งแถวทันทีและแถวสรุปจึง **ไม่มี IP และ user agent**:
  * ถังนั้นรวมทุกแหล่งที่มาหลังงบหมด และเกิดได้เฉพาะตอนถูกยิงจากหลายที่ ซึ่งคือตอนที่ IP ถูกปลอมได้
@@ -33,7 +35,7 @@ import type { Request } from "express";
 
 import { AuditSubject, logAudit, type AuditActionCode, type AuditSubjectType } from "./audit.js";
 import { tokenFingerprint } from "./auth.js";
-import { currentContext, runWithContext } from "./context.js";
+import { currentContext, parseClientIp, runWithContext } from "./context.js";
 
 const WINDOW_MS = 10 * 60_000;
 const SWEEP_MS = 60_000;
@@ -48,6 +50,13 @@ const SWEEP_MS = 60_000;
  */
 const MAX_IMMEDIATE_ROWS = 20;
 const OVERFLOW_KEY = "\u0000overflow";
+/**
+ * หน้าต่างเดียวของทุกคำขอที่ `req.ip` ไม่ใช่ IP — ถ้าใช้ค่าดิบเป็น key ทุกค่าที่แต่งขึ้นใหม่จะได้
+ * หน้าต่างใหม่และแถวใหม่จนงบหมด ส่วนคำขอที่ไม่มี `req.ip` เลย (socket ปิดไปก่อน) แยกไว้อีกถัง
+ * เพราะแถวของมันไม่ควรมีธง `ip_unparsed`
+ */
+const UNPARSED_KEY = "\u0000unparsed";
+const NO_ADDRESS_KEY = "\u0000no-address";
 /** รายการในแถวสรุป (fingerprint · เส้นทาง) เก็บได้ไม่เกินเท่านี้ต่อหน้าต่าง */
 const MAX_LISTED = 20;
 /** path มาจากผู้ยิง ยาวเท่าไรก็ได้ — ตัดไว้ก่อนลงคอลัมน์ Json */
@@ -67,6 +76,7 @@ interface RejectionWindow {
   overflow: boolean;
   /** บริบทของครั้งแรก — แถวสรุปเขียนจาก timer ซึ่งไม่มี request ให้อ่าน */
   ipAddress: string | null;
+  ipUnparsed: boolean;
   userAgent: string | null;
   sourceComponent: string;
 }
@@ -116,6 +126,7 @@ export function createTokenRejectionRecorder(
     return runWithContext(
       {
         ipAddress: window.ipAddress,
+        ipUnparsed: window.ipUnparsed,
         userAgent: window.userAgent,
         sourceComponent: window.sourceComponent,
       },
@@ -183,7 +194,9 @@ export function createTokenRejectionRecorder(
         const path = pathPattern(req);
         const entry = `${req.method} ${path}`;
 
-        let key = req.ip ?? "unknown";
+        // ตัวเดียวกับที่ correlationMiddleware ใช้ — key ของหน้าต่างกับ IP ในแถวจึงตรงกันเสมอ
+        const client = parseClientIp(req.ip);
+        let key = client.ip ?? (client.unparsed ? UNPARSED_KEY : NO_ADDRESS_KEY);
         if (countInto(key, now, fp, entry)) return;
         // หน้าต่างใหม่ = แถวทันทีหนึ่งแถว ใช้งบรวมหนึ่งหน่วย งบหมดแล้วนับรวมในถัง overflow แทน
         if (!takeBudget(now)) {
@@ -195,7 +208,8 @@ export function createTokenRejectionRecorder(
         const overflow = key === OVERFLOW_KEY;
         // ที่มาของหน้าต่าง — ถังรวมไม่ใช่ของ client ไหน จึงไม่มีทั้งสองค่า (ดูหัวไฟล์)
         const origin = {
-          ipAddress: overflow ? null : (ctx?.ipAddress ?? req.ip ?? null),
+          ipAddress: overflow ? null : client.ip,
+          ipUnparsed: overflow ? false : client.unparsed,
           userAgent: overflow ? null : (ctx?.userAgent ?? null),
           sourceComponent: ctx?.sourceComponent ?? "web-portal",
         };

@@ -52,6 +52,7 @@ import {
 } from "@prisma/client";
 import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
 import { releaseApproverSeat, type ReleasedSeat } from "../lib/approver-seat.js";
+import { clientIp } from "../lib/context.js";
 import {
   activatedApprover,
   activeAssignmentWhere,
@@ -2509,7 +2510,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
               documentVersionIds: signedVersionIds,
               notApplicableVersionIds,
             },
-            ipAddress: req.ip ?? null,
+            ipAddress: clientIp(req),
             userAgent: req.get("user-agent") ?? null,
             createdBy: session.sub,
           },
@@ -2538,7 +2539,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
               acceptanceContextJson: signature.attestationText
                 ? { attestationText: signature.attestationText }
                 : undefined,
-              ipAddress: req.ip ?? null,
+              ipAddress: clientIp(req),
               userAgent: req.get("user-agent") ?? null,
               createdBy: session.sub,
             })),

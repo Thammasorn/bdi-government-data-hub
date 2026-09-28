@@ -305,10 +305,38 @@ interface AuditInput {
   metadata?: Record<string, unknown>;
 }
 
-/** Date และ undefined ลง Json column ไม่ได้ ต้องแปลงเป็นค่าที่ serialize ได้ก่อน */
+/**
+ * Date และ undefined ลง Json column ไม่ได้ ต้องแปลงเป็นค่าที่ serialize ได้ก่อน
+ *
+ * ตัด U+0000 ออกจากทุก string ไปด้วย: jsonb ของ Postgres ไม่รับ `\u0000` แล้ว INSERT ล้มทั้งแถว
+ * ค่าที่อ่านมาจากฐานข้อมูลไม่มีตัวนี้อยู่แล้ว ตัวที่มาได้คือข้อความที่ผู้เรียกส่งมาใน JSON body
+ */
 function toJson(value: unknown): Prisma.InputJsonValue | undefined {
   if (value === undefined || value === null) return undefined;
-  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+  const json = JSON.stringify(value, (_key, v: unknown) =>
+    typeof v === "string" ? v.replaceAll("\u0000", "") : v,
+  );
+  return JSON.parse(json) as Prisma.InputJsonValue;
+}
+
+/**
+ * ความยาวของคอลัมน์ VARCHAR ใน audit.audit_event (schema.prisma) — `user_agent` เป็น TEXT จึงไม่อยู่ในนี้
+ *
+ * ค่าที่ยาวเกินไม่ได้ถูกตัดโดย Postgres แต่ทำให้ INSERT ล้มทั้งแถว และ logAudit กลืน error นั้นไว้
+ * แถวจึงหายเงียบ ๆ ทั้งที่ส่วนที่เหลือถูกต้องหมด ต้นทางของแต่ละค่าตรวจไว้แล้ว (IP ผ่าน
+ * `parseClientIp()` correlation id ต้องเป็น UUID) ตัวนี้คือด่านสุดท้าย: ค่าที่ผู้เรียกมีส่วนกำหนด
+ * ต้องไม่มีทางทำให้บันทึกหายได้อีก ตัดทิ้งส่วนเกินยังดีกว่าไม่มีแถว
+ */
+const COLUMN_MAX = {
+  action: 128,
+  subjectType: 64,
+  ipAddress: 64,
+  correlationId: 64,
+  sourceComponent: 64,
+} as const;
+
+function fit(value: string, max: number): string {
+  return value.length > max ? value.slice(0, max) : value;
 }
 
 /**
@@ -346,23 +374,28 @@ export async function logAudit(input: AuditInput): Promise<void> {
       }
     }
 
-    const metadata = { ...actorSnapshot, ...input.metadata };
+    const metadata = {
+      ...actorSnapshot,
+      ...input.metadata,
+      // IP ที่ส่งมาไม่ใช่ IP (ดู parseClientIp) — บอกไว้ว่ามีค่ามาแต่ไม่เก็บ ไม่ใช่ไม่มีค่ามาเลย
+      ...(ctx?.ipUnparsed ? { ip_unparsed: true } : {}),
+    };
 
     await prisma.auditEvent.create({
       data: {
-        action: input.action,
+        action: fit(input.action, COLUMN_MAX.action),
         actorType: input.actorType ?? (actorId ? AuditActorType.USER : AuditActorType.SYSTEM),
         actorId,
-        subjectType: input.subjectType,
+        subjectType: fit(input.subjectType, COLUMN_MAX.subjectType),
         subjectId: input.subjectId ?? null,
         organizationId: input.organizationId ?? null,
         result: input.result ?? AuditResult.SUCCESS,
         beforeSummaryJson: toJson(input.before),
         afterSummaryJson: toJson(input.after),
-        ipAddress: ctx?.ipAddress ?? null,
+        ipAddress: ctx?.ipAddress ? fit(ctx.ipAddress, COLUMN_MAX.ipAddress) : null,
         userAgent: ctx?.userAgent ?? null,
-        correlationId: correlationId(),
-        sourceComponent: sourceComponent(),
+        correlationId: fit(correlationId(), COLUMN_MAX.correlationId),
+        sourceComponent: fit(sourceComponent(), COLUMN_MAX.sourceComponent),
         metadataJson: Object.keys(metadata).length > 0 ? toJson(metadata) : undefined,
       },
     });
