@@ -1519,13 +1519,19 @@ datasetRequestRouter.post("/:id/assign", async (req, res, next) => {
     // ก่อนแจ้งเตือนและก่อนอีเมล inline ข้างล่าง — SMTP ที่ throw ต้องไม่ทำให้การมอบหมาย
     // ที่ commit ไปแล้วหายจาก log (เงื่อนไขเดียวกับการแจ้ง: กดซ้ำคนเดิมไม่ใช่การมอบหมาย)
     if (changed) {
+      // วันนี้มีแค่ uuid ไม่มีอะไรให้ปิด แต่ diff ที่เพิ่มในการ์ดนี้ผ่าน sanitizeDiff() ทุกตัว —
+      // ใครเติมช่องลงมาทีหลังจะได้ไม่ต้องรู้ว่าตรงนี้เคยได้รับยกเว้น
+      const assigned = sanitizeDiff({
+        before: { assignedSpecialistId: request.assignedSpecialistId ?? null },
+        after: { assignedSpecialistId: specialistId },
+      });
       await logAudit({
         action: AuditAction.REQUEST_ASSIGNED,
         subjectType: AuditSubject.DATASET_REGISTRATION_REQUEST,
         subjectId: request.id,
         organizationId: request.organizationId,
-        before: { assignedSpecialistId: request.assignedSpecialistId ?? null },
-        after: { assignedSpecialistId: specialistId },
+        before: assigned?.before,
+        after: assigned?.after,
         metadata: { request_number: request.requestNumber },
       });
     }

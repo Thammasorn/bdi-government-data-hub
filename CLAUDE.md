@@ -440,10 +440,13 @@ instead; without that, old log rows change meaning when a user is renamed.
 The design column is "Sanitized state before/after" and the table has no retention, so a raw
 diff writes a CID on every save. Codes that predate the activity-log card (`REQUEST_UPDATED`,
 `INVITATION_DELETED`, `ACTIVATION_KEY_ISSUED`, …) still store the raw value until BDI decides
-whether to mask existing codes; don't change their payloads in passing. Officer draft saves write
-`REQUEST_DRAFT_SAVED`, diffed against what the route **writes**, never against the body: the
-organisation form sends only non-empty fields and the dataset form sends all of them, so neither
-body says what changed. `""` counts as null, and a save that changes nothing writes no row.
+whether to mask existing codes; don't change their payloads in passing. The officer's draft
+`PATCH` writes `REQUEST_DRAFT_SAVED`, diffed against what the route **writes**, never against the
+body: the organisation form sends only non-empty fields and the dataset form sends all of them, so
+neither body says what changed. `""` counts as null, and a save that changes nothing writes no row.
+That PATCH comes from "บันทึกแบบร่าง" **and** from the save the generate buttons ("ตรวจสอบข้อมูล",
+"ตรวจสอบคำขอ") make before calling `generate-form`; the row does not say which. A successful
+generate is followed by its own `REQUEST_FORM_GENERATED`, a failed one by nothing.
 The organisation route also writes the contact section and an activated signatory's e-mail/CID
 from the **account** over whatever the body carried; a change there goes in
 `metadata.synced_from_account`, not `fields_changed`, so the first save of a snapshot older than
