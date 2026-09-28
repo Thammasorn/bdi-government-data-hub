@@ -136,8 +136,29 @@ export const AuditAction = {
    */
   REQUEST_DRAFT_SAVED: "REQUEST_DRAFT_SAVED",
 
+  /**
+   * สร้างเอกสารจาก template ให้ตรวจก่อนนำส่ง (`POST /:id/generate-form` ทั้งสองเส้นทาง)
+   * — เพิ่มจากรายการใน sheet
+   *
+   * ฉบับที่สร้างรอบนี้คือสิ่งที่ผู้มีอำนาจฯ จะอ่านและลงนาม และกดสร้างซ้ำเมื่อไรฉบับเดิมก็
+   * กลายเป็น REPLACED ไม่มีแถวนี้ก็ตอบไม่ได้ว่าฉบับที่ลงนามถูกสร้างจากร่างรอบไหน
+   * `metadata.documents` เก็บรหัสเอกสาร เวอร์ชัน template และ attachment ที่ได้ การ render
+   * ซ้ำหลังลงนามไม่เขียนแถวนี้ — นั่นเป็นผลของ `DOCUMENT_SIGNED` ไม่ใช่การกดของใคร
+   */
+  REQUEST_FORM_GENERATED: "REQUEST_FORM_GENERATED",
+
   REQUEST_SUBMITTED: "REQUEST_SUBMITTED",
   REQUEST_RETURNED: "REQUEST_RETURNED",
+
+  /**
+   * ผู้ประสานงานของ BDI ขอความเห็นจากผู้เชี่ยวชาญด้านข้อมูล หรือถอนการขอ
+   * (`POST /api/dataset-requests/:id/assign`) — เพิ่มจากรายการใน sheet
+   *
+   * การมอบหมายไม่ใช่ด่าน จึงไม่มี review_task ให้ย้อนดู และ `assigned_specialist_id` ถูก
+   * เขียนทับทุกครั้ง แถวนี้จึงเป็นที่เดียวที่บอกว่าเคยขอใครไว้ก่อน `after.assignedSpecialistId`
+   * เป็น null แปลว่าถอน เขียนเฉพาะเมื่อชื่อเปลี่ยนจริง และก่อนอีเมลที่ส่ง inline ซึ่ง throw ได้
+   */
+  REQUEST_ASSIGNED: "REQUEST_ASSIGNED",
 
   /**
    * ผู้ดูแลระบบแก้ snapshot ของคำขอโดยตรง (`PUT /api/admin/registrations/...`)

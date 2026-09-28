@@ -1287,10 +1287,25 @@ datasetRequestRouter.post("/:id/generate-form", async (req, res) => {
     return;
   }
 
+  await logAudit({
+    action: AuditAction.REQUEST_FORM_GENERATED,
+    subjectType: AuditSubject.DATASET_REGISTRATION_REQUEST,
+    subjectId: request.id,
+    organizationId: request.organizationId,
+    metadata: {
+      request_number: request.requestNumber,
+      documents: rendered.map((d) => ({
+        code: d.code,
+        version_id: d.versionId,
+        attachment_id: d.attachmentId,
+      })),
+    },
+  });
+
   const attachment = await activeAttachment(prisma, OWNER, request.id, AttachmentType.GENERATED_FORM);
   res.status(201).json({
     attachment: attachment ? publicAttachment(attachment) : null,
-    documents: rendered,
+    documents: rendered.map((d) => d.code),
   });
 });
 
@@ -1500,6 +1515,20 @@ datasetRequestRouter.post("/:id/assign", async (req, res, next) => {
         updatedBy: session.sub,
       },
     });
+
+    // ก่อนแจ้งเตือนและก่อนอีเมล inline ข้างล่าง — SMTP ที่ throw ต้องไม่ทำให้การมอบหมาย
+    // ที่ commit ไปแล้วหายจาก log (เงื่อนไขเดียวกับการแจ้ง: กดซ้ำคนเดิมไม่ใช่การมอบหมาย)
+    if (changed) {
+      await logAudit({
+        action: AuditAction.REQUEST_ASSIGNED,
+        subjectType: AuditSubject.DATASET_REGISTRATION_REQUEST,
+        subjectId: request.id,
+        organizationId: request.organizationId,
+        before: { assignedSpecialistId: request.assignedSpecialistId ?? null },
+        after: { assignedSpecialistId: specialistId },
+        metadata: { request_number: request.requestNumber },
+      });
+    }
 
     // แจ้งเฉพาะตอนที่ชื่อเปลี่ยนจริง — กดบันทึกซ้ำคนเดิมไม่ควรส่งอีเมลซ้ำ
     if (specialistId && changed) {
@@ -1978,6 +2007,16 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
       signedVersionIds = published.map((doc) => doc.versionId);
     }
 
+    /**
+     * ชุดข้อมูลที่เพิ่งเกิดจากการอนุมัติขั้นสุดท้าย — กำหนดค่าใน transaction อ่านหลัง commit
+     *
+     * audit เขียนใน callback ของ `$transaction` ไม่ได้ (ต้องหลัง commit และห้าม throw) จึงพา
+     * id ออกมาทางตัวแปรข้างนอก ไม่มีมันแถว `REQUEST_APPROVED` ของด่านสุดท้ายบอกไม่ได้ว่า
+     * อนุมัติแล้วได้ dataset ตัวไหน และงานส่ง DII แถวไหนรออยู่ (`as` กันไม่ให้ TypeScript
+     * ตีค่าเป็น null ตายตัว — มันมองไม่เห็นการกำหนดค่าใน callback)
+     */
+    let materialised = null as MaterialisedDataset | null;
+
     await prisma.$transaction(async (tx) => {
       await startTask(tx, task.id, session.sub);
       await completeTask(tx, {
@@ -2053,7 +2092,7 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
       }
 
       if (advance) {
-        await nextStageAfter(tx, request, task.taskType, session.sub);
+        materialised = await nextStageAfter(tx, request, task.taskType, session.sub);
       }
 
       if (result === ReviewResult.REJECTED) {
@@ -2077,7 +2116,24 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
       subjectId: request.id,
       organizationId: request.organizationId,
       after: { taskType: task.taskType, result, note },
+      metadata: materialised
+        ? {
+            dataset_id: materialised.datasetId,
+            integration_operation_id: materialised.integrationOperationId,
+          }
+        : undefined,
     });
+
+    // รูปเดียวกับของเส้นทาง B (organizations.ts) — ค้นการลงนามของทั้งสองเส้นทางด้วยรหัสเดียว
+    if (confirmationType && result === ReviewResult.APPROVED) {
+      await logAudit({
+        action: AuditAction.DOCUMENT_SIGNED,
+        subjectType: AuditSubject.DATASET_REGISTRATION_REQUEST,
+        subjectId: request.id,
+        organizationId: request.organizationId,
+        after: { confirmationType, documentVersionIds: signedVersionIds },
+      });
+    }
 
     await dispatchDatasetNotifications(request, task.taskType, result, note, session.sub);
 
@@ -2134,7 +2190,7 @@ async function nextStageAfter(
   request: RequestRow,
   completed: ReviewTaskType,
   actorId: string,
-) {
+): Promise<MaterialisedDataset | null> {
   const open = async (taskType: ReviewTaskType, roleCode: RoleCode, orgScope?: string | null) => {
     // ไม่ระบุ orgScope = ด่านฝั่ง BDI ซึ่งอยู่ในหน่วยงาน BDI
     const isBdiStage = orgScope === undefined;
@@ -2169,20 +2225,25 @@ async function nextStageAfter(
         ROLE_CODES.ORGANIZATION_APPROVER,
         request.organizationId,
       );
-      return;
+      return null;
 
     case ReviewTaskType.ORGANIZATION_APPROVAL:
       // §4.5 — ลงนามแล้วส่งให้ผู้อนุมัติ BDI ทันที ไม่มีด่านตรวจซ้ำคั่นอีกต่อไป
       await open(ReviewTaskType.BDI_FINAL_APPROVAL, ROLE_CODES.BDI_FINAL_APPROVER);
-      return;
+      return null;
 
     case ReviewTaskType.BDI_FINAL_APPROVAL:
-      await materialiseDataset(tx, request, actorId);
-      return;
+      return materialiseDataset(tx, request, actorId);
 
     default:
-      return;
+      return null;
   }
+}
+
+/** สิ่งที่การอนุมัติขั้นสุดท้ายสร้างขึ้น — ผู้เรียกใช้ใส่ใน audit หลัง commit */
+interface MaterialisedDataset {
+  datasetId: string;
+  integrationOperationId: string;
 }
 
 /**
@@ -2201,7 +2262,7 @@ async function materialiseDataset(
   tx: Prisma.TransactionClient,
   request: RequestRow,
   actorId: string,
-) {
+): Promise<MaterialisedDataset> {
   await tx.datasetRegistrationRequest.update({
     where: { id: request.id },
     data: { approvedAt: new Date(), updatedBy: actorId },
@@ -2246,7 +2307,7 @@ async function materialiseDataset(
 
   // ขั้นที่ 7 — งานส่ง Dataset Reference ไปยัง DII รอ worker หยิบไปทำ
   // docs/01-user-journey.md §6 ระบุว่า DII ยังเป็น [Next Phase] จึงมีแค่แถวรอไว้
-  await tx.integrationOperation.create({
+  const operation = await tx.integrationOperation.create({
     data: {
       integrationType: IntegrationType.DII,
       operation: "PUBLISH_DATASET_REFERENCE",
@@ -2256,9 +2317,10 @@ async function materialiseDataset(
       idempotencyKey: `DII:PUBLISH_DATASET_REFERENCE:${dataset.id}`,
       correlationId: correlationId(),
     },
+    select: { id: true },
   });
 
-  return dataset;
+  return { datasetId: dataset.id, integrationOperationId: operation.id };
 }
 
 async function dispatchDatasetNotifications(

@@ -1805,6 +1805,21 @@ organizationRouter.post("/:id/generate-form", async (req, res) => {
     return;
   }
 
+  await logAudit({
+    action: AuditAction.REQUEST_FORM_GENERATED,
+    subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
+    subjectId: request.id,
+    organizationId: request.organizationId,
+    metadata: {
+      request_number: request.requestNumber,
+      documents: rendered.map((d) => ({
+        code: d.code,
+        version_id: d.versionId,
+        attachment_id: d.attachmentId,
+      })),
+    },
+  });
+
   const attachment = await activeAttachment(
     prisma,
     AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
@@ -1814,7 +1829,7 @@ organizationRouter.post("/:id/generate-form", async (req, res) => {
   res.status(201).json({
     attachment: attachment ? publicAttachment(attachment) : null,
     /** รหัสเอกสารที่สร้างให้รอบนี้ — หน้าตรวจสอบก่อนนำส่งใช้ยืนยันว่าครบ */
-    documents: rendered,
+    documents: rendered.map((d) => d.code),
   });
 });
 
