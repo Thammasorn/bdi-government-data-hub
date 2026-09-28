@@ -1404,9 +1404,10 @@ organizationRouter.patch("/:id", async (req, res) => {
    * มาตามเดิม และค่าที่มันส่งก็เป็นค่าเดียวกับที่ถูกล็อกอยู่ ตอบ 400 จึงได้แต่ทำให้ฟอร์ม
    * ที่ไม่ได้ทำอะไรผิดบันทึกไม่ได้ ผลข้างเคียงที่ต้องการอีกอย่างคือ snapshot ที่ค้างค่าเก่า
    * อยู่ถูกเขียนให้ตรงกับบัญชีตั้งแต่การบันทึกร่างครั้งแรก
+   *
+   * แยกเก็บไว้เป็นก้อนเดียว เพราะ audit ข้างล่างต้องบอกได้ว่าช่องไหนเปลี่ยนเพราะบัญชี
    */
-  const snapshot = {
-    ...(await toRequestData(parsed.data)),
+  const fromAccount = {
     ...contactFromAccount(await contactAccount(request)),
     /**
      * อีเมลกับเลขบัตรของผู้มีอำนาจฯ ที่เปิดใช้งานบัญชีแล้วก็ทับค่าจาก body แบบเดียวกัน —
@@ -1417,6 +1418,7 @@ organizationRouter.patch("/:id", async (req, res) => {
      */
     ...approverFromAccount(await activatedApprover(prisma, request)),
   };
+  const snapshot = { ...(await toRequestData(parsed.data)), ...fromAccount };
 
   /**
    * ชื่อหน่วยงานบน master ตามคำขอไปด้วย ตราบใดที่ยังไม่อนุมัติ — เฉพาะหน่วยงานที่ผู้กรอก
@@ -1467,6 +1469,18 @@ organizationRouter.patch("/:id", async (req, res) => {
       blankAsNull(sentOnly(snapshot)) as Record<string, unknown>,
     ),
   );
+  /**
+   * ช่องที่เปลี่ยนเพราะค่าจากบัญชี ไม่ใช่เพราะผู้กรอกพิมพ์ — แยกออกจาก `fields_changed`
+   *
+   * ช่องเหล่านี้ล็อกอยู่บนฟอร์ม ผู้กรอกแก้ไม่ได้ แต่ snapshot ที่ไม่ตรงกับบัญชี (ร่างที่เปิดไว้
+   * ก่อนมีกฎนี้ บัญชีถูกแก้ชื่อหลังเปิดร่าง หรือผู้มีอำนาจฯ เพิ่งเปิดใช้งานบัญชี) จะถูกเขียนให้
+   * ตรงตอนบันทึกครั้งถัดไป ถ้ารวมไว้ใน `fields_changed` แถวจะอ่านว่าผู้ประสานงานพิมพ์ค่าพวกนั้น
+   * เอง ทั้งที่เขาไม่ได้แตะ (ร่างที่ `seed:demo` สร้างก็เป็นแบบนั้น — ชื่อกับเบอร์ของผู้ประสานงานว่าง)
+   * ยังอยู่ใน before/after ครบ เพราะถูกเขียนลงตารางจริง และบันทึกครั้งนั้นยังเกิดแถวแม้ไม่ได้
+   * พิมพ์อะไรเลย ไม่อย่างนั้น snapshot จะเปลี่ยนโดยไม่มีร่องรอย
+   */
+  const changedKeys = changed ? Object.keys(changed.after) : [];
+  const syncedFromAccount = changedKeys.filter((key) => key in fromAccount);
   const masterChanged = masterRename
     ? sanitizeDiff(
         diffFields(
@@ -1488,7 +1502,8 @@ organizationRouter.patch("/:id", async (req, res) => {
         saved_via: "WEB_FORM",
         request_number: request.requestNumber,
         status: request.status,
-        fields_changed: changed ? Object.keys(changed.after) : [],
+        fields_changed: changedKeys.filter((key) => !(key in fromAccount)),
+        ...(syncedFromAccount.length ? { synced_from_account: syncedFromAccount } : {}),
         // ชื่อบนแถว organization ที่ตามคำขอไปด้วย — คนละแถวกับ subject จึงไม่ปนกับ before/after
         ...(masterChanged ? { organization_master_changed: masterChanged } : {}),
       },

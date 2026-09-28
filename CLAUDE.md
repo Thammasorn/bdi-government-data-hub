@@ -444,6 +444,11 @@ whether to mask existing codes; don't change their payloads in passing. Officer 
 `REQUEST_DRAFT_SAVED`, diffed against what the route **writes**, never against the body: the
 organisation form sends only non-empty fields and the dataset form sends all of them, so neither
 body says what changed. `""` counts as null, and a save that changes nothing writes no row.
+The organisation route also writes the contact section and an activated signatory's e-mail/CID
+from the **account** over whatever the body carried; a change there goes in
+`metadata.synced_from_account`, not `fields_changed`, so the first save of a snapshot older than
+the account (a legacy or `seed:demo` draft, a renamed account) writes a row with
+`fields_changed: []` instead of crediting the officer with typing their own name.
 
 **Email is no longer sent from request handlers.** `notifyUsers()` writes a `notification` row
 plus a `notification_delivery` row (the outbox), and `src/workers/delivery.ts` sends it — a
