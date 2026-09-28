@@ -59,6 +59,16 @@ export function tokenFingerprint(token: string): string {
 }
 
 /**
+ * token ของผู้ดูแลระบบที่ fingerprint ข้างบนเดาย้อนกลับได้ — สั้นกว่า 32 ตัว หรือยังเป็นค่าตัวอย่าง `dev-…`
+ *
+ * เกณฑ์หยาบโดยตั้งใจ: 32 ตัวคือ 128 บิตเมื่อเป็นฐานสิบหก วลีที่ยาว 32 ตัวก็ยังเดาได้ แต่ค่าที่สั้นกว่านั้น
+ * เดาได้แน่ ใช้เตือนตอนบูต (`index.ts`) ไม่ใช่ปฏิเสธ ดูเหตุผลที่นั่น
+ */
+export function adminTokenLooksWeak(token: string): boolean {
+  return token.length < 32 || token.startsWith("dev-");
+}
+
+/**
  * Activation key ตาม sheet `activation_key`
  *
  * รูปแบบที่ sheet แนะนำ: สุ่มอย่างน้อย 32 ไบต์ แล้วเข้ารหัส URL-safe Base64

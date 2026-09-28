@@ -246,7 +246,12 @@ OTP แบบ `REGISTRATION` อีกแล้ว
 (`backend/src/lib/token-rejection.ts`) โดยไม่เก็บค่าที่ส่งมา เก็บแค่ `token_fp` คือ 12 ตัวแรกของ
 SHA-256 ของค่านั้น (`tokenFingerprint()` ใน `lib/auth.ts`) ซึ่งพอบอกได้ว่า "ค่านี้คือ token เก่าหรือ
 เปล่า" fingerprint แบบไม่มีกุญแจของค่าสั้น ๆ เดาย้อนกลับได้ token จึงต้องยาวอย่างน้อย 128 บิต
-(`openssl rand -hex 32`)
+(`openssl rand -hex 32`) — fingerprint ของ token ที่ใช้อยู่ก็ลงทุกแถวของ admin API ด้วย
+(`metadata.admin_token_fp`) token ที่เดาได้จึงให้ใครก็ตามที่อ่าน log ได้ทดสอบคำเดาแบบ offline จนได้ token
+ที่เปิด `/api/admin` ทั้งหมด backend ที่รันแบบ production พร้อม token ที่สั้นกว่า 32 ตัวหรือขึ้นต้นด้วย `dev-`
+พิมพ์ `[backend] คำเตือน: ADMIN_API_TOKEN …` ตอนบูต (`adminTokenLooksWeak()` ใน `lib/auth.ts` เกณฑ์หยาบ:
+วลียาว 32 ตัวก็ยังเดาได้) แค่เตือน ไม่ปฏิเสธการบูต เพราะ deploy ที่ออกก่อนหมุน token ต้องไม่ทำให้ backend
+วนรีสตาร์ตจนหน้าเว็บล่ม **หมุน token ก่อน deploy ที่เริ่มเขียน fingerprint** ไม่ใช่หลังจากนั้น
 
 ไม่ได้เขียนทุกครั้ง เพราะ 401 ใครก็ยิงได้ไม่จำกัด และตารางนี้ไม่มี retention:
 
@@ -265,6 +270,34 @@ SHA-256 ของค่านั้น (`tokenFingerprint()` ใน `lib/auth.ts
 ได้แถวไม่เกิน: แถวทันที 20 + ของถังรวม 1 + แถวสรุปของหน้าต่างเหล่านั้น + แถว `watched_token` 60 +
 แถวสรุปของที่มาที่ยิง token ที่เฝ้าไว้ซ้ำ (ไม่เกินจำนวนที่มาที่ได้แถว `watched_token`) คนที่ไม่ได้ถือ
 token เก่าจริงทำได้แค่ส่วนแรก
+
+**เพดานข้างบนเป็นของ `ADMIN_TOKEN_REJECTED` อย่างเดียว ไม่ได้คุ้มครองทั้งตาราง** (ยอมรับไว้ 2026-09-29
+ไม่ใช่มองข้าม) แถวต่อไปนี้ใครก็เขียนได้โดยไม่ต้องมีอะไรอยู่ในมือ หนึ่งคำขอหนึ่งแถว ไม่มีหน้าต่าง ไม่มีงบ
+และ backend ไม่มี rate limit เลย:
+
+| แถว | สิ่งที่ผู้ยิงต้องมี |
+|---|---|
+| `LOGIN_FAILED` `INVALID_CREDENTIAL` (มีมาก่อนการ์ด activity log) | อีเมลใดก็ได้ — อีเมลที่ไม่มีบัญชีไม่ต้องรอ bcrypt ด้วยซ้ำ |
+| `LOGIN_FAILED` `OTP_NOT_PENDING` | อีเมลใดก็ได้ แถวเก็บอีเมลที่พิมพ์มา |
+| `IDENTITY_VERIFICATION_FAILED` `state_not_found` | `state` ใดก็ได้ |
+| `PASSWORD_RESET_COMPLETED` `FAILURE` `not_found` | โทเคนใดก็ได้ |
+| `IDENTITY_VERIFICATION_STARTED` | ไม่มี — ทุก `POST /thaid/start` ขา login พร้อมแถว `integration_operation` ของมัน (แถวนั้นมีมาก่อนการ์ด) |
+
+วนยิงตรงเข้า backend ก็ขยาย `audit_event` ได้เท่าอัตราคำขอ และตั้งแต่มีสำเนาใน MongoDB ก็ขยายที่นั่นด้วย
+ที่ไม่ throttle แบบ `ADMIN_TOKEN_REJECTED`: throttle แค่บางแถวไม่ได้กันอะไร ตราบที่ทางอื่นในกลุ่มเดียวกันยังเปิด —
+`INVALID_CREDENTIAL` ของบัญชีที่มีอยู่จริงคือหลักฐานว่ามีคนเดารหัสผ่านของคนคนหนึ่ง ซึ่งเป็นสิ่งที่ log นี้ต้องเก็บ
+ทีละแถว และ `integration_operation` ของ `/thaid/start` ก็โตตามคำขออยู่ดี ขอบเขตที่ได้ผลจริงคือ rate limit ของ
+`/api/auth/*` ซึ่งต้องมีที่อยู่ของผู้เรียกที่เชื่อได้ก่อน: IP ในระบบนี้ผู้เรียกเขียนเอง (ย่อหน้าถัดไป) limit ต่อ IP
+จึงถูกเลี่ยงได้ด้วยการยิงตรง ส่วน limit รวมทั้งระบบกลายเป็นคันโยกที่ทำให้ทุกคนเข้าสู่ระบบไม่ได้ จึงรอจนตัดสินเรื่อง
+X-Forwarded-For และการปิดพอร์ต 4000 จากภายนอก ระหว่างนี้ดูว่ามีการยิงถล่มหรือไม่ด้วย:
+
+```sql
+select date_trunc('minute', occurred_at) as minute, action,
+       metadata_json->>'failure_reason' as reason, count(*)
+from audit.audit_event
+where actor_type = 'ANONYMOUS' and occurred_at > now() - interval '1 hour'
+group by 1, 2, 3 order by 1 desc, 4 desc;
+```
 
 **IP ในแถวเหล่านี้คือสิ่งที่ผู้เรียกเขียนมาเอง** เว้นแต่ชั้นนอกสุดต่อท้ายที่อยู่จริงให้
 `trust proxy 1` อ่านค่าสุดท้ายของ X-Forwarded-For และไม่มีชั้นไหนในระบบเราต่อท้ายที่อยู่จริงเลย:

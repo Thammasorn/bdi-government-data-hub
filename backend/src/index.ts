@@ -6,6 +6,7 @@ import { MulterError } from "multer";
 
 import { prisma } from "./db.js";
 import { env } from "./env.js";
+import { adminTokenLooksWeak } from "./lib/auth.js";
 import { DocumentRenderError } from "./lib/document-render.js";
 import { correlationMiddleware } from "./lib/context.js";
 import { loadChoices } from "./lib/dataset-choices.js";
@@ -218,6 +219,18 @@ async function main() {
     // บอกไว้ตั้งแต่บูตว่าเลขบัตรจะมาจาก claim ไหน เวลาไล่ปัญหาจะได้ไม่ต้องเดา
     if (!env.thaid.usePid) {
       console.log("[backend] THAID_USE_PID=false — ใช้ claim `sub` เป็นเลขประจำตัวประชาชน");
+    }
+    /**
+     * fingerprint ของ token นี้ลงทุกแถวของ admin API (`admin_token_fp`) — ถ้า token เดาได้ ใครที่อ่าน log ได้
+     * ก็ทดสอบคำเดาแบบ offline แล้วได้ token ที่เปิด /api/admin ทั้งหมด เตือนเฉพาะ production เพราะ dev
+     * checkout ใช้ค่าตัวอย่างอยู่แล้ว และเตือนแทนการไม่ยอมบูต: deploy ที่ออกก่อนหมุน token ต้องไม่ทำให้
+     * backend วนรีสตาร์ตจนหน้าเว็บล่ม ไม่พิมพ์ค่าหรือความยาวของ token
+     */
+    if (env.nodeEnv === "production" && adminTokenLooksWeak(env.auth.adminApiToken)) {
+      console.warn(
+        "[backend] คำเตือน: ADMIN_API_TOKEN สั้นกว่า 32 ตัวหรือยังเป็นค่าตัวอย่าง dev-… — fingerprint ที่ลง " +
+          "audit_event ใช้เดาย้อนกลับได้ ให้หมุนเป็นค่าจาก `openssl rand -hex 32` (docs/09 §4.1)",
+      );
     }
   });
 
