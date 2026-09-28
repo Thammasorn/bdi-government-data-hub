@@ -1070,12 +1070,23 @@ async function revertStrandedWork(
     before: { status: RequestStatus; submittedAt: Date | null };
   }> = [];
   for (const request of stranded) {
-    await cancelActiveTask(tx, {
+    /**
+     * ใบนั้นนับว่าถูกดันกลับก็ต่อเมื่อ*การเรียกครั้งนี้*เป็นคนปิดด่านเอง
+     *
+     * การอ่านข้างบนบอกได้แค่ว่า "ตอนที่อ่าน ด่านยังเปิด" — การย้ายสองครั้งที่ซ้อนกันเห็นด่านเปิดทั้งคู่
+     * แต่ updateMany ใน `cancelActiveTask()` ปล่อยผ่านได้ฝั่งเดียว อีกฝั่งได้ `null` กลับมา ใบนั้นจึงเป็น
+     * ของทรานแซกชันที่ปิดด่านไปก่อน (อาจเป็นการย้ายอีกครั้ง หรือผู้มีอำนาจกดอนุมัติไปแล้วก็ได้) เดิมโค้ด
+     * ไม่ดูค่าที่คืนมา ฝั่งที่แพ้จึงเขียนคำขอซ้ำแล้วได้ `REQUEST_RESET_TO_DRAFT` อีกแถว อ้างว่า
+     * SUBMITTED→DRAFT ด้วยเหตุผลของตัวเอง ทั้งที่ด่านถือเหตุผลของอีกฝั่ง — และถ้าคนที่ปิดคือการอนุมัติ
+     * ก็จะดันใบที่เดินหน้าไปด่านถัดไปแล้วกลับเป็นร่าง
+     */
+    const cancelled = await cancelActiveTask(tx, {
       subjectType: SubjectType.ORGANIZATION_REGISTRATION_REQUEST,
       subjectId: request.id,
       actorId: SYSTEM_USER_ID,
       reason: params.reason,
     });
+    if (!cancelled) continue;
     const approverCleared =
       request.approverEmail?.toLowerCase() === params.email.toLowerCase();
     await tx.organizationRegistrationRequest.update({

@@ -467,9 +467,12 @@ saw instead is the read-then-write trap again: four simultaneous revokes of one 
 200 and wrote four rows for one revocation. The one revoke that writes no such row is the ThaID
 CID mismatch (`revokeActivationKey()`, called from the callback in `routes/auth.ts`), on purpose:
 its `IDENTITY_VERIFICATION_FAILED` row with `failure_reason: CID_MISMATCH` is the record of that
-revocation. Anything created inside a transaction (an account, a key, a role)
-comes out in the transaction's result and is audited after commit, never from inside the
-callback (`ensureApproverAccount()` returns what it made for that reason; the in-transaction
+revocation. The transfer's `revertStrandedWork()` keeps the same rule for
+`REQUEST_RESET_TO_DRAFT`: a request counts as reverted only when its own `cancelActiveTask()`
+closed the gate — `null` means another transaction got there first, and two overlapping transfers
+used to write two reset rows for one reset. Anything created inside a transaction (an account, a
+key, a role) comes out in the transaction's result and is audited after commit, never from inside
+the callback (`ensureApproverAccount()` returns what it made for that reason; the in-transaction
 `ROLE_REVOKED` of `revokeRoleAssignments()` is QA A4's and is left alone). `requireAdminToken`
 stamps the request `admin-portal` and `logAudit` adds `metadata.admin_token_fp`, since the actor
 on that path is always "system".
