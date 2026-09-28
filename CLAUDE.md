@@ -1484,8 +1484,13 @@ Two API base URLs, and they are not interchangeable:
   looks correct — until the database is down at boot, when the API answers 500 again. Both are
   mapped in `index.ts`, and an initialization failure answers 503 even when it carries no code.
 - **`req.ip` is whatever the caller wrote.** `trust proxy 1` takes it from the last
-  `X-Forwarded-For` entry, and the backend is reachable without the proxy, so it can be any text
-  of any length. Every `ip_address` column is `VARCHAR(64)`. Until 2026-09-28 a 100-character
+  `X-Forwarded-For` entry, and nothing in this stack appends the real peer: the backend is
+  reachable without the proxy, and the Next proxy (`app/api/[...path]/route.ts`) forwards the
+  browser's `X-Forwarded-For` as sent, because Next fills that header from the socket only when
+  it is absent (`??=` in `base-server.js`). So through the site too it can be any text of any
+  length. It is only the caller's address where an edge in front appends it (Cloudflare on
+  `main`). Dropping the header in the proxy is not a fix, because every user would then share
+  the frontend container's address. Every `ip_address` column is `VARCHAR(64)`. Until 2026-09-28 a 100-character
   value made the OTP step answer 400, because the session insert failed, so that user could not
   log in at all. It also made every `audit_event` row of the request vanish, since `logAudit`
   swallows its own failure, and admin-token and password guessing could run with no trace.

@@ -256,11 +256,30 @@ SHA-256 ของค่านั้น (`tokenFingerprint()` ใน `lib/auth.ts
 | ครั้งถัดไปจาก IP เดิมในหน้าต่างเดิม | นับอย่างเดียว แล้วได้แถวสรุปแถวเดียวตอนหน้าต่างปิด (`suppressed_count` · `token_fps` · `paths`) |
 | แถวทันทีรวมทุก IP ครบ 20 แถวใน 10 นาทีแล้ว | IP ที่ยังไม่มีหน้าต่างนับรวมในถังเดียว แถวของถังมี `throttle_overflow: true` และไม่มี IP กับ user agent |
 | ค่าที่ได้เป็น IP มาไม่ใช่ IP | ทุกค่าใช้หน้าต่างเดียวกัน แถวไม่มี IP แต่มี `ip_unparsed: true` |
-| fingerprint อยู่ใน `ADMIN_TOKEN_WATCH_FPS` | แถวของตัวเองทันที มี `watched_token: true` และอยู่นอกงบข้างบน — ที่มาละแถวต่อนาที รวมไม่เกิน 60 แถวต่อ 10 นาที ส่วนที่เกินไปอยู่ในแถวสรุปเป็น `watched_suppressed_count` |
+| fingerprint อยู่ใน `ADMIN_TOKEN_WATCH_FPS` | แถวของตัวเองทันที มี `watched_token: true` และอยู่นอกงบข้างบน — ที่มาละแถวต่อนาที รวมไม่เกิน 60 แถวต่อ 10 นาที แถว `watched_token` จึงไม่เกิน 60 จริง |
+| ↳ ที่มาเดิมยิง token นั้นซ้ำภายในนาทีเดียวกัน | ไม่มีแถวใหม่ นับเข้าหน้าต่างของที่มานั้น (เปิดให้ถ้ายังไม่มี โดยไม่เขียนแถวทันทีและไม่กินงบ 20 แถว) แล้วได้แถวสรุปที่มี IP พร้อม `watched_suppressed_count` |
+| ↳ งบ 60 แถวของ token ที่เฝ้าไว้หมดแล้ว | ไปทางปกติเหมือนคำขออื่น: ใช้งบ 20 แถวร่วมกัน แถวทันทีที่ได้มี `watched_over_budget: true` (**ไม่ใช่** `watched_token`) งบนั้นหมดด้วยก็ลงถังรวม ครั้งที่ถูกนับอยู่ใน `watched_suppressed_count` ของแถวสรุป |
 
-IP ในแถวเหล่านี้เชื่อได้เท่าที่ X-Forwarded-For เชื่อได้: backend ยิงตรงได้ และ `trust proxy 1`
-อ่านที่อยู่จาก header นั้น `metadata.path` เป็นรูปแบบ ไม่ใช่ข้อความที่ผู้ยิงพิมพ์ — UUID → `:id`
-เลข 6 หลักขึ้นไป → `:n` ตัวอักษรนอก `A-Z a-z 0-9 / _ . : -` → `_` และยาวไม่เกิน 120 ตัว
+รวมแล้วต่อ 10 นาทีได้ไม่เกิน: แถวทันที 20 + ของถังรวม 1 + แถวสรุปของหน้าต่างเหล่านั้น + แถว
+`watched_token` 60 + แถวสรุปของที่มาที่ยิง token ที่เฝ้าไว้ซ้ำ (ไม่เกินจำนวนที่มาที่ได้แถว
+`watched_token`) คนที่ไม่ได้ถือ token เก่าจริงทำได้แค่ส่วนแรก
+
+**IP ในแถวเหล่านี้คือสิ่งที่ผู้เรียกเขียนมาเอง** เว้นแต่ชั้นนอกสุดต่อท้ายที่อยู่จริงให้
+`trust proxy 1` อ่านค่าสุดท้ายของ X-Forwarded-For และไม่มีชั้นไหนในระบบเราต่อท้ายที่อยู่จริงเลย:
+backend ยิงตรงได้ และ proxy ของหน้าเว็บ (`frontend/app/api/[...path]/route.ts`) ส่ง
+X-Forwarded-For ของเบราว์เซอร์ต่อไปทั้งดุ้น — Next เติม header นี้จาก socket ก็ต่อเมื่อไม่มีมา
+(`??=`) ยิงผ่านหน้าเว็บของ dev checkout พร้อม `X-Forwarded-For: 198.51.100.200` จึงได้แถวที่ IP
+เป็น `198.51.100.200` บน production ค่านี้ถูกเท่าที่ Cloudflare ต่อท้ายที่อยู่ของผู้ที่ต่อเข้ามาจริง
+(เอกสารของ Cloudflare บอกว่าต่อท้าย ยังไม่ได้ยืนยันกับ tunnel ของเรา) ส่วนใครที่เข้าถึงพอร์ต 3000 หรือ
+4000 ของเครื่องได้ตรง ๆ ตั้งค่าเองได้ทั้งหมด
+
+`metadata.path` เป็นรูปแบบ ไม่ใช่ข้อความที่ผู้ยิงพิมพ์ — ถอด `%xx` ก่อน แล้ว UUID → `:id`
+ตัวอักษรนอก `A-Z a-z 0-9 / _ . : -` → `_` กลุ่มเลขที่ชี้ตัวคนได้ → `:n` และยาวไม่เกิน 120 ตัว
+"กลุ่มเลข" คือเลขที่ติดกันหรือคั่นด้วย `-` `.` `_` `:` (ช่องว่างกลายเป็น `_` ไปก่อนแล้ว) และนับ
+เป็นเลขชี้ตัวคนเมื่อมีเลขติดกัน 6 หลัก หรือรวมทั้งกลุ่ม 9 หลักขึ้นไป — `1-1017-00203-45-1`,
+`1101700203451`, `1 1017 00203 45 1` และ `081-234-5678` กลายเป็น `:n` ทั้งหมด ส่วน
+`ORG-REG-2026-0002` กับวันที่ `2026-09-28` (8 หลัก) ยังอ่านได้ **ตัวอักษรยังเหลือได้ถึง 120 ตัว**:
+คนที่ตั้งใจสะกดเลขเป็นตัวอักษรหรือเข้ารหัสซ้อนยังเขียนลงช่องนี้ได้ อ่านมันเป็นข้อความของผู้ยิงเสมอ
 
 **ทุกครั้งที่ปลด token ให้เพิ่ม fingerprint ของตัวเก่าลง `ADMIN_TOKEN_WATCH_FPS`** แถวสรุปจด
 fingerprint ได้แค่ 20 ค่าต่อหน้าต่าง คนที่ยิงค่ามั่ว ๆ 20 ค่าก่อนแล้วค่อยใช้ token เก่า จะเหลือ
@@ -286,11 +305,22 @@ ADMIN_TOKEN_WATCH_FPS=<fingerprint ตัวที่เพิ่งปลด>,<
 จากนั้น recreate container ของ backend (`restart` ไม่อ่าน `.env` ใหม่) แถวที่ได้ดูด้วย:
 
 ```sql
-select occurred_at, ip_address, metadata_json->>'path' as path
+select occurred_at, ip_address,
+       case when metadata_json ? 'watched_token' then 'งบของ token ที่เฝ้า'
+            when metadata_json ? 'watched_over_budget' then 'เกินงบ 60 — ใช้งบรวม'
+            else 'แถวสรุป' end as row_kind,
+       metadata_json->>'path' as path,
+       metadata_json->>'watched_suppressed_count' as counted_only
 from audit.audit_event
-where action = 'ADMIN_TOKEN_REJECTED' and metadata_json->>'watched_token' = 'true'
-order by occurred_at desc limit 20;
+where action = 'ADMIN_TOKEN_REJECTED'
+  and (metadata_json ? 'watched_token' or metadata_json ? 'watched_over_budget'
+       or metadata_json ? 'watched_suppressed_count')
+order by occurred_at desc limit 50;
 ```
+
+แถว `watched_token` ไม่เกิน 60 ต่อ 10 นาที ถ้าเห็นครบ 60 หรือเห็น `watched_over_budget` แปลว่า
+token เก่าถูกใช้จากที่มามากกว่าที่งบให้แถวได้ ให้ดู `counted_only` ของแถวสรุปประกอบ แถวสรุปของ
+ถังรวมไม่มี IP
 
 ค่าที่ไม่ใช่ฐานสิบหก 12 ตัวถูกข้ามพร้อมคำเตือนตอนบูต (`[env] ADMIN_TOKEN_WATCH_FPS: ข้าม …`)
 โดยไม่พิมพ์ค่านั้นออกมา เผื่อเป็น token จริงที่วางผิดช่อง

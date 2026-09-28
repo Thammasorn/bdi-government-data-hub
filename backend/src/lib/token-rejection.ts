@@ -17,8 +17,9 @@
  * ก่อนแล้วค่อยลอง token เก่ายังซ่อนมันไว้หลังธงได้ จึงมีทางที่สามข้างล่าง (fingerprint ที่เฝ้าไว้)
  *
  * หน้าต่างต่อ IP อย่างเดียวคุมจำนวนแถวไม่ได้: `trust proxy 1` ทำให้ `req.ip` มาจาก
- * X-Forwarded-For และ backend ของ main เปิดตรงที่ 0.0.0.0:4000 คนที่ยิงตรงไม่ผ่าน proxy จึงตั้ง
- * IP เองได้ทุกคำขอ แต่ละค่าได้หน้าต่างใหม่และแถวใหม่ ตัวที่คุมจำนวนแถวจริงคืองบรวม
+ * X-Forwarded-For ซึ่งผู้เรียกตั้งเองได้ทุกคำขอ — ทั้งตอนยิง backend ตรง (main เปิด 0.0.0.0:4000)
+ * และตอนยิงผ่านหน้าเว็บ เพราะ proxy ของ Next ส่ง header นั้นของเบราว์เซอร์ต่อไปทั้งดุ้น (ดู
+ * `parseClientIp()`) แต่ละค่าได้หน้าต่างใหม่และแถวใหม่ ตัวที่คุมจำนวนแถวจริงคืองบรวม
  * `MAX_IMMEDIATE_ROWS` ต่อ 10 นาที — IP ในแถวเหล่านี้จึงเชื่อได้เท่าที่ X-Forwarded-For เชื่อได้
  * ค่าที่ไม่ใช่ IP เลย (`parseClientIp()`) ใช้หน้าต่างเดียวกันหมด (`UNPARSED_KEY`) ไม่ใช่หน้าต่าง
  * ละค่า และแถวของมันไม่มี IP แต่มี `ip_unparsed: true`
@@ -28,13 +29,20 @@
  * ถ้าแถวทันทีใส่ IP ของคำขอแรกที่ตกลงถังไว้ คนอ่านจะโยนทั้งถังให้ที่อยู่เดียวซึ่งสุ่มมาและอาจปลอม
  *
  * **fingerprint ที่เฝ้าไว้** (`watchedFps`, ของ admin คือ `ADMIN_TOKEN_WATCH_FPS` = token ที่ปลด
- * แล้ว) ได้แถวของตัวเองเสมอ พร้อม `watched_token: true` นอกงบข้างบนทั้งหมด ค่ามั่วจึงเบียดมันไม่ได้
+ * แล้ว) ได้แถวของตัวเองพร้อม `watched_token: true` นอกงบข้างบนทั้งหมด ค่ามั่วจึงเบียดมันไม่ได้
  * เพราะต้องถือ token เก่าตัวจริงถึงจะเข้าทางนี้ งบของมันแยกต่างหาก: ที่มาละแถวต่อนาที รวมไม่เกิน
- * `MAX_WATCHED_ROWS` ต่อ 10 นาที ส่วนที่เกินงบนี้ไหลไปทางปกติ ถูกนับและสรุปเหมือนคำขออื่น แต่ยัง
- * นับแยกไว้ใน `watched_suppressed_count` ของแถวสรุป
+ * `MAX_WATCHED_ROWS` ต่อ 10 นาที แถว `watched_token` จึงมีไม่เกินเท่านั้นจริง ๆ ส่วนที่เกินงบ:
+ *   - ที่มาเดิมยิงซ้ำภายในนาทีนั้น → นับเข้าหน้าต่างของที่มานั้นอย่างเดียว (เปิดใหม่ได้โดยไม่เขียน
+ *     แถวทันที เพราะแถว watched เพิ่งบอกไปแล้ว) ไม่ได้แถวที่สองของวินาทีเดียวกัน
+ *   - งบรวม 60 หมดแล้ว → ไปทางปกติเหมือนคำขออื่น ใช้งบ `MAX_IMMEDIATE_ROWS` ร่วมกัน แถวทันทีที่ได้
+ *     มี `watched_over_budget: true` แทน `watched_token` คนค้นจะได้แยกออกว่าแถวไหนมาจากงบไหน
+ *   ทั้งสองทางนับแยกไว้ใน `watched_suppressed_count` ของแถวสรุปด้วย
  *
  * `path` ที่เก็บเป็นรูปแบบ ไม่ใช่ข้อความที่ผู้ยิงพิมพ์ (`pathPattern()`) — ตารางไม่มี retention
- * ข้อความอิสระในนั้นคือช่องให้คนนอกเขียนอะไรก็ได้ลงหลักฐาน รวมถึงเลขบัตรของคนอื่น
+ * ข้อความอิสระในนั้นคือช่องให้คนนอกเขียนอะไรก็ได้ลงหลักฐาน รวมถึงเลขบัตรของคนอื่น รูปแบบปิด
+ * ได้เฉพาะเลขในรูปที่คนพิมพ์กันจริง (ติดกัน มีขีด จุด ช่องว่าง หรือ percent-encode มา) ตัวอักษร
+ * ยังเหลือได้ถึง 120 ตัว — คนที่ตั้งใจสะกดเลขเป็นตัวอักษรก็ยังเขียนลงได้ อ่านช่องนี้เป็นข้อความ
+ * ของผู้ยิงเสมอ
  *
  * ค่าทั้งหมดอยู่ในหน่วยความจำของ process เดียว — backend หลาย replica นับแยกกัน ตัวเลขจึงเป็น
  * ค่าประมาณ (ยอมรับไว้ในแผน) รีสตาร์ตแล้วตัวนับหาย `flushTokenRejections()` ตอน shutdown
@@ -55,7 +63,8 @@ const SWEEP_MS = 60_000;
  * กรณีที่ใช้จริง (คนตั้งค่า Postman ผิด token เก่าหลังหมุน) มาจากไม่กี่ที่ 20 แหล่งใน 10 นาทีคือ
  * การยิงแล้ว ตัวเลขนี้จึงไม่บังของจริง แต่ต่อให้ปลอม IP ทุกคำขอ แถวก็ไม่เกินราว 40 ต่อ 10 นาที
  * (ทันที + สรุป + ของถังรวม) ไม่ใช่หนึ่งแถวต่อ IP ปลอม — และเพราะหน้าต่างใหม่เปิดได้เฉพาะตอนที่ยัง
- * มีงบ แผนที่ในหน่วยความจำจึงไม่โตเกินหลักสิบไปด้วย ไม่ต้องมีเพดานจำนวน IP แยกอีกตัว
+ * มีงบ (งบนี้ หรืองบของ fingerprint ที่เฝ้าไว้ซึ่งเปิดหน้าต่างเงียบได้ไม่เกินจำนวนแถว watched)
+ * แผนที่ในหน่วยความจำจึงไม่โตเกินหลักร้อยไปด้วย ไม่ต้องมีเพดานจำนวน IP แยกอีกตัว
  */
 const MAX_IMMEDIATE_ROWS = 20;
 const OVERFLOW_KEY = "\u0000overflow";
@@ -70,7 +79,7 @@ const NO_ADDRESS_KEY = "\u0000no-address";
 const WATCHED_PER_SOURCE_MS = 60_000;
 /**
  * ...และรวมทุกที่มาไม่เกินเท่านี้ต่อ 10 นาที — คนที่ถือ token เก่าอยู่จริงก็ใช้การปลอม IP ขยายมัน
- * เป็นน้ำท่วมไม่ได้ หกสิบแถวพอให้เห็นว่ามีการใช้จากกี่ที่ ส่วนที่เกินยังถูกนับในแถวสรุป
+ * เป็นน้ำท่วมไม่ได้ หกสิบแถวพอให้เห็นว่ามีการใช้จากกี่ที่ ส่วนที่เกินไปทางปกติ (ดูหัวไฟล์)
  */
 const MAX_WATCHED_ROWS = 60;
 /** รายการในแถวสรุป (fingerprint · เส้นทาง) เก็บได้ไม่เกินเท่านี้ต่อหน้าต่าง */
@@ -79,9 +88,33 @@ const MAX_LISTED = 20;
 const MAX_PATH = 120;
 
 const UUID_IN_PATH = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
-/** เลขบัตรประชาชน เบอร์โทร หรือเลขอะไรก็ตามที่ยาวพอจะชี้ตัวคน — เลขคำขอ (`-2026-0002`) สั้นกว่านี้ */
-const LONG_NUMBER = /\d{6,}/g;
+/** `%xx` ที่ติดกัน — ถอดทีละช่วง ช่วงที่เสียช่วงเดียวจะได้ไม่ทำให้ทั้ง path ไม่ถูกถอด */
+const PERCENT_RUN = /(?:%[0-9A-Fa-f]{2})+/g;
 const OUTSIDE_PATH_CHARS = /[^A-Za-z0-9/_.:-]/g;
+/**
+ * กลุ่มตัวเลขที่ติดกันหรือคั่นด้วย `-` `.` `_` `:` — เลขบัตรพิมพ์กันเป็น `1-1017-00203-45-1` หรือ
+ * มีช่องว่าง (ซึ่งกลายเป็น `_` ไปก่อนแล้ว) บ่อยพอ ๆ กับติดกัน 13 หลัก ดูแค่เลขที่ติดกันจึงไม่พอ
+ */
+const DIGIT_GROUP = /\d(?:[-._:]{0,3}\d)*/g;
+/**
+ * กลุ่มไหนนับเป็นเลขที่ชี้ตัวคน: เลขติดกัน 6 หลักขึ้นไป หรือทั้งกลุ่มมี 9 หลักขึ้นไป (เบอร์โทร 9–10
+ * หลัก เลขบัตร 13 หลัก) — เลขคำขอ `ORG-REG-2026-0002` กับวันที่ `2026-09-28` มีแค่ 8 หลักจึงยังอ่านได้
+ */
+function identifyingNumber(group: string): boolean {
+  return /\d{6}/.test(group) || group.replace(/\D/g, "").length >= 9;
+}
+
+/** ถอด `%xx` ก่อนจัดรูป — ไม่งั้น `1%2D1017…` เหลือ `1_2D1017…` ซึ่งตัว `D` ตัดกลุ่มเลขขาด */
+function decodePercent(path: string): string {
+  return path.replace(PERCENT_RUN, (run) => {
+    try {
+      return decodeURIComponent(run);
+    } catch {
+      // ไบต์ที่ไม่ใช่ UTF-8 — ทิ้งทั้งช่วง ไม่ปล่อยเลขที่อยู่ในนั้นออกไป
+      return "_";
+    }
+  });
+}
 
 /** บริบทที่แถวหนึ่งถูกเขียนจาก — แถวสรุปเขียนจาก timer ซึ่งไม่มี request ให้อ่าน จึงต้องเก็บไว้ */
 interface Origin {
@@ -115,15 +148,18 @@ function remember(list: Set<string>, value: string | null, onFull: () => void) {
 }
 
 /**
- * เส้นทางที่ถูกยิงในรูปที่จัดกลุ่มได้: ไม่เอา query string, UUID → `:id`, เลข 6 หลักขึ้นไป → `:n`,
- * ตัวอักษรนอกชุดที่ path ปกติใช้ → `_` (รวมถึง `%xx` ที่ยังไม่ถอดรหัส) แล้วตัดที่ `MAX_PATH`
+ * เส้นทางที่ถูกยิงในรูปที่จัดกลุ่มได้: ไม่เอา query string, ถอด `%xx`, UUID → `:id`, ตัวอักษรนอกชุด
+ * ที่ path ปกติใช้ → `_`, กลุ่มเลขที่ชี้ตัวคนได้ (`identifyingNumber()`) → `:n` แล้วตัดที่ `MAX_PATH`
+ *
+ * ลำดับสำคัญ: ถอดก่อนเพื่อให้ตัวคั่นที่ encode มาเป็นตัวคั่นจริง แทน `_` ก่อนหาเลขเพื่อให้ช่องว่าง
+ * และตัวคั่นแปลก ๆ ยังนับเป็นตัวคั่น และ UUID ก่อนเลขเพราะ UUID มีเลขปนขีดยาวพอจะโดนนับเป็นเลข
  */
 function pathPattern(req: Request): string {
   const path = (req.originalUrl ?? req.url).split("?")[0] ?? "";
-  return path
+  return decodePercent(path)
     .replace(UUID_IN_PATH, ":id")
-    .replace(LONG_NUMBER, ":n")
     .replace(OUTSIDE_PATH_CHARS, "_")
+    .replace(DIGIT_GROUP, (group) => (identifyingNumber(group) ? ":n" : group))
     .slice(0, MAX_PATH);
 }
 
@@ -173,15 +209,19 @@ export function createTokenRejectionRecorder(
   /** เวลาที่แต่ละที่มาได้แถว watched ล่าสุด — โตได้ไม่เกินงบ เพราะเพิ่มเฉพาะตอนเขียนแถว */
   const watchedLastAt = new Map<string, number>();
 
-  function takeWatched(source: string, now: number): boolean {
+  /**
+   * ได้แถว watched หรือไม่ และถ้าไม่ได้เพราะอะไร — สองเหตุต้องไปคนละทาง (ดูหัวไฟล์): `"source"` =
+   * ที่มานี้เพิ่งได้แถวไปไม่ถึงนาที, `"budget"` = งบรวม `MAX_WATCHED_ROWS` หมด
+   */
+  function takeWatched(source: string, now: number): "row" | "source" | "budget" {
     const last = watchedLastAt.get(source);
-    if (last !== undefined && now - last < WATCHED_PER_SOURCE_MS) return false;
-    if (!takeWatchedBudget(now)) return false;
+    if (last !== undefined && now - last < WATCHED_PER_SOURCE_MS) return "source";
+    if (!takeWatchedBudget(now)) return "budget";
     for (const [key, at] of watchedLastAt) {
       if (now - at >= WATCHED_PER_SOURCE_MS) watchedLastAt.delete(key);
     }
     watchedLastAt.set(source, now);
-    return true;
+    return "row";
   }
 
   /**
@@ -225,29 +265,54 @@ export function createTokenRejectionRecorder(
   }
 
   /**
-   * นับเข้าหน้าต่างที่ยังเปิดอยู่ของ `key` — คืน false ถ้าไม่มีหน้าต่างให้นับ ผู้เรียกต้องเปิดใหม่
-   * หน้าต่างที่หมดเวลาแต่ตัวกวาดยังไม่มาถึงถูกสรุปทิ้งตรงนี้ก่อน ลำดับแถวจะได้ถูก
+   * หน้าต่างที่ยังเปิดอยู่ของ `key` ถ้ามี — หน้าต่างที่หมดเวลาแต่ตัวกวาดยังไม่มาถึงถูกสรุปทิ้งตรงนี้
+   * ก่อน ลำดับแถวจะได้ถูก
    */
-  function countInto(
-    key: string,
+  function liveWindow(key: string, now: number): RejectionWindow | undefined {
+    const open = windows.get(key);
+    if (!open) return undefined;
+    if (now - open.startedAt >= WINDOW_MS) {
+      windows.delete(key);
+      void summarise(open, now);
+      return undefined;
+    }
+    return open;
+  }
+
+  /** เปิดหน้าต่างใหม่ — ไม่เขียนแถวเอง แถวทันที (ถ้ามี) เป็นหน้าที่ของผู้เรียก */
+  function openWindow(key: string, now: number, origin: Origin, overflow: boolean): RejectionWindow {
+    const window: RejectionWindow = {
+      startedAt: now,
+      lastAt: now,
+      suppressed: 0,
+      watchedSuppressed: 0,
+      tokenFps: new Set(),
+      paths: new Set(),
+      truncated: { tokenFps: false, paths: false },
+      overflow,
+      origin,
+    };
+    windows.set(key, window);
+    if (!sweeper) {
+      sweeper = setInterval(() => sweep(Date.now()), SWEEP_MS);
+      // ไม่ให้ตัวกวาดเป็นเหตุที่ process ไม่ยอมจบ
+      sweeper.unref();
+    }
+    return window;
+  }
+
+  function count(
+    window: RejectionWindow,
     now: number,
     fp: string | null,
     entry: string,
     watchedToken: boolean,
-  ): boolean {
-    const open = windows.get(key);
-    if (!open) return false;
-    if (now - open.startedAt >= WINDOW_MS) {
-      windows.delete(key);
-      void summarise(open, now);
-      return false;
-    }
-    open.suppressed += 1;
-    if (watchedToken) open.watchedSuppressed += 1;
-    open.lastAt = now;
-    remember(open.tokenFps, fp, () => (open.truncated.tokenFps = true));
-    remember(open.paths, entry, () => (open.truncated.paths = true));
-    return true;
+  ) {
+    window.suppressed += 1;
+    if (watchedToken) window.watchedSuppressed += 1;
+    window.lastAt = now;
+    remember(window.tokenFps, fp, () => (window.truncated.tokenFps = true));
+    remember(window.paths, entry, () => (window.truncated.paths = true));
   }
 
   flushers.push(async () => {
@@ -280,46 +345,46 @@ export function createTokenRejectionRecorder(
           path,
           token_present: Boolean(provided),
           token_fp: fp,
-          ...(watchedToken ? { watched_token: true } : {}),
         };
 
         // token ที่ปลดแล้วได้แถวของตัวเองก่อนอย่างอื่น และไม่แตะหน้าต่างปกติ — แถวนี้ไม่ต้องรอสรุป
-        if (watchedToken && takeWatched(source, now)) {
-          void write(requestOrigin, ctx?.correlationId, details);
+        const verdict = watchedToken ? takeWatched(source, now) : null;
+        if (verdict === "row") {
+          void write(requestOrigin, ctx?.correlationId, { ...details, watched_token: true });
+          return;
+        }
+        if (verdict === "source") {
+          // ที่มานี้เพิ่งได้แถว watched ไปไม่ถึงนาที แถวที่สองไม่บอกอะไรเพิ่ม — นับเข้าหน้าต่างของมัน
+          // ถ้ายังไม่มีก็เปิดแบบเงียบ ไม่กินงบรวม เพราะแถว watched ทำหน้าที่แถวทันทีไปแล้ว
+          const window = liveWindow(source, now) ?? openWindow(source, now, requestOrigin, false);
+          count(window, now, fp, entry, true);
           return;
         }
 
-        let key = source;
-        if (countInto(key, now, fp, entry, watchedToken)) return;
+        // ถึงตรงนี้ได้สองแบบ: token ทั่วไป หรือ token ที่เฝ้าไว้ซึ่งงบรวมของมันหมดแล้ว ("budget")
+        const open = liveWindow(source, now);
+        if (open) {
+          count(open, now, fp, entry, watchedToken);
+          return;
+        }
         // หน้าต่างใหม่ = แถวทันทีหนึ่งแถว ใช้งบรวมหนึ่งหน่วย งบหมดแล้วนับรวมในถัง overflow แทน
-        if (!takeBudget(now)) {
-          key = OVERFLOW_KEY;
-          if (countInto(key, now, fp, entry, watchedToken)) return;
+        const overflow = !takeBudget(now);
+        if (overflow) {
+          const bucket = liveWindow(OVERFLOW_KEY, now);
+          if (bucket) {
+            count(bucket, now, fp, entry, watchedToken);
+            return;
+          }
         }
 
-        const overflow = key === OVERFLOW_KEY;
         const origin: Origin = overflow
           ? { ipAddress: null, ipUnparsed: false, userAgent: null, sourceComponent: requestOrigin.sourceComponent }
           : requestOrigin;
-        windows.set(key, {
-          startedAt: now,
-          lastAt: now,
-          suppressed: 0,
-          watchedSuppressed: 0,
-          tokenFps: new Set(),
-          paths: new Set(),
-          truncated: { tokenFps: false, paths: false },
-          overflow,
-          origin,
-        });
-        if (!sweeper) {
-          sweeper = setInterval(() => sweep(Date.now()), SWEEP_MS);
-          // ไม่ให้ตัวกวาดเป็นเหตุที่ process ไม่ยอมจบ
-          sweeper.unref();
-        }
-
+        openWindow(overflow ? OVERFLOW_KEY : source, now, origin, overflow);
         void write(origin, ctx?.correlationId, {
           ...details,
+          // ไม่ใช่ `watched_token` — แถวนี้มาจากงบ 20 แถวที่ใช้ร่วมกับค่าอื่น ไม่ใช่งบของ token ที่ปลดแล้ว
+          ...(watchedToken ? { watched_over_budget: true } : {}),
           ...(overflow ? { throttle_overflow: true } : {}),
         });
       } catch (err) {

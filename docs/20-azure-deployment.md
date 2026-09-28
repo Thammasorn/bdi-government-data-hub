@@ -698,6 +698,7 @@ rather than overriding it.
 | `PORT` | | `4000` | must equal `--target-port` |
 | `DATABASE_URL` | **yes** | — | needs `sslmode=require` on Azure |
 | `ADMIN_API_TOKEN` | **yes** | — | shared secret for `/api/admin/*` |
+| `ADMIN_TOKEN_WATCH_FPS` | | empty | comma-separated 12-hex fingerprints of retired admin tokens; each gets its own `ADMIN_TOKEN_REJECTED` row (`docs/09` §4.1). Fingerprints only, never a token |
 | `ACTIVATION_KEY_SECRET` | **in production** | dev value | HMAC key for activation keys |
 | `AZURE_STORAGE_ACCOUNT_URL` | one of the two | — | managed identity; the production answer |
 | `AZURE_STORAGE_CONNECTION_STRING` | one of the two | — | account key; dev only. Wins if both are set |
