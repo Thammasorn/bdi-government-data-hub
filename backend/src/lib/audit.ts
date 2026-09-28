@@ -57,6 +57,14 @@ export const AuditAction = {
   USER_IDENTITY_RELEASED: "USER_IDENTITY_RELEASED",
 
   ACTIVATION_KEY_ISSUED: "ACTIVATION_KEY_ISSUED",
+  /**
+   * คีย์ถูกใช้เปิดบัญชีแล้ว — `POST /api/auth/activate` เขียนหลัง commit คู่กับ `USER_ACCOUNT_ACTIVATED`
+   * (subject คือบัญชี) และ `ROLE_ASSIGNED` (subject คือ assignment) ด้วย correlation id เดียวกัน
+   *
+   * แยกแถวไว้ให้ประวัติที่อ่านจาก subject ของคีย์ใบเดียวจบที่ USED — ISSUED · IDENTITY_VERIFIED · USED
+   * before/after เป็น `ISSUED` → `USED` เสมอ เพราะ `completeActivation()` พลิกเฉพาะคีย์ที่ยัง ISSUED
+   * ตอนเขียน คีย์ที่ถูกเพิกถอนหรือถูกใช้ไประหว่างนั้นได้ 410 และไม่มีแถวนี้ หนึ่งคีย์จึงมีแถวนี้ไม่เกินหนึ่งแถว
+   */
   ACTIVATION_KEY_USED: "ACTIVATION_KEY_USED",
   /**
    * คีย์ที่ยังใช้ได้ถูกเพิกถอน — หนึ่งแถวต่อคีย์ เขียนหลัง commit ด้วย `logKeysRevoked()` ใน lib/iam.ts

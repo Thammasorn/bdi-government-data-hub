@@ -21,6 +21,7 @@ import {
 } from "../lib/auth.js";
 import { AuditAction, AuditSubject, diffFields, logAudit } from "../lib/audit.js";
 import {
+  ActivationKeyUnusableError,
   activeAssignmentWhere,
   activeRoleCodes,
   completeActivation,
@@ -752,6 +753,11 @@ authRouter.post("/activate", async (req, res) => {
       });
       return;
     }
+    // คีย์ถูกเพิกถอนหรือถูกใช้ไประหว่างที่อ่านมากับตอนเขียน — ตอบเหมือนอ่านเจอสถานะนั้นตั้งแต่ต้น
+    if (err instanceof ActivationKeyUnusableError) {
+      res.status(410).json({ error: err.reason, message: ACTIVATION_FAILURE_MESSAGES[err.reason] });
+      return;
+    }
     throw err;
   }
 
@@ -765,13 +771,14 @@ authRouter.post("/activate", async (req, res) => {
   });
   // คีย์กับ role เปลี่ยนใน transaction เดียวกับบัญชี — บันทึกแยกแถวเพราะคนละ subject:
   // ประวัติของคีย์ใบนี้ต้องจบที่ USED และ assignment ต้องมีแถวเกิดของตัวเอง
+  // before เป็น ISSUED เสมอ: `completeActivation()` พลิกได้เฉพาะคีย์ที่ยัง ISSUED ตอนเขียน ไม่ใช่ตอนที่อ่านไว้
   await logAudit({
     action: AuditAction.ACTIVATION_KEY_USED,
     subjectType: AuditSubject.USER_ACTIVATION_KEY,
     subjectId: key.id,
     actorId: key.userAccountId,
     organizationId: key.organizationId,
-    before: { status: key.status },
+    before: { status: "ISSUED" },
     after: { status: "USED" },
     metadata: { user_account_id: key.userAccountId, role: key.role.code },
   });

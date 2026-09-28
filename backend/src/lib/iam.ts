@@ -631,6 +631,20 @@ export async function revokeActivationKey(
 }
 
 /**
+ * คีย์ไม่ได้เป็น `ISSUED` แล้วตอนที่ `completeActivation()` จะใช้มัน — อีก transaction เปลี่ยนไปก่อน
+ *
+ * `POST /activate` อ่านคีย์ก่อนเปิด transaction แล้วใช้เวลา hash รหัสผ่านอยู่ข้างใน ระหว่างนั้นผู้ดูแลระบบ
+ * เพิกถอนได้ หรือฟอร์มเดิมถูกส่งซ้ำแล้วใบแรกใช้คีย์ไปแล้ว `reason` คือสถานะที่ transaction อื่น commit ไว้
+ * ผู้เรียกตอบ 410 ด้วยรหัสเดียวกับตอนอ่านคีย์ไม่ผ่าน และทั้ง transaction ถอยกลับ บัญชีจึงไม่ถูกเปิด
+ */
+export class ActivationKeyUnusableError extends Error {
+  constructor(readonly reason: ActivationLookupFailure) {
+    super(`activation key ถูกเปลี่ยนสถานะไปก่อน (${reason})`);
+    this.name = "ActivationKeyUnusableError";
+  }
+}
+
+/**
  * ปิดงาน activation ตามขั้นที่ 6–8 ของ lifecycle ใน sheet
  * เรียกจากใน transaction เท่านั้น
  */
@@ -638,6 +652,38 @@ export async function completeActivation(
   db: Db,
   params: { activationKeyId: string; userAccountId: string; roleCode: RoleCode; organizationId: string },
 ) {
+  /**
+   * ขั้นที่ 8 ทำก่อน และเงื่อนไข `ISSUED` อยู่ใน WHERE ของคำสั่งที่เขียน — กับดัก read-then-write
+   * เดียวกับ `revokeIssuedKeys()` เดิมเป็น `update` ตามสถานะที่อ่านไว้นอก transaction จึงทับ `REVOKED`
+   * ของคำสั่งเพิกถอนที่ commit ระหว่างนั้นได้ (บัญชีเปิดด้วยคำเชิญที่ถูกยกเลิกแล้ว และ log มีสองแถว
+   * ที่ออกจาก ISSUED ขัดกันเอง) ส่วนฟอร์มที่ส่งซ้ำ ใบที่สองรอ lock ของแถวบัญชีแล้วผ่านทุกขั้น
+   * ได้ `USER_ACCOUNT_ACTIVATED` กับ `ACTIVATION_KEY_USED` สองชุด ตอนนี้คนที่มาทีหลังได้ 0 แถวแล้วหยุด
+   * ก่อนแตะบัญชีหรือ role ลำดับภายใน transaction เดียวไม่เปลี่ยนผลของการ commit
+   */
+  const claimed = await db.activationKey.updateMany({
+    where: { id: params.activationKeyId, status: ActivationKeyStatus.ISSUED },
+    data: {
+      status: ActivationKeyStatus.USED,
+      usedAt: new Date(),
+      updatedBy: params.userAccountId,
+    },
+  });
+  if (claimed.count === 0) {
+    const current = await db.activationKey.findUnique({
+      where: { id: params.activationKeyId },
+      select: { status: true },
+    });
+    throw new ActivationKeyUnusableError(
+      current?.status === ActivationKeyStatus.USED
+        ? "used"
+        : current?.status === ActivationKeyStatus.REVOKED
+          ? "revoked"
+          : current?.status === ActivationKeyStatus.EXPIRED
+            ? "expired"
+            : "not_found",
+    );
+  }
+
   await db.userAccount.update({
     where: { id: params.userAccountId },
     data: {
@@ -653,15 +699,6 @@ export async function completeActivation(
     roleCode: params.roleCode,
     organizationId: params.organizationId,
     actorId: params.userAccountId,
-  });
-
-  await db.activationKey.update({
-    where: { id: params.activationKeyId },
-    data: {
-      status: ActivationKeyStatus.USED,
-      usedAt: new Date(),
-      updatedBy: params.userAccountId,
-    },
   });
 
   /**
