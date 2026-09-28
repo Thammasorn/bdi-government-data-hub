@@ -1488,8 +1488,9 @@ Two API base URLs, and they are not interchangeable:
   reachable without the proxy, and the Next proxy (`app/api/[...path]/route.ts`) forwards the
   browser's `X-Forwarded-For` as sent, because Next fills that header from the socket only when
   it is absent (`??=` in `base-server.js`). So through the site too it can be any text of any
-  length. It is only the caller's address where an edge in front appends it (Cloudflare on
-  `main`). Dropping the header in the proxy is not a fix, because every user would then share
+  length. It is only the caller's address where an edge in front appends it. On `main` that edge
+  is Cloudflare; Cloudflare's docs say it appends, but nobody has checked that for our tunnel.
+  Dropping the header in the proxy is not a fix, because every user would then share
   the frontend container's address. Every `ip_address` column is `VARCHAR(64)`. Until 2026-09-28 a 100-character
   value made the OTP step answer 400, because the session insert failed, so that user could not
   log in at all. It also made every `audit_event` row of the request vanish, since `logAudit`

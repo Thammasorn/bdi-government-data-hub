@@ -221,18 +221,24 @@ export const AuditAction = {
    * (เหตุผลเต็มอยู่หัว lib/token-rejection.ts):
    *   - หน้าต่าง 10 นาทีต่อ IP: ครั้งแรกเขียนทันที ที่เหลือนับไว้ แล้วเขียนแถวสรุปแถวเดียวตอน
    *     หน้าต่างปิด (`suppressed_count` · `token_fps` · `paths`)
-   *   - แถวทันทีรวมทุก IP ไม่เกิน 20 แถวต่อ 10 นาที เกินแล้วนับรวมในถังเดียว แถวของถังนั้นมี
+   *   - แถวทันทีรวมทุก IP ไม่เกิน 20 แถวในช่วง 10 นาทีใด ๆ เกินแล้วนับรวมในถังเดียว แถวของถังนั้นมี
    *     `throttle_overflow: true` และ **ไม่มี IP กับ user agent** เพราะ IP ปลอมได้ทุกคำขอ
    *   - fingerprint ใน `ADMIN_TOKEN_WATCH_FPS` (token ที่ปลดแล้ว) ได้แถวของตัวเองนอกงบข้างบน
-   *     พร้อม `watched_token: true` — IP ละแถวต่อนาที รวมไม่เกิน 60 แถวต่อ 10 นาที ค่ามั่ว ๆ ที่
-   *     ยิงเข้ามาก่อนจึงเบียด token เก่าให้หายไปจากแถวสรุปไม่ได้ IP เดิมยิงซ้ำภายในนาทีนั้นถูกนับเข้า
-   *     แถวสรุปของ IP นั้น ส่วนที่เกิน 60 ไปทางปกติ ใช้งบ 20 แถวร่วมกัน และแถวทันทีของมันมี
-   *     `watched_over_budget: true` แทน — `watched_token` จึงไม่เกิน 60 จริง ครั้งที่ถูกนับทั้งหมด
-   *     อยู่ใน `watched_suppressed_count` ของแถวสรุป
+   *     พร้อม `watched_token: true` — IP ละแถวต่อนาที รวมไม่เกิน 60 แถวในช่วง 10 นาทีใด ๆ (งบเป็น
+   *     หน้าต่างเลื่อน จับเวลายิงคร่อมรอบก็ไม่ได้เพิ่ม) ค่ามั่ว ๆ ที่ยิงเข้ามาก่อนจึงเบียด token เก่าให้
+   *     หายไปจากแถวสรุปไม่ได้ IP เดิมยิงซ้ำภายในนาทีนั้นถูกนับเข้าหน้าต่างเงียบของ IP นั้น ซึ่งแยกจาก
+   *     หน้าต่างปกติ (token อื่นจาก IP เดียวกันยังได้แถวทันทีของตัวเอง) แถวสรุปของมันมี
+   *     `suppressed_count` เท่ากับ `watched_suppressed_count` ส่วนที่เกิน 60 ไปทางปกติ ใช้งบ 20 แถว
+   *     ร่วมกัน และแถวทันทีของมันมี `watched_over_budget: true` แทน — `watched_token` จึงไม่เกิน 60
+   *     จริง ครั้งที่ถูกนับทั้งหมดอยู่ใน `watched_suppressed_count` ของแถวสรุป
    *
    * `metadata.path` เป็นรูปแบบ ไม่ใช่ข้อความที่ผู้ยิงพิมพ์: ถอด `%xx` แล้ว UUID → `:id` ตัวอักษรนอก
    * ชุดที่ URL ปกติใช้ → `_` กลุ่มเลขที่ชี้ตัวคนได้ → `:n` (ติดกัน 6 หลัก หรือรวม 9 หลักขึ้นไปแม้มีขีด
-   * จุด หรือช่องว่างคั่น) ยาวไม่เกิน 120 ตัว ตัวอักษรยังเหลืออยู่ — ช่องนี้เป็นข้อความของผู้ยิงเสมอ
+   * จุด หรือช่องว่างคั่น) และถ้าทั้ง path ยังเหลือเลขรวม 9 ตัวขึ้นไป (คั่นด้วย `/` หรือ encode ซ้อน)
+   * เลขทุกช่วงเป็น `:n` ยาวไม่เกิน 120 ตัว ตัวอักษรยังเหลืออยู่ — ช่องนี้เป็นข้อความของผู้ยิงเสมอ
+   *
+   * `user_agent` ก็เป็นข้อความของผู้ยิง ยาวไม่เกิน 512 ตัว และเลขบัตร/เบอร์โทรในรูปที่คนพิมพ์ถูกปิด
+   * แต่เลขที่คั่นด้วยจุดและตัวอักษรยังผ่าน (`storedUserAgent()` ใช้กับทุกแถว ไม่ใช่แค่แถวนี้)
    *
    * `ip_address` คือค่าสุดท้ายของ X-Forwarded-For ซึ่งผู้เรียกตั้งเองได้ ทั้งตอนยิง backend ตรงและ
    * ตอนยิงผ่านหน้าเว็บ (ดู `parseClientIp()` ใน lib/context.ts)
@@ -337,6 +343,7 @@ function toJson(value: unknown): Prisma.InputJsonValue | undefined {
 
 /**
  * ความยาวของคอลัมน์ VARCHAR ใน audit.audit_event (schema.prisma) — `user_agent` เป็น TEXT จึงไม่อยู่ในนี้
+ * (ยาวแค่ไหน INSERT ก็ไม่ล้ม แต่ถูกตัดด้วยเหตุผลอื่น ดู `storedUserAgent()`)
  *
  * ค่าที่ยาวเกินไม่ได้ถูกตัดโดย Postgres แต่ทำให้ INSERT ล้มทั้งแถว และ logAudit กลืน error นั้นไว้
  * แถวจึงหายเงียบ ๆ ทั้งที่ส่วนที่เหลือถูกต้องหมด ต้นทางของแต่ละค่าตรวจไว้แล้ว (IP ผ่าน
@@ -353,6 +360,39 @@ const COLUMN_MAX = {
 
 function fit(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) : value;
+}
+
+/** user agent ของเบราว์เซอร์และแอปจริงยาวไม่เกินราว 350 ตัว (in-app browser ยาวที่สุด) */
+const USER_AGENT_MAX = 512;
+/**
+ * กลุ่มเลขที่คั่นด้วย `-` `_` `:` หรือช่องว่าง — **ไม่รวม `.`** ต่างจากกฎของ path ใน
+ * lib/token-rejection.ts เพราะ user agent จริงเต็มไปด้วยเลขเวอร์ชันแบบมีจุด
+ */
+const USER_AGENT_DIGIT_GROUP = /\d(?:[-_: ]{0,3}\d)*/g;
+
+/**
+ * user agent ในรูปที่เก็บลง audit_event: กลุ่มเลข 9 หลักขึ้นไป → `:n` แล้วตัดที่ `USER_AGENT_MAX`
+ *
+ * header นี้ผู้เรียกเขียนเองทั้งหมด และแถวที่ไม่ต้องล็อกอินก่อน (`LOGIN_FAILED`,
+ * `ADMIN_TOKEN_REJECTED`) ใครก็เขียนได้ไม่จำกัดจำนวน ตารางนี้ไม่มี retention และห้าม update จึงเป็น
+ * ช่องเดียวกับที่ `metadata.path` ของการปฏิเสธ token ถูกปิดไว้: ไม่งั้นใครก็เขียนเลขบัตรของคนอื่น
+ * ลงหลักฐานได้ ยาวได้เท่าที่ Node รับ header (16 KB) ต่อแถว
+ *
+ * กฎเลขหลวมกว่าของ path เพราะต้องไม่แตะ user agent จริง: `.` ไม่นับเป็นตัวคั่น
+ * (`Edg/151.0.3405.80` รวมได้ 10 หลัก) และเลขติดกัน 6–8 หลักไม่นับ (`Gecko/20100101`,
+ * `Build/UP1A.231005.007`) ที่ถูกปิดคือเลขบัตรและเบอร์โทรในรูปที่คนพิมพ์ (ติดกัน มีขีด หรือเว้นวรรค)
+ * ส่วนที่ยังผ่านได้: ตัวอักษรทั้งหมด เลขที่คั่นด้วย `.` หรือ `/` และตัวคั่นเกินสามตัว — อ่านคอลัมน์นี้
+ * เป็นข้อความของผู้เรียกเสมอ เลขรุ่น build ยาว ๆ ของบางแอป (`FBBV/540101231`) โดนปิดไปด้วย ซึ่งไม่เสีย
+ * อะไรในการสอบสวน
+ *
+ * ใช้กับทุกแถวของ audit_event ไม่ใช่เฉพาะแถวนิรนาม กฎเดียวง่ายกว่าให้คนอ่านรู้ว่าคอลัมน์นี้ผ่านอะไรมา
+ * ส่วน `iam.session` กับหลักฐานการลงนามยังเก็บค่าที่ได้รับ เพราะเกิดได้หลังยืนยันตัวตนแล้วเท่านั้น
+ */
+function storedUserAgent(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  return raw
+    .replace(USER_AGENT_DIGIT_GROUP, (group) => (group.replace(/\D/g, "").length >= 9 ? ":n" : group))
+    .slice(0, USER_AGENT_MAX);
 }
 
 /**
@@ -409,7 +449,7 @@ export async function logAudit(input: AuditInput): Promise<void> {
         beforeSummaryJson: toJson(input.before),
         afterSummaryJson: toJson(input.after),
         ipAddress: ctx?.ipAddress ? fit(ctx.ipAddress, COLUMN_MAX.ipAddress) : null,
-        userAgent: ctx?.userAgent ?? null,
+        userAgent: storedUserAgent(ctx?.userAgent),
         correlationId: fit(correlationId(), COLUMN_MAX.correlationId),
         sourceComponent: fit(sourceComponent(), COLUMN_MAX.sourceComponent),
         metadataJson: Object.keys(metadata).length > 0 ? toJson(metadata) : undefined,
