@@ -51,7 +51,7 @@ import {
   streamAttachment,
   uploadedFile,
 } from "../lib/attachment.js";
-import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
+import { AuditAction, AuditSubject, blankAsNull, diffFields, logAudit, sanitizeDiff } from "../lib/audit.js";
 import { clientIp, correlationId } from "../lib/context.js";
 import {
   DATASET_ALLOWED_MIME,
@@ -813,7 +813,8 @@ datasetRequestRouter.patch("/:id", async (req, res) => {
 
   // รวมกับค่าที่บันทึกไว้เดิมก่อนเสมอ กฎในชีท conditions ตัดสินจากคำตอบทั้งใบ
   // ไม่ใช่เฉพาะช่องที่เพิ่งแก้ (เปลี่ยนหมวดหมู่ข้อมูลอย่างเดียวก็เปลี่ยนค่าอีกหกช่องได้)
-  const values = mergeMetadata(fromMetadataRow(request.metadata), parsed.data);
+  const previous = fromMetadataRow(request.metadata);
+  const values = mergeMetadata(previous, parsed.data);
   const { columns, extra } = toMetadataColumns(values, request.metadata?.additionalMetadataJson);
   const updated = await prisma.$transaction(async (tx) => {
     await tx.datasetRegistrationMetadata.upsert({
@@ -837,6 +838,36 @@ datasetRequestRouter.patch("/:id", async (req, res) => {
       include: requestInclude,
     });
   });
+
+  /**
+   * เทียบค่าทั้งใบก่อนบันทึกกับค่าที่เขียนลงจริงหลัง `mergeMetadata()` — ไม่ใช่กับ body
+   *
+   * ฟอร์มนี้ส่งครบทุกช่องทุกครั้ง (ช่องว่างเป็น null) body จึงบอกไม่ได้ว่าผู้กรอกแตะอะไร
+   * และค่าที่กฎในชีท conditions ล้างหรือบังคับให้เองก็ถูกเขียนลงตารางเหมือนกัน จึงต้องอยู่ใน
+   * diff ด้วย `proposedTitle` ไม่ได้เทียบแยก เพราะมันตามช่อง `title` เสมอ (การล้างชื่อไม่แตะมัน)
+   */
+  const changed = sanitizeDiff(
+    diffFields(
+      blankAsNull(previous) as unknown as Record<string, unknown>,
+      blankAsNull(values) as unknown as Record<string, unknown>,
+    ),
+  );
+  if (changed) {
+    await logAudit({
+      action: AuditAction.REQUEST_DRAFT_SAVED,
+      subjectType: AuditSubject.DATASET_REGISTRATION_REQUEST,
+      subjectId: request.id,
+      organizationId: request.organizationId,
+      before: changed.before,
+      after: changed.after,
+      metadata: {
+        saved_via: "WEB_FORM",
+        request_number: request.requestNumber,
+        status: request.status,
+        fields_changed: Object.keys(changed.after),
+      },
+    });
+  }
 
   res.json({ request: toApiShape(updated) });
 });

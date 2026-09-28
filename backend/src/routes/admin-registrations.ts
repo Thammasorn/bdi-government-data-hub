@@ -34,7 +34,7 @@ import { prisma } from "../db.js";
 import { Router } from "../lib/async-route.js";
 import { releaseApproverSeat, type ReleasedSeat } from "../lib/approver-seat.js";
 import { softDeleteAttachment } from "../lib/attachment.js";
-import { AuditAction, AuditSubject, diffFields, logAudit } from "../lib/audit.js";
+import { AuditAction, AuditSubject, diffFields, logAudit, sentOnly } from "../lib/audit.js";
 import {
   datasetDraftSchema,
   fromMetadataRow,
@@ -142,24 +142,6 @@ function resetRefusal(
     };
   }
   return null;
-}
-
-/**
- * ตัด key ที่ไม่ได้ส่งมาออกก่อนเทียบว่าอะไรเปลี่ยน
- *
- * `toRequestData()` คืน **ทุก** key เสมอ โดยที่ช่องที่ผู้เรียกไม่ได้ส่งมาเป็น `undefined` —
- * Prisma ข้าม `undefined` ให้อยู่แล้ว การอัปเดตจึงถูกต้อง แต่ `diffFields()` เดินตาม
- * `Object.keys(after)` และเทียบด้วย `JSON.stringify(v ?? null)` ดังนั้น `undefined` จะ
- * อ่านเป็น `null` แล้วต่างจากค่าเดิมทุกช่อง — `fields_changed` ใน audit จะบอกว่าแก้ทั้งใบ
- * ทั้งที่แตะช่องเดียว ซึ่งทำให้บันทึกที่มีไว้เพื่อตอบว่า "อะไรเปลี่ยน" ตอบผิด
- *
- * `null` **ไม่ถูกตัด** เพราะมันคือการสั่งล้างค่าจริง ๆ (`phoneExtensionSchema` แปลง `""`
- * เป็น `null`) ต่างจาก `providedOnly()` ในฟอร์มที่ตัดทั้งคู่ด้วยเหตุผลคนละเรื่อง
- */
-function sentOnly<T extends object>(value: T): Partial<T> {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, v]) => v !== undefined),
-  ) as Partial<T>;
 }
 
 /** ค่าที่ต้องล้างทุกครั้งที่คำขอกลับไปเป็นฉบับร่าง — ไม่งั้น status ที่ derive ได้ไม่ใช่ DRAFT */

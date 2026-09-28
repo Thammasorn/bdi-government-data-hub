@@ -117,6 +117,25 @@ export const AuditAction = {
    */
   REQUEST_CANCELLED: "REQUEST_CANCELLED",
 
+  /**
+   * ฝั่งหน่วยงานกด "บันทึกร่าง" (`PATCH /api/organizations/:id` และ
+   * `PATCH /api/dataset-requests/:id`) — เพิ่มจากรายการใน sheet
+   *
+   * ไม่ใช่ `REQUEST_UPDATED`: อันนั้นคือผู้ดูแลระบบเขียนทับได้ทุกสถานะ ส่วนอันนี้คือคนใน
+   * หน่วยงานแก้ร่างของตัวเองตอน DRAFT/RETURNED (ฝั่งชุดข้อมูลผู้มีอำนาจฯ ก็บันทึกได้ ดู
+   * `mayEdit`) — รวมเป็นรหัสเดียวแล้วแถวจะไม่บอกว่าใครใช้อำนาจแบบไหน
+   *
+   * `before`/`after` คำนวณที่เซิร์ฟเวอร์จากแถวเดิมกับค่าที่ **เขียนลงจริง** ไม่ใช่จาก body:
+   * ฟอร์มหน่วยงานส่งเฉพาะช่องที่ไม่ว่าง ฟอร์มชุดข้อมูลส่งครบทุกช่อง ไม่มีฝั่งไหนรู้ว่าอะไร
+   * เปลี่ยน ค่าที่กฎในชีท conditions ล้างให้เองก็อยู่ใน diff ด้วย เพราะมันถูกเขียนจริง
+   * `""` นับเท่ากับ null และเลขบัตรผ่าน `sanitizeDiff()` ก่อนลงแถว กดบันทึกโดยไม่มีอะไร
+   * เปลี่ยนไม่เขียนแถว — ที่หน่วยงานอยากรู้คือ "ใครแก้อะไร" ไม่ใช่ "ใครกดปุ่ม"
+   *
+   * ชื่อบนแถว `organization` ที่ตามร่างของหน่วยงานที่เปิดเองไปด้วยอยู่ใน
+   * `metadata.organization_master_changed` ไม่ใช่ใน before/after เพราะเป็นคนละแถวกับ subject
+   */
+  REQUEST_DRAFT_SAVED: "REQUEST_DRAFT_SAVED",
+
   REQUEST_SUBMITTED: "REQUEST_SUBMITTED",
   REQUEST_RETURNED: "REQUEST_RETURNED",
 
@@ -483,4 +502,84 @@ export function diffFields<T extends Record<string, unknown>>(
   }
 
   return changed ? { before: changedBefore, after: changedAfter } : null;
+}
+
+/**
+ * ตัด key ที่ไม่ได้ถูกเขียนออกก่อนเทียบว่าอะไรเปลี่ยน
+ *
+ * ตัวแปลงค่าอย่าง `toRequestData()` คืน **ทุก** key เสมอ โดยที่ช่องที่ไม่ได้ส่งมาเป็น
+ * `undefined` — Prisma ข้าม `undefined` ให้อยู่แล้ว การอัปเดตจึงถูกต้อง แต่ `diffFields()`
+ * เดินตาม `Object.keys(after)` และอ่าน `undefined` เป็น `null` แล้วต่างจากค่าเดิมทุกช่อง —
+ * `fields_changed` จะบอกว่าแก้ทั้งใบทั้งที่แตะช่องเดียว บันทึกที่มีไว้ตอบว่า "อะไรเปลี่ยน" ก็ตอบผิด
+ *
+ * `null` **ไม่ถูกตัด** เพราะมันคือการสั่งล้างค่าจริง ๆ (`phoneExtensionSchema` แปลง `""`
+ * เป็น `null`) ต่างจาก `providedOnly()` ในฟอร์มที่ตัดทั้งคู่ด้วยเหตุผลคนละเรื่อง
+ */
+export function sentOnly<T extends object>(value: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, v]) => v !== undefined),
+  ) as Partial<T>;
+}
+
+/**
+ * `""` เป็น `null` ก่อนเทียบ — ใช้กับ diff ที่เพิ่มในการ์ด activity log เท่านั้น
+ *
+ * ร่างเก่าเก็บช่องว่างไว้ทั้งสองแบบ (แล้วแต่ว่าบันทึกผ่านทางไหน) และสำหรับคนอ่าน log ทั้งคู่
+ * แปลว่า "ยังไม่ได้กรอก" เหมือนกัน ถ้าไม่ปรับ การกดบันทึกเฉย ๆ จะได้แถวที่บอกว่า `""` กลายเป็น
+ * `null` ซึ่งไม่มีใครแก้อะไรเลย ไม่ได้ย้ายเข้าไปใน `diffFields()` เพราะนั่นจะเปลี่ยนเนื้อของ
+ * `REQUEST_UPDATED` ที่เขียนอยู่แล้ว
+ */
+export function blankAsNull<T extends object>(value: T): T {
+  return Object.fromEntries(
+    Object.entries(value).map(([k, v]) => [k, v === "" ? null : v]),
+  ) as T;
+}
+
+/**
+ * ชื่อ key ที่ถือเลขประจำตัวประชาชน — `approverCid` `userCid` `signatoryNationalId` `pid`
+ * และ `thaid_subject` ซึ่งคือ `sub` ของ DOPA ที่เป็นเลขบัตร 13 หลักไม่ว่า `THAID_USE_PID`
+ * จะตั้งไว้อย่างไร (ดู Traps ใน CLAUDE.md) ตัดสินจากชื่อ key ไม่ใช่จากรูปของค่า: ร่างที่กรอก
+ * ครึ่ง ๆ กลาง ๆ มีเลขไม่ครบ 13 หลักได้ และมันก็ยังเป็นเลขบัตรของคนอยู่ดี
+ */
+const CID_KEY = /cid$|nationalid|^pid$|^thaid_subject$/i;
+
+/** เหลือ 4 ตัวท้ายไว้ให้คนอ่าน log เทียบกับเอกสารได้ — ค่าที่สั้นกว่านั้นปิดทั้งหมด */
+function maskCid(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  const text = String(value);
+  const shown = text.length > 4 ? text.slice(-4) : "";
+  return { masked: "x".repeat(text.length - shown.length) + shown, changed: true };
+}
+
+function sanitizeValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizeValue);
+  // เฉพาะ object ธรรมดา — Date และ Decimal ของ Prisma ต้องผ่านไปทั้งตัวให้ toJson() แปลง
+  const proto = value !== null && typeof value === "object" ? Object.getPrototypeOf(value) : undefined;
+  if (proto === Object.prototype || proto === null) {
+    return Object.fromEntries(
+      Object.entries(value as object).map(([k, v]) => [k, CID_KEY.test(k) ? maskCid(v) : sanitizeValue(v)]),
+    );
+  }
+  return value;
+}
+
+/**
+ * ปิดเลขบัตรใน diff ก่อนลง `audit_event` — คอลัมน์ในดีไซน์ชื่อ "Sanitized state before/after"
+ *
+ * ไม่มีขั้นนี้ การบันทึกร่างของหน่วยงานทุกครั้งที่แตะช่องเลขบัตรของผู้มีอำนาจฯ จะเขียนเลขเต็ม
+ * ลงตารางที่ไม่มี retention ค่าที่ถูกปิดเป็น `{masked: "xxxxxxxxx1234", changed: true}` —
+ * `changed` บอกว่ามีการเปลี่ยนจริง แม้ 4 ตัวท้ายของค่าเก่ากับค่าใหม่จะบังเอิญตรงกัน
+ *
+ * ใช้กับ diff ที่เพิ่มในการ์ด activity log เท่านั้น แถวเดิมและรหัสเดิมที่เก็บเลขบัตรอยู่แล้ว
+ * (`ACTIVATION_KEY_ISSUED` `INVITATION_DELETED` `REQUEST_UPDATED` ฯลฯ) ยังเก็บแบบเดิม
+ * จนกว่า BDI จะตัดสินเรื่องนั้น
+ */
+export function sanitizeDiff(
+  diff: { before: object; after: object } | null,
+): { before: Record<string, unknown>; after: Record<string, unknown> } | null {
+  if (!diff) return null;
+  return {
+    before: sanitizeValue(diff.before) as Record<string, unknown>,
+    after: sanitizeValue(diff.after) as Record<string, unknown>,
+  };
 }

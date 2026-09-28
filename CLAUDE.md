@@ -435,6 +435,16 @@ before it. The rule to keep: **every path that writes `review_task` ends with `s
 `actor_name` / `actor_roles` columns, so `lib/audit.ts` snapshots them into `metadata_json`
 instead; without that, old log rows change meaning when a user is renamed.
 
+**A diff you add goes through `sanitizeDiff()`** (`lib/audit.ts`): keys that hold a national ID
+(`…Cid`, `…NationalId`, `pid`, `thaid_subject`) become `{masked: "xxxxxxxxx1234", changed: true}`.
+The design column is "Sanitized state before/after" and the table has no retention, so a raw
+diff writes a CID on every save. Codes that predate the activity-log card (`REQUEST_UPDATED`,
+`INVITATION_DELETED`, `ACTIVATION_KEY_ISSUED`, …) still store the raw value until BDI decides
+whether to mask existing codes; don't change their payloads in passing. Officer draft saves write
+`REQUEST_DRAFT_SAVED`, diffed against what the route **writes**, never against the body: the
+organisation form sends only non-empty fields and the dataset form sends all of them, so neither
+body says what changed. `""` counts as null, and a save that changes nothing writes no row.
+
 **Email is no longer sent from request handlers.** `notifyUsers()` writes a `notification` row
 plus a `notification_delivery` row (the outbox), and `src/workers/delivery.ts` sends it — a
 separate `delivery-worker` compose service, claiming rows with `FOR UPDATE SKIP LOCKED`, with

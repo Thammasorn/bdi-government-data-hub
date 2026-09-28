@@ -50,7 +50,15 @@ import {
   ConfirmationType,
   LegalDocumentVersionStatus,
 } from "@prisma/client";
-import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
+import {
+  AuditAction,
+  AuditSubject,
+  blankAsNull,
+  diffFields,
+  logAudit,
+  sanitizeDiff,
+  sentOnly,
+} from "../lib/audit.js";
 import { releaseApproverSeat, type ReleasedSeat } from "../lib/approver-seat.js";
 import { clientIp } from "../lib/context.js";
 import {
@@ -1410,30 +1418,82 @@ organizationRouter.patch("/:id", async (req, res) => {
     ...approverFromAccount(await activatedApprover(prisma, request)),
   };
 
+  /**
+   * ชื่อหน่วยงานบน master ตามคำขอไปด้วย ตราบใดที่ยังไม่อนุมัติ — เฉพาะหน่วยงานที่ผู้กรอก
+   * เปิดเอง ไม่ใช่แค่ "ยังไม่ถูกล็อก" เพราะการเขียนทับหน่วยงานที่ระบบเปิดให้จะทำให้
+   * systemOrganizationName() เปลี่ยนคำตอบ แล้วช่องชื่อล็อกตัวเองกลางคัน (ดู nameOwnedByForm)
+   *
+   * แยกค่าออกมาก่อน transaction เพื่อให้ audit ข้างล่าง diff กับสิ่งที่เขียนจริงชุดเดียวกัน
+   */
+  const masterRename =
+    parsed.data.name && nameOwnedByForm(request)
+      ? {
+          nameTh: parsed.data.name,
+          nameEn: parsed.data.nameEn ?? null,
+          organizationType: parsed.data.organizationType ?? null,
+        }
+      : null;
+
   const updated = await prisma.$transaction(async (tx) => {
     const next = await tx.organizationRegistrationRequest.update({
       where: { id: request.id },
       data: { ...snapshot, updatedBy: session.sub },
       include: { organization: true },
     });
-    /**
-     * ชื่อหน่วยงานบน master ตามคำขอไปด้วย ตราบใดที่ยังไม่อนุมัติ — เฉพาะหน่วยงานที่ผู้กรอก
-     * เปิดเอง ไม่ใช่แค่ "ยังไม่ถูกล็อก" เพราะการเขียนทับหน่วยงานที่ระบบเปิดให้จะทำให้
-     * systemOrganizationName() เปลี่ยนคำตอบ แล้วช่องชื่อล็อกตัวเองกลางคัน (ดู nameOwnedByForm)
-     */
-    if (parsed.data.name && nameOwnedByForm(request)) {
+    if (masterRename) {
       await tx.organization.update({
         where: { id: request.organizationId },
-        data: {
-          nameTh: parsed.data.name,
-          nameEn: parsed.data.nameEn ?? null,
-          organizationType: parsed.data.organizationType ?? null,
-          updatedBy: session.sub,
-        },
+        data: { ...masterRename, updatedBy: session.sub },
       });
     }
     return next;
   });
+
+  /**
+   * ช่องไหนเปลี่ยนจากอะไรเป็นอะไร — เทียบแถวที่อ่านไว้ก่อนเขียนกับค่าที่ **เขียนลงจริง**
+   *
+   * ไม่ใช่กับ body: ฟอร์มนี้ส่งเฉพาะช่องที่ไม่ว่าง (บวกเลขต่อสองช่อง) และค่าตัวตนของผู้กรอก
+   * กับผู้มีอำนาจฯ ที่เปิดบัญชีแล้วถูกเขียนทับจากบัญชี ไม่ใช่จากที่พิมพ์มา `sentOnly()` ตัดช่องที่
+   * ไม่ได้ถูกเขียน แต่รหัสที่อยู่ที่ `resolveAddressCodes()` คืนเป็น null **ถูกเขียนจริง** จึงอยู่
+   * ในการเทียบด้วย — ที่อยู่ที่ไม่เคยกรอกเทียบ null กับ null ไม่เกิดแถว ผลลัพธ์ตรงกับตาราง
+   *
+   * ผลที่ตามมาจากหน้าจอ: ล้างช่องข้อความช่องใดช่องหนึ่ง (นอกจากเลขต่อ) แล้วบันทึก ฟอร์มไม่ส่ง
+   * ช่องนั้นมา ค่าเดิมจึงยังอยู่ในตาราง และ log ก็ไม่บันทึกว่าล้าง — ตรงกับสิ่งที่เกิดขึ้นจริง
+   * ที่อยู่ไม่เป็นแบบนั้น: ล้างจังหวัดแล้วรหัสทั้งสามช่องถูกเขียนเป็น null จริง แถวจึงบันทึกไว้
+   */
+  const changed = sanitizeDiff(
+    diffFields(
+      blankAsNull(request) as Record<string, unknown>,
+      blankAsNull(sentOnly(snapshot)) as Record<string, unknown>,
+    ),
+  );
+  const masterChanged = masterRename
+    ? sanitizeDiff(
+        diffFields(
+          blankAsNull(request.organization) as Record<string, unknown>,
+          blankAsNull(masterRename) as Record<string, unknown>,
+        ),
+      )
+    : null;
+
+  if (changed || masterChanged) {
+    await logAudit({
+      action: AuditAction.REQUEST_DRAFT_SAVED,
+      subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
+      subjectId: request.id,
+      organizationId: request.organizationId,
+      before: changed?.before,
+      after: changed?.after,
+      metadata: {
+        saved_via: "WEB_FORM",
+        request_number: request.requestNumber,
+        status: request.status,
+        fields_changed: changed ? Object.keys(changed.after) : [],
+        // ชื่อบนแถว organization ที่ตามคำขอไปด้วย — คนละแถวกับ subject จึงไม่ปนกับ before/after
+        ...(masterChanged ? { organization_master_changed: masterChanged } : {}),
+      },
+    });
+  }
 
   res.json({ organization: await toApiShape(updated) });
 });
