@@ -1516,6 +1516,15 @@ Two API base URLs, and they are not interchangeable:
   Take the address from the context (`currentContext()?.ipAddress`) or from `clientIp(req)` in
   `lib/context.ts`. Both keep only what `net.isIP()` accepts, with the IPv6 zone dropped. Never
   write `req.ip` to a column.
+- **A middleware that calls `next` from a stream event drops the request context.** multer
+  (busboy) calls it from the socket's `data`/`finish` events, which run outside the
+  `AsyncLocalStorage` store of `lib/context.ts`. Every handler after a real-size upload therefore
+  ran with no store: until 2026-09-29 a 759 KB appointment order was audited as actor `SYSTEM`,
+  source `request-service`, no IP and a fresh correlation id, while a 45-byte test PDF looked fine
+  because its body arrived with the headers. `wrap()` in `lib/async-route.ts` now binds `next` with
+  `AsyncResource.bind`, so routes built on that `Router` are covered. A middleware mounted with
+  `app.use` in `index.ts` is not; `express.json` is safe only because raw-body binds its own
+  callback. Test uploads with a file of realistic size.
 
 
 ## Notion

@@ -15,19 +15,35 @@
  * ในไฟล์ใต้ routes/ ทุกไฟล์
  *
  * ถ้าวันหนึ่งย้ายไป Express 5 ไฟล์นี้ลบทิ้งได้ — v5 ทำให้ในตัวแล้ว
+ *
+ * อีกหน้าที่หนึ่งที่ Express 5 **ไม่ได้** ทำให้: `next` ถูกผูกกับบริบทของคำขอ (ดู `wrap()`) ถ้าย้ายไป
+ * v5 ต้องเก็บส่วนนั้นไว้
  */
+import { AsyncResource } from "node:async_hooks";
+
 import { Router as ExpressRouter, type IRouter, type RequestHandler } from "express";
 
-/** error middleware ของ Express มีสี่พารามิเตอร์ ห้ามแตะ ไม่งั้นมันจะกลายเป็น handler ธรรมดา */
+/**
+ * error middleware ของ Express มีสี่พารามิเตอร์ ห้ามแตะ ไม่งั้นมันจะกลายเป็น handler ธรรมดา
+ *
+ * `next` ที่ส่งให้ handler ถูกผูกกับบริบทของคำขอ (`AsyncResource.bind`) — middleware แบบ callback
+ * ที่เรียก `next` จาก event ของ stream คืนบริบทของ AsyncLocalStorage ไม่ได้ เพราะ event นั้นวิ่งใน
+ * บริบทของ socket ไม่ใช่ของคำขอ multer (busboy) เป็นแบบนั้น: ไฟล์ที่ body มาไม่ทันพร้อม header (ไฟล์
+ * ขนาดจริงทุกไฟล์) ทำให้ handler หลังการอัปโหลดวิ่งโดยไม่มี store ของ lib/context.ts เลย แถว audit
+ * ของการอัปโหลดคำสั่งแต่งตั้งขนาด 759 KB จึงกลายเป็น actor SYSTEM, source `request-service`, ไม่มี IP
+ * และ correlation id สุ่มใหม่ (ไฟล์ 45 ไบต์ไม่เป็น) — คนที่อัปโหลดหายไปจากบันทึก การเผยแพร่ template
+ * ของ admin ก็ไม่ได้ป้าย `admin-portal` ด้วยเหตุเดียวกัน ผูกที่นี่ที่เดียว route ที่เพิ่มทีหลังได้ไปด้วย
+ */
 function wrap(handler: unknown): unknown {
   if (typeof handler !== "function" || handler.length === 4) return handler;
 
   const fn = handler as RequestHandler;
   const wrapped: RequestHandler = (req, res, next) => {
+    const resume = AsyncResource.bind(next);
     try {
-      Promise.resolve(fn(req, res, next)).catch(next);
+      Promise.resolve(fn(req, res, resume)).catch(resume);
     } catch (error) {
-      next(error);
+      resume(error);
     }
   };
   return wrapped;
