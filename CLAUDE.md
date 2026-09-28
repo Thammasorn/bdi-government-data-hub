@@ -460,9 +460,14 @@ the account (a legacy or `seed:demo` draft, a renamed account) writes a row with
 **Audit rows come before any inline send.** Activation-key, password-reset and OTP mails go out
 inline and can throw; a row written after them vanishes with the SMTP failure while the key or
 token it describes is already committed. **Revoke activation keys with `revokeIssuedKeys()`**
-(`lib/iam.ts`), never a bare `updateMany`: it returns the keys it revoked so the caller can write
-one `ACTIVATION_KEY_REVOKED` per key with `logKeysRevoked()` after commit — every revoke path used
-to change the status silently. Anything created inside a transaction (an account, a key, a role)
+(`lib/iam.ts`), never a bare `updateMany`: it returns the keys its own `UPDATE … RETURNING`
+changed, so the caller can write one `ACTIVATION_KEY_REVOKED` per key with `logKeysRevoked()`
+after commit — every revoke path used to change the status silently. Returning what a `findMany`
+saw instead is the read-then-write trap again: four simultaneous revokes of one key all answered
+200 and wrote four rows for one revocation. The one revoke that writes no such row is the ThaID
+CID mismatch (`revokeActivationKey()`, called from the callback in `routes/auth.ts`), on purpose:
+its `IDENTITY_VERIFICATION_FAILED` row with `failure_reason: CID_MISMATCH` is the record of that
+revocation. Anything created inside a transaction (an account, a key, a role)
 comes out in the transaction's result and is audited after commit, never from inside the
 callback (`ensureApproverAccount()` returns what it made for that reason; the in-transaction
 `ROLE_REVOKED` of `revokeRoleAssignments()` is QA A4's and is left alone). `requireAdminToken`

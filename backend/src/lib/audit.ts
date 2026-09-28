@@ -236,12 +236,21 @@ export const AuditAction = {
   REQUEST_UPDATED: "REQUEST_UPDATED",
 
   /**
-   * ผู้ดูแลระบบพาคำขอกลับไปเป็นฉบับร่าง (`POST /api/admin/registrations/.../reset`)
+   * คำขอถูกพากลับไปเป็นฉบับร่าง — สองทาง แยกด้วย `metadata.reset_via`
    *
-   * แยกจาก `REQUEST_RETURNED` เพราะคนละคนสั่งและคนละความหมาย: การส่งกลับเป็น**ผล**
-   * ของด่านหนึ่ง มีผู้ตัดสินและเหตุผลที่หน่วยงานอ่านได้ ส่วนอันนี้คือการลบรอบที่กำลัง
-   * เดินอยู่ทิ้งทั้งรอบ ด่านที่ค้างถูกปิดเป็น `CANCELLED` ไม่มีผลการตรวจใด ๆ เกิดขึ้น
-   * `metadata_json` เก็บสถานะเดิม ด่านที่ถูกยกเลิก และสิ่งที่เกิดกับผู้มีอำนาจฯ
+   * - `ADMIN_API`: ผู้ดูแลระบบสั่งเอง (`POST /api/admin/registrations/.../reset`) ทั้งสองเส้นทาง
+   *   `metadata` เก็บด่านที่ถูกยกเลิก (`cancelled_task_type`) และฝั่งหน่วยงานมี `is_remove_approver`
+   *   กับสิ่งที่เกิดกับผู้มีอำนาจฯ (`approver_outcome`)
+   * - `ADMIN_TRANSFER` (เพิ่มในการ์ด activity log): ผลข้างเคียงของ `POST /api/admin/users/:id/transfer`
+   *   คำขอจดทะเบียนหน่วยงานที่ค้างอยู่ที่ด่านของคนที่ย้ายถูกดันกลับเป็นร่าง หนึ่งแถวต่อใบ `metadata`
+   *   เป็นคนละรูป: ไม่มี `cancelled_task_type` (ด่านที่ถูกปิดหาได้จาก `review_task`) มี
+   *   `transferred_user_account_id` ชี้คนที่ย้าย และ `approver_cleared: true` แปลว่าอีเมลผู้มีอำนาจฯ ใน
+   *   snapshot ถูกล้างเพราะเป็นคนที่ย้ายเอง — แถวนี้ไม่เก็บอีเมลนั้น `reason` คือเหตุผลของการย้าย
+   *   แถวแบบนี้ที่เขียนก่อนการ์ดไม่มี เหลือแค่เลขคำขอใน `ROLE_ASSIGNED` ของคนที่ย้าย
+   *
+   * ทั้งสองทาง `before` คือสถานะกับ `submittedAt` เดิม แยกจาก `REQUEST_RETURNED` เพราะคนละคนสั่งและคนละ
+   * ความหมาย: การส่งกลับเป็น**ผล**ของด่านหนึ่ง มีผู้ตัดสินและเหตุผลที่หน่วยงานอ่านได้ ส่วนอันนี้คือการลบรอบที่
+   * กำลังเดินอยู่ทิ้งทั้งรอบ ด่านที่ค้างถูกปิดเป็น `CANCELLED` ไม่มีผลการตรวจใด ๆ เกิดขึ้น
    */
   REQUEST_RESET_TO_DRAFT: "REQUEST_RESET_TO_DRAFT",
   REQUEST_APPROVED: "REQUEST_APPROVED",
@@ -670,9 +679,10 @@ function sanitizeValue(value: unknown): unknown {
  * ลงตารางที่ไม่มี retention ค่าที่ถูกปิดเป็น `{masked: "xxxxxxxxx1234", changed: true}` —
  * `changed` บอกว่ามีการเปลี่ยนจริง แม้ 4 ตัวท้ายของค่าเก่ากับค่าใหม่จะบังเอิญตรงกัน
  *
- * ใช้กับ diff ที่เพิ่มในการ์ด activity log เท่านั้น แถวเดิมและรหัสเดิมที่เก็บเลขบัตรอยู่แล้ว
- * (`ACTIVATION_KEY_ISSUED` `INVITATION_DELETED` `REQUEST_UPDATED` ฯลฯ) ยังเก็บแบบเดิม
- * จนกว่า BDI จะตัดสินเรื่องนั้น
+ * ใช้กับ diff ที่เพิ่มในการ์ด activity log — ตัดสินที่ **จุดที่เขียน** ไม่ใช่ที่รหัส: จุดที่เขียนรหัสเดิมมาตั้งแต่
+ * ก่อนการ์ด (`ACTIVATION_KEY_ISSUED` ของ `POST /api/admin/invitations`, `INVITATION_DELETED`,
+ * `REQUEST_UPDATED` ฯลฯ) ยังเก็บเลขบัตรแบบเดิมจนกว่า BDI จะตัดสินเรื่องนั้น ส่วนจุดใหม่ที่เขียนรหัสเดิม
+ * (`ACTIVATION_KEY_ISSUED` ของคำเชิญผู้มีอำนาจฯ) ปิดเหมือน diff ใหม่ทุกตัว
  */
 export function sanitizeDiff(
   diff: { before: object; after: object } | null,

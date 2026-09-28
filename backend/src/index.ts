@@ -107,11 +107,15 @@ function isBodyParserError(err: unknown): err is { status: number; type: string 
 
 app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
   /**
-   * ส่งหัวคำตอบไปแล้ว (เช่นสตรีมไฟล์ขาดกลางทาง) — ตอบใหม่ไม่ได้ ส่งต่อให้ตัวจัดการของ Express ซึ่ง
-   * ปิดการเชื่อมต่อ ไม่งั้น `res.status()` ข้างล่างจะ throw ซ้อนเข้าไปอีกชั้น
+   * ส่งหัวคำตอบไปแล้ว (route ที่เริ่มเขียน body แล้วค่อยล้ม) — ตอบใหม่ไม่ได้ ส่งต่อให้ตัวจัดการของ Express
+   * ซึ่งปิดการเชื่อมต่อ ไม่งั้น `res.status()` ข้างล่างจะ throw ซ้อนเข้าไปอีกชั้น สตรีมไฟล์แนบที่ขาดกลางทาง
+   * **ไม่** มาถึงที่นี่: `streamAttachment()` ใช้ `pipe()` ซึ่งไม่ส่ง error ต่อให้ `next`
+   *
+   * บรรทัดนี้ไม่พิมพ์ `err` เอง: ตัวจัดการของ Express พิมพ์ stack ต่อท้ายให้อยู่แล้ว (`logerror` ของ
+   * finalhandler) ลองด้วย route ชั่วคราวที่ throw หลัง `res.write()` แล้วได้ stack สองชุดต่อหนึ่งครั้ง
    */
   if (res.headersSent) {
-    console.error("[backend] error after the response had started:", err);
+    console.error("[backend] error after the response had started — closing the connection:");
     next(err);
     return;
   }

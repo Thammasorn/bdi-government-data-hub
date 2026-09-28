@@ -1250,12 +1250,29 @@ adminRouter.delete("/invitations/:id", async (req, res) => {
 });
 
 /**
+ * `reason` ของการเพิกถอน — ไม่บังคับมาตั้งแต่แรก (คู่มือผู้ทดสอบ `docs/13` เรียกโดยไม่ส่ง body) และค่าตั้งต้น
+ * ก็ยังบอกได้ว่าผู้ดูแลระบบเป็นคนสั่ง
+ *
+ * แต่ถ้าส่งมาต้องเป็นข้อความ 10–500 ตัวอักษรเหมือน `/api/admin/users` เดิมรับ `String(...)` ของอะไรก็ได้
+ * object กลายเป็น "[object Object]" ค่าว่างก็ผ่าน และยาวเป็นเมกะไบต์ก็ผ่าน ค่านี้ลงทั้ง `revoked_reason`
+ * (ไม่จำกัดความยาว) และ `metadata.reason` ของ `audit_event` ซึ่งไม่มี retention และไม่มีวันถูกแก้
+ */
+const revokeSchema = z.object({
+  reason: z
+    .string({ error: "reason ต้องเป็นข้อความ — เหตุผลนี้ถูกบันทึกลง audit" })
+    .trim()
+    .min(10, "กรุณาระบุเหตุผลอย่างน้อย 10 ตัวอักษร หรือไม่ต้องส่ง reason มาเลย — เหตุผลนี้ถูกบันทึกลง audit")
+    .max(500, "เหตุผลยาวได้ไม่เกิน 500 ตัวอักษร")
+    .optional(),
+});
+
+/**
  * เพิกถอนคำเชิญ แต่เก็บแถวไว้เป็นประวัติ — ต่างจาก `DELETE /invitations/:id` ที่คืนอีเมลกับเลขบัตร
  *
  * เดิมเส้นทางนี้ไม่เขียน audit เลย (QA A14) คำเชิญที่ถูกเพิกถอนจึงเหลือแค่ `revoked_reason` บนแถว
  * ซึ่งบอกไม่ได้ว่าถูกสั่งเมื่อไรในคำขอไหน ตอนนี้เขียน `ACTIVATION_KEY_REVOKED` พร้อมเหตุผลที่พิมพ์มา
  * แตะเฉพาะใบที่สถานะยังเป็น ISSUED — ใบที่เป็น USED, EXPIRED หรือ REVOKED แล้วตอบ 404 เหมือนเดิม
- * และไม่ได้แถวซ้ำ
+ * และไม่ได้แถวซ้ำ แม้สั่งพร้อมกันหลายครั้ง: `revokeIssuedKeys()` คืนเฉพาะใบที่คำสั่งนี้เปลี่ยนเอง
  */
 adminRouter.post("/invitations/:id/revoke", async (req, res) => {
   const parsedId = z.string().uuid().safeParse(req.params.id);
@@ -1263,10 +1280,15 @@ adminRouter.post("/invitations/:id/revoke", async (req, res) => {
     res.status(404).json({ error: "not_found", message: "ไม่พบคำเชิญที่ยังใช้งานได้" });
     return;
   }
+  const parsed = revokeSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+    return;
+  }
   const revoked = await revokeIssuedKeys(
     prisma,
     { id: parsedId.data },
-    { actorId: SYSTEM_USER_ID, reason: String(req.body?.reason ?? "ยกเลิกโดยผู้ดูแลระบบ") },
+    { actorId: SYSTEM_USER_ID, reason: parsed.data.reason ?? "ยกเลิกโดยผู้ดูแลระบบ" },
   );
   if (revoked.length === 0) {
     res.status(404).json({ error: "not_found", message: "ไม่พบคำเชิญที่ยังใช้งานได้" });

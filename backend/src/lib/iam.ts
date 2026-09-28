@@ -419,6 +419,12 @@ export interface RevokedKey {
  * เพิกถอนที่ไม่เคยเกิด) ผู้เรียกจึงต้องถือค่านี้ออกจาก transaction แล้วเขียน `ACTIVATION_KEY_REVOKED`
  * หลัง commit เดิมแต่ละทางเขียน `updateMany` ของตัวเองและไม่มีทางไหนเขียน audit เลย
  *
+ * **คืนเฉพาะใบที่ UPDATE นี้เปลี่ยนเอง** (`updateManyAndReturn` = `UPDATE … RETURNING`) ไม่ใช่ใบที่อ่านเจอก่อน
+ * เขียน: รุ่นแรกอ่าน ISSUED ด้วย `findMany` แล้วค่อย `updateMany` สี่คำสั่ง revoke ที่ยิงพร้อมกันจึงเห็นใบเดียวกัน
+ * เป็น ISSUED ทั้งสี่ ได้ 200 ทั้งสี่ และเขียน `ACTIVATION_KEY_REVOKED` สี่แถว ทั้งที่มีแค่ใบแรกที่เปลี่ยนสถานะได้จริง
+ * (สามแถวเป็นการเพิกถอนที่ไม่เคยเกิด และใบที่ `/activate` เพิ่งใช้ไปก็ถูกบันทึกว่าถูกเพิกถอนได้ด้วย) ตอนนี้
+ * เงื่อนไข ISSUED อยู่ใน WHERE ของคำสั่งเดียวกับที่เขียน คนที่มาทีหลังรอ lock ของแถวแล้วได้รายการว่าง
+ *
  * ต้องระบุ `id` หรือ `userAccountId` อย่างใดอย่างหนึ่งเสมอ — เงื่อนไขว่างคือการเพิกถอนคีย์ทั้งระบบ
  */
 export async function revokeIssuedKeys(
@@ -426,14 +432,8 @@ export async function revokeIssuedKeys(
   where: { id: string } | { userAccountId: string; organizationId?: string; roleId?: string },
   params: { actorId: string; reason: string },
 ): Promise<RevokedKey[]> {
-  const targets = await db.activationKey.findMany({
+  const revoked = await db.activationKey.updateManyAndReturn({
     where: { ...where, status: ActivationKeyStatus.ISSUED },
-    select: { id: true, userAccountId: true, organizationId: true, role: { select: { code: true } } },
-  });
-  if (targets.length === 0) return [];
-
-  await db.activationKey.updateMany({
-    where: { id: { in: targets.map((t) => t.id) }, status: ActivationKeyStatus.ISSUED },
     data: {
       status: ActivationKeyStatus.REVOKED,
       revokedAt: new Date(),
@@ -441,9 +441,10 @@ export async function revokeIssuedKeys(
       revokedReason: params.reason,
       updatedBy: params.actorId,
     },
+    select: { id: true, userAccountId: true, organizationId: true, role: { select: { code: true } } },
   });
 
-  return targets.map((t) => ({
+  return revoked.map((t) => ({
     id: t.id,
     userAccountId: t.userAccountId,
     organizationId: t.organizationId,
@@ -608,6 +609,9 @@ async function evaluateActivationKey(record: ActivationKeyRecord) {
  *
  * §2.4 ของสเปกสั่งไว้ว่าเลขบัตรจาก ThaID ไม่ตรงกับที่บันทึกไว้ → REVOKED ไม่ใช่แค่
  * ปฏิเสธครั้งนั้น คนที่ถือลิงก์ต้องขอใบใหม่จากเจ้าหน้าที่ ลองสุ่มเลขบัตรซ้ำ ๆ ไม่ได้
+ *
+ * ไม่ผ่าน `revokeIssuedKeys()` และไม่มี `ACTIVATION_KEY_REVOKED` โดยตั้งใจ — ผู้เรียกเขียน
+ * `IDENTITY_VERIFICATION_FAILED` (`CID_MISMATCH`) ซึ่งเป็นหลักฐานของการเพิกถอนครั้งนี้อยู่แล้ว
  */
 export async function revokeActivationKey(
   db: Db,
