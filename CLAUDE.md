@@ -1525,6 +1525,11 @@ Two API base URLs, and they are not interchangeable:
   `AsyncResource.bind`, so routes built on that `Router` are covered. A middleware mounted with
   `app.use` in `index.ts` is not; `express.json` is safe only because raw-body binds its own
   callback. Test uploads with a file of realistic size.
+- **Never print a body-parser error.** The `entity.parse.failed` error carries the raw body in
+  `err.body`, and V8's message can quote it too (`Unexpected token 'S', ..."assword": S...`). The
+  final error middleware used to `console.error(err)` it, so a truncated login JSON put the
+  plaintext password in `docker logs`. It now answers 400 `validation` or 413 `payload_too_large`
+  from a branch that prints nothing.
 
 
 ## Notion

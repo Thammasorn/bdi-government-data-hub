@@ -27,11 +27,18 @@ const app = express();
 app.set("trust proxy", 1);
 // credentials: true บังคับให้ต้องระบุ origin เจาะจง ใช้ "*" ไม่ได้
 app.use(cors({ origin: env.corsOrigins, credentials: true }));
+/**
+ * ต้องมาก่อน router ทุกตัว — audit_event, notification และ integration_operation บังคับ
+ * correlation_id เป็น NOT NULL และอ่านค่าผ่าน AsyncLocalStorage
+ *
+ * และต้องมาก่อน `express.json` ด้วย: body ที่อ่านไม่ออกล้มตั้งแต่ตัวแปลง ถ้าตัวนี้อยู่ข้างหลัง คำตอบ 400
+ * นั้นไม่มี `x-correlation-id` ให้ผู้เรียกอ้างถึง บริบทไม่หายระหว่างรออ่าน body เพราะ raw-body 2.5.3
+ * ผูก callback ด้วย `AsyncResource` (`node_modules/raw-body/index.js` ตรง `AsyncResource.bind`)
+ * ตัวแปลงจึงคืนมาใน store เดิม
+ */
+app.use(correlationMiddleware);
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
-// ต้องมาก่อน router ทุกตัว — audit_event, notification และ integration_operation
-// บังคับ correlation_id เป็น NOT NULL และอ่านค่าผ่าน AsyncLocalStorage
-app.use(correlationMiddleware);
 
 app.get("/", (_req, res) => {
   res.json({ service: "d2-api", version: "0.1.0" });
@@ -88,7 +95,49 @@ const PRISMA_ERRORS: Record<string, { status: number; error: string; message: st
   P2024: { status: 503, error: "unavailable", message: "ระบบกำลังมีผู้ใช้งานหนาแน่น กรุณาลองใหม่อีกครั้ง" },
 };
 
-app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+/**
+ * error ของตัวแปลง body (`express.json`) — มี `status` เป็นตัวเลขต่ำกว่า 500 และ `type` เป็นข้อความ
+ * เช่น `entity.parse.failed` หรือ `entity.too.large` (ตาม http-errors ที่ body-parser ใช้)
+ */
+function isBodyParserError(err: unknown): err is { status: number; type: string } {
+  if (typeof err !== "object" || err === null) return false;
+  const { status, type } = err as { status?: unknown; type?: unknown };
+  return typeof status === "number" && status < 500 && typeof type === "string";
+}
+
+app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
+  /**
+   * ส่งหัวคำตอบไปแล้ว (เช่นสตรีมไฟล์ขาดกลางทาง) — ตอบใหม่ไม่ได้ ส่งต่อให้ตัวจัดการของ Express ซึ่ง
+   * ปิดการเชื่อมต่อ ไม่งั้น `res.status()` ข้างล่างจะ throw ซ้อนเข้าไปอีกชั้น
+   */
+  if (res.headersSent) {
+    console.error("[backend] error after the response had started:", err);
+    next(err);
+    return;
+  }
+
+  /**
+   * body ที่อ่านไม่ออกหรือใหญ่เกิน — ความผิดของคำขอ ไม่ใช่ของระบบ จึงไม่ใช่ 500
+   *
+   * **ห้ามพิมพ์ error ตัวนี้** แม้แต่ข้อความ: error ของ `entity.parse.failed` ถือ `body` ดิบไว้ทั้งก้อน
+   * และข้อความก็ยกบางส่วนของ body มา เดิมมันตกไปที่ `console.error(err)` ข้างล่าง JSON ของหน้า login
+   * ที่ส่งมาไม่ครบจึงพา**รหัสผ่านตัวจริง**ลง docker logs ไปด้วย 4xx อื่นของระบบก็ไม่พิมพ์อยู่แล้ว
+   */
+  if (isBodyParserError(err)) {
+    if (err.status === 413) {
+      res.status(413).json({
+        error: "payload_too_large",
+        message: "ข้อมูลที่ส่งมามีขนาดเกิน 1 MB — ไฟล์แนบให้อัปโหลดผ่านช่องแนบไฟล์ ไม่ใช่ส่งรวมมากับข้อมูล",
+      });
+      return;
+    }
+    res.status(400).json({
+      error: "validation",
+      message: "อ่านข้อมูลที่ส่งมาไม่ได้ — ต้องเป็น JSON ที่สมบูรณ์ กรุณาตรวจสอบแล้วส่งใหม่อีกครั้ง",
+    });
+    return;
+  }
+
   if (err instanceof MulterError) {
     const message =
       err.code === "LIMIT_FILE_SIZE" ? "ไฟล์มีขนาดเกิน 10 MB" : "อัปโหลดไฟล์ไม่สำเร็จ";
