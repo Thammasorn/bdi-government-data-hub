@@ -25,6 +25,11 @@ export interface RequestContext {
   userAgent: string | null;
   /** ชื่อ service ที่เขียน log — คอลัมน์ source_component */
   sourceComponent: string;
+  /**
+   * fingerprint (`tokenFingerprint()`) ของ `x-admin-token` ที่ผ่าน `requireAdminToken` — null ถ้าคำขอ
+   * ไม่ได้มาทาง admin API logAudit จดลง `metadata.admin_token_fp`
+   */
+  adminTokenFp: string | null;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();
@@ -55,6 +60,7 @@ export function runWithContext<T>(context: Partial<RequestContext>, fn: () => T)
       ipUnparsed: context.ipUnparsed ?? false,
       userAgent: context.userAgent ?? null,
       sourceComponent: context.sourceComponent ?? "request-service",
+      adminTokenFp: context.adminTokenFp ?? null,
     },
     fn,
   );
@@ -116,7 +122,9 @@ export function correlationMiddleware(req: Request, res: Response, next: NextFun
       ipAddress: client.ip,
       ipUnparsed: client.unparsed,
       userAgent: req.header("user-agent") ?? null,
+      // ค่าตั้งต้นของทุกคำขอ — requireAdminToken เปลี่ยนเป็น admin-portal เมื่อ token ผ่าน
       sourceComponent: "web-portal",
+      adminTokenFp: null,
     },
     () => next(),
   );
@@ -126,4 +134,22 @@ export function correlationMiddleware(req: Request, res: Response, next: NextFun
 export function setActor(actorId: string | null) {
   const store = storage.getStore();
   if (store) store.actorId = actorId;
+}
+
+/**
+ * เปลี่ยน source_component ของคำขอนี้ — เรียกหลังรู้แล้วว่าคำขอมาจากช่องทางไหน
+ *
+ * correlationMiddleware ประทับ `web-portal` ให้ทุกคำขอเพราะตอนนั้นยังไม่รู้ว่าเป็นใคร ถ้าไม่มีตัวนี้
+ * งานของผู้ดูแลระบบทุกแถวก็เป็น `web-portal` ไปด้วย แยกไม่ออกว่าหน่วยงานกดบนหน้าเว็บหรือมีคนถือ
+ * admin token ยิงเข้ามา
+ */
+export function setSourceComponent(component: string) {
+  const store = storage.getStore();
+  if (store) store.sourceComponent = component;
+}
+
+/** requireAdminToken เรียกเมื่อ token ผ่าน — ดู `RequestContext.adminTokenFp` */
+export function setAdminTokenFp(fingerprint: string) {
+  const store = storage.getStore();
+  if (store) store.adminTokenFp = fingerprint;
 }

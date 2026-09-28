@@ -6,8 +6,8 @@ import { RoleAssignmentStatus, SessionRevokeReason, UserAccountStatus } from "@p
 import { prisma } from "../db.js";
 import { env } from "../env.js";
 import { AuditAction, AuditSubject } from "../lib/audit.js";
-import { SESSION_COOKIE, hashToken, type SessionPayload } from "../lib/auth.js";
-import { setActor } from "../lib/context.js";
+import { SESSION_COOKIE, hashToken, tokenFingerprint, type SessionPayload } from "../lib/auth.js";
+import { setActor, setAdminTokenFp, setSourceComponent } from "../lib/context.js";
 import { resolveSession, revokeSessionsFor } from "../lib/session.js";
 import { ORGANIZATION_SCOPED_ROLES, type RoleCode } from "../lib/system.js";
 import { createTokenRejectionRecorder } from "../lib/token-rejection.js";
@@ -162,6 +162,11 @@ const adminTokenRejections = createTokenRejectionRecorder(
  * (lib/token-rejection.ts): หน้าต่าง 10 นาทีต่อ IP ภายใต้งบแถวทันที 20 แถวรวมทุก IP ส่วนที่มาหลัง
  * งบหมดลงถังรวมที่ไม่มี IP (`throttle_overflow`) และ token ที่ปลดแล้วตาม `ADMIN_TOKEN_WATCH_FPS`
  * ได้แถวของตัวเองนอกงบนั้น (`watched_token`) — ไม่ await: คำตอบ 401 ไม่รอฐานข้อมูล
+ *
+ * ผ่านแล้วประทับคำขอเป็น `admin-portal` (มีในรายการ source_component ของ sheet) พร้อม fingerprint
+ * ของ token ทุกแถว audit ของคำขอนี้จึงบอกได้ว่ามาทาง admin API — actor ของเส้นทางนี้เป็น "ระบบ"
+ * เสมอ `metadata.admin_token_fp` จึงเป็นสิ่งเดียวบนแถวที่บอกว่าใช้ token ใบไหน ตอนหมุน token
+ * งานที่ทำด้วยใบเก่ากับใบใหม่จึงแยกกันได้
  */
 export function requireAdminToken(req: Request, res: Response, next: NextFunction) {
   const provided = req.header("x-admin-token");
@@ -170,5 +175,7 @@ export function requireAdminToken(req: Request, res: Response, next: NextFunctio
     res.status(401).json({ error: "unauthenticated", message: "x-admin-token ไม่ถูกต้อง" });
     return;
   }
+  setSourceComponent("admin-portal");
+  setAdminTokenFp(tokenFingerprint(provided));
   next();
 }

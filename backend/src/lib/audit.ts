@@ -488,6 +488,8 @@ export async function logAudit(input: AuditInput): Promise<void> {
       ...input.metadata,
       // IP ที่ส่งมาไม่ใช่ IP (ดู parseClientIp) — บอกไว้ว่ามีค่ามาแต่ไม่เก็บ ไม่ใช่ไม่มีค่ามาเลย
       ...(ctx?.ipUnparsed ? { ip_unparsed: true } : {}),
+      // มาทาง admin API — token ใบไหน (ดู requireAdminToken) มาหลัง input.metadata ให้ผู้เรียกทับไม่ได้
+      ...(ctx?.adminTokenFp ? { admin_token_fp: ctx.adminTokenFp } : {}),
     };
 
     await prisma.auditEvent.create({
