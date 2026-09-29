@@ -23,6 +23,8 @@ import { AsyncResource } from "node:async_hooks";
 
 import { Router as ExpressRouter, type IRouter, type RequestHandler } from "express";
 
+import { setRoute } from "./context.js";
+
 /**
  * error middleware ของ Express มีสี่พารามิเตอร์ ห้ามแตะ ไม่งั้นมันจะกลายเป็น handler ธรรมดา
  *
@@ -33,12 +35,20 @@ import { Router as ExpressRouter, type IRouter, type RequestHandler } from "expr
  * ของการอัปโหลดคำสั่งแต่งตั้งขนาด 759 KB จึงกลายเป็น actor SYSTEM, source `request-service`, ไม่มี IP
  * และ correlation id สุ่มใหม่ (ไฟล์ 45 ไบต์ไม่เป็น) — คนที่อัปโหลดหายไปจากบันทึก การเผยแพร่ template
  * ของ admin ก็ไม่ได้ป้าย `admin-portal` ด้วยเหตุเดียวกัน ผูกที่นี่ที่เดียว route ที่เพิ่มทีหลังได้ไปด้วย
+ *
+ * และจด route แบบแม่แบบ (`req.baseUrl + req.route.path`) ลงบริบท ให้ error ที่เกิดใน route เดียวกันรวมเป็น issue
+ * เดียว (lib/error-capture.ts) — ที่นี่เป็นที่เดียวที่ `baseUrl` ยังถูก: ตัวจัดการ error ท้าย index.ts อยู่ระดับ app
+ * ซึ่ง `baseUrl` ว่างแล้ว **ต้องเช็กก่อนว่ามี `req.route`**: `wrap` ครอบ `router.use(...)` ด้วย (`METHODS` มี "use")
+ * ซึ่งเป็นทางที่ `requireAdminToken` กับ `requireAuth` ถูกติดตั้ง และตรงนั้น `req.route` เป็น undefined — อ่านตรง ๆ
+ * แล้ว throw ก็กลายเป็น `next(err)` ทุก route ที่มี guard จะตอบ 500 ทั้งหมด typecheck จับไม่ได้เพราะ `req.route` เป็น any
  */
 function wrap(handler: unknown): unknown {
   if (typeof handler !== "function" || handler.length === 4) return handler;
 
   const fn = handler as RequestHandler;
   const wrapped: RequestHandler = (req, res, next) => {
+    const template: unknown = req.route?.path;
+    if (typeof template === "string") setRoute(req.baseUrl + template);
     const resume = AsyncResource.bind(next);
     try {
       Promise.resolve(fn(req, res, resume)).catch(resume);

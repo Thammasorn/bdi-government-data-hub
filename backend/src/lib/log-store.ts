@@ -12,7 +12,7 @@
  *   - timeout ของ driver สั้น (CLIENT_TIMEOUTS) Mongo ที่ช้าหรือหายไปรู้ผลภายในไม่กี่วินาที ไม่ค้าง
  *   - ต่อแบบขี้เกียจ: สร้าง client ตอนใช้ครั้งแรก ต่อไม่ติดก็ทิ้ง client นั้นแล้วลองใหม่รอบหน้า
  */
-import type { MongoClient, MongoClientOptions } from "mongodb";
+import type { Db, MongoClient, MongoClientOptions } from "mongodb";
 
 import { env } from "../env.js";
 
@@ -112,6 +112,25 @@ export function startLogStore(options: { service: LogStoreService; maxPoolSize: 
   // ส่วนเส้นตายของการรอครั้งแรก**ต้องไม่ unref**: ตอนบูตยังไม่มีอะไรอื่นรั้ง event loop ไว้ ถ้า Mongo ล่มแล้วตัวจับ
   // เวลาของ driver ไม่ ref ด้วย process จะจบเงียบ ๆ ก่อนถึง listen — log store ล่มแล้วพา backend ล่มตาม
   return settleWithin(refresh(), FIRST_CHECK_WAIT_MS);
+}
+
+/**
+ * ฐานข้อมูลของ log store สำหรับผู้เขียน (lib/error-capture.ts) — ไม่ reject
+ *
+ * คืน null เมื่อปิดอยู่ ยังไม่ได้ `startLogStore()` ถูกปิดไปแล้ว หรือต่อไม่ได้ (สถานะกลายเป็น `down` พร้อมบรรทัดเดียว
+ * ตามกติกาของ setState) ผู้เรียกถือ null ว่า "ตอนนี้เขียนไม่ได้" แล้วลองใหม่รอบหน้า ไม่ใช่ error
+ *
+ * **ผู้เรียกที่อ่านต้องใส่ `maxTimeMS` เอง** — timeout ของ driver (CLIENT_TIMEOUTS) คุมแค่การต่อกับ socket ไม่ได้คุม
+ * query ที่ server ทำงานนาน ส่วนการเขียนจบใน socketTimeoutMS 5 วินาทีอยู่แล้ว
+ */
+export async function logDb(): Promise<Db | null> {
+  if (!env.logStore.enabled || !started || closed) return null;
+  try {
+    return (await connectedClient()).db(env.logStore.db);
+  } catch (err) {
+    setState("down", describe(err));
+    return null;
+  }
 }
 
 /**

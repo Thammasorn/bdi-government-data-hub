@@ -8,8 +8,16 @@ import { prisma } from "./db.js";
 import { env } from "./env.js";
 import { adminTokenLooksWeak } from "./lib/auth.js";
 import { DocumentRenderError } from "./lib/document-render.js";
-import { correlationMiddleware } from "./lib/context.js";
+import { correlationMiddleware, currentContext, referenceOf } from "./lib/context.js";
 import { loadChoices } from "./lib/dataset-choices.js";
+import {
+  FLUSH_ON_EXIT_MS,
+  captureError,
+  exitAfterFatal,
+  flushErrors,
+  initErrorCapture,
+  recordRuntimeEvent,
+} from "./lib/error-capture.js";
 import { closeLogStore, startLogStore } from "./lib/log-store.js";
 import { flushTokenRejections } from "./lib/token-rejection.js";
 import { adminRegistrationRouter } from "./routes/admin-registrations.js";
@@ -65,9 +73,39 @@ function parseJsonBody(req: Request, res: Response, next: NextFunction) {
   });
 }
 
+/**
+ * ทุกคำตอบ 5xx ของ API มีรหัสอ้างอิง — `reference` ในตัว body และต่อท้าย `message` (decision 18 ใน plan)
+ *
+ * toast ของหน้าเว็บส่วนใหญ่แสดง `message` ของ ApiError ตรง ๆ รหัสที่อยู่ในข้อความจึงถึงตาผู้ใช้โดยไม่ต้องแก้หน้าไหน
+ * ผู้ใช้อ่านรหัสให้เจ้าหน้าที่ฟังแล้วค้นย้อนหา error event และแถว audit ของคำขอนั้นได้ (8 ตัวแรกของ correlation id)
+ * ทำที่ `res.json` ของทุกคำขอแทนการไล่เติมทีละจุด: 503 ของ route เอง (`no_reviewer`, ตัวแปลงเอกสารไม่พร้อม, ThaID 502)
+ * ได้ด้วยโดยไม่ต้องจำ แตะเฉพาะ body ที่เป็น error ของ API (`{error: "…"}`) — `/health/ready` ที่ตอบ 503 ไม่เปลี่ยนรูป
+ */
+function referenceOnServerErrors(_req: Request, res: Response, next: NextFunction) {
+  const ctx = currentContext();
+  if (!ctx) return next();
+  const reference = referenceOf(ctx.correlationId);
+  const json = res.json.bind(res);
+  res.json = ((body?: unknown) => {
+    if (res.statusCode < 500 || !body || typeof body !== "object" || Array.isArray(body)) return json(body);
+    const fields = body as Record<string, unknown>;
+    if (typeof fields.error !== "string") return json(body);
+    const message =
+      typeof fields.message === "string" && !fields.message.includes("รหัสอ้างอิง")
+        ? `${fields.message} (รหัสอ้างอิง ${reference})`
+        : fields.message;
+    return json({ ...fields, message, reference });
+  }) as Response["json"];
+  next();
+}
+
 app.set("trust proxy", 1);
-// credentials: true บังคับให้ต้องระบุ origin เจาะจง ใช้ "*" ไม่ได้
-app.use(cors({ origin: env.corsOrigins, credentials: true }));
+/**
+ * credentials: true บังคับให้ต้องระบุ origin เจาะจง ใช้ "*" ไม่ได้
+ * `x-correlation-id` ต้องประกาศว่าให้เบราว์เซอร์อ่านได้ — checkout dev เรียก backend ข้าม origin (new-dev.sh) และ
+ * header ที่ไม่ได้ประกาศถูกซ่อนจาก JavaScript ทั้งที่มาถึงเบราว์เซอร์แล้ว
+ */
+app.use(cors({ origin: env.corsOrigins, credentials: true, exposedHeaders: ["x-correlation-id"] }));
 /**
  * ต้องมาก่อน router ทุกตัว — audit_event, notification และ integration_operation บังคับ
  * correlation_id เป็น NOT NULL และอ่านค่าผ่าน AsyncLocalStorage
@@ -78,11 +116,13 @@ app.use(cors({ origin: env.corsOrigins, credentials: true }));
  * ตัวแปลงจึงคืนมาใน store เดิม
  */
 app.use(correlationMiddleware);
+app.use(referenceOnServerErrors);
 app.use(parseJsonBody);
 app.use(cookieParser());
 
 app.get("/", (_req, res) => {
-  res.json({ service: "d2-api", version: "0.1.0" });
+  // release = SHA ที่ build image นี้ (dev: `dev`) — บอกได้จากภายนอกว่ากำลังรันรุ่นไหนอยู่ ดู env.ts
+  res.json({ service: "d2-api", version: "0.1.0", release: env.release });
 });
 
 app.use("/health", healthRouter);
@@ -136,17 +176,25 @@ const PRISMA_ERRORS: Record<string, { status: number; error: string; message: st
   P2024: { status: 503, error: "unavailable", message: "ระบบกำลังมีผู้ใช้งานหนาแน่น กรุณาลองใหม่อีกครั้ง" },
 };
 
-app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
+/**
+ * ที่เกิดของ error ในรูปที่ใช้จัดกลุ่ม — method + route แบบแม่แบบที่ `wrap()` จดไว้ ไม่ใช่ path จริงที่มี id
+ * error จาก guard ที่ติดตั้งด้วย `router.use` (ยังไม่ถึง route) ไม่มีแม่แบบ ได้ `-` แทน ไม่ใช้ path เพราะ id ใน path
+ * จะทำให้ issue แตกเป็นหนึ่งตัวต่อหนึ่ง id
+ */
+function routeKey(req: Request): string {
+  return `${req.method} ${currentContext()?.route ?? "-"}`;
+}
+
+app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
   /**
    * ส่งหัวคำตอบไปแล้ว (route ที่เริ่มเขียน body แล้วค่อยล้ม) — ตอบใหม่ไม่ได้ ส่งต่อให้ตัวจัดการของ Express
    * ซึ่งปิดการเชื่อมต่อ ไม่งั้น `res.status()` ข้างล่างจะ throw ซ้อนเข้าไปอีกชั้น สตรีมไฟล์แนบที่ขาดกลางทาง
    * **ไม่** มาถึงที่นี่: `streamAttachment()` ใช้ `pipe()` ซึ่งไม่ส่ง error ต่อให้ `next`
    *
-   * บรรทัดนี้ไม่พิมพ์ `err` เอง: ตัวจัดการของ Express พิมพ์ stack ต่อท้ายให้อยู่แล้ว (`logerror` ของ
-   * finalhandler) ลองด้วย route ชั่วคราวที่ throw หลัง `res.write()` แล้วได้ stack สองชุดต่อหนึ่งครั้ง
+   * ตัวจัดการของ Express พิมพ์ stack ต่อท้ายให้เองด้วย (`logerror` ของ finalhandler) ที่นี่จึงเก็บอย่างเดียว
    */
   if (res.headersSent) {
-    console.error("[backend] error after the response had started — closing the connection:");
+    captureError(err, { req, status: res.statusCode, tag: "http.after-headers-sent" });
     next(err);
     return;
   }
@@ -161,8 +209,19 @@ app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
    * เพราะเป็นร่องรอยเดียวของ route ที่ยังไม่ดักเคสของตัวเอง
    *
    * `RequestBodyError` ไม่ถือ error เดิมไว้ตั้งแต่ `parseJsonBody()` แล้ว สาขานี้จึงไม่มีอะไรให้พิมพ์พลาด
+   *
+   * เก็บลง log store เป็น warning (ไม่มี body เพราะมันไม่ถืออะไรไว้ และไม่พิมพ์ — ผู้เรียกยิงถี่ได้เท่าที่ต้องการ)
+   * ให้เห็นว่ามีคนส่ง JSON เสียมาบ่อยแค่ไหน แยก issue ตาม status
    */
   if (err instanceof RequestBodyError) {
+    captureError(err, {
+      req,
+      level: "warning",
+      status: err.status,
+      tag: "http.request-body",
+      fingerprint: `http:request-body:${err.status}`,
+      print: false,
+    });
     if (err.status === 413) {
       res.status(413).json({
         error: "payload_too_large",
@@ -197,9 +256,16 @@ app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
    *
    * ทุกกรณีมีสาเหตุที่บอกได้เป็นคำพูด และ DocumentRenderError ถือ status มาเองแล้ว
    * (400 = ไฟล์ที่อัปโหลดผิด · 503 = ตัวแปลงหรือเอกสารต้นแบบยังไม่พร้อม)
+   *
+   * 5xx เก็บเป็น issue ต่อรหัส (`render:converter_unavailable`) — ตัวแปลงล่มครั้งเดียวกระทบทุก route ที่สร้างเอกสาร
+   * และเป็นปัญหาเดียวกัน breadcrumb บอกว่าคำขอนั้นทำอะไรไปแล้วก่อนถึงขั้นเรนเดอร์ 4xx พิมพ์บรรทัดเดิมเหมือนเคย
    */
   if (err instanceof DocumentRenderError) {
-    console.error(`[backend] ${err.code}:`, err.message);
+    if (err.status >= 500) {
+      captureError(err, { req, status: err.status, tag: `render.${err.code}`, fingerprint: `render:${err.code}` });
+    } else {
+      console.error(`[backend] ${err.code}:`, err.message);
+    }
     res.status(err.status).json({ error: err.code, message: err.message, fields: err.fields });
     return;
   }
@@ -219,8 +285,18 @@ app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
 
   const known = prismaCode ? PRISMA_ERRORS[prismaCode] : undefined;
   if (known) {
-    // log ไว้ทุกครั้ง: การหลุดมาถึงตะแกรงนี้แปลว่ามี route ที่ยังไม่ได้ดักเคสของตัวเอง
-    console.error(`[backend] ${prismaCode} not handled by its route:`, (err as Error).message);
+    /**
+     * เก็บทุกครั้ง (captureError พิมพ์หนึ่งบรรทัดที่กวาดแล้ว): การหลุดมาถึงตะแกรงนี้แปลว่ามี route ที่ยังไม่ได้ดักเคส
+     * ของตัวเอง issue แยกตามรหัสและ route (`prisma:P2002:POST /api/…`) จึงชี้ route ที่ต้องแก้ได้ตรงตัว
+     * รหัสที่แปลเป็น 4xx เป็น warning ส่วนรหัสของฐานข้อมูลที่ติดต่อไม่ได้ (503) เป็น error เพราะนั่นคือระบบล่ม
+     */
+    captureError(err, {
+      req,
+      level: known.status >= 500 ? "error" : "warning",
+      status: known.status,
+      tag: `prisma.${prismaCode}`,
+      fingerprint: `prisma:${prismaCode}:${routeKey(req)}`,
+    });
     res.status(known.status).json({ error: known.error, message: known.message });
     return;
   }
@@ -228,18 +304,34 @@ app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
   // เริ่มต้น client ไม่สำเร็จเลย = ระบบยังไม่พร้อม ไม่ใช่ความผิดของคำขอ ตอบ 503 ไว้ก่อน
   // แม้จะไม่รู้รหัส เพราะ 500 จะทำให้คนเรียกไปหาสาเหตุผิดที่
   if (err instanceof Prisma.PrismaClientInitializationError) {
-    console.error("[backend] prisma could not initialise:", err.message);
+    captureError(err, { req, status: 503, tag: "prisma.init" });
     res
       .status(503)
       .json({ error: "unavailable", message: "ระบบฐานข้อมูลไม่พร้อมใช้งาน กรุณาลองใหม่อีกครั้ง" });
     return;
   }
 
-  console.error("[backend] unhandled error:", err);
-  res.status(500).json({ error: "internal", message: "เกิดข้อผิดพลาดภายในระบบ" });
+  /**
+   * ไม่รู้ว่าเป็นอะไร — เก็บแล้วตอบ 500 พร้อมรหัสอ้างอิง **ไม่พิมพ์ `err` ดิบ** อย่างที่เคยทำ: error ของ Prisma ยก
+   * argument ของ query มาทั้งก้อน ซึ่งมีอีเมลและเลขบัตรปน captureError พิมพ์บรรทัดเดียวที่กวาดแล้วพร้อม id ของ event
+   * ส่วน stack เต็ม (ที่กวาดแล้ว) อยู่ใน log store
+   */
+  captureError(err, { req, status: 500 });
+  const reference = referenceOf(currentContext()?.correlationId ?? "");
+  res.status(500).json({
+    error: "internal",
+    message: `เกิดข้อผิดพลาดภายในระบบ (รหัสอ้างอิง ${reference})`,
+    reference,
+  });
 });
 
 async function main() {
+  /**
+   * ก่อนอย่างอื่นทั้งหมด: ตัวดัก unhandledRejection / uncaughtException และคิวของ error ที่เกิดระหว่างบูต
+   * (อ่านตัวเลือกไม่ได้, container ของ storage) — คิวรอจนกว่า log store ข้างล่างจะต่อได้
+   */
+  initErrorCapture({ service: "backend" });
+
   /**
    * ตัวเลือกของแบบฟอร์มชุดข้อมูลอยู่ในฐานข้อมูล แต่ผู้ใช้ของมัน (zod schema, ชื่อช่องติ๊ก)
    * ถูกประเมินตั้งแต่ตอน import แล้ว จึงต้องโหลดเข้า cache ให้เสร็จก่อนเปิดรับ request
@@ -249,8 +341,9 @@ async function main() {
 
   // Best-effort: don't block startup if Azure Blob Storage is briefly unavailable —
   // /health/ready will report it.
-  await ensureContainer().catch((err) => {
-    console.warn(`[startup] could not ensure container: ${err.message}`);
+  await ensureContainer().catch((err: unknown) => {
+    console.warn(`[startup] could not ensure container: ${err instanceof Error ? err.message : String(err)}`);
+    captureError(err, { level: "warning", tag: "storage.ensure-container" });
   });
 
   /**
@@ -261,6 +354,8 @@ async function main() {
 
   const server = app.listen(env.port, () => {
     console.log(`[backend] listening on http://localhost:${env.port}`);
+    // บันทึกของ process — การเริ่มที่ไม่มี shutdown นำหน้าคือการล่มแล้ววนกลับมา (step 10 ใช้จับ crash loop)
+    recordRuntimeEvent("start", { node: process.version });
     if (!env.smtp.enabled) {
       console.log("[backend] SMTP ยังไม่ได้ตั้งค่า — อีเมลจะถูกพิมพ์ลง log แทนการส่งจริง");
     }
@@ -285,10 +380,12 @@ async function main() {
   const shutdown = async (signal: string) => {
     console.log(`[backend] ${signal} received, shutting down`);
     server.close();
+    recordRuntimeEvent("shutdown", { signal });
     // แถวสรุปของ token ที่ถูกปฏิเสธยังค้างอยู่ในหน่วยความจำ — เขียนให้เท่าที่ทันภายใน 2 วินาที
     // ไม่รอนานกว่านั้น เพราะ compose ให้เวลาทั้งหมด 10 วินาทีก่อน SIGKILL
     await Promise.race([flushTokenRejections(), new Promise((resolve) => setTimeout(resolve, 2_000))]);
-    // ไม่เกิน 1.5 วินาที — รวมกับข้างบนแล้วยังอยู่ใน 10 วินาทีของ compose
+    // คิวของ error + บันทึก shutdown ข้างบน ไม่เกิน 2 วินาที แล้วปิด client ไม่เกิน 1.5 — รวมกันยังอยู่ใน 10 วินาที
+    await flushErrors(FLUSH_ON_EXIT_MS);
     await closeLogStore();
     await prisma.$disconnect();
     process.exit(0);
@@ -298,7 +395,7 @@ async function main() {
   process.on("SIGINT", () => void shutdown("SIGINT"));
 }
 
-main().catch((err) => {
-  console.error("[backend] fatal startup error:", err);
-  process.exit(1);
+main().catch((err: unknown) => {
+  console.error("[backend] fatal startup error — ดูบรรทัด [capture] ถัดไป");
+  exitAfterFatal(err, { mechanism: "captured", tag: "startup" });
 });

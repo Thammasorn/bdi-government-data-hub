@@ -195,6 +195,10 @@ services:
       MONGODB_URI: ${MONGODB_BACKEND_URI:-mongodb://bdi_backend:${MONGO_BACKEND_PASSWORD:-dev-mongo-backend-change-me}@mongo:27017/${MONGODB_DB:-bdi_logs}?authSource=${MONGODB_DB:-bdi_logs}}
       MONGODB_DB: ${MONGODB_DB:-bdi_logs}
       LOG_STORE_MAX_MB: ${LOG_STORE_MAX_MB:-}
+      # ชื่อ deployment ที่ติดไปกับทุก error event (ค่าตั้งต้นคือชื่อ project ของ compose: bdi-main, bdi-dev_…)
+      # **ไม่มี RELEASE ตรงนี้โดยตั้งใจ**: image ของ production ฝัง RELEASE=<SHA> ไว้แล้ว (backend/Dockerfile) และค่าว่าง
+      # จาก `${RELEASE:-}` จะทับค่านั้นจนกลายเป็น `dev`
+      DEPLOY_ENV: ${DEPLOY_ENV:-${COMPOSE_PROJECT_NAME:-bdi-project}}
     ports:
       # ตรึงไว้ — โดเมนสาธารณะ bdi-api.thammasorn.org ชี้มาที่พอร์ตนี้
       # checkout อื่นให้ทับด้วย docker-compose.override.yml (new-dev.sh สร้างให้)
@@ -252,6 +256,7 @@ services:
       MONGODB_URI: ${MONGODB_WORKER_URI:-mongodb://bdi_worker:${MONGO_WORKER_PASSWORD:-dev-mongo-worker-change-me}@mongo:27017/${MONGODB_DB:-bdi_logs}?authSource=${MONGODB_DB:-bdi_logs}}
       MONGODB_DB: ${MONGODB_DB:-bdi_logs}
       LOG_STORE_MAX_MB: ${LOG_STORE_MAX_MB:-}
+      DEPLOY_ENV: ${DEPLOY_ENV:-${COMPOSE_PROJECT_NAME:-bdi-project}}
     volumes:
       - ./backend:/app
       - backend-node-modules:/app/node_modules

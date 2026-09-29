@@ -19,7 +19,8 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "../db.js";
-import { correlationId, currentContext, sourceComponent } from "./context.js";
+import { reportAuditWriteFailure } from "./audit-fallback.js";
+import { addBreadcrumb, correlationId, currentContext, sourceComponent } from "./context.js";
 import { NAME_FIELDS, fullNameTh } from "./person-name.js";
 
 /** action code ตามตัวอย่างใน sheet `audit.audit_event` */
@@ -455,7 +456,7 @@ export const AuditSubject = {
 
 export type AuditSubjectType = (typeof AuditSubject)[keyof typeof AuditSubject];
 
-interface AuditInput {
+export interface AuditInput {
   action: AuditActionCode;
   subjectType: AuditSubjectType;
   subjectId?: string | null;
@@ -555,15 +556,17 @@ function storedUserAgent(raw: string | null | undefined): string | null {
 /**
  * เขียน audit event หนึ่งแถว
  *
- * ล้มเหลวแล้วไม่ throw ต่อ: การบันทึก log ต้องไม่ทำให้คำขอที่ผู้ใช้กดสำเร็จไปแล้วพัง
+ * ล้มเหลวแล้วไม่ throw ต่อ: การบันทึก log ต้องไม่ทำให้คำขอที่ผู้ใช้กดสำเร็จไปแล้วพัง แต่ก็ไม่หายเงียบ — ความล้มเหลว
+ * ไปเป็น error event `audit.write-failed` กับสำเนาของแถวใน log store (lib/audit-fallback.ts) และทิ้ง breadcrumb ไว้
+ * ให้ error ตัวถัดไปของคำขอเดียวกันเห็นว่า audit ของมันเขียนแล้วหรือยัง
  */
 export async function logAudit(input: AuditInput): Promise<void> {
+  const ctx = currentContext();
+  const actorId = input.actorId ?? ctx?.actorId ?? null;
+  const userAgent = storedUserAgent(ctx?.userAgent);
+  // ชื่อและ role ณ เวลานั้น — ดีไซน์ไม่มีคอลัมน์ให้ จึงเก็บลง metadata_json
+  let actorSnapshot: Record<string, unknown> | undefined;
   try {
-    const ctx = currentContext();
-    const actorId = input.actorId ?? ctx?.actorId ?? null;
-
-    // ชื่อและ role ณ เวลานั้น — ดีไซน์ไม่มีคอลัมน์ให้ จึงเก็บลง metadata_json
-    let actorSnapshot: Record<string, unknown> | undefined;
     if (actorId) {
       const actor = await prisma.userAccount.findUnique({
         where: { id: actorId },
@@ -608,14 +611,20 @@ export async function logAudit(input: AuditInput): Promise<void> {
         beforeSummaryJson: toJson(input.before),
         afterSummaryJson: toJson(input.after),
         ipAddress: ctx?.ipAddress ? fit(ctx.ipAddress, COLUMN_MAX.ipAddress) : null,
-        userAgent: storedUserAgent(ctx?.userAgent),
+        userAgent,
         correlationId: fit(correlationId(), COLUMN_MAX.correlationId),
         sourceComponent: fit(sourceComponent(), COLUMN_MAX.sourceComponent),
         metadataJson: Object.keys(metadata).length > 0 ? toJson(metadata) : undefined,
       },
     });
+    addBreadcrumb("audit", input.action);
   } catch (err) {
-    console.error("[audit] บันทึก audit event ไม่สำเร็จ:", err);
+    addBreadcrumb("audit", `${input.action} — เขียนไม่สำเร็จ`, false);
+    /**
+     * ไม่พิมพ์ `err` ดิบอีกแล้ว: `PrismaClientValidationError` ยก argument ทั้งก้อนของ INSERT มาในข้อความ ซึ่งก็คือ
+     * before/after/metadata พร้อมอีเมลและเลขบัตร — captureError พิมพ์บรรทัดที่กวาดแล้วแทน พร้อม id ของ event
+     */
+    reportAuditWriteFailure(err, input, { actorId, actorSnapshot, userAgent });
   }
 }
 

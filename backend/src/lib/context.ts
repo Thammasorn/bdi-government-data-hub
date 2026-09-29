@@ -30,7 +30,34 @@ export interface RequestContext {
    * ไม่ได้มาทาง admin API logAudit จดลง `metadata.admin_token_fp`
    */
   adminTokenFp: string | null;
+  /** เวลาที่งานนี้เริ่ม (ms) — lib/error-capture.ts คิด durationMs ของคำขอที่ล้มจากค่านี้ */
+  startedAt: number;
+  /** HTTP method ของคำขอ — null ใน worker และสคริปต์ */
+  method: string | null;
+  /**
+   * route แบบแม่แบบ (`/api/organizations/:id/review`) ไม่ใช่ path จริง — `wrap()` ใน lib/async-route.ts ตั้งให้
+   * ก่อน handler ทำงาน ใช้จัดกลุ่ม error ที่เกิดใน route เดียวกันให้เป็น issue เดียว ไม่ว่า id ใน path จะเป็นอะไร
+   */
+  route: string | null;
+  /**
+   * สิ่งที่คำขอนี้ทำไปแล้วก่อนจะล้ม (เขียน audit · ลง outbox · ส่งอีเมล · เรนเดอร์ · storage · ThaID) ล่าสุดไม่เกิน
+   * BREADCRUMB_MAX รายการ — ติดไปกับ error event ของคำขอนั้น ตอบคำถาม "commit ไปแล้วหรือยังก่อนจะได้ 500"
+   * ข้อความเป็นของเราเองทั้งหมด **ห้ามใส่ที่อยู่อีเมล ชื่อ หรือค่าที่ผู้ใช้กรอก**
+   */
+  breadcrumbs: Breadcrumb[];
 }
+
+export type BreadcrumbType = "audit" | "outbox" | "smtp" | "render" | "storage" | "thaid";
+
+export interface Breadcrumb {
+  at: Date;
+  type: BreadcrumbType;
+  message: string;
+  ok: boolean;
+}
+
+/** เก็บแค่ 30 รายการล่าสุด — คำขอที่วนเขียนเป็นร้อยครั้งต้องไม่ทำให้ error event โตไม่มีเพดาน */
+const BREADCRUMB_MAX = 30;
 
 const storage = new AsyncLocalStorage<RequestContext>();
 
@@ -44,6 +71,16 @@ export function currentContext(): RequestContext | undefined {
  */
 export function correlationId(): string {
   return storage.getStore()?.correlationId ?? randomUUID();
+}
+
+/**
+ * รหัสอ้างอิงที่ผู้ใช้เห็นบนข้อความ 5xx — 8 ตัวแรกของ correlation id ของคำขอ (decision 18 ใน plan)
+ *
+ * สั้นพอให้อ่านให้เจ้าหน้าที่ฟังทางโทรศัพท์ได้ และค้นย้อนหา error event กับแถว audit ของคำขอนั้นได้ด้วย prefix
+ * ของ `request.correlationId` ไม่ได้อยู่ในคำขอ (worker) ก็ได้ค่าจาก correlation id ใหม่ ซึ่งไม่ชี้อะไร
+ */
+export function referenceOf(id: string): string {
+  return id.slice(0, 8);
 }
 
 export function sourceComponent(): string {
@@ -61,6 +98,10 @@ export function runWithContext<T>(context: Partial<RequestContext>, fn: () => T)
       userAgent: context.userAgent ?? null,
       sourceComponent: context.sourceComponent ?? "request-service",
       adminTokenFp: context.adminTokenFp ?? null,
+      startedAt: Date.now(),
+      method: null,
+      route: null,
+      breadcrumbs: [],
     },
     fn,
   );
@@ -125,6 +166,11 @@ export function correlationMiddleware(req: Request, res: Response, next: NextFun
       // ค่าตั้งต้นของทุกคำขอ — requireAdminToken เปลี่ยนเป็น admin-portal เมื่อ token ผ่าน
       sourceComponent: "web-portal",
       adminTokenFp: null,
+      startedAt: Date.now(),
+      method: req.method,
+      // ยังไม่รู้ว่าจะไปถึง route ไหน — wrap() เติมให้ตอนเข้า handler ของ route
+      route: null,
+      breadcrumbs: [],
     },
     () => next(),
   );
@@ -152,4 +198,23 @@ export function setSourceComponent(component: string) {
 export function setAdminTokenFp(fingerprint: string) {
   const store = storage.getStore();
   if (store) store.adminTokenFp = fingerprint;
+}
+
+/** `wrap()` เรียกก่อน handler ของ route — ดู `RequestContext.route` */
+export function setRoute(route: string) {
+  const store = storage.getStore();
+  if (store) store.route = route;
+}
+
+/**
+ * จดว่าคำขอนี้ทำอะไรไปแล้ว — ไม่ throw ไม่แตะ I/O นอกคำขอ (worker สคริปต์) ก็แค่ไม่ได้จด
+ *
+ * `message` เป็นข้อความของเราเองเท่านั้น: ชื่อ action รหัสตอบกลับ จำนวน — **ไม่ใส่ที่อยู่อีเมล ชื่อคน หรือค่าที่
+ * ผู้ใช้กรอก** เพราะ breadcrumb ลง error event ทั้งก้อนโดยไม่ผ่านตัวกรองอีกชั้น
+ */
+export function addBreadcrumb(type: BreadcrumbType, message: string, ok = true) {
+  const store = storage.getStore();
+  if (!store) return;
+  store.breadcrumbs.push({ at: new Date(), type, message: message.slice(0, 200), ok });
+  if (store.breadcrumbs.length > BREADCRUMB_MAX) store.breadcrumbs.shift();
 }

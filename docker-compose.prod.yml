@@ -13,9 +13,12 @@
 services:
   # log ของ backend / worker / frontend มีเพดาน: json-file ของ docker ไม่จำกัดขนาดโดยค่าตั้งต้น และ /hdd1tb ที่เก็บมัน
   # คือดิสก์เดียวกับ Postgres ของ production · 50 MB × 5 ไฟล์ต่อ service เกินพอสำหรับ "dump log ก่อน deploy"
+  # GIT_SHA → RELEASE ของ image (backend/Dockerfile) — ตั้งใน shell ตอน deploy ดู docs/21 · ไม่ตั้งได้ `unknown`
   backend:
     build:
       target: runner
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     environment:
       NODE_ENV: production
     command: >
@@ -51,6 +54,8 @@ services:
   delivery-worker:
     build:
       target: runner
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     environment:
       NODE_ENV: production
     command: ["node", "dist/workers/delivery.js"]

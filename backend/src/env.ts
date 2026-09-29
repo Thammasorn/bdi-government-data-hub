@@ -76,6 +76,15 @@ const MONGODB_URI = optional("MONGODB_URI", "");
 
 export const env = {
   nodeEnv: NODE_ENV,
+  /**
+   * รุ่นของโค้ดที่รันอยู่ — SHA ของ commit ที่ build image นี้ (`GIT_SHA` → `ENV RELEASE` ใน backend/Dockerfile)
+   * ติดไปกับทุก error event และ `GET /` เพื่อบอกได้ว่า error เกิดกับรุ่นไหน และ issue ที่ปิดไปแล้วกลับมาในรุ่นไหน
+   * dev (tsx จาก source) ไม่ได้ build image จึงเป็น `dev` · **อย่าใส่ใน environment ของ compose**: ค่าว่างจาก `${…:-}`
+   * จะทับค่าที่ image ฝังไว้แล้ว optional() อ่านเป็นไม่ได้ตั้ง กลายเป็น `dev` บน production
+   */
+  release: optional("RELEASE", "dev"),
+  /** ชื่อ deployment ที่ error เกิด (ค่าตั้งต้นใน compose คือ COMPOSE_PROJECT_NAME เช่น `bdi-main`) — แยก checkout ออกจากกัน */
+  deployEnv: optional("DEPLOY_ENV", NODE_ENV),
   port: Number(optional("PORT", "4000")),
   /**
    * รับได้หลาย origin คั่นด้วย comma เพราะตอนเปิดสู่สาธารณะยังต้องเข้าจาก
