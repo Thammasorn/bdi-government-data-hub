@@ -12,8 +12,9 @@
 // แบ่งสองคนเพราะ backend คือ process ที่รับคำขอจากอินเทอร์เน็ต: ถ้ามันถูกยึด ต้องลบหรือแก้ activity ย้อนหลังไม่ได้
 //   bdi_backend — find + insert ทุก collection ของฐานนี้ และ update เฉพาะ error_issues (ตัวนับของ issue
 //                 กับสถานะ open/resolved/ignored) ไม่มี remove ไม่มี drop ไม่มี createIndex
-//   bdi_worker  — เพิ่ม update/remove (relay upsert, prune ตามอายุ) createIndex (ensureIndexes ตอนบูต)
-//                 และ dbStats (ตรวจเพดานขนาด) ยังไม่มี drop ใด ๆ
+//   bdi_worker  — เพิ่ม update/remove (relay upsert, prune ตามอายุ) createIndex กับ listIndexes (ensureIndexes
+//                 ตอนบูต ดูว่ามีอะไรอยู่แล้วก่อนสร้าง) listCollections, collStats และ dbStats (ตรวจเพดานขนาด
+//                 รวมทั้งฐานและราย collection) ยังไม่มี drop ใด ๆ — รายการเต็มคือ ROLES.bdiLogWorker ข้างล่าง
 // ไม่ต้องให้ createCollection: insert หรือ createIndex ลง collection ที่ยังไม่มีก็สร้างมันเองได้ด้วยสิทธิ์ของตัวมัน
 // (ลองกับ mongo:7.0 แล้ว 2026-09-30)
 

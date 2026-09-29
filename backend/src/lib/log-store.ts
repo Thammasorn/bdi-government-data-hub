@@ -22,14 +22,16 @@ import { env } from "../env.js";
  *   up         — ต่อได้ login ผ่าน อ่านได้
  *   down       — ต่อไม่ได้ login ไม่ผ่าน หรือ driver โหลดไม่ขึ้น (รายละเอียดอยู่ใน log ของ process)
  *   disabled   — ปิดไว้ด้วย LOG_STORE_ENABLED=false หรือไม่มี MONGODB_URI
- *   over_quota — ต่อได้ แต่ขนาดเกิน LOG_STORE_MAX_MB แล้ว: worker ตั้งธง `overQuota` ไว้ใน relay_state
+ *   over_quota — ต่อได้ แต่ธง `overQuota` ใน relay_state ตั้งอยู่ ซึ่งแปลว่าขนาดเกิน LOG_STORE_MAX_MB แล้ว
+ *                **ตอนนี้ยังไม่มีใครตั้งธงนี้**: ตัวตรวจเพดานรายชั่วโมงของ worker มาพร้อมงานเก็บ error
+ *                ไฟล์นี้แค่อ่านธงไว้ก่อน สถานะนี้จึงเกิดได้จากการตั้งธงด้วยมือเท่านั้นจนกว่าตัวตรวจจะมา
  */
 export type LogStoreStatus = "up" | "down" | "disabled" | "over_quota";
 
 /** ใครเป็นคนเปิด — ใช้ในบรรทัด log และเป็น appName ที่ Mongo เห็น */
 export type LogStoreService = "backend" | "delivery-worker";
 
-/** เอกสารใน relay_state ที่ worker ดูแล — ไฟล์นี้อ่านแค่ธงเพดานขนาด */
+/** เอกสารใน relay_state ที่ worker จะเป็นคนเขียน (ยังไม่มีใครเขียน) — ไฟล์นี้อ่านแค่ธงเพดานขนาด */
 interface RelayStateDoc {
   _id: string;
   overQuota?: boolean;
@@ -54,13 +56,22 @@ const CLIENT_TIMEOUTS = {
   socketTimeoutMS: 5_000,
 } satisfies MongoClientOptions;
 
-interface State {
+/**
+ * สถานะเดิมแต่สาเหตุของความล้มเหลวเปลี่ยน พิมพ์บรรทัดใหม่ได้ไม่ถี่กว่านี้ (setState) — สถานะที่เปลี่ยนพิมพ์ทันทีเสมอ
+ * สิบนาทีคือไม่เกิน 6 บรรทัดต่อชั่วโมงต่อ process ต่อให้สาเหตุสลับไปมาทุกรอบตรวจ
+ */
+const CAUSE_REPRINT_MS = 10 * 60_000;
+
+/** บรรทัดสถานะที่พิมพ์ไปล่าสุด — ใช้ตัดสินว่าผลตรวจรอบใหม่มีอะไรใหม่ให้พิมพ์ไหม */
+interface Printed {
   status: LogStoreStatus;
-  /** ข้อความของความล้มเหลวล่าสุด (ลบรหัสผ่านออกแล้ว) — พิมพ์ตอนสถานะเปลี่ยนเท่านั้น */
-  error: string | null;
+  /** สาเหตุแบบตัดตัวเลขทิ้งแล้ว (causeKey) หรือ null ถ้าไม่มี error */
+  cause: string | null;
+  at: number;
 }
 
-let state: State = { status: env.logStore.enabled ? "down" : "disabled", error: null };
+let currentStatus: LogStoreStatus = env.logStore.enabled ? "down" : "disabled";
+let printed: Printed | null = null;
 let service: LogStoreService = "backend";
 let maxPoolSize = 5;
 let started = false;
@@ -72,7 +83,7 @@ let refreshing: Promise<void> | null = null;
 
 /** สถานะล่าสุดที่ตรวจไว้ — ไม่แตะ Mongo ไม่ await อะไร เรียกจาก health probe ได้ทุกครั้ง */
 export function logStoreStatus(): { status: LogStoreStatus } {
-  return { status: state.status };
+  return { status: currentStatus };
 }
 
 /**
@@ -194,12 +205,22 @@ function refresh(): Promise<void> {
 }
 
 /**
- * เปลี่ยนสถานะ และพิมพ์หนึ่งบรรทัดเฉพาะตอนที่เปลี่ยน (ไม่พิมพ์ซ้ำทุก 30 วินาทีตอน Mongo ล่มนาน ๆ)
- * ผลตรวจครั้งแรกนับว่าเปลี่ยนเสมอ: ค่าเริ่มต้นคือ down ที่ไม่มีข้อความ ซึ่งการตรวจไม่มีวันให้ผลแบบนั้น
+ * เปลี่ยนสถานะ และพิมพ์หนึ่งบรรทัดเมื่อมีอะไรใหม่ให้บอก — Mongo ที่ล่มนาน ๆ ต้องไม่ได้บรรทัดใหม่ทุก 30 วินาที
+ *
+ *   - สถานะเปลี่ยน (up → down, down → up, …) และผลตรวจครั้งแรกของ process พิมพ์ทันทีเสมอ
+ *   - สถานะเดิมแต่สาเหตุเปลี่ยน พิมพ์ได้ไม่ถี่กว่า CAUSE_REPRINT_MS สาเหตุเทียบกันหลังตัดตัวเลขทิ้ง (causeKey)
+ *     เพราะข้อความของ driver ฝังเวลาที่ใช้ไว้ ("timed out after 2001ms" รอบนี้ "2002ms" รอบหน้า) และ IP ของ
+ *     container ซึ่งเปลี่ยนทุกครั้งที่สร้างใหม่ — เทียบทั้งข้อความเคยทำให้พิมพ์ซ้ำเกือบทุกรอบตลอดเวลาที่ล่ม
+ *     ส่วนเพดานเวลากันสาเหตุที่สลับไปมา เช่น mongo ที่วนรีสตาร์ต (main/ ก่อนตั้งรหัสผ่านจริง) ซึ่งบางรอบหาชื่อ
+ *     host ไม่เจอ บางรอบต่อไม่ติด
+ * สถานะปัจจุบันยังดูได้ตลอดที่ /health/ready — บรรทัดใน log มีไว้บอกว่าเปลี่ยนเมื่อไรและเพราะอะไร
  */
 function setState(status: LogStoreStatus, error: string | null) {
-  if (status === state.status && error === state.error) return;
-  state = { status, error };
+  currentStatus = status;
+  const cause = error === null ? null : causeKey(error);
+  const now = Date.now();
+  if (printed?.status === status && (printed.cause === cause || now - printed.at < CAUSE_REPRINT_MS)) return;
+  printed = { status, cause, at: now };
   const where = `ฐานข้อมูล ${env.logStore.db}`;
   if (status === "up") console.log(`[log-store] ${service}: เชื่อมต่อ MongoDB ได้ (${where})`);
   else if (status === "over_quota") {
@@ -217,8 +238,8 @@ function setState(status: LogStoreStatus, error: string | null) {
  */
 function warnIfDevPassword() {
   if (env.nodeEnv !== "production") return;
-  const password = uriPassword(env.logStore.uri);
-  if (password === null) return;
+  const password = uriPassword(env.logStore.uri)?.decoded;
+  if (password === undefined) return;
   if (password.startsWith("dev-") || password.includes("change-me")) {
     console.warn(
       `[log-store] ${service}: คำเตือน: รหัสผ่านใน MONGODB_URI ยังเป็นค่าตัวอย่าง dev-…/…change-me ที่เปิดเผยอยู่ใน ` +
@@ -228,23 +249,48 @@ function warnIfDevPassword() {
   }
 }
 
-/** รหัสผ่านใน `mongodb://user:pass@…` (ถอด %xx แล้ว) หรือ null ถ้าไม่มี — ไม่ใช้ `new URL` เพราะ URI หลาย host แยกไม่ได้ */
-function uriPassword(uri: string): string | null {
-  const match = /^mongodb(?:\+srv)?:\/\/[^:@/]*:([^@/]*)@/.exec(uri);
-  if (!match?.[1]) return null;
+/** สาเหตุสำหรับเทียบใน setState: ตัวเลขทุกชุดเป็น `#` ("after 2001ms" กับ "after 2002ms" คือสาเหตุเดียวกัน) */
+function causeKey(error: string): string {
+  return error.replace(/\d+/g, "#");
+}
+
+/**
+ * รหัสผ่านใน `mongodb://user:pass@…` ตามที่ driver เองแยก หรือ null ถ้าไม่มี (คืนทั้งแบบดิบใน URI และแบบถอด %xx)
+ *
+ * แยกแบบเดียวกับ HOSTS_REGEX ของ mongodb-connection-string-url: รหัสผ่านคือทุกตัวหลัง `user:` จนถึง `@` ตัวแรก
+ * `/` ที่ไม่ได้ encode จึงนับเป็นรหัสผ่านด้วย — ถ้าหยุดที่ `/` รหัสผ่านอย่าง `Sekr3t/Pw` จะหาไม่เจอและไม่ถูกลบจาก
+ * ข้อความ ไม่ใช้ `new URL` เพราะ URI หลาย host แยกไม่ได้
+ */
+function uriPassword(uri: string): { raw: string; decoded: string } | null {
+  const match = /^mongodb(?:\+srv)?:\/\/[^:@]*:([^@]*)@/.exec(uri);
+  const raw = match?.[1];
+  if (!raw) return null;
   try {
-    return decodeURIComponent(match[1]);
+    return { raw, decoded: decodeURIComponent(raw) };
   } catch {
-    return match[1];
+    return { raw, decoded: raw };
   }
 }
 
-/** ข้อความของ error สำหรับ log — ตัดรหัสผ่านออกเผื่อ driver ยกบางส่วนของ URI มา และจำกัดความยาว */
+/**
+ * userinfo ของ connection string ใดก็ตามที่อยู่ในข้อความ — ถึง `@` ตัวสุดท้ายก่อนช่องว่างหรือเครื่องหมายคำพูด
+ * driver ยก URI ทั้งเส้นมาในเครื่องหมายคำพูดตอนแยกไม่ได้ (`Protocol and host list are required in "…"`)
+ */
+const URI_USERINFO = /(mongodb(?:\+srv)?:\/\/[^:@\s"']*:)[^\s"']*@/gi;
+
+/**
+ * ข้อความของ error สำหรับ log — ลบรหัสผ่านสองชั้น แล้วจำกัดความยาว
+ *
+ *   1. userinfo ของ URI ใด ๆ ในข้อความเป็น `user:***@` — ไม่ต้องพึ่งว่าแยกรหัสผ่านของเราออกมาได้ถูก
+ *   2. รหัสผ่านของ URI ที่ตั้งไว้ ทุกรูปที่อาจโผล่ (ดิบ ถอด %xx แล้ว encode ใหม่) — เผื่อ driver ยกมาโดยไม่มี URI ล้อม
+ */
 function describe(err: unknown): string {
   let text = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  text = text.replace(URI_USERINFO, "$1***@");
   const password = uriPassword(env.logStore.uri);
   if (password) {
-    for (const form of new Set([password, encodeURIComponent(password)])) text = text.split(form).join("***");
+    const forms = new Set([password.raw, password.decoded, encodeURIComponent(password.decoded)]);
+    for (const form of forms) if (form) text = text.split(form).join("***");
   }
   return text.length > 300 ? `${text.slice(0, 300)}…` : text;
 }
