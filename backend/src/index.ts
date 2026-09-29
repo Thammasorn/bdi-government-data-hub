@@ -10,6 +10,7 @@ import { adminTokenLooksWeak } from "./lib/auth.js";
 import { DocumentRenderError } from "./lib/document-render.js";
 import { correlationMiddleware } from "./lib/context.js";
 import { loadChoices } from "./lib/dataset-choices.js";
+import { closeLogStore, startLogStore } from "./lib/log-store.js";
 import { flushTokenRejections } from "./lib/token-rejection.js";
 import { adminRegistrationRouter } from "./routes/admin-registrations.js";
 import { adminRouter } from "./routes/admin.js";
@@ -252,6 +253,12 @@ async function main() {
     console.warn(`[startup] could not ensure container: ${err.message}`);
   });
 
+  /**
+   * log store (MongoDB) — best-effort แบบเดียวกัน: รอผลตรวจครั้งแรกไม่เกิน ~3 วินาทีเพื่อให้ /health/ready ตอบสถานะที่
+   * ถูกตั้งแต่คำขอแรก แล้วเดินต่อไม่ว่าผลจะเป็นอะไร ไม่ reject — Mongo ล่มหรือปิดอยู่ backend ก็บูตตามปกติ
+   */
+  await startLogStore({ service: "backend", maxPoolSize: 5 });
+
   const server = app.listen(env.port, () => {
     console.log(`[backend] listening on http://localhost:${env.port}`);
     if (!env.smtp.enabled) {
@@ -281,6 +288,8 @@ async function main() {
     // แถวสรุปของ token ที่ถูกปฏิเสธยังค้างอยู่ในหน่วยความจำ — เขียนให้เท่าที่ทันภายใน 2 วินาที
     // ไม่รอนานกว่านั้น เพราะ compose ให้เวลาทั้งหมด 10 วินาทีก่อน SIGKILL
     await Promise.race([flushTokenRejections(), new Promise((resolve) => setTimeout(resolve, 2_000))]);
+    // ไม่เกิน 1.5 วินาที — รวมกับข้างบนแล้วยังอยู่ใน 10 วินาทีของ compose
+    await closeLogStore();
     await prisma.$disconnect();
     process.exit(0);
   };

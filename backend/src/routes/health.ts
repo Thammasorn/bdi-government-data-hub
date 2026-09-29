@@ -2,6 +2,7 @@ import { Router } from "../lib/async-route.js";
 
 import { pingDatabase } from "../db.js";
 import { choiceStatus } from "../lib/dataset-choices.js";
+import { logStoreStatus } from "../lib/log-store.js";
 import { pingStorage } from "../storage.js";
 
 export const healthRouter = Router();
@@ -33,9 +34,19 @@ healthRouter.get("/ready", async (_req, res) => {
    */
   const datasetChoices = choiceStatus();
 
+  /**
+   * log store (MongoDB) ก็รายงานไว้ให้เห็นแต่ **ไม่ร่วมตัดสิน** healthy ด้วยเหตุผลเดียวกัน และแรงกว่า: สคริปต์
+   * deploy รัน `curl -fsS /health/ready` ใต้ `set -e` ถ้า Mongo ล่มแล้วตัวนี้ตอบ 503 การ deploy ทั้งหมดจะหยุด
+   * กลางทาง ทั้งที่เว็บให้บริการได้ครบ
+   *
+   * อ่านจากสถานะที่ log-store.ts ตรวจไว้เบื้องหลังทุก 30 วินาที probe นี้จึงไม่รอ Mongo เลย และตอบแค่คำเดียว
+   * (up / down / disabled / over_quota) — endpoint นี้เปิดสาธารณะ ข้อความของ error อยู่ใน log ของ process
+   */
+  const logStore = logStoreStatus();
+
   const healthy = database.status === "up" && storage.status === "up";
   res.status(healthy ? 200 : 503).json({
     status: healthy ? "ok" : "degraded",
-    checks: { database, storage, datasetChoices },
+    checks: { database, storage, datasetChoices, logStore },
   });
 });

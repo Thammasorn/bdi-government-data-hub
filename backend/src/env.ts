@@ -53,11 +53,29 @@ function fingerprintList(name: string): string[] {
   return valid;
 }
 
+/**
+ * จำนวนบวกจาก env — ค่าที่อ่านไม่ออกใช้ค่าตั้งต้นแทนพร้อมคำเตือน ไม่ throw
+ *
+ * `Number("5GB")` ได้ NaN และการเทียบกับ NaN เป็นเท็จเสมอ เพดานที่ตั้งผิดรูปจึงกลายเป็น "ไม่มีเพดาน" เงียบ ๆ
+ * ค่านี้ไม่ใช่ความลับ พิมพ์ชื่อตัวแปรกับค่าตั้งต้นที่ใช้แทนได้
+ */
+function positiveNumber(name: string, fallback: number): number {
+  const raw = optional(name, "");
+  if (raw === "") return fallback;
+  const value = Number(raw);
+  if (Number.isFinite(value) && value > 0) return value;
+  console.warn(`[env] ${name}: ไม่ใช่จำนวนบวก — ใช้ค่าตั้งต้น ${fallback} แทน`);
+  return fallback;
+}
+
 /** อ่านก่อนสร้าง env เพราะ redirect_uri ของ ThaID ตั้งต้นจากค่านี้ */
 const APP_URL = optional("APP_URL", "http://localhost:3000").replace(/\/$/, "");
+/** อ่านก่อนสร้าง env เพราะค่าตั้งต้นบางตัว (เพดานของ log store) ต่างกันระหว่าง production กับที่อื่น */
+const NODE_ENV = optional("NODE_ENV", "development");
+const MONGODB_URI = optional("MONGODB_URI", "");
 
 export const env = {
-  nodeEnv: optional("NODE_ENV", "development"),
+  nodeEnv: NODE_ENV,
   port: Number(optional("PORT", "4000")),
   /**
    * รับได้หลาย origin คั่นด้วย comma เพราะตอนเปิดสู่สาธารณะยังต้องเข้าจาก
@@ -266,6 +284,31 @@ export const env = {
   support: {
     email: optional("SUPPORT_EMAIL", "d2share-support@bdi.or.th"),
     phone: optional("SUPPORT_PHONE", "02-480-8833"),
+  },
+
+  /**
+   * log store — MongoDB ที่เก็บสำเนาค้นหาได้ของ audit.audit_event และ error ของระบบ (lib/log-store.ts, docs/21)
+   *
+   * **ใช้ `optional()` เท่านั้น ห้าม `required()` / `requiredInProduction()`** — log store เป็นของเสริม และไฟล์นี้
+   * ถูก import โดย backend, delivery-worker, seed ทุกตัว และ job seed บน ACA ตัวแปรที่ขาดตัวเดียวต้องไม่ทำให้
+   * process ไหนบูตไม่ขึ้น ขาดแล้วผลคือ log store ปิด (`disabled`) เท่านั้น
+   */
+  logStore: {
+    /**
+     * สวิตช์ปิดคือ `LOG_STORE_ENABLED=false` — ปิดแล้วไม่โหลด driver ของ Mongo เลย ใช้ได้ทั้งตอน Mongo มีปัญหา
+     * และบน Azure ที่ยังไม่ได้เลือกบริการ ต้องมี URI ด้วยถึงจะเปิด: URI ว่างก็ถือว่าปิด ไม่ใช่ error
+     */
+    enabled: optional("LOG_STORE_ENABLED", "true") === "true" && MONGODB_URI !== "",
+    /** มีรหัสผ่านอยู่ข้างใน — ห้ามพิมพ์ลง log (lib/log-store.ts พิมพ์ได้แค่ชื่อฐานข้อมูล) */
+    uri: MONGODB_URI,
+    db: optional("MONGODB_DB", "bdi_logs"),
+    /**
+     * เพดานขนาดของ log store (MB ของ `storageSize`) — worker เทียบขนาดจริงกับค่านี้แล้วตั้งธง `overQuota` ใน
+     * relay_state ซึ่ง backend อ่านเป็นสถานะ `over_quota` (lib/log-store.ts) มีเพดานเพราะ /hdd1tb ที่ Mongo อยู่
+     * คือดิสก์เดียวกับ Postgres ของ production · 5 GB บน production 512 MB ที่อื่น · บน managed Mongo โควตาของ
+     * บริการเป็นตัวคุมอีกชั้น
+     */
+    maxMb: positiveNumber("LOG_STORE_MAX_MB", NODE_ENV === "production" ? 5120 : 512),
   },
 } as const;
 

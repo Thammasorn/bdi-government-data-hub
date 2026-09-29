@@ -17,6 +17,7 @@
 import { DeliveryStatus, PrismaClient } from "@prisma/client";
 
 import { runWithContext } from "../lib/context.js";
+import { closeLogStore, startLogStore } from "../lib/log-store.js";
 import { renderAndSend } from "./render.js";
 
 const prisma = new PrismaClient();
@@ -129,10 +130,17 @@ async function tick() {
 async function main() {
   console.log(`[delivery] เริ่มทำงาน — poll ทุก ${POLL_INTERVAL_MS} ms, retry สูงสุด ${MAX_ATTEMPTS} ครั้ง`);
 
+  /**
+   * log store (MongoDB) — ไม่ await โดยตั้งใจ: ลูปส่งอีเมลข้างล่างต้องเริ่มทันทีและต้องไม่ผูกกับ Mongo เลย
+   * startLogStore ไม่ reject และปิดอยู่ก็ไม่โหลด driver (ดู lib/log-store.ts)
+   */
+  void startLogStore({ service: "delivery-worker", maxPoolSize: 3 });
+
   let running = true;
   const stop = async (signal: string) => {
     console.log(`[delivery] ${signal} received, shutting down`);
     running = false;
+    await closeLogStore();
     await prisma.$disconnect();
     process.exit(0);
   };

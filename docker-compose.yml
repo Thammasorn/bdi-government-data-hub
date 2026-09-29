@@ -187,6 +187,14 @@ services:
       THAID_USE_PID: ${THAID_USE_PID:-true}
       THAID_REQUIRE_NONCE: ${THAID_REQUIRE_NONCE:-false}
       COOKIE_SECURE: ${COOKIE_SECURE:-}
+      # log store (MongoDB) — ดู lib/log-store.ts · สวิตช์ปิดคือ LOG_STORE_ENABLED=false (ค่าบูลีน ไม่ใช่การเว้น URI
+      # ให้ว่าง เพราะ `:-` ถือว่าค่าว่างคือไม่ได้ตั้ง แล้วเติม URI ตั้งต้นกลับมาให้เอง)
+      # backend ใช้ bdi_backend ซึ่งลบอะไรไม่ได้ · ชี้ Mongo ตัวอื่นด้วย MONGODB_BACKEND_URI
+      # **ชุดเดียวกันต้องอยู่ใน delivery-worker ข้างล่างด้วย** (ต่างกันแค่ user)
+      LOG_STORE_ENABLED: ${LOG_STORE_ENABLED:-true}
+      MONGODB_URI: ${MONGODB_BACKEND_URI:-mongodb://bdi_backend:${MONGO_BACKEND_PASSWORD:-dev-mongo-backend-change-me}@mongo:27017/${MONGODB_DB:-bdi_logs}?authSource=${MONGODB_DB:-bdi_logs}}
+      MONGODB_DB: ${MONGODB_DB:-bdi_logs}
+      LOG_STORE_MAX_MB: ${LOG_STORE_MAX_MB:-}
     ports:
       # ตรึงไว้ — โดเมนสาธารณะ bdi-api.thammasorn.org ชี้มาที่พอร์ตนี้
       # checkout อื่นให้ทับด้วย docker-compose.override.yml (new-dev.sh สร้างให้)
@@ -238,6 +246,12 @@ services:
       SUPPORT_PHONE: ${SUPPORT_PHONE:-02-480-8833}
       DELIVERY_POLL_INTERVAL_MS: ${DELIVERY_POLL_INTERVAL_MS:-15000}
       DELIVERY_MAX_ATTEMPTS: ${DELIVERY_MAX_ATTEMPTS:-5}
+      # log store — ชุดเดียวกับ backend แต่เป็น user bdi_worker (ลบได้ สำหรับ prune ตามอายุ) · ชี้ Mongo ตัวอื่นด้วย
+      # MONGODB_WORKER_URI · ไม่มี depends_on mongo ตรงนี้เช่นกัน: ลูปส่งอีเมลต้องไม่ผูกกับ log store
+      LOG_STORE_ENABLED: ${LOG_STORE_ENABLED:-true}
+      MONGODB_URI: ${MONGODB_WORKER_URI:-mongodb://bdi_worker:${MONGO_WORKER_PASSWORD:-dev-mongo-worker-change-me}@mongo:27017/${MONGODB_DB:-bdi_logs}?authSource=${MONGODB_DB:-bdi_logs}}
+      MONGODB_DB: ${MONGODB_DB:-bdi_logs}
+      LOG_STORE_MAX_MB: ${LOG_STORE_MAX_MB:-}
     volumes:
       - ./backend:/app
       - backend-node-modules:/app/node_modules
