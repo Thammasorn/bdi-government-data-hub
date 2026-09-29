@@ -23,6 +23,50 @@ const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const UUID_EXACT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
+ * ข้อความ error ของฐานข้อมูลที่ยก**แถวทั้งแถว**มา — ต้องตัดก่อนกฎอื่นทุกตัว เพราะในนั้นคือค่าจริงของทุกคอลัมน์
+ * (id ผู้กระทำ, before/after เป็น JSON, IP, UA, ชื่อ) ซึ่งตารางกวาดข้างล่างจับได้แค่บางรูป
+ *
+ * Postgres แนบ DETAIL มากับ error ที่ปฏิเสธแถว (`Failing row contains (…)` ของ CHECK/NOT NULL,
+ * `Key (email)=(…) already exists` ของ unique) และ Prisma ยกมาสองรูป — ลองกับ stack ที่รันอยู่แล้ว 2026-09-30:
+ *   - `PrismaClientUnknownRequestError` (INSERT/UPDATE ผ่าน model): Rust debug print
+ *     `PostgresError { code: "23514", message: "…", severity: "ERROR", detail: Some("Failing row contains (…)"), … }`
+ *   - `P2010` (raw query): ``Raw query failed. Code: `23514`. Message: `ERROR: …\nDETAIL: Failing row contains (…)` ``
+ *
+ * `message` ของ Postgres (ชื่อ constraint, ชื่อ relation) กับรหัส SQLSTATE เก็บไว้ — ใช้ไล่ปัญหาได้และไม่มีค่าของแถว
+ * รหัสถูกเขียนใหม่เป็น `SQLSTATE 23514` เพราะกฎ `code: "…"` ข้างล่างจะกลบมันเป็น `[redacted]`
+ * ตัดแล้วบรรทัดสุดท้ายของข้อความ (หัวเรื่องของ issue และ fingerprint — `headlineOf`) ก็ไม่มี id กับเวลาของแถวอีก
+ * error เดียวกันจึงรวมเป็น issue เดียว ไม่แตกตามแถว
+ *
+ * `(?:"\)|$)` — ข้อความที่ถูกตัดความยาวมาก่อนถึงนี่อาจไม่มีเครื่องหมายปิด ก็ยังตัดจนสุดข้อความ ไม่ปล่อยท่อนที่เหลือ
+ */
+const DATABASE_DETAIL_RULES: Array<[RegExp, string]> = [
+  [/\b(detail|hint): Some\("(?:[^"\\]|\\[\s\S])*(?:"\)|$)/g, "$1: [ตัดทิ้ง]"],
+  // ตาข่ายชั้นที่สอง: ถ้ารูปข้างบนไม่ตรง (Prisma เปลี่ยนวิธีพิมพ์ ข้อความเพี้ยน) ตัดตั้งแต่ตรงนั้นจนสุดข้อความ
+  [/\b(detail|hint): Some\("[\s\S]*$/g, "$1: [ตัดทิ้ง]"],
+  // DETAIL/HINT/CONTEXT ของ raw query อยู่บรรทัดของตัวเอง ค่าในแถวมีขึ้นบรรทัดใหม่ได้ — ตัดไปจนสุดข้อความ หรือจนถึง
+  // บรรทัด `at …` ของ stack ถ้ามีคนส่ง stack ทั้งก้อนมา
+  [/\n(?:DETAIL|HINT|CONTEXT|WHERE):(?:(?!\n\s+at )[\s\S])*/g, " (รายละเอียดของแถวตัดทิ้ง)"],
+  [/PostgresError \{ code: "([0-9A-Z]{5})",/g, "PostgresError { SQLSTATE $1,"],
+  [/(Raw query failed\.) Code: `([0-9A-Z]{5})`\./g, "$1 SQLSTATE $2."],
+  // เปลือก Rust ทั้งก้อนเหลือแค่รหัสกับข้อความ — ไม่งั้นหัวเรื่องของ issue (200 ตัว) ถูกตัดก่อนถึงชื่อ constraint
+  // รูปไม่ตรง (Prisma เปลี่ยนวิธีพิมพ์) ก็แค่ไม่ย่อ กฎข้างบนตัดค่าของแถวไปแล้ว
+  [
+    /ConnectorError\(ConnectorError \{ user_facing_error: None, kind: QueryError\(PostgresError \{ SQLSTATE ([0-9A-Z]{5}), message: "((?:[^"\\]|\\.)*)"[^{}]*\}\), transient: (?:true|false) \}\)/g,
+    "Postgres SQLSTATE $1: $2",
+  ],
+];
+
+/**
+ * ชื่อ key ที่ค่าของมันเป็นความลับ — ชื่อที่**ลงท้าย**ด้วยคำเหล่านี้ (`apiKey`, `access_token`, `newPassword`)
+ * `pwd` กับ `pin` สั้นจนเป็นท้ายคำธรรมดาได้ (`mapping`, `shipping`) จึงนับเฉพาะเมื่อเป็นทั้งคำหรือมี `_`/`-` นำหน้า
+ */
+const SECRET_KEY =
+  "[A-Za-z0-9_-]*(?:token|key|secret|passw(?:or)?d|passcode|passphrase|otp|code|state)|(?:[A-Za-z0-9_-]*[_-])?(?:pwd|pin)";
+/** key ที่ค่าเป็นวลีได้ (มีช่องว่าง จุลภาค) — ค่าที่ไม่มีเครื่องหมายคำพูดครอบถูกตัดไปจนสุดบรรทัด */
+const PHRASE_KEY =
+  "[A-Za-z0-9_-]*(?:secret|passw(?:or)?d|passcode|passphrase)|(?:[A-Za-z0-9_-]*[_-])?pwd";
+
+/**
  * ตารางกวาดข้อความอิสระ (plan §7.5) — ลำดับมีผล: userinfo ของ URI กับ JWT ก่อน (ไม่งั้นท่อนข้างในโดนกฎอื่นกินไปครึ่งเดียว)
  * แล้ว `key=value` แล้วอีเมล แล้วกฎตัวเลข/ความลับที่รันหลังกัน UUID ไว้แล้ว (`scrubText`)
  *
@@ -34,12 +78,17 @@ const BEFORE_UUID_RULES: Array<[RegExp, string]> = [
   [/(?<![A-Za-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/)[^\s/@"'<>]+@/gi, "$1***@"],
   [/(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{5,}(?:\.[A-Za-z0-9_-]*){0,2}/g, "[jwt]"],
   [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted]"],
-  // token=… · apiKey=… · "password":"…" · state=… · code=… — เก็บชื่อไว้ให้รู้ว่ามีค่า แต่ไม่เก็บค่า
-  // code ที่ไม่ใช่ความลับ (`code=P2002`) ก็โดนไปด้วย ยอมรับ (plan §7.5)
-  [
-    /(?<![A-Za-z0-9_-])([A-Za-z0-9_-]*(?:token|key|secret|passw(?:or)?d|otp|code|state))("?\s*[=:]\s*"?)([^\s&"',;}<>]+)/gi,
-    "$1$2[redacted]",
-  ],
+  // เก็บชื่อไว้ให้รู้ว่ามีค่า แต่ไม่เก็บค่า — code ที่ไม่ใช่ความลับ (`code=P2002`) ก็โดนไปด้วย ยอมรับ (plan §7.5)
+  // `"password":"ab,cd ef"` — ค่าในเครื่องหมายคำพูดวิ่งไปจนถึงเครื่องหมายปิดที่ไม่ได้ escape ไม่ใช่แค่ถึงจุลภาคหรือช่องว่าง
+  [new RegExp(`(?<![A-Za-z0-9_-])(${SECRET_KEY})("\\s*[:=]\\s*")((?:[^"\\\\]|\\\\[\\s\\S])*)`, "gi"), "$1$2[redacted]"],
+  // JSON ที่ถูก escape ซ้อนอยู่ในข้อความอีกชั้น — `{\"password\":\"ab,cd\"}` ค่าจบที่ `\"`
+  [new RegExp(`(?<![A-Za-z0-9_-])(${SECRET_KEY})(\\\\"\\s*[:=]\\s*\\\\")((?:[^"\\\\]|\\\\[^"])*)`, "gi"), "$1$2[redacted]"],
+  // `password: my secret phrase` — รหัสผ่านที่ไม่มีเครื่องหมายคำพูดครอบ ถึงสุดบรรทัด (หรือ `&` ของ query string)
+  [new RegExp(`(?<![A-Za-z0-9_-])(${PHRASE_KEY})(\\s*[=:]\\s*)([^\\r\\n&]+)`, "gi"), "$1$2[redacted]"],
+  // token=… · apiKey=… · state=… · code=… · pin=… — ค่าเป็นคำเดียว
+  [new RegExp(`(?<![A-Za-z0-9_-])(${SECRET_KEY})("?\\s*[=:]\\s*"?)([^\\s&"',;}<>]+)`, "gi"), "$1$2[redacted]"],
+  // `otp 482913` · `code 482913` — คั่นด้วยช่องว่าง นับเฉพาะเลข 4–8 หลัก: `status code 500` ต้องรอด
+  [/(?<![A-Za-z0-9_-])(otp|code|pin|passcode)(\s+)\d{4,8}(?!\d)/gi, "$1$2[redacted]"],
   [/(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g, "[email]"],
 ];
 
@@ -52,6 +101,8 @@ const LONG_RUN = /(?<![A-Za-z0-9_+-])[A-Za-z0-9_+-]{32,}={0,2}/g;
 const CID_RUN = /(?<!\d)\d(?:[- ]?\d){12}(?!\d)/g;
 /** เบอร์โทรไทย `0` ตามด้วยอีก 8–9 หลัก (ขีด/ช่องว่างคั่นได้) */
 const PHONE_RUN = /(?<!\d)0\d(?:[- ]?\d){7,8}(?!\d)/g;
+/** รูปสากล `+66` ตามด้วยเลขที่ตัด `0` ตัวหน้าแล้ว 8–9 หลัก (`+66812345678`, `+66 81-234-5678`, `+66 2 123 4567`) */
+const INTL_PHONE_RUN = /(?<![\d+])\+66[- ]?\d(?:[- ]?\d){7,8}(?!\d)/g;
 
 /** ตัวคั่นที่ไม่มีกฎไหนจับได้ (private use area) ใช้แทน UUID ระหว่างกวาด แล้วใส่คืนทีหลัง */
 const HOLD_OPEN = "\uE000";
@@ -63,17 +114,21 @@ const HELD = /\uE000(\d+)\uE001/g;
  *
  * | รูปแบบ | กลายเป็น |
  * |---|---|
+ * | `detail: Some("Failing row contains …")` / `DETAIL: …` ของ Postgres ที่ Prisma ยกมา | `detail: [ตัดทิ้ง]` |
  * | userinfo ใน URI (`postgresql://u:p@host`) | `postgresql://***@host` |
  * | JWT `eyJ…` | `[jwt]` |
  * | `Bearer …` / `Basic …` | `Bearer [redacted]` |
- * | `token=` `key=` `secret=` `password=` `otp=` `code=` `state=` (และ `"password":"…"`) | `…=[redacted]` |
+ * | `token=` `key=` `secret=` `password=` `pwd=` `pin=` `passcode=` `otp=` `code=` `state=` | `…=[redacted]` |
+ * | `"password":"ab,cd ef"` (ทั้งค่าจนถึงเครื่องหมายปิด) · `password: วลี มี ช่องว่าง` (จนสุดบรรทัด) | `…[redacted]` |
+ * | `otp 482913` / `code 482913` (เลข 4–8 หลักหลังช่องว่าง) | `otp [redacted]` |
  * | อีเมล | `[email]` |
  * | ฐานสิบหก/base64url ยาว 32 ตัวขึ้นไปที่มีตัวเลข (ยกเว้น UUID) | `[secret]` |
  * | เลข 13 หลัก / เลขบัตรแบบมีขีด | `[cid]` |
- * | `0` + 8–9 หลัก | `[phone]` |
+ * | `0` + 8–9 หลัก · `+66` + 8–9 หลัก | `[phone]` |
  */
 export function scrubText(text: string): string {
   let out = text.length > SCRUB_INPUT_MAX ? text.slice(0, SCRUB_INPUT_MAX) : text;
+  for (const [pattern, replacement] of DATABASE_DETAIL_RULES) out = out.replace(pattern, replacement);
   for (const [pattern, replacement] of BEFORE_UUID_RULES) out = out.replace(pattern, replacement);
 
   const held: string[] = [];
@@ -81,8 +136,20 @@ export function scrubText(text: string): string {
   out = out
     .replace(LONG_RUN, (run) => (/\d/.test(run) ? "[secret]" : run))
     .replace(CID_RUN, "[cid]")
+    .replace(INTL_PHONE_RUN, "[phone]")
     .replace(PHONE_RUN, "[phone]");
   return out.replace(HELD, (_all, index: string) => held[Number(index)] ?? "");
+}
+
+/**
+ * บรรทัดเดียวของ log ของ Prisma เอง (`prisma:error`, db.ts) — ข้อความเต็มของมันยกโค้ดรอบจุดที่เรียก และ DETAIL ของแถว
+ * ที่ Postgres ปฏิเสธมาทั้งแถว จึงตัด DETAIL ก่อน (ทั้งก้อน) แล้วค่อยหยิบบรรทัดสุดท้าย (สาเหตุจริง เหมือน `headlineOf`)
+ * แล้วกวาด ไม่ตัดความยาวก่อนตัด DETAIL: ถ้าตัดก่อน บรรทัดสุดท้ายที่เหลืออาจเป็นกลางแถวพอดี
+ */
+export function databaseLogLine(message: string): string {
+  let stripped = message;
+  for (const [pattern, replacement] of DATABASE_DETAIL_RULES) stripped = stripped.replace(pattern, replacement);
+  return scrubText(headlineOf("Prisma", stripped)).slice(0, 500);
 }
 
 // ------------------------------------------------------------------------------------ error object
@@ -131,6 +198,8 @@ function nameOf(err: unknown): string {
  *
  * `PrismaClientValidationError` เหลือบรรทัดแรกบรรทัดเดียว เพราะบรรทัดถัดไปคือ argument ทั้งก้อนที่ส่งให้ query
  * พร้อมค่า (อีเมล เลขบัตร ที่อยู่ …) — ตารางกวาดจับได้บางรูปเท่านั้น ตัดทิ้งทั้งท่อนแน่นอนกว่า
+ * error ที่ Postgres ปฏิเสธแถว (`PrismaClientUnknownRequestError`, `P2010`) ยกแถวมาใน DETAIL — `scrubText`
+ * ตัดท่อนนั้นทิ้งเป็นกฎแรก (`DATABASE_DETAIL_RULES`) จึงไม่ต้องมีสาขาของตัวเองที่นี่
  */
 function messageOf(err: unknown, max: number): string {
   let raw: string;
@@ -310,8 +379,21 @@ export function allowedHeaders(headers: Record<string, unknown>): Record<string,
  * `thaid_subject` คือ `sub` ของ DOPA ซึ่งเป็นเลขบัตร 13 หลักไม่ว่า THAID_USE_PID จะตั้งไว้อย่างไร
  */
 const CID_KEY = /cid$|nationalid|^pid$|^thaid_subject$/i;
-/** ข้อความอิสระในสำเนากิจกรรมที่ plan §7.6 ให้ปิดเลข 13 หลักข้างใน */
-const FREE_TEXT_KEY = /^(note|reason)$/i;
+
+/**
+ * เลข 13 หลักใน**ทุก**ค่าที่เป็นข้อความ ไม่ใช่แค่ `note` / `reason` อย่างที่ plan §7.6 เขียนไว้ — ช่องข้อความอิสระที่
+ * audit บันทึกมีอีกมาก (`notes`, `objectiveOther`, `dataFields`, `title`, ความเห็น) ผู้ตรวจพิมพ์เลขบัตรลง `notes`
+ * ของร่างคำขอแล้วเลขนั้นไปถึงทั้ง `activity` และ `error_events.extra.audit` ครบทั้ง 13 หลัก (2026-09-30)
+ * ตัวเลข (number) 13 หลักก็นับ — audit ส่งวันเวลามาเป็น ISO string (`plain()` ใน audit-fallback) ไม่ใช่ epoch ms
+ * จึงไม่มีอะไรถูกปิดผิดตัวในวันนี้ และ key ของ object ก็ผ่านกฎเดียวกัน (object ที่ใช้เลขบัตรเป็น key)
+ */
+function maskCidRuns(value: unknown): unknown {
+  if (typeof value === "string") return value.replace(CID_RUN, "[cid]");
+  if (typeof value === "number" && Number.isInteger(value) && Math.abs(value) >= 1e12 && Math.abs(value) < 1e13) {
+    return "[cid]";
+  }
+  return value;
+}
 
 function maskedCid(value: unknown): unknown {
   if (value === null || value === undefined) return value;
@@ -331,8 +413,11 @@ export function maskedTypedEmail(value: unknown): unknown {
 }
 
 /**
- * ปิดเลขบัตรตามชื่อ key (ทุกชั้น) และเลข 13 หลักใน `note` / `reason` — plan §7.6 ข้อที่ใช้ได้โดยไม่มี LOG_HASH_KEY
- * (key ค้นหา `cid#…` มากับงานสำเนา audit ใน step 6) อีเมลของบัญชี ชื่อ เบอร์ IP และ UA ไม่ถูกแตะ ตามที่ตัดสินไว้
+ * ปิดเลขบัตรในสิ่งที่จะออกไปเป็นสำเนากิจกรรม — plan §7.6 ข้อที่ใช้ได้โดยไม่มี LOG_HASH_KEY
+ * (key ค้นหา `cid#…` มากับงานสำเนา audit ใน step 6)
+ *   - key ที่ชื่อบอกว่าถือเลขบัตร (ทุกชั้น) → `{masked: "xxxxxxxxx1234"}` เหลือ 4 ตัวท้ายไว้เทียบกับคนได้
+ *   - เลข 13 หลักที่อยู่ในค่าอื่นทุกตัว → `[cid]` (`maskCidRuns`)
+ * อีเมลของบัญชี ชื่อ เบอร์ IP และ UA ไม่ถูกแตะ ตามที่ตัดสินไว้ (decision 10, plan §7.6)
  */
 export function maskForLogStore(value: unknown, depth = 0): unknown {
   if (depth > 8) return "[ลึกเกิน]";
@@ -341,13 +426,13 @@ export function maskForLogStore(value: unknown, depth = 0): unknown {
   if (proto === Object.prototype || proto === null) {
     return Object.fromEntries(
       Object.entries(value as object).map(([k, v]) => {
-        if (CID_KEY.test(k)) return [k, maskedCid(v)];
-        if (FREE_TEXT_KEY.test(k) && typeof v === "string") return [k, v.replace(CID_RUN, "[cid]")];
-        return [k, maskForLogStore(v, depth + 1)];
+        const key = k.replace(CID_RUN, "[cid]");
+        if (CID_KEY.test(k)) return [key, maskedCid(v)];
+        return [key, maskForLogStore(v, depth + 1)];
       }),
     );
   }
-  return value;
+  return maskCidRuns(value);
 }
 
 /** ใช้ใน lib/error-capture.ts: id ที่หน้าตาเป็น UUID ให้ผ่าน ที่เหลือถือเป็นข้อความอิสระ */

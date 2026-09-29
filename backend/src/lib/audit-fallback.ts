@@ -64,12 +64,23 @@ function plain(value: unknown): unknown {
   }
 }
 
+/** `actor_type` ที่ logAudit จะเขียน — ค่าที่ผู้เรียกบอกมา ไม่งั้น USER ถ้ารู้ตัวผู้กระทำ ไม่งั้น SYSTEM */
+function actorTypeOf(input: AuditInput, actorId: string | null): string {
+  return input.actorType ?? (actorId ? "USER" : "SYSTEM");
+}
+
 function keysOf(value: unknown): string[] {
   return value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value) : [];
 }
 
-/** input ของแถว audit ในรูปที่ออกไปถึง log store ได้ — plan §7.6 */
-function maskedInput(input: AuditInput): Record<string, unknown> {
+/**
+ * input ของแถว audit ในรูปที่ออกไปถึง log store ได้ — plan §7.6
+ *
+ * ผู้กระทำคือคนที่ `logAudit()` หามาได้ (`actorId`: input ก่อน แล้วค่อยบริบทของคำขอ) ไม่ใช่ `input.actorId` เฉย ๆ —
+ * แถวที่มาจาก session ส่วนใหญ่ไม่ได้ส่ง actorId มา event กับเอกสาร activity ของความล้มเหลวเดียวกันเคยบอกผู้กระทำ
+ * ไม่ตรงกัน (null กับ id จริง) ชนิดของผู้กระทำก็คิดแบบเดียวกับที่ logAudit จะเขียนลง Postgres
+ */
+function maskedInput(input: AuditInput, actorId: string | null): Record<string, unknown> {
   const metadata = (maskForLogStore(plain(input.metadata ?? null)) ?? null) as Record<string, unknown> | null;
   // อีเมลที่**พิมพ์เอง**ตอนล็อกอินไม่ผ่าน อาจไม่ใช่ของบัญชีไหนเลย — ปิดไว้ อีเมลของบัญชีในที่อื่นเก็บตามเดิม
   if (input.action === "LOGIN_FAILED" && metadata && "email" in metadata) {
@@ -80,8 +91,8 @@ function maskedInput(input: AuditInput): Record<string, unknown> {
     subjectType: input.subjectType,
     subjectId: input.subjectId ?? null,
     organizationId: input.organizationId ?? null,
-    actorId: input.actorId ?? null,
-    actorType: input.actorType ?? null,
+    actorId,
+    actorType: actorTypeOf(input, actorId),
     result: input.result ?? "SUCCESS",
     before: maskForLogStore(plain(input.before)),
     after: maskForLogStore(plain(input.after)),
@@ -101,7 +112,7 @@ export function reportAuditWriteFailure(
   known: { actorId: string | null; actorSnapshot?: Record<string, unknown>; userAgent: string | null },
 ): void {
   try {
-    const masked = maskedInput(input);
+    const masked = maskedInput(input, known.actorId);
     const eventId = captureError(err, { tag: "audit.write-failed", extra: { audit: masked } });
 
     const ctx = currentContext();
@@ -118,7 +129,7 @@ export function reportAuditWriteFailure(
       category: categoryOf(input.action),
       result: masked.result,
       actor: {
-        type: input.actorType ?? (known.actorId ? "USER" : "SYSTEM"),
+        type: actorTypeOf(input, known.actorId),
         id: known.actorId,
         name: typeof snapshot.actor_name === "string" ? snapshot.actor_name : null,
         roles: Array.isArray(snapshot.actor_roles) ? snapshot.actor_roles : [],
