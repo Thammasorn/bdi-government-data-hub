@@ -87,6 +87,49 @@ services:
       retries: 5
       start_period: 20s
 
+  # MongoDB — log store: สำเนาค้นหาได้ของ audit.audit_event และที่เก็บ error ของระบบ · ดู docs/21
+  #
+  # เป็นของเสริม ไม่ใช่ของที่ระบบขาดไม่ได้ จึง**ไม่ผูกพอร์ตออกโฮสต์ และห้ามมี service ไหน depends_on ตัวนี้**:
+  # mongo ล่ม ขึ้นไม่ได้ หรือชนอะไรตอน deploy แล้วเว็บต้องยังขึ้น (เหตุ azurite พอร์ต 9000 เคยทำเว็บสาธารณะล่มมาแล้ว)
+  # backend รายงานสถานะไว้ที่ /health/ready แต่ไม่นับรวมใน healthy · ปิดทั้งหมดด้วย LOG_STORE_ENABLED=false
+  #
+  # cache ของ WiredTiger ตั้งเองเสมอ: ค่าตั้งต้นคือครึ่งหนึ่งของ RAM เครื่อง *ต่อหนึ่ง instance* และเครื่องนี้รันหลาย
+  # stack พร้อมกัน (prod overlay ให้ 0.5 GB) · log ของคอนเทนเนอร์มีเพดาน เพราะ / กับ /hdd1tb เคยเต็มมาแล้ว
+  #
+  # รหัสผ่านทั้งสามใช้**ครั้งเดียวตอน volume ว่าง** (init/01-users.js) — เปลี่ยนใน .env ทีหลังไม่มีผลกับ volume เดิม
+  # ค่าตั้งต้นเป็นค่าตัวอย่างสาธารณะ ซึ่ง prod overlay สั่งให้ entrypoint.sh ไม่ยอมเริ่มถ้ายังใช้อยู่
+  # รหัสผ่านของ backend/worker ถูกแทนลง URI ตรง ๆ ต้องเป็นฐานสิบหก (`openssl rand -hex 32`)
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    entrypoint: ["sh", "/opt/bdi-mongo/entrypoint.sh"]
+    command: ["mongod", "--quiet", "--wiredTigerCacheSizeGB", "0.25"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-bdi}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-dev-mongo-root-change-me}
+      MONGO_BACKEND_PASSWORD: ${MONGO_BACKEND_PASSWORD:-dev-mongo-backend-change-me}
+      MONGO_WORKER_PASSWORD: ${MONGO_WORKER_PASSWORD:-dev-mongo-worker-change-me}
+      MONGODB_DB: ${MONGODB_DB:-bdi_logs}
+    expose:
+      - "27017"
+    volumes:
+      - mongo-data:/data/db
+      - ./mongo:/opt/bdi-mongo:ro
+      - ./mongo/init:/docker-entrypoint-initdb.d:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      # ping ไม่ต้อง login — บอกแค่ว่า mongod รับคำสั่งแล้ว ผู้ใช้ของแอปดูที่ logStore ใน /health/ready
+      test: ["CMD", "mongosh", "--quiet", "--norc", "--eval", "quit(db.adminCommand('ping').ok ? 0 : 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      start_interval: 5s
+
   backend:
     build:
       context: ./backend
@@ -226,6 +269,8 @@ services:
 volumes:
   postgres-data:
   azurite-data:
+  # log store — `down -v` ลบทิ้ง ที่ dev ไม่เป็นไร แต่ที่ main/ คือ log ของ production ห้ามใช้ -v ที่นั่น
+  mongo-data:
   backend-node-modules:
   frontend-node-modules:
   frontend-next-cache:
