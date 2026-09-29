@@ -367,8 +367,10 @@ authRouter.post("/thaid/callback", async (req, res) => {
     identity = await resolveIdentity(parsed.data.code, operation.requestNonce);
   } catch (err) {
     const code = err instanceof ThaidError ? err.code : "unexpected";
+    // failThaidOperation() กวาดก่อนเขียนลง integration_operation — ที่นี่ไม่พิมพ์มันดิบ ๆ
     const detail = err instanceof Error ? err.message : String(err);
-    console.error(`[thaid] ${code}: ${detail}`);
+    // ข้อความเต็ม (error_description ของ DOPA, ข้อความของตัวตรวจ JWT) อยู่ในบรรทัด [capture] ถัดไปที่กวาดแล้ว
+    console.error(`[thaid] ${code} — ดูบรรทัด [capture] ถัดไป`);
     /**
      * nonce ที่ไม่ตรงคือ id_token ที่ไม่ได้ออกให้คำขอนี้ — ผู้ใช้ไม่ได้ทำอะไรผิด แต่ก็ไม่ใช่ระบบเราล่ม เก็บเป็น warning
      * ที่เหลือ (ThaID ไม่ตอบ, แลก code ไม่ผ่าน, id_token เสีย) คือยืนยันตัวตนไม่ได้ทั้งที่ผู้ใช้ทำถูกทุกขั้น

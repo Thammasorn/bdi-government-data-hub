@@ -1571,6 +1571,20 @@ Two API base URLs, and they are not interchangeable:
   which body-parser raises as `createError(400, zlibError)` with no `type`, so it still answered
   500 and printed a stack. Other 4xx branches of that middleware (`DocumentRenderError`, Prisma
   codes mapped to 409/400/404) do print, on purpose; the silence is for body errors only.
+- **Never hand an error, or its `message`, to `console.*` — call `captureError()`**
+  (`lib/error-capture.ts`). It prints one scrubbed line carrying the event id, with or without the
+  log store, and a `console` line beside it should say only where it happened and point at that
+  `[capture]` line. Raw error text carries data. When Postgres refuses a row, Prisma quotes the
+  whole row in `detail: Some("Failing row contains (…)")`: actor id, before/after JSON, IP, UA and
+  name. A raw query quotes it as a `DETAIL:` line. Nodemailer quotes rejected recipient addresses,
+  and DOPA's `error_description` is theirs to fill. Two sources print on their own, and both are
+  closed now. Prisma's `log: ["error"]` printed the whole message before the capture ran, so
+  `db.ts` takes its log as events and prints `databaseLogLine()`. Express's finalhandler prints
+  `err.stack` raw, so the error middleware never passes an error on with `next(err)`. After headers
+  are sent, it destroys the socket itself (checked 2026-09-30, with a `CHECK (false) NOT VALID`
+  probe constraint and a route that wrote before throwing). `scrubText()` in `lib/redact.ts` cuts
+  the database detail first, before any other rule. Its other rules are a backstop, not a licence to
+  print.
 
 
 ## Notion

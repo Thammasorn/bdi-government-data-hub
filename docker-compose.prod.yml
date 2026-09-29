@@ -3,7 +3,9 @@
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 #
 # ต่างจากโหมด dev ตรงที่:
-#   - build เป็นบันเดิลจริง ไม่มี source map / HMR / stack trace เต็ม ๆ หลุดออกไป
+#   - build เป็นบันเดิลจริง ไม่มี HMR และไม่มี source map ส่งถึงเบราว์เซอร์ — backend รันด้วย
+#     NODE_OPTIONS=--enable-source-maps (backend/Dockerfile) ให้ stack ใน log store ชี้ .ts แต่ไฟล์ .map อยู่ใน
+#     image เท่านั้น ไม่มีทางไหนเสิร์ฟออกไป และ stack ไม่เคยอยู่ในคำตอบของ API
 #   - ไม่ bind-mount source เข้าไป โค้ดที่รันคือสิ่งที่ build ไว้เท่านั้น
 #   - รันด้วย user `node` ไม่ใช่ root
 #

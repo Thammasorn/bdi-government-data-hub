@@ -213,7 +213,8 @@ async function main() {
     try {
       await tick();
     } catch (err) {
-      console.error("[delivery] รอบนี้ล้มเหลว:", err);
+      // ไม่พิมพ์ `err` ดิบ — error ของ Prisma/SMTP ยกแถวหรือที่อยู่ผู้รับมาได้ captureError พิมพ์ฉบับที่กวาดแล้ว
+      console.error("[delivery] รอบนี้ล้มเหลว — ดูบรรทัด [capture] ถัดไป");
       captureError(err, { tag: "delivery.tick" });
     }
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));

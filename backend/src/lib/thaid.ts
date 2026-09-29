@@ -176,10 +176,7 @@ export async function revokeToken(
   try {
     await postForm("/api/v2/oauth2/revoke/", { token, token_type_hint: hint });
   } catch (err) {
-    console.warn(
-      `[thaid] revoke ${hint} ไม่สำเร็จ (ข้ามไป):`,
-      err instanceof Error ? err.message : err,
-    );
+    console.warn(`[thaid] revoke ${hint} ไม่สำเร็จ (ข้ามไป) — ดูบรรทัด [capture] ถัดไป`);
     // ไม่กระทบผู้ใช้ แต่ถ้าเกิดทุกครั้งแปลว่า token ที่ ThaID ออกให้ค้างอยู่ทุกใบ — เก็บไว้ให้เห็นแนวโน้ม
     captureError(err, { level: "warning", tag: "thaid.revoke" });
   }

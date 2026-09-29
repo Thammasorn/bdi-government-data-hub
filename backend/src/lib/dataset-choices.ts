@@ -149,9 +149,10 @@ async function readRows(): Promise<Map<ChoiceFieldKey, ChoiceRow[]> | null> {
      * ครั้งแรกของ stack ใหม่ ไม่ใช่เหตุให้ API ทั้งตัวไม่ขึ้น
      */
     const code = error instanceof Prisma.PrismaClientKnownRequestError ? error.code : "";
+    // ไม่พิมพ์ข้อความของ Prisma เอง (ยกโค้ดรอบจุดที่เรียกและรายละเอียดของ Postgres มา) — บรรทัด [capture] ถัดไปคือฉบับที่กวาดแล้ว
     console.warn(
       `[dataset-choices] อ่านตาราง administration.dataset_choice ไม่ได้${code ? ` (${code})` : ""} — ` +
-        `ใช้ค่าตั้งต้นในโค้ดไปก่อน: ${error instanceof Error ? error.message : String(error)}`,
+        "ใช้ค่าตั้งต้นในโค้ดไปก่อน ดูบรรทัด [capture] ถัดไป",
     );
     captureError(error, { level: "warning", tag: "dataset-choices.read-failed" });
     return null;

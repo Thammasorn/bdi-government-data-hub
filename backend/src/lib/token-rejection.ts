@@ -58,6 +58,7 @@ import type { Request } from "express";
 import { AuditSubject, logAudit, type AuditActionCode, type AuditSubjectType } from "./audit.js";
 import { tokenFingerprint } from "./auth.js";
 import { currentContext, parseClientIp, runWithContext } from "./context.js";
+import { captureError } from "./error-capture.js";
 
 const WINDOW_MS = 10 * 60_000;
 const SWEEP_MS = 60_000;
@@ -421,7 +422,8 @@ export function createTokenRejectionRecorder(
         });
       } catch (err) {
         // การบันทึกต้องไม่ทำให้คำตอบ 401 พัง — logAudit กลืน error ของตัวเองอยู่แล้ว ที่นี่กันส่วนที่เหลือ
-        console.error("[audit] บันทึกการปฏิเสธ token ไม่สำเร็จ:", err);
+        // captureError ไม่ throw และพิมพ์บรรทัดที่กวาดแล้ว — ไม่พิมพ์ `err` ดิบ
+        captureError(err, { tag: "audit.token-rejection" });
       }
     },
   };

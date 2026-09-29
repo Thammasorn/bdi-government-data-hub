@@ -185,17 +185,19 @@ function routeKey(req: Request): string {
   return `${req.method} ${currentContext()?.route ?? "-"}`;
 }
 
-app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
   /**
-   * ส่งหัวคำตอบไปแล้ว (route ที่เริ่มเขียน body แล้วค่อยล้ม) — ตอบใหม่ไม่ได้ ส่งต่อให้ตัวจัดการของ Express
-   * ซึ่งปิดการเชื่อมต่อ ไม่งั้น `res.status()` ข้างล่างจะ throw ซ้อนเข้าไปอีกชั้น สตรีมไฟล์แนบที่ขาดกลางทาง
-   * **ไม่** มาถึงที่นี่: `streamAttachment()` ใช้ `pipe()` ซึ่งไม่ส่ง error ต่อให้ `next`
+   * ส่งหัวคำตอบไปแล้ว (route ที่เริ่มเขียน body แล้วค่อยล้ม หรือตอบเสร็จแล้วค่อย throw) — ตอบใหม่ไม่ได้ และ
+   * `res.status()` ข้างล่างจะ throw ซ้อนเข้าไปอีกชั้น เก็บ (captureError พิมพ์บรรทัดที่กวาดแล้วหนึ่งบรรทัด) แล้วปิดการ
+   * เชื่อมต่อเองถ้าคำตอบยังค้างครึ่งทาง ผู้เรียกจะได้ไม่รอ body ที่ไม่มีวันมาครบ
    *
-   * ตัวจัดการของ Express พิมพ์ stack ต่อท้ายให้เองด้วย (`logerror` ของ finalhandler) ที่นี่จึงเก็บอย่างเดียว
+   * **ไม่ส่งต่อ `next(err)`** ให้ตัวจัดการของ Express อย่างที่เคยทำ: finalhandler ของมันพิมพ์ `err.stack` ดิบ
+   * (`logerror`) ก่อนปิด socket และ stack ดิบของ Prisma ยกแถวทั้งแถวมาได้ — ที่นี่ทำสิ่งเดียวกับที่มันทำ (ทำลาย socket)
+   * โดยไม่พิมพ์ สตรีมไฟล์แนบที่ขาดกลางทาง**ไม่**มาถึงที่นี่: `streamAttachment()` ใช้ `pipe()` ซึ่งไม่ส่ง error ต่อให้ `next`
    */
   if (res.headersSent) {
     captureError(err, { req, status: res.statusCode, tag: "http.after-headers-sent" });
-    next(err);
+    if (!res.writableEnded) res.destroy();
     return;
   }
 
@@ -342,7 +344,8 @@ async function main() {
   // Best-effort: don't block startup if Azure Blob Storage is briefly unavailable —
   // /health/ready will report it.
   await ensureContainer().catch((err: unknown) => {
-    console.warn(`[startup] could not ensure container: ${err instanceof Error ? err.message : String(err)}`);
+    // ข้อความของ Azure SDK ยก URL ของบัญชีมาได้ — บรรทัด [capture] ถัดไปคือฉบับที่กวาดแล้ว
+    console.warn("[startup] could not ensure container — ดูบรรทัด [capture] ถัดไป");
     captureError(err, { level: "warning", tag: "storage.ensure-container" });
   });
 

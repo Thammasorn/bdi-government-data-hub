@@ -2171,7 +2171,7 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
         });
       } catch (err) {
         documentRendered = false;
-        console.error("[dataset] สร้างแบบนำส่งข้อมูลฉบับลงนามไม่สำเร็จ", err);
+        console.error("[dataset] สร้างแบบนำส่งข้อมูลฉบับลงนามไม่สำเร็จ — ดูบรรทัด [capture] ถัดไป");
         // การลงนาม commit ไปแล้ว คำขอตอบ 200 — ถ้าไม่เก็บตรงนี้ เอกสารฉบับลงนามที่ขาดไปจะไม่มีใครเห็นนอกจาก docker logs
         captureError(err, { req, tag: "render.dataset-document-after-commit" });
       }

@@ -2950,7 +2950,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
         });
       } catch (err) {
         agreementRendered = false;
-        console.error("[organizations] สร้างเอกสารข้อตกลงฉบับลงนามไม่สำเร็จ", err);
+        console.error("[organizations] สร้างเอกสารข้อตกลงฉบับลงนามไม่สำเร็จ — ดูบรรทัด [capture] ถัดไป");
         // การลงนาม commit ไปแล้ว คำขอตอบ 200 — ถ้าไม่เก็บตรงนี้ เอกสารฉบับลงนามที่ขาดไปจะไม่มีใครเห็นนอกจาก docker logs
         captureError(err, { req, tag: "render.agreement-after-commit" });
       }
@@ -3256,7 +3256,8 @@ async function ensureApproverAccount(
      *
      * ไม่มีใคร await สัญญานี้ ถ้าไม่ดักไว้ SMTP ที่ล้มคือ unhandled rejection ซึ่ง Node 22 ฆ่าทั้งโปรเซส
      * พร้อมคำขออื่นที่ค้างอยู่ (Traps ใน CLAUDE.md) — คำเชิญที่ส่งไม่ถึงแก้ได้ด้วย resend ส่วนโปรเซสที่ตาย
-     * แก้ไม่ได้ พิมพ์แค่ข้อความของ error ไม่ใช่ทั้งก้อน
+     * แก้ไม่ได้ ไม่พิมพ์ข้อความของ error เอง: ข้อความของ nodemailer ยกที่อยู่ผู้รับที่ถูกปฏิเสธมาได้ — captureError พิมพ์
+     * ฉบับที่กวาดแล้ว
      */
     void sendInvitationEmail(email, issued.key, {
       roleLabel: ROLE_LABELS[ROLE_CODES.ORGANIZATION_APPROVER],
@@ -3265,10 +3266,7 @@ async function ensureApproverAccount(
       expiresAt: issued.record.expiresAt,
       internal: false,
     }).catch((err: unknown) => {
-      console.error(
-        "[organizations] ส่งอีเมลคำเชิญผู้มีอำนาจกระทำการแทนไม่สำเร็จ:",
-        err instanceof Error ? err.message : String(err),
-      );
+      console.error("[organizations] ส่งอีเมลคำเชิญผู้มีอำนาจกระทำการแทนไม่สำเร็จ — ดูบรรทัด [capture] ถัดไป");
       // ผู้มีอำนาจฯ ไม่ได้คีย์ และไม่มีใครรู้จนกว่าเขาจะโทรมาถาม — แก้ได้ด้วย resend ถ้ามีคนเห็น
       captureError(err, { tag: "mail.approver-invitation" });
     });
