@@ -147,11 +147,17 @@ function connectedClient(): Promise<MongoClient> {
   if (!connecting) {
     connecting = (async () => {
       const { MongoClient } = await loadDriver();
-      const fresh = new MongoClient(env.logStore.uri, {
-        ...CLIENT_TIMEOUTS,
-        maxPoolSize,
-        appName: `bdi-${service}`,
-      });
+      let fresh: MongoClient;
+      try {
+        fresh = new MongoClient(env.logStore.uri, {
+          ...CLIENT_TIMEOUTS,
+          maxPoolSize,
+          appName: `bdi-${service}`,
+        });
+      } catch (err) {
+        // constructor คือที่ driver แยก connection string — ข้อความจากตรงนี้ห้ามพิมพ์ตรง ๆ (describe)
+        throw new UriRejected(err);
+      }
       // driver ส่ง 'error' ของ topology ต่อมาที่ client (เช่น MongoCompatibilityError เมื่อ server เก่าหรือใหม่เกินรุ่น
       // ที่ driver คุยได้ — lib/sdam/topology.js) และ EventEmitter ที่ไม่มีใครฟัง 'error' จะ throw ออกมาเป็น
       // uncaught exception ซึ่งพา process ล่มทั้งตัว ฟังไว้ให้เหลือแค่สถานะ down
@@ -229,12 +235,15 @@ function setState(status: LogStoreStatus, error: string | null) {
 }
 
 /**
- * รหัสผ่านใน URI ยังเป็นค่าตัวอย่างของ dev (`dev-…` หรือ `…change-me`) — กติกาเดียวกับ mongo/entrypoint.sh
- * และ mongo/init/01-users.js ที่ไม่ยอมเริ่ม/ไม่ยอมสร้าง user บน production
+ * รหัสผ่านใน URI ยังเป็นค่าตัวอย่างของ dev (`dev-…` หรือ `…change-me`)
+ *
+ * ใช้แค่ข้อนี้ข้อเดียวร่วมกับ mongo/entrypoint.sh และ mongo/init/01-users.js สองไฟล์นั้นยังปฏิเสธรหัสผ่านว่าง
+ * และอักขระนอก [A-Za-z0-9._~-] ด้วย เพราะมันตรวจตัวแปร MONGO_*_PASSWORD ก่อนถูกแทนลงใน URI ส่วนที่นี่เห็น URI
+ * ที่ประกอบเสร็จหรือเขียนเองแล้ว: URI ที่ไม่มีรหัสผ่าน (managed Mongo ที่ใช้ identity แทน) ถูกต้อง และอักขระพิเศษที่
+ * encode เป็น %xx แล้วก็ถูกต้อง
  *
  * เตือนเฉพาะ production แบบเดียวกับคำเตือน ADMIN_API_TOKEN ใน index.ts: เตือน ไม่ใช่ปฏิเสธ เพราะ log store
  * เป็นของเสริมและ deploy ต้องไม่ทำให้ process วนรีสตาร์ต ไม่พิมพ์ค่าหรือความยาวของรหัสผ่าน
- * URI ที่ไม่มีรหัสผ่านเลย (managed Mongo ที่ใช้ identity แทน) ไม่เข้าข่าย
  */
 function warnIfDevPassword() {
   if (env.nodeEnv !== "production") return;
@@ -258,11 +267,10 @@ function causeKey(error: string): string {
  * รหัสผ่านใน `mongodb://user:pass@…` ตามที่ driver เองแยก หรือ null ถ้าไม่มี (คืนทั้งแบบดิบใน URI และแบบถอด %xx)
  *
  * แยกแบบเดียวกับ HOSTS_REGEX ของ mongodb-connection-string-url: รหัสผ่านคือทุกตัวหลัง `user:` จนถึง `@` ตัวแรก
- * `/` ที่ไม่ได้ encode จึงนับเป็นรหัสผ่านด้วย — ถ้าหยุดที่ `/` รหัสผ่านอย่าง `Sekr3t/Pw` จะหาไม่เจอและไม่ถูกลบจาก
- * ข้อความ ไม่ใช้ `new URL` เพราะ URI หลาย host แยกไม่ได้
+ * `/` ที่ไม่ได้ encode จึงนับเป็นรหัสผ่านด้วย ไม่ใช้ `new URL` เพราะ URI หลาย host แยกไม่ได้
  */
 function uriPassword(uri: string): { raw: string; decoded: string } | null {
-  const match = /^mongodb(?:\+srv)?:\/\/[^:@]*:([^@]*)@/.exec(uri);
+  const match = /^mongodb(?:\+srv)?:\/\/[^:@]*:([^@]*)@/i.exec(uri);
   const raw = match?.[1];
   if (!raw) return null;
   try {
@@ -273,24 +281,88 @@ function uriPassword(uri: string): { raw: string; decoded: string } | null {
 }
 
 /**
+ * `new MongoClient()` ปฏิเสธ connection string — ห่อ error เดิมไว้ให้ describe() รู้ว่ามาจากการแยก URI
+ * ซึ่งเป็นที่เดียวที่พบว่า driver รุ่นนี้ยก URI (ทั้งเส้นหรือท่อนหลัง `user:`) มาใส่ข้อความ
+ */
+class UriRejected extends Error {
+  constructor(readonly original: unknown) {
+    super("MONGODB_URI rejected by the driver");
+  }
+}
+
+/**
+ * ข้อความของ driver ตอนแยก URI ไม่ได้ ที่เป็นประโยคตายตัว ไม่มีส่วนไหนของ URI ปน — พิมพ์ได้ (เทียบทั้งประโยค)
+ * ข้อความอื่นของขั้นนี้ไม่พิมพ์ รวมถึงข้อความที่ driver รุ่นหน้าเพิ่มหรือเปลี่ยนถ้อยคำ
+ * ที่มา: mongodb-connection-string-url 3.0 (ConnectionString) และ decodeURIComponent ของ %xx ที่เสีย
+ */
+const FIXED_PARSE_MESSAGES = new Set([
+  'Invalid scheme, expected connection string to start with "mongodb://" or "mongodb+srv://"',
+  "Password contains unescaped characters",
+  "URI contained empty userinfo section",
+  "URI malformed",
+  "mongodb+srv URI cannot have multiple service names",
+  "mongodb+srv URI cannot have port number",
+]);
+
+/**
+ * URI ที่ตั้งไว้มี `@` เกินหนึ่งตัว — ข้อความของ driver ทุกขั้นอาจมีท่อนหนึ่งของรหัสผ่าน (describe)
+ * นับทั้งเส้น ไม่หยุดที่ `?`: รหัสผ่าน `pa@ss?x` ทำให้ driver อ่าน `ss` เป็นชื่อ host และ `?x@…` เป็น query
+ * `@` ที่อยู่ใน query จริง ๆ ก็ถูกนับด้วย — ผลคือไม่ได้ข้อความละเอียดของ driver ไม่ใช่รหัสผ่านรั่ว
+ */
+const URI_HAS_EXTRA_AT = (env.logStore.uri.match(/@/g)?.length ?? 0) > 1;
+
+/**
  * userinfo ของ connection string ใดก็ตามที่อยู่ในข้อความ — ถึง `@` ตัวสุดท้ายก่อนช่องว่างหรือเครื่องหมายคำพูด
- * driver ยก URI ทั้งเส้นมาในเครื่องหมายคำพูดตอนแยกไม่ได้ (`Protocol and host list are required in "…"`)
+ * driver รุ่นนี้ยก URI มาเฉพาะตอนแยก URI ซึ่ง describe() ไม่พิมพ์อยู่แล้ว ชั้นนี้กันไว้เผื่อรุ่นหน้า
  */
 const URI_USERINFO = /(mongodb(?:\+srv)?:\/\/[^:@\s"']*:)[^\s"']*@/gi;
 
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
- * ข้อความของ error สำหรับ log — ลบรหัสผ่านสองชั้น แล้วจำกัดความยาว
+ * ข้อความของ error สำหรับ log — แยกตามที่มา เพราะ driver ดัดรหัสผ่านก่อนยกมาหลายแบบจนตามลบทีหลังไม่ครบ
  *
- *   1. userinfo ของ URI ใด ๆ ในข้อความเป็น `user:***@` — ไม่ต้องพึ่งว่าแยกรหัสผ่านของเราออกมาได้ถูก
- *   2. รหัสผ่านของ URI ที่ตั้งไว้ ทุกรูปที่อาจโผล่ (ดิบ ถอด %xx แล้ว encode ใหม่) — เผื่อ driver ยกมาโดยไม่มี URI ล้อม
+ *   1. แยก URI ไม่ได้ (UriRejected): driver ยก URI หรือบางส่วนมาในหลายรูป — ทั้งเส้นในเครื่องหมายคำพูด
+ *      (`Protocol and host list are required in "…"`), ต่อท้าย `Invalid URL:`, และท่อนหลัง `user:` ที่แทนช่องว่าง
+ *      ด้วย %20 (`Unable to parse bdi_backend:Sek%20r3t with URL` เมื่อ URI ไม่มี `@`) จึงพิมพ์แค่ชื่อ error
+ *      กับประโยคใน FIXED_PARSE_MESSAGES
+ *   2. URI มี `@` เกินหนึ่งตัว: driver ถือว่ารหัสผ่านจบที่ `@` ตัวแรก แล้วอ่านท่อนถัดไปเป็นชื่อ host ซึ่ง error ตอนต่อ
+ *      ยกมา — ตัวพิมพ์เล็กด้วย (`getaddrinfo ENOTFOUND r3tpw`, `querySrv ENOTFOUND _mongodb._tcp.r3tPw`)
+ *      จึงพิมพ์แค่ชื่อ error กับวิธีแก้
+ *   3. นอกนั้น (แยก URI ผ่าน และมี `@` ตัวเดียว) รหัสผ่านอยู่ใน userinfo เท่านั้น ซึ่ง error ตอนต่อ/login/ping
+ *      ไม่ยกมา ข้อความจึงพิมพ์ได้หลังลบสองชั้นกันไว้ (ไม่สนตัวพิมพ์เล็กใหญ่): userinfo ของ URI ใด ๆ ในข้อความ
+ *      และรหัสผ่านของ URI ที่ตั้งไว้ในรูปดิบ ถอด %xx แล้ว และ encode ใหม่
+ * ข้อ 1 กับ 2 ปิดทุกทางที่พบว่า driver รุ่นนี้ (mongodb 6.21) ยกรหัสผ่านมา การลบทีหลังในข้อ 3 จึงเป็นชั้นสำรอง
+ * ไม่ใช่ชั้นที่ต้องเดาให้ครบทุกรูปของรหัสผ่านอีกต่อไป
  */
 function describe(err: unknown): string {
-  let text = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  if (err instanceof UriRejected) {
+    const original = err.original;
+    const name = original instanceof Error ? original.name : "Error";
+    const message = original instanceof Error ? original.message : "";
+    const reason = FIXED_PARSE_MESSAGES.has(message)
+      ? `(${message})`
+      : "(ไม่พิมพ์ข้อความของ driver เพราะมันยก URI มาด้วย)";
+    return (
+      `${name}: driver แยก MONGODB_URI ไม่ได้ ${reason} — ตรวจรูป mongodb://ผู้ใช้:รหัสผ่าน@host:port/ฐานข้อมูล ` +
+      "และเขียนอักขระพิเศษในรหัสผ่านเป็น %xx"
+    );
+  }
+  const name = err instanceof Error ? err.name : "Error";
+  if (URI_HAS_EXTRA_AT) {
+    return (
+      `${name}: (ไม่พิมพ์ข้อความของ driver) MONGODB_URI มี @ เกินหนึ่งตัว driver จึงอ่านท่อนหลัง @ ตัวแรกเป็นชื่อ ` +
+      "host และข้อความของมันอาจมีบางส่วนของรหัสผ่าน — @ ในรหัสผ่านต้องเขียนเป็น %40"
+    );
+  }
+  let text = err instanceof Error ? `${name}: ${err.message}` : String(err);
   text = text.replace(URI_USERINFO, "$1***@");
   const password = uriPassword(env.logStore.uri);
   if (password) {
     const forms = new Set([password.raw, password.decoded, encodeURIComponent(password.decoded)]);
-    for (const form of forms) if (form) text = text.split(form).join("***");
+    for (const form of forms) if (form) text = text.replace(new RegExp(escapeRegExp(form), "gi"), "***");
   }
   return text.length > 300 ? `${text.slice(0, 300)}…` : text;
 }

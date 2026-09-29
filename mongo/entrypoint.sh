@@ -15,7 +15,9 @@
 # ปฏิเสธ = ออกด้วย 1 แล้วคอนเทนเนอร์วนรีสตาร์ต (docker หน่วงเวลาเพิ่มขึ้นเองจนถึงนาทีละครั้ง) mongo ไม่ขึ้น
 # ซึ่งเว็บรับได้โดยออกแบบ: ไม่มี service ไหน depends_on mongo และ /health/ready ไม่นับ logStore
 #
-# กติกาเดียวกับ init/01-users.js (checkPasswords) และ lib/log-store.ts (passwordLooksDev) — แก้ที่หนึ่งต้องแก้ครบ
+# กติกาเดียวกับ init/01-users.js (checkPasswords) ทุกข้อ — แก้ที่หนึ่งต้องแก้อีกที่
+# backend/src/lib/log-store.ts (warnIfDevPassword) ใช้ร่วมแค่ข้อ dev-…/…change-me และแค่เตือน: มันเห็น URI ที่
+# ประกอบเสร็จแล้ว ซึ่งไม่มีรหัสผ่านก็ได้ (managed Mongo) และมีอักขระพิเศษที่ encode เป็น %xx แล้วก็ได้
 set -eu
 
 if [ "${MONGO_REFUSE_DEV_PASSWORDS:-}" = "true" ]; then

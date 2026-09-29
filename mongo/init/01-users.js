@@ -21,8 +21,9 @@
 const DB_NAME = process.env.MONGODB_DB || "bdi_logs";
 
 /**
- * กติกาเดียวกับ mongo/entrypoint.sh — ที่นั่นกันทุกครั้งที่เริ่ม ที่นี่กันซ้ำตอน init เผื่อมีคนรัน mongod
+ * กติกาเดียวกับ mongo/entrypoint.sh ทุกข้อ — ที่นั่นกันทุกครั้งที่เริ่ม ที่นี่กันซ้ำตอน init เผื่อมีคนรัน mongod
  * โดยไม่ผ่าน entrypoint ของเรา throw ในไฟล์นี้ = docker-entrypoint.sh ออกด้วย error คอนเทนเนอร์ไม่ขึ้น
+ * (warnIfDevPassword ใน backend/src/lib/log-store.ts ใช้ร่วมแค่ข้อ dev-…/…change-me และแค่เตือน)
  */
 function checkPasswords() {
   if (process.env.MONGO_REFUSE_DEV_PASSWORDS !== "true") return;
