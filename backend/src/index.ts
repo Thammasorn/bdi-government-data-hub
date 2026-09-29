@@ -80,8 +80,23 @@ function parseJsonBody(req: Request, res: Response, next: NextFunction) {
  * ผู้ใช้อ่านรหัสให้เจ้าหน้าที่ฟังแล้วค้นย้อนหา error event และแถว audit ของคำขอนั้นได้ (8 ตัวแรกของ correlation id)
  * ทำที่ `res.json` ของทุกคำขอแทนการไล่เติมทีละจุด: 503 ของ route เอง (`no_reviewer`, ตัวแปลงเอกสารไม่พร้อม, ThaID 502)
  * ได้ด้วยโดยไม่ต้องจำ แตะเฉพาะ body ที่เป็น error ของ API (`{error: "…"}`) — `/health/ready` ที่ตอบ 503 ไม่เปลี่ยนรูป
+ *
+ * รหัสที่ผู้ใช้เห็นต้องค้นเจอ: 5xx ที่ route ตอบเองโดยไม่มีใครเรียก `captureError()` (503 `no_reviewer`,
+ * `no_legal_documents`, 501 ThaID ยังไม่ตั้งค่า) ถูกเก็บตรงนี้เป็น warning หนึ่งตัว แยก issue ตาม route กับรหัส
+ * error (`http:5xx:POST /api/…:no_reviewer`) เดิมตรงนี้เติมแค่รหัส ผู้ใช้อ่านรหัสให้เจ้าหน้าที่ฟังแล้วค้นใน
+ * error_events ไม่เจออะไรเลย คำขอที่ถูกเก็บไปแล้ว (ตัวจัดการ error ท้ายไฟล์, จุดที่เรียก captureError เองก่อนตอบ)
+ * ไม่ถูกเก็บซ้ำ — ดู `RequestContext.errorCaptured`
  */
-function referenceOnServerErrors(_req: Request, res: Response, next: NextFunction) {
+class RouteServerError extends Error {
+  constructor(status: number, code: string, message: string | null) {
+    super(`${status} ${code}${message ? `: ${message}` : ""}`);
+    this.name = "RouteServerError";
+    // ที่เกิดจริงคือ route ซึ่งอยู่ใน `request.route` ของ event แล้ว — เฟรมของ `res.json` ในไฟล์นี้ชี้ผิดที่ จึงไม่มี stack
+    this.stack = `${this.name}: ${this.message}`;
+  }
+}
+
+function referenceOnServerErrors(req: Request, res: Response, next: NextFunction) {
   const ctx = currentContext();
   if (!ctx) return next();
   const reference = referenceOf(ctx.correlationId);
@@ -90,6 +105,16 @@ function referenceOnServerErrors(_req: Request, res: Response, next: NextFunctio
     if (res.statusCode < 500 || !body || typeof body !== "object" || Array.isArray(body)) return json(body);
     const fields = body as Record<string, unknown>;
     if (typeof fields.error !== "string") return json(body);
+    if (!ctx.errorCaptured) {
+      const text = typeof fields.message === "string" ? fields.message : null;
+      captureError(new RouteServerError(res.statusCode, fields.error, text), {
+        req,
+        level: "warning",
+        status: res.statusCode,
+        tag: "http.route-5xx",
+        fingerprint: `http:5xx:${routeKey(req)}:${fields.error.slice(0, 64)}`,
+      });
+    }
     const message =
       typeof fields.message === "string" && !fields.message.includes("รหัสอ้างอิง")
         ? `${fields.message} (รหัสอ้างอิง ${reference})`

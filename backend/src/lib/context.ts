@@ -45,6 +45,12 @@ export interface RequestContext {
    * ข้อความเป็นของเราเองทั้งหมด **ห้ามใส่ที่อยู่อีเมล ชื่อ หรือค่าที่ผู้ใช้กรอก**
    */
   breadcrumbs: Breadcrumb[];
+  /**
+   * คำขอนี้ผ่าน `captureError()` ไปแล้วหรือยัง — lib/error-capture.ts ตั้งเป็น true ส่วน `referenceOnServerErrors`
+   * ใน index.ts อ่าน: 5xx ที่ route ตอบเองโดยไม่มีใครเก็บ (503 `no_reviewer`, `no_legal_documents`) ถูกเก็บเป็น
+   * warning ตรงนั้น รหัสอ้างอิงที่ผู้ใช้เห็นจึงค้นเจอเสมอ ส่วน 5xx ที่ถูกเก็บไปแล้วไม่ถูกนับซ้ำเป็น issue ที่สอง
+   */
+  errorCaptured: boolean;
 }
 
 export type BreadcrumbType = "audit" | "outbox" | "smtp" | "render" | "storage" | "thaid";
@@ -102,6 +108,7 @@ export function runWithContext<T>(context: Partial<RequestContext>, fn: () => T)
       method: null,
       route: null,
       breadcrumbs: [],
+      errorCaptured: false,
     },
     fn,
   );
@@ -171,6 +178,7 @@ export function correlationMiddleware(req: Request, res: Response, next: NextFun
       // ยังไม่รู้ว่าจะไปถึง route ไหน — wrap() เติมให้ตอนเข้า handler ของ route
       route: null,
       breadcrumbs: [],
+      errorCaptured: false,
     },
     () => next(),
   );

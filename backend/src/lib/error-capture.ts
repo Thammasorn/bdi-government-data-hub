@@ -332,6 +332,8 @@ function capture(err: unknown, options: CaptureOptions): string | null {
   const mechanism = options.mechanism ?? (req ? "express" : "captured");
   const handled = options.handled ?? (mechanism === "express" || mechanism === "captured");
   const ctx = currentContext();
+  // ตั้งก่อนอย่างอื่น — ถ้าข้างล่าง throw ก็ยังถือว่ามีคนพยายามเก็บแล้ว 5xx ของคำขอนี้ไม่ต้องถูกเก็บซ้ำ (index.ts)
+  if (ctx) ctx.errorCaptured = true;
   const scrubbed = scrubError(err);
   const tag = options.tag ?? null;
 
