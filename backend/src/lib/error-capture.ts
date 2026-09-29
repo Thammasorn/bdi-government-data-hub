@@ -10,11 +10,11 @@
  * เกินเพดานขนาดที่ worker พิมพ์บรรทัดของตัวเองไปแล้ว
  *
  * เพดาน — ทุกตัวมีไว้กันหน่วยความจำกับดิสก์ ไม่ใช่กันข้อมูล:
- *   - คิวไม่เกิน 500 เอกสาร / 2 MB เต็มแล้วทิ้งตามลำดับ (PRIORITY): คำเตือนก่อน แล้วค่อย error; fatal กับบันทึกของ
- *     process (start/shutdown/fatal-exit) ถูกเก็บไว้ท้ายสุด ทิ้งไปเท่าไรนับไว้ แล้วพอเขียนได้อีกครั้งจะมี event สรุปหนึ่ง
- *     ตัวว่า "ทิ้งไป N รายการระหว่าง X ถึง Y"
+ *   - คิวไม่เกิน 500 เอกสาร / 2 MB เต็มแล้วทิ้งตามลำดับ (PRIORITY): คำเตือนก่อน แล้วค่อย error; fatal, บันทึกของ
+ *     process (start/shutdown/fatal-exit) และสำเนา audit ที่ Postgres ไม่รับถูกเก็บไว้ท้ายสุด ทิ้งไปเท่าไรนับไว้
+ *     แล้วพอเขียนได้อีกครั้งจะมี event สรุปหนึ่งตัวว่า "ทิ้งไป N รายการระหว่าง X ถึง Y"
  *   - เก็บ event ทีละตัวได้ไม่เกิน 50 ต่อ fingerprint ต่อชั่วโมง และไม่เกิน 600 ต่อ process ต่อนาที — เกินนั้นเดินแค่ตัวนับ
- *     ของ issue (error ที่วนซ้ำหมื่นครั้งยังเห็นว่าหมื่น แต่เก็บตัวอย่างแค่ 50)
+ *     ของ issue (error ที่วนซ้ำหมื่นครั้งยังเห็นว่าหมื่น แต่เก็บตัวอย่างแค่ 50) fatal ไม่ติดเพดานสองตัวนี้
  *   - log store เกินเพดานขนาด (สถานะ `over_quota` ที่ worker ตั้ง) — เดินแค่ตัวนับ ไม่เก็บ event
  *   - เอกสารหนึ่งตัวไม่เกิน 64 KB
  *
@@ -168,8 +168,12 @@ export const FLUSH_ON_EXIT_MS = 2_000;
  * ลำดับการทิ้งเมื่อคิวเต็ม: ตัวที่เลขน้อยกว่าถูกทิ้งก่อน (ตัวเก่าสุดในกลุ่มนั้น) ตัวที่เข้ามาใหม่ไล่ได้เฉพาะตัวที่เลข
  * **น้อยกว่า** ตัวเอง เลขเท่ากันแปลว่าตัวใหม่ถูกทิ้ง — ตัวอย่างแรก ๆ ของเหตุการณ์หนึ่งบอกอะไรได้มากกว่าตัวที่ห้าร้อย
  * รายงานจากเบราว์เซอร์ (0) กับบันทึกการเรียก admin API (1) จะมาใน step 9 และ 8 และถูกทิ้งก่อนทุกอย่างของที่นี่
+ *
+ * สำเนา audit (`activity`) อยู่ชั้นเดียวกับ fatal ไม่ใช่กับ error: มันคือสำเนา**เดียว**ที่เหลือของแถวที่ Postgres ไม่รับ
+ * ส่วนตัวอย่าง error ที่ถูกไล่ออกยังเหลือตัวนับของ issue อยู่ เดิมเลขเท่ากับ error — คิวที่เต็มไปด้วย error ตอน Mongo
+ * ล่ม (ห้าร้อยตัว ซึ่งเกิดจริงในการทดสอบ) จึงทิ้งสำเนา audit ที่มาทีหลังแทนที่จะทิ้งตัวอย่าง error ตัวเก่าสุด
  */
-const PRIORITY = { warning: 2, error: 3, activity: 3, fatal: 4, runtime: 4 } as const;
+const PRIORITY = { warning: 2, error: 3, activity: 4, fatal: 4, runtime: 4 } as const;
 
 // --------------------------------------------------------------------------------------------- สถานะ
 
@@ -398,7 +402,8 @@ function capture(err: unknown, options: CaptureOptions): string | null {
   return outcome === "queued" ? id : null;
 }
 
-type Outcome = "queued" | "disabled" | "over_quota" | "capped" | "dropped";
+/** `capped_issue` = ครบ 50 ตัวต่อชั่วโมงของ fingerprint นี้ · `capped_process` = ครบ 600 ตัวต่อนาทีของทั้ง process */
+type Outcome = "queued" | "disabled" | "over_quota" | "capped_issue" | "capped_process" | "dropped";
 
 /** นับเข้า issue แล้วตัดสินว่าจะเก็บตัว event ไหม */
 function keep(doc: ErrorEventDoc, fingerprint: string, scrubbed: ScrubbedError, where: string | null): Outcome {
@@ -410,7 +415,15 @@ function keep(doc: ErrorEventDoc, fingerprint: string, scrubbed: ScrubbedError, 
     return "dropped";
   }
   if (logStoreStatus().status === "over_quota") return "over_quota";
-  if (!admit(fingerprint, doc.occurredAt.getTime())) return "capped";
+  /**
+   * fatal ไม่ผ่านเพดานการสุ่มเก็บ — เกิดได้ครั้งเดียวต่อ process (exit ตามมาทันที) จึงท่วมอะไรไม่ได้ และเป็นตัวที่
+   * บอกว่าทำไม process ตาย ถ้าต้องผ่านเพดานด้วย uncaughtException ที่มาระหว่างพายุ error (เกิน 600 ต่อนาทีอยู่แล้ว)
+   * จะเหลือแค่ตัวนับ คิวก็ให้ fatal อยู่ชั้นบนสุดด้วยเหตุผลเดียวกัน
+   */
+  if (doc.level !== "fatal") {
+    const cap = admit(fingerprint, doc.occurredAt.getTime());
+    if (cap !== null) return cap;
+  }
 
   const bytes = fitDocument(doc);
   const priority = doc.level === "fatal" ? PRIORITY.fatal : doc.level === "error" ? PRIORITY.error : PRIORITY.warning;
@@ -448,21 +461,25 @@ function countIssue(
   return delta;
 }
 
-/** เพดาน 50 ตัวต่อ fingerprint ต่อชั่วโมง และ 600 ตัวต่อ process ต่อนาที — เกินแล้วนับอย่างเดียว */
-function admit(fingerprint: string, now: number): boolean {
+/**
+ * เพดาน 50 ตัวต่อ fingerprint ต่อชั่วโมง และ 600 ตัวต่อ process ต่อนาที — เกินแล้วนับอย่างเดียว
+ * คืน null ถ้าเก็บได้ หรือบอกว่าติดเพดานตัวไหน: บรรทัดใน stdout ต้องบอกให้ถูก ไม่งั้น error ที่เพิ่งเห็นครั้งแรก
+ * แต่ติดเพดานของ process ถูกพิมพ์ว่า "เก็บตัวอย่างของ issue นี้ครบแล้ว" ซึ่งไม่จริง
+ */
+function admit(fingerprint: string, now: number): "capped_issue" | "capped_process" | null {
   if (now - processWindow.start >= 60_000) processWindow = { start: now, stored: 0 };
-  if (processWindow.stored >= PER_PROCESS_PER_MINUTE) return false;
+  if (processWindow.stored >= PER_PROCESS_PER_MINUTE) return "capped_process";
 
   let window = perFingerprint.get(fingerprint);
   if (!window || now - window.windowStart >= 3_600_000) {
     window = { windowStart: now, stored: 0 };
     perFingerprint.set(fingerprint, window);
   }
-  if (window.stored >= PER_FINGERPRINT_PER_HOUR) return false;
+  if (window.stored >= PER_FINGERPRINT_PER_HOUR) return "capped_issue";
 
   window.stored += 1;
   processWindow.stored += 1;
-  return true;
+  return null;
 }
 
 /**
@@ -526,9 +543,11 @@ function printLine(doc: ErrorEventDoc, scrubbed: ScrubbedError, where: string | 
         ? "event=- (log store ปิดอยู่)"
         : outcome === "over_quota"
           ? "event=- (log store เกินเพดานขนาด: นับอย่างเดียว)"
-          : outcome === "capped"
-            ? "event=- (เก็บตัวอย่างของ issue นี้ครบโควตาแล้ว: นับอย่างเดียว)"
-            : "event=- (คิวเต็ม: ทิ้ง)";
+          : outcome === "capped_issue"
+            ? `event=- (เก็บตัวอย่างของ issue นี้ครบ ${PER_FINGERPRINT_PER_HOUR} ตัวในชั่วโมงนี้แล้ว: นับอย่างเดียว)`
+            : outcome === "capped_process"
+              ? `event=- (เกินเพดาน ${PER_PROCESS_PER_MINUTE} ต่อนาทีของ process: นับอย่างเดียว)`
+              : "event=- (คิวเต็ม: ทิ้ง)";
   const issue = /^[0-9a-f]{40}$/.test(doc.fingerprint) ? doc.fingerprint.slice(0, 12) : doc.fingerprint;
   const ref = doc.request?.reference ? ` ref=${doc.request.reference}` : "";
   const firstLine = headlineOf(scrubbed.name, scrubbed.message).slice(0, 300);
