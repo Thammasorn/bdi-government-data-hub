@@ -1522,9 +1522,14 @@ Two API base URLs, and they are not interchangeable:
   before committing any Postman file.** `0d0a0d4` (2026-09-24) committed the real production
   token in `bdi-public`, and it reached Bitbucket and the public GitHub `origin` before anyone
   noticed; the rule above was written down and did not stop it. The check goes by variable
-  *name*, not `type`, because `bdi-dev-checkout` declares its token `type: "default"`. The same
-  commit also blanked every value in `.env.example`, so `new-dev.sh` checkouts could not boot
-  until it was restored.
+  *name*, not `type`, because `bdi-dev-checkout` declares its token `type: "default"`. With no
+  arguments it reads every `docs/*.postman_*.json`, the collection included. In each file it checks
+  environment `values`, collection and folder `variable`, headers, query params and `auth`
+  parameters, and accepts only an empty value, the `dev-…-change-me` placeholder or a
+  `{{variable}}` reference. Until 2026-09-29 it read only environment `values`, so a real token
+  pasted into the collection's own `adminToken`, which is where its description says to paste it,
+  passed with exit 0. Scripts and request bodies are still not checked. `0d0a0d4` also blanked
+  every value in `.env.example`, so `new-dev.sh` checkouts could not boot until it was restored.
 - Prisma reports "cannot reach the database" as **two** classes that keep the code in different
   fields. A pool that was connected and then lost the server raises
   `PrismaClientKnownRequestError` with `code: "P1001"`; a client that never connected raises
