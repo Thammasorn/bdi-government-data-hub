@@ -57,14 +57,19 @@ const DATABASE_DETAIL_RULES: Array<[RegExp, string]> = [
 ];
 
 /**
- * ชื่อ key ที่ค่าของมันเป็นความลับ — ชื่อที่**ลงท้าย**ด้วยคำเหล่านี้ (`apiKey`, `access_token`, `newPassword`)
- * `pwd` กับ `pin` สั้นจนเป็นท้ายคำธรรมดาได้ (`mapping`, `shipping`) จึงนับเฉพาะเมื่อเป็นทั้งคำหรือมี `_`/`-` นำหน้า
+ * ชื่อ key ที่ค่าของมันเป็นความลับ — ชื่อที่**ลงท้าย**ด้วยคำเหล่านี้ (`apiKey`, `access_token`, `newPassword`,
+ * `x-auth`, `set-cookie`) คำสั้นที่เป็นท้ายคำธรรมดาได้ (`mapping`, `bypass`, `compass`, `upsid`) นับเฉพาะเมื่อเป็นทั้งคำ
+ * หรือมี `_`/`-` นำหน้า: `pwd` `pin` `pass` `pw` `sid` และ `session` (ชื่อ cookie ของเราคือ `bdi_session`)
  */
 const SECRET_KEY =
-  "[A-Za-z0-9_-]*(?:token|key|secret|passw(?:or)?d|passcode|passphrase|otp|code|state)|(?:[A-Za-z0-9_-]*[_-])?(?:pwd|pin)";
-/** key ที่ค่าเป็นวลีได้ (มีช่องว่าง จุลภาค) — ค่าที่ไม่มีเครื่องหมายคำพูดครอบถูกตัดไปจนสุดบรรทัด */
+  "[A-Za-z0-9_-]*(?:token|key|secret|passw(?:or)?d|passcode|passphrase|otp|code|state|auth|authorization|cookie)" +
+  "|(?:[A-Za-z0-9_-]*[_-])?(?:pwd|pin|pass|pw|sid|session)";
+/**
+ * key ที่ค่าเป็นวลีได้ (มีช่องว่าง จุลภาค) — ค่าที่ไม่มีเครื่องหมายคำพูดครอบถูกตัดไปจนสุดบรรทัด
+ * `authorization` (`Digest username=…, response=…`) กับ `cookie` (`a=1; bdi_session=…`) ค่าเป็นหลายท่อนต่อกันเสมอ
+ */
 const PHRASE_KEY =
-  "[A-Za-z0-9_-]*(?:secret|passw(?:or)?d|passcode|passphrase)|(?:[A-Za-z0-9_-]*[_-])?pwd";
+  "[A-Za-z0-9_-]*(?:secret|passw(?:or)?d|passcode|passphrase|authorization|cookie)|(?:[A-Za-z0-9_-]*[_-])?(?:pwd|pass)";
 
 /**
  * ตารางกวาดข้อความอิสระ (plan §7.5) — ลำดับมีผล: userinfo ของ URI กับ JWT ก่อน (ไม่งั้นท่อนข้างในโดนกฎอื่นกินไปครึ่งเดียว)
@@ -74,19 +79,31 @@ const PHRASE_KEY =
  * ทุกตำแหน่งเริ่มจนถึงท้ายก้อน (กำลังสอง) และ captureError เป็น synchronous บนเส้นทางของคำขอ
  */
 const BEFORE_UUID_RULES: Array<[RegExp, string]> = [
-  // `scheme://user:pass@host` — connection string ของ Postgres/Mongo/SMTP ที่ error บางตัวยกมา
-  [/(?<![A-Za-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/)[^\s/@"'<>]+@/gi, "$1***@"],
+  /**
+   * `scheme://user:pass@host` — connection string ของ Postgres/Mongo/SMTP ที่ error บางตัวยกมา
+   * ตัดถึง `@` **ตัวสุดท้าย**ก่อน `/` หรือช่องว่าง ไม่ใช่ตัวแรก: รหัสผ่านที่มี `@` ไม่ได้ encode (`u:pa@ss@mongo`)
+   * ตัดที่ตัวแรกแล้วท่อนหลังของรหัสผ่านหลุดออกมา (`***@ss@mongo`) ข้อความที่มี `@` ต่อจาก host โดยไม่มี `/` คั่น
+   * (`https://host?email=a@b.com`) โดนตัดเกินไปถึงตรงนั้น ยอมรับ — ตัดเกินดีกว่าตัดขาด
+   */
+  [/(?<![A-Za-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/)[^\s/"'<>]+@/gi, "$1***@"],
   [/(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{5,}(?:\.[A-Za-z0-9_-]*){0,2}/g, "[jwt]"],
   [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted]"],
   // เก็บชื่อไว้ให้รู้ว่ามีค่า แต่ไม่เก็บค่า — code ที่ไม่ใช่ความลับ (`code=P2002`) ก็โดนไปด้วย ยอมรับ (plan §7.5)
-  // `"password":"ab,cd ef"` — ค่าในเครื่องหมายคำพูดวิ่งไปจนถึงเครื่องหมายปิดที่ไม่ได้ escape ไม่ใช่แค่ถึงจุลภาคหรือช่องว่าง
-  [new RegExp(`(?<![A-Za-z0-9_-])(${SECRET_KEY})("\\s*[:=]\\s*")((?:[^"\\\\]|\\\\[\\s\\S])*)`, "gi"), "$1$2[redacted]"],
+  // `"password":"ab,cd ef"` · `token="ab cd"` — ค่าในเครื่องหมายคำพูดวิ่งไปจนถึงเครื่องหมายปิดที่ไม่ได้ escape
+  // ไม่ใช่แค่ถึงจุลภาคหรือช่องว่าง ชื่อ key จะมีเครื่องหมายคำพูดปิดท้าย (JSON) หรือไม่มี (`key="…"`) ก็ได้
+  [new RegExp(`(?<![A-Za-z0-9_-])(${SECRET_KEY})("?\\s*[:=]\\s*")((?:[^"\\\\]|\\\\[\\s\\S])*)`, "gi"), "$1$2[redacted]"],
+  // เครื่องหมายคำพูดเดี่ยว — object ที่ `util.inspect` พิมพ์ (`{ token: 'ab', password: 'cd' }`), `key='…'` ของ
+  // shell/SQL ค่าวิ่งไปจนถึง `'` ปิดที่ไม่ได้ escape เหมือนแบบข้างบน ก่อนหน้านี้กฎคำเดียวข้างล่างหยุดที่ `'` เปิดพอดี
+  // ค่าจึงหลุดออกไปทั้งตัว
+  [new RegExp(`(?<![A-Za-z0-9_-])(${SECRET_KEY})('?\\s*[:=]\\s*')((?:[^'\\\\]|\\\\[\\s\\S])*)`, "gi"), "$1$2[redacted]"],
   // JSON ที่ถูก escape ซ้อนอยู่ในข้อความอีกชั้น — `{\"password\":\"ab,cd\"}` ค่าจบที่ `\"`
   [new RegExp(`(?<![A-Za-z0-9_-])(${SECRET_KEY})(\\\\"\\s*[:=]\\s*\\\\")((?:[^"\\\\]|\\\\[^"])*)`, "gi"), "$1$2[redacted]"],
   // `password: my secret phrase` — รหัสผ่านที่ไม่มีเครื่องหมายคำพูดครอบ ถึงสุดบรรทัด (หรือ `&` ของ query string)
-  [new RegExp(`(?<![A-Za-z0-9_-])(${PHRASE_KEY})(\\s*[=:]\\s*)([^\\r\\n&]+)`, "gi"), "$1$2[redacted]"],
-  // token=… · apiKey=… · state=… · code=… · pin=… — ค่าเป็นคำเดียว
-  [new RegExp(`(?<![A-Za-z0-9_-])(${SECRET_KEY})("?\\s*[=:]\\s*"?)([^\\s&"',;}<>]+)`, "gi"), "$1$2[redacted]"],
+  // ค่าที่ขึ้นต้นด้วยเครื่องหมายคำพูดไม่นับ: กฎข้างบนตัดไปแล้ว ถ้านับซ้ำจะกินทุกอย่างที่ตามมาในบรรทัดไปด้วย
+  // ตัวแรกของค่าห้ามเป็นช่องว่างด้วย ไม่งั้น `\s*` ถอยคืนช่องว่างให้แล้วค่าก็ "ขึ้นต้น" ด้วยช่องว่างแทนเครื่องหมายคำพูด
+  [new RegExp(`(?<![A-Za-z0-9_-])(${PHRASE_KEY})(\\s*[=:]\\s*)([^\\s&"'][^\\r\\n&]*)`, "gi"), "$1$2[redacted]"],
+  // token=… · apiKey=… · state=… · code=… · pin=… · 'sid': … — ค่าเป็นคำเดียว
+  [new RegExp(`(?<![A-Za-z0-9_-])(${SECRET_KEY})(['"]?\\s*[=:]\\s*['"]?)([^\\s&"',;}<>]+)`, "gi"), "$1$2[redacted]"],
   // `otp 482913` · `code 482913` — คั่นด้วยช่องว่าง นับเฉพาะเลข 4–8 หลัก: `status code 500` ต้องรอด
   [/(?<![A-Za-z0-9_-])(otp|code|pin|passcode)(\s+)\d{4,8}(?!\d)/gi, "$1$2[redacted]"],
   [/(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g, "[email]"],
@@ -97,6 +114,16 @@ const BEFORE_UUID_RULES: Array<[RegExp, string]> = [
  * ยาว ๆ ใน stack (`PrismaClientInitializationError`) โดนไปด้วย token สุ่มยาว 32 ตัวที่ไม่มีเลขเลยแทบไม่มีทางเกิด
  */
 const LONG_RUN = /(?<![A-Za-z0-9_+-])[A-Za-z0-9_+-]{32,}={0,2}/g;
+/**
+ * base64 มาตรฐานที่มี `/` (หรือ `+`) — LONG_RUN ไม่รับ `/` เพราะ path ใน stack และใน URL ก็เป็นก้อนยาวที่มี `/`
+ * ก้อนนี้จึงนับเฉพาะเมื่อมีทั้งตัวพิมพ์ใหญ่ ตัวพิมพ์เล็ก และตัวเลขปนกัน ซึ่ง base64 ของค่าสุ่มยาว 32 ตัวแทบไม่มีทาง
+ * ขาดตัวไหน ส่วน path ของเรา (`/app/src/routes/…`) เป็นตัวเล็กล้วนและถูก `.` `-` `_` `@` ตัดเป็นท่อนสั้นอยู่แล้ว
+ */
+const BASE64_RUN = /(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{32,}={0,2}/g;
+
+function looksLikeBase64Secret(run: string): boolean {
+  return /[+/]/.test(run) && /\d/.test(run) && /[A-Z]/.test(run) && /[a-z]/.test(run);
+}
 /** เลขบัตร 13 หลัก ทั้งแบบติดกันและแบบมีขีด/ช่องว่างคั่น (`1-2345-67890-12-3`) */
 const CID_RUN = /(?<!\d)\d(?:[- ]?\d){12}(?!\d)/g;
 /** เบอร์โทรไทย `0` ตามด้วยอีก 8–9 หลัก (ขีด/ช่องว่างคั่นได้) */
@@ -115,14 +142,14 @@ const HELD = /\uE000(\d+)\uE001/g;
  * | รูปแบบ | กลายเป็น |
  * |---|---|
  * | `detail: Some("Failing row contains …")` / `DETAIL: …` ของ Postgres ที่ Prisma ยกมา | `detail: [ตัดทิ้ง]` |
- * | userinfo ใน URI (`postgresql://u:p@host`) | `postgresql://***@host` |
+ * | userinfo ใน URI (`postgresql://u:p@host`, ถึง `@` ตัวสุดท้ายก่อน `/`) | `postgresql://***@host` |
  * | JWT `eyJ…` | `[jwt]` |
  * | `Bearer …` / `Basic …` | `Bearer [redacted]` |
- * | `token=` `key=` `secret=` `password=` `pwd=` `pin=` `passcode=` `otp=` `code=` `state=` | `…=[redacted]` |
- * | `"password":"ab,cd ef"` (ทั้งค่าจนถึงเครื่องหมายปิด) · `password: วลี มี ช่องว่าง` (จนสุดบรรทัด) | `…[redacted]` |
+ * | `token=` `key=` `secret=` `password=` `pwd=` `pass=` `pw=` `pin=` `passcode=` `otp=` `code=` `state=` `auth=` `authorization:` `cookie:` `sid=` `bdi_session=` | `…=[redacted]` |
+ * | `"password":"ab,cd ef"` · `token='ab cd'` (ทั้งค่าจนถึงเครื่องหมายปิด) · `password: วลี มี ช่องว่าง` · `Cookie: a=1; b=2` (จนสุดบรรทัด) | `…[redacted]` |
  * | `otp 482913` / `code 482913` (เลข 4–8 หลักหลังช่องว่าง) | `otp [redacted]` |
  * | อีเมล | `[email]` |
- * | ฐานสิบหก/base64url ยาว 32 ตัวขึ้นไปที่มีตัวเลข (ยกเว้น UUID) | `[secret]` |
+ * | ฐานสิบหก/base64url ยาว 32 ตัวขึ้นไปที่มีตัวเลข (ยกเว้น UUID) · base64 ที่มี `/` `+` และตัวใหญ่ ตัวเล็ก ตัวเลขปนกัน | `[secret]` |
  * | เลข 13 หลัก / เลขบัตรแบบมีขีด | `[cid]` |
  * | `0` + 8–9 หลัก · `+66` + 8–9 หลัก | `[phone]` |
  */
@@ -135,6 +162,7 @@ export function scrubText(text: string): string {
   out = out.replace(UUID, (uuid) => `${HOLD_OPEN}${held.push(uuid) - 1}${HOLD_CLOSE}`);
   out = out
     .replace(LONG_RUN, (run) => (/\d/.test(run) ? "[secret]" : run))
+    .replace(BASE64_RUN, (run) => (looksLikeBase64Secret(run) ? "[secret]" : run))
     .replace(CID_RUN, "[cid]")
     .replace(INTL_PHONE_RUN, "[phone]")
     .replace(PHONE_RUN, "[phone]");
@@ -395,10 +423,29 @@ function maskCidRuns(value: unknown): unknown {
   return value;
 }
 
-function maskedCid(value: unknown): unknown {
+/**
+ * ค่าใต้ key ที่ชื่อบอกว่าถือเลขบัตร — ทุกใบของมันถือเป็นเลขบัตร ไม่ว่าจะซ้อนอยู่ลึกแค่ไหน
+ *
+ * ค่าที่เป็น object หรือ array ลงไปปิดทีละใบ (`{contactCid: ["…", "…"]}` → สองตัวที่ปิดแล้ว) เดิม `String(value)`
+ * ทำให้ object กลายเป็น `"[object Object]"` แล้วปิดเป็น `xxxxxxxxxxxect]` ซึ่งไม่บอกอะไร และ array ที่ถูกต่อเป็นข้อความ
+ * เดียวก็เหลือท้ายของใบสุดท้ายแค่ใบเดียว `{masked}` ที่ปิดไว้แล้วตั้งแต่ Postgres (`sanitizeDiff()` →
+ * `{masked, changed}`) ไม่ปิดซ้ำ แต่ยังผ่านกฎเลข 13 หลักของ `maskForLogStore` — `masked` ที่ใครส่งมาเป็นเลขเต็มจึงไม่หลุด
+ */
+function maskedCid(value: unknown, depth: number): unknown {
   if (value === null || value === undefined) return value;
-  // ปิดไว้แล้วตั้งแต่ Postgres (`sanitizeDiff()` → `{masked, changed}`) — อย่าปิดซ้ำจนกลายเป็น "[object Object]"
-  if (typeof value === "object" && value !== null && "masked" in value) return value;
+  if (depth > 8) return "[ลึกเกิน]";
+  if (Array.isArray(value)) return value.map((v) => maskedCid(v, depth + 1));
+  if (typeof value === "object") {
+    const proto = Object.getPrototypeOf(value);
+    if (proto === Object.prototype || proto === null) {
+      if ("masked" in value) return maskForLogStore(value, depth + 1);
+      return Object.fromEntries(
+        Object.entries(value).map(([k, v]) => [k.replace(CID_RUN, "[cid]"), maskedCid(v, depth + 1)]),
+      );
+    }
+    // Date, Buffer, … — `plain()` ของ audit-fallback แปลงเป็นข้อความมาก่อนแล้ว ถึงตรงนี้ได้ก็ไม่รู้ว่าข้างในคืออะไร
+    return { masked: "***" };
+  }
   const text = String(value);
   const shown = text.length > 4 ? text.slice(-4) : "";
   return { masked: "x".repeat(text.length - shown.length) + shown };
@@ -416,6 +463,7 @@ export function maskedTypedEmail(value: unknown): unknown {
  * ปิดเลขบัตรในสิ่งที่จะออกไปเป็นสำเนากิจกรรม — plan §7.6 ข้อที่ใช้ได้โดยไม่มี LOG_HASH_KEY
  * (key ค้นหา `cid#…` มากับงานสำเนา audit ใน step 6)
  *   - key ที่ชื่อบอกว่าถือเลขบัตร (ทุกชั้น) → `{masked: "xxxxxxxxx1234"}` เหลือ 4 ตัวท้ายไว้เทียบกับคนได้
+ *     ค่าที่เป็น object หรือ array ปิดทีละใบข้างใน (`maskedCid`)
  *   - เลข 13 หลักที่อยู่ในค่าอื่นทุกตัว → `[cid]` (`maskCidRuns`)
  * อีเมลของบัญชี ชื่อ เบอร์ IP และ UA ไม่ถูกแตะ ตามที่ตัดสินไว้ (decision 10, plan §7.6)
  */
@@ -427,7 +475,7 @@ export function maskForLogStore(value: unknown, depth = 0): unknown {
     return Object.fromEntries(
       Object.entries(value as object).map(([k, v]) => {
         const key = k.replace(CID_RUN, "[cid]");
-        if (CID_KEY.test(k)) return [key, maskedCid(v)];
+        if (CID_KEY.test(k)) return [key, maskedCid(v, depth + 1)];
         return [key, maskForLogStore(v, depth + 1)];
       }),
     );
