@@ -363,7 +363,7 @@ function describe(err: unknown): string {
     const message = original instanceof Error ? original.message : "";
     const reason = FIXED_PARSE_MESSAGES.has(message)
       ? `(${message})`
-      : "(ไม่พิมพ์ข้อความของ driver เพราะมันยก URI มาด้วย)";
+      : "(ไม่พิมพ์ข้อความของ driver เพราะอาจยก URI มาด้วย)";
     return (
       `${name}: driver แยก MONGODB_URI ไม่ได้ ${reason} — ตรวจรูป mongodb://ผู้ใช้:รหัสผ่าน@host:port/ฐานข้อมูล ` +
       "และเขียนอักขระพิเศษในรหัสผ่านเป็น %xx"
