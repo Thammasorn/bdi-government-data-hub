@@ -26,7 +26,6 @@ import {
   recordRuntimeEvent,
 } from "../lib/error-capture.js";
 import { closeLogStore, startLogStore } from "../lib/log-store.js";
-import { scrubText } from "../lib/redact.js";
 import { startLogUpkeep, stopLogUpkeep } from "./log-upkeep.js";
 import { renderAndSend } from "./render.js";
 
@@ -134,11 +133,15 @@ async function deliver(row: Claimed) {
       },
     });
 
-    // ข้อความของ SMTP ยกที่อยู่ผู้รับมาได้ ("550 5.1.1 <…>: Recipient address rejected") — กวาดก่อนพิมพ์
-    console.error(`[delivery] ส่งไม่สำเร็จ ครั้งที่ ${attempt}: ${scrubText(message)}`);
+    /**
+     * บรรทัดนี้บอกแค่ว่าเกิดที่ไหน ครั้งที่เท่าไร กับรหัสของ SMTP แล้วชี้ไปที่บรรทัด [capture] ถัดไป — ไม่พิมพ์ข้อความ
+     * ของ error แม้จะกวาดแล้ว: captureError พิมพ์ฉบับที่กวาดแล้วอยู่แล้ว สองบรรทัดที่มีข้อความเดียวกันซ้ำกันเปล่า ๆ
+     * และข้อความของ SMTP ยกที่อยู่ผู้รับมาได้ ("550 5.1.1 <…>: Recipient address rejected") ที่เดียวที่กวาดจึงดีกว่าสองที่
+     */
+    const code = smtpCode(err);
+    console.error(`[delivery] ส่งไม่สำเร็จ ครั้งที่ ${attempt}${code ? ` (${code})` : ""} — ดูบรรทัด [capture] ถัดไป`);
 
     // ทุกครั้งที่ล้มเป็น warning จัดกลุ่มตามรหัสของ SMTP — ล้มครั้งเดียวแล้ว retry ผ่านเป็นเรื่องปกติ
-    const code = smtpCode(err);
     captureError(err, {
       level: "warning",
       tag: "delivery.send-failed",
