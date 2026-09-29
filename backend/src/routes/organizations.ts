@@ -100,6 +100,7 @@ import {
   renderPlaceholderDocuments,
 } from "../lib/organization-agreement.js";
 import { DocumentRenderError } from "../lib/document-render.js";
+import { captureError } from "../lib/error-capture.js";
 import { LEGAL_SCOPES, requestDocuments } from "../lib/legal.js";
 import { NAME_FIELDS, accountNameTh, fullNameTh } from "../lib/person-name.js";
 import {
@@ -2950,13 +2951,16 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
       } catch (err) {
         agreementRendered = false;
         console.error("[organizations] สร้างเอกสารข้อตกลงฉบับลงนามไม่สำเร็จ", err);
+        // การลงนาม commit ไปแล้ว คำขอตอบ 200 — ถ้าไม่เก็บตรงนี้ เอกสารฉบับลงนามที่ขาดไปจะไม่มีใครเห็นนอกจาก docker logs
+        captureError(err, { req, tag: "render.agreement-after-commit" });
       }
     }
 
     res.json({ organization: await toApiShape(fresh), agreementRendered });
   } catch (err) {
+    // ให้ตัวจัดการท้าย index.ts ตอบ — คำตอบหน้าตาเดิม และ 5xx (ตัวแปลงล่มระหว่างเรนเดอร์ก่อน commit) ถูกเก็บเป็น issue
     if (err instanceof DocumentRenderError) {
-      res.status(err.status).json({ error: err.code, message: err.message, fields: err.fields });
+      next(err);
       return;
     }
     if (err instanceof WorkflowError) {
@@ -3265,6 +3269,8 @@ async function ensureApproverAccount(
         "[organizations] ส่งอีเมลคำเชิญผู้มีอำนาจกระทำการแทนไม่สำเร็จ:",
         err instanceof Error ? err.message : String(err),
       );
+      // ผู้มีอำนาจฯ ไม่ได้คีย์ และไม่มีใครรู้จนกว่าเขาจะโทรมาถาม — แก้ได้ด้วย resend ถ้ามีคนเห็น
+      captureError(err, { tag: "mail.approver-invitation" });
     });
     invited = true;
   }

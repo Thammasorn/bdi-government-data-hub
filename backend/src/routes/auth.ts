@@ -32,6 +32,7 @@ import {
   roleSeatTaken,
   usableActivationKeyById,
 } from "../lib/iam.js";
+import { captureError } from "../lib/error-capture.js";
 import { announceRoleReplacement } from "../lib/notify.js";
 import { sendOtpEmail } from "../lib/mail.js";
 import {
@@ -368,6 +369,15 @@ authRouter.post("/thaid/callback", async (req, res) => {
     const code = err instanceof ThaidError ? err.code : "unexpected";
     const detail = err instanceof Error ? err.message : String(err);
     console.error(`[thaid] ${code}: ${detail}`);
+    /**
+     * nonce ที่ไม่ตรงคือ id_token ที่ไม่ได้ออกให้คำขอนี้ — ผู้ใช้ไม่ได้ทำอะไรผิด แต่ก็ไม่ใช่ระบบเราล่ม เก็บเป็น warning
+     * ที่เหลือ (ThaID ไม่ตอบ, แลก code ไม่ผ่าน, id_token เสีย) คือยืนยันตัวตนไม่ได้ทั้งที่ผู้ใช้ทำถูกทุกขั้น
+     */
+    captureError(err, {
+      req,
+      level: code === "nonce_mismatch" || code === "nonce_missing" ? "warning" : "error",
+      tag: "thaid.resolve-identity",
+    });
     await failThaidOperation(operation, code, detail);
 
     /**
@@ -407,6 +417,12 @@ authRouter.post("/thaid/callback", async (req, res) => {
       `claim ${claim} ไม่มา หรือไม่ใช่เลขประจำตัวประชาชนที่ถูกต้อง (THAID_USE_PID/scope ตั้งถูกหรือไม่)`,
     );
     console.error(`[thaid] ไม่ได้เลขบัตรจาก claim ${claim} — ตรวจ THAID_USE_PID และ THAID_SCOPE`);
+    // ตั้งค่าผิดฝั่งเรา ผู้ใช้ทุกคนที่ผ่าน ThaID จะติดตรงนี้เหมือนกันหมด จึงต้องเป็น issue ที่มีคนเห็น
+    captureError(new Error(`ThaID ไม่ส่งเลขประจำตัวประชาชนมาใน claim ${claim}`), {
+      req,
+      tag: "thaid.cid-unavailable",
+      fingerprint: `thaid:cid-unavailable:${claim}`,
+    });
     res.status(502).json({
       error: "cid_unavailable",
       message: "ระบบไม่ได้รับเลขประจำตัวประชาชนจาก ThaID จึงยืนยันตัวตนไม่ได้ กรุณาติดต่อผู้ดูแลระบบ",

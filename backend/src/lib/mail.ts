@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import nodemailer, { type Transporter } from "nodemailer";
 
 import { env } from "../env.js";
+import { addBreadcrumb } from "./context.js";
 import type { JourneyProgress } from "./journey-steps.js";
 
 /**
@@ -223,8 +224,25 @@ async function send(to: string, subject: string, html: string): Promise<void> {
     const otp = /letter-spacing:8px[^>]*>(\d{6})</.exec(html)?.[1];
     if (otp) console.log(`[mail:dry-run] รหัส OTP: ${otp}`);
     console.log("");
+    addBreadcrumb("smtp", "ไม่ได้ตั้ง SMTP — พิมพ์อีเมลลง log แทน (dry-run)");
     return;
   }
+  /**
+   * breadcrumb บอกแค่ส่งได้หรือไม่ได้กับรหัสตอบกลับของ SMTP — **ไม่มีที่อยู่ผู้รับหรือหัวเรื่อง** เพราะ breadcrumb
+   * ลง error event ทั้งก้อน inline SMTP หลัง commit ที่ล้ม (ตอบ 500 ทั้งที่งานสำเร็จแล้ว, plan §13 #6) จึงเห็นได้จาก
+   * breadcrumb ของ event ว่า audit เขียนแล้ว แล้วค่อยมาล้มที่อีเมล
+   */
+  try {
+    await sendMailVia(tx, to, subject, html);
+  } catch (err) {
+    const code = (err as { responseCode?: unknown; code?: unknown }).responseCode ?? (err as { code?: unknown }).code;
+    addBreadcrumb("smtp", `ส่งอีเมลไม่สำเร็จ${typeof code === "string" || typeof code === "number" ? ` (${code})` : ""}`, false);
+    throw err;
+  }
+  addBreadcrumb("smtp", "ส่งอีเมลสำเร็จ");
+}
+
+async function sendMailVia(tx: Transporter, to: string, subject: string, html: string): Promise<void> {
   await tx.sendMail({
     from: env.smtp.from,
     /**

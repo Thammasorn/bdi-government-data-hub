@@ -91,6 +91,7 @@ import {
   renderDatasetDocuments,
 } from "../lib/dataset-document.js";
 import { DocumentRenderError } from "../lib/document-render.js";
+import { captureError } from "../lib/error-capture.js";
 import { LEGAL_SCOPES, publishedDocuments } from "../lib/legal.js";
 import { nextDatasetCode, nextDatasetRequestNumber } from "../lib/request-number.js";
 import { buildJourneyProgress, summariseMany } from "../lib/journey-steps.js";
@@ -2171,6 +2172,8 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
       } catch (err) {
         documentRendered = false;
         console.error("[dataset] สร้างแบบนำส่งข้อมูลฉบับลงนามไม่สำเร็จ", err);
+        // การลงนาม commit ไปแล้ว คำขอตอบ 200 — ถ้าไม่เก็บตรงนี้ เอกสารฉบับลงนามที่ขาดไปจะไม่มีใครเห็นนอกจาก docker logs
+        captureError(err, { req, tag: "render.dataset-document-after-commit" });
       }
     }
 
