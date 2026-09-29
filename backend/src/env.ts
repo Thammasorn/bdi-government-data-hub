@@ -312,12 +312,13 @@ export const env = {
     uri: MONGODB_URI,
     db: optional("MONGODB_DB", "bdi_logs"),
     /**
-     * เพดานขนาดของ log store (MB ของ `storageSize`) มีเพดานเพราะ /hdd1tb ที่ Mongo อยู่คือดิสก์เดียวกับ Postgres
-     * ของ production · 5 GB บน production 512 MB ที่อื่น · บน managed Mongo โควตาของบริการเป็นตัวคุมอีกชั้น
+     * เพดานขนาดของ log store (MB ของ `storageSize + indexSize` จาก dbStats) มีเพดานเพราะ /hdd1tb ที่ Mongo อยู่คือ
+     * ดิสก์เดียวกับ Postgres ของ production · 5 GB บน production 512 MB ที่อื่น · บน managed Mongo โควตาของบริการ
+     * เป็นตัวคุมอีกชั้น
      *
-     * **ตอนนี้ยังไม่มีใครเทียบค่านี้** — ตัวตรวจรายชั่วโมงของ worker ที่เทียบขนาดจริงกับค่านี้แล้วตั้งธง
-     * `overQuota` ใน relay_state (ซึ่ง backend อ่านเป็นสถานะ `over_quota` อยู่แล้ว lib/log-store.ts) มาพร้อมงาน
-     * เก็บ error ค่านี้มาก่อนเพื่อให้ตัวแปรเดินทางถึง compose ทั้งสอง service, .env.example และ deploy/azure ในทีเดียว
+     * worker เทียบค่านี้ทุกชั่วโมงและตอนบูต (workers/log-upkeep.ts) เกินแล้วตั้งธง `overQuota` ใน relay_state ซึ่ง
+     * backend กับ worker อ่านเป็นสถานะ `over_quota` (lib/log-store.ts) และระหว่างนั้นเก็บแค่ตัวนับของ issue
+     * ธงลงเมื่อขนาดต่ำกว่า 90% ของเพดาน
      */
     maxMb: positiveNumber("LOG_STORE_MAX_MB", NODE_ENV === "production" ? 5120 : 512),
   },

@@ -23,15 +23,15 @@ import { env } from "../env.js";
  *   down       — ต่อไม่ได้ login ไม่ผ่าน หรือ driver โหลดไม่ขึ้น (รายละเอียดอยู่ใน log ของ process)
  *   disabled   — ปิดไว้ด้วย LOG_STORE_ENABLED=false หรือไม่มี MONGODB_URI
  *   over_quota — ต่อได้ แต่ธง `overQuota` ใน relay_state ตั้งอยู่ ซึ่งแปลว่าขนาดเกิน LOG_STORE_MAX_MB แล้ว
- *                **ตอนนี้ยังไม่มีใครตั้งธงนี้**: ตัวตรวจเพดานรายชั่วโมงของ worker มาพร้อมงานเก็บ error
- *                ไฟล์นี้แค่อ่านธงไว้ก่อน สถานะนี้จึงเกิดได้จากการตั้งธงด้วยมือเท่านั้นจนกว่าตัวตรวจจะมา
+ *                ตัวตั้งธงคือตัวตรวจเพดานรายชั่วโมงของ worker (workers/log-upkeep.ts) ระหว่างที่ธงตั้งอยู่
+ *                lib/error-capture.ts เก็บแค่ตัวนับของ issue ไม่เก็บ error event ทีละตัว
  */
 export type LogStoreStatus = "up" | "down" | "disabled" | "over_quota";
 
 /** ใครเป็นคนเปิด — ใช้ในบรรทัด log และเป็น appName ที่ Mongo เห็น */
 export type LogStoreService = "backend" | "delivery-worker";
 
-/** เอกสารใน relay_state ที่ worker จะเป็นคนเขียน (ยังไม่มีใครเขียน) — ไฟล์นี้อ่านแค่ธงเพดานขนาด */
+/** เอกสารใน relay_state ที่ worker เขียน (workers/log-upkeep.ts) — ไฟล์นี้อ่านแค่ธงเพดานขนาด */
 interface RelayStateDoc {
   _id: string;
   overQuota?: boolean;
@@ -115,7 +115,7 @@ export function startLogStore(options: { service: LogStoreService; maxPoolSize: 
 }
 
 /**
- * ฐานข้อมูลของ log store สำหรับผู้เขียน (lib/error-capture.ts) — ไม่ reject
+ * ฐานข้อมูลของ log store สำหรับผู้เขียน (lib/error-capture.ts, workers/log-upkeep.ts) — ไม่ reject
  *
  * คืน null เมื่อปิดอยู่ ยังไม่ได้ `startLogStore()` ถูกปิดไปแล้ว หรือต่อไม่ได้ (สถานะกลายเป็น `down` พร้อมบรรทัดเดียว
  * ตามกติกาของ setState) ผู้เรียกถือ null ว่า "ตอนนี้เขียนไม่ได้" แล้วลองใหม่รอบหน้า ไม่ใช่ error

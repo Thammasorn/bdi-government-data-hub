@@ -255,6 +255,7 @@ services:
       LOG_STORE_ENABLED: ${LOG_STORE_ENABLED:-true}
       MONGODB_URI: ${MONGODB_WORKER_URI:-mongodb://bdi_worker:${MONGO_WORKER_PASSWORD:-dev-mongo-worker-change-me}@mongo:27017/${MONGODB_DB:-bdi_logs}?authSource=${MONGODB_DB:-bdi_logs}}
       MONGODB_DB: ${MONGODB_DB:-bdi_logs}
+      # worker เป็นคนเทียบค่านี้กับขนาดจริงทุกชั่วโมง (workers/log-upkeep.ts)
       LOG_STORE_MAX_MB: ${LOG_STORE_MAX_MB:-}
       DEPLOY_ENV: ${DEPLOY_ENV:-${COMPOSE_PROJECT_NAME:-bdi-project}}
     volumes:
