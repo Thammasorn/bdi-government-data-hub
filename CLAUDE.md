@@ -455,7 +455,13 @@ The organisation route also writes the contact section and an activated signator
 from the **account** over whatever the body carried; a change there goes in
 `metadata.synced_from_account`, not `fields_changed`, so the first save of a snapshot older than
 the account (a legacy or `seed:demo` draft, a renamed account) writes a row with
-`fields_changed: []` instead of crediting the officer with typing their own name.
+`fields_changed: []` instead of crediting the officer with typing their own name. The same goes
+for the route's own normalisation: a draft stored before e-mails were lower-cased (2026-09-18) or
+phones reduced to digits (2026-08-29) is shown as stored, sent back as shown, and written in the
+new form. Such keys go in `metadata.normalised_by_route`, decided by `changedOnlyInForm()`
+(`lib/organization-form.ts`): does the old value, run through the form's own converters, equal
+what was written? A new converter on a draft field must be reflected there, or its first save
+credits the officer again.
 
 **Audit rows come before any inline send.** Activation-key, password-reset and OTP mails go out
 inline and can throw; a row written after them vanishes with the SMTP failure while the key or

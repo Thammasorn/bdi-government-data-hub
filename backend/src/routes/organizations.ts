@@ -104,6 +104,7 @@ import { LEGAL_SCOPES, requestDocuments } from "../lib/legal.js";
 import { NAME_FIELDS, accountNameTh, fullNameTh } from "../lib/person-name.js";
 import {
   MAX_ADDRESS_LINE,
+  changedOnlyInForm,
   organizationDraftSchema as draftSchema,
   toRequestData,
 } from "../lib/organization-form.js";
@@ -1506,12 +1507,11 @@ organizationRouter.patch("/:id", async (req, res) => {
    * ช่องนั้นมา ค่าเดิมจึงยังอยู่ในตาราง และ log ก็ไม่บันทึกว่าล้าง — ตรงกับสิ่งที่เกิดขึ้นจริง
    * ที่อยู่ไม่เป็นแบบนั้น: ล้างจังหวัดแล้วรหัสทั้งสามช่องถูกเขียนเป็น null จริง แถวจึงบันทึกไว้
    */
-  const changed = sanitizeDiff(
-    diffFields(
-      blankAsNull(request) as Record<string, unknown>,
-      blankAsNull(sentOnly(snapshot)) as Record<string, unknown>,
-    ),
+  const rawChanged = diffFields(
+    blankAsNull(request) as Record<string, unknown>,
+    blankAsNull(sentOnly(snapshot)) as Record<string, unknown>,
   );
+  const changed = sanitizeDiff(rawChanged);
   /**
    * ช่องที่เปลี่ยนเพราะค่าจากบัญชี ไม่ใช่เพราะผู้กรอกพิมพ์ — แยกออกจาก `fields_changed`
    *
@@ -1522,8 +1522,21 @@ organizationRouter.patch("/:id", async (req, res) => {
    * ยังอยู่ใน before/after ครบ เพราะถูกเขียนลงตารางจริง และบันทึกครั้งนั้นยังเกิดแถวแม้ไม่ได้
    * พิมพ์อะไรเลย ไม่อย่างนั้น snapshot จะเปลี่ยนโดยไม่มีร่องรอย
    */
-  const changedKeys = changed ? Object.keys(changed.after) : [];
+  const changedKeys = rawChanged ? Object.keys(rawChanged.after) : [];
   const syncedFromAccount = changedKeys.filter((key) => key in fromAccount);
+  /**
+   * ช่องที่เปลี่ยนแค่รูปเพราะการแปลงของ route เอง (อีเมลเป็นตัวพิมพ์เล็ก เบอร์เป็นตัวเลขล้วน ตัดช่องว่าง)
+   * — แยกออกจาก `fields_changed` ด้วยเหตุผลเดียวกับกลุ่มข้างบน
+   *
+   * ร่างเก่าที่เก็บ "Saraban@DOL.go.th" หรือ "02-123-4567" ไว้ ฟอร์มแสดงตามนั้นแล้วส่งกลับมาตามนั้น
+   * route เขียนลงเป็นรูปใหม่ ตารางเปลี่ยนจริงจึงยังอยู่ใน before/after แต่ถ้านับใน `fields_changed`
+   * แถวจะอ่านว่าผู้ประสานงานแก้อีเมลและเบอร์ของหน่วยงานทั้งที่เขาไม่ได้แตะ (ลองกับ ORG-REG-2026-0002
+   * แล้ว 2026-09-29) ตัดสินจากค่าเดิมหลังแปลงเทียบกับค่าที่เขียนลง ไม่ใช่จาก body — `changedOnlyInForm()`
+   */
+  const normalisedByRoute = changedKeys.filter(
+    (key) =>
+      !(key in fromAccount) && changedOnlyInForm(key, rawChanged!.before[key], rawChanged!.after[key]),
+  );
   const masterChanged = masterRename
     ? sanitizeDiff(
         diffFields(
@@ -1545,8 +1558,11 @@ organizationRouter.patch("/:id", async (req, res) => {
         saved_via: "WEB_FORM",
         request_number: request.requestNumber,
         status: request.status,
-        fields_changed: changedKeys.filter((key) => !(key in fromAccount)),
+        fields_changed: changedKeys.filter(
+          (key) => !(key in fromAccount) && !normalisedByRoute.includes(key),
+        ),
         ...(syncedFromAccount.length ? { synced_from_account: syncedFromAccount } : {}),
+        ...(normalisedByRoute.length ? { normalised_by_route: normalisedByRoute } : {}),
         // ชื่อบนแถว organization ที่ตามคำขอไปด้วย — คนละแถวกับ subject จึงไม่ปนกับ before/after
         ...(masterChanged ? { organization_master_changed: masterChanged } : {}),
       },
