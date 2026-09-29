@@ -1552,8 +1552,14 @@ Two API base URLs, and they are not interchangeable:
 - **Never print a body-parser error.** The `entity.parse.failed` error carries the raw body in
   `err.body`, and V8's message can quote it too (`Unexpected token 'S', ..."assword": S...`). The
   final error middleware used to `console.error(err)` it, so a truncated login JSON put the
-  plaintext password in `docker logs`. It now answers 400 `validation` or 413 `payload_too_large`
-  from a branch that prints nothing.
+  plaintext password in `docker logs`. It now answers 400 `validation`, 413 `payload_too_large` or
+  415 `unsupported_media_type` from a branch that prints nothing. That branch recognises the error
+  by **where it came from**, not by its shape: `parseJsonBody()` in `index.ts` wraps `express.json`
+  and turns every 4xx it raises into a `RequestBodyError` that keeps only the status. Matching on
+  shape (`typeof err.type === "string"`) missed a corrupt `Content-Encoding: gzip`/`deflate` body,
+  which body-parser raises as `createError(400, zlibError)` with no `type`, so it still answered
+  500 and printed a stack. Other 4xx branches of that middleware (`DocumentRenderError`, Prisma
+  codes mapped to 409/400/404) do print, on purpose; the silence is for body errors only.
 
 
 ## Notion

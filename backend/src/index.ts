@@ -25,6 +25,45 @@ import { ensureContainer } from "./storage.js";
 
 const app = express();
 
+/**
+ * body ที่อ่านไม่ได้ด้วยความผิดของคำขอ — ตัวแปลง body ล้มด้วย status 4xx
+ *
+ * ตัวนี้**ไม่ถือ error เดิมไว้** ตั้งใจ: error ของ `entity.parse.failed` ถือ body ดิบไว้ทั้งก้อน
+ * (และข้อความของ V8 ก็ยกบางส่วนมา) ห่อไว้ก็ยังมีทางหลุดไปถึง `console.error` สักวัน ทิ้งไปเลย
+ * เหลือแค่ status ที่ใช้ตอบ
+ */
+class RequestBodyError extends Error {
+  constructor(readonly status: number) {
+    super(`request body rejected with ${status}`);
+  }
+}
+
+const jsonBody = express.json({ limit: "1mb" });
+
+/**
+ * `express.json` ที่ติดป้าย error **จากต้นทาง** — ไม่ใช่เดาจากรูปร่างของ error ที่ปลายทาง
+ *
+ * เดิมตัวจัดการ error ท้ายไฟล์ดูว่า error มี `type` เป็นข้อความหรือเปล่า แต่ body-parser ไม่ได้ใส่
+ * `type` ให้ทุกตัว: body ที่บีบอัดมาเสีย (`Content-Encoding: gzip`/`deflate` แต่ข้างในไม่ใช่) ออกมาเป็น
+ * `createError(400, zlibError)` ซึ่งมีแค่ `status` กับ `expose` ไม่มี `type` จึงหลุดไปถึง 500 `internal`
+ * แถมถูกพิมพ์เป็น unhandled error (ลองกับ stack ที่รันอยู่แล้ว 2026-09-29) — การเดาจากรูปร่างพลาดได้
+ * อีกเมื่อ body-parser เปลี่ยนรุ่น ส่วนการดูว่ามาจากไหนไม่พลาด
+ *
+ * 4xx ทุกตัวจากตรงนี้คือความผิดของคำขอ (อ่านไม่ออก · ใหญ่เกิน · charset/การบีบอัดที่ไม่รองรับ ·
+ * ส่งมาไม่ครบ) ส่วน 5xx ของมัน (เช่น stream ถูกอ่านไปก่อนแล้ว) เป็นความผิดของเรา ปล่อยผ่านไปตามเดิม
+ * ให้ถูกพิมพ์ — error กลุ่มนั้นของ raw-body ไม่ได้ถือ body ไว้
+ *
+ * callback ของ body-parser กลับมาใน store ของ `correlationMiddleware` อยู่แล้ว (ดูข้างล่าง) การห่อ
+ * ชั้นนี้ไม่ได้เปลี่ยนเรื่องนั้น
+ */
+function parseJsonBody(req: Request, res: Response, next: NextFunction) {
+  jsonBody(req, res, (err?: unknown) => {
+    if (!err) return next();
+    const status = (err as { status?: unknown }).status;
+    next(typeof status === "number" && status >= 400 && status < 500 ? new RequestBodyError(status) : err);
+  });
+}
+
 app.set("trust proxy", 1);
 // credentials: true บังคับให้ต้องระบุ origin เจาะจง ใช้ "*" ไม่ได้
 app.use(cors({ origin: env.corsOrigins, credentials: true }));
@@ -38,7 +77,7 @@ app.use(cors({ origin: env.corsOrigins, credentials: true }));
  * ตัวแปลงจึงคืนมาใน store เดิม
  */
 app.use(correlationMiddleware);
-app.use(express.json({ limit: "1mb" }));
+app.use(parseJsonBody);
 app.use(cookieParser());
 
 app.get("/", (_req, res) => {
@@ -96,16 +135,6 @@ const PRISMA_ERRORS: Record<string, { status: number; error: string; message: st
   P2024: { status: 503, error: "unavailable", message: "ระบบกำลังมีผู้ใช้งานหนาแน่น กรุณาลองใหม่อีกครั้ง" },
 };
 
-/**
- * error ของตัวแปลง body (`express.json`) — มี `status` เป็นตัวเลขต่ำกว่า 500 และ `type` เป็นข้อความ
- * เช่น `entity.parse.failed` หรือ `entity.too.large` (ตาม http-errors ที่ body-parser ใช้)
- */
-function isBodyParserError(err: unknown): err is { status: number; type: string } {
-  if (typeof err !== "object" || err === null) return false;
-  const { status, type } = err as { status?: unknown; type?: unknown };
-  return typeof status === "number" && status < 500 && typeof type === "string";
-}
-
 app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
   /**
    * ส่งหัวคำตอบไปแล้ว (route ที่เริ่มเขียน body แล้วค่อยล้ม) — ตอบใหม่ไม่ได้ ส่งต่อให้ตัวจัดการของ Express
@@ -122,17 +151,29 @@ app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
   }
 
   /**
-   * body ที่อ่านไม่ออกหรือใหญ่เกิน — ความผิดของคำขอ ไม่ใช่ของระบบ จึงไม่ใช่ 500
+   * body ที่อ่านไม่ออก ใหญ่เกิน หรือเข้ารหัสแบบที่ไม่รองรับ — ความผิดของคำขอ ไม่ใช่ของระบบ จึงไม่ใช่ 500
    *
-   * **ห้ามพิมพ์ error ตัวนี้** แม้แต่ข้อความ: error ของ `entity.parse.failed` ถือ `body` ดิบไว้ทั้งก้อน
+   * **ไม่พิมพ์อะไรเลย** เพราะ error ต้นทางถือ body ดิบไว้: `entity.parse.failed` เก็บทั้งก้อนใน `err.body`
    * และข้อความก็ยกบางส่วนของ body มา เดิมมันตกไปที่ `console.error(err)` ข้างล่าง JSON ของหน้า login
-   * ที่ส่งมาไม่ครบจึงพา**รหัสผ่านตัวจริง**ลง docker logs ไปด้วย 4xx อื่นของระบบก็ไม่พิมพ์อยู่แล้ว
+   * ที่ส่งมาไม่ครบจึงพา**รหัสผ่านตัวจริง**ลง docker logs ไปด้วย เหตุผลมีแค่นั้น — ไม่ใช่ว่า 4xx ของ
+   * ไฟล์นี้ไม่พิมพ์กันทั้งหมด: `DocumentRenderError` 400 กับรหัส Prisma ที่แปลงเป็น 4xx ข้างล่างพิมพ์เสมอ
+   * เพราะเป็นร่องรอยเดียวของ route ที่ยังไม่ดักเคสของตัวเอง
+   *
+   * `RequestBodyError` ไม่ถือ error เดิมไว้ตั้งแต่ `parseJsonBody()` แล้ว สาขานี้จึงไม่มีอะไรให้พิมพ์พลาด
    */
-  if (isBodyParserError(err)) {
+  if (err instanceof RequestBodyError) {
     if (err.status === 413) {
       res.status(413).json({
         error: "payload_too_large",
         message: "ข้อมูลที่ส่งมามีขนาดเกิน 1 MB — ไฟล์แนบให้อัปโหลดผ่านช่องแนบไฟล์ ไม่ใช่ส่งรวมมากับข้อมูล",
+      });
+      return;
+    }
+    // charset หรือ Content-Encoding ที่ตัวแปลงไม่รู้จัก — ตอบ 415 ตามที่มันบอก ไม่ใช่ 400 เพราะแก้คนละที่
+    if (err.status === 415) {
+      res.status(415).json({
+        error: "unsupported_media_type",
+        message: "รูปแบบการเข้ารหัสของข้อมูลที่ส่งมาไม่รองรับ — ส่งเป็น JSON แบบ UTF-8 (บีบอัดได้เฉพาะ gzip หรือ deflate)",
       });
       return;
     }
