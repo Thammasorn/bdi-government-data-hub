@@ -196,8 +196,25 @@ const pendingIssues = new Map<string, IssueDelta>();
 const perFingerprint = new Map<string, { windowStart: number; stored: number }>();
 let processWindow = { start: 0, stored: 0 };
 
+/**
+ * ทำไมถึงทิ้ง — event สรุปต้องบอกสาเหตุให้ถูก เดิมมันโทษ "log store เขียนไม่ได้นาน" ทุกครั้ง แม้ที่ทิ้งจริงคือเอกสารที่
+ * Mongo ไม่รับ หรือพายุ error ตอนที่ Mongo ปกติดี คนอ่านจึงไปไล่หา Mongo ล่มที่ไม่เคยเกิด
+ *   - queue_full: คิวในหน่วยความจำเต็ม (500 รายการ / 2 MB) — Mongo เขียนไม่ได้นาน หรือ error มาเร็วกว่าที่เขียนทัน
+ *   - too_large: เอกสารตัวเดียวเกิน 64 KB หลังตัดแล้ว
+ *   - rejected: Mongo ปฏิเสธตัวเอกสาร (DOCUMENT_REJECTED) ลองซ้ำก็ไม่ผ่าน
+ *   - issue_backlog: issue ที่รอเขียนครบ 1,000 fingerprint — การเกิดครั้งนั้นไม่ได้เข้าตัวนับด้วยซ้ำ
+ */
+type DropReason = "queue_full" | "too_large" | "rejected" | "issue_backlog";
+
 /** ทิ้งไปเท่าไรตั้งแต่เขียนสำเร็จครั้งล่าสุด — ได้ event สรุปหนึ่งตัวเมื่อกลับมาเขียนได้ */
-const dropped = { count: 0, first: null as Date | null, last: null as Date | null };
+const dropped = {
+  count: 0,
+  first: null as Date | null,
+  last: null as Date | null,
+  reasons: { queue_full: 0, too_large: 0, rejected: 0, issue_backlog: 0 } as Record<DropReason, number>,
+  /** ในนั้นเป็นสำเนา audit ที่ Postgres ไม่รับกี่ตัว — สำเนาเดียวที่เหลือของแถวนั้น หายแล้วหายเลย */
+  auditCopies: 0,
+};
 
 let flushing: Promise<void> | null = null;
 let failures = 0;
@@ -472,7 +489,7 @@ function keep(doc: ErrorEventDoc, fingerprint: string, scrubbed: ScrubbedError, 
 
   const delta = countIssue(doc, fingerprint, scrubbed, where);
   if (!delta) {
-    noteDropped(doc.occurredAt, 1);
+    noteDropped(doc.occurredAt, 1, "issue_backlog");
     return "dropped";
   }
   if (logStoreStatus().status === "over_quota") return "over_quota";
@@ -625,19 +642,19 @@ function printLine(doc: ErrorEventDoc, scrubbed: ScrubbedError, where: string | 
 /** วางลงคิว ไล่ตัวที่สำคัญน้อยกว่าออกถ้าเต็ม — คืน false ถ้าตัวที่เข้ามาใหม่เองถูกทิ้ง */
 function enqueue(item: RingItem): boolean {
   if (item.bytes > DOC_MAX_BYTES) {
-    noteDropped(new Date(), 1);
+    noteDropped(new Date(), 1, "too_large", item.kind === "activity" ? 1 : 0);
     return false;
   }
   while (ring.length >= RING_MAX_DOCS || ringBytes + item.bytes > RING_MAX_BYTES) {
     const victim = lowestPriorityIndex();
     const victimItem = victim === -1 ? undefined : ring[victim];
     if (!victimItem || victimItem.priority >= item.priority) {
-      noteDropped(new Date(), 1);
+      noteDropped(new Date(), 1, "queue_full", item.kind === "activity" ? 1 : 0);
       return false;
     }
     ring.splice(victim, 1);
     ringBytes -= victimItem.bytes;
-    noteDropped(new Date(), 1);
+    noteDropped(new Date(), 1, "queue_full", victimItem.kind === "activity" ? 1 : 0);
   }
   ring.push(item);
   ringBytes += item.bytes;
@@ -658,8 +675,10 @@ function lowestPriorityIndex(): number {
   return index;
 }
 
-function noteDropped(at: Date, count: number) {
+function noteDropped(at: Date, count: number, reason: DropReason, auditCopies = 0) {
   dropped.count += count;
+  dropped.reasons[reason] += count;
+  dropped.auditCopies += auditCopies;
   dropped.first ??= at;
   dropped.last = at;
 }
@@ -808,7 +827,7 @@ async function insertAll(db: Db, collection: string, docs: Array<{ _id: string }
     const notDuplicate = writeErrors.filter((e) => e.code !== 11000);
     if (notDuplicate.some((e) => !DOCUMENT_REJECTED.has(Number(e.code)))) throw err;
     if (notDuplicate.length > 0) {
-      noteDropped(new Date(), notDuplicate.length);
+      noteDropped(new Date(), notDuplicate.length, "rejected", collection === "activity" ? notDuplicate.length : 0);
       console.warn(`[capture] ${service}: Mongo ไม่รับเอกสาร ${notDuplicate.length} ตัวใน ${collection} — ทิ้งแล้ว`);
     }
   }
@@ -892,7 +911,7 @@ function requeue(items: RingItem[], issues: IssueDelta[]) {
     } else if (pendingIssues.size < PENDING_ISSUES_MAX) {
       pendingIssues.set(d.fingerprint, d);
     } else {
-      noteDropped(d.lastSeen, d.count);
+      noteDropped(d.lastSeen, d.count, "issue_backlog");
     }
   }
 }
@@ -905,13 +924,29 @@ function enqueueDroppedSummary() {
   const count = dropped.count;
   const first = dropped.first ?? new Date();
   const last = dropped.last ?? first;
+  const reasons = { ...dropped.reasons };
+  const auditCopies = dropped.auditCopies;
   dropped.count = 0;
   dropped.first = null;
   dropped.last = null;
+  dropped.reasons = { queue_full: 0, too_large: 0, rejected: 0, issue_backlog: 0 };
+  dropped.auditCopies = 0;
 
+  const REASON_TEXT: Record<DropReason, (n: number) => string> = {
+    queue_full: (n) =>
+      `คิวในหน่วยความจำเต็ม ${n} รายการ (เพดาน ${RING_MAX_DOCS} รายการ / ${RING_MAX_BYTES / 1024 / 1024} MB: ` +
+      "log store เขียนไม่ได้นาน หรือ error มาเร็วกว่าที่เขียนทัน)",
+    too_large: (n) => `เอกสารใหญ่เกิน ${DOC_MAX_BYTES / 1024} KB ${n} รายการ`,
+    rejected: (n) => `Mongo ไม่รับตัวเอกสาร ${n} รายการ`,
+    issue_backlog: (n) => `issue ที่รอเขียนครบ ${PENDING_ISSUES_MAX} fingerprint ${n} ครั้ง (ไม่ได้เข้าตัวนับด้วย)`,
+  };
+  const breakdown = (Object.keys(REASON_TEXT) as DropReason[])
+    .filter((reason) => reasons[reason] > 0)
+    .map((reason) => REASON_TEXT[reason](reasons[reason]))
+    .join(" · ");
   const message =
-    `ทิ้ง error ไป ${count} รายการระหว่าง ${first.toISOString()} ถึง ${last.toISOString()} — ` +
-    `log store เขียนไม่ได้นานจนคิวในหน่วยความจำเต็ม (เพดาน ${RING_MAX_DOCS} รายการ / ${RING_MAX_BYTES / 1024 / 1024} MB)`;
+    `ทิ้งไป ${count} รายการระหว่าง ${first.toISOString()} ถึง ${last.toISOString()} — ${breakdown}` +
+    (auditCopies > 0 ? ` · ในนั้นเป็นสำเนา audit ที่ Postgres ไม่รับ ${auditCopies} รายการ` : "");
   const now = new Date();
   const fingerprint = `error-capture:dropped:${service}`;
   const doc: ErrorEventDoc = {
@@ -930,7 +965,7 @@ function enqueueDroppedSummary() {
     request: null,
     actor: null,
     breadcrumbs: [],
-    extra: { dropped: count, from: first, to: last },
+    extra: { dropped: count, from: first, to: last, reasons, auditCopies },
     browser: null,
     ingest: null,
   };
@@ -944,7 +979,7 @@ function enqueueDroppedSummary() {
   } else {
     pendingIssues.set(fingerprint, {
       fingerprint,
-      title: "ErrorCaptureDropped: ทิ้ง error ไประหว่างที่ log store เขียนไม่ได้",
+      title: "ErrorCaptureDropped: ทิ้งสิ่งที่ควรเก็บไป (สาเหตุแยกอยู่ใน event)",
       culprit: service,
       level: "warning",
       tag: doc.tag,
