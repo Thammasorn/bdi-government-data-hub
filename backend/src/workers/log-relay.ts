@@ -32,7 +32,8 @@
  *     db.activity.deleteMany({ source: "audit_event" })
  *     db.relay_state.updateOne({ _id: "audit_event" }, { $unset: { cursor: "", hashKeyFp: "", schemaVersion: "" } })
  *
- * relay เติมใหม่ตั้งแต่แถวแรกในรอบถัดไป ไม่ต้องเริ่ม worker ใหม่ **`$unset` สามฟิลด์ ไม่ใช่ลบเอกสาร relay_state ทั้งใบ**:
+ * relay เติมใหม่ตั้งแต่แถวแรกในรอบถัดไป ไม่ต้องเริ่ม worker ใหม่ — รอบที่วิ่งค้างอยู่ตอน `$unset` เขียน cursor เก่าคืนไม่ได้
+ * (`advanceCursor` เทียบก่อนเขียน) มันทิ้งรอบแล้วพิมพ์บรรทัดหนึ่ง **`$unset` สามฟิลด์ ไม่ใช่ลบเอกสาร relay_state ทั้งใบ**:
  * ใบเดียวกันถือตัวเลขของเพดานขนาด (`storageMb` `overQuota` … — workers/log-upkeep.ts) และ `lastPruneAt` ถ้าลบทั้งใบ
  * log-upkeep เห็นว่าเอกสารไม่ใช่อย่างที่มันเขียนไว้แล้วตรวจเพดานใหม่ในรอบนาทีถัดไป (ก่อนหน้านั้นธงเกินเพดานหายไปราวหนึ่ง
  * นาที) และ prune วิ่งทันที ซึ่งไม่เสียหาย แต่ไม่ใช่วิธีที่ตั้งใจ — docs/21 §3.8 ต้องบอกแบบเดียวกัน
@@ -233,6 +234,11 @@ async function relayTick(): Promise<void> {
     const started = new Date();
     const upper = new Date(started.getTime() - SETTLE_MS);
     const from = cursorFrom(state);
+    // cursor ที่เก็บไว้ใช้ไม่ได้ (รูปผิด อยู่ในอนาคต) — ลบทิ้งก่อนเริ่มจากแถวแรก การเขียน cursor ของรอบนี้จึงเทียบกับ "ไม่มี
+    // cursor" ได้ แทนการเทียบกับค่าเสียที่อาจอ่านกลับมาไม่ตรงตัว (แล้ว relay ติดอยู่ตรงนั้นตลอดไป)
+    if (from === EPOCH && state?.cursor !== undefined && state.cursor !== null) {
+      await relay.updateOne({ _id: STATE_ID }, { $unset: { cursor: "" } }, { maxTimeMS: MONGO_READ_MS });
+    }
     let cursor = from;
     let inserted = 0;
     let caughtUp = false;
@@ -240,8 +246,15 @@ async function relayTick(): Promise<void> {
       const rows = await readPage(client, cursor, { at: upper, inclusive: true });
       if (rows.length > 0) {
         inserted += await writeRows(db, client, rows);
-        cursor = cursorOfRow(rows[rows.length - 1]!);
-        await relay.updateOne({ _id: STATE_ID }, { $set: { cursor } }, { upsert: true, maxTimeMS: MONGO_READ_MS });
+        const next = cursorOfRow(rows[rows.length - 1]!);
+        if (!(await advanceCursor(relay, cursor, next))) {
+          console.log(
+            "[log-relay] cursor ใน relay_state เปลี่ยนไประหว่างรอบนี้ (rebuild หรือ relay อีกตัว) — ทิ้งรอบนี้ " +
+              "รอบถัดไปอ่านต่อจาก cursor ที่บันทึกไว้ตอนนั้น",
+          );
+          return;
+        }
+        cursor = next;
       }
       if (rows.length < PAGE_SIZE) {
         caughtUp = true;
@@ -333,6 +346,29 @@ function cursorFrom(state: RelayStateDoc | null): Cursor {
     return EPOCH;
   }
   return { at: cursor.at, exact: cursor.exact, id: cursor.id };
+}
+
+/**
+ * บันทึก cursor ใหม่ **เฉพาะเมื่อค่าที่เก็บยังเป็น `expected`** (compare-and-set) — คืน false ถ้ามีคนเปลี่ยนมันไปแล้ว
+ *
+ * เดิมเป็น `$set` เฉย ๆ จากค่าที่อ่านตอนเริ่มรอบ rebuild ตามคู่มือ (`deleteMany` แล้ว `$unset` cursor ขณะ worker วิ่งอยู่) จึง
+ * แข่งกับรอบที่อ่าน state ก่อน `$unset` แล้วเขียนหน้าถัดไปหลังจากนั้นได้: cursor เก่าถูกเขียนคืน relay อ่านต่อจากเกือบปัจจุบัน
+ * เอกสารก่อนหน้านั้นที่ `deleteMany` ลบไปแล้วไม่กลับมาอีก reconcile เติมแค่ 24 ชั่วโมงล่าสุด และไม่มีบรรทัดไหนบอก (ตรวจแบบค้าน
+ * ขั้น 7, 2026-09-30 — จากการอ่านโค้ด) ตอนนี้รอบนั้นเขียนไม่ติด ทิ้งรอบ แล้วรอบถัดไปเริ่มจากแถวแรก
+ *
+ * ไม่ upsert: เอกสาร relay_state มีอยู่แล้วเสมอตรงนี้ (`checkIdentity` สร้างให้ตอนอ่านได้ null) ถ้ามีคนลบทั้งใบระหว่างรอบ
+ * ก็เขียนไม่ติดเหมือนกัน รอบถัดไปสร้างใหม่ · ช่องที่เหลือ: รอบที่เริ่มจาก "ไม่มี cursor" แล้ว rebuild เกิดระหว่างหน้าแรก
+ * ของมัน — `$unset` ของค่าที่ไม่มีอยู่แล้วไม่เปลี่ยนอะไร ตัวเทียบจึงผ่าน และถ้า `deleteMany` ลบเอกสารของหน้านั้นไปแล้ว
+ * แถวไม่เกิน 500 แถวนั้นไม่ถูกเติมคืน (ต้อง rebuild ซ้ำภายในไม่กี่วินาทีหลัง rebuild หรือ volume ใหม่ — ยอมรับ)
+ * relay สองตัวซ้อนกันระหว่าง deploy ก็ผ่านตัวนี้: ตัวที่เขียนช้ากว่าทิ้งรอบของมันแทนการพา cursor ถอยหลัง
+ */
+async function advanceCursor(relay: Collection<RelayStateDoc>, expected: Cursor, next: Cursor): Promise<boolean> {
+  const guard: Filter<RelayStateDoc> =
+    expected === EPOCH
+      ? ({ cursor: null } as unknown as Filter<RelayStateDoc>)
+      : { "cursor.exact": expected.exact, "cursor.id": expected.id };
+  const result = await relay.updateOne({ _id: STATE_ID, ...guard }, { $set: { cursor: next } }, { maxTimeMS: MONGO_READ_MS });
+  return result.matchedCount === 1;
 }
 
 function reportBadCursor(why: string) {
