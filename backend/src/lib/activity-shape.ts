@@ -133,8 +133,8 @@ const CATEGORY_BY_ACTION: Record<AuditActionCode, ActivityCategory> = {
 };
 
 /**
- * รหัสของขั้นถัดไปที่ยังไม่อยู่ใน `AuditAction` (step 8: บันทึกการเรียก admin API ซึ่งอยู่ใน Mongo อย่างเดียว ไม่ผ่าน
- * audit_event) — ย้ายเข้าตารางข้างบนถ้ารหัสนั้นเข้า `AuditAction` วันหนึ่ง
+ * รหัสที่ไม่อยู่ใน `AuditAction` เพราะไม่เคยลง audit_event — `ADMIN_API_REQUEST` คือบันทึกการเรียก admin API ซึ่งอยู่ใน Mongo
+ * อย่างเดียว (`source: "http"`, lib/admin-access.ts) ย้ายเข้าตารางข้างบนถ้ารหัสนั้นเข้า `AuditAction` วันหนึ่ง
  */
 const CATEGORY_OF_LATER_ACTIONS: Record<string, ActivityCategory> = {
   ADMIN_API_REQUEST: "admin-access",

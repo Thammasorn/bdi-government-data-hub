@@ -6,6 +6,7 @@ import { MulterError } from "multer";
 
 import { prisma } from "./db.js";
 import { env } from "./env.js";
+import { recordAdminAccess } from "./lib/admin-access.js";
 import { adminTokenLooksWeak } from "./lib/auth.js";
 import { DocumentRenderError } from "./lib/document-render.js";
 import { correlationMiddleware, currentContext, referenceOf } from "./lib/context.js";
@@ -159,6 +160,11 @@ app.get("/", (_req, res) => {
 
 app.use("/health", healthRouter);
 app.use("/api/auth", authRouter);
+/**
+ * บันทึกการเรียก /api/admin* ทุกครั้ง รวมการอ่าน (lib/admin-access.ts — Mongo อย่างเดียว ไม่มีคำขอไหนรอ) ต้องมาก่อน router ของ
+ * admin ทุกตัว: ผูก listener ไว้ก่อน `requireAdminToken` ตอบ 401 ข้าม `/api/admin/logs*` เอง (บันทึกตัวเองเป็น AUDIT_LOG_READ)
+ */
+app.use("/api/admin", recordAdminAccess);
 /**
  * API อ่าน log — token ของตัวเอง (`x-log-token`) ไม่ใช่ admin token และมี 404 ของตัวเองท้าย router: ต้องมาก่อน adminRouter
  * ที่จับ /api/admin ทั้งก้อน ไม่งั้น path ที่พิมพ์ผิดใต้ /api/admin/logs ไปเจอ requireAdminToken แล้วได้แถว

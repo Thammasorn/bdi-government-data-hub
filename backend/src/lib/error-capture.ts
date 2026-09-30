@@ -144,10 +144,15 @@ interface IssueDelta {
   lastEventId: string | null;
 }
 
+/**
+ * `activity` = สำเนาของแถว audit ที่ Postgres ไม่รับ (สำเนาเดียวที่เหลือ) · `access` = บันทึกการเรียก admin API
+ * (lib/admin-access.ts) — ลง collection เดียวกัน แต่ `access` ถูกทิ้งก่อนเกือบทุกอย่างเมื่อคิวเต็ม และไม่เขียนตอนเกินเพดานขนาด
+ */
 type RingItem =
   | { kind: "event"; doc: ErrorEventDoc; bytes: number; priority: number }
   | { kind: "runtime"; doc: RuntimeEventDoc; bytes: number; priority: number }
-  | { kind: "activity"; doc: ActivityDoc; bytes: number; priority: number };
+  | { kind: "activity"; doc: ActivityDoc; bytes: number; priority: number }
+  | { kind: "access"; doc: ActivityDoc; bytes: number; priority: number };
 
 // --------------------------------------------------------------------------------------------- เพดาน
 
@@ -174,13 +179,14 @@ export const FLUSH_ON_EXIT_MS = 2_000;
 /**
  * ลำดับการทิ้งเมื่อคิวเต็ม: ตัวที่เลขน้อยกว่าถูกทิ้งก่อน (ตัวเก่าสุดในกลุ่มนั้น) ตัวที่เข้ามาใหม่ไล่ได้เฉพาะตัวที่เลข
  * **น้อยกว่า** ตัวเอง เลขเท่ากันแปลว่าตัวใหม่ถูกทิ้ง — ตัวอย่างแรก ๆ ของเหตุการณ์หนึ่งบอกอะไรได้มากกว่าตัวที่ห้าร้อย
- * รายงานจากเบราว์เซอร์ (0) กับบันทึกการเรียก admin API (1) จะมาใน step 9 และ 8 และถูกทิ้งก่อนทุกอย่างของที่นี่
+ * รายงานจากเบราว์เซอร์ (0) กับบันทึกการเรียก admin API (1 — lib/admin-access.ts) ถูกทิ้งก่อนทุกอย่างของ server เอง:
+ * เบราว์เซอร์ส่งอะไรมาก็ได้ และบันทึกการเรียกเป็นการเข้าถึง ไม่ใช่การเปลี่ยนแปลง (การเปลี่ยนแปลงอยู่ใน audit_event อยู่แล้ว)
  *
  * สำเนา audit (`activity`) อยู่ชั้นเดียวกับ fatal ไม่ใช่กับ error: มันคือสำเนา**เดียว**ที่เหลือของแถวที่ Postgres ไม่รับ
  * ส่วนตัวอย่าง error ที่ถูกไล่ออกยังเหลือตัวนับของ issue อยู่ เดิมเลขเท่ากับ error — คิวที่เต็มไปด้วย error ตอน Mongo
  * ล่ม (ห้าร้อยตัว ซึ่งเกิดจริงในการทดสอบ) จึงทิ้งสำเนา audit ที่มาทีหลังแทนที่จะทิ้งตัวอย่าง error ตัวเก่าสุด
  */
-const PRIORITY = { warning: 2, error: 3, activity: 4, fatal: 4, runtime: 4 } as const;
+const PRIORITY = { browser: 0, access: 1, warning: 2, error: 3, activity: 4, fatal: 4, runtime: 4 } as const;
 
 // --------------------------------------------------------------------------------------------- สถานะ
 
@@ -306,6 +312,21 @@ export function enqueueActivity(doc: ActivityDoc): boolean {
   try {
     if (!env.logStore.enabled) return false;
     return enqueue({ kind: "activity", doc, bytes: sizeOf(doc), priority: PRIORITY.activity });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * บันทึกการเรียก admin API หนึ่งครั้ง (lib/admin-access.ts, `source: "http"`) — คืน false ถ้าไม่ได้เข้าคิว ไม่ throw
+ *
+ * ต่างจากสำเนา audit ข้างบนสองข้อ: เกินเพดานขนาดแล้วไม่เก็บ (plan §3 "Size ceiling": เกินแล้วไม่มีบันทึกการเรียก admin API)
+ * และอยู่ชั้นที่ 1 ของคิว ถูกทิ้งหลังรายงานจากเบราว์เซอร์แต่ก่อนทุกอย่างของ server เอง เอกสารต้องผ่าน `fitDocument()` มาแล้ว
+ */
+export function enqueueAccessRecord(doc: ActivityDoc): boolean {
+  try {
+    if (!env.logStore.enabled || logStoreStatus().status === "over_quota") return false;
+    return enqueue({ kind: "access", doc, bytes: sizeOf(doc), priority: PRIORITY.access });
   } catch {
     return false;
   }
@@ -828,15 +849,19 @@ async function writeBatch(
   const events: ErrorEventDoc[] = [];
   const runtime: RuntimeEventDoc[] = [];
   const activity: ActivityDoc[] = [];
+  const access: ActivityDoc[] = [];
   for (const item of items) {
     if (item.kind === "event") {
       if (!overQuota) events.push(item.doc);
     } else if (item.kind === "runtime") runtime.push(item.doc);
-    else activity.push(item.doc);
+    else if (item.kind === "access") {
+      if (!overQuota) access.push(item.doc);
+    } else activity.push(item.doc);
   }
   if (events.length > 0) await insertAll(db, "error_events", events);
   if (runtime.length > 0) await insertAll(db, "runtime_events", runtime);
-  if (activity.length > 0) await insertAll(db, "activity", activity);
+  if (activity.length > 0) await insertAll(db, "activity", activity, { auditCopies: true });
+  if (access.length > 0) await insertAll(db, "activity", access);
   done.items = true;
 
   if (issueOps.length > 0) {
@@ -860,7 +885,12 @@ export const DOCUMENT_REJECTED = new Set([2, 9, 52, 121, 10334, 17280]);
  * ระดับคำสั่ง (server กำลังปิด, ต่อไม่ติดกลางทาง) ไว้ในคลาสเดียวกับ error รายเอกสาร ลองแล้ว 2026-09-30: ถือว่า
  * "ไม่มี error รายตัว = สำเร็จ" ทำให้ event ทั้งคิวหายเงียบระหว่างที่ mongo ถูก stop ขณะที่ตัวนับของ issue ยังครบ
  */
-async function insertAll(db: Db, collection: string, docs: Array<{ _id: string }>): Promise<void> {
+async function insertAll(
+  db: Db,
+  collection: string,
+  docs: Array<{ _id: string }>,
+  options: { auditCopies?: boolean } = {},
+): Promise<void> {
   try {
     await db.collection<{ _id: string }>(collection).insertMany(docs, { ordered: false });
   } catch (err) {
@@ -869,7 +899,7 @@ async function insertAll(db: Db, collection: string, docs: Array<{ _id: string }
     const notDuplicate = writeErrors.filter((e) => e.code !== 11000);
     if (notDuplicate.some((e) => !DOCUMENT_REJECTED.has(Number(e.code)))) throw err;
     if (notDuplicate.length > 0) {
-      noteDropped(new Date(), notDuplicate.length, "rejected", collection === "activity" ? notDuplicate.length : 0);
+      noteDropped(new Date(), notDuplicate.length, "rejected", options.auditCopies ? notDuplicate.length : 0);
       console.warn(`[capture] ${service}: Mongo ไม่รับเอกสาร ${notDuplicate.length} ตัวใน ${collection} — ทิ้งแล้ว`);
     }
   }

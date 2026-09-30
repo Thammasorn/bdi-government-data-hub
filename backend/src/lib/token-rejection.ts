@@ -179,7 +179,7 @@ function remember(list: Set<string>, value: string | null, onFull: () => void) {
  * มีเลขไม่เกิน 8 ตัว (UUID กลายเป็น `:id` ไปก่อนแล้ว เลขคำขอ 8 หลัก) ชั้นนี้จึงไม่แตะคำขอที่พิมพ์
  * token ผิดธรรมดา เลขทุกรูปที่ encode ไว้ก็เหลือเป็นเลขฐานสิบหกให้นับเสมอ ส่วนที่ปิดไม่ได้คือตัวอักษร
  */
-function pathPattern(req: Request): string {
+export function pathPattern(req: Request): string {
   const path = (req.originalUrl ?? req.url).split("?")[0] ?? "";
   const pattern = decodePercent(path)
     .replace(UUID_IN_PATH, ":id")

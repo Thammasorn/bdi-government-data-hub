@@ -54,6 +54,7 @@ import { z } from "zod";
 
 import { isDatabaseUnreachable, prisma, withDatabaseDeadline } from "../db.js";
 import { env } from "../env.js";
+import { adminAccessStats } from "../lib/admin-access.js";
 import { hashKeyOf, type ActivityCategory, type ActivitySource, type ActivityVia } from "../lib/activity-shape.js";
 import { Router } from "../lib/async-route.js";
 import { AuditAction, AuditSubject, logAudit, recordLogRead } from "../lib/audit.js";
@@ -1079,7 +1080,8 @@ adminLogRouter.get("/status", async (req, res) => {
       // Mongo ตอบไม่ทัน — ตัวเลขของ relay และเพดานเป็น null ส่วน status มาจากรอบตรวจของ log-store.ts อยู่แล้ว
     }
   }
-  res.json({ logStore, release: env.release });
+  // บันทึกการเรียก admin API ของ backend process นี้ (lib/admin-access.ts) — `suppressed` = เกินเพดานต่อนาทีจึงไม่ได้บันทึก
+  res.json({ logStore, adminAccess: adminAccessStats(), release: env.release });
 });
 
 /**
