@@ -164,12 +164,20 @@ names this system used before the move, though `bdi-uploads` satisfies both.
 ```bash
 export ADMIN_API_TOKEN=$(openssl rand -base64 48)
 export ACTIVATION_KEY_SECRET=$(openssl rand -base64 48)
+export LOG_READ_TOKEN=$(openssl rand -hex 32)
 ```
 
-Keep both. `ACTIVATION_KEY_SECRET` is the HMAC key behind every activation link
+Keep all three. `ACTIVATION_KEY_SECRET` is the HMAC key behind every activation link
 (`key_hash = HMAC-SHA-256(secret, raw_key)`) — **rotating it invalidates every activation key
 that has not been used yet**, and the backend refuses to boot without it when
 `NODE_ENV=production`.
+
+`LOG_READ_TOKEN` is the `x-log-token` of the log read API (`/api/admin/logs/*`,
+`docs/21-activity-log.md` §3.11) — a **different** secret from `ADMIN_API_TOKEN` on purpose, so
+holding the admin token does not open the activity log. Hand it only to the people who
+investigate. Empty, the `dev-…-change-me` sample, or shorter than 32 characters, and that API
+answers 503 `log_access_disabled` while everything else runs normally; the backend never
+refuses to boot over it.
 
 ---
 
@@ -245,6 +253,7 @@ az containerapp create \
       database-url="$DATABASE_URL" \
       admin-api-token="$ADMIN_API_TOKEN" \
       activation-key-secret="$ACTIVATION_KEY_SECRET" \
+      log-read-token="$LOG_READ_TOKEN" \
       smtp-pass="<gmail-app-password>" \
       thaid-client-secret="<thaid-client-secret>" \
       thaid-api-key="<thaid-api-key>" \
@@ -254,6 +263,7 @@ az containerapp create \
       DATABASE_URL=secretref:database-url \
       ADMIN_API_TOKEN=secretref:admin-api-token \
       ACTIVATION_KEY_SECRET=secretref:activation-key-secret \
+      LOG_READ_TOKEN=secretref:log-read-token \
       AZURE_STORAGE_ACCOUNT_URL="https://${SANAME}.blob.core.windows.net" \
       AZURE_STORAGE_CONTAINER=bdi-uploads \
       GOTENBERG_URL="https://${GOTENBERG_FQDN}" \
@@ -279,6 +289,13 @@ internal ingress and routes to the target port itself; writing `:3000` there fai
 
 `APP_URL`, `CORS_ORIGIN` and `THAID_REDIRECT_URI` are missing on purpose — they need the
 frontend's hostname, which does not exist yet. §4.5 fills them in.
+
+`LOG_READ_TOKEN` goes to the **backend only** — the delivery-worker and the frontend never read
+it. On its own it opens nothing yet: the log read API also needs the log store, which stays off on
+Azure until BDI chooses a managed MongoDB service (`LOG_STORE_ENABLED=false` in
+`deploy/azure/backend.env`, which also lists `MONGODB_URI` and `LOG_HASH_KEY` for that day), so
+the API answers 503 `log_store_disabled` until then. Setting the token now means turning the log
+store on later needs no second secret.
 
 Now grant the backend's identity access to blob data:
 
@@ -700,6 +717,7 @@ rather than overriding it.
 | `ADMIN_API_TOKEN` | **yes** | — | shared secret for `/api/admin/*` |
 | `ADMIN_TOKEN_WATCH_FPS` | | empty | comma-separated 12-hex fingerprints of retired admin tokens; each gets its own `ADMIN_TOKEN_REJECTED` row (`docs/09` §4.1). Fingerprints only, never a token |
 | `ACTIVATION_KEY_SECRET` | **in production** | dev value | HMAC key for activation keys |
+| `LOG_READ_TOKEN` | | empty (dev value outside production) | `x-log-token` of `/api/admin/logs/*`, backend only; `openssl rand -hex 32`. Empty, `dev-…` or under 32 characters = 503 `log_access_disabled`. Useless until the log store is on (§4.3) |
 | `AZURE_STORAGE_ACCOUNT_URL` | one of the two | — | managed identity; the production answer |
 | `AZURE_STORAGE_CONNECTION_STRING` | one of the two | — | account key; dev only. Wins if both are set |
 | `AZURE_STORAGE_CONTAINER` | | `bdi-uploads` | must match the container that exists |
