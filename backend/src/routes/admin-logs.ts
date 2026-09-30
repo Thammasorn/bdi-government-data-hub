@@ -17,6 +17,10 @@
  *     ไม่กลายเป็นที่เก็บเลขบัตรแห่งใหม่
  *   - ทุกคำสั่งอ่านของ Mongo มี `maxTimeMS` (READ_MAX_MS) ไม่มีอะไรที่นี่แก้ `activity` ได้ มีแค่สถานะของ issue
  *   - Mongo ล่มหรือช้า = 503 `log_store_unavailable` ภายในราว 2–4 วินาที ปิด log store = 503 `log_store_disabled`
+ *   - Postgres ล่มหรือค้าง: ทุกคำสั่งของ Postgres ที่การอ่านรอมีเพดาน (`withDatabaseDeadline()` ใน db.ts — 2 วินาที,
+ *     0.3 วินาทีเมื่อเพิ่งติดต่อไม่ได้) บันทึกการอ่านไปลง log store แทน ตัวระบุที่ต้องแปลง (อีเมล เลขที่คำขอ รหัสหน่วยงาน)
+ *     ตอบ 503 `database_unavailable` ส่วน Postgres ของ trace เป็น `postgres: "unavailable"` — PATCH ของ issue รอ `logAudit()`
+ *     ตามทางปกติ ไม่มีเพดานนี้
  *
  * ข้อตกลงของรายการ (ตามรายการของ admin API): zod แบบ strict — พารามิเตอร์ที่ไม่รู้จักก็ 400 `{error:"validation", fields}`
  * · `page` เริ่ม 1 · `pageSize` 50 สูงสุด 200 · เรียง `occurredAt` ใหม่ไปเก่าแล้ว `_id` · `total` จาก `countDocuments` ตัดที่
@@ -32,7 +36,7 @@ import type { Request, Response } from "express";
 import type { Db, Document, Filter } from "mongodb";
 import { z } from "zod";
 
-import { prisma } from "../db.js";
+import { isDatabaseUnreachable, prisma, withDatabaseDeadline } from "../db.js";
 import { env } from "../env.js";
 import { hashKeyOf, type ActivityCategory, type ActivitySource, type ActivityVia } from "../lib/activity-shape.js";
 import { Router } from "../lib/async-route.js";
@@ -73,6 +77,9 @@ const ISSUE_EVENTS_MAX = 100;
 const BANGKOK_OFFSET_MS = 7 * 60 * 60_000;
 
 const STORE_MESSAGE = "ระบบบันทึกกิจกรรมยังไม่พร้อมใช้งาน กรุณาลองใหม่อีกครั้ง";
+const DATABASE_MESSAGE =
+  "ฐานข้อมูลหลักไม่พร้อม จึงแปลงอีเมล เลขที่คำขอ หรือรหัสหน่วยงานเป็น id ไม่ได้ — ระหว่างนี้ค้นด้วย uuid ผ่าน actorId หรือ " +
+  "subjectType+subjectId ได้ หรือลองใหม่อีกครั้ง";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const UUID_TEMPLATE = "00000000-0000-0000-0000-000000000000";
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -418,22 +425,38 @@ function isStoreError(err: unknown): boolean {
 
 /**
  * ครอบ handler: error ของ Mongo ระหว่างอ่านเป็น 503 `log_store_unavailable` (เก็บเป็น warning) ไม่ใช่ 500 — Mongo เป็นของเสริม
- * ล่มได้ตามแบบ error อื่น (Prisma, โค้ดเรา) ไปตามทางเดิมของ index.ts
+ * ล่มได้ · Postgres ที่ติดต่อไม่ได้หรือไม่ทันเพดานตอนแปลงตัวระบุเป็น 503 `database_unavailable` (DatabaseDeadlineExceeded ไม่ใช่
+ * error ของ Prisma — ถ้าไม่จับที่นี่ index.ts ตอบ 500) error อื่น (Prisma, โค้ดเรา) ไปตามทางเดิมของ index.ts
  */
 function storeRoute(fn: (req: Request, res: Response) => Promise<void>) {
   return async (req: Request, res: Response) => {
     try {
       await fn(req, res);
     } catch (err) {
-      if (!isStoreError(err) || res.headersSent) throw err;
-      captureError(err, {
-        req,
-        level: "warning",
-        status: 503,
-        tag: "log-api.store",
-        fingerprint: `log-api:store:${(err as Error).name}`,
-      });
-      res.status(503).json({ error: "log_store_unavailable", message: STORE_MESSAGE });
+      if (res.headersSent) throw err;
+      if (isStoreError(err)) {
+        captureError(err, {
+          req,
+          level: "warning",
+          status: 503,
+          tag: "log-api.store",
+          fingerprint: `log-api:store:${(err as Error).name}`,
+        });
+        res.status(503).json({ error: "log_store_unavailable", message: STORE_MESSAGE });
+        return;
+      }
+      if (isDatabaseUnreachable(err)) {
+        captureError(err, {
+          req,
+          level: "warning",
+          status: 503,
+          tag: "log-api.database",
+          fingerprint: `log-api:database:${(err as Error).name}`,
+        });
+        res.status(503).json({ error: "database_unavailable", message: DATABASE_MESSAGE });
+        return;
+      }
+      throw err;
     }
   };
 }
@@ -604,10 +627,12 @@ interface PersonRef {
 async function resolvePerson(value: string, res: Response): Promise<PersonRef | null> {
   if (UUID.test(value)) return { accountId: value.toLowerCase(), emailKey: null, recorded: value.toLowerCase() };
   const email = value.trim().toLowerCase();
-  const account = await prisma.userAccount.findFirst({
-    where: { email: { equals: email, mode: "insensitive" } },
-    select: { id: true },
-  });
+  const account = await withDatabaseDeadline(() =>
+    prisma.userAccount.findFirst({
+      where: { email: { equals: email, mode: "insensitive" } },
+      select: { id: true },
+    }),
+  );
   const emailKey = hashKeyOf("email", email, env.logStore.hashKey);
   if (!account && !emailKey) {
     hashSearchUnavailable(res, "person");
@@ -637,15 +662,19 @@ async function resolveRequest(value: string): Promise<RequestRef> {
   const select = { id: true, requestNumber: true, createdAt: true } as const;
   if (UUID.test(value)) {
     const id = value.toLowerCase();
-    const found =
-      (await prisma.organizationRegistrationRequest.findUnique({ where: { id }, select })) ??
-      (await prisma.datasetRegistrationRequest.findUnique({ where: { id }, select }));
+    const found = await withDatabaseDeadline(
+      async () =>
+        (await prisma.organizationRegistrationRequest.findUnique({ where: { id }, select })) ??
+        (await prisma.datasetRegistrationRequest.findUnique({ where: { id }, select })),
+    );
     return { id, number: found?.requestNumber ?? null, createdAt: found?.createdAt ?? null };
   }
   const number = value.toUpperCase();
-  const found =
-    (await prisma.organizationRegistrationRequest.findUnique({ where: { requestNumber: number }, select })) ??
-    (await prisma.datasetRegistrationRequest.findUnique({ where: { requestNumber: number }, select }));
+  const found = await withDatabaseDeadline(
+    async () =>
+      (await prisma.organizationRegistrationRequest.findUnique({ where: { requestNumber: number }, select })) ??
+      (await prisma.datasetRegistrationRequest.findUnique({ where: { requestNumber: number }, select })),
+  );
   return { id: found?.id ?? null, number, createdAt: found?.createdAt ?? null };
 }
 
@@ -660,10 +689,12 @@ function requestFilter(request: RequestRef): Filter<Document> {
 /** หน่วยงาน — uuid ตามจริง (หน่วยงานที่ไม่มีแล้วก็ค้นได้) รหัสหน่วยงานต้องมีในทะเบียน ไม่งั้น 404 */
 async function resolveOrganization(value: string, res: Response): Promise<string | null> {
   if (UUID.test(value)) return value.toLowerCase();
-  const found = await prisma.organization.findFirst({
-    where: { organizationCode: { equals: value, mode: "insensitive" } },
-    select: { id: true },
-  });
+  const found = await withDatabaseDeadline(() =>
+    prisma.organization.findFirst({
+      where: { organizationCode: { equals: value, mode: "insensitive" } },
+      select: { id: true },
+    }),
+  );
   if (!found) {
     res.status(404).json({ error: "not_found", message: `ไม่พบหน่วยงานรหัส ${value}`, fields: { organization: "ไม่พบ" } });
     return null;
@@ -1089,44 +1120,47 @@ adminLogRouter.get(
 );
 
 /**
- * อีเมลในคิวและงานกับระบบภายนอกของ correlation id ตรงตัว — null ถ้า Postgres ตอบไม่ได้ (trace ยังคืนส่วนของ log store)
+ * อีเมลในคิวและงานกับระบบภายนอกของ correlation id ตรงตัว — null ถ้า Postgres ตอบไม่ได้ภายในเพดานของ db.ts (trace ยังคืน
+ * ส่วนของ log store)
  * ไม่มีที่อยู่ปลายทางของอีเมล (`destination`) และข้อความ error ผ่าน `scrubClipped` — SMTP ยกที่อยู่ผู้รับมาในข้อความได้
  * (workers/delivery.ts เขียน `last_error_message` ดิบ)
  */
 async function postgresOfTrace(correlationId: string) {
   try {
-    const [deliveries, integrations] = await Promise.all([
-      prisma.notificationDelivery.findMany({
-        where: { correlationId },
-        orderBy: { createdAt: "asc" },
-        take: TRACE_ROWS_MAX,
-        select: {
-          id: true,
-          channel: true,
-          status: true,
-          attemptCount: true,
-          lastErrorCode: true,
-          lastErrorMessage: true,
-          createdAt: true,
-          sentAt: true,
-          notification: { select: { notificationType: true } },
-        },
-      }),
-      prisma.integrationOperation.findMany({
-        where: { correlationId },
-        orderBy: { createdAt: "asc" },
-        take: TRACE_ROWS_MAX,
-        select: {
-          id: true,
-          integrationType: true,
-          operation: true,
-          status: true,
-          lastErrorCode: true,
-          createdAt: true,
-          completedAt: true,
-        },
-      }),
-    ]);
+    const [deliveries, integrations] = await withDatabaseDeadline(() =>
+      Promise.all([
+        prisma.notificationDelivery.findMany({
+          where: { correlationId },
+          orderBy: { createdAt: "asc" },
+          take: TRACE_ROWS_MAX,
+          select: {
+            id: true,
+            channel: true,
+            status: true,
+            attemptCount: true,
+            lastErrorCode: true,
+            lastErrorMessage: true,
+            createdAt: true,
+            sentAt: true,
+            notification: { select: { notificationType: true } },
+          },
+        }),
+        prisma.integrationOperation.findMany({
+          where: { correlationId },
+          orderBy: { createdAt: "asc" },
+          take: TRACE_ROWS_MAX,
+          select: {
+            id: true,
+            integrationType: true,
+            operation: true,
+            status: true,
+            lastErrorCode: true,
+            createdAt: true,
+            completedAt: true,
+          },
+        }),
+      ]),
+    );
     return {
       deliveries: deliveries.map(({ notification, lastErrorMessage, ...rest }) => ({
         ...rest,

@@ -18,7 +18,7 @@ import {
   type Prisma,
 } from "@prisma/client";
 
-import { prisma } from "../db.js";
+import { prisma, withDatabaseDeadline } from "../db.js";
 import { recordLogReadFallback, reportAuditWriteFailure } from "./audit-fallback.js";
 import { addBreadcrumb, correlationId, currentContext, sourceComponent } from "./context.js";
 import { NAME_FIELDS, fullNameTh } from "./person-name.js";
@@ -711,16 +711,12 @@ export interface LogReadRecord {
 }
 
 /**
- * Postgres ที่ค้าง (pause, pool เต็ม) ต้องไม่ทำให้คำขออ่านค้างตามไปด้วย — เกินนี้ถือว่าเขียนไม่ได้แล้วไปทางสำรอง
- * INSERT ที่ถูกทิ้งไว้ยัง commit ทีหลังได้ การอ่านครั้งนั้นจึงอาจมีสองบันทึก (ดู `recordLogReadFallback()`)
- */
-const LOG_READ_PG_TIMEOUT_MS = 5_000;
-
-/**
  * บันทึกการอ่าน log หนึ่งครั้ง **ก่อน** ส่งข้อมูลกลับ — `AUDIT_LOG_READ` (plan §6, decision 9)
  *
  * ต่างจาก `logAudit()` ตรงที่**ไม่กลืน error**: การอ่านที่ไม่มีร่องรอยห้ามเกิด ลำดับคือ
- *   1. INSERT ลง Postgres ตรง ๆ (ไม่เกิน 5 วินาที) — ได้ id ของแถวเป็น `readId`
+ *   1. INSERT ลง Postgres ตรง ๆ ภายในเพดานของ `withDatabaseDeadline()` (db.ts: 2 วินาที, 0.3 วินาทีถ้าเพิ่งติดต่อไม่ได้ —
+ *      Postgres ที่ล่มจึงไม่ทำให้ทุกการอ่านรอเต็มเพดาน) — ได้ id ของแถวเป็น `readId` INSERT ที่เลิกรอแล้วยัง commit ทีหลังได้
+ *      การอ่านครั้งนั้นจึงอาจมีสองบันทึก (ดู `recordLogReadFallback()`)
  *   2. ไม่ได้ → เก็บ error (`audit.log-read-failed`) แล้วเขียนสำเนาลง log store (`source: "audit_fallback"`) และรอผล
  *      ไม่เกิน 2 วินาที — ได้ `_id` ของสำเนาเป็น `readId`
  *   3. ไม่ได้ทั้งคู่ → คืน null ผู้เรียกตอบ 503 `log_read_unrecorded` โดยไม่ส่งข้อมูลใด ๆ
@@ -746,9 +742,8 @@ export async function recordLogRead(
   };
   const userAgent = storedUserAgent(currentContext()?.userAgent);
   try {
-    const row = await withDeadline(
+    const row = await withDatabaseDeadline(() =>
       prisma.auditEvent.create({ data: auditEventData(input, null, undefined, userAgent), select: { id: true } }),
-      LOG_READ_PG_TIMEOUT_MS,
     );
     addBreadcrumb("audit", input.action);
     return { readId: row.id, recordedIn: "postgres" };
@@ -757,22 +752,6 @@ export async function recordLogRead(
     const fallbackId = await recordLogReadFallback(err, input, userAgent);
     return fallbackId ? { readId: fallbackId, recordedIn: "log_store" } : null;
   }
-}
-
-class DeadlineExceeded extends Error {
-  constructor(ms: number) {
-    super(`ไม่เสร็จภายใน ${ms} ms`);
-    this.name = "DeadlineExceeded";
-  }
-}
-
-/** เหมือน `work` แต่ล้มด้วย DeadlineExceeded ถ้าไม่จบใน `ms` — ตัวจับเวลาถูกล้างทันทีที่ work จบ */
-function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
-  let handle: NodeJS.Timeout | undefined;
-  const deadline = new Promise<never>((_, reject) => {
-    handle = setTimeout(() => reject(new DeadlineExceeded(ms)), ms);
-  });
-  return Promise.race([work, deadline]).finally(() => clearTimeout(handle));
 }
 
 /**
