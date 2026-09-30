@@ -27,6 +27,15 @@
  *
  * **prune** วันละครั้งหลัง 03:00 น. เวลาไทย (หรือรอบแรกที่ worker ขึ้นหลังจากนั้น) ตามตารางใน lib/log-retention.ts
  *
+ * **เพดานขนาดไม่คุม `activity`** — relay ไม่อ่าน `overQuota` เลย คัดลอกทุกแถวไม่ว่า log store จะใหญ่แค่ไหน (plan §3 "Size
+ * ceiling" และตัดสิน 2026-09-30: activity เล็ก และเป็นบันทึกที่ค้นได้) เพดานหยุดแค่ `error_events` (workers/log-upkeep.ts)
+ * ผลที่ต้องรู้: แถวของคำขอที่ไม่ต้อง login และถูก (`LOGIN_FAILED` `OTP_NOT_PENDING`, `IDENTITY_VERIFICATION_FAILED`
+ * `state_not_found`, `PASSWORD_RESET_COMPLETED` `not_found` — ไม่มี throttle) คือแถวหนึ่งใน Postgres **และ**เอกสารหนึ่งใบที่มี
+ * index สิบเอ็ดตัว (บวก `_id`) ที่นี่ วัดบน checkout นี้ (2026-09-30): เอกสารราว 970 ไบต์ บวก index 540–640 ไบต์ ต่อแถว
+ * Postgres ราว 440 ไบต์ — คำขอที่วนยิงจึงกิน `/hdd1tb` เร็วขึ้นสามถึงสี่เท่าของตอนที่มีแค่ Postgres ประโยค "The Mongo
+ * copy is bounded by the size ceiling" ในตารางความเสี่ยงของแผน (§11) ไม่จริงแล้ว — ตัวแก้คือ rate limit ของ `/api/auth/*`
+ * (plan §13 #30) ไม่ใช่ที่นี่
+ *
  * **rebuild** (รูปเอกสารเปลี่ยน หรือเปลี่ยน LOG_HASH_KEY) ทำด้วยมือ สองคำสั่ง (ผู้ใช้ root หรือ bdi_worker):
  *
  *     db.activity.deleteMany({ source: "audit_event" })
