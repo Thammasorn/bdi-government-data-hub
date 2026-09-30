@@ -15,6 +15,7 @@
  *     แล้วพอเขียนได้อีกครั้งจะมี event สรุปหนึ่งตัวว่า "ทิ้งไป N รายการระหว่าง X ถึง Y"
  *   - เก็บ event ทีละตัวได้ไม่เกิน 50 ต่อ fingerprint ต่อชั่วโมง และไม่เกิน 600 ต่อ process ต่อนาที — เกินนั้นเดินแค่ตัวนับ
  *     ของ issue (error ที่วนซ้ำหมื่นครั้งยังเห็นว่าหมื่น แต่เก็บตัวอย่างแค่ 50) fatal ไม่ติดเพดานสองตัวนี้
+ *     คำขอที่ติดเพดานแล้วตอบ 5xx พร้อมรหัสอ้างอิงได้**ตัวย่อ**หนึ่งตัวแทน ให้รหัสนั้นค้นเจอ (`keepReference`, ≤120/นาที)
  *   - log store เกินเพดานขนาด (สถานะ `over_quota` ที่ worker ตั้ง) — เดินแค่ตัวนับ ไม่เก็บ event
  *   - เอกสารหนึ่งตัวไม่เกิน 64 KB
  *
@@ -30,7 +31,7 @@ import type { Request } from "express";
 import type { AnyBulkWriteOperation, Db } from "mongodb";
 
 import { env } from "../env.js";
-import { currentContext, referenceOf, type Breadcrumb } from "./context.js";
+import { currentContext, referenceOf, type Breadcrumb, type RequestContext } from "./context.js";
 import { logDb, logStoreStatus } from "./log-store.js";
 import { bodyShape, headlineOf, requestTarget, scrubClipped, scrubError, type ScrubbedError } from "./redact.js";
 
@@ -405,8 +406,61 @@ function capture(err: unknown, options: CaptureOptions): string | null {
   };
 
   const outcome = keep(doc, fingerprint, scrubbed, where ?? tag);
+  if (ctx && (outcome === "capped_issue" || outcome === "capped_process")) unstored.set(ctx, { doc, outcome });
   if (options.print !== false) printLine(doc, scrubbed, where ?? tag, outcome);
   return outcome === "queued" ? id : null;
+}
+
+// --------------------------------------------------------------------------------------------- รหัสอ้างอิง
+
+/** เก็บรหัสอ้างอิงที่ไม่มีตัวอย่างเต็มได้ไม่เกินนี้ต่อ process ต่อนาที — แยกจากเพดาน 600 ตัวของ event เต็ม */
+const REFERENCE_STUBS_PER_MINUTE = 120;
+let stubWindow = { start: 0, stored: 0 };
+
+/**
+ * error ของคำขอที่ติดเพดานการสุ่มเก็บ (ครบ 50 ตัวต่อชั่วโมงของ issue หรือ 600 ตัวต่อนาทีของ process) — ตัวล่าสุด
+ * ของแต่ละคำขอ รอดูว่าคำขอนั้นจะตอบ 5xx พร้อมรหัสอ้างอิงหรือเปล่า (`keepReference`) หายไปเองพร้อมบริบทของคำขอ
+ */
+const unstored = new WeakMap<RequestContext, { doc: ErrorEventDoc; outcome: "capped_issue" | "capped_process" }>();
+
+/**
+ * ให้รหัสอ้างอิงที่กำลังจะไปถึงตาผู้ใช้ค้นเจอใน error_events — เรียกจาก `referenceOnServerErrors` (index.ts) ทุกครั้ง
+ * ที่คำตอบ 5xx ได้รหัสอ้างอิง ไม่ throw
+ *
+ * error ที่ติดเพดานการสุ่มเก็บเหลือแค่ตัวนับของ issue ไม่มีเอกสารที่ถือ correlation id ของคำขอนั้น — 503 `no_reviewer`
+ * ที่หน่วยงานกดส่งพร้อมกันหกสิบแห่งในชั่วโมงเดียวได้รหัสหกสิบตัว แต่ค้นเจอแค่ห้าสิบ ตัวนี้เก็บ**ตัวย่อ**ของ error ตัวนั้น
+ * แทน: fingerprint (โยงกับ issue), ชื่อกับข้อความ, route, status, ผู้ใช้, เวลา ไม่มี stack, cause, breadcrumb, รูปร่าง
+ * ของ body — `extra.referenceOnly: true` บอกว่าเป็นตัวย่อ
+ *
+ * ยังค้นไม่เจอเมื่อ: log store เกินเพดานขนาด (เก็บแค่ตัวนับ), คิวเต็ม, หรือเกิน 120 ตัวย่อต่อนาที — เหลือแค่ตัวนับของ
+ * issue กับบรรทัด `[capture] … ref=` ใน stdout
+ */
+export function keepReference(status: number): void {
+  try {
+    const ctx = currentContext();
+    if (!ctx || !env.logStore.enabled) return;
+    const pending = unstored.get(ctx);
+    if (!pending) return;
+    unstored.delete(ctx);
+    if (logStoreStatus().status === "over_quota") return;
+
+    const now = Date.now();
+    if (now - stubWindow.start >= 60_000) stubWindow = { start: now, stored: 0 };
+    if (stubWindow.stored >= REFERENCE_STUBS_PER_MINUTE) return;
+
+    const { doc, outcome } = pending;
+    const stub: ErrorEventDoc = {
+      ...doc,
+      error: { name: doc.error.name, message: doc.error.message, stack: null, props: doc.error.props, causes: [] },
+      request: doc.request ? { ...doc.request, status, bodyShape: null } : null,
+      breadcrumbs: [],
+      extra: { referenceOnly: true, capped: outcome },
+    };
+    // ชั้นเดียวกับคำเตือน — คิวเต็มแล้วตัวย่อถูกทิ้งก่อนตัวอย่างเต็มทุกตัว
+    if (enqueue({ kind: "event", doc: stub, bytes: sizeOf(stub), priority: PRIORITY.warning })) stubWindow.stored += 1;
+  } catch {
+    // รหัสอ้างอิงที่ค้นไม่เจอดีกว่าคำตอบที่ส่งไม่ออก
+  }
 }
 
 /** `capped_issue` = ครบ 50 ตัวต่อชั่วโมงของ fingerprint นี้ · `capped_process` = ครบ 600 ตัวต่อนาทีของทั้ง process */

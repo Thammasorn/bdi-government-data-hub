@@ -16,6 +16,7 @@ import {
   exitAfterFatal,
   flushErrors,
   initErrorCapture,
+  keepReference,
   recordRuntimeEvent,
 } from "./lib/error-capture.js";
 import { closeLogStore, startLogStore } from "./lib/log-store.js";
@@ -86,6 +87,10 @@ function parseJsonBody(req: Request, res: Response, next: NextFunction) {
  * error (`http:5xx:POST /api/…:no_reviewer`) เดิมตรงนี้เติมแค่รหัส ผู้ใช้อ่านรหัสให้เจ้าหน้าที่ฟังแล้วค้นใน
  * error_events ไม่เจออะไรเลย คำขอที่ถูกเก็บไปแล้ว (ตัวจัดการ error ท้ายไฟล์, จุดที่เรียก captureError เองก่อนตอบ)
  * ไม่ถูกเก็บซ้ำ — ดู `RequestContext.errorCaptured`
+ *
+ * error ที่ถูกเก็บแต่ติดเพดานการสุ่มเก็บ (50 ตัวต่อชั่วโมงของ issue — คนที่ห้าสิบเอ็ดที่เจอ `no_reviewer` ในชั่วโมงนั้น)
+ * ไม่มีเอกสารของตัวเอง `keepReference()` เก็บตัวย่อของมันแทน รหัสจึงยังค้นเจอ ยกเว้นตอน log store เกินเพดานขนาด
+ * คิวเต็ม หรือตัวย่อเกิน 120 ตัวต่อนาที ซึ่งเหลือแค่ตัวนับของ issue กับบรรทัด `[capture] … ref=` ใน stdout
  */
 class RouteServerError extends Error {
   constructor(status: number, code: string, message: string | null) {
@@ -115,6 +120,7 @@ function referenceOnServerErrors(req: Request, res: Response, next: NextFunction
         fingerprint: `http:5xx:${routeKey(req)}:${fields.error.slice(0, 64)}`,
       });
     }
+    keepReference(res.statusCode);
     const message =
       typeof fields.message === "string" && !fields.message.includes("รหัสอ้างอิง")
         ? `${fields.message} (รหัสอ้างอิง ${reference})`
