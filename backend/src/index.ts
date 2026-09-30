@@ -224,7 +224,8 @@ app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
    *
    * **ไม่ส่งต่อ `next(err)`** ให้ตัวจัดการของ Express อย่างที่เคยทำ: finalhandler ของมันพิมพ์ `err.stack` ดิบ
    * (`logerror`) ก่อนปิด socket และ stack ดิบของ Prisma ยกแถวทั้งแถวมาได้ — ที่นี่ทำสิ่งเดียวกับที่มันทำ (ทำลาย socket)
-   * โดยไม่พิมพ์ สตรีมไฟล์แนบที่ขาดกลางทาง**ไม่**มาถึงที่นี่: `streamAttachment()` ใช้ `pipe()` ซึ่งไม่ส่ง error ต่อให้ `next`
+   * โดยไม่พิมพ์ สตรีมไฟล์แนบที่ขาดกลางทาง**ไม่**มาถึงที่นี่: `pipe()` ไม่ส่ง error ต่อให้ `next` — `pipeToResponse()`
+   * ใน lib/attachment.ts เก็บและปิดการเชื่อมต่อเอง
    */
   if (res.headersSent) {
     captureError(err, { req, status: res.statusCode, tag: "http.after-headers-sent" });

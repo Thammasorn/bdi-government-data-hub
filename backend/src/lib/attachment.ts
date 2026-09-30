@@ -11,8 +11,10 @@
  * 2. **storage key มี attachment_id อยู่ใน path** จึงไม่มีวันเขียนทับ object เดิม
  *    (ภาพ "ทำไมต้องมี attachment_id" ใน sheet อธิบายเหตุผลนี้ไว้)
  */
+import { AsyncResource } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { randomUUID } from "node:crypto";
+import type { Readable } from "node:stream";
 
 import {
   AttachmentOwnerType,
@@ -25,6 +27,8 @@ import {
 
 import { env } from "../env.js";
 import { CONTAINER, getObjectBuffer, getObjectStream, putObject } from "../storage.js";
+import { addBreadcrumb } from "./context.js";
+import { captureError } from "./error-capture.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -265,7 +269,59 @@ export async function streamAttachment(
     "Content-Disposition",
     `${disposition}; filename*=UTF-8''${encodeURIComponent(attachment.originalFileName)}`,
   );
-  stream.pipe(res);
+  pipeToResponse(stream as Readable, res);
+}
+
+/**
+ * ส่งสตรีมของไฟล์จาก storage ต่อให้ผู้ใช้ — โดยที่ storage ล้มกลางทางต้องไม่พา process ล่ม
+ *
+ * `pipe()` ไม่ฟัง 'error' ของต้นทางให้ และ EventEmitter ที่ไม่มีใครฟัง 'error' จะ throw ออกมาเป็น uncaught
+ * exception ซึ่งตั้งแต่ step 5 คือ fatal + `exit(1)` ของทั้ง backend (ลองแล้ว 2026-09-30: หยุด azurite ระหว่างดาวน์โหลด
+ * ไฟล์ 80 MB — `AbortError` เป็น fatal แล้ว API ตอบไม่ได้ทุกคำขอ) error ของสตรีมไม่ผ่านตัวจัดการ error ของ Express
+ * เพราะมันเกิดหลัง handler คืนค่าไปแล้ว จึงต้องจัดการตรงนี้:
+ *   - ยังไม่ได้ส่งอะไรออกไป → ตอบ 503 `storage_unavailable` เป็น JSON ปกติ (ได้รหัสอ้างอิงจาก `referenceOnServerErrors`)
+ *   - ส่งไปแล้วบางส่วน → ตอบใหม่ไม่ได้ ตัดการเชื่อมต่อทิ้ง ผู้ใช้ได้ไฟล์ขาด (curl ได้ exit 18) ไม่ใช่ไฟล์ที่ดูเหมือนครบ
+ *   - เก็บ error ด้วย tag `storage.stream` ทั้งสองแบบ
+ * ผู้ใช้ปิดแท็บหรือยกเลิกกลางทางก็ปิดสตรีมของ storage ตามไป ไม่ปล่อย connection ค้างรอคนอ่าน และ error ที่ตามมาจาก
+ * การปิดนั้นไม่ใช่ความล้มเหลวของ storage จึงไม่ถูกเก็บ
+ *
+ * ตัวฟังถูกผูกกับบริบทของคำขอ (`AsyncResource.bind`) — event ของสตรีมมาจาก socket ซึ่งอยู่นอก AsyncLocalStorage
+ * (กับดักเดียวกับ multer ใน CLAUDE.md) ไม่ผูกแล้ว error ที่เก็บได้จะไม่มี correlation id ไม่มี route และคำตอบ 503
+ * จะถูกเก็บซ้ำเป็น issue ที่สอง
+ */
+export function pipeToResponse(source: Readable, res: import("express").Response) {
+  let clientGone = false;
+  let failed = false;
+  res.on(
+    "close",
+    AsyncResource.bind(() => {
+      if (res.writableFinished || failed) return;
+      clientGone = true;
+      source.destroy();
+    }),
+  );
+  source.on(
+    "error",
+    AsyncResource.bind((err: unknown) => {
+      if (failed || clientGone) return;
+      failed = true;
+      source.unpipe(res);
+      addBreadcrumb("storage", "สตรีมไฟล์ขาดกลางทาง", false);
+      captureError(err, { tag: "storage.stream", status: res.headersSent ? res.statusCode : 503 });
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      // หัวของไฟล์ที่ตั้งไว้แล้วต้องออกก่อน — `res.json` ไม่ตั้ง Content-Type ทับค่าที่มีอยู่ JSON จะออกไปในชื่อ text/csv
+      res.removeHeader("Content-Type");
+      res.removeHeader("Content-Disposition");
+      res.status(503).json({
+        error: "storage_unavailable",
+        message: "เปิดไฟล์ไม่สำเร็จ ระบบจัดเก็บไฟล์ไม่ตอบ กรุณาลองใหม่อีกครั้ง",
+      });
+    }),
+  );
+  source.pipe(res);
 }
 
 /**
