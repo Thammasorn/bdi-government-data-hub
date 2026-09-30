@@ -889,15 +889,31 @@ function personFilter(person: PersonRef): Filter<Document> {
  * อะไรก็ได้ทั้งสองทาง: แถวที่ subject เป็นคำขอนั้น และแถวที่มีเลขที่ของมัน (ไฟล์แนบ การลงนาม) เดิมเลขที่ที่ไม่มีในตารางได้
  * `id: null` ตัวกรองจึงจับได้แค่ `requestNumber` — แถวของคำขอที่สำเนาไม่มีเลขที่ (คัดลอกหลังการลบ ก่อนที่ relay จะหาเลขที่จาก
  * `REQUEST_DELETED` ได้) หายไปจาก timeline ทั้งที่ subject คือคำขอนั้นเอง
+ *
+ * **เลขที่คำขอถูกใช้ซ้ำได้** — เลขถัดไปคือเลขสูงสุดที่มีอยู่บวกหนึ่ง (lib/request-number.ts) ลบคำขอที่เลขสูงสุดแล้วคำขอใหม่ได้
+ * เลขเดิม เลขที่จึงชี้คำขอเดียวเฉพาะช่วงชีวิตของคำขอนั้น `numberWindow` คือช่วงนั้น: ตั้งแต่วันที่สร้าง ถึงเวลาที่ถูกลบ (หรือไม่มี
+ * ปลายถ้ายังอยู่) — ตัดสินแล้วว่า**จำกัดช่วง** ไม่ใช่ "ตัดสาขาเลขที่ทิ้งเมื่อมีคำขอที่ยังอยู่ถือเลขนั้น": แบบหลังทำให้ไฟล์แนบ
+ * และการลงนามของคำขอที่ถูกลบ (ซึ่งผูกด้วยเลขที่อย่างเดียวในสำเนาบางใบ) หายจาก timeline ของมันทันทีที่เลขถูกใช้ซ้ำ และแก้แค่
+ * ทางเดียว: timeline ของคำขอที่**ยังอยู่**ก็ดึงแถวของคำขอที่ถูกลบซึ่งเคยถือเลขเดียวกันเข้ามาด้วย (ตรวจขั้น 7 แบบค้าน,
+ * 2026-09-30 — DS-REG-2026-0011 ลบแล้วสร้างใหม่ ทั้งสองทางเห็นแถวของกันและกัน) ช่วงชีวิตแยกได้ทั้งสองทาง เพราะเลขถูกใช้ซ้ำ
+ * ได้หลังการลบเท่านั้น ระหว่างที่คำขอยังอยู่เลขของมัน unique · สาขา subject ไม่จำกัดช่วง: id ไม่ถูกใช้ซ้ำ
  */
 interface RequestRef {
   id: string | null;
   number: string | null;
   createdAt: Date | null;
+  /** ช่วงที่เลขที่นี้เป็นของคำขอนี้ — null ที่ปลายไหนคือไม่จำกัดปลายนั้น (ไม่รู้วันสร้าง หรือยังไม่ถูกลบ) */
+  numberWindow: TimeWindow;
 }
 
 async function resolveRequest(value: string, db: Db): Promise<RequestRef> {
   const select = { id: true, requestNumber: true, createdAt: true } as const;
+  const live = (found: { id: string; requestNumber: string; createdAt: Date }): RequestRef => ({
+    id: found.id,
+    number: found.requestNumber,
+    createdAt: found.createdAt,
+    numberWindow: { from: found.createdAt, to: null },
+  });
   if (UUID.test(value)) {
     const id = value.toLowerCase();
     const found = await withDatabaseDeadline(
@@ -905,9 +921,14 @@ async function resolveRequest(value: string, db: Db): Promise<RequestRef> {
         (await prisma.organizationRegistrationRequest.findUnique({ where: { id }, select })) ??
         (await prisma.datasetRegistrationRequest.findUnique({ where: { id }, select })),
     );
-    if (found) return { id, number: found.requestNumber, createdAt: found.createdAt };
+    if (found) return live(found);
     const deleted = await deletedRequest(db, { "subject.type": { $in: REQUEST_SUBJECTS }, "subject.id": id });
-    return { id, number: deleted?.number ?? null, createdAt: deleted?.createdAt ?? null };
+    return {
+      id,
+      number: deleted?.number ?? null,
+      createdAt: deleted?.createdAt ?? null,
+      numberWindow: { from: deleted?.numberFrom ?? null, to: deleted?.deletedAt ?? null },
+    };
   }
   const number = value.toUpperCase();
   const found = await withDatabaseDeadline(
@@ -915,42 +936,73 @@ async function resolveRequest(value: string, db: Db): Promise<RequestRef> {
       (await prisma.organizationRegistrationRequest.findUnique({ where: { requestNumber: number }, select })) ??
       (await prisma.datasetRegistrationRequest.findUnique({ where: { requestNumber: number }, select })),
   );
-  if (found) return { id: found.id, number, createdAt: found.createdAt };
+  if (found) return live(found);
+  // ไม่มีคำขอที่ยังอยู่ถือเลขนี้ — คือคำขอที่ถูกลบครั้งล่าสุดที่ถือเลขนี้ (เลขที่ถูกลบและใช้ซ้ำหลายรอบ: รอบก่อน ๆ ค้นด้วย uuid)
   const deleted = await deletedRequest(db, { requestNumber: number });
-  return { id: deleted?.id ?? null, number, createdAt: deleted?.createdAt ?? null };
+  return {
+    id: deleted?.id ?? null,
+    number,
+    createdAt: deleted?.createdAt ?? null,
+    numberWindow: { from: deleted?.numberFrom ?? null, to: deleted?.deletedAt ?? null },
+  };
 }
 
 /**
- * คำขอที่ถูกลบ ตามเอกสาร `REQUEST_DELETED` ของมันใน log store — id (subject) เลขที่ (`requestNumber`) และวันที่สร้าง
- * (`before.createdAt` ที่แถวนั้นเก็บไว้) หรือ null ถ้าไม่เคยถูกลบ (หรือสำเนายังมาไม่ถึง) ใช้ index `requestNumber` หรือ
- * `subject.type+id` ของ activity
+ * คำขอที่ถูกลบ ตามเอกสาร `REQUEST_DELETED` ของมันใน log store — id (subject) เลขที่ (`requestNumber`) วันที่สร้าง
+ * (`before.createdAt` ที่แถวนั้นเก็บไว้) และเวลาที่ถูกลบ หรือ null ถ้าไม่เคยถูกลบ (หรือสำเนายังมาไม่ถึง) ใช้ index
+ * `requestNumber` หรือ `subject.type+id` ของ activity
+ *
+ * `numberFrom` = ต้นช่วงที่เลขที่เป็นของคำขอนี้: วันที่สร้าง หรือถ้าแถวไม่ได้เก็บไว้ (แถวก่อนการ์ดนี้) เวลาที่คำขอ**ก่อนหน้า**ที่
+ * ถือเลขเดียวกันถูกลบ (null ถ้าไม่มี) — คำขอหนึ่งเริ่มถือเลขได้ไม่ก่อนที่คนถือคนก่อนจะถูกลบ
  */
 async function deletedRequest(
   db: Db,
   filter: Filter<Document>,
-): Promise<{ id: string | null; number: string | null; createdAt: Date | null } | null> {
-  const doc = await db
-    .collection("activity")
-    .findOne(
-      { ...filter, action: AuditAction.REQUEST_DELETED },
-      { projection: { subject: 1, requestNumber: 1, "before.createdAt": 1 }, sort: { occurredAt: -1 }, maxTimeMS: READ_MAX_MS },
-    );
+): Promise<{
+  id: string | null;
+  number: string | null;
+  createdAt: Date | null;
+  deletedAt: Date | null;
+  numberFrom: Date | null;
+} | null> {
+  const activity = db.collection("activity");
+  const doc = await activity.findOne(
+    { ...filter, action: AuditAction.REQUEST_DELETED },
+    {
+      projection: { subject: 1, requestNumber: 1, occurredAt: 1, "before.createdAt": 1 },
+      sort: { occurredAt: -1 },
+      maxTimeMS: READ_MAX_MS,
+    },
+  );
   if (!doc) return null;
   const subject = (doc.subject ?? null) as Document | null;
   const createdAtText = ((doc.before ?? null) as Document | null)?.createdAt;
-  const createdAt = typeof createdAtText === "string" ? new Date(createdAtText) : null;
-  return {
-    id: typeof subject?.id === "string" ? subject.id : null,
-    number: typeof doc.requestNumber === "string" ? doc.requestNumber : null,
-    createdAt: createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt : null,
-  };
+  const parsed = typeof createdAtText === "string" ? new Date(createdAtText) : null;
+  const createdAt = parsed && !Number.isNaN(parsed.getTime()) ? parsed : null;
+  const deletedAt = doc.occurredAt instanceof Date ? doc.occurredAt : null;
+  const number = typeof doc.requestNumber === "string" ? doc.requestNumber : null;
+
+  let numberFrom = createdAt;
+  if (!numberFrom && number && deletedAt) {
+    const previous = await activity.findOne(
+      { requestNumber: number, action: AuditAction.REQUEST_DELETED, occurredAt: { $lt: deletedAt } },
+      { projection: { occurredAt: 1 }, sort: { occurredAt: -1 }, maxTimeMS: READ_MAX_MS },
+    );
+    numberFrom = previous?.occurredAt instanceof Date ? previous.occurredAt : null;
+  }
+  return { id: typeof subject?.id === "string" ? subject.id : null, number, createdAt, deletedAt, numberFrom };
 }
 
-/** แถวของคำขอ: subject เป็นคำขอนั้น (index subject.type+id) หรือเลขที่คำขอตรง (ไฟล์แนบ การลงนาม คำขอที่ถูกลบ) */
+/**
+ * แถวของคำขอ: subject เป็นคำขอนั้น (index subject.type+id) หรือเลขที่คำขอตรง**ภายในช่วงชีวิตของคำขอนั้น** (ไฟล์แนบ การลงนาม
+ * คำขอที่ถูกลบ — `RequestRef.numberWindow` บอกว่าทำไมต้องจำกัดช่วง) ช่วงนั้นรวมทั้งสองปลาย: แถว `REQUEST_DELETED` เองอยู่ที่ปลาย
+ */
 function requestFilter(request: RequestRef): Filter<Document> {
   const branches: Filter<Document>[] = [];
   if (request.id) branches.push({ "subject.type": { $in: REQUEST_SUBJECTS }, "subject.id": request.id });
-  if (request.number) branches.push({ requestNumber: request.number });
+  if (request.number) {
+    branches.push(allOf([{ requestNumber: request.number }, timeFilter("occurredAt", request.numberWindow)]));
+  }
   return anyOf(branches);
 }
 
