@@ -1018,11 +1018,17 @@ The error digest (`workers/error-alerts.ts`, on only when `ERROR_ALERT_EMAILS` i
 only) is the one mail that is neither inline nor outbox: its recipients are not accounts, and
 `notification_delivery.recipient_user_id` is NOT NULL. It runs in its own loop in the
 delivery-worker, never inside the outbox `tick()`, and sends one message per recipient at a time
-through `sendRaw(…, {bounded: true})` — a transport of its own that drops a connection that stays
-silent (10 s to connect or greet, 20 s mid-conversation) — waiting at most 30 s for each. That wait
-is a `Promise.race`: giving up on a send does not cancel it, so the first send that times out ends
-the digest, and the remaining recipients wait for the next one rather than open a second
-connection beside the stuck one. The SMTP server is Office 365, which takes about three
+through `sendRaw(…, {timeoutMs: 30_000})`. That is a hard 30 s per message: `sendWithDeadline()` in
+`lib/mail.ts` opens the socket itself (nodemailer's `getSocket`) and destroys it at the deadline.
+nodemailer's own timeouts only bound *silence* (10 s to greet, 20 s mid-conversation), so a server
+that answers every 19 s kept a send alive for minutes. A `Promise.race` gives up waiting without
+closing anything, and `close()` on a non-pooled transport does not touch a send in flight either.
+The first send that hits the deadline ends that round, because SMTP that slow will be slow for the
+next recipient too. Everyone it did not reach (the one that timed out, the ones not yet tried, and
+temporary failures) is kept in `pending` as a hash of the address plus that digest's text, and
+gets it, marked "ส่งช้า", ahead of the next digest 15 minutes later. It used to mark the issues
+alerted as soon as one recipient had the mail, so the others never heard of them at all. A 5xx
+rejection is not retried. The SMTP server is Office 365, which takes about three
 connections. At most one digest per 15 minutes and one alert per issue per 6 hours unless it
 regressed. A regression alerts only an issue that would alert anyway (level error or fatal, or a
 sustained route-answered 5xx); `browser:chunk-load` and `…:log_access_disabled` never alert.

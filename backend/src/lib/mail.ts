@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import net from "node:net";
 
 import nodemailer, { type Transporter } from "nodemailer";
 
@@ -46,7 +47,6 @@ const contactLine = (lead: string) =>
     : `${lead}อีเมล ${SUPPORT_EMAIL}`;
 
 let transporter: Transporter | null = null;
-let boundedTransporter: Transporter | null = null;
 
 function getTransporter(): Transporter | null {
   if (!env.smtp.enabled) return null;
@@ -61,29 +61,76 @@ function getTransporter(): Transporter | null {
   return transporter;
 }
 
-/**
- * transport ที่ตัดการเชื่อมต่อเองเมื่อ SMTP เงียบ — ของอีเมลสรุป error (`sendRaw(…, {bounded: true})`,
- * workers/error-alerts.ts) ซึ่งรอการส่งแต่ละฉบับไม่เกิน 30 วินาที
- *
- * transport ปกติใช้ค่าตั้งต้นของ nodemailer (ต่อไม่ติดรอ 2 นาที socket เงียบรอ 10 นาที) และการเลิกรอด้วย `Promise.race` ไม่ได้ปิด
- * การเชื่อมต่อ การส่งที่ค้างจึงถือการเชื่อมต่อไว้ได้อีกหลายนาทีหลังผู้เรียกเลิกรอ ตัวนี้ปิดเองภายในเพดานเดียวกัน (ต่อ 10 วินาที
- * ทักทาย 10 วินาที เงียบระหว่างคุย 20 วินาที) Office 365 จึงไม่เห็นการเชื่อมต่อที่ค้างจากลูปนี้นานกว่าการรอของมัน
- * ไม่เปลี่ยน transport ปกติ: อีเมลของ outbox กับอีเมลที่ส่งจากคำขอไม่ได้มีเพดานเวลา และค่าที่สั้นลงเปลี่ยนพฤติกรรมของมัน
- */
-function getBoundedTransporter(): Transporter | null {
-  if (!env.smtp.enabled) return null;
-  if (!boundedTransporter) {
-    boundedTransporter = nodemailer.createTransport({
-      host: env.smtp.host,
-      port: env.smtp.port,
-      secure: env.smtp.secure,
-      auth: { user: env.smtp.user, pass: env.smtp.pass },
-      connectionTimeout: 10_000,
-      greetingTimeout: 10_000,
-      socketTimeout: 20_000,
-    });
+/** การส่งที่มีเพดานเวลาทั้งฉบับ (`sendRaw(…, {timeoutMs})`) ไม่จบในเวลา — ตอนที่ error นี้ออกมา การเชื่อมต่อของมันถูกปิดแล้ว */
+export class SendDeadlineError extends Error {
+  constructor(ms: number) {
+    super(`ส่งอีเมลเกิน ${ms / 1000} วินาที — ปิดการเชื่อมต่อแล้ว`);
+    this.name = "SendDeadlineError";
   }
-  return boundedTransporter;
+}
+
+/**
+ * ส่งหนึ่งฉบับให้จบภายใน `timeoutMs` ทั้งฉบับ ไม่งั้นปิดการเชื่อมต่อทิ้ง — ของอีเมลสรุป error (workers/error-alerts.ts)
+ * เพราะ SMTP ของจริงคือ Office 365 ซึ่งรับการเชื่อมต่อพร้อมกันได้ราวสามตัว
+ *
+ * timeout ของ nodemailer เป็นเพดาน**ต่อช่วงเงียบ** ไม่ใช่ทั้งฉบับ: `socketTimeout` เริ่มนับใหม่ทุกครั้งที่ server ตอบ server ที่ตอบ
+ * ทุก 19 วินาทีจึงถือการเชื่อมต่อไว้ได้ขั้นละเกือบ 20 วินาที ทุกขั้นของ SMTP (EHLO, STARTTLS, AUTH, MAIL, RCPT, DATA …) — รวม
+ * กันเป็นนาที การเลิกรอด้วย `Promise.race` ก็ไม่ได้ปิดอะไร และ `close()` ของ transport แบบไม่ใช้ pool ไม่แตะการเชื่อมต่อที่กำลัง
+ * ส่งเลย (nodemailer 9: แค่ emit `close`) เดิมตรงนี้เป็น transport ที่ตั้ง timeout สั้นลงอย่างเดียว ความเห็นเดิมเขียนว่า Office 365
+ * "ไม่เห็นการเชื่อมต่อที่ค้างนานกว่าการรอ" ซึ่งไม่จริง: ตรวจแบบค้าน 2026-10-01 ด้วย server ที่ตอบทุก 19 วินาที การส่งอยู่ต่อหลัง
+ * 30 วินาทีที่เลิกรอไปแล้ว
+ *
+ * ที่นี่จึงเปิด socket เอง (`getSocket` ของ nodemailer ส่ง socket ที่เปิดแล้วเข้าไปเป็น `connection`) แล้วทำลายมันเมื่อครบเวลา
+ * TLS ที่ห่อ socket นั้น (STARTTLS ของ Office 365 หรือพอร์ต 465 — nodemailer upgrade บน socket ที่ส่งเข้าไป ชื่อ SNI มาจาก
+ * `host`) ปิดตามเมื่อ socket ข้างล่างปิด transport สร้างใหม่ต่อฉบับเพราะ socket ผูกกับการส่งครั้งนั้น timeout ของ nodemailer ยังอยู่
+ * (ต่อจนได้คำทักทาย 10 วินาที, เงียบกลางการคุย 20 วินาที) ให้ server ที่เงียบสนิทล้มเร็วกว่าเพดานรวม ลองแล้ว 2026-10-01 กับ
+ * SMTP ปลอมที่ตอบทุก 19 วินาทีหลัง RCPT ทั้งแบบ plain และ STARTTLS: server เห็นการเชื่อมต่อถูกปิดที่ 30.0 วินาทีพอดี
+ * ส่งสำเร็จแล้วรอ QUIT ให้ socket ปิดก่อนคืน (`QUIT_WAIT_MS`) — ผู้เรียกที่ส่งทีละฉบับจึงไม่มีสองการเชื่อมต่อซ้อนกันแม้แต่ช่วงสั้น ๆ
+ * ไม่เปลี่ยน transport ปกติ: อีเมลของ outbox กับอีเมลที่ส่งจากคำขอไม่มีเพดานเวลา และค่าที่สั้นลงเปลี่ยนพฤติกรรมของมัน
+ */
+async function sendWithDeadline(to: string, subject: string, html: string, timeoutMs: number): Promise<void> {
+  const sockets: net.Socket[] = [];
+  const tx = nodemailer.createTransport({
+    host: env.smtp.host,
+    port: env.smtp.port,
+    secure: env.smtp.secure,
+    auth: { user: env.smtp.user, pass: env.smtp.pass },
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
+    getSocket: (_options: unknown, callback: (err: Error | null, socketOptions: { connection: net.Socket }) => void) => {
+      const socket = net.connect({ host: env.smtp.host, port: env.smtp.port });
+      sockets.push(socket);
+      callback(null, { connection: socket });
+    },
+  });
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      for (const socket of sockets) socket.destroy();
+      reject(new SendDeadlineError(timeoutMs));
+    }, timeoutMs);
+  });
+  const work = sendMailVia(tx, to, subject, html);
+  // การส่งที่ถูกตัดล้มตามมาทีหลัง ("Connection closed") — ผลออกไปทาง deadline แล้ว ต้องไม่กลายเป็น unhandled rejection
+  work.catch(() => undefined);
+  try {
+    await Promise.race([work, deadline]);
+    // `sendMail` จบเมื่อ server รับฉบับแล้ว แต่ socket ยังคุย QUIT อยู่ราวร้อยมิลลิวินาที — รอให้ปิดก่อนคืน (ไม่เกิน QUIT_WAIT_MS)
+    // ไม่งั้นผู้รับคนถัดไปเปิดการเชื่อมต่อที่สองซ้อนตอนนั้นพอดี (เห็นจาก server ปลอม 2026-10-01: สองตัวเปิดพร้อมกันทุกครั้ง)
+    await Promise.race([Promise.all(sockets.map(closed)), new Promise((resolve) => setTimeout(resolve, QUIT_WAIT_MS))]);
+  } finally {
+    clearTimeout(timer);
+    for (const socket of sockets) socket.destroy();
+    tx.close();
+  }
+}
+
+/** รอ QUIT ของฉบับที่ส่งแล้วได้ไม่เกินเท่านี้ ครบแล้วตัดทิ้ง — ฉบับนั้น server รับไปแล้ว */
+const QUIT_WAIT_MS = 2_000;
+
+function closed(socket: net.Socket): Promise<void> {
+  if (socket.destroyed) return Promise.resolve();
+  return new Promise((resolve) => socket.once("close", () => resolve()));
 }
 
 /**
@@ -240,13 +287,9 @@ function orgCodeLine(code: string | null | undefined): string {
           </p>`;
 }
 
-async function send(
-  to: string,
-  subject: string,
-  html: string,
-  transport: () => Transporter | null = getTransporter,
-): Promise<void> {
-  const tx = transport();
+/** `timeoutMs`: เพดานเวลาทั้งฉบับ ครบแล้วปิดการเชื่อมต่อ (`sendWithDeadline`) — ไม่ส่งมา = transport ปกติ ไม่มีเพดาน */
+async function send(to: string, subject: string, html: string, timeoutMs?: number): Promise<void> {
+  const tx = getTransporter();
   if (!tx) {
     // ยังไม่ตั้งค่า SMTP — พิมพ์ลง log เพื่อให้ทดสอบ flow ได้โดยไม่ต้องมีเมลจริง
     console.log(`\n[mail:dry-run] ถึง: ${to}\n[mail:dry-run] เรื่อง: ${subject}`);
@@ -264,7 +307,8 @@ async function send(
    * breadcrumb ของ event ว่า audit เขียนแล้ว แล้วค่อยมาล้มที่อีเมล
    */
   try {
-    await sendMailVia(tx, to, subject, html);
+    if (timeoutMs === undefined) await sendMailVia(tx, to, subject, html);
+    else await sendWithDeadline(to, subject, html, timeoutMs);
   } catch (err) {
     const code = (err as { responseCode?: unknown; code?: unknown }).responseCode ?? (err as { code?: unknown }).code;
     addBreadcrumb("smtp", `ส่งอีเมลไม่สำเร็จ${typeof code === "string" || typeof code === "number" ? ` (${code})` : ""}`, false);
@@ -371,12 +415,13 @@ export async function sendRaw(
   to: string,
   title: string,
   message: string,
-  options: { lineBreaks?: boolean; bounded?: boolean } = {},
+  options: { lineBreaks?: boolean; timeoutMs?: number } = {},
 ): Promise<void> {
   // `lineBreaks`: ขึ้นบรรทัดใหม่ตาม `\n` ของข้อความ (สรุป error ของ workers/error-alerts.ts) — ผู้เรียกเดิมไม่ส่งมา อีเมลของ
-  // notification จึงหน้าตาเหมือนเดิมทุกตัว · `bounded`: ส่งผ่าน transport ที่ตัดการเชื่อมต่อที่เงียบเอง (`getBoundedTransporter`)
+  // notification จึงหน้าตาเหมือนเดิมทุกตัว · `timeoutMs`: เพดานเวลาทั้งฉบับ ครบแล้วปิดการเชื่อมต่อแล้ว throw
+  // `SendDeadlineError` (`sendWithDeadline`)
   const intro = options.lineBreaks ? escapeHtml(message).replace(/\n/g, "<br>") : escapeHtml(message);
-  await send(to, title, layout({ title, intro }), options.bounded ? getBoundedTransporter : getTransporter);
+  await send(to, title, layout({ title, intro }), options.timeoutMs);
 }
 
 /**
