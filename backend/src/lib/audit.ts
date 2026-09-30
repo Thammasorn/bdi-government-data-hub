@@ -19,7 +19,7 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "../db.js";
-import { reportAuditWriteFailure } from "./audit-fallback.js";
+import { recordLogReadFallback, reportAuditWriteFailure } from "./audit-fallback.js";
 import { addBreadcrumb, correlationId, currentContext, sourceComponent } from "./context.js";
 import { NAME_FIELDS, fullNameTh } from "./person-name.js";
 
@@ -374,6 +374,43 @@ export const AuditAction = {
    */
   ADMIN_TOKEN_REJECTED: "ADMIN_TOKEN_REJECTED",
 
+  /**
+   * `x-log-token` ผิดหรือไม่ได้ส่งมาที่ `/api/admin/logs/*` — เพิ่มจากรายการตัวอย่างใน sheet
+   *
+   * token นี้เปิดอ่าน log ทั้งหมด (ทุกการกระทำของทุกคน และ error) จึงต้องเห็นการเดาได้เหมือน `ADMIN_TOKEN_REJECTED`
+   * และเขียนด้วยตัวบันทึกเดียวกัน (lib/token-rejection.ts) — หน้าต่าง 10 นาทีต่อ IP งบแถวทันที 20 แถว ถังรวมที่ไม่มี IP
+   * แถวสรุป `suppressed_count` `token_fps` `paths` ตัวนับแยกจากของ admin token ส่วน token ที่ปลดแล้วไม่มีรายการเฝ้า
+   * (`watched_token` มีแค่ของ admin) subject `AUDIT_LOG` · `subject_id` null · แถวนิรนาม `source_component = web-portal`
+   *
+   * `LOG_READ_TOKEN` ที่ไม่ได้ตั้งไม่ใช่การปฏิเสธ: API ตอบ 503 `log_access_disabled` ก่อนดู token และไม่เขียนแถวนี้
+   */
+  LOG_TOKEN_REJECTED: "LOG_TOKEN_REJECTED",
+
+  /**
+   * มีคนอ่าน log ผ่าน `/api/admin/logs/*` — หนึ่งแถวต่อหนึ่งคำขอ เขียน**ก่อน**ส่งข้อมูลกลับ (`recordLogRead()`)
+   *
+   * log รวมทุกอย่างที่ admin API เห็นบวกประวัติการกระทำของทุกคน การอ่านจึงต้องทิ้งร่องรอยเสมอ (plan decision 9)
+   * ต่างจากแถวอื่นตรงที่**ไม่กลืน error**: เขียน Postgres ไม่ได้ก็เขียนสำเนาลง log store (`source: "audit_fallback"`)
+   * และรอผล ไม่ได้ทั้งคู่ API ตอบ 503 `log_read_unrecorded` โดยไม่ส่งข้อมูลใด ๆ `GET /status` ไม่มีแถวนี้ (ไม่มีข้อมูลบุคคล)
+   *
+   * `metadata`: `reader` (อีเมลที่ผู้อ่าน**ประกาศ**ใน `x-log-reader` — ไม่ได้พิสูจน์) · `reason` (ข้อความจาก `x-log-reason`
+   * อาจเป็น null บน endpoint ของ error ที่ไม่บังคับ) · `endpoint` (`GET /api/admin/logs/activity`) · `filters` (ค่าที่ใช้ค้น —
+   * `cid` `email` และ `person` ที่เป็นอีเมลเก็บเป็น key HMAC `cid#…` / `email#…` เท่านั้น ส่วนเลขที่คำขอกับรหัสหน่วยงาน
+   * เก็บตามจริงเพราะไม่ใช่ข้อมูลบุคคล) · `token_fp` (12 ตัวแรกของ SHA-256 ของ `x-log-token` ที่ใช้) · `page`
+   * actor เป็นระบบ (`SYSTEM`, ไม่มี id) เหมือนงานผ่าน admin token · `source_component = log-api` · subject `AUDIT_LOG`
+   */
+  AUDIT_LOG_READ: "AUDIT_LOG_READ",
+
+  /**
+   * เปลี่ยนสถานะของ error issue ผ่าน `PATCH /api/admin/logs/errors/issues/:fingerprint` — open · resolved · ignored
+   *
+   * สถานะตัดสินว่า issue จะเปิดกลับเองเมื่อเกิดซ้ำไหม และ (step 10) จะส่งอีเมลแจ้งเตือนไหม การปิดหรือละเว้นจึงเป็น
+   * การตัดสินใจที่ต้องตอบได้ว่าใครทำด้วยเหตุผลอะไร `before`/`after` คือ `{status, statusReason}` ก่อนและหลัง
+   * `metadata.fingerprint` คือ issue (`subject_id` เป็น null เพราะ fingerprint ไม่ใช่ uuid) `metadata.reason` คือเหตุผล
+   * ที่ส่งมาใน body `metadata.reader` / `token_fp` เหมือน `AUDIT_LOG_READ`
+   */
+  ERROR_ISSUE_STATUS_CHANGED: "ERROR_ISSUE_STATUS_CHANGED",
+
   DATA_EXPORTED: "DATA_EXPORTED",
   DOCUMENT_DOWNLOADED: "DOCUMENT_DOWNLOADED",
 
@@ -452,6 +489,16 @@ export const AuditSubject = {
    * `metadata.path` (ในรูปแบบที่ปรับแล้ว ดู `ADMIN_TOKEN_REJECTED`)
    */
   ADMIN_API: "ADMIN_API",
+  /**
+   * API อ่าน log (`/api/admin/logs/*`) — ไม่มีใน sheet เพิ่มพร้อม `AUDIT_LOG_READ` และ `LOG_TOKEN_REJECTED`
+   * `subject_id` เป็น null เสมอ: สิ่งที่ถูกอ่านอยู่ใน `metadata.endpoint` กับ `metadata.filters`
+   */
+  AUDIT_LOG: "AUDIT_LOG",
+  /**
+   * error issue หนึ่งตัวใน log store (`error_issues`) — ไม่มีใน sheet เพิ่มพร้อม `ERROR_ISSUE_STATUS_CHANGED`
+   * `subject_id` เป็น null เพราะคอลัมน์เป็น uuid แต่ id ของ issue คือ fingerprint — อยู่ใน `metadata.fingerprint`
+   */
+  ERROR_ISSUE: "ERROR_ISSUE",
 } as const;
 
 export type AuditSubjectType = (typeof AuditSubject)[keyof typeof AuditSubject];
@@ -554,6 +601,52 @@ export function storedUserAgent(raw: string | null | undefined): string | null {
 }
 
 /**
+ * metadata ในรูปที่ลงแถว — snapshot ของผู้กระทำ + ของผู้เรียก + สองคีย์ที่เติมจากบริบทเสมอ
+ * (lib/audit-fallback.ts ประกอบสำเนาของแถวที่ Postgres ไม่รับด้วยลำดับเดียวกันนี้ — แก้ที่นี่ต้องแก้ที่นั่นด้วย)
+ */
+function auditMetadata(
+  input: Pick<AuditInput, "metadata">,
+  actorSnapshot: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const ctx = currentContext();
+  return {
+    ...actorSnapshot,
+    ...input.metadata,
+    // IP ที่ส่งมาไม่ใช่ IP (ดู parseClientIp) — บอกไว้ว่ามีค่ามาแต่ไม่เก็บ ไม่ใช่ไม่มีค่ามาเลย
+    ...(ctx?.ipUnparsed ? { ip_unparsed: true } : {}),
+    // มาทาง admin API — token ใบไหน (ดู requireAdminToken) มาหลัง input.metadata ให้ผู้เรียกทับไม่ได้
+    ...(ctx?.adminTokenFp ? { admin_token_fp: ctx.adminTokenFp } : {}),
+  };
+}
+
+/** แถวหนึ่งแถวในรูปที่ INSERT — ทางเดียวที่ประกอบแถว audit_event ทั้ง `logAudit()` และ `recordLogRead()` ใช้ */
+function auditEventData(
+  input: AuditInput,
+  actorId: string | null,
+  actorSnapshot: Record<string, unknown> | undefined,
+  userAgent: string | null,
+): Prisma.AuditEventUncheckedCreateInput {
+  const ctx = currentContext();
+  const metadata = auditMetadata(input, actorSnapshot);
+  return {
+    action: fit(input.action, COLUMN_MAX.action),
+    actorType: input.actorType ?? (actorId ? AuditActorType.USER : AuditActorType.SYSTEM),
+    actorId,
+    subjectType: fit(input.subjectType, COLUMN_MAX.subjectType),
+    subjectId: input.subjectId ?? null,
+    organizationId: input.organizationId ?? null,
+    result: input.result ?? AuditResult.SUCCESS,
+    beforeSummaryJson: toJson(input.before),
+    afterSummaryJson: toJson(input.after),
+    ipAddress: ctx?.ipAddress ? fit(ctx.ipAddress, COLUMN_MAX.ipAddress) : null,
+    userAgent,
+    correlationId: fit(correlationId(), COLUMN_MAX.correlationId),
+    sourceComponent: fit(sourceComponent(), COLUMN_MAX.sourceComponent),
+    metadataJson: Object.keys(metadata).length > 0 ? toJson(metadata) : undefined,
+  };
+}
+
+/**
  * เขียน audit event หนึ่งแถว
  *
  * ล้มเหลวแล้วไม่ throw ต่อ: การบันทึก log ต้องไม่ทำให้คำขอที่ผู้ใช้กดสำเร็จไปแล้วพัง แต่ก็ไม่หายเงียบ — ความล้มเหลว
@@ -590,33 +683,7 @@ export async function logAudit(input: AuditInput): Promise<void> {
       }
     }
 
-    const metadata = {
-      ...actorSnapshot,
-      ...input.metadata,
-      // IP ที่ส่งมาไม่ใช่ IP (ดู parseClientIp) — บอกไว้ว่ามีค่ามาแต่ไม่เก็บ ไม่ใช่ไม่มีค่ามาเลย
-      ...(ctx?.ipUnparsed ? { ip_unparsed: true } : {}),
-      // มาทาง admin API — token ใบไหน (ดู requireAdminToken) มาหลัง input.metadata ให้ผู้เรียกทับไม่ได้
-      ...(ctx?.adminTokenFp ? { admin_token_fp: ctx.adminTokenFp } : {}),
-    };
-
-    await prisma.auditEvent.create({
-      data: {
-        action: fit(input.action, COLUMN_MAX.action),
-        actorType: input.actorType ?? (actorId ? AuditActorType.USER : AuditActorType.SYSTEM),
-        actorId,
-        subjectType: fit(input.subjectType, COLUMN_MAX.subjectType),
-        subjectId: input.subjectId ?? null,
-        organizationId: input.organizationId ?? null,
-        result: input.result ?? AuditResult.SUCCESS,
-        beforeSummaryJson: toJson(input.before),
-        afterSummaryJson: toJson(input.after),
-        ipAddress: ctx?.ipAddress ? fit(ctx.ipAddress, COLUMN_MAX.ipAddress) : null,
-        userAgent,
-        correlationId: fit(correlationId(), COLUMN_MAX.correlationId),
-        sourceComponent: fit(sourceComponent(), COLUMN_MAX.sourceComponent),
-        metadataJson: Object.keys(metadata).length > 0 ? toJson(metadata) : undefined,
-      },
-    });
+    await prisma.auditEvent.create({ data: auditEventData(input, actorId, actorSnapshot, userAgent) });
     addBreadcrumb("audit", input.action);
   } catch (err) {
     addBreadcrumb("audit", `${input.action} — เขียนไม่สำเร็จ`, false);
@@ -626,6 +693,86 @@ export async function logAudit(input: AuditInput): Promise<void> {
      */
     reportAuditWriteFailure(err, input, { actorId, actorSnapshot, userAgent });
   }
+}
+
+/** การอ่าน log หนึ่งครั้งตามที่ `recordLogRead()` บันทึก — ค่าใน `filters` ต้องผ่านการแปลงเป็น key HMAC มาแล้ว */
+export interface LogReadRecord {
+  /** อีเมลที่ผู้อ่านประกาศใน `x-log-reader` (ASCII ตัวพิมพ์เล็ก) — ไม่ได้พิสูจน์ */
+  reader: string;
+  /** ข้อความจาก `x-log-reason` ที่ถอด percent-encoding แล้ว — null บน endpoint ที่ไม่บังคับ */
+  reason: string | null;
+  /** `GET /api/admin/logs/activity` — method กับ route แบบแม่แบบ */
+  endpoint: string;
+  /** ตัวกรองที่ใช้ — `cid` `email` และ `person` ที่เป็นอีเมลต้องเป็น `cid#…` / `email#…` แล้ว ไม่ใช่ค่าจริง */
+  filters: Record<string, unknown>;
+  page?: number | null;
+  /** `tokenFingerprint()` ของ `x-log-token` ที่ใช้ */
+  tokenFp: string;
+}
+
+/**
+ * Postgres ที่ค้าง (pause, pool เต็ม) ต้องไม่ทำให้คำขออ่านค้างตามไปด้วย — เกินนี้ถือว่าเขียนไม่ได้แล้วไปทางสำรอง
+ * INSERT ที่ถูกทิ้งไว้ยัง commit ทีหลังได้ การอ่านครั้งนั้นจึงอาจมีสองบันทึก (ดู `recordLogReadFallback()`)
+ */
+const LOG_READ_PG_TIMEOUT_MS = 5_000;
+
+/**
+ * บันทึกการอ่าน log หนึ่งครั้ง **ก่อน** ส่งข้อมูลกลับ — `AUDIT_LOG_READ` (plan §6, decision 9)
+ *
+ * ต่างจาก `logAudit()` ตรงที่**ไม่กลืน error**: การอ่านที่ไม่มีร่องรอยห้ามเกิด ลำดับคือ
+ *   1. INSERT ลง Postgres ตรง ๆ (ไม่เกิน 5 วินาที) — ได้ id ของแถวเป็น `readId`
+ *   2. ไม่ได้ → เก็บ error (`audit.log-read-failed`) แล้วเขียนสำเนาลง log store (`source: "audit_fallback"`) และรอผล
+ *      ไม่เกิน 2 วินาที — ได้ `_id` ของสำเนาเป็น `readId`
+ *   3. ไม่ได้ทั้งคู่ → คืน null ผู้เรียกตอบ 503 `log_read_unrecorded` โดยไม่ส่งข้อมูลใด ๆ
+ *
+ * แถวมาจาก `auditEventData()` ตัวเดียวกับ logAudit (IP, user agent, correlation id, source_component ของคำขอ) actor
+ * เป็น `SYSTEM` ไม่มี id — ผู้อ่านไม่ใช่บัญชีในระบบ ตัวตนที่ประกาศมาอยู่ใน `metadata.reader`
+ */
+export async function recordLogRead(
+  read: LogReadRecord,
+): Promise<{ readId: string; recordedIn: "postgres" | "log_store" } | null> {
+  const input: AuditInput = {
+    action: AuditAction.AUDIT_LOG_READ,
+    subjectType: AuditSubject.AUDIT_LOG,
+    actorType: AuditActorType.SYSTEM,
+    metadata: {
+      reader: read.reader,
+      reason: read.reason,
+      endpoint: read.endpoint,
+      filters: read.filters,
+      token_fp: read.tokenFp,
+      ...(read.page === undefined || read.page === null ? {} : { page: read.page }),
+    },
+  };
+  const userAgent = storedUserAgent(currentContext()?.userAgent);
+  try {
+    const row = await withDeadline(
+      prisma.auditEvent.create({ data: auditEventData(input, null, undefined, userAgent), select: { id: true } }),
+      LOG_READ_PG_TIMEOUT_MS,
+    );
+    addBreadcrumb("audit", input.action);
+    return { readId: row.id, recordedIn: "postgres" };
+  } catch (err) {
+    addBreadcrumb("audit", `${input.action} — เขียนไม่สำเร็จ`, false);
+    const fallbackId = await recordLogReadFallback(err, input, userAgent);
+    return fallbackId ? { readId: fallbackId, recordedIn: "log_store" } : null;
+  }
+}
+
+class DeadlineExceeded extends Error {
+  constructor(ms: number) {
+    super(`ไม่เสร็จภายใน ${ms} ms`);
+    this.name = "DeadlineExceeded";
+  }
+}
+
+/** เหมือน `work` แต่ล้มด้วย DeadlineExceeded ถ้าไม่จบใน `ms` — ตัวจับเวลาถูกล้างทันทีที่ work จบ */
+function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+  let handle: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    handle = setTimeout(() => reject(new DeadlineExceeded(ms)), ms);
+  });
+  return Promise.race([work, deadline]).finally(() => clearTimeout(handle));
 }
 
 /**

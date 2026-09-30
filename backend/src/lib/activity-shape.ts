@@ -125,18 +125,25 @@ const CATEGORY_BY_ACTION: Record<AuditActionCode, ActivityCategory> = {
   DATASET_CHOICE_CHANGED: "config",
 
   ADMIN_TOKEN_REJECTED: "admin-access",
-};
+  LOG_TOKEN_REJECTED: "admin-access",
 
-/** รหัสของขั้นถัดไปที่ยังไม่อยู่ใน `AuditAction` (step 7, 8) — ย้ายเข้าตารางข้างบนเมื่อรหัสนั้นเกิดจริง */
-const CATEGORY_OF_LATER_ACTIONS: Record<string, ActivityCategory> = {
   AUDIT_LOG_READ: "log-access",
   ERROR_ISSUE_STATUS_CHANGED: "log-access",
-  LOG_TOKEN_REJECTED: "admin-access",
+};
+
+/**
+ * รหัสของขั้นถัดไปที่ยังไม่อยู่ใน `AuditAction` (step 8: บันทึกการเรียก admin API ซึ่งอยู่ใน Mongo อย่างเดียว ไม่ผ่าน
+ * audit_event) — ย้ายเข้าตารางข้างบนถ้ารหัสนั้นเข้า `AuditAction` วันหนึ่ง
+ */
+const CATEGORY_OF_LATER_ACTIONS: Record<string, ActivityCategory> = {
   ADMIN_API_REQUEST: "admin-access",
 };
 
-/** รหัสที่อ่าน log ผ่าน LOG_READ_TOKEN (step 7) — via เป็น LOG_TOKEN */
-const LOG_TOKEN_ACTIONS = new Set(["AUDIT_LOG_READ", "ERROR_ISSUE_STATUS_CHANGED"]);
+/**
+ * รหัสที่เขียนจาก API อ่าน log ผ่าน LOG_READ_TOKEN — via เป็น LOG_TOKEN (ข้อความตรง ๆ ไม่ใช่ `AuditAction.…`: ไฟล์นี้กับ
+ * lib/audit.ts import กันเป็นวง ค่าจาก audit.ts ยังไม่พร้อมตอนโมดูลนี้ประเมินชั้นบนสุด `satisfies` ให้ typecheck ยังจับชื่อผิดได้)
+ */
+const LOG_TOKEN_ACTIONS = new Set<string>(["AUDIT_LOG_READ", "ERROR_ISSUE_STATUS_CHANGED"] satisfies AuditActionCode[]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
