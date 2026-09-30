@@ -117,7 +117,10 @@ async function tick(): Promise<void> {
   }
 }
 
-/** ทีละ index — ตัวที่ล้มเพราะต่อไม่ได้ลองใหม่รอบหน้า ตัวที่ Mongo ปฏิเสธเตือนครั้งเดียวแล้วเลิก */
+/**
+ * ทีละ index — ตัวที่ล้มชั่วคราว (ต่อไม่ได้ หมดเวลา mongod กำลังปิดหรือสลับ primary — `isTransient`) ลองใหม่รอบหน้า
+ * ตัวที่ Mongo ปฏิเสธเตือนครั้งเดียวแล้วเลิก
+ */
 async function ensureIndexes(db: Db): Promise<void> {
   for (const [index, spec] of INDEXES.entries()) {
     if (settledIndexes.has(index)) continue;
@@ -137,10 +140,51 @@ async function ensureIndexes(db: Db): Promise<void> {
   }
 }
 
-/** error ที่ลองใหม่แล้วอาจผ่าน (เน็ต, เลือก server ไม่ได้, หมดเวลา) — ไม่ใช่การปฏิเสธตัว index */
+/**
+ * รหัส error ฝั่ง server ที่เป็นสถานะชั่วคราวของ mongod ไม่ใช่คำตอบต่อคำสั่ง: กำลังปิด (91 ShutdownInProgress,
+ * 11600 InterruptedAtShutdown) สลับ primary (189 10107 11602 13435 13436) เครือข่ายระหว่าง node (6 7 89 9001)
+ * หมดเวลาฝั่ง shard (262) และ majority ยังไม่พร้อม (134) — ชุดเดียวกับ RETRYABLE_READ_ERROR_CODES ของ driver
+ * (spec retryable-reads) ซึ่ง driver ไม่ export ออกมาให้ใช้
+ */
+const TRANSIENT_SERVER_CODES = new Set([6, 7, 89, 91, 134, 189, 262, 9001, 10107, 11600, 11602, 13435, 13436]);
+
+/**
+ * error ที่ลองใหม่แล้วอาจผ่าน — ฝั่ง driver (เน็ต, เลือก server ไม่ได้, หมดเวลา) ดูจากชื่อ ฝั่ง server ดูจากรหัส
+ *
+ * เดิมดูแค่ชื่อ แต่ error ที่ mongod ส่งกลับมาชื่อ `MongoServerError` เสมอ ไม่ว่าจะเป็นการปฏิเสธคำสั่งหรือ mongod
+ * กำลัง restart อยู่ — `createIndex` ที่โดน InterruptedAtShutdown จึงถูกนับว่า index ถูกปฏิเสธและไม่ถูกสร้างอีกจนกว่า
+ * worker จะเริ่มใหม่ และ `dbStats` ที่โดนแบบเดียวกันเคยทำให้เลิกขอ `freeStorage` ไปตลอด (`readStorageSize`)
+ */
 function isTransient(err: unknown): boolean {
   const name = err instanceof Error ? err.name : "";
-  return /Network|ServerSelection|Timeout|PoolCleared|NotPrimary/i.test(name);
+  if (/Network|ServerSelection|Timeout|PoolCleared|NotPrimary/i.test(name)) return true;
+  const code = (err as { code?: unknown } | null | undefined)?.code;
+  return typeof code === "number" && TRANSIENT_SERVER_CODES.has(code);
+}
+
+/**
+ * รหัสที่แปลว่าบริการไม่รับ **option** ที่ส่งไป ไม่ว่าจะถามกี่รอบ: field ที่ไม่รู้จัก (40415 IDLUnknownField — ที่ mongo:7.0
+ * ตอบจริงกับ `{dbStats: 1, bogusOption: 1}`) ค่าผิดรูป (2 BadValue, 9 FailedToParse, 14 TypeMismatch — ตัวหลังคือที่
+ * mongo:7.0 ตอบกับ `freeStorage: "yes"`) และ option ที่ไม่รองรับ (72 InvalidOptions) ดูทั้งรหัสและชื่อ เพราะบริการ
+ * ที่เลียนแบบ mongo บางตัวส่งมาแค่อย่างใดอย่างหนึ่ง
+ */
+const OPTION_REFUSED_CODES = new Set([2, 9, 14, 72, 40415]);
+const OPTION_REFUSED_NAMES = new Set(["BadValue", "FailedToParse", "TypeMismatch", "InvalidOptions", "IDLUnknownField"]);
+
+function refusesOption(err: unknown): boolean {
+  const { code, codeName } = (err ?? {}) as { code?: unknown; codeName?: unknown };
+  return (
+    (typeof code === "number" && OPTION_REFUSED_CODES.has(code)) ||
+    (typeof codeName === "string" && OPTION_REFUSED_NAMES.has(codeName))
+  );
+}
+
+/** ชื่อกับรหัสของ error ไว้พิมพ์ — ไม่มีข้อความของ error (กฎใน CLAUDE.md: ข้อความดิบไปทาง captureError เท่านั้น) */
+function errorLabel(err: unknown): string {
+  const name = err instanceof Error ? err.name : "Error";
+  const { code, codeName } = (err ?? {}) as { code?: unknown; codeName?: unknown };
+  const detail = codeName ?? code;
+  return detail === undefined ? name : `${name} ${String(detail)}`;
 }
 
 /**
@@ -155,37 +199,63 @@ export interface StorageFigures {
   basis: SizeBasis;
 }
 
-/** บริการนี้ปฏิเสธ `freeStorage` ไปแล้วครั้งหนึ่ง — ไม่ขออีกจนกว่า process จะเริ่มใหม่ */
-let freeStorageRejected = false;
+/** บริการนี้ปฏิเสธ option `freeStorage` เอง (`refusesOption`) — ไม่ขออีกจนกว่า process จะเริ่มใหม่ */
+let freeStorageRefused = false;
+/** error ที่ไม่รู้จักซึ่งเตือนไปแล้ว (ตาม `errorLabel`) — เตือนครั้งเดียวต่อชนิด ไม่ใช่ทุกชั่วโมง */
+const unrecognisedWarned = new Set<string>();
 
 /**
- * ขนาดของ log store จาก `dbStats` — ขอตัวเลขพื้นที่ว่างด้วย `freeStorage: 1` ก่อน ถ้าบริการไม่รับ field นี้ขอใหม่โดยไม่มีมัน
+ * ขนาดของ log store จาก `dbStats` — ขอตัวเลขพื้นที่ว่างด้วย `freeStorage: 1` ก่อน ถ้าไม่ผ่านขอใหม่โดยไม่มีมัน
  *
  * mongo ปฏิเสธ field ที่ไม่รู้จักทั้งคำสั่ง ไม่ใช่ข้ามไปเฉย ๆ (ลองกับ mongo:7.0 แล้ว 2026-09-30:
  * `{dbStats: 1, bogusOption: 1}` → 40415 IDLUnknownField) บริการ managed ที่ไม่รู้จัก `freeStorage` จึงน่าจะทำแบบเดียวกัน
  * เดิมคำสั่งที่ถูกปฏิเสธ throw ทุกชั่วโมง ถูกเก็บเป็น warning แล้วเพดานไม่เคยถูกเทียบเลย ตอนนี้ถอยไปเทียบขนาดที่จองไว้
  * (storageSize + indexSize) ซึ่งมากกว่าหรือเท่ากับที่ใช้จริงเสมอ — ธงอาจตั้งเร็วกว่าที่ควร แต่ไม่มีวันไม่ตั้ง
- * error ชั่วคราว (ต่อไม่ติด หมดเวลา) ไม่ถือว่าเป็นการปฏิเสธ throw ต่อให้รอบหน้าลองใหม่ ไม่งั้นเน็ตสะดุดครั้งเดียวทำให้
- * เทียบด้วยตัวเลขที่หยาบกว่าไปจนกว่า worker จะเริ่มใหม่
+ *
+ * ความล้มเหลวของคำสั่งแรกแยกเป็นสามทาง เพราะการจำผิดมีราคา: ธงที่ตั้งด้วยขนาดที่จองไว้**ไม่ลงเมื่อลบ** (ลงเมื่อ `compact`
+ * เท่านั้น — `checkQuota`) และระหว่างนั้น error event ถูกเก็บแค่ตัวนับ
+ *   1. ชั่วคราว (`isTransient` — เน็ต หมดเวลา mongod กำลังปิดหรือสลับ primary) → throw ไม่ถอย ไม่จำ รอบถัดไป (60 วินาที
+ *      เพราะ `lastQuotaCheckAt` ยังไม่ถูกจด) ขอ `freeStorage` ใหม่
+ *   2. คำสั่งเปล่าก็ล้มด้วย (ไม่มีสิทธิ์ `dbStats` ฯลฯ) → ปัญหาไม่ได้อยู่ที่ option: throw error ของคำสั่งเปล่า ไม่จำ ไม่เตือนว่า
+ *      ไม่รับ `freeStorage`
+ *   3. คำสั่งเปล่าผ่าน → รอบนี้เทียบขนาดที่จองไว้ แล้ว
+ *      - รหัสเป็นการปฏิเสธ option จริง (`refusesOption`) → จำไว้จนกว่า process จะเริ่มใหม่ เตือนหนึ่งบรรทัดและเก็บเป็น
+ *        `log-store:free-storage-rejected` ครั้งเดียว
+ *      - รหัสอื่น → **ไม่จำ** รอบตรวจชั่วโมงหน้าขอ `freeStorage` ใหม่ (ถ้ายังล้มก็ถอยอีก เสียคำสั่งเปล่าหนึ่งคำสั่งต่อชั่วโมง)
+ *        เตือนและเก็บเป็น `log-store:free-storage-failed` ครั้งเดียวต่อชนิดของ error บริการที่ปฏิเสธด้วยรหัสของตัวเอง
+ *        ก็ยังถูกเทียบเพดานทุกชั่วโมง ส่วน error ที่ไม่รู้จักแต่หายเองได้ทำให้เทียบหยาบไปแค่รอบเดียว
+ *   เดิมทุกอย่างที่ไม่ใช่ข้อ 1 (ซึ่งตอนนั้นดูแค่ชื่อ error) ถูกจำว่าเป็นการปฏิเสธ — mongod ที่ restart ระหว่าง `dbStats`
+ *   ครั้งเดียว (11600 InterruptedAtShutdown) หรือสิทธิ์ที่ขาดชั่วคราว (13 Unauthorized) ทำให้เทียบด้วยขนาดที่จองไว้
+ *   จนกว่า worker จะเริ่มใหม่ และธงที่ตั้งระหว่างนั้นลงไม่ได้เลย
  *
  * บริการที่รับ `freeStorage` แต่ไม่ส่งตัวเลขกลับมาก็ได้ `allocated` เช่นกัน
  */
 export async function readStorageSize(db: Pick<Db, "command">): Promise<StorageFigures> {
   // คำสั่งนี้อ่านแค่ metadata ของ WiredTiger — เพดานเวลาคือ socketTimeoutMS ของ driver (5 วินาที) กับ TICK_TIMEOUT_MS
   let stats: Record<string, unknown> | null = null;
-  if (!freeStorageRejected) {
+  if (!freeStorageRefused) {
     try {
       stats = await db.command({ dbStats: 1, freeStorage: 1 });
     } catch (err) {
       if (isTransient(err)) throw err;
-      freeStorageRejected = true;
-      const name = err instanceof Error ? err.name : "Error";
-      const code = (err as { codeName?: unknown; code?: unknown }).codeName ?? (err as { code?: unknown }).code;
-      console.warn(
-        `[log-store] delivery-worker: dbStats ไม่รับ freeStorage (${name}${code === undefined ? "" : ` ${String(code)}`}) — ` +
-          "เทียบเพดานด้วยขนาดที่จองไว้ (storageSize + indexSize) แทนขนาดที่ใช้จริง",
-      );
-      captureError(err, { level: "warning", tag: "log-upkeep.free-storage", fingerprint: "log-store:free-storage-rejected" });
+      // ล้มตรงนี้ = ข้อ 2 — error ของคำสั่งเปล่าออกไปถึง tick() ซึ่งเก็บเป็น log-upkeep.tick
+      stats = await db.command({ dbStats: 1 });
+      const label = errorLabel(err);
+      if (refusesOption(err)) {
+        freeStorageRefused = true;
+        console.warn(
+          `[log-store] delivery-worker: dbStats ไม่รับ freeStorage (${label}) — ` +
+            "ต่อจากนี้เทียบเพดานด้วยขนาดที่จองไว้ (storageSize + indexSize) แทนขนาดที่ใช้จริง จนกว่า worker จะเริ่มใหม่",
+        );
+        captureError(err, { level: "warning", tag: "log-upkeep.free-storage", fingerprint: "log-store:free-storage-rejected" });
+      } else if (!unrecognisedWarned.has(label)) {
+        unrecognisedWarned.add(label);
+        console.warn(
+          `[log-store] delivery-worker: dbStats แบบขอ freeStorage ล้ม (${label}) แต่แบบไม่ขอผ่าน — ` +
+            "รอบนี้เทียบเพดานด้วยขนาดที่จองไว้ (storageSize + indexSize) รอบตรวจหน้าขอ freeStorage ใหม่ (เตือนครั้งเดียวต่อชนิด)",
+        );
+        captureError(err, { level: "warning", tag: "log-upkeep.free-storage", fingerprint: "log-store:free-storage-failed" });
+      }
     }
   }
   stats ??= await db.command({ dbStats: 1 });
@@ -212,6 +282,10 @@ export async function readStorageSize(db: Pick<Db, "command">): Promise<StorageF
  * `deleteMany` จนเหลือครึ่ง: ลองกับ mongo:7.0 แล้ว 2026-09-30 ลบหมดทั้ง collection storageSize ไม่ขยับ ขยับแค่ตัว
  * free ถ้าต้องการคืนดิสก์ให้เครื่องจริง ๆ ต้อง `compact` เอง บริการที่ไม่ให้ตัวเลขพื้นที่ว่างเทียบขนาดที่จองไว้แทน
  * (`readStorageSize`, `relay_state.sizeBasis`)
+ *
+ * **บน `sizeBasis: "allocated"` ธงลงได้ทางเดียวคือ `compact`** — ขนาดที่จองไว้ไม่ลดเมื่อลบ บนบริการที่ปฏิเสธ `freeStorage`
+ * จริง restart worker ก็ไม่ช่วย (มันถามใหม่แล้วถูกปฏิเสธอีก) ส่วนรอบที่ถอยเพราะ error ที่ไม่ใช่การปฏิเสธ รอบตรวจหน้า
+ * ได้ `in_use` กลับมาและธงลงตามปกติถ้าที่ใช้จริงต่ำกว่า 90%
  */
 async function checkQuota(db: Db): Promise<void> {
   const { storageMb, allocatedMb, basis } = await readStorageSize(db);
