@@ -200,22 +200,27 @@ function looksLikeBase64Secret(run: string): boolean {
  * (`1-2345-67890-12-3`, `1.1017.00203.45.1`, `1 - 1017 - 00203 - 45 - 1`) รูปเดียวกับกลุ่มเลขที่ `pathPattern()` ของ
  * lib/token-rejection.ts ปิด ยกเว้น `:` ซึ่งไม่นับที่นี่: เวลา `2026-09-30 12:34:56.789` มีเลขพอดี 13 หลักหลังขีดตัวแรก
  * และข้อความ error มีเวลาแบบนี้บ่อยกว่าเลขบัตรที่คั่นด้วย `:` มาก เดิมรับแค่ขีดหรือช่องว่างตัวเดียว เลขบัตรแบบมีจุดจึงหลุด
- * ตัวเลขเป็นได้ทั้งสามรูปของ DIGIT ปนกันได้
+ * ตัวเลขเป็นได้ทั้งสามรูปของ DIGIT ปนกันได้ ใช้ทั้งกับข้อความ error (`scrubText`) และกับข้อความทุกค่าของสำเนากิจกรรม
+ * ยกเว้นชื่อไฟล์ (`maskForLogStore`, `maskCidText`)
  */
 const CID_RUN = new RegExp(`(?<!${DIGIT})${DIGIT}(?:[${DASH}._ ]{0,3}${DIGIT}){12}(?!${DIGIT})`, "g");
 /**
- * เลขบัตรในสำเนากิจกรรม (`maskCidText`) — แคบกว่า CID_RUN โดยตั้งใจ: ติดกัน หรือคั่นด้วยขีดหรือช่องว่าง**ตัวเดียว**
- * (`1-2345-67890-12-3`, `1 2345 67890 12 3`) ซึ่งเป็นรูปที่คนพิมพ์เลขบัตร ตัวเลขเป็นได้ทั้งสามรูปของ DIGIT
+ * เลขบัตรใน**ชื่อไฟล์**ของสำเนากิจกรรม (ค่าใต้ key แบบ `FILE_KEY` — `filename`, `originalFileName`, `storageKey`) —
+ * แคบกว่า CID_RUN โดยตั้งใจ: ติดกัน หรือคั่นด้วยขีดหรือช่องว่าง**ตัวเดียว** (`1-2345-67890-12-3`, `1 2345 67890 12 3`)
+ * ตัวเลขเป็นได้ทั้งสามรูปของ DIGIT
  *
- * ข้อความ error ปิดเกินได้ ไม่มีใครอ่านชื่อไฟล์ใน stack แต่สำเนากิจกรรมคือบันทึกที่คนค้นและอ่าน และเก็บชื่อไฟล์ เบอร์โทร
- * ไว้ตามที่ตัดสิน (decision 10) — CID_RUN ตัวกว้างทำให้ `scan_20260930_12345.pdf` ใน `after.filename` ของ
- * DOCUMENT_DOWNLOADED กลายเป็น `scan_[cid].pdf` และได้ `cid#` ปลอมหนึ่งตัว (ลองแล้ว 2026-09-30) เลขบัตรที่คั่นด้วยจุด
- * ขีดล่าง หรือตัวคั่นหลายตัวในข้อความที่คนพิมพ์ (บันทึก ความเห็น) จึงหลุดไปถึง `activity` — ยอมรับไว้ก่อน (กว้างน้อยกว่า
- * plan §7.6 รอ DPO ตัดสิน) ส่วนสำเนาใน error ปิดด้วยตัวกว้างทั้งหมด: ข้อความ error (`scrubText`) และ input ของแถว audit
- * ที่เขียนไม่สำเร็จใน `error_events.extra.audit` (`maskForErrorCopy`)
- * เบอร์โทร 10 หลักที่ตามด้วยช่องว่างกับเลขอีก 3 ตัว (`0812345678 123`) ยังถูกปิดเป็น `[cid]` เหมือนก่อน CID_RUN จะกว้างขึ้น
+ * ชื่อไฟล์มีวันที่กับเลขลำดับคั่นด้วยขีดล่างหรือจุดเป็นปกติ — CID_RUN ตัวกว้างทำให้ `scan_20260930_12345.pdf` ใน
+ * `after.filename` ของ DOCUMENT_DOWNLOADED กลายเป็น `scan_[cid].pdf` และได้ `cid#` ปลอมหนึ่งตัว (ลองแล้ว 2026-09-30)
+ * ส่วนชื่อไฟล์ที่เป็นเลขบัตรตรง ๆ (`1101700203451.pdf`) ยังถูกปิด
+ *
+ * เดิมตัวนี้ใช้กับข้อความ**ทุกค่า**ของสำเนากิจกรรม เลขบัตรที่คั่นด้วยจุด ขีดล่าง หรือตัวคั่นหลายตัวใน `notes` ของร่าง
+ * จึงไปถึง `activity` ครบ 13 หลักและไม่ได้ `cid#` (ตรวจขั้น 6, 2026-09-30: สี่แถวจริงใน REQUEST_DRAFT_SAVED) — ตอนนี้
+ * ข้อความอื่นทุกค่าใช้ CID_RUN ตัวกว้าง เหลือตัวแคบไว้แค่ชื่อไฟล์ ราคาของตัวกว้างในข้อความอิสระ: เลขอื่นที่มี 13 หลัก
+ * คั่นด้วยจุดหรือขีดล่าง (ทศนิยมยาว ๆ, วันเวลาแบบ `30.09.2026 12.34.567`) กลายเป็น `[cid]` ในสำเนาและได้ `cid#` ที่ไม่มีใคร
+ * ค้น ตัวเต็มยังอยู่ใน Postgres (ปิดเกินไว้ก่อน รอ DPO ยืนยัน — docs/21)
+ * เบอร์โทร 10 หลักที่ตามด้วยช่องว่างกับเลขอีก 3 ตัว (`0812345678 123`) ถูกปิดเป็น `[cid]` ทั้งสองตัว
  */
-const ACTIVITY_CID_RUN = new RegExp(`(?<!${DIGIT})${DIGIT}(?:[${DASH} ]?${DIGIT}){12}(?!${DIGIT})`, "g");
+const FILENAME_CID_RUN = new RegExp(`(?<!${DIGIT})${DIGIT}(?:[${DASH} ]?${DIGIT}){12}(?!${DIGIT})`, "g");
 /** เบอร์โทรไทย `0` ตามด้วยอีก 8–9 หลัก (ขีด/ช่องว่างคั่นได้) — เลขไทยและเลขเต็มความกว้างด้วย (DIGIT) */
 const PHONE_RUN = new RegExp(`(?<!${DIGIT})${ZERO}${DIGIT}(?:[${DASH} ]?${DIGIT}){7,8}(?!${DIGIT})`, "g");
 /** รูปสากล `+66` ตามด้วยเลขที่ตัด `0` ตัวหน้าแล้ว 8–9 หลัก (`+66812345678`, `+66 81-234-5678`, `+66 2 123 4567`) */
@@ -662,6 +667,12 @@ export function allowedHeaders(headers: Record<string, unknown>): Record<string,
  * `thaid_subject` คือ `sub` ของ DOPA ซึ่งเป็นเลขบัตร 13 หลักไม่ว่า THAID_USE_PID จะตั้งไว้อย่างไร
  */
 const CID_KEY = /cid$|nationalid|^pid$|^thaid_subject$/i;
+/**
+ * ชื่อ key ที่ถือชื่อไฟล์หรือ storage key — ค่าข้างใต้ (ทุกชั้น) ใช้ FILENAME_CID_RUN ตัวแคบแทน CID_RUN ในสำเนากิจกรรม
+ * ชื่อที่ audit เขียนวันนี้: `after.filename` (อัปโหลด ดาวน์โหลด ลงนาม) และ `before.attachments[].originalFileName` /
+ * `storageKey` ของ REQUEST_DELETED — `storedFileName` `file_name` `storage_keys` ก็เข้า
+ */
+const FILE_KEY = /(?:file_?name|storage_?key|original_?name)s?$/i;
 
 /**
  * ค่าจริงที่การปิดของสำเนากิจกรรมปิดไปเอง — lib/activity-shape.ts ทำ key ค้นหา `cid#…` จากค่าพวกนี้ (ก่อนปิด)
@@ -673,8 +684,9 @@ export interface MaskFindings {
 }
 
 /**
- * เลข 13 หลักในข้อความ (`ACTIVITY_CID_RUN` — ไม่ใช่ CID_RUN ของข้อความ error) → `[cid]` โดยไม่แตะ UUID — กันไว้ก่อนแล้ว
- * ใส่คืน แบบเดียวกับ `scrubText`
+ * เลขบัตรในข้อความ (CID_RUN ตัวกว้าง — กฎเดียวกับข้อความ error) → `[cid]` โดยไม่แตะ UUID — กันไว้ก่อนแล้วใส่คืน
+ * แบบเดียวกับ `scrubText` ใช้กับข้อความชั้นบนของสำเนากิจกรรมที่ไม่ได้อยู่ใน before/after/metadata (`reason`, ชื่อผู้กระทำ,
+ * ชื่อช่องที่เปลี่ยน, user agent — lib/activity-shape.ts) `findings` ได้ค่าจริงของตัวที่ถูกปิด ไว้ทำ `cid#`
  *
  * UUID ที่ขึ้นต้นด้วยเลขล้วน 12 ตัว (`12345678-1234-4abc-…`: กลุ่มที่สามของ v4 ขึ้นต้นด้วยเลข 4 เสมอ) คือเลข 13 หลักที่
  * คั่นด้วยขีด — เดิมกลายเป็น `[cid]abc-9def-…` ทั้ง id ใน metadata (`user_account_id`,
@@ -682,16 +694,19 @@ export interface MaskFindings {
  * join กลับไป Postgres ทุกตัวที่ร้อยเสียไปหนึ่ง
  */
 export function maskCidText(text: string, findings?: MaskFindings): string {
-  return maskCidTextWith(text, { run: ACTIVITY_CID_RUN, findings });
+  return maskCidTextWith(text, { run: CID_RUN, findings });
 }
 
 /**
  * การปิดรอบหนึ่ง — กฎเลขบัตรในข้อความที่ใช้ กับที่เก็บค่าจริงที่ถูกปิด
- *   - สำเนากิจกรรม (`maskForLogStore`): `ACTIVITY_CID_RUN` ตัวแคบ ชื่อไฟล์ที่มีวันที่กับเลขลำดับต้องรอด
- *   - สำเนาใน error (`maskForErrorCopy`): `CID_RUN` ตัวกว้าง เท่ากับข้อความ error ที่ `scrubText` กวาด
+ *   - สำเนากิจกรรม (`maskForLogStore`): `CID_RUN` ตัวกว้าง ยกเว้นค่าใต้ key ชื่อไฟล์ (`FILE_KEY`) ที่ใช้
+ *     `FILENAME_CID_RUN` ตัวแคบ (`fileRun`) — ชื่อไฟล์ที่มีวันที่กับเลขลำดับต้องรอด
+ *   - สำเนาใน error (`maskForErrorCopy`): `CID_RUN` ตัวกว้างทุกค่า ชื่อไฟล์ด้วย เท่ากับข้อความ error ที่ `scrubText` กวาด
  */
 interface MaskPass {
   run: RegExp;
+  /** กฎของค่าใต้ key ชื่อไฟล์ — ไม่มี = ใช้ `run` */
+  fileRun?: RegExp;
   findings?: MaskFindings;
 }
 
@@ -764,23 +779,21 @@ export function maskedTypedEmail(value: unknown): unknown {
  * ปิดเลขบัตรในสิ่งที่จะออกไปเป็นสำเนากิจกรรม — plan §7.6
  *   - key ที่ชื่อบอกว่าถือเลขบัตร (ทุกชั้น) → `{masked: "xxxxxxxxx1234"}` เหลือ 4 ตัวท้ายไว้เทียบกับคนได้
  *     ค่าที่เป็น object หรือ array ปิดทีละใบข้างใน (`maskedCid`)
- *   - เลข 13 หลักที่อยู่ในค่าอื่นทุกตัว → `[cid]` (`maskCidRuns`)
+ *   - เลขบัตรที่อยู่ในค่าอื่นทุกตัว → `[cid]` (`maskCidRuns`) ด้วย CID_RUN ตัวกว้าง (ติดกัน หรือคั่นด้วยขีด จุด ขีดล่าง
+ *     ช่องว่าง ไม่เกินสามตัว) — ยกเว้นค่าใต้ key ชื่อไฟล์ (`FILE_KEY`) ที่ใช้ FILENAME_CID_RUN ตัวแคบ
  * อีเมลของบัญชี ชื่อ เบอร์ IP และ UA ไม่ถูกแตะ ตามที่ตัดสินไว้ (decision 10, plan §7.6)
  *
  * `findings` (ถ้าส่งมา) ได้ค่าจริงของทุกตัวที่ถูกปิดที่นี่ — lib/activity-shape.ts ทำ key ค้นหา `cid#…` จากมัน
  * ค่าจริงไม่ออกจาก process ทางอื่น
  */
 export function maskForLogStore(value: unknown, findings?: MaskFindings): unknown {
-  return maskValue(value, 0, { run: ACTIVITY_CID_RUN, findings });
+  return maskValue(value, 0, { run: CID_RUN, fileRun: FILENAME_CID_RUN, findings });
 }
 
 /**
- * แบบเดียวกับ `maskForLogStore` แต่เลขบัตรในข้อความใช้ `CID_RUN` ตัวกว้างของข้อความ error — สำหรับ input ของแถว audit
- * ที่ Postgres ไม่รับ ซึ่งไปอยู่ใน `error_events.extra.audit` (lib/audit-fallback.ts)
- *
- * สำเนานั้นเป็นข้อมูลของ error ไม่ใช่บันทึกที่คนค้นและอ่าน ปิดเกินได้เหมือนข้อความ error (ชื่อไฟล์ที่มีวันที่กับเลขลำดับ
- * กลายเป็น `[cid]` — ยอมรับ) เดิมใช้ตัวแคบของสำเนากิจกรรม เลขบัตรที่คั่นด้วยจุด ขีดล่าง หรือตัวคั่นหลายตัวในบันทึกของร่าง
- * จึงไปถึง error_events เต็มทั้ง 13 หลัก ทั้งที่ข้อความ error ปิดรูปเดียวกันได้ (พบตอนตรวจ 2026-09-30) ไม่ทำ key ค้นหา
+ * แบบเดียวกับ `maskForLogStore` แต่ชื่อไฟล์ก็ใช้ CID_RUN ตัวกว้าง — สำหรับ input ของแถว audit ที่ Postgres ไม่รับ ซึ่งไปอยู่
+ * ใน `error_events.extra.audit` (lib/audit-fallback.ts) สำเนานั้นเป็นข้อมูลของ error ไม่ใช่บันทึกที่คนค้นและอ่าน ปิดเกินได้
+ * เหมือนข้อความ error (ชื่อไฟล์ที่มีวันที่กับเลขลำดับกลายเป็น `[cid]` — ยอมรับ) ไม่ทำ key ค้นหา
  */
 export function maskForErrorCopy(value: unknown): unknown {
   return maskValue(value, 0, { run: CID_RUN });
@@ -795,6 +808,7 @@ function maskValue(value: unknown, depth: number, pass: MaskPass): unknown {
       Object.entries(value as object).map(([k, v]) => {
         const key = maskCidTextWith(k, pass);
         if (CID_KEY.test(k)) return [key, maskedCid(v, depth + 1, pass)];
+        if (pass.fileRun && FILE_KEY.test(k)) return [key, maskValue(v, depth + 1, { ...pass, run: pass.fileRun })];
         return [key, maskValue(v, depth + 1, pass)];
       }),
     );

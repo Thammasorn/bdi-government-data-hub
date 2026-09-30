@@ -8,9 +8,13 @@
  *   - **category** ของทุกรหัส (`CATEGORY_BY_ACTION`) — retention ผูกกับมัน (lib/log-retention.ts) รหัสใหม่ใน
  *     `AuditAction` ที่ไม่ได้ใส่ในตารางนี้ typecheck ไม่ผ่าน
  *   - **via** — มาทางไหน (session, admin token, สคริปต์, …) ดูจากแถวเอง ไม่ใช่จาก actor อย่างเดียว
- *   - **การปิดข้อมูล** — เลขบัตรทุกคีย์ที่ชื่อบอก (รวม `thaid_subject`) และเลข 13 หลักในข้อความทุกค่า
- *     (`maskForLogStore` ใน lib/redact.ts) อีเมลที่**พิมพ์มา**ตอนล็อกอินไม่ผ่าน · ค่าที่ Postgres ปิดมาแล้วผ่านไปตามเดิม
- *   - **hashKeys** — `cid#<hmac16>` ของทุกเลขบัตรที่สำเนาปิดเอง และ `email#<hmac16>` ของทุกอีเมลในแถว (`hashKeyOf`)
+ *   - **การปิดข้อมูล** — เลขบัตรทุกคีย์ที่ชื่อบอก (รวม `thaid_subject`) และเลขบัตรในข้อความทุกค่า ทั้งใน before/after/
+ *     metadata (`maskForLogStore` ใน lib/redact.ts) และในข้อความชั้นบนที่มาจากแถว: `reason`, `actor.name`,
+ *     `changedFields`, `request.userAgent`, `request.ip` (`maskCidText`) อีเมลที่**พิมพ์มา**ตอนล็อกอินไม่ผ่าน ·
+ *     ค่าที่ Postgres ปิดมาแล้วผ่านไปตามเดิม
+ *   - **hashKeys** — `cid#<hmac16>` ของทุกเลขบัตรที่สำเนาปิดเอง และ `email#<hmac16>` ของอีเมลที่เป็นค่าข้อความใต้ key ที่
+ *     ชื่อลงท้าย `email` / `e-mail` ทุกชั้นของ before/after/metadata (`emailsIn`, `hashKeyOf`) — อีเมลในข้อความอิสระ
+ *     (บันทึก เหตุผล) และใน array ใต้ key พหูพจน์ไม่ได้ key (วันนี้ audit ไม่มีแถวแบบหลัง)
  *   - เอกสารไม่เกิน 64 KB **เมื่อเป็น BSON** (ขนาดที่ Mongo เก็บ — lib/bson-size.ts) — ตัดแบบกำหนดได้ (`fitDocument`)
  *     ไม่ทิ้งทั้งใบ ทุกเอกสารที่ออกจากไฟล์นี้ผ่านเพดานนี้แล้ว ทั้งของ relay และของ audit_fallback
  *
@@ -379,7 +383,12 @@ function changedFieldsOf(row: AuditRowLike): string[] {
 /**
  * แถวหนึ่งแถว → เอกสาร `activity` หนึ่งใบ — ไม่ throw บนข้อมูลแปลก ๆ (ค่าที่ไม่ใช่ชนิดที่คาดได้ null หรือ `[]`)
  *
- * ค่าดิบใช้หา relatedUserIds, tokenFps, changedFields และ hashKeys ก่อน แล้วจึงปิด ค่าดิบไม่ออกไปทางอื่น
+ * ค่าดิบใช้หา relatedUserIds, tokenFps, changedFields และ hashKeys ก่อน แล้วจึงปิด ค่าดิบไม่ออกไปทางอื่น: ข้อความทุกตัว
+ * ที่ออกไปเป็นฟิลด์ชั้นบนผ่าน `maskCidText` ด้วย — `reason`, `actor.name`, ชื่อใน `changedFields` (ชื่อ key ของ
+ * before/after ถูกปิดด้วยกฎเดียวกัน ชื่อช่องที่เปลี่ยนจึงตรงกับ key ที่เห็น), `request.userAgent` และ `request.ip`
+ * (แถวก่อน 2026-09-28 เก็บ X-Forwarded-For ที่ผู้เรียกเขียนเองได้ทุกข้อความ) เดิม `actor.name` กับ `changedFields`
+ * ออกไปดิบ: เลข 13 หลักใน `actor_name` หรือเลขบัตรที่ใช้เป็นชื่อ key รอดไปถึง Mongo (ตรวจขั้น 6, 2026-09-30)
+ * ฟิลด์ที่เหลือมาจากคอลัมน์ที่ระบบเขียน (รหัส enum uuid เลขที่คำขอ) หรือถูกกรองตามรูปแล้ว (tokenFps, relatedUserIds)
  */
 export function projectAuditRow(row: AuditRowLike, options: ProjectOptions): ActivityDoc {
   const now = options.now ?? new Date();
@@ -404,6 +413,16 @@ export function projectAuditRow(row: AuditRowLike, options: ProjectOptions): Act
     metadata = Object.keys(masked).length > 0 ? masked : null;
   }
 
+  const text = (value: string | null): string | null => (value === null ? null : maskCidText(value, findings));
+  const reasonText = rawMeta ? stringOrNull(rawMeta.reason) : null;
+  const reason = reasonText === null ? null : maskCidText(reasonText, findings).slice(0, REASON_MAX);
+  const actorName = text(rawMeta ? stringOrNull(rawMeta.actor_name) : null);
+  const changedFields = changedFieldsOf(row).map((name) => maskCidText(name, findings));
+  const ip = text(row.ipAddress);
+  // แถวที่เขียนก่อน a0a0578 เก็บ user agent ดิบ — ผ่านกฎเดียวกับที่ logAudit ใช้ทุกวันนี้ (ทำซ้ำได้ ไม่เปลี่ยนค่าที่ผ่านแล้ว)
+  // แล้วผ่านกฎเลขบัตรของสำเนาอีกชั้น: storedUserAgent ไม่นับเลขไทย เลขเต็มความกว้าง และเลขที่คั่นด้วยจุด
+  const userAgent = text(storedUserAgent(row.userAgent));
+
   const hashKeys = new Set<string>();
   for (const cid of findings.cids) {
     const key = hashKeyOf("cid", cid, options.hashKey);
@@ -415,7 +434,6 @@ export function projectAuditRow(row: AuditRowLike, options: ProjectOptions): Act
   }
 
   const adminTokenFp = rawMeta ? stringOrNull(rawMeta.admin_token_fp) : null;
-  const reasonText = rawMeta ? stringOrNull(rawMeta.reason) : null;
   const roles = rawMeta && Array.isArray(rawMeta.actor_roles) ? rawMeta.actor_roles.filter((r) => typeof r === "string") : [];
 
   const doc: ActivityDoc = {
@@ -429,7 +447,7 @@ export function projectAuditRow(row: AuditRowLike, options: ProjectOptions): Act
     actor: {
       type: row.actorType,
       id: row.actorId,
-      name: rawMeta ? stringOrNull(rawMeta.actor_name) : null,
+      name: actorName,
       roles: roles as string[],
       organizationId: rawMeta ? stringOrNull(rawMeta.actor_organization_id) : null,
     },
@@ -441,16 +459,15 @@ export function projectAuditRow(row: AuditRowLike, options: ProjectOptions): Act
     gate: isPlainObject(row.after) ? stringOrNull(row.after.taskType) : null,
     before,
     after,
-    changedFields: changedFieldsOf(row),
+    changedFields,
     // ค่านี้ปนรหัส (SESSION_REVOKED: LOGOUT, …) กับข้อความที่คนพิมพ์ — docs/21 §4.0 "ความหมายของ reason"
-    reason: reasonText === null ? null : maskCidText(reasonText).slice(0, REASON_MAX),
+    reason,
     metadata,
     request: {
       correlationId: row.correlationId,
       reference: referenceOf(row.correlationId),
-      ip: row.ipAddress,
-      // แถวที่เขียนก่อน a0a0578 เก็บ user agent ดิบ — ผ่านกฎเดียวกับที่ logAudit ใช้ทุกวันนี้ (ทำซ้ำได้ ไม่เปลี่ยนค่าที่ผ่านแล้ว)
-      userAgent: storedUserAgent(row.userAgent),
+      ip,
+      userAgent,
       method: null,
       route: null,
       status: null,
