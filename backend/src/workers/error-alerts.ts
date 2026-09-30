@@ -52,7 +52,7 @@
  * เปิดอยู่ไหม (`GET /api/admin/logs/status` แสดง) — เปิดอยู่เขียนทุกนาที ปิดอยู่เขียนครั้งเดียวตอนเริ่มพร้อมล้าง `enabledAt`
  * เปิดกลับมาจึงนับใหม่จากตอนนั้น ไม่ใช่แจ้งทุกอย่างที่เกิดระหว่างที่ปิด
  */
-import { createHash } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 
 import type { Collection, Db, Document, Filter } from "mongodb";
 
@@ -687,11 +687,22 @@ function permanentFailure(err: unknown): boolean {
 }
 
 /**
- * key ของผู้รับที่ `pending` เก็บ — ส่วนหนึ่งของ SHA-256 ของที่อยู่ (ตัวเล็กอยู่แล้ว — env.ts `emailList`) ไม่ใช่ตัวที่อยู่
- * รายชื่อจริงอยู่ใน `ERROR_ALERT_EMAILS` ที่เดียว ผู้รับที่ถูกถอดออกจากรายชื่อระหว่างนั้นหาไม่เจอ ก็ไม่ได้ฉบับที่ค้าง
+ * กุญแจของ `recipientKey` — `LOG_HASH_KEY` ตัวเดียวกับ key ค้นหาของสำเนากิจกรรม (worker มีอยู่แล้ว) ไม่ได้ตั้ง (production ที่ตั้ง
+ * ไม่ครบ — `/status` บอก `hashKey: "missing"`) ใช้กุญแจสุ่มของ process นี้แทน: ผู้รับที่ค้างจึงถูกจำได้แค่จน worker เริ่มใหม่
+ */
+const RECIPIENT_KEY_SECRET = env.logStore.hashKey || randomBytes(32).toString("hex");
+
+/**
+ * key ของผู้รับที่ `pending` เก็บ — HMAC ของที่อยู่ (ตัวเล็กอยู่แล้ว — env.ts `emailList`) ไม่ใช่ตัวที่อยู่ รายชื่อจริงอยู่ใน
+ * `ERROR_ALERT_EMAILS` ที่เดียว ผู้รับที่ถูกถอดออกจากรายชื่อระหว่างนั้นหาไม่เจอ ก็ไม่ได้ฉบับที่ค้าง
+ *
+ * เดิมเป็น SHA-256 เปล่า ๆ ใครอ่าน `relay_state` ได้ (รวม `bdi_backend`) ก็ยืนยันที่อยู่ของเจ้าหน้าที่ที่เดาไว้ได้ด้วยการ hash เอง
+ * (ตรวจแบบค้าน 2026-10-01) — อีเมลใน log store ที่อื่นเป็น HMAC ใต้ `LOG_HASH_KEY` ทั้งหมด (plan §7) ข้อความนำหน้าแยก key ชุดนี้
+ * ออกจาก `email#…` ของ `activity.hashKeys` ที่อยู่เดียวกันจึงได้ key คนละตัว โยงกันไม่ได้ `LOG_HASH_KEY` เปลี่ยน key เก่าก็หา
+ * ไม่เจอ ผู้รับที่ค้างในตอนนั้นไม่ได้ฉบับที่ค้าง (บรรทัดเตือนของ `deliverPending`)
  */
 function recipientKey(address: string): string {
-  return createHash("sha256").update(address).digest("hex").slice(0, 16);
+  return createHmac("sha256", RECIPIENT_KEY_SECRET).update(`error-alert-recipient\0${address}`).digest("hex").slice(0, 16);
 }
 
 /**
@@ -718,7 +729,10 @@ async function deliverPending(
       continue;
     }
     const keys = item.recipients.filter((key) => configured.has(key));
-    if (keys.length < item.recipients.length) changed = true;
+    if (keys.length < item.recipients.length) {
+      changed = true;
+      warnUnknown(item, item.recipients.length - keys.length);
+    }
     if (keys.length === 0) continue;
     if (stalled || stopped) {
       kept.push({ ...item, recipients: keys });
@@ -763,6 +777,14 @@ function pendingError(pending: PendingDigest[]): string | null {
   if (pending.length === 0) return null;
   const people = pending.reduce((sum, item) => sum + item.recipients.length, 0);
   return `ยังส่งไม่ถึงผู้รับ ${people} รายการใน ${pending.length} ฉบับ — ส่งให้ในรอบหน้า`;
+}
+
+/** ผู้รับในฉบับที่ค้างซึ่งไม่อยู่ในรายชื่อแล้ว — ถูกถอดออก หรือ key ใช้ไม่ได้แล้ว (`recipientKey`: `LOG_HASH_KEY` เปลี่ยน หรือไม่ได้ตั้งแล้ว worker เริ่มใหม่) */
+function warnUnknown(item: PendingDigest, count: number) {
+  console.warn(
+    `[error-alerts] สรุปของ ${bangkok(item.createdAt)} ที่ค้างอยู่มีผู้รับ ${count} รายที่ไม่อยู่ในรายชื่อแล้ว — ไม่ส่งให้ ` +
+      "(ถูกถอดออกจาก ERROR_ALERT_EMAILS หรือ LOG_HASH_KEY เปลี่ยน/ไม่ได้ตั้งแล้ว worker เริ่มใหม่)",
+  );
 }
 
 function warnDropped(item: PendingDigest, why: string) {
