@@ -20,7 +20,7 @@ import { prisma } from "../db.js";
 import { env } from "../env.js";
 import { AuditAction, AuditSubject, logAudit, storableText } from "./audit.js";
 import { correlationId } from "./context.js";
-import { scrubText } from "./redact.js";
+import { scrubClipped } from "./redact.js";
 import { generateNonce, generateState } from "./thaid.js";
 
 /**
@@ -164,7 +164,7 @@ const OAUTH_ERROR_CODE = /^[a-z][a-z_]{0,39}$/;
  * เลอะ และฝังเลขบัตรลงคอลัมน์ที่ไม่มีใครคิดจะปิดบังได้ ค่าที่ไม่ใช่รูปของรหัสจึงเหลือค่าคงที่ค่าเดียว
  * ไม่เก็บค่าดิบไว้ที่ไหนเลย — ส่วน `error_description` ยังลง `last_error_message` เป็นข้อความอิสระ
  * ที่ผู้ยิงเลือกเองได้ (`failThaidOperation()` ตัดความยาวและกวาดเลขบัตร อีเมล เบอร์โทร ความลับออกด้วย
- * `scrubText()` แต่ถ้อยคำที่เหลือยังเป็นของผู้ยิง) อย่าอ่านคอลัมน์นั้น
+ * `scrubClipped()` แต่ถ้อยคำที่เหลือยังเป็นของผู้ยิง) อย่าอ่านคอลัมน์นั้น
  * ว่าเป็นคำของ ThaID
  *
  * รหัสอื่นที่ส่งเข้า `failThaidOperation()` ไม่ต้องผ่านตรงนี้: เป็นค่าคงที่ของเราเอง หรือ `error`
@@ -205,10 +205,10 @@ export async function failThaidOperation(
         // ของเราเองกับของ endpoint token สั้นกว่านี้มาก ตัดที่ 500 เท่ากับ delivery worker
         // `storableText()` หลังตัด: ผู้ยิงเลือกข้อความเองได้ และ U+0000 หรือ surrogate ครึ่งคู่ (ส่งมาตรง ๆ
         // หรือเกิดจากการตัดที่ 500 กลางอีโมจิ) ทำให้ UPDATE ล้ม แถวค้าง PROCESSING และคำขอตอบ 500
-        // `scrubText()` ก่อนตัด: เนื้อความผู้ยิงก็เลือกเองได้ — เลขบัตร อีเมล เบอร์โทรที่ฝังมาไม่ลงคอลัมน์นี้
-        // (plan §13 #39) คอลัมน์นี้ยังเป็นข้อความของผู้เรียก ไม่ใช่คำของ ThaID ตัดก่อนกวาดด้วย ให้ regex วิ่งบนข้อความ
-        // ที่มีเพดาน
-        lastErrorMessage: storableText(scrubText(message.slice(0, 2_000)).slice(0, 500)),
+        // กวาดก่อนเก็บ: เนื้อความผู้ยิงก็เลือกเองได้ — เลขบัตร อีเมล เบอร์โทรที่ฝังมาไม่ลงคอลัมน์นี้ (plan §13 #39)
+        // คอลัมน์นี้ยังเป็นข้อความของผู้เรียก ไม่ใช่คำของ ThaID `scrubClipped()` ตัดก่อนกวาดให้ regex วิ่งบนข้อความที่มี
+        // เพดาน โดยเผื่อข้อความหลังจุดตัดไว้ให้ของที่คร่อมจุดตัดยังถูกจำได้ (เดิมตัดดิบ ๆ ที่ 2,000)
+        lastErrorMessage: storableText(scrubClipped(message, 500)),
         completedAt: new Date(),
       },
     });

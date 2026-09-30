@@ -16,14 +16,16 @@
  */
 
 /**
- * ข้อความที่ยาวกว่านี้ถูกตัดก่อนกวาด — regex ทุกตัวข้างล่างเป็นเส้นตรง (ดูหมายเหตุเหนือ BEFORE_UUID_RULES) แต่ก็ไม่ควร
- * วิ่งบนข้อความขนาดเมกะไบต์ ข้อความที่มาจากคำขอ (ชื่อ key, path, UA) ไม่ได้มาถึงขนาดนี้: ผู้เรียกตัดก่อนด้วย
- * `scrubClipped()` เพราะ captureError เป็น synchronous บนเส้นทางของคำขอ และคำขอเดียวส่งชื่อ key มาได้ห้าสิบตัว
+ * ข้อความที่ยาวกว่านี้ถูกตัดก่อนกวาด (แบบ `scrubClipped()` — เผื่อข้อความหลังจุดตัดไว้ให้กฎจำได้) — regex ทุกตัวข้างล่าง
+ * เป็นเส้นตรง (ดูหมายเหตุเหนือ BEFORE_UUID_RULES) แต่ก็ไม่ควรวิ่งบนข้อความขนาดเมกะไบต์ ข้อความที่มาจากคำขอ (ชื่อ key,
+ * path, UA) ไม่ได้มาถึงขนาดนี้: ผู้เรียกตัดก่อนด้วย `scrubClipped()` เพราะ captureError เป็น synchronous บนเส้นทางของ
+ * คำขอ และคำขอเดียวส่งชื่อ key มาได้ห้าสิบตัว
  */
 const SCRUB_INPUT_MAX = 20_000;
 /**
  * ข้อความที่เผื่อไว้หลังจุดตัดของ `scrubClipped()` — ของที่คร่อมจุดตัดต้องยังครบพอให้กฎจำได้ (อีเมลยาวได้ 254 ตัว,
- * ความลับยาว ๆ ต้องครบ 32 ตัว, เลขบัตรแบบมีขีด 17 ตัว) ไม่งั้นท่อนหน้าของมันหลุดออกไปโดยไม่ถูกกวาด
+ * ความลับยาว ๆ ต้องครบ 32 ตัว, เลขบัตรแบบมีตัวคั่น 13 ตัวบวกตัวคั่นไม่เกิน 36 ตัว) ไม่งั้นท่อนหน้าของมันหลุดออกไปโดย
+ * ไม่ถูกกวาด ของที่ต้องมองไกลกว่านี้ถึงจะจำได้ไม่มีในตาราง
  */
 const CLIP_CONTEXT = 256;
 
@@ -192,7 +194,12 @@ const HELD = /\uE000(\d+)\uE001/g;
  * | `0` + 8–9 หลัก · `+66` + 8–9 หลัก | `[phone]` |
  */
 export function scrubText(text: string): string {
-  let out = text.length > SCRUB_INPUT_MAX ? text.slice(0, SCRUB_INPUT_MAX) : text;
+  return text.length > SCRUB_INPUT_MAX ? scrubClipped(text, SCRUB_INPUT_MAX) : applyRules(text);
+}
+
+/** ตารางกวาดทั้งตารางบนข้อความทั้งก้อน ไม่ตัด — ผู้เรียกตัดมาแล้วเสมอ (`scrubText`, `scrubClipped`) */
+function applyRules(text: string): string {
+  let out = text;
   for (const [pattern, replacement] of DATABASE_DETAIL_RULES) out = out.replace(pattern, replacement);
   for (const [pattern, replacement] of BEFORE_UUID_RULES) out = out.replace(pattern, replacement);
 
@@ -208,13 +215,34 @@ export function scrubText(text: string): string {
 }
 
 /**
- * กวาดข้อความที่**ผู้เรียก API เลือกเองได้** (ชื่อ key ของ body และของ query, path, user-agent) แล้วเหลือไม่เกิน `max`
- * ตัว — ตัดก่อนกวาด ไม่ใช่กวาดก่อนตัด: ค่าเหล่านี้ยาวได้ถึงเพดานของ body (1 MB) หรือของ header (16 KB) และ
- * captureError เรียกตัวนี้บนเส้นทางของคำขอก่อนเพดานการเก็บตัวไหนจะได้ดู แม้ log store ปิดอยู่
- * เผื่อข้อความหลังจุดตัดไว้ CLIP_CONTEXT ตัว ของที่คร่อมจุดตัดจึงยังถูกกวาดครบก่อนถูกตัดทิ้ง
+ * กวาดข้อความยาวไม่จำกัด แล้วเหลือไม่เกิน `max` ตัว — ใช้กับข้อความที่**ผู้เรียก API เลือกเองได้** (ชื่อ key ของ body
+ * และของ query, path, user-agent) กับบรรทัดเฟรมของ stack และเป็นทางที่ `scrubText()` ใช้กับข้อความเกิน SCRUB_INPUT_MAX
+ * ตัดก่อนกวาด ไม่ใช่กวาดก่อนตัด: ค่าเหล่านี้ยาวได้ถึงเพดานของ body (1 MB) หรือของ header (16 KB) และ captureError
+ * เรียกตัวนี้บนเส้นทางของคำขอก่อนเพดานการเก็บตัวไหนจะได้ดู แม้ log store ปิดอยู่
+ *
+ * การตัดต้องไม่ผ่ากลางของที่กฎจำได้แล้วปล่อยท่อนหน้าไป (ความลับ 40 ตัวที่เหลือ 20 ตัวไม่ครบ 32 ตัว อีเมลที่ขาดโดเมน)
+ * จึงกวาดสองรอบ: รอบหนึ่งบนข้อความถึงจุดตัด อีกรอบเผื่อข้อความหลังจุดตัดไว้ CLIP_CONTEXT ตัว แล้วเก็บเฉพาะส่วนหน้าที่
+ * สองรอบได้ตรงกัน — ทุกตัวในนั้นมาจากข้อความก่อนจุดตัด และไม่มีกฎไหนเห็นต่างเพราะรู้ว่ามีอะไรต่อ ของที่คร่อมจุดตัดซึ่ง
+ * รอบที่เผื่อจำได้ (`[secret]`, `[phone]`) ทำให้สองรอบแยกกันตรงจุดเริ่มของมัน จึงไม่เหลือแม้แต่ท่อนหน้า
+ *
+ * เดิมกวาดรอบเดียวที่ `max + CLIP_CONTEXT` แล้วนับตัดที่ `max` ตัวของ**ผลลัพธ์** — ถ้าก่อนหน้านั้นมีก้อนยาวที่ถูกย่อ
+ * (ความลับ 400 ตัวเหลือ `[secret]` 8 ตัว) ตัวที่ `max` ของผลลัพธ์ก็เลยจุดตัดเดิมไป แล้วท่อนหน้าของความลับที่คร่อมจุดตัด
+ * ก็ติดมาด้วย (ลองแล้ว 2026-09-30) ส่วน `scrubText()` กับบรรทัดเฟรมตัดเฉย ๆ ไม่เผื่ออะไรเลย: เฟรมที่มีความลับ
+ * คร่อมคอลัมน์ 1,024 ได้ `[phone]abcdef0123`
  */
 export function scrubClipped(text: string, max: number): string {
-  return scrubText(text.slice(0, max + CLIP_CONTEXT)).slice(0, max);
+  const limit = Math.min(max, SCRUB_INPUT_MAX);
+  if (text.length <= limit) return applyRules(text).slice(0, limit);
+  const withContext = applyRules(text.slice(0, limit + CLIP_CONTEXT));
+  const atCut = applyRules(text.slice(0, limit));
+  return commonPrefix(withContext, atCut).slice(0, limit);
+}
+
+function commonPrefix(a: string, b: string): string {
+  const end = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < end && a.charCodeAt(i) === b.charCodeAt(i)) i++;
+  return a.slice(0, i);
 }
 
 /** ข้อความของ Prisma ที่ยาวกว่านี้ถูกตัดหางก่อนตัด DETAIL — ข้อความปกติ (โค้ดรอบจุดที่เรียกกับสาเหตุ) ไม่ถึงหลักพัน */
@@ -232,7 +260,7 @@ const DATABASE_LOG_INPUT_MAX = 64 * 1024;
 export function databaseLogLine(message: string): string {
   let stripped = message.length > DATABASE_LOG_INPUT_MAX ? message.slice(0, DATABASE_LOG_INPUT_MAX) : message;
   for (const [pattern, replacement] of DATABASE_DETAIL_RULES) stripped = stripped.replace(pattern, replacement);
-  return scrubText(headlineOf("Prisma", stripped)).slice(0, 500);
+  return scrubClipped(headlineOf("Prisma", stripped), 500);
 }
 
 // ------------------------------------------------------------------------------------ error object
@@ -319,8 +347,9 @@ function propsOf(err: unknown): Record<string, unknown> {
 
 /**
  * เพดานของการอ่าน stack — หลังตัดส่วนหัว (ข้อความ) ทิ้งแล้ว อ่านแค่ STACK_PARSE_MAX ตัวแรก เก็บไม่เกิน FRAMES_MAX
- * เฟรม และบรรทัดละไม่เกิน FRAME_LINE_MAX ตัว stack จริงของเรามีสิบเฟรม (Error.stackTraceLimit) บรรทัดละไม่ถึง 200 ตัว
- * `err.stack` ไม่มีเพดานของตัวเอง: มันถือข้อความทั้งก้อน ซึ่งมาจากค่าที่ผู้เรียกส่งมาได้ (ถึง 1 MB ของ body)
+ * เฟรม และบรรทัดละไม่เกิน FRAME_LINE_MAX ตัว (ตัดหลังกวาด — `scrubClipped`) stack จริงของเรามีสิบเฟรม
+ * (Error.stackTraceLimit) บรรทัดละไม่ถึง 200 ตัว `err.stack` ไม่มีเพดานของตัวเอง: มันถือข้อความทั้งก้อน ซึ่งมาจากค่าที่
+ * ผู้เรียกส่งมาได้ (ถึง 1 MB ของ body)
  */
 const STACK_PARSE_MAX = 64 * 1024;
 const FRAMES_MAX = 50;
@@ -346,15 +375,19 @@ function belowMessage(stack: string, message: string): string {
   return stack;
 }
 
-/** บรรทัด `at …` ของ stack — ไม่รวมบรรทัดหัวหรือบรรทัดในข้อความ และไม่เกินเพดานข้างบน */
+/**
+ * บรรทัด `at …` ของ stack **ดิบ** — ไม่รวมบรรทัดหัวหรือบรรทัดในข้อความ และไม่เกินเพดานข้างบน ผู้เรียกกวาดเองทีละบรรทัด
+ * บรรทัดที่เกิน FRAME_LINE_MAX เก็บเผื่อไว้ CLIP_CONTEXT ตัวให้ `scrubClipped()` ใช้จำของที่คร่อมจุดตัด
+ */
 function framesOf(err: unknown): string[] {
   if (!(err instanceof Error) || typeof err.stack !== "string") return [];
   const message = typeof err.message === "string" ? err.message : "";
   const region = belowMessage(err.stack, message).slice(0, STACK_PARSE_MAX);
+  const keep = FRAME_LINE_MAX + CLIP_CONTEXT;
   const frames: string[] = [];
   for (const line of region.split("\n")) {
     if (!/^\s+at /.test(line)) continue;
-    frames.push(line.length > FRAME_LINE_MAX ? line.slice(0, FRAME_LINE_MAX) : line);
+    frames.push(line.length > keep ? line.slice(0, keep) : line);
     if (frames.length >= FRAMES_MAX) break;
   }
   return frames;
@@ -442,7 +475,19 @@ export function scrubError(err: unknown): ScrubbedError {
   const frames = framesOf(err);
   let stack: string | null = null;
   if (frames.length > 0) {
-    stack = scrubText(`${name}: ${message}\n${frames.join("\n")}`);
+    // หัวกับเฟรมกวาดแยกกัน: ข้อความกวาดมาแล้ว และแต่ละเฟรมถูกตัดที่ FRAME_LINE_MAX **หลัง**กวาด
+    // ไม่ใช่ก่อน เดิมต่อทั้งหมดแล้วกวาดทีเดียว ซึ่งเกิน SCRUB_INPUT_MAX ได้ (ห้าสิบเฟรม) และเฟรมถูกตัดดิบ ๆ มาก่อนแล้ว
+    // หยุดกวาดเมื่อยาวเกิน STACK_MAX — เฟรมที่เหลือไม่ถูกเก็บอยู่แล้ว
+    const header = scrubText(`${name}: ${message}`);
+    const lines = [header];
+    let length = header.length;
+    for (const frame of frames) {
+      if (length > STACK_MAX) break;
+      const line = scrubClipped(frame, FRAME_LINE_MAX);
+      lines.push(line);
+      length += line.length + 1;
+    }
+    stack = lines.join("\n");
     if (stack.length > STACK_MAX) stack = `${stack.slice(0, STACK_MAX)}…`;
   }
 
