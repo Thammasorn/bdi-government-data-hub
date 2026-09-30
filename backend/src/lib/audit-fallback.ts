@@ -19,7 +19,7 @@ import { fitDocument, projectAuditRow } from "./activity-shape.js";
 import type { AuditInput } from "./audit.js";
 import { correlationId, currentContext } from "./context.js";
 import { captureError, enqueueActivity } from "./error-capture.js";
-import { maskForLogStore, maskedTypedEmail } from "./redact.js";
+import { maskForErrorCopy, maskedTypedEmail } from "./redact.js";
 
 /** Date → ISO, Decimal ของ Prisma → ข้อความ — ให้ได้ค่าที่ Mongo เก็บแล้วอ่านกลับมาเหมือนที่ Postgres จะเก็บ */
 function plain(value: unknown): unknown {
@@ -39,12 +39,16 @@ function actorTypeOf(input: AuditInput, actorId: string | null): string {
 /**
  * input ของแถว audit ในรูปที่ออกไปถึง log store ได้ (`extra.audit` ของ error event) — plan §7.6
  *
+ * ปิดเลขบัตรด้วย `maskForErrorCopy` (กฎตัวกว้างของข้อความ error) ไม่ใช่ `maskForLogStore` ของสำเนากิจกรรม: เลขบัตรที่คั่น
+ * ด้วยจุดหรือขีดล่างในบันทึกของร่างต้องไม่ไปถึง error_events เต็มทั้ง 13 หลัก เอกสาร activity ของความล้มเหลวเดียวกัน
+ * (ข้างล่าง) ยังผ่าน `projectAuditRow()` ตัวเดียวกับ relay — กฎเดียวกับสำเนาของแถวที่ Postgres รับ
+ *
  * ผู้กระทำคือคนที่ `logAudit()` หามาได้ (`actorId`: input ก่อน แล้วค่อยบริบทของคำขอ) ไม่ใช่ `input.actorId` เฉย ๆ —
  * แถวที่มาจาก session ส่วนใหญ่ไม่ได้ส่ง actorId มา event กับเอกสาร activity ของความล้มเหลวเดียวกันเคยบอกผู้กระทำ
  * ไม่ตรงกัน (null กับ id จริง) ชนิดของผู้กระทำก็คิดแบบเดียวกับที่ logAudit จะเขียนลง Postgres
  */
 function maskedInput(input: AuditInput, actorId: string | null): Record<string, unknown> {
-  const metadata = (maskForLogStore(plain(input.metadata ?? null)) ?? null) as Record<string, unknown> | null;
+  const metadata = (maskForErrorCopy(plain(input.metadata ?? null)) ?? null) as Record<string, unknown> | null;
   // อีเมลที่**พิมพ์เอง**ตอนล็อกอินไม่ผ่าน อาจไม่ใช่ของบัญชีไหนเลย — ปิดไว้ อีเมลของบัญชีในที่อื่นเก็บตามเดิม
   if (input.action === "LOGIN_FAILED" && metadata && "email" in metadata) {
     metadata.email = maskedTypedEmail(metadata.email);
@@ -57,8 +61,8 @@ function maskedInput(input: AuditInput, actorId: string | null): Record<string, 
     actorId,
     actorType: actorTypeOf(input, actorId),
     result: input.result ?? "SUCCESS",
-    before: maskForLogStore(plain(input.before)),
-    after: maskForLogStore(plain(input.after)),
+    before: maskForErrorCopy(plain(input.before)),
+    after: maskForErrorCopy(plain(input.after)),
     metadata,
   };
 }

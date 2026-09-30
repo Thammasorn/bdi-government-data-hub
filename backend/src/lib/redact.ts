@@ -181,7 +181,9 @@ const CID_RUN = /(?<!\d)\d(?:[-._ ]{0,3}\d){12}(?!\d)/g;
  * ข้อความ error ปิดเกินได้ ไม่มีใครอ่านชื่อไฟล์ใน stack แต่สำเนากิจกรรมคือบันทึกที่คนค้นและอ่าน และเก็บชื่อไฟล์ เบอร์โทร
  * ไว้ตามที่ตัดสิน (decision 10) — CID_RUN ตัวกว้างทำให้ `scan_20260930_12345.pdf` ใน `after.filename` ของ
  * DOCUMENT_DOWNLOADED กลายเป็น `scan_[cid].pdf` และได้ `cid#` ปลอมหนึ่งตัว (ลองแล้ว 2026-09-30) เลขบัตรที่คั่นด้วยจุด
- * ขีดล่าง หรือตัวคั่นหลายตัวในข้อความที่คนพิมพ์ (บันทึก ความเห็น) จึงหลุดไปถึง `activity` — ยอมรับ ถูกปิดใน error เท่านั้น
+ * ขีดล่าง หรือตัวคั่นหลายตัวในข้อความที่คนพิมพ์ (บันทึก ความเห็น) จึงหลุดไปถึง `activity` — ยอมรับไว้ก่อน (กว้างน้อยกว่า
+ * plan §7.6 รอ DPO ตัดสิน) ส่วนสำเนาใน error ปิดด้วยตัวกว้างทั้งหมด: ข้อความ error (`scrubText`) และ input ของแถว audit
+ * ที่เขียนไม่สำเร็จใน `error_events.extra.audit` (`maskForErrorCopy`)
  * เบอร์โทร 10 หลักที่ตามด้วยช่องว่างกับเลขอีก 3 ตัว (`0812345678 123`) ยังถูกปิดเป็น `[cid]` เหมือนก่อน CID_RUN จะกว้างขึ้น
  */
 const ACTIVITY_CID_RUN = /(?<!\d)\d(?:[- ]?\d){12}(?!\d)/g;
@@ -646,12 +648,26 @@ export interface MaskFindings {
  * join กลับไป Postgres ทุกตัวที่ร้อยเสียไปหนึ่ง
  */
 export function maskCidText(text: string, findings?: MaskFindings): string {
+  return maskCidTextWith(text, { run: ACTIVITY_CID_RUN, findings });
+}
+
+/**
+ * การปิดรอบหนึ่ง — กฎเลขบัตรในข้อความที่ใช้ กับที่เก็บค่าจริงที่ถูกปิด
+ *   - สำเนากิจกรรม (`maskForLogStore`): `ACTIVITY_CID_RUN` ตัวแคบ ชื่อไฟล์ที่มีวันที่กับเลขลำดับต้องรอด
+ *   - สำเนาใน error (`maskForErrorCopy`): `CID_RUN` ตัวกว้าง เท่ากับข้อความ error ที่ `scrubText` กวาด
+ */
+interface MaskPass {
+  run: RegExp;
+  findings?: MaskFindings;
+}
+
+function maskCidTextWith(text: string, pass: MaskPass): string {
   if (UUID_EXACT.test(text)) return text;
   const held: string[] = [];
   const out = neutraliseHolds(text)
     .replace(UUID, (uuid) => `${HOLD_OPEN}${held.push(uuid) - 1}${HOLD_CLOSE}`)
-    .replace(ACTIVITY_CID_RUN, (run) => {
-      findings?.cids.push(run);
+    .replace(pass.run, (run) => {
+      pass.findings?.cids.push(run);
       return "[cid]";
     });
   return held.length > 0 ? out.replace(HELD, (_all, index: string) => held[Number(index)] ?? "") : out;
@@ -664,10 +680,10 @@ export function maskCidText(text: string, findings?: MaskFindings): string {
  * ตัวเลข (number) 13 หลักก็นับ — audit ส่งวันเวลามาเป็น ISO string (`plain()` ใน audit-fallback) ไม่ใช่ epoch ms
  * จึงไม่มีอะไรถูกปิดผิดตัวในวันนี้ และ key ของ object ก็ผ่านกฎเดียวกัน (object ที่ใช้เลขบัตรเป็น key)
  */
-function maskCidRuns(value: unknown, findings: MaskFindings | undefined): unknown {
-  if (typeof value === "string") return maskCidText(value, findings);
+function maskCidRuns(value: unknown, pass: MaskPass): unknown {
+  if (typeof value === "string") return maskCidTextWith(value, pass);
   if (typeof value === "number" && Number.isInteger(value) && Math.abs(value) >= 1e12 && Math.abs(value) < 1e13) {
-    findings?.cids.push(String(Math.abs(value)));
+    pass.findings?.cids.push(String(Math.abs(value)));
     return "[cid]";
   }
   return value;
@@ -681,23 +697,23 @@ function maskCidRuns(value: unknown, findings: MaskFindings | undefined): unknow
  * เดียวก็เหลือท้ายของใบสุดท้ายแค่ใบเดียว `{masked}` ที่ปิดไว้แล้วตั้งแต่ Postgres (`sanitizeDiff()` →
  * `{masked, changed}`) ไม่ปิดซ้ำ แต่ยังผ่านกฎเลข 13 หลักของ `maskForLogStore` — `masked` ที่ใครส่งมาเป็นเลขเต็มจึงไม่หลุด
  */
-function maskedCid(value: unknown, depth: number, findings: MaskFindings | undefined): unknown {
+function maskedCid(value: unknown, depth: number, pass: MaskPass): unknown {
   if (value === null || value === undefined) return value;
   if (depth > 8) return "[ลึกเกิน]";
-  if (Array.isArray(value)) return value.map((v) => maskedCid(v, depth + 1, findings));
+  if (Array.isArray(value)) return value.map((v) => maskedCid(v, depth + 1, pass));
   if (typeof value === "object") {
     const proto = Object.getPrototypeOf(value);
     if (proto === Object.prototype || proto === null) {
-      if ("masked" in value) return maskValue(value, depth + 1, findings);
+      if ("masked" in value) return maskValue(value, depth + 1, pass);
       return Object.fromEntries(
-        Object.entries(value).map(([k, v]) => [maskCidText(k, findings), maskedCid(v, depth + 1, findings)]),
+        Object.entries(value).map(([k, v]) => [maskCidTextWith(k, pass), maskedCid(v, depth + 1, pass)]),
       );
     }
     // Date, Buffer, … — `plain()` ของ audit-fallback แปลงเป็นข้อความมาก่อนแล้ว ถึงตรงนี้ได้ก็ไม่รู้ว่าข้างในคืออะไร
     return { masked: "***" };
   }
   const text = String(value);
-  findings?.cids.push(text);
+  pass.findings?.cids.push(text);
   const shown = text.length > 4 ? text.slice(-4) : "";
   return { masked: "x".repeat(text.length - shown.length) + shown };
 }
@@ -721,23 +737,35 @@ export function maskedTypedEmail(value: unknown): unknown {
  * ค่าจริงไม่ออกจาก process ทางอื่น
  */
 export function maskForLogStore(value: unknown, findings?: MaskFindings): unknown {
-  return maskValue(value, 0, findings);
+  return maskValue(value, 0, { run: ACTIVITY_CID_RUN, findings });
 }
 
-function maskValue(value: unknown, depth: number, findings: MaskFindings | undefined): unknown {
+/**
+ * แบบเดียวกับ `maskForLogStore` แต่เลขบัตรในข้อความใช้ `CID_RUN` ตัวกว้างของข้อความ error — สำหรับ input ของแถว audit
+ * ที่ Postgres ไม่รับ ซึ่งไปอยู่ใน `error_events.extra.audit` (lib/audit-fallback.ts)
+ *
+ * สำเนานั้นเป็นข้อมูลของ error ไม่ใช่บันทึกที่คนค้นและอ่าน ปิดเกินได้เหมือนข้อความ error (ชื่อไฟล์ที่มีวันที่กับเลขลำดับ
+ * กลายเป็น `[cid]` — ยอมรับ) เดิมใช้ตัวแคบของสำเนากิจกรรม เลขบัตรที่คั่นด้วยจุด ขีดล่าง หรือตัวคั่นหลายตัวในบันทึกของร่าง
+ * จึงไปถึง error_events เต็มทั้ง 13 หลัก ทั้งที่ข้อความ error ปิดรูปเดียวกันได้ (พบตอนตรวจ 2026-09-30) ไม่ทำ key ค้นหา
+ */
+export function maskForErrorCopy(value: unknown): unknown {
+  return maskValue(value, 0, { run: CID_RUN });
+}
+
+function maskValue(value: unknown, depth: number, pass: MaskPass): unknown {
   if (depth > 8) return "[ลึกเกิน]";
-  if (Array.isArray(value)) return value.map((v) => maskValue(v, depth + 1, findings));
+  if (Array.isArray(value)) return value.map((v) => maskValue(v, depth + 1, pass));
   const proto = value !== null && typeof value === "object" ? Object.getPrototypeOf(value) : undefined;
   if (proto === Object.prototype || proto === null) {
     return Object.fromEntries(
       Object.entries(value as object).map(([k, v]) => {
-        const key = maskCidText(k, findings);
-        if (CID_KEY.test(k)) return [key, maskedCid(v, depth + 1, findings)];
-        return [key, maskValue(v, depth + 1, findings)];
+        const key = maskCidTextWith(k, pass);
+        if (CID_KEY.test(k)) return [key, maskedCid(v, depth + 1, pass)];
+        return [key, maskValue(v, depth + 1, pass)];
       }),
     );
   }
-  return maskCidRuns(value, findings);
+  return maskCidRuns(value, pass);
 }
 
 /** ใช้ใน lib/error-capture.ts: id ที่หน้าตาเป็น UUID ให้ผ่าน ที่เหลือถือเป็นข้อความอิสระ */
