@@ -13,6 +13,7 @@
  *   - `navigator.sendBeacon` เป็น `text/plain` (ไม่มี preflight ข้าม origin ในเครื่อง dev และส่งได้แม้หน้ากำลังปิด) ไม่ได้ก็ `fetch`
  *     แบบ keepalive ไม่แนบ cookie — endpoint ไม่ต้อง login และไม่ควรรู้ว่าใครส่ง
  *   - กลืนทุกความล้มเหลว: การรายงาน error ต้องไม่เป็นต้นเหตุของ error
+ *   - chunk ที่โหลดไม่ขึ้น (`isChunkLoadError`) เป็นคำเตือน ไม่ว่ามาทางไหน (ตัวดักของ `window` หรือหน้า global-error)
  * backend กวาดทุกช่องซ้ำเอง (lib/redact.ts) ไม่เชื่อสิ่งที่ส่งไป
  */
 
@@ -65,6 +66,27 @@ function apiErrorOf(value: unknown): { status: number; code: string } | null {
   return kind === "ApiError" && typeof status === "number" && typeof code === "string" ? { status, code } : null;
 }
 
+/**
+ * chunk ของบันเดิลโหลดไม่ขึ้น — ส่วนใหญ่คือ deploy ใหม่ระหว่างที่หน้าเก่ายังเปิดอยู่ (ไฟล์ของ build เก่าหายไปแล้ว) ไม่ใช่บั๊ก
+ * บันทึกเป็นคำเตือนและไม่ส่งอีเมลแจ้งเตือน (plan §5) backend จัดทุกตัวไว้ใน issue เดียว `browser:chunk-load`
+ *
+ * **สองถ้อยคำ เพราะสอง bundler:** `next dev --webpack` ของ dev checkout ได้ `ChunkLoadError` ("Loading chunk 123 failed.",
+ * "Loading CSS chunk …") ส่วน `next build` ของ production เป็น **Turbopack** (ค่าตั้งต้นของ Next 16) ซึ่ง throw `Error` ธรรมดา
+ * ชื่อ `Error` ข้อความ "Failed to load chunk /_next/static/chunks/<hash>.js from module 83412" — เดิมรู้จักแค่แบบแรก
+ * chunk ที่หายบน production จึงเป็น error ระดับ error หนึ่ง issue ต่อ hash ของ chunk ต่อ build และส่งอีเมลแจ้งเตือนทุก deploy
+ * ตรวจคู่กันกับ `isChunkLoadReport` ใน backend/src/routes/client-errors.ts — แก้ที่หนึ่งต้องแก้อีกที่
+ */
+export function isChunkLoadError(value: unknown): boolean {
+  // `window` `error` ที่ไม่มี `event.error` (สคริปต์ข้าม origin) ได้แค่ข้อความ เช่น "Uncaught Error: Failed to load chunk …"
+  const name = value instanceof Error ? value.name : "";
+  const message = value instanceof Error ? String(value.message ?? "") : typeof value === "string" ? value : "";
+  return (
+    name === "ChunkLoadError" ||
+    /Loading (?:CSS )?chunk [\w-]+ failed/i.test(message) ||
+    /Failed to load chunk\s/i.test(message)
+  );
+}
+
 function describe(value: unknown): { name: string; message: string; stack?: string } {
   if (value instanceof Error) {
     return { name: value.name || "Error", message: String(value.message ?? ""), stack: value.stack };
@@ -79,7 +101,8 @@ function describe(value: unknown): { name: string; message: string; stack?: stri
 
 /**
  * รายงาน error หนึ่งตัว — ไม่ throw ไม่ await `reference` คือรหัสที่ผู้ใช้เห็นบนจอ (หน้า global-error) `digest` คือของ Next
- * สำหรับ error ฝั่ง server ที่ถูกซ่อนข้อความ
+ * สำหรับ error ฝั่ง server ที่ถูกซ่อนข้อความ · ไม่ระบุ `level` = `warning` ถ้าเป็น chunk ที่โหลดไม่ขึ้น (`isChunkLoadError`)
+ * นอกนั้น `error`
  */
 export function reportError(
   error: unknown,
@@ -101,7 +124,7 @@ export function reportError(
     sent += 1;
     send({
       mechanism: options.mechanism,
-      level: options.level ?? "error",
+      level: options.level ?? (isChunkLoadError(error) ? "warning" : "error"),
       name: name.slice(0, 200),
       message: message.slice(0, 2_000),
       ...(stack ? { stack: stack.slice(0, 16_000) } : {}),

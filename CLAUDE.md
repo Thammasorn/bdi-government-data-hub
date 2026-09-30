@@ -1474,6 +1474,16 @@ its own message text, so every distinct message is a new `error_issues` document
 lets browser reports create at most 100 new issues per process per hour and none while the log
 store is over its ceiling (beyond that they only count toward issues that already exist), and
 the worker deletes open browser issues not seen for 30 days.
+**A chunk that fails to load (a deploy under an open page) is a warning filed as
+`browser:chunk-load`, which never alerts, and there are two wordings for it.** `next dev --webpack`
+throws webpack's `ChunkLoadError` ("Loading chunk 123 failed."). Production's `next build` is
+**Turbopack** (Next 16's default), which throws a plain `Error`: "Failed to load chunk
+/_next/static/chunks/<hash>.js from module 83412". Until 2026-10-01 only the webpack wording was
+known, so on production every missing chunk became an error-level issue per chunk hash per build,
+and every deploy under open pages would have mailed the team. `isChunkLoadError` in
+`lib/report-error.ts` and `isChunkLoadReport` in `routes/client-errors.ts` must learn any new
+wording together. The backend check applies to browser reports only, because a Next server that
+cannot load its own chunk has a broken image.
 
 ## Conventions
 
