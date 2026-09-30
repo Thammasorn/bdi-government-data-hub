@@ -71,7 +71,7 @@ export LOC=southeastasia
 export ENVNAME=cae-d2dsp-dev          # Container Apps environment
 export PGNAME=psql-d2dsp-dev
 export SANAME=std2dspdev              # storage account: 3-24 chars, lowercase+digits only
-export TAG=<image-tag>                # e.g. the git short SHA the images were built from
+export TAG=<image-tag>                # the git short SHA the images were built from (and passed as GIT_SHA — §9)
 ```
 
 ---
@@ -706,6 +706,28 @@ everything through. `docs/07-thaid-integration.md` §4 has the detail.
 
 ## 9. Updating to a new image
 
+**Build the images with their commit SHA.** The images come from the Docker Hub procedure
+(`assets/docker-push-manual/manual.txt` on the build machine, outside git). The backend and frontend
+builds must pass the commit as the build argument `GIT_SHA`:
+
+```bash
+TAG=$(git rev-parse --short HEAD)
+docker build --target runner --build-arg GIT_SHA=$TAG -t gbdi/d2s-portal-backend:$TAG ./backend
+docker build --target runner --build-arg GIT_SHA=$TAG --build-arg NEXT_PUBLIC_API_URL= \
+             -t gbdi/d2s-portal-frontend:$TAG ./frontend
+```
+
+`GIT_SHA` becomes `RELEASE` in the backend image, and so in the worker, which is the same image
+re-tagged. In the frontend it becomes `NEXT_PUBLIC_RELEASE`, inlined into both the browser bundle
+and the Next server. Every error event and issue in the log store records it as its release
+(`docs/21`), which is how an issue tells you the build it first and last happened in, and whether a
+resolved issue came back after a deploy. **Without the argument both Dockerfiles fall back to
+`unknown`**, and every error from Azure reports release `unknown`. It is a build-time value only: do
+not set `RELEASE` or `NEXT_PUBLIC_RELEASE` on a container app. On the frontend it would do nothing,
+because Next inlines `NEXT_PUBLIC_*` during `next build`. `main/` gets the same argument from
+`docker-compose.prod.yml`, which passes `GIT_SHA: ${GIT_SHA:-unknown}` to all three built services,
+so its deploy shell must export `GIT_SHA` before `build`.
+
 ```bash
 az containerapp update -n ca-backend-dev         -g $RG --image docker.io/gbdi/d2s-portal-backend:<new-tag>
 az containerapp update -n ca-delivery-worker-dev -g $RG --image docker.io/gbdi/d2s-delivery-worker:<new-tag>
@@ -743,6 +765,7 @@ rather than overriding it.
 | --- | --- | --- | --- |
 | `NODE_ENV` | | `development` | set to `production` |
 | `PORT` | | `4000` | must equal `--target-port` |
+| ~~`RELEASE`~~ | | baked into the image | set at build time from `--build-arg GIT_SHA` (§9); do not set it on the app |
 | `DATABASE_URL` | **yes** | — | needs `sslmode=require` on Azure |
 | `ADMIN_API_TOKEN` | **yes** | — | shared secret for `/api/admin/*` |
 | `ADMIN_TOKEN_WATCH_FPS` | | empty | comma-separated 12-hex fingerprints of retired admin tokens; each gets its own `ADMIN_TOKEN_REJECTED` row (`docs/09` §4.1). Fingerprints only, never a token |
@@ -787,6 +810,7 @@ worker only, inert while the log store is off — §4.4).
 | `INTERNAL_API_URL` | `https://<backend-internal-fqdn>`, no port. Read per request |
 | `INGEST_SERVER_TOKEN` | secret, same value as the backend's (§4.5). Read at runtime, never `NEXT_PUBLIC_` |
 | ~~`NEXT_PUBLIC_API_URL`~~ | build-time only, must stay empty — see §4.5 |
+| ~~`NEXT_PUBLIC_RELEASE`~~ | build-time only, from `--build-arg GIT_SHA` — see §9 |
 | ~~`ALLOWED_DEV_ORIGINS`~~ | affects `next dev` only; irrelevant in production |
 
 ### gotenberg
