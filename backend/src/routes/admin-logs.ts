@@ -1059,7 +1059,12 @@ adminLogRouter.get("/status", async (req, res) => {
     overQuota: null,
     quotaCheckedAt: null,
   };
-  /** ลูปอีเมลสรุป error ของ worker (workers/error-alerts.ts) — null = ไม่เคยวิ่ง (ไม่ได้ตั้ง ERROR_ALERT_EMAILS หรือ log store ใหม่) */
+  /**
+   * ลูปอีเมลสรุป error ของ worker (workers/error-alerts.ts) ตามที่ worker บอกไว้เอง — backend อ่าน ERROR_ALERT_EMAILS ไม่ได้ (เป็น env
+   * ของ worker) `enabled` คือคำของ worker ณ `checkedAt`: เปิดอยู่เขียนทุกนาที ปิดอยู่เขียนครั้งเดียวตอน worker เริ่ม ·
+   * `enabled: true` ที่ `checkedAt` เก่ากว่าสองสามนาที = ลูปไม่ได้วิ่งแล้ว (worker ดับ หรือ Mongo ของ worker ต่อไม่ได้) ·
+   * null ทั้งก้อน = worker ยังไม่เคยเขียน (log store ใหม่) · `enabled: null` = เอกสารจาก worker รุ่นก่อนที่ยังไม่บอกค่านี้
+   */
   let alerts: Record<string, unknown> | null = null;
   const db = env.logStore.enabled ? await logDb() : null;
   if (db) {
@@ -1080,9 +1085,18 @@ adminLogRouter.get("/status", async (req, res) => {
       }
       const alertState = await db
         .collection<{ _id: string } & Document>("relay_state")
-        .findOne({ _id: "error_alerts" }, { projection: { enabledAt: 1, lastDigestAt: 1, lastError: 1 }, maxTimeMS: READ_MAX_MS });
+        .findOne(
+          { _id: "error_alerts" },
+          {
+            projection: { enabled: 1, recipients: 1, checkedAt: 1, enabledAt: 1, lastDigestAt: 1, lastError: 1 },
+            maxTimeMS: READ_MAX_MS,
+          },
+        );
       if (alertState) {
         alerts = {
+          enabled: typeof alertState.enabled === "boolean" ? alertState.enabled : null,
+          recipients: typeof alertState.recipients === "number" ? alertState.recipients : null,
+          checkedAt: alertState.checkedAt ?? null,
           enabledAt: alertState.enabledAt ?? null,
           lastDigestAt: alertState.lastDigestAt ?? null,
           lastError: typeof alertState.lastError === "string" ? alertState.lastError : null,

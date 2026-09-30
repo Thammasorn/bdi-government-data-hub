@@ -1018,10 +1018,18 @@ The error digest (`workers/error-alerts.ts`, on only when `ERROR_ALERT_EMAILS` i
 only) is the one mail that is neither inline nor outbox: its recipients are not accounts, and
 `notification_delivery.recipient_user_id` is NOT NULL. It runs in its own loop in the
 delivery-worker, never inside the outbox `tick()`, and sends one message per recipient at a time
-through `sendRaw()` with a 30 s limit each — the SMTP server is Office 365, which takes about
-three connections. At most one digest per 15 minutes and one alert per issue per 6 hours unless
-it regressed; its state lives in `relay_state` `_id: "error_alerts"`, so a restart does not
-resend. In dry-run it prints the whole digest to `docker compose logs delivery-worker`.
+through `sendRaw(…, {bounded: true})` — a transport of its own that drops a connection that stays
+silent (10 s to connect or greet, 20 s mid-conversation) — waiting at most 30 s for each. That wait
+is a `Promise.race`: giving up on a send does not cancel it, so the first send that times out ends
+the digest, and the remaining recipients wait for the next one rather than open a second
+connection beside the stuck one. The SMTP server is Office 365, which takes about three
+connections. At most one digest per 15 minutes and one alert per issue per 6 hours unless it
+regressed. A regression alerts only an issue that would alert anyway (level error or fatal, or a
+sustained route-answered 5xx); `browser:chunk-load` and `…:log_access_disabled` never alert.
+Browser issues, which anyone can create, are held to five per six hours across digests and go
+into the mail without their message text. Its state lives in `relay_state` `_id: "error_alerts"`,
+so a restart does not resend; `GET /api/admin/logs/status` shows whether the worker last said it
+was on. In dry-run it prints the whole digest to `docker compose logs delivery-worker`.
 
 ### PDF — every document comes from a .docx template
 

@@ -46,6 +46,7 @@ const contactLine = (lead: string) =>
     : `${lead}อีเมล ${SUPPORT_EMAIL}`;
 
 let transporter: Transporter | null = null;
+let boundedTransporter: Transporter | null = null;
 
 function getTransporter(): Transporter | null {
   if (!env.smtp.enabled) return null;
@@ -58,6 +59,31 @@ function getTransporter(): Transporter | null {
     });
   }
   return transporter;
+}
+
+/**
+ * transport ที่ตัดการเชื่อมต่อเองเมื่อ SMTP เงียบ — ของอีเมลสรุป error (`sendRaw(…, {bounded: true})`,
+ * workers/error-alerts.ts) ซึ่งรอการส่งแต่ละฉบับไม่เกิน 30 วินาที
+ *
+ * transport ปกติใช้ค่าตั้งต้นของ nodemailer (ต่อไม่ติดรอ 2 นาที socket เงียบรอ 10 นาที) และการเลิกรอด้วย `Promise.race` ไม่ได้ปิด
+ * การเชื่อมต่อ การส่งที่ค้างจึงถือการเชื่อมต่อไว้ได้อีกหลายนาทีหลังผู้เรียกเลิกรอ ตัวนี้ปิดเองภายในเพดานเดียวกัน (ต่อ 10 วินาที
+ * ทักทาย 10 วินาที เงียบระหว่างคุย 20 วินาที) Office 365 จึงไม่เห็นการเชื่อมต่อที่ค้างจากลูปนี้นานกว่าการรอของมัน
+ * ไม่เปลี่ยน transport ปกติ: อีเมลของ outbox กับอีเมลที่ส่งจากคำขอไม่ได้มีเพดานเวลา และค่าที่สั้นลงเปลี่ยนพฤติกรรมของมัน
+ */
+function getBoundedTransporter(): Transporter | null {
+  if (!env.smtp.enabled) return null;
+  if (!boundedTransporter) {
+    boundedTransporter = nodemailer.createTransport({
+      host: env.smtp.host,
+      port: env.smtp.port,
+      secure: env.smtp.secure,
+      auth: { user: env.smtp.user, pass: env.smtp.pass },
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 20_000,
+    });
+  }
+  return boundedTransporter;
 }
 
 /**
@@ -214,8 +240,13 @@ function orgCodeLine(code: string | null | undefined): string {
           </p>`;
 }
 
-async function send(to: string, subject: string, html: string): Promise<void> {
-  const tx = getTransporter();
+async function send(
+  to: string,
+  subject: string,
+  html: string,
+  transport: () => Transporter | null = getTransporter,
+): Promise<void> {
+  const tx = transport();
   if (!tx) {
     // ยังไม่ตั้งค่า SMTP — พิมพ์ลง log เพื่อให้ทดสอบ flow ได้โดยไม่ต้องมีเมลจริง
     console.log(`\n[mail:dry-run] ถึง: ${to}\n[mail:dry-run] เรื่อง: ${subject}`);
@@ -340,12 +371,12 @@ export async function sendRaw(
   to: string,
   title: string,
   message: string,
-  options: { lineBreaks?: boolean } = {},
+  options: { lineBreaks?: boolean; bounded?: boolean } = {},
 ): Promise<void> {
   // `lineBreaks`: ขึ้นบรรทัดใหม่ตาม `\n` ของข้อความ (สรุป error ของ workers/error-alerts.ts) — ผู้เรียกเดิมไม่ส่งมา อีเมลของ
-  // notification จึงหน้าตาเหมือนเดิมทุกตัว
+  // notification จึงหน้าตาเหมือนเดิมทุกตัว · `bounded`: ส่งผ่าน transport ที่ตัดการเชื่อมต่อที่เงียบเอง (`getBoundedTransporter`)
   const intro = options.lineBreaks ? escapeHtml(message).replace(/\n/g, "<br>") : escapeHtml(message);
-  await send(to, title, layout({ title, intro }));
+  await send(to, title, layout({ title, intro }), options.bounded ? getBoundedTransporter : getTransporter);
 }
 
 /**
