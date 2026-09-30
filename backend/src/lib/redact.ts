@@ -75,7 +75,7 @@ const DATABASE_DETAIL_RULES: Array<[RegExp, string]> = [
  * หรือมี `_`/`-` นำหน้า: `pwd` `pin` `pass` `pw` `sid` และ `session` (ชื่อ cookie ของเราคือ `bdi_session`)
  */
 const SECRET_KEY =
-  "[A-Za-z0-9_-]*(?:token|key|secret|passw(?:or)?d|passcode|passphrase|otp|code|state|auth|authorization|cookie)" +
+  "[A-Za-z0-9_-]*(?:token|key|secret|passw(?:or)?d|passcode|passphrase|otp|code|state|nonce|auth|authorization|cookie)" +
   "|(?:[A-Za-z0-9_-]*[_-])?(?:pwd|pin|pass|pw|sid|session)";
 /**
  * key ที่ค่าเป็นวลีได้ (มีช่องว่าง จุลภาค) — ค่าที่ไม่มีเครื่องหมายคำพูดครอบถูกตัดไปจนสุดบรรทัด
@@ -83,6 +83,36 @@ const SECRET_KEY =
  */
 const PHRASE_KEY =
   "[A-Za-z0-9_-]*(?:secret|passw(?:or)?d|passcode|passphrase|authorization|cookie)|(?:[A-Za-z0-9_-]*[_-])?(?:pwd|pass)";
+/**
+ * คำสั้นเดียวกันแบบ camelCase (`newPass` `userPass` `oldPw` `userPin` `appSid`) — ต้องแยกเป็นกฎที่ไม่ใช้ flag `i`
+ * เพราะตัวพิมพ์ใหญ่คือสิ่งเดียวที่บอกว่าเป็นท้ายคำ ไม่ใช่ `bypass` `compass` `upsid` ในข้อความธรรมดา
+ * (JavaScript บน Node 22 ยังเปิด/ปิด `i` เฉพาะบางส่วนของ regex ไม่ได้) `…Password`, `…Token` มีกฎตัวพิมพ์ไม่สนอยู่แล้ว
+ */
+const CAMEL_SECRET_KEY = "[A-Za-z0-9_-]*[a-z0-9](?:Pass|PASS|Pwd|PWD|Pw|PW|Pin|PIN|Sid|SID|Session)";
+const CAMEL_PHRASE_KEY = "[A-Za-z0-9_-]*[a-z0-9](?:Pass|PASS|Pwd|PWD)";
+
+/**
+ * กฎ `key=value` ทุกรูปของค่า สำหรับชุด key หนึ่งชุด — ชุดที่ไม่สนตัวพิมพ์ (`gi`) กับชุด camelCase (`g`) ใช้รูปเดียวกัน
+ *   1. ในเครื่องหมายคำพูดคู่ · 2. เดี่ยว · 3. backtick — ค่าวิ่งไปจนถึงเครื่องหมายปิดที่ไม่ได้ escape ไม่ใช่แค่ถึงช่องว่าง
+ *      (`token: \`ab cd\`` เคยหลุด ` cd\`` ออกไป)
+ *   4. JSON ที่ถูก escape ซ้อนอยู่ในข้อความอีกชั้น — `{\"password\":\"ab,cd\"}` ค่าจบที่ `\"`
+ *   5. key ที่ค่าเป็นวลีได้ ไม่มีเครื่องหมายคำพูดครอบ — ถึงสุดบรรทัด (หรือ `&` ของ query string) ค่าที่ขึ้นต้นด้วย
+ *      เครื่องหมายคำพูดไม่นับ (กฎ 1–3 ตัดไปแล้ว ถ้านับซ้ำจะกินทุกอย่างที่ตามมาในบรรทัด) ตัวแรกห้ามเป็นช่องว่างด้วย
+ *      ไม่งั้น `\s*` ถอยคืนช่องว่างให้แล้วค่าก็ "ขึ้นต้น" ด้วยช่องว่างแทนเครื่องหมายคำพูด
+ *   6. ค่าคำเดียว — `token=…` `apiKey=…` `state=…` `code=…` `pin=…` `'sid': …`
+ * ชื่อยังอยู่ให้รู้ว่ามีค่า แต่ค่าไม่อยู่ — code ที่ไม่ใช่ความลับ (`code=P2002`) ก็โดนไปด้วย ยอมรับ (plan §7.5)
+ */
+function keyValueRules(key: string, phraseKey: string, flags: string): Array<[RegExp, string]> {
+  const start = "(?<![A-Za-z0-9_-])";
+  return [
+    [new RegExp(`${start}(${key})("?\\s*[:=]\\s*")((?:[^"\\\\]|\\\\[\\s\\S])*)`, flags), "$1$2[redacted]"],
+    [new RegExp(`${start}(${key})('?\\s*[:=]\\s*')((?:[^'\\\\]|\\\\[\\s\\S])*)`, flags), "$1$2[redacted]"],
+    [new RegExp(`${start}(${key})(\`?\\s*[:=]\\s*\`)((?:[^\`\\\\]|\\\\[\\s\\S])*)`, flags), "$1$2[redacted]"],
+    [new RegExp(`${start}(${key})(\\\\"\\s*[:=]\\s*\\\\")((?:[^"\\\\]|\\\\[^"])*)`, flags), "$1$2[redacted]"],
+    [new RegExp(`${start}(${phraseKey})(\\s*[=:]\\s*)([^\\s&"'\`][^\\r\\n&]*)`, flags), "$1$2[redacted]"],
+    [new RegExp(`${start}(${key})(['"\`]?\\s*[=:]\\s*['"\`]?)([^\\s&"'\`,;}<>]+)`, flags), "$1$2[redacted]"],
+  ];
+}
 
 /**
  * ตารางกวาดข้อความอิสระ (plan §7.5) — ลำดับมีผล: userinfo ของ URI กับ JWT ก่อน (ไม่งั้นท่อนข้างในโดนกฎอื่นกินไปครึ่งเดียว)
@@ -104,22 +134,9 @@ const BEFORE_UUID_RULES: Array<[RegExp, string]> = [
   [/(?<![A-Za-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/)[^\s/"'<>]+@/gi, "$1***@"],
   [/(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{5,}(?:\.[A-Za-z0-9_-]*){0,2}/g, "[jwt]"],
   [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted]"],
-  // เก็บชื่อไว้ให้รู้ว่ามีค่า แต่ไม่เก็บค่า — code ที่ไม่ใช่ความลับ (`code=P2002`) ก็โดนไปด้วย ยอมรับ (plan §7.5)
-  // `"password":"ab,cd ef"` · `token="ab cd"` — ค่าในเครื่องหมายคำพูดวิ่งไปจนถึงเครื่องหมายปิดที่ไม่ได้ escape
-  // ไม่ใช่แค่ถึงจุลภาคหรือช่องว่าง ชื่อ key จะมีเครื่องหมายคำพูดปิดท้าย (JSON) หรือไม่มี (`key="…"`) ก็ได้
-  [new RegExp(`(?<![A-Za-z0-9_-])(${SECRET_KEY})("?\\s*[:=]\\s*")((?:[^"\\\\]|\\\\[\\s\\S])*)`, "gi"), "$1$2[redacted]"],
-  // เครื่องหมายคำพูดเดี่ยว — object ที่ `util.inspect` พิมพ์ (`{ token: 'ab', password: 'cd' }`), `key='…'` ของ
-  // shell/SQL ค่าวิ่งไปจนถึง `'` ปิดที่ไม่ได้ escape เหมือนแบบข้างบน ก่อนหน้านี้กฎคำเดียวข้างล่างหยุดที่ `'` เปิดพอดี
-  // ค่าจึงหลุดออกไปทั้งตัว
-  [new RegExp(`(?<![A-Za-z0-9_-])(${SECRET_KEY})('?\\s*[:=]\\s*')((?:[^'\\\\]|\\\\[\\s\\S])*)`, "gi"), "$1$2[redacted]"],
-  // JSON ที่ถูก escape ซ้อนอยู่ในข้อความอีกชั้น — `{\"password\":\"ab,cd\"}` ค่าจบที่ `\"`
-  [new RegExp(`(?<![A-Za-z0-9_-])(${SECRET_KEY})(\\\\"\\s*[:=]\\s*\\\\")((?:[^"\\\\]|\\\\[^"])*)`, "gi"), "$1$2[redacted]"],
-  // `password: my secret phrase` — รหัสผ่านที่ไม่มีเครื่องหมายคำพูดครอบ ถึงสุดบรรทัด (หรือ `&` ของ query string)
-  // ค่าที่ขึ้นต้นด้วยเครื่องหมายคำพูดไม่นับ: กฎข้างบนตัดไปแล้ว ถ้านับซ้ำจะกินทุกอย่างที่ตามมาในบรรทัดไปด้วย
-  // ตัวแรกของค่าห้ามเป็นช่องว่างด้วย ไม่งั้น `\s*` ถอยคืนช่องว่างให้แล้วค่าก็ "ขึ้นต้น" ด้วยช่องว่างแทนเครื่องหมายคำพูด
-  [new RegExp(`(?<![A-Za-z0-9_-])(${PHRASE_KEY})(\\s*[=:]\\s*)([^\\s&"'][^\\r\\n&]*)`, "gi"), "$1$2[redacted]"],
-  // token=… · apiKey=… · state=… · code=… · pin=… · 'sid': … — ค่าเป็นคำเดียว
-  [new RegExp(`(?<![A-Za-z0-9_-])(${SECRET_KEY})(['"]?\\s*[=:]\\s*['"]?)([^\\s&"',;}<>]+)`, "gi"), "$1$2[redacted]"],
+  // `key=value` ทุกรูป (keyValueRules) — ชุดที่ไม่สนตัวพิมพ์ก่อน แล้วชุด camelCase ซึ่งชุดแรกไม่แตะเลย
+  ...keyValueRules(SECRET_KEY, PHRASE_KEY, "gi"),
+  ...keyValueRules(CAMEL_SECRET_KEY, CAMEL_PHRASE_KEY, "g"),
   // `otp 482913` · `code 482913` — คั่นด้วยช่องว่าง นับเฉพาะเลข 4–8 หลัก: `status code 500` ต้องรอด
   [/(?<![A-Za-z0-9_-])(otp|code|pin|passcode)(\s+)\d{4,8}(?!\d)/gi, "$1$2[redacted]"],
   [/(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g, "[email]"],
@@ -140,8 +157,13 @@ const BASE64_RUN = /(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{32,}={0,2}/g;
 function looksLikeBase64Secret(run: string): boolean {
   return /[+/]/.test(run) && /\d/.test(run) && /[A-Z]/.test(run) && /[a-z]/.test(run);
 }
-/** เลขบัตร 13 หลัก ทั้งแบบติดกันและแบบมีขีด/ช่องว่างคั่น (`1-2345-67890-12-3`) */
-const CID_RUN = /(?<!\d)\d(?:[- ]?\d){12}(?!\d)/g;
+/**
+ * เลขบัตร 13 หลัก ทั้งแบบติดกันและแบบมีตัวคั่น — ขีด จุด ขีดล่าง หรือช่องว่าง ไม่เกินสามตัวระหว่างเลข
+ * (`1-2345-67890-12-3`, `1.1017.00203.45.1`, `1 - 1017 - 00203 - 45 - 1`) รูปเดียวกับกลุ่มเลขที่ `pathPattern()` ของ
+ * lib/token-rejection.ts ปิด ยกเว้น `:` ซึ่งไม่นับที่นี่: เวลา `2026-09-30 12:34:56.789` มีเลขพอดี 13 หลักหลังขีดตัวแรก
+ * และข้อความ error มีเวลาแบบนี้บ่อยกว่าเลขบัตรที่คั่นด้วย `:` มาก เดิมรับแค่ขีดหรือช่องว่างตัวเดียว เลขบัตรแบบมีจุดจึงหลุด
+ */
+const CID_RUN = /(?<!\d)\d(?:[-._ ]{0,3}\d){12}(?!\d)/g;
 /** เบอร์โทรไทย `0` ตามด้วยอีก 8–9 หลัก (ขีด/ช่องว่างคั่นได้) */
 const PHONE_RUN = /(?<!\d)0\d(?:[- ]?\d){7,8}(?!\d)/g;
 /** รูปสากล `+66` ตามด้วยเลขที่ตัด `0` ตัวหน้าแล้ว 8–9 หลัก (`+66812345678`, `+66 81-234-5678`, `+66 2 123 4567`) */
@@ -161,12 +183,12 @@ const HELD = /\uE000(\d+)\uE001/g;
  * | userinfo ใน URI (`postgresql://u:p@host`, ถึง `@` ตัวสุดท้ายก่อน `/`) | `postgresql://***@host` |
  * | JWT `eyJ…` | `[jwt]` |
  * | `Bearer …` / `Basic …` | `Bearer [redacted]` |
- * | `token=` `key=` `secret=` `password=` `pwd=` `pass=` `pw=` `pin=` `passcode=` `otp=` `code=` `state=` `auth=` `authorization:` `cookie:` `sid=` `bdi_session=` | `…=[redacted]` |
- * | `"password":"ab,cd ef"` · `token='ab cd'` (ทั้งค่าจนถึงเครื่องหมายปิด) · `password: วลี มี ช่องว่าง` · `Cookie: a=1; b=2` (จนสุดบรรทัด) | `…[redacted]` |
+ * | `token=` `key=` `secret=` `password=` `pwd=` `pass=` `pw=` `pin=` `passcode=` `otp=` `code=` `state=` `nonce=` `auth=` `authorization:` `cookie:` `sid=` `bdi_session=` · camelCase `newPass=` `oldPw=` `userPin=` `appSid=` | `…=[redacted]` |
+ * | `"password":"ab,cd ef"` · `token='ab cd'` · ``token: `ab cd` `` (ทั้งค่าจนถึงเครื่องหมายปิด) · `password: วลี มี ช่องว่าง` · `Cookie: a=1; b=2` (จนสุดบรรทัด) | `…[redacted]` |
  * | `otp 482913` / `code 482913` (เลข 4–8 หลักหลังช่องว่าง) | `otp [redacted]` |
  * | อีเมล | `[email]` |
  * | ฐานสิบหก/base64url ยาว 32 ตัวขึ้นไปที่มีตัวเลข (ยกเว้น UUID) · base64 ที่มี `/` `+` และตัวใหญ่ ตัวเล็ก ตัวเลขปนกัน | `[secret]` |
- * | เลข 13 หลัก / เลขบัตรแบบมีขีด | `[cid]` |
+ * | เลข 13 หลัก / เลขบัตรที่คั่นด้วยขีด จุด ขีดล่าง หรือช่องว่าง | `[cid]` |
  * | `0` + 8–9 หลัก · `+66` + 8–9 หลัก | `[phone]` |
  */
 export function scrubText(text: string): string {
