@@ -79,7 +79,9 @@ const READ_MAX_MS = MONGO_COMMAND_MAX_MS;
 /**
  * เพดานของ `store()` (ต่อ + ping) — Mongo ที่หยุดตอบภายใน serverSelectionTimeoutMS 2 วินาทีอยู่แล้ว แต่ Mongo ที่ค้าง (ต่อได้
  * แต่ไม่ตอบ: `docker compose pause`, เครื่องแกว่ง) ค้าง ping ไว้จนถึง socketTimeoutMS 5 วินาที เพดานนี้ทำให้ทั้งสองกรณีตอบ 503
- * ในราว 2 วินาทีเท่ากัน ping ที่เลิกรอยังวิ่งต่อจนหมดเวลาของ driver เอง (แล้ว pool ถูกล้าง ตามปกติของ server ที่ค้าง)
+ * ในราว 2 วินาทีเท่ากัน ping ที่เลิกรอยังวิ่งต่อจนหมดเวลาของ driver เอง ซึ่งปิดแค่การเชื่อมต่อของมัน — pool ถูกล้างก็ต่อเมื่อ
+ * monitor ของ driver รอ heartbeat เกินกำหนด (server ที่หยุดตอบคร่อมจังหวะนั้นนานกว่าราว 2 วินาที — lib/log-store.ts
+ * `MONGO_COMMAND_MAX_MS`)
  */
 const STORE_CHECK_MS = 2_000;
 const DAY_MS = 24 * 60 * 60_000;

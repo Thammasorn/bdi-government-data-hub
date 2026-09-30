@@ -46,20 +46,37 @@ const CHECK_TIMEOUT_MS = 6_000;
 /** ตอนปิด process รอ client ปิดไม่เกินเท่านี้ — compose ให้เวลาทั้งหมด 10 วินาทีก่อน SIGKILL */
 const CLOSE_WAIT_MS = 1_500;
 
-/** driver เลิกรอคำตอบของคำสั่งใดก็ตามหลังเท่านี้ (socketTimeoutMS) — ทุกคำสั่งของทุก process มีเพดานนี้ ไม่ว่าจะใส่อะไรไว้ */
+/**
+ * driver เลิกรอคำตอบของคำสั่งหนึ่งหลังเท่านี้ (socketTimeoutMS) — ทุกคำสั่งของทุก process มีเพดานนี้ ไม่ว่าจะใส่อะไรไว้
+ * ครบเวลาแล้ว driver ปิด**แค่การเชื่อมต่อของคำสั่งนั้น** (`MongoNetworkTimeoutError`) pool ไม่ถูกล้าง และ server ยังทำคำสั่งนั้น
+ * ต่อเบื้องหลัง (driver 6.21 `Server.handleError`: timeout หลัง handshake ไม่ทำให้ server เป็น Unknown)
+ */
 const SOCKET_TIMEOUT_MS = 5_000;
 
 /**
- * `maxTimeMS` ที่ใส่ให้คำสั่งได้โดยไม่สัญญาเกินจริง — ต่ำกว่า SOCKET_TIMEOUT_MS หนึ่งวินาทีโดยตั้งใจ: server ยกเลิกคำสั่งเองแล้ว
- * ตอบ error ของคำสั่งนั้นก่อนที่ driver จะตัด socket (ถ้าเท่ากันหรือมากกว่า driver ตัดก่อน pool ทั้งก้อนถูกล้าง —
- * `PoolClearedOnNetworkError` — และ server ยังทำคำสั่งนั้นต่อเบื้องหลัง) งานที่ใหญ่กว่านี้ต้องแบ่งเป็นก้อน ไม่ใช่ขยายเพดาน:
+ * `maxTimeMS` ที่ใส่ให้คำสั่งได้โดยไม่สัญญาเกินจริง — ต่ำกว่า SOCKET_TIMEOUT_MS หนึ่งวินาทีโดยตั้งใจ: **server ที่ยังตอบได้แต่ช้า**
+ * ยกเลิกคำสั่งเองแล้วตอบ error ของคำสั่งนั้นก่อนที่ driver จะเลิกรอ งานจึงหยุดจริงและการเชื่อมต่อยังใช้ต่อได้ (ถ้าเท่ากันหรือมากกว่า
+ * driver เลิกรอก่อน ปิดการเชื่อมต่อนั้น แล้ว server ยังทำต่อเบื้องหลัง) งานที่ใหญ่กว่านี้ต้องแบ่งเป็นก้อน ไม่ใช่ขยายเพดาน:
  * `maxTimeMS: 60_000` ไม่ได้ให้เวลาหกสิบวินาที มันถูก socketTimeoutMS ตัดที่ห้าวินาทีเสมอ
+ *
+ * **ค่านี้ไม่ได้กัน pool ถูกล้าง** — ความเห็นเดิมตรงนี้เขียนว่ากัน ซึ่งผิด คนล้าง pool คือ monitor ของ driver ไม่ใช่ timeout ของคำสั่ง:
+ * monitor ถือ `hello` แบบรอ (streaming) ที่ server ตอบทุก heartbeatFrequencyMS (10 วินาที) และรอเกินนั้นได้อีกแค่
+ * connectTimeoutMS (2 วินาที — CLIENT_TIMEOUTS) server ที่**หยุดตอบ** (`docker compose pause`, เครื่องค้าง, เครือข่ายขาด) คร่อม
+ * จังหวะนั้นนานกว่าราว 2 วินาที monitor จึงหมดเวลา แล้ว driver ล้าง pool และตัดทุกการเชื่อมต่อที่กำลังใช้อยู่ด้วย
+ * `PoolClearedOnNetworkError` การหยุดที่นานกว่า 12 วินาทีโดนเสมอ ที่สั้นกว่านั้นโดนหรือไม่แล้วแต่จังหวะ server ที่หยุดตอบก็ไม่ได้
+ * นับ `maxTimeMS` ให้ใคร ค่านี้จึงช่วยแค่ server ที่ยังตอบแต่ช้า ลองแล้ว 2026-10-01 (client ตั้งค่าเดียวกันนี้ใน container ของ worker,
+ * หยุด mongo ครั้งละ 3.4 วินาที): หยุดที่ทำให้คำตอบของ heartbeat ช้ากว่ากำหนดเกิน 2 วินาที 4 ใน 4 ครั้ง ได้
+ * `PoolCleared interruptInUse=true` ส่วนหยุดที่ไม่คร่อมกำหนด หรือคร่อมแต่ช้าไม่ถึง 2 วินาที (0.5–1.8) ไม่ได้ 6 ใน 6 ครั้ง
+ *
+ * คำสั่งที่ถูกตัดแบบนั้น: การอ่านลองซ้ำเองหนึ่งครั้ง (retryReads) การเขียนไม่ลองซ้ำเลยบน mongo แบบ standalone ของทุก stack
+ * (retryable writes ต้องเป็น replica set) — `deleteMany` ของ prune (workers/log-relay.ts) จึงล้มกลางรอบได้
  */
 export const MONGO_COMMAND_MAX_MS = SOCKET_TIMEOUT_MS - 1_000;
 
 /**
  * Mongo ช้าหรือล่มต้องรู้ผลเร็ว ไม่ใช่ค้างตาม default ของ driver (เลือก server 30 วินาที, socket ไม่มีเพดาน)
- * pool เล็ก: backend 5, worker 3 — ตั้งจาก startLogStore()
+ * pool เล็ก: backend 5, worker 3 — ตั้งจาก startLogStore() connectTimeoutMS เป็นทั้งเพดานของการต่อและส่วนที่ monitor รอ
+ * heartbeat เกินกำหนดได้ (ดู MONGO_COMMAND_MAX_MS)
  */
 const CLIENT_TIMEOUTS = {
   serverSelectionTimeoutMS: 2_000,
@@ -132,8 +149,8 @@ export function startLogStore(options: { service: LogStoreService; maxPoolSize: 
  * คืน null เมื่อปิดอยู่ ยังไม่ได้ `startLogStore()` ถูกปิดไปแล้ว หรือต่อไม่ได้ (สถานะกลายเป็น `down` พร้อมบรรทัดเดียว
  * ตามกติกาของ setState) ผู้เรียกถือ null ว่า "ตอนนี้เขียนไม่ได้" แล้วลองใหม่รอบหน้า ไม่ใช่ error
  *
- * **ผู้เรียกที่อ่านต้องใส่ `maxTimeMS` เอง** — timeout ของ driver (CLIENT_TIMEOUTS) คุมแค่การต่อกับ socket ไม่ได้คุม
- * query ที่ server ทำงานนาน ส่วนการเขียนจบใน socketTimeoutMS 5 วินาทีอยู่แล้ว
+ * **ผู้เรียกที่อ่านต้องใส่ `maxTimeMS` เอง** — timeout ของ driver (CLIENT_TIMEOUTS) คุมแค่ว่า driver รอนานเท่าไร
+ * (socketTimeoutMS 5 วินาที) ไม่ได้หยุด query ที่ server ทำงานนาน `maxTimeMS` ให้ server เลิกเอง (MONGO_COMMAND_MAX_MS)
  */
 export async function logDb(): Promise<Db | null> {
   if (!env.logStore.enabled || !started || closed) return null;

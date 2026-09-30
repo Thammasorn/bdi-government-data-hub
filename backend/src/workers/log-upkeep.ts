@@ -151,8 +151,9 @@ async function ensureIndexes(db: Db): Promise<void> {
     if (createdIndexes.has(index) || refusedIndexes.has(index)) continue;
     try {
       // ไม่มี maxTimeMS: เพดานจริงคือ socketTimeoutMS 5 วินาทีของ driver (lib/log-store.ts) — เดิมใส่ 30 วินาทีซึ่ง driver ไม่เคยให้
-      // index ที่สร้างนานกว่านั้น (collection ใหญ่) driver เลิกรอแล้วได้ error ชั่วคราว (`isTransient`) ส่วน server สร้างต่อจนเสร็จ
-      // รอบหน้า createIndex ของ index ที่เสร็จแล้วไม่ทำอะไร
+      // index ที่สร้างนานกว่านั้น (collection ใหญ่) driver เลิกรอแล้วปิดแค่การเชื่อมต่อนั้น ได้ `MongoNetworkTimeoutError` ซึ่งเป็น
+      // error ชั่วคราว (`isTransient`) ส่วน server สร้างต่อจนเสร็จ รอบหน้า createIndex ของ index ที่เสร็จแล้วไม่ทำอะไร
+      // (Mongo ที่หยุดตอบทั้งตัวเป็นอีกเรื่อง: monitor ของ driver ล้าง pool แล้วตัดคำสั่งนี้ด้วย `PoolClearedOnNetworkError` — ชั่วคราวเหมือนกัน)
       await db.collection(spec.collection).createIndex(spec.keys);
       createdIndexes.add(index);
     } catch (err) {

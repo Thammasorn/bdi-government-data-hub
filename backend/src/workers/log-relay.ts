@@ -118,9 +118,12 @@ const PRUNE_CHUNKS_MAX = 40;
 const PG_TIMEOUT_MS = 15_000;
 /**
  * `maxTimeMS` ของทุกคำสั่ง Mongo ในไฟล์นี้ ทั้งอ่านและเขียน — เพดานจริงของทุกคำสั่งคือ socketTimeoutMS 5 วินาทีของ driver
- * (lib/log-store.ts) ค่านี้ต่ำกว่านั้นหนึ่งวินาทีให้ server ยกเลิกเองก่อน เดิมมี `MONGO_MS = 60_000` ของการเขียนและ prune
- * ซึ่งสัญญาหกสิบวินาทีที่ driver ไม่เคยให้ — `updateMany` ที่ตัด IP/UA ทั้งปีในคำสั่งเดียวโดนตัดที่ห้าวินาทีแล้ว server ยังทำต่อ
- * เบื้องหลังขณะที่ worker นับว่าล้ม (ตรวจขั้น 7 แบบค้าน, 2026-09-30) งานที่ยาวกว่านี้แบ่งก้อน (`inChunks`) ไม่ขยายเพดาน
+ * (lib/log-store.ts) ค่านี้ต่ำกว่านั้นหนึ่งวินาทีให้ server ที่ยังตอบได้แต่ช้ายกเลิกเองก่อน เดิมมี `MONGO_MS = 60_000` ของการเขียน
+ * และ prune ซึ่งสัญญาหกสิบวินาทีที่ driver ไม่เคยให้ — `updateMany` ที่ตัด IP/UA ทั้งปีในคำสั่งเดียวโดนตัดที่ห้าวินาทีแล้ว server
+ * ยังทำต่อเบื้องหลังขณะที่ worker นับว่าล้ม (ตรวจขั้น 7 แบบค้าน, 2026-09-30) งานที่ยาวกว่านี้แบ่งก้อน (`inChunks`) ไม่ขยายเพดาน
+ * ค่านี้**ไม่ได้**กันคำสั่งถูกตัดเมื่อ server หยุดตอบราวสองวินาทีขึ้นไป: monitor ของ driver ล้าง pool แล้วตัดทุกคำสั่งที่ค้างอยู่
+ * (`PoolClearedOnNetworkError` — MONGO_COMMAND_MAX_MS ใน lib/log-store.ts) รอบของลูปนั้นล้มแล้วรอบถัดไปทำต่อ prune จดส่วนที่
+ * ทำไปแล้วก่อนล้ม (`runPrune`)
  */
 const MONGO_MS = MONGO_COMMAND_MAX_MS;
 /** cursor ที่อยู่ในอนาคตเกินนี้ถือว่าเสีย — เริ่มใหม่จากแถวแรก (ดู `cursorFrom`) */
@@ -374,9 +377,10 @@ async function rebuildTick(db: Db, relay: Collection<RelayStateDoc>, requestedAt
     console.log("[log-relay] rebuild: ลบสำเนาของ audit_event ใน log store แล้วจะเติมใหม่ตั้งแต่แถวแรก (relay หยุดคัดลอกระหว่างนี้)");
   }
   const activity = db.collection("activity") as unknown as ActivityCollection;
-  const result = await deleteInChunks(activity, { source: "audit_event" });
-  rebuilding.deleted += result.count;
-  if (!result.complete) {
+  const progress = rebuilding;
+  // นับทีละก้อน — รอบที่ล้มกลางทาง (Mongo หยุดตอบ) ไม่ทำให้ยอดที่ลบไปแล้วหาย รอบถัดไปบวกต่อ
+  const complete = await deleteInChunks(activity, { source: "audit_event" }, (n) => (progress.deleted += n));
+  if (!complete) {
     console.log(`[log-relay] rebuild: ลบไปแล้ว ${rebuilding.deleted} ใบ — ยังเหลือ ลบต่อรอบถัดไป`);
     return;
   }
@@ -798,24 +802,7 @@ async function maintenanceTick(): Promise<void> {
     const now = new Date();
     const lastPruneAt = pastDate(state?.lastPruneAt, "lastPruneAt", now);
 
-    if (pruneDue(lastPruneAt, now)) {
-      const summary = await pruneLogStore(db, now);
-      await relay.updateOne(
-        { _id: STATE_ID },
-        // ลบไม่หมดในรอบเดียว (ค้างมาก) — ไม่เลื่อน lastPruneAt รอบถัดไปในหนึ่งนาทีทำต่อ
-        { $set: { lastPrune: { at: now, ...summary }, ...(summary.complete ? { lastPruneAt: now } : {}) } },
-        { upsert: true, maxTimeMS: MONGO_MS },
-      );
-      const total =
-        summary.activityDeleted + summary.errorEventsDeleted + summary.runtimeEventsDeleted + summary.issuesDeleted;
-      if (total > 0 || summary.activityStripped > 0) {
-        console.log(
-          `[log-relay] prune ตามอายุ: ลบ activity ${summary.activityDeleted} · ตัด IP/UA ${summary.activityStripped} · ` +
-            `ลบ error_events ${summary.errorEventsDeleted} · runtime_events ${summary.runtimeEventsDeleted} · ` +
-            `error_issues ${summary.issuesDeleted}${summary.complete ? "" : " (ยังไม่หมด ทำต่อรอบหน้า)"}`,
-        );
-      }
-    }
+    if (pruneDue(lastPruneAt, now)) await runPrune(db, relay, state, now);
 
     const lastReconcile = pastDate(state?.lastReconcileAt, "lastReconcileAt", now)?.getTime() ?? 0;
     const caughtUpAt = pastDate(state?.caughtUpAt, "caughtUpAt", now)?.getTime() ?? 0;
@@ -901,6 +888,98 @@ export interface PruneSummary {
   complete: boolean;
 }
 
+const PRUNE_COUNTS = [
+  "activityDeleted",
+  "activityStripped",
+  "errorEventsDeleted",
+  "runtimeEventsDeleted",
+  "issuesDeleted",
+] as const;
+
+export function emptyPruneSummary(): PruneSummary {
+  return {
+    activityDeleted: 0,
+    activityStripped: 0,
+    errorEventsDeleted: 0,
+    runtimeEventsDeleted: 0,
+    issuesDeleted: 0,
+    complete: true,
+  };
+}
+
+/**
+ * prune หนึ่งรอบของงานดูแล แล้วจดผล — `relay_state.lastPrune` เป็น**ยอดของการ prune ทั้งครั้ง** ตั้งแต่รอบแรกจนรอบที่จบ ไม่ใช่
+ * แค่รอบสุดท้าย และทุกรอบที่ทำอะไรได้พิมพ์บรรทัดของรอบนั้น
+ *
+ * การ prune ครั้งหนึ่งกินหลายรอบได้สองทาง: ค้างมากเกิน PRUNE_CHUNKS_MAX (`complete: false`) หรือล้มกลางรอบ — Mongo ที่หยุดตอบ
+ * ราวสองวินาทีขึ้นไปทำให้ monitor ของ driver ตัด `deleteMany` ที่ค้างอยู่ (`PoolClearedOnNetworkError`, ดู MONGO_MS) เดิมรอบที่
+ * ล้มทิ้งตัวเลขทั้งรอบ: ตรวจแบบค้าน 2026-10-01 หยุด mongo 3.4 วินาทีกลางรอบ เอกสาร auth ที่ลบไปแล้ว 12,000 ใบไม่ปรากฏที่ไหนเลย
+ * รอบที่ลองใหม่จด `activityDeleted: 0` และพิมพ์ "ลบ activity 0" ตอนนี้ตัวเลขนับทีละก้อน (`inChunks`) รอบที่ล้มพิมพ์ส่วนที่ทำไปแล้ว
+ * พร้อมชื่อ error จดลง `lastPrune` ถ้า Mongo กลับมาทัน (`error`, `complete: false`) แล้ว throw ต่อให้ `maintenanceTick` เก็บ
+ * รอบถัดไปเห็น `complete: false` จึงบวกต่อจากยอดเดิม (`startedAt` ของครั้งนั้นคงไว้) ก้อนที่ล้ม**กลางคำสั่ง**ไม่ถูกนับ: server อาจ
+ * ลบไปแล้วบางส่วนหรือทั้งหมด แต่ไม่มีใครบอกจำนวน — ยอดรวมจึงต่ำกว่าจริงได้ไม่เกินหนึ่งก้อน (5,000) ต่อครั้งที่ล้ม
+ * ลองหลังแก้ 2026-10-01: `killOp` ก้อนที่สามของ 40,000 → รอบนั้นพิมพ์และจด 10,000 (`complete: false`) รอบถัดไปรวมเป็น 38,880
+ * (ก้อนที่ถูกฆ่าลบไป 1,120 ก่อนหยุด) · หยุด mongo ให้ monitor ล้าง pool กลาง prune 150,000 → "หยุดกลางคัน:
+ * PoolClearedOnNetworkError" 5,000 แล้วรอบถัดไปรวมเป็น 147,330 `startedAt` เป็นของรอบที่ล้ม
+ */
+async function runPrune(db: Db, relay: Collection<RelayStateDoc>, state: RelayStateDoc | null, now: Date): Promise<void> {
+  const tick = emptyPruneSummary();
+  let failure: unknown = null;
+  try {
+    await pruneLogStore(db, now, tick);
+  } catch (err) {
+    failure = err;
+    tick.complete = false;
+  }
+  const carried = unfinishedPrune(state?.lastPrune);
+  const record: Record<string, unknown> = { at: now, startedAt: carried?.startedAt ?? now, complete: tick.complete };
+  for (const key of PRUNE_COUNTS) record[key] = (carried?.counts[key] ?? 0) + tick[key];
+  if (failure) record.error = errorName(failure);
+
+  const done = PRUNE_COUNTS.reduce((sum, key) => sum + tick[key], 0);
+  if (done > 0 || failure) {
+    const line =
+      `[log-relay] prune ตามอายุ: ลบ activity ${tick.activityDeleted} · ตัด IP/UA ${tick.activityStripped} · ` +
+      `ลบ error_events ${tick.errorEventsDeleted} · runtime_events ${tick.runtimeEventsDeleted} · ` +
+      `error_issues ${tick.issuesDeleted}` +
+      (failure
+        ? ` (หยุดกลางคัน: ${errorName(failure)} — ตัวเลขนี้คือส่วนที่ทำไปแล้ว รอบหน้าทำต่อ)`
+        : tick.complete
+          ? ""
+          : " (ยังไม่หมด ทำต่อรอบหน้า)");
+    if (failure) console.warn(line);
+    else console.log(line);
+  }
+  try {
+    await relay.updateOne(
+      { _id: STATE_ID },
+      // ไม่จบ (ค้างมาก หรือล้มกลางคัน) — ไม่เลื่อน lastPruneAt รอบถัดไปในหนึ่งนาทีทำต่อ
+      { $set: { lastPrune: record, ...(tick.complete ? { lastPruneAt: now } : {}) } },
+      { upsert: true, maxTimeMS: MONGO_MS },
+    );
+  } catch (err) {
+    if (!failure) throw err;
+    // Mongo ยังไม่กลับ — ตัวเลขของรอบนี้อยู่ในบรรทัดข้างบนแล้ว error ที่ส่งต่อคือตัวที่ทำให้ prune ล้ม
+  }
+  if (failure) throw failure;
+}
+
+/** `lastPrune` ของการ prune ที่ยังไม่จบ (`complete: false`) — ยอดที่รอบนี้ต้องบวกต่อ ค่าที่ผิดรูปนับเป็นศูนย์ ไม่มี/จบแล้ว = null */
+function unfinishedPrune(
+  value: unknown,
+): { startedAt: Date; counts: Record<(typeof PRUNE_COUNTS)[number], number> } | null {
+  if (value === null || typeof value !== "object") return null;
+  const last = value as Record<string, unknown>;
+  if (last.complete !== false) return null;
+  const counts = {} as Record<(typeof PRUNE_COUNTS)[number], number>;
+  for (const key of PRUNE_COUNTS) {
+    const n = last[key];
+    counts[key] = typeof n === "number" && Number.isSafeInteger(n) && n >= 0 ? n : 0;
+  }
+  const started = last.startedAt instanceof Date ? last.startedAt : last.at instanceof Date ? last.at : null;
+  return { startedAt: started && !Number.isNaN(started.getTime()) ? started : new Date(), counts };
+}
+
 function daysBefore(now: Date, days: number): Date {
   return new Date(now.getTime() - days * 24 * 60 * 60_000);
 }
@@ -923,30 +1002,28 @@ function groupByDays(pick: (category: ActivityCategory) => number | null): Map<n
  * เดิมการตัด IP/UA เป็น `updateMany` คำสั่งเดียว ซึ่งวันแรกที่แถวอายุครบปี (หรือหลัง rebuild) คือทั้งปีในคำสั่งเดียว เกิน
  * socketTimeoutMS ของ driver แน่นอน IP/UA ถูก `$unset` ไม่ใช่ตั้งเป็น null — เอกสารที่ตัดแล้วไม่ตรงเงื่อนไข `$exists` อีก
  * ก้อนถัดไปและรอบถัดไปจึงไม่แตะซ้ำ
+ *
+ * ตัวเลขลง `summary` ของผู้เรียก**ทีละก้อน**ทันทีที่ก้อนนั้นสำเร็จ ไม่ใช่ตอนจบ — ถ้า throw กลางทาง ผู้เรียกยังเห็นส่วนที่ทำไปแล้ว
+ * (`runPrune`)
  */
-export async function pruneLogStore(db: Db, now: Date): Promise<PruneSummary> {
-  const summary: PruneSummary = {
-    activityDeleted: 0,
-    activityStripped: 0,
-    errorEventsDeleted: 0,
-    runtimeEventsDeleted: 0,
-    issuesDeleted: 0,
-    complete: true,
-  };
+export async function pruneLogStore(db: Db, now: Date, summary: PruneSummary = emptyPruneSummary()): Promise<PruneSummary> {
   const activity = db.collection("activity") as unknown as ActivityCollection;
-  const tally = (result: { count: number; complete: boolean }) => {
-    if (!result.complete) summary.complete = false;
-    return result.count;
+  const done = (complete: boolean) => {
+    if (!complete) summary.complete = false;
   };
 
   for (const [days, categories] of groupByDays((c) => ACTIVITY_RETENTION[c].deleteAfterDays)) {
-    summary.activityDeleted += tally(
-      await deleteInChunks(activity, { category: { $in: categories }, occurredAt: { $lt: daysBefore(now, days) } }),
+    done(
+      await deleteInChunks(
+        activity,
+        { category: { $in: categories }, occurredAt: { $lt: daysBefore(now, days) } },
+        (n) => (summary.activityDeleted += n),
+      ),
     );
   }
   // ตัด IP/UA ทีละก้อนเหมือนการลบ — เอกสารที่ตัดแล้วไม่ตรง `$exists` อีก ก้อนถัดไปจึงเป็นเอกสารชุดใหม่เสมอ
   for (const [days, categories] of groupByDays((c) => ACTIVITY_RETENTION[c].stripClientAfterDays)) {
-    summary.activityStripped += tally(
+    done(
       await inChunks(
         activity,
         {
@@ -962,33 +1039,46 @@ export async function pruneLogStore(db: Db, now: Date): Promise<PruneSummary> {
               { maxTimeMS: MONGO_MS },
             )
           ).modifiedCount,
+        (n) => (summary.activityStripped += n),
       ),
     );
   }
 
   const errors = db.collection("error_events") as unknown as ActivityCollection;
-  summary.errorEventsDeleted += tally(
-    await deleteInChunks(errors, { service: { $ne: "browser" }, occurredAt: { $lt: daysBefore(now, ERROR_EVENT_DAYS) } }),
+  const errorEvents = (n: number) => (summary.errorEventsDeleted += n);
+  done(
+    await deleteInChunks(
+      errors,
+      { service: { $ne: "browser" }, occurredAt: { $lt: daysBefore(now, ERROR_EVENT_DAYS) } },
+      errorEvents,
+    ),
   );
-  summary.errorEventsDeleted += tally(
-    await deleteInChunks(errors, { service: "browser", occurredAt: { $lt: daysBefore(now, BROWSER_EVENT_DAYS) } }),
+  done(
+    await deleteInChunks(errors, { service: "browser", occurredAt: { $lt: daysBefore(now, BROWSER_EVENT_DAYS) } }, errorEvents),
   );
-  summary.runtimeEventsDeleted += tally(
-    await deleteInChunks(db.collection("runtime_events") as unknown as ActivityCollection, {
-      at: { $lt: daysBefore(now, RUNTIME_EVENT_DAYS) },
-    }),
+  done(
+    await deleteInChunks(
+      db.collection("runtime_events") as unknown as ActivityCollection,
+      { at: { $lt: daysBefore(now, RUNTIME_EVENT_DAYS) } },
+      (n) => (summary.runtimeEventsDeleted += n),
+    ),
   );
   const issues = db.collection("error_issues") as unknown as ActivityCollection;
-  summary.issuesDeleted += tally(
-    await deleteInChunks(issues, { status: { $ne: "open" }, lastSeen: { $lt: daysBefore(now, CLOSED_ISSUE_DAYS) } }),
+  const issuesDeleted = (n: number) => (summary.issuesDeleted += n);
+  done(
+    await deleteInChunks(
+      issues,
+      { status: { $ne: "open" }, lastSeen: { $lt: daysBefore(now, CLOSED_ISSUE_DAYS) } },
+      issuesDeleted,
+    ),
   );
   // issue เบราว์เซอร์ที่ยังเปิดแต่ไม่เกิดอีก — ใครก็สร้างได้ จึงมีอายุเท่า event ของมัน (lib/log-retention.ts)
-  summary.issuesDeleted += tally(
-    await deleteInChunks(issues, {
-      service: "browser",
-      status: "open",
-      lastSeen: { $lt: daysBefore(now, OPEN_BROWSER_ISSUE_DAYS) },
-    }),
+  done(
+    await deleteInChunks(
+      issues,
+      { service: "browser", status: "open", lastSeen: { $lt: daysBefore(now, OPEN_BROWSER_ISSUE_DAYS) } },
+      issuesDeleted,
+    ),
   );
   return summary;
 }
@@ -996,18 +1086,20 @@ export async function pruneLogStore(db: Db, now: Date): Promise<PruneSummary> {
 function deleteInChunks(
   collection: ActivityCollection,
   filter: Filter<{ _id: string; [key: string]: unknown }>,
-): Promise<{ count: number; complete: boolean }> {
+  add: (count: number) => void,
+): Promise<boolean> {
   return inChunks(
     collection,
     filter,
     async (ids) => (await collection.deleteMany({ _id: { $in: ids } }, { maxTimeMS: MONGO_MS })).deletedCount,
+    add,
   );
 }
 
 /**
  * ทำ `apply` กับเอกสารที่ตรง `filter` ทีละ PRUNE_CHUNK ตัว (หา id ก่อน แล้วสั่งด้วย `_id`) ไม่เกิน PRUNE_CHUNKS_MAX ก้อน —
- * คืนจำนวนที่ `apply` นับได้ และ `complete: false` ถ้ายังเหลือ (รอบหน้าทำต่อ) `apply` ต้องทำให้เอกสารที่ทำแล้วไม่ตรง `filter`
- * อีก (ลบ หรือ `$unset` ฟิลด์ที่ filter ถามหา) ไม่งั้นก้อนถัดไปได้ id ชุดเดิม
+ * ส่งจำนวนที่ `apply` นับได้ให้ `add` ทีละก้อน และคืน false ถ้ายังเหลือ (รอบหน้าทำต่อ) `apply` ต้องทำให้เอกสารที่ทำแล้วไม่ตรง
+ * `filter` อีก (ลบ หรือ `$unset` ฟิลด์ที่ filter ถามหา) ไม่งั้นก้อนถัดไปได้ id ชุดเดิม
  *
  * ไม่ใช่คำสั่งเดียวทั้งก้อน: คำสั่งเดียวที่แตะเป็นแสนใช้เวลาเกิน socketTimeoutMS ของ driver แล้ว server ยังทำต่อเบื้องหลังขณะที่
  * worker คิดว่าล้ม ก้อนเล็กจบในเวลาและนับได้จริง
@@ -1016,17 +1108,17 @@ async function inChunks(
   collection: ActivityCollection,
   filter: Filter<{ _id: string; [key: string]: unknown }>,
   apply: (ids: string[]) => Promise<number>,
-): Promise<{ count: number; complete: boolean }> {
-  let count = 0;
+  add: (count: number) => void,
+): Promise<boolean> {
   for (let chunk = 0; chunk < PRUNE_CHUNKS_MAX && !stopped; chunk++) {
     const found = await collection
       .find(filter, { projection: { _id: 1 }, limit: PRUNE_CHUNK, maxTimeMS: MONGO_MS })
       .toArray();
-    if (found.length === 0) return { count, complete: true };
-    count += await apply(found.map((doc) => doc._id));
-    if (found.length < PRUNE_CHUNK) return { count, complete: true };
+    if (found.length === 0) return true;
+    add(await apply(found.map((doc) => doc._id)));
+    if (found.length < PRUNE_CHUNK) return true;
   }
-  return { count, complete: false };
+  return false;
 }
 
 interface ReconcileSummary {
