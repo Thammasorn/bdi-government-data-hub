@@ -12,7 +12,8 @@
  *   - ทุกคำขอผ่าน `requireLogReader` (token แยก ผู้อ่าน เหตุผล) activity · timeline · trace ต้องมีเหตุผลด้วย (`requireReadReason`)
  *   - ตัวระบุบุคคล (`person` `cid` `email`) มาทาง header `x-log-*` เท่านั้น เหมือนเหตุผล — ไม่อยู่ใน URL (`SUBJECT_HEADERS`)
  *   - **ทุกการอ่านถูกบันทึกก่อนส่งข้อมูล** ลำดับในแต่ละ route: ตรวจพารามิเตอร์ → log store ตอบได้ไหม (`store()`) →
- *     แปลงตัวระบุ (Postgres) → บันทึก (`recordRead()`) → อ่าน — คำขอที่ผิดรูปหรืออ่านไม่ได้อยู่แล้วจึงไม่เกิดบันทึกเปล่า ๆ
+ *     แปลงตัวระบุ (Postgres — คำขอที่ถูกลบไปแล้วจาก log store) → บันทึก (`recordRead()`) → อ่าน — คำขอที่ผิดรูปหรืออ่าน
+ *     ไม่ได้อยู่แล้วจึงไม่เกิดบันทึกเปล่า ๆ
  *     ผลจึงแยกตามว่าอะไรล่มก่อน: Mongo ล่มหรือค้างอยู่แล้ว (จะมี Postgres หรือไม่) = 503 `log_store_unavailable` ก่อนบันทึก
  *     เพราะไม่มีอะไรให้ส่ง · Postgres ล่มแต่ Mongo ตอบ = บันทึกลง log store แทนแล้วอ่านตามปกติ · `log_read_unrecorded`
  *     เกิดเฉพาะเมื่อ Postgres บันทึกไม่ได้**และ**การเขียนสำเนาลง Mongo ล้มหลังจากที่ `store()` ping ผ่านไปแล้ว (Mongo ล่ม
@@ -758,8 +759,13 @@ function personFilter(person: PersonRef): Filter<Document> {
 }
 
 /**
- * คำขอ — uuid หรือเลขที่คำขอ ค้นทั้งสองตาราง คำขอที่ถูกลบไปแล้ว (`REQUEST_DELETED`) ไม่มีใน Postgres แต่สำเนายังมีเลขที่คำขอ
- * (มาจาก `metadata.request_number`) จึงยังค้นเจอด้วยเลขที่ ค้นด้วย uuid ของคำขอที่ถูกลบได้แค่แถวที่ subject เป็นคำขอนั้น
+ * คำขอ — uuid หรือเลขที่คำขอ ค้นทั้งสองตาราง
+ *
+ * คำขอที่ถูกลบไปแล้ว (`DELETE /api/admin/registrations/datasets/:id`) ไม่มีใน Postgres — ส่วนที่หายไป (id ของมันเมื่อค้นด้วย
+ * เลขที่ หรือเลขที่เมื่อค้นด้วย id และวันที่สร้าง) มาจากเอกสาร `REQUEST_DELETED` ของมันใน log store (`deletedRequest`) ค้นด้วย
+ * อะไรก็ได้ทั้งสองทาง: แถวที่ subject เป็นคำขอนั้น และแถวที่มีเลขที่ของมัน (ไฟล์แนบ การลงนาม) เดิมเลขที่ที่ไม่มีในตารางได้
+ * `id: null` ตัวกรองจึงจับได้แค่ `requestNumber` — แถวของคำขอที่สำเนาไม่มีเลขที่ (คัดลอกหลังการลบ ก่อนที่ relay จะหาเลขที่จาก
+ * `REQUEST_DELETED` ได้) หายไปจาก timeline ทั้งที่ subject คือคำขอนั้นเอง
  */
 interface RequestRef {
   id: string | null;
@@ -767,7 +773,7 @@ interface RequestRef {
   createdAt: Date | null;
 }
 
-async function resolveRequest(value: string): Promise<RequestRef> {
+async function resolveRequest(value: string, db: Db): Promise<RequestRef> {
   const select = { id: true, requestNumber: true, createdAt: true } as const;
   if (UUID.test(value)) {
     const id = value.toLowerCase();
@@ -776,7 +782,9 @@ async function resolveRequest(value: string): Promise<RequestRef> {
         (await prisma.organizationRegistrationRequest.findUnique({ where: { id }, select })) ??
         (await prisma.datasetRegistrationRequest.findUnique({ where: { id }, select })),
     );
-    return { id, number: found?.requestNumber ?? null, createdAt: found?.createdAt ?? null };
+    if (found) return { id, number: found.requestNumber, createdAt: found.createdAt };
+    const deleted = await deletedRequest(db, { "subject.type": { $in: REQUEST_SUBJECTS }, "subject.id": id });
+    return { id, number: deleted?.number ?? null, createdAt: deleted?.createdAt ?? null };
   }
   const number = value.toUpperCase();
   const found = await withDatabaseDeadline(
@@ -784,7 +792,35 @@ async function resolveRequest(value: string): Promise<RequestRef> {
       (await prisma.organizationRegistrationRequest.findUnique({ where: { requestNumber: number }, select })) ??
       (await prisma.datasetRegistrationRequest.findUnique({ where: { requestNumber: number }, select })),
   );
-  return { id: found?.id ?? null, number, createdAt: found?.createdAt ?? null };
+  if (found) return { id: found.id, number, createdAt: found.createdAt };
+  const deleted = await deletedRequest(db, { requestNumber: number });
+  return { id: deleted?.id ?? null, number, createdAt: deleted?.createdAt ?? null };
+}
+
+/**
+ * คำขอที่ถูกลบ ตามเอกสาร `REQUEST_DELETED` ของมันใน log store — id (subject) เลขที่ (`requestNumber`) และวันที่สร้าง
+ * (`before.createdAt` ที่แถวนั้นเก็บไว้) หรือ null ถ้าไม่เคยถูกลบ (หรือสำเนายังมาไม่ถึง) ใช้ index `requestNumber` หรือ
+ * `subject.type+id` ของ activity
+ */
+async function deletedRequest(
+  db: Db,
+  filter: Filter<Document>,
+): Promise<{ id: string | null; number: string | null; createdAt: Date | null } | null> {
+  const doc = await db
+    .collection("activity")
+    .findOne(
+      { ...filter, action: AuditAction.REQUEST_DELETED },
+      { projection: { subject: 1, requestNumber: 1, "before.createdAt": 1 }, sort: { occurredAt: -1 }, maxTimeMS: READ_MAX_MS },
+    );
+  if (!doc) return null;
+  const subject = (doc.subject ?? null) as Document | null;
+  const createdAtText = ((doc.before ?? null) as Document | null)?.createdAt;
+  const createdAt = typeof createdAtText === "string" ? new Date(createdAtText) : null;
+  return {
+    id: typeof subject?.id === "string" ? subject.id : null,
+    number: typeof doc.requestNumber === "string" ? doc.requestNumber : null,
+    createdAt: createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt : null,
+  };
 }
 
 /** แถวของคำขอ: subject เป็นคำขอนั้น (index subject.type+id) หรือเลขที่คำขอตรง (ไฟล์แนบ การลงนาม คำขอที่ถูกลบ) */
@@ -901,7 +937,7 @@ adminLogRouter.get(
 
     const person = q.person ? await resolvePerson(q.person, res) : null;
     if (q.person && !person) return;
-    const request = q.request ? await resolveRequest(q.request) : null;
+    const request = q.request ? await resolveRequest(q.request, db) : null;
     const organizationId = q.organization ? await resolveOrganization(q.organization, res) : null;
     if (q.organization && !organizationId) return;
     const cidKey = q.cid ? hashKeyOf("cid", q.cid, hashKey) : null;
@@ -1035,7 +1071,7 @@ adminLogRouter.get(
 
     const person = q.person ? await resolvePerson(q.person, res) : null;
     if (q.person && !person) return;
-    const request = q.request ? await resolveRequest(q.request) : null;
+    const request = q.request ? await resolveRequest(q.request, db) : null;
     const organizationId = q.organization ? await resolveOrganization(q.organization, res) : null;
     if (q.organization && !organizationId) return;
 

@@ -541,8 +541,15 @@ function projectSafely(row: RawAuditRow, requestNumber: string | null, now: Date
 
 /**
  * เลขที่คำขอของแถวที่ subject เป็นคำขอ หรือเป็นไฟล์แนบของคำขอ — `findMany` ครั้งเดียวต่อตารางต่อหน้า
- * แถวที่ไม่เจอ (คำขอถูกลบไปแล้ว: `REQUEST_DELETED`) ใช้ `metadata.request_number` แทนใน projectAuditRow
  * ไฟล์แนบของชุดข้อมูลที่อนุมัติแล้ว (`DATASET`) และไฟล์ของเอกสารกฎหมายไม่ได้เลขที่คำขอ
+ *
+ * **คำขอที่ถูกลบไปแล้ว** (`DELETE /api/admin/registrations/datasets/:id`) ไม่อยู่ในตารางคำขอ — เลขที่มาจากแถว
+ * `REQUEST_DELETED` ของมันเองใน audit_event (`metadata.request_number`, สำรองด้วย `before.requestNumber`) หนึ่งคำสั่งต่อหน้า
+ * เฉพาะเมื่อมี id ที่หาไม่เจอ (index `subject_type, subject_id`) ไฟล์แนบของคำขอนั้นยังอยู่ (ถูกปิด ไม่ถูกลบ) จึงได้เลขที่
+ * ผ่านทางเดียวกัน เดิมทางนี้ถามแค่ตารางคำขอ: แถวที่ relay คัดลอก**หลัง**การลบ — ทุกแถวตอน backfill ครั้งแรกของ production
+ * และทุก rebuild — ได้ `requestNumber: null` ยกเว้นรหัสที่ใส่ `request_number` ไว้ใน metadata เอง (บันทึกร่าง สร้างเอกสาร
+ * แก้โดย admin) `REQUEST_CREATED` `SUBMITTED` `APPROVED` `RETURNED` และทุกแถวของไฟล์แนบจึงหายจาก `?request=<เลขที่>` ทั้งที่
+ * สำเนาที่คัดลอกก่อนการลบมีเลขที่ครบ ผลขึ้นกับว่า relay วิ่งเมื่อไร (ตรวจแบบค้านขั้น 7, 2026-09-30)
  */
 async function requestNumbers(client: PrismaClient, rows: RawAuditRow[]): Promise<Map<string, string>> {
   const organizationIds = new Set<string>();
@@ -597,6 +604,25 @@ async function requestNumbers(client: PrismaClient, rows: RawAuditRow[]): Promis
       "อ่านเลขที่คำขอชุดข้อมูล",
     );
     for (const request of requests) numberOf.set(request.id, request.requestNumber);
+  }
+  const gone = [...organizationIds, ...datasetIds].filter((id) => !numberOf.has(id));
+  if (gone.length > 0) {
+    const deletions = await withTimeout(
+      client.auditEvent.findMany({
+        where: {
+          action: "REQUEST_DELETED",
+          subjectType: { in: ["ORGANIZATION_REGISTRATION_REQUEST", "DATASET_REGISTRATION_REQUEST"] },
+          subjectId: { in: gone },
+        },
+        select: { subjectId: true, metadataJson: true, beforeSummaryJson: true },
+      }),
+      PG_TIMEOUT_MS,
+      "อ่านเลขที่ของคำขอที่ถูกลบ",
+    );
+    for (const deletion of deletions) {
+      const number = stringField(deletion.metadataJson, "request_number") ?? stringField(deletion.beforeSummaryJson, "requestNumber");
+      if (deletion.subjectId && number) numberOf.set(deletion.subjectId, number);
+    }
   }
 
   const byRow = new Map<string, string>();
@@ -904,6 +930,13 @@ async function reconcile(db: Db, client: PrismaClient, now: Date): Promise<Recon
 }
 
 // --------------------------------------------------------------------------------------------- ตัวช่วย
+
+/** ข้อความที่ไม่ว่างใต้ `key` ของ object JSON — ไม่ใช่ object หรือไม่ใช่ข้อความได้ null */
+function stringField(value: unknown, key: string): string | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "string" && field.length > 0 ? field : null;
+}
 
 function errorName(err: unknown): string {
   if (!(err instanceof Error)) return "Error";
