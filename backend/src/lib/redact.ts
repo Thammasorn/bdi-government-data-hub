@@ -15,8 +15,17 @@
  *      จึงเป็นชั้นสำรอง ไม่ใช่ชั้นหลัก: ข้อความที่มีค่าที่ผู้ใช้กรอกไม่ควรมาถึงตรงนี้ตั้งแต่แรก
  */
 
-/** ข้อความที่ยาวกว่านี้ถูกตัดก่อนกวาด — regex ทุกตัวข้างล่างเป็นเส้นตรง แต่ก็ไม่ควรวิ่งบนข้อความขนาดเมกะไบต์ */
+/**
+ * ข้อความที่ยาวกว่านี้ถูกตัดก่อนกวาด — regex ทุกตัวข้างล่างเป็นเส้นตรง (ดูหมายเหตุเหนือ BEFORE_UUID_RULES) แต่ก็ไม่ควร
+ * วิ่งบนข้อความขนาดเมกะไบต์ ข้อความที่มาจากคำขอ (ชื่อ key, path, UA) ไม่ได้มาถึงขนาดนี้: ผู้เรียกตัดก่อนด้วย
+ * `scrubClipped()` เพราะ captureError เป็น synchronous บนเส้นทางของคำขอ และคำขอเดียวส่งชื่อ key มาได้ห้าสิบตัว
+ */
 const SCRUB_INPUT_MAX = 20_000;
+/**
+ * ข้อความที่เผื่อไว้หลังจุดตัดของ `scrubClipped()` — ของที่คร่อมจุดตัดต้องยังครบพอให้กฎจำได้ (อีเมลยาวได้ 254 ตัว,
+ * ความลับยาว ๆ ต้องครบ 32 ตัว, เลขบัตรแบบมีขีด 17 ตัว) ไม่งั้นท่อนหน้าของมันหลุดออกไปโดยไม่ถูกกวาด
+ */
+const CLIP_CONTEXT = 256;
 
 /** UUID ต้องรอดการกวาดทั้งตัว: มันคือ id ที่ใช้ตามรอย และตัวเลขข้างในหน้าตาเหมือนเบอร์โทรหรือเลขบัตรได้ */
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
@@ -44,8 +53,12 @@ const DATABASE_DETAIL_RULES: Array<[RegExp, string]> = [
   // ตาข่ายชั้นที่สอง: ถ้ารูปข้างบนไม่ตรง (Prisma เปลี่ยนวิธีพิมพ์ ข้อความเพี้ยน) ตัดตั้งแต่ตรงนั้นจนสุดข้อความ
   [/\b(detail|hint): Some\("[\s\S]*$/g, "$1: [ตัดทิ้ง]"],
   // DETAIL/HINT/CONTEXT ของ raw query อยู่บรรทัดของตัวเอง ค่าในแถวมีขึ้นบรรทัดใหม่ได้ — ตัดไปจนสุดข้อความ หรือจนถึง
-  // บรรทัด `at …` ของ stack ถ้ามีคนส่ง stack ทั้งก้อนมา
-  [/\n(?:DETAIL|HINT|CONTEXT|WHERE):(?:(?!\n\s+at )[\s\S])*/g, " (รายละเอียดของแถวตัดทิ้ง)"],
+  // บรรทัด `at …` ของ stack ถ้ามีคนส่ง stack ทั้งก้อนมา ทีละบรรทัด: บรรทัดถัดไปถูกกินต่อเมื่อไม่ได้ขึ้นต้นด้วยช่องว่าง
+  // ในบรรทัด (ช่องว่างหรือ tab ไม่ใช่ `\s`) ตามด้วย `at `
+  // เดิมเป็น `(?:(?!\n\s+at )[\s\S])*` ซึ่ง `\s+` ใน lookahead ข้ามบรรทัดใหม่ได้ ที่ทุกตัวอักษรมันจึงไล่บรรทัดว่างที่
+  // ตามมาทั้งหมด — `\nDETAIL:` ตามด้วยบรรทัดว่างสองหมื่นบรรทัด (ชื่อ key ของ body ที่ใครก็ส่งได้) ใช้ 175 ms ต่อ key
+  // และ 8.8 วินาทีต่อคำขอที่มีห้าสิบ key ขณะที่ event loop ทั้งตัวรออยู่ (วัด 2026-09-30) แบบนี้กินเวลาเส้นตรง
+  [/\n(?:DETAIL|HINT|CONTEXT|WHERE):[^\n]*(?:\n(?![ \t]+at )[^\n]*)*/g, " (รายละเอียดของแถวตัดทิ้ง)"],
   [/PostgresError \{ code: "([0-9A-Z]{5})",/g, "PostgresError { SQLSTATE $1,"],
   [/(Raw query failed\.) Code: `([0-9A-Z]{5})`\./g, "$1 SQLSTATE $2."],
   // เปลือก Rust ทั้งก้อนเหลือแค่รหัสกับข้อความ — ไม่งั้นหัวเรื่องของ issue (200 ตัว) ถูกตัดก่อนถึงชื่อ constraint
@@ -77,6 +90,9 @@ const PHRASE_KEY =
  *
  * ทุกกฎที่มี `+` ขึ้นต้นด้วย lookbehind ว่าต้องเริ่มที่ขอบของก้อน — ไม่งั้นข้อความยาว 20 KB ที่ไม่มีอะไรตรงจะถูกลอง
  * ทุกตำแหน่งเริ่มจนถึงท้ายก้อน (กำลังสอง) และ captureError เป็น synchronous บนเส้นทางของคำขอ
+ * อีกรูปของกำลังสองคือ lookahead ที่อยู่**ในวง** `*` แล้วมองไปข้างหน้าได้ไม่จำกัด (`(?:(?!\n\s+at )[\s\S])*` ของ
+ * DATABASE_DETAIL_RULES เคยเป็นแบบนี้) — lookahead ในวงต้องมองได้แค่ระยะสั้นหรือหยุดที่ขอบบรรทัด
+ * กฎใหม่ต้องผ่านชุดทดสอบข้อความ 20 KB แบบปั่น (ตัวอักษรซ้ำ ๆ ของทุกกฎ) ให้จบในหลักมิลลิวินาทีก่อนใช้
  */
 const BEFORE_UUID_RULES: Array<[RegExp, string]> = [
   /**
@@ -170,12 +186,29 @@ export function scrubText(text: string): string {
 }
 
 /**
+ * กวาดข้อความที่**ผู้เรียก API เลือกเองได้** (ชื่อ key ของ body และของ query, path, user-agent) แล้วเหลือไม่เกิน `max`
+ * ตัว — ตัดก่อนกวาด ไม่ใช่กวาดก่อนตัด: ค่าเหล่านี้ยาวได้ถึงเพดานของ body (1 MB) หรือของ header (16 KB) และ
+ * captureError เรียกตัวนี้บนเส้นทางของคำขอก่อนเพดานการเก็บตัวไหนจะได้ดู แม้ log store ปิดอยู่
+ * เผื่อข้อความหลังจุดตัดไว้ CLIP_CONTEXT ตัว ของที่คร่อมจุดตัดจึงยังถูกกวาดครบก่อนถูกตัดทิ้ง
+ */
+export function scrubClipped(text: string, max: number): string {
+  return scrubText(text.slice(0, max + CLIP_CONTEXT)).slice(0, max);
+}
+
+/** ข้อความของ Prisma ที่ยาวกว่านี้ถูกตัดหางก่อนตัด DETAIL — ข้อความปกติ (โค้ดรอบจุดที่เรียกกับสาเหตุ) ไม่ถึงหลักพัน */
+const DATABASE_LOG_INPUT_MAX = 64 * 1024;
+
+/**
  * บรรทัดเดียวของ log ของ Prisma เอง (`prisma:error`, db.ts) — ข้อความเต็มของมันยกโค้ดรอบจุดที่เรียก และ DETAIL ของแถว
  * ที่ Postgres ปฏิเสธมาทั้งแถว จึงตัด DETAIL ก่อน (ทั้งก้อน) แล้วค่อยหยิบบรรทัดสุดท้าย (สาเหตุจริง เหมือน `headlineOf`)
- * แล้วกวาด ไม่ตัดความยาวก่อนตัด DETAIL: ถ้าตัดก่อน บรรทัดสุดท้ายที่เหลืออาจเป็นกลางแถวพอดี
+ * แล้วกวาด ไม่ตัดเหลือ 500 ตัวก่อนตัด DETAIL: ถ้าตัดก่อน บรรทัดสุดท้ายที่เหลืออาจเป็นกลางแถวพอดี
+ *
+ * แต่ก็ไม่วิ่งบนข้อความยาวไม่จำกัด (ค่าในแถวมาจากสิ่งที่ผู้ใช้กรอก): เกิน 64 KB ถูกตัด**หาง**ทิ้งก่อน ซึ่งไม่ทำให้
+ * ค่าของแถวหลุด — หัว `DETAIL:` / `detail: Some("` มาก่อนค่าของแถวเสมอ และกฎของมันตัดไปจนสุดข้อความเมื่อหาตัวปิด
+ * ไม่เจอ ที่เสียคือบรรทัดสุดท้ายของข้อความที่ยาวขนาดนั้นไม่ใช่สาเหตุจริง — ยอมรับ ข้อความปกติไม่มีทางยาวถึง
  */
 export function databaseLogLine(message: string): string {
-  let stripped = message;
+  let stripped = message.length > DATABASE_LOG_INPUT_MAX ? message.slice(0, DATABASE_LOG_INPUT_MAX) : message;
   for (const [pattern, replacement] of DATABASE_DETAIL_RULES) stripped = stripped.replace(pattern, replacement);
   return scrubText(headlineOf("Prisma", stripped)).slice(0, 500);
 }
@@ -216,7 +249,7 @@ function nameOf(err: unknown): string {
   }
   if (err && typeof err === "object") {
     const name = (err as { name?: unknown }).name;
-    if (typeof name === "string" && name) return scrubText(name).slice(0, 100);
+    if (typeof name === "string" && name) return scrubClipped(name, 100);
   }
   return "NonError";
 }
@@ -251,7 +284,7 @@ function propsOf(err: unknown): Record<string, unknown> {
   for (const key of ERROR_PROPS) {
     const value = source[key];
     if (typeof value === "number" || typeof value === "boolean") props[key] = value;
-    else if (typeof value === "string") props[key] = scrubText(value).slice(0, 200);
+    else if (typeof value === "string") props[key] = scrubClipped(value, 200);
   }
   // Prisma: ชื่อคอลัมน์หรือ index ที่ชน (P2002) — ชื่อ ไม่ใช่ค่า
   const target = (source.meta as { target?: unknown } | undefined)?.target;
@@ -348,14 +381,15 @@ function shapeOf(value: unknown): string {
  * รูปร่างของ body — `{title: "string(12)", password: "present", tags: "array(3)"}` หรือ null ถ้าไม่ใช่ object
  *
  * ลงไปแค่ชั้นบนสุด: object ข้างในเหลือแค่จำนวน key (`object(5)`) ไม่ไล่ชื่อ key ข้างใน `signature.*` จึงเป็น
- * present/absent ทั้งก้อนตามชื่อของมันเอง ชื่อ key ผ่านตารางกวาดด้วย เพราะผู้เรียกตั้งชื่อ key เป็นอะไรก็ได้
+ * present/absent ทั้งก้อนตามชื่อของมันเอง ชื่อ key ผ่านตารางกวาดด้วย เพราะผู้เรียกตั้งชื่อ key เป็นอะไรก็ได้ — และยาว
+ * แค่ไหนก็ได้ภายใน 1 MB ของ body จึงตัดก่อนกวาด (`scrubClipped`)
  */
 export function bodyShape(body: unknown): Record<string, string> | null {
   if (!body || typeof body !== "object" || Array.isArray(body) || Buffer.isBuffer(body)) return null;
   const entries = Object.entries(body as Record<string, unknown>);
   const shape: Record<string, string> = {};
   for (const [key, value] of entries.slice(0, BODY_KEYS_MAX)) {
-    const safeKey = scrubText(key).slice(0, 64);
+    const safeKey = scrubClipped(key, 64);
     shape[safeKey] = SENSITIVE_BODY_KEY.test(key)
       ? value === undefined || value === null || value === ""
         ? "absent"
@@ -378,14 +412,14 @@ export function requestTarget(originalUrl: string): { path: string; queryKeys: s
   if (query) {
     try {
       for (const key of new URLSearchParams(query).keys()) {
-        keys.add(scrubText(key).slice(0, 64));
+        keys.add(scrubClipped(key, 64));
         if (keys.size >= 20) break;
       }
     } catch {
       keys.add("(อ่าน query ไม่ออก)");
     }
   }
-  return { path: scrubText(rawPath).slice(0, 300), queryKeys: [...keys] };
+  return { path: scrubClipped(rawPath, 300), queryKeys: [...keys] };
 }
 
 /** header ที่ออกไปได้ — ไม่มี cookie, x-admin-token, x-log-token, authorization, referer หรืออะไรนอกรายการ */
@@ -395,7 +429,7 @@ export function allowedHeaders(headers: Record<string, unknown>): Record<string,
   const out: Record<string, string> = {};
   for (const name of HEADER_ALLOWLIST) {
     const value = headers[name];
-    if (typeof value === "string") out[name] = scrubText(value).slice(0, 512);
+    if (typeof value === "string") out[name] = scrubClipped(value, 512);
   }
   return out;
 }

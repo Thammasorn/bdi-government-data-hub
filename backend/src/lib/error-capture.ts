@@ -32,7 +32,7 @@ import type { AnyBulkWriteOperation, Db } from "mongodb";
 import { env } from "../env.js";
 import { currentContext, referenceOf, type Breadcrumb } from "./context.js";
 import { logDb, logStoreStatus } from "./log-store.js";
-import { bodyShape, headlineOf, requestTarget, scrubError, scrubText, type ScrubbedError } from "./redact.js";
+import { bodyShape, headlineOf, requestTarget, scrubClipped, scrubError, type ScrubbedError } from "./redact.js";
 
 export type ErrorLevel = "fatal" | "error" | "warning";
 /** error มาถึงทางไหน — `captured` คือโค้ดของเราเรียกเองที่จุดที่กลืน error ไว้ */
@@ -380,7 +380,7 @@ function capture(err: unknown, options: CaptureOptions): string | null {
             correlationId: correlation,
             reference,
             ip: ctx?.ipAddress ?? null,
-            userAgent: ctx?.userAgent ? scrubText(ctx.userAgent).slice(0, 512) : null,
+            userAgent: ctx?.userAgent ? scrubClipped(ctx.userAgent, 512) : null,
             bodyShape: req ? bodyShape(req.body) : null,
           }
         : null,
