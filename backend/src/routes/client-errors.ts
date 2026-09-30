@@ -219,6 +219,10 @@ function ingest(req: Request, ip: string | null, userAgent: string | null): void
         }
       : null,
     browser: verified ? null : browserContext(report, page),
+    // digest ของ Next: ตัวเดียวกับที่หน้า global-error ได้และรายงานมาใน `browser.digest` (production ซ่อนข้อความของ error ฝั่ง
+    // server จากเบราว์เซอร์ เหลือแค่ digest) — เก็บไว้ที่ event ของ Next server ด้วย ไม่งั้นรหัสบนจอผู้ใช้โยงถึงข้อความจริงได้
+    // ผ่านบรรทัดใน stdout ของ Next อย่างเดียว ซึ่ง deploy ถัดไปลบทิ้ง · trace ใช้โยงสองฝั่ง (`serverErrors`, routes/admin-logs.ts)
+    extra: verified && report.digest ? { digest: scrubClipped(report.digest, 100) } : null,
     ingest: {
       verified,
       claimedService: claimed ? scrubClipped(claimed, 40) : null,

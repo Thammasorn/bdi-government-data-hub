@@ -585,6 +585,8 @@ export interface IngestedReport {
   tag: string | null;
   request: ErrorEventDoc["request"];
   browser: BrowserContext | null;
+  /** ข้อมูลเพิ่มที่**ผู้เรียกกวาดแล้ว** — ตอนนี้มีแค่ `digest` ของ Next บน event ของ Next server ที่ยืนยันแล้ว */
+  extra: Record<string, unknown> | null;
   ingest: IngestContext;
 }
 
@@ -628,7 +630,7 @@ export function captureReport(report: IngestedReport): string | null {
       request: report.request,
       actor: null,
       breadcrumbs: [],
-      extra: null,
+      extra: boundedExtra(report.extra ?? undefined),
       browser: report.browser,
       ingest: report.ingest,
     };

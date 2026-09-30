@@ -96,6 +96,9 @@ const TRACE_ERRORS_MAX = 50;
 /** แถวของ Postgres ต่อชนิดใน trace — คลิกเดียวไม่ควรมีมากกว่านี้ */
 const TRACE_ROWS_MAX = 50;
 const TRACE_CANDIDATES_MAX = 10;
+/** error ของ Next server ที่ trace หาจาก digest ของรายงาน (`serverErrors`) — ห่างจากรายงานไม่เกินนี้ และไม่เกินกี่ตัว */
+const TRACE_DIGEST_WINDOW_MS = 60 * 60_000;
+const TRACE_SERVER_ERRORS_MAX = 20;
 const ISSUE_EVENTS_DEFAULT = 20;
 const ISSUE_EVENTS_MAX = 100;
 const BANGKOK_OFFSET_MS = 7 * 60 * 60_000;
@@ -1377,6 +1380,9 @@ adminLogRouter.get(
  * ทางนี้ทางเดียว — backend ไม่เคยเห็นคำขอนั้น) และรหัสที่หน้า global-error สร้างเอง ใครก็ส่งรายงานอ้างรหัสของคนอื่นได้
  * (routes/client-errors.ts) จึงอ่านเป็นคำบอกเล่า ไม่ใช่หลักฐาน · มีแต่ `reports` (ไม่มี activity/error ของรหัสนั้น) ตอบ 200 พร้อม
  * `correlationId: null` ไม่ใช่ 404
+ *
+ * `serverErrors` = error ของ Next server ที่ `digest` ของรายงานใน `reports` ชี้ถึง (`serverErrorsOf`) — หน้า global-error ของ
+ * production ได้จาก server แค่ digest ไม่มีข้อความ ข้อความจริงอยู่ที่ event ของ Next server ตัวนี้
  */
 adminLogRouter.get(
   "/trace/:ref",
@@ -1402,6 +1408,7 @@ adminLogRouter.get(
         .maxTimeMS(READ_MAX_MS)
         .toArray()
     ).map(errorEventDto);
+    const serverErrors = await serverErrorsOf(db, reports);
 
     let correlationId = ref;
     if (ref.length < 36) {
@@ -1445,6 +1452,7 @@ adminLogRouter.get(
           errors: [],
           errorsTruncated: false,
           reports,
+          serverErrors,
           deliveries: null,
           integrations: null,
           postgres: "not_applicable",
@@ -1463,6 +1471,7 @@ adminLogRouter.get(
           candidates: list,
           candidatesTruncated: candidates.size > TRACE_CANDIDATES_MAX,
           reports,
+          serverErrors,
           readId,
         });
         return;
@@ -1515,6 +1524,7 @@ adminLogRouter.get(
       errors: errors.map(errorEventDto),
       errorsTruncated,
       reports,
+      serverErrors,
       deliveries: postgres?.deliveries ?? null,
       integrations: postgres?.integrations ?? null,
       postgres: postgres ? "ok" : UUID.test(correlationId) ? "unavailable" : "not_applicable",
@@ -1522,6 +1532,41 @@ adminLogRouter.get(
     });
   }),
 );
+
+/**
+ * error ของ Next server ที่รายงานใน trace ชี้ถึงด้วย `digest` — ตัวที่หน้า global-error ได้จาก Next และส่งมาใน `browser.digest`
+ * ตรงกับ `extra.digest` ของ event ที่ Next server รายงานเอง (routes/client-errors.ts เก็บเฉพาะของที่ `x-report-token` ยืนยันแล้ว)
+ *
+ * digest ของ Next คือ hash ของข้อความกับ stack ไม่ใช่ id ของคำขอ: error เดียวกันของคนอื่นได้ digest เดียวกัน จึงดูแค่ในช่วง
+ * `TRACE_DIGEST_WINDOW_MS` รอบเวลาของรายงาน ใหม่ไปเก่า ไม่เกิน `TRACE_SERVER_ERRORS_MAX` ตัว ไม่มีดัชนีบน `extra.digest`
+ * (plan §3 "Indexes") ช่วงเวลาคือตัวที่ทำให้ค้นเร็ว (`{occurredAt: -1}`) · digest ของรายงานผู้ส่งเขียนเองได้เหมือน `reference`
+ */
+async function serverErrorsOf(db: Db, reports: Document[]): Promise<Document[]> {
+  const digests = new Set<string>();
+  let earliest = Number.POSITIVE_INFINITY;
+  let latest = Number.NEGATIVE_INFINITY;
+  for (const report of reports) {
+    const digest = (report.browser as Document | null | undefined)?.digest;
+    const at = report.occurredAt instanceof Date ? report.occurredAt.getTime() : Number.NaN;
+    if (typeof digest !== "string" || digest === "" || Number.isNaN(at)) continue;
+    digests.add(digest);
+    earliest = Math.min(earliest, at);
+    latest = Math.max(latest, at);
+  }
+  if (digests.size === 0) return [];
+  const docs = await db
+    .collection("error_events")
+    .find({
+      occurredAt: { $gte: new Date(earliest - TRACE_DIGEST_WINDOW_MS), $lte: new Date(latest + TRACE_DIGEST_WINDOW_MS) },
+      service: "frontend-server",
+      "extra.digest": { $in: [...digests] },
+    })
+    .sort({ occurredAt: -1, _id: -1 })
+    .limit(TRACE_SERVER_ERRORS_MAX)
+    .maxTimeMS(READ_MAX_MS)
+    .toArray();
+  return docs.map(errorEventDto);
+}
 
 /**
  * อีเมลในคิวและงานกับระบบภายนอกของ correlation id ตรงตัว — null ถ้า Postgres ตอบไม่ได้ภายในเพดานของ db.ts (trace ยังคืน

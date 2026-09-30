@@ -11,7 +11,8 @@ import { reportError } from "@/lib/report-error";
  * แสดง**รหัสอ้างอิง**ให้ผู้ใช้อ่านให้เจ้าหน้าที่ฟังได้ — สร้างที่เบราว์เซอร์ (8 ตัวฐานสิบหก) แล้วส่งไปกับรายงาน error
  * (`browser.reference` ใน log store ค้นด้วย Postman G6 ได้ — lib/report-error.ts) สร้างใน `useEffect` ไม่ใช่ตอนเรนเดอร์:
  * หน้านี้ถูก prerender ตอน build ค่าสุ่มตอนเรนเดอร์จะติดไปกับ HTML ทุกคนได้รหัสเดียวกัน และไม่ตรงกับตอน hydrate
- * `error.digest` (ของ error ฝั่ง server ที่ Next ซ่อนข้อความ) ไปกับรายงานด้วย ใช้เทียบกับบรรทัดใน log ของ Next server
+ * `error.digest` (ของ error ฝั่ง server ที่ Next ซ่อนข้อความ) ไปกับรายงานด้วย — Next server รายงาน error ตัวเดียวกันพร้อม
+ * digest เดียวกัน (`extra.digest`, lib/server-error-report.ts) trace ของรหัสนี้ (Postman G6) จึงได้ข้อความจริงใน `serverErrors`
  */
 export default function GlobalError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   const [reference, setReference] = useState<string | null>(null);
