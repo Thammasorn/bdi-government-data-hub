@@ -217,6 +217,9 @@ const dropped = {
   auditCopies: 0,
 };
 
+/** ทิ้งไปทั้งหมดเท่าไรตั้งแต่ process เริ่ม — `dropped.count` ข้างบนถูกล้างทุกครั้งที่ event สรุปเข้าคิว ตัวนี้ไม่ถูกล้าง */
+let droppedSinceStart = 0;
+
 let flushing: Promise<void> | null = null;
 let failures = 0;
 let nextAttemptAt = 0;
@@ -306,6 +309,34 @@ export function enqueueActivity(doc: ActivityDoc): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * ตัวเลขของคิวใน process นี้ — `GET /api/admin/logs/status` แสดง (ไม่มีข้อมูลบุคคล ไม่แตะ Mongo ไม่ await อะไร)
+ *
+ *   buffered       — รายการที่รอเขียนอยู่ในคิว (event, บันทึกของ process, สำเนา audit) · bufferedBytes ขนาดรวม
+ *   pendingIssues  — issue ที่ตัวนับยังไม่ได้เขียน
+ *   dropped        — ทิ้งไปทั้งหมดตั้งแต่ process เริ่ม (คิวเต็ม ใหญ่เกิน Mongo ไม่รับ issue ค้างเกิน)
+ *   droppedUnreported — ในนั้นที่ยังไม่มี event สรุป "ทิ้งไป N รายการ" (เข้าคิวเมื่อเขียนได้อีกครั้ง)
+ *   writing        — `failing` ระหว่างที่เขียน log store ไม่ได้และกำลังถอยห่าง
+ * เป็นของ process ที่ตอบเท่านั้น: คิวของ delivery-worker และของ backend replica อื่นแยกกัน
+ */
+export function errorCaptureStats(): {
+  buffered: number;
+  bufferedBytes: number;
+  pendingIssues: number;
+  dropped: number;
+  droppedUnreported: number;
+  writing: "ok" | "failing";
+} {
+  return {
+    buffered: ring.length,
+    bufferedBytes: ringBytes,
+    pendingIssues: pendingIssues.size,
+    dropped: droppedSinceStart,
+    droppedUnreported: dropped.count,
+    writing: failing ? "failing" : "ok",
+  };
 }
 
 /**
@@ -686,6 +717,7 @@ function lowestPriorityIndex(): number {
 }
 
 function noteDropped(at: Date, count: number, reason: DropReason, auditCopies = 0) {
+  droppedSinceStart += count;
   dropped.count += count;
   dropped.reasons[reason] += count;
   dropped.auditCopies += auditCopies;

@@ -21,6 +21,7 @@ import {
 } from "./lib/error-capture.js";
 import { closeLogStore, startLogStore } from "./lib/log-store.js";
 import { flushTokenRejections } from "./lib/token-rejection.js";
+import { adminLogRouter } from "./routes/admin-logs.js";
 import { adminRegistrationRouter } from "./routes/admin-registrations.js";
 import { adminRouter } from "./routes/admin.js";
 import { adminUserRouter } from "./routes/admin-users.js";
@@ -158,6 +159,12 @@ app.get("/", (_req, res) => {
 
 app.use("/health", healthRouter);
 app.use("/api/auth", authRouter);
+/**
+ * API อ่าน log — token ของตัวเอง (`x-log-token`) ไม่ใช่ admin token และมี 404 ของตัวเองท้าย router: ต้องมาก่อน adminRouter
+ * ที่จับ /api/admin ทั้งก้อน ไม่งั้น path ที่พิมพ์ผิดใต้ /api/admin/logs ไปเจอ requireAdminToken แล้วได้แถว
+ * ADMIN_TOKEN_REJECTED ที่ชวนเข้าใจผิด (proxy ของหน้าเว็บตอบ 404 ให้ /api/admin/logs* อยู่แล้ว — เรียกได้ทาง backend ตรง)
+ */
+app.use("/api/admin/logs", adminLogRouter);
 app.use("/api/admin/users", adminUserRouter);
 // ต้องมาก่อน adminRouter ที่จับ /api/admin ทั้งก้อน ไม่งั้น /registrations/* ตกไปที่ 404 ของมัน
 app.use("/api/admin/registrations", adminRegistrationRouter);
