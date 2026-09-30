@@ -204,6 +204,9 @@ services:
       # กุญแจของ key ค้นหา cid#/email# ในสำเนากิจกรรม — ว่าง = ค่าของ dev ใน env.ts, production ว่าง = ไม่มี key ค้นหา
       # ต้องเป็นค่าเดียวกับของ delivery-worker ข้างล่าง (relay ใช้ทำ key ของทุกแถว)
       LOG_HASH_KEY: ${LOG_HASH_KEY:-}
+      # token ของ API อ่าน log (x-log-token ของ /api/admin/logs/*) — ว่าง = ค่าของ dev ใน env.ts, production ว่างหรือเป็น
+      # ค่าตัวอย่าง = API นั้นตอบ 503 · **backend เท่านั้น** worker ไม่ได้ให้บริการ API นี้
+      LOG_READ_TOKEN: ${LOG_READ_TOKEN:-}
       # ชื่อ deployment ที่ติดไปกับทุก error event (ค่าตั้งต้นคือชื่อ project ของ compose: bdi-main, bdi-dev_…)
       # **ไม่มี RELEASE ตรงนี้โดยตั้งใจ**: image ของ production ฝัง RELEASE=<SHA> ไว้แล้ว (backend/Dockerfile) และค่าว่าง
       # จาก `${RELEASE:-}` จะทับค่านั้นจนกลายเป็น `dev`

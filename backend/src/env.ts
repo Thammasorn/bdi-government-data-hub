@@ -74,6 +74,27 @@ const APP_URL = optional("APP_URL", "http://localhost:3000").replace(/\/$/, "");
 const NODE_ENV = optional("NODE_ENV", "development");
 const MONGODB_URI = optional("MONGODB_URI", "");
 
+/**
+ * LOG_READ_TOKEN ที่ใช้ได้จริง — ดู `logStore.readToken` ข้างล่าง
+ *
+ * production: ค่าตัวอย่าง (`dev-…`, `…change-me`) หรือสั้นกว่า 32 ตัว (128 บิตเมื่อเป็นฐานสิบหก — fingerprint 12 ตัวที่ลง
+ * `AUDIT_LOG_READ.metadata.token_fp` เดาย้อนกลับได้ถ้า token สั้น) ถือเป็น**ไม่ได้ตั้ง** API อ่าน log จึงปิด (503) แทนที่จะเปิด
+ * ด้วยค่าที่ใครก็รู้ ต่างจาก ADMIN_API_TOKEN ที่แค่เตือน: token นี้ใหม่ ไม่มีใครพึ่งมันอยู่ ปฏิเสธจึงไม่ทำให้อะไรที่ใช้งาน
+ * อยู่พัง ไม่พิมพ์ค่าหรือความยาว
+ */
+function logReadToken(): string {
+  const value = optional("LOG_READ_TOKEN", NODE_ENV === "production" ? "" : "dev-log-token-change-me");
+  if (NODE_ENV !== "production" || value === "") return value;
+  if (value.length < 32 || value.startsWith("dev-") || value.includes("change-me")) {
+    console.warn(
+      "[env] LOG_READ_TOKEN ยังเป็นค่าตัวอย่างหรือสั้นกว่า 32 ตัว — ปิด API อ่าน log (/api/admin/logs ตอบ 503 " +
+        "log_access_disabled) จนกว่าจะตั้งเป็นค่าจาก `openssl rand -hex 32`",
+    );
+    return "";
+  }
+  return value;
+}
+
 export const env = {
   nodeEnv: NODE_ENV,
   /**
@@ -334,6 +355,17 @@ export const env = {
      * **เปลี่ยนค่าแล้วต้อง rebuild สำเนา** — key เดิมหาด้วยกุญแจใหม่ไม่เจอ (workers/log-relay.ts เตือนเมื่อเห็นว่าเปลี่ยน)
      */
     hashKey: optional("LOG_HASH_KEY", NODE_ENV === "production" ? "" : "dev-log-hash-key"),
+    /**
+     * ความลับของ API อ่าน log (`x-log-token` ของ `/api/admin/logs/*` — routes/admin-logs.ts) แยกจาก ADMIN_API_TOKEN
+     * โดยตั้งใจ (plan decision 9): log รวมทุกอย่างที่ admin API เห็นบวกประวัติการกระทำของทุกคน และ admin token เคยหลุดมาแล้ว
+     * คนถือ admin token จึงไม่ได้สิทธิ์อ่าน log ไปด้วย
+     *
+     * ว่าง = API ตอบ 503 `log_access_disabled` ทุกคำขอ (ไม่เปิดให้ใครอ่าน และไม่ทำให้บูตไม่ขึ้น) · dev มีค่าตัวอย่าง
+     * `dev-log-token-change-me` (ตรงกับ `.env.example` และ Postman environment ของ dev checkout) · **production ไม่รับค่า
+     * ตัวอย่างและค่าที่สั้นกว่า 32 ตัว** — ถือเป็นว่างพร้อมคำเตือนตอนบูต (`logReadToken()`) เพราะคนที่คัดลอก `.env.example`
+     * ไปเป็น `.env` ของ main/ จะได้ token ที่เขียนอยู่ใน repo สาธารณะ ค่าจริงคือ `openssl rand -hex 32`
+     */
+    readToken: logReadToken(),
   },
 } as const;
 

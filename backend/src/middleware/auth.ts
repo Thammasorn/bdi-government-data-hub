@@ -12,11 +12,22 @@ import { resolveSession, revokeSessionsFor } from "../lib/session.js";
 import { ORGANIZATION_SCOPED_ROLES, type RoleCode } from "../lib/system.js";
 import { createTokenRejectionRecorder } from "../lib/token-rejection.js";
 
+/** ผู้อ่าน log ที่ผ่าน `requireLogReader` — สิ่งที่ `recordLogRead()` ต้องใช้บันทึกการอ่าน */
+export interface LogReader {
+  /** อีเมลจาก `x-log-reader` ตัวพิมพ์เล็ก — ประกาศเอง ไม่ได้พิสูจน์ */
+  reader: string;
+  /** ข้อความจาก `x-log-reason` ที่ถอดแล้ว หรือ null ถ้าไม่ได้ส่ง (บังคับเฉพาะบาง endpoint — `requireReadReason`) */
+  reason: string | null;
+  /** fingerprint ของ `x-log-token` ที่ใช้ — ลง `metadata.token_fp` */
+  tokenFp: string;
+}
+
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
       session?: SessionPayload;
+      logReader?: LogReader;
     }
   }
 }
@@ -177,5 +188,124 @@ export function requireAdminToken(req: Request, res: Response, next: NextFunctio
   }
   setSourceComponent("admin-portal");
   setAdminTokenFp(tokenFingerprint(provided));
+  next();
+}
+
+/** ตัวนับการปฏิเสธ `x-log-token` ของ process นี้ — แยกจากของ admin token (หน้าต่างและงบของใครของมัน) */
+const logTokenRejections = createTokenRejectionRecorder(AuditAction.LOG_TOKEN_REJECTED, AuditSubject.AUDIT_LOG);
+
+/** อีเมล ASCII ธรรมดา — ผู้อ่านพิมพ์เองใน Postman ไม่ต้องรองรับทุกรูปที่ RFC ยอม แค่ต้องไม่ใช่ข้อความอิสระ */
+const READER_EMAIL = /^[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+$/;
+const READER_MAX = 100;
+const REASON_MIN = 10;
+const REASON_MAX = 500;
+/** ชื่อ query ที่ดูเป็นเหตุผล — `?reason=`, `?x-log-reason=`, `?readReason=` … */
+const REASON_IN_QUERY = /reason/i;
+
+function validationError(res: Response, field: string, message: string) {
+  res.status(400).json({ error: "validation", message, fields: { [field]: message } });
+}
+
+/**
+ * ถอด `x-log-reason` — ต้องเป็น UTF-8 ที่ percent-encode แล้ว (`encodeURIComponent`) เพราะ header ของ HTTP เป็น ASCII:
+ * ภาษาไทยที่ส่งดิบมาถึง Node เป็น latin1 ทีละไบต์ อ่านออกมาเป็นขยะ จึงปฏิเสธแทนการเก็บขยะลงบันทึก
+ * คืนข้อความ หรือข้อความของ error ภาษาไทยที่บอกว่าผิดตรงไหน
+ */
+function decodeReason(raw: string): { reason: string } | { error: string } {
+  if (/[^\x20-\x7e]/.test(raw)) {
+    return { error: "x-log-reason ต้อง percent-encode (encodeURIComponent) — ส่งภาษาไทยดิบใน header ไม่ได้" };
+  }
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    return { error: "x-log-reason ถอด percent-encoding ไม่ได้ — ต้องเป็น UTF-8 ที่ผ่าน encodeURIComponent" };
+  }
+  const reason = decoded.trim();
+  if (/[\u0000-\u001f\u007f]/.test(reason)) return { error: "x-log-reason มีอักขระควบคุม (ขึ้นบรรทัดใหม่ ฯลฯ)" };
+  const length = [...reason].length;
+  if (length < REASON_MIN || length > REASON_MAX) {
+    return { error: `x-log-reason ต้องยาว ${REASON_MIN}–${REASON_MAX} ตัวอักษร — บอกว่าอ่านเพื่ออะไร (เช่น เลขเรื่องที่สอบสวน)` };
+  }
+  return { reason };
+}
+
+/**
+ * ด่านของ API อ่าน log (`/api/admin/logs/*`, routes/admin-logs.ts) — plan §6, decision 9
+ *
+ *   1. ไม่ได้ตั้ง `LOG_READ_TOKEN` (หรือ production ตั้งเป็นค่าตัวอย่าง — env.ts) → 503 `log_access_disabled` ไม่เคยเปิดให้
+ *      อ่านโดยไม่มี token และไม่ทำให้บูตไม่ขึ้น
+ *   2. `x-log-token` ผิดหรือไม่ได้ส่ง → 401 และ `LOG_TOKEN_REJECTED` แบบ throttle (lib/token-rejection.ts ตัวเดียวกับของ admin
+ *      token) เทียบด้วย `secretMatches` ใช้เวลาเท่ากันเสมอ
+ *   3. มีชื่อ query ที่ดูเป็นเหตุผล → 400: เหตุผลมักมีชื่อคนที่ถูกสอบสวน และ URL ไปจบใน log ของ proxy/edge ทุกชั้น จึงรับได้
+ *      ทาง header เท่านั้น — ปฏิเสธดัง ๆ ให้คนแก้ Postman ไม่ใช่ทิ้งค่านั้นเงียบ ๆ ซึ่งทำให้คิดว่าส่งถูกแล้ว
+ *   4. `x-log-reader` ต้องเป็นอีเมล ASCII ไม่เกิน 100 ตัว — **ประกาศเอง ไม่ได้พิสูจน์** ใครถือ token ก็ใส่ชื่อใครก็ได้ มันบอกว่า
+ *      ผู้ถือ token *อ้างว่า* เป็นใคร (ตัวที่ผูกกับ token จริงคือ `token_fp`)
+ *   5. `x-log-reason` ถ้าส่งมาต้องถอดได้และยาว 10–500 ตัว — endpoint ที่บังคับให้ส่งใช้ `requireReadReason` ต่ออีกชั้น
+ *
+ * ผ่านแล้วประทับคำขอเป็น `log-api` (source_component ของ `AUDIT_LOG_READ` และ `ERROR_ISSUE_STATUS_CHANGED`) และวาง
+ * `req.logReader` ไว้ให้ route ใช้บันทึกการอ่าน ไม่แตะ Postgres หรือ Mongo — ด่านนี้ยังทำงานเมื่อทั้งสองล่ม
+ */
+export function requireLogReader(req: Request, res: Response, next: NextFunction) {
+  const expected = env.logStore.readToken;
+  if (!expected) {
+    res.status(503).json({
+      error: "log_access_disabled",
+      message: "ยังไม่ได้เปิด API อ่าน log บนระบบนี้ (ไม่ได้ตั้ง LOG_READ_TOKEN)",
+    });
+    return;
+  }
+  const provided = req.header("x-log-token");
+  if (!provided || !secretMatches(provided, expected)) {
+    logTokenRejections.record(req, provided);
+    res.status(401).json({ error: "unauthenticated", message: "x-log-token ไม่ถูกต้อง" });
+    return;
+  }
+
+  const reasonKey = Object.keys(req.query).find((key) => REASON_IN_QUERY.test(key));
+  if (reasonKey !== undefined) {
+    validationError(
+      res,
+      reasonKey,
+      "ห้ามส่งเหตุผลใน URL (URL ถูกเก็บใน log ของ proxy ทุกชั้น) — ส่งใน header x-log-reason แบบ encodeURIComponent",
+    );
+    return;
+  }
+
+  const reader = (req.header("x-log-reader") ?? "").trim().toLowerCase();
+  if (!reader || reader.length > READER_MAX || !READER_EMAIL.test(reader)) {
+    validationError(res, "x-log-reader", `ต้องระบุอีเมลของผู้อ่านใน header x-log-reader (ASCII ไม่เกิน ${READER_MAX} ตัว)`);
+    return;
+  }
+
+  let reason: string | null = null;
+  const rawReason = req.header("x-log-reason");
+  if (rawReason !== undefined && rawReason.trim() !== "") {
+    const decoded = decodeReason(rawReason.trim());
+    if ("error" in decoded) {
+      validationError(res, "x-log-reason", decoded.error);
+      return;
+    }
+    reason = decoded.reason;
+  }
+
+  setSourceComponent("log-api");
+  req.logReader = { reader, reason, tokenFp: tokenFingerprint(provided) };
+  next();
+}
+
+/**
+ * endpoint ที่อ่านประวัติการกระทำของคน (activity · timeline · trace) ต้องมีเหตุผล — ติดตั้งหลัง `requireLogReader`
+ * endpoint ของ error ไม่บังคับ (เนื้อหาเป็นเรื่องของระบบ ไม่ใช่ของคน) แต่ถ้าส่งมาก็ถูกบันทึกเหมือนกัน
+ */
+export function requireReadReason(req: Request, res: Response, next: NextFunction) {
+  if (!req.logReader?.reason) {
+    validationError(
+      res,
+      "x-log-reason",
+      `ต้องระบุเหตุผลที่อ่านใน header x-log-reason (${REASON_MIN}–${REASON_MAX} ตัว แบบ encodeURIComponent)`,
+    );
+    return;
+  }
   next();
 }
