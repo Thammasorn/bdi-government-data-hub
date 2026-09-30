@@ -19,8 +19,10 @@ export async function register(): Promise<void> {
 export const onRequestError: Instrumentation.onRequestError = async (error, request, context) => {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
   const { reportServerError } = await import("./lib/server-error-report");
-  // เอกสารของ Next ให้ await งาน async ในนี้ — มีเพดาน 1 วินาทีอยู่ในตัวแล้ว
-  await reportServerError(error, {
+  // ยิงแล้วไม่รอ (plan §5): Next **รอ** ตัวนี้ก่อนตอบ error ของ route handler (build/templates/app-route.js) — backend ช้าหรือล่ม
+  // ต้องไม่ทำให้คำตอบ 500 ช้าไปอีกวินาที เอกสารของ Next ที่ให้ await เขียนไว้สำหรับ serverless ซึ่ง process ตายหลังตอบ ที่นี่
+  // Next server รันค้างอยู่ (output: "standalone") POST ที่ค้างจึงจบเองภายในเพดาน 1 วินาทีของมัน
+  void reportServerError(error, {
     mechanism: "onRequestError",
     route: {
       path: context.routePath,

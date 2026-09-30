@@ -1460,7 +1460,15 @@ reports `onRequestError` plus the process's unhandled rejections (through
 `backend_unreachable`, which the backend never saw: that one is queued in
 `sessionStorage` (`bdi.pendingErrorReports`, five at most) and sent after the next API call
 that succeeds, so the reference in the toast is findable (Postman G6). Only `location.pathname`
-ever leaves the browser. `INGEST_SERVER_TOKEN` is what marks a report as the Next server's; it
+ever leaves the browser, and a URL inside an error's message or stack loses its query and fragment
+on the way out — in the browser, in the Next server's stdout line, and again in the backend —
+because a frame of an inline script quotes `/activate?token=…` and React's error links quote
+on-screen text in `?args[]=`; the redaction rules only know named keys. The Next server's own
+report keeps Next's `digest` (`extra.digest`), which is all the production global-error page gets
+instead of the message, so G6 lists the server's error for that page's reference as
+`serverErrors`. `onRequestError`, the rejection listener and `uncaughtExceptionMonitor` were
+checked under a production `output: "standalone"` build on 2026-10-01: all three report, and the
+server keeps running. `INGEST_SERVER_TOKEN` is what marks a report as the Next server's; it
 is read at runtime, so it must never become `NEXT_PUBLIC_`. A browser report's fingerprint is
 its own message text, so every distinct message is a new `error_issues` document: the backend
 lets browser reports create at most 100 new issues per process per hour and none while the log
