@@ -1662,6 +1662,32 @@ the worker deletes open browser issues not seen for 30 days.
   probe constraint and a route that wrote before throwing). `scrubText()` in `lib/redact.ts` cuts
   the database detail first, before any other rule. Its other rules are a backstop, not a licence to
   print.
+- **A changed `LOG_HASH_KEY` needs a rebuild of the Mongo copy, and a rebuild is one command.** The
+  `cid#` / `email#` keys in `activity.hashKeys` are HMACs under that key, so after a rotation
+  `x-log-cid` / `x-log-email` find nothing in documents written before it. The worker notices, since
+  `relay_state.hashKeyFp` records the key that built the copy, but it only warns once per process
+  (`log-relay:hash-key-changed`) and does not fix it. A change to the projection (`SCHEMA_VERSION`
+  in `lib/activity-shape.ts`) is the same. Run this as root or `bdi_worker`:
+  `db.relay_state.updateOne({_id: "audit_event"}, {$set: {rebuildRequestedAt: new Date()}})`.
+  Within about 5 s the worker deletes the `source: "audit_event"` documents in chunks. It then clears
+  the cursor, `hashKeyFp`, `schemaVersion` and `caughtUpAt` in one update and refills from the first
+  row. **Don't** use the old two-step (`deleteMany`, then `$unset` the cursor by hand): until the
+  second command lands, the cursor still stands, so an hourly reconcile counts Mongo 0 against
+  Postgres N. It then warns that the relay missed N rows (43,498 on 2026-10-01). **Never delete the
+  whole `relay_state` document**: it also holds the size-ceiling figures and `lastPruneAt`. A rebuild
+  cannot bring back `audit_fallback` or `http` (admin access) documents, which exist only in Mongo
+  and keep their old keys. Rows `seed:demo` has wiped from Postgres are gone from the copy for good.
+  The header of `workers/log-relay.ts` has the whole procedure.
+- **A Mongo that stops answering for a couple of seconds clears the driver's pool, whatever
+  `maxTimeMS` says.** `maxTimeMS` below `socketTimeoutMS` (`MONGO_COMMAND_MAX_MS`) only makes a
+  *slow but live* server cancel its own command. An operation's own socket timeout closes only its
+  connection. What clears the pool is the driver's monitor. Its streaming `hello` waits
+  `connectTimeoutMS` (2 s) past each 10 s heartbeat, so a pause, frozen host or network drop that
+  crosses a heartbeat by more than that interrupts every in-flight command with
+  `PoolClearedOnNetworkError`. Reads retry once. Writes are never retried on the standalone mongod
+  every stack runs, so treat any multi-command Mongo job as one that can stop halfway. Count its
+  progress as it goes, the way prune does (`runPrune` in `workers/log-relay.ts`, reproduced
+  2026-10-01).
 
 
 ## Notion
