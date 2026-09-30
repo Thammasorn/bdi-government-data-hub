@@ -76,7 +76,7 @@ export default function HomePage() {
     return user.removedFromOrganization ? (
       <RemovedFromOrganizationNotice removal={user.removedFromOrganization} />
     ) : (
-      <CreateOrganizationPrompt loading={starting} onCreate={start} />
+      <NoOrganizationNotice />
     );
   }
 
@@ -741,7 +741,7 @@ function StatTiles({ summary }: { summary: ListSummary }) {
  * (บางรายอนุมัติไปแล้วด้วย) หน้านี้จึงบอกแค่ว่าเขาถูกถอดออกจากหน้าที่ไหน ของหน่วยงานไหน
  *
  * **ไม่มีปุ่มสร้างหน่วยงานใหม่** (ตัดสินใจ 2026-09-30) — คนที่ถูกถอดออกต้องรอให้ผู้ดูแลระบบ
- * มอบหน่วยงานให้ก่อน `POST /api/organizations` ปฏิเสธเขาด้วย 403 `removed_from_organization`
+ * มอบหน่วยงานให้ก่อน `POST /api/organizations` ปฏิเสธเขาด้วย 403 `no_organization`
  * เคยมีปุ่มพร้อมคำอธิบายว่ามันสร้างหน่วยงานคนละแห่ง และเคยบอกชื่อคนที่มาแทนกับบอกว่าข้อมูล
  * เดิมยังอยู่ครบ — BDI ให้ตัดทั้งหมดออก เหลือแค่ข้อเท็จจริงว่าถูกถอดออก
  */
@@ -794,14 +794,15 @@ function RemovedFromOrganizationNotice({
   );
 }
 
-function CreateOrganizationPrompt({
-  loading,
-  onCreate,
-}: {
-  loading: boolean;
-  onCreate: () => void;
-}) {
-  // สเปก: "ระบบจะแสดงปุ่มสร้างหน่วยงานตรงกลางหน้าจอ ซึ่งเป็นเมนูเดียวที่ผู้ใช้เห็นและทำได้"
+/**
+ * ผู้ใช้ที่ไม่มีหน่วยงานและไม่เคยถูกถอดออก — บอกให้ติดต่อผู้ดูแลระบบ ไม่มีปุ่มสร้างหน่วยงาน
+ *
+ * เดิมหน้านี้คือ "ยังไม่มีหน่วยงานในระบบ" พร้อมปุ่ม "สร้างหน่วยงาน" ตามสเปกแรกที่ให้ผู้ใช้
+ * เปิดหน่วยงานเอง ตั้งแต่ 2026-09-30 หน่วยงานเกิดจากผู้ดูแลระบบเท่านั้น และผู้ประสานงาน
+ * ทุกคนถูกเชิญมาพร้อมหน่วยงาน (`POST /api/organizations` ตอบ 403 `no_organization` กับคนที่
+ * ไม่มี) ใครมาถึงหน้านี้จึงเป็นบัญชีที่ตั้งค่าไม่ครบ ไม่ใช่คนที่ควรเริ่มลงทะเบียนเอง
+ */
+function NoOrganizationNotice() {
   return (
     <div className="relative mx-auto flex min-h-[calc(100vh-8.5rem)] max-w-2xl items-center justify-center px-4 py-16">
       <DotDecoration className="right-0 top-4 h-52 w-52 text-navy-500" />
@@ -824,16 +825,11 @@ function CreateOrganizationPrompt({
         </div>
 
         <h1 className="mt-7 text-[28px] font-semibold text-navy-800 sm:text-[30px]">
-          ยังไม่มีหน่วยงานในระบบ
+          บัญชีของคุณยังไม่ได้สังกัดหน่วยงาน
         </h1>
         <p className="mx-auto mt-3 max-w-md text-[15px] leading-relaxed text-ink-muted">
-          เริ่มต้นด้วยการสร้างหน่วยงานของคุณ เพื่อเข้าใช้งานแพลตฟอร์มข้อมูลภาครัฐ
-          ระบบจะพาคุณกรอกข้อมูลทีละขั้นและสร้างแบบฟอร์มให้อัตโนมัติ
+          กรุณาติดต่อผู้ดูแลระบบ BDI เพื่อมอบหมายหน่วยงานให้บัญชีของคุณ
         </p>
-
-        <Button size="lg" className="mt-8" loading={loading} onClick={onCreate}>
-          สร้างหน่วยงาน
-        </Button>
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import {
   OtpPurpose,
+  RoleAssignmentStatus,
   SessionRevokeReason,
   UserAccountStatus,
   type IntegrationOperation,
@@ -22,9 +23,9 @@ import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
 import {
   activeRoleCodes,
   completeActivation,
-  findReplacementRemoval,
   findUsableActivationKey,
   revokeActivationKey,
+  ROLE_REPLACED_REASON,
   RoleOccupiedError,
   roleSeatTaken,
   usableActivationKeyById,
@@ -1061,7 +1062,22 @@ async function removedFromOrganization(userAccountId: string, organizationId: st
   // ยังสังกัดหน่วยงานอยู่ (หรือย้ายไปที่ใหม่แล้ว) ก็ไม่มีอะไรต้องอธิบาย
   if (organizationId) return null;
 
-  const removal = await findReplacementRemoval(userAccountId);
+  const removal = await prisma.userRoleAssignment.findFirst({
+    where: {
+      userAccountId,
+      status: RoleAssignmentStatus.REVOKED,
+      revocationReason: ROLE_REPLACED_REASON,
+      organizationId: { not: null },
+      role: { code: { in: [...ORGANIZATION_SCOPED_ROLES] } },
+    },
+    orderBy: { revokedAt: "desc" },
+    select: {
+      revokedAt: true,
+      organizationId: true,
+      organization: { select: { nameTh: true } },
+      role: { select: { code: true } },
+    },
+  });
   if (!removal) return null;
 
   /**

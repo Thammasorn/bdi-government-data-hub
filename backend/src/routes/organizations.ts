@@ -56,7 +56,6 @@ import {
   activatedApprover,
   activeAssignmentWhere,
   assignRole,
-  findReplacementRemoval,
   issueActivationKey,
   revokeRoleAssignments,
   roleIdByCode,
@@ -96,7 +95,7 @@ import {
   organizationDraftSchema as draftSchema,
   toRequestData,
 } from "../lib/organization-form.js";
-import { nextOrganizationCode, nextOrganizationRequestNumber } from "../lib/request-number.js";
+import { nextOrganizationRequestNumber } from "../lib/request-number.js";
 import { buildJourneyProgress, summariseMany } from "../lib/journey-steps.js";
 import { REVIEW_TASK_TYPE_LABELS, ROLE_LABELS, isBdiStaff } from "../lib/roles.js";
 import {
@@ -943,6 +942,31 @@ organizationRouter.post("/", async (req, res) => {
   }
 
   /**
+   * คำขอจดทะเบียนเปิดได้เฉพาะ **ผู้ประสานงานของหน่วยงาน (ORGANIZATION_USER) ที่มีหน่วยงานแล้ว**
+   * (ตัดสินใจ 2026-09-30) และเปิดให้หน่วยงานของตัวเองเท่านั้น — ไม่มีใครสร้างหน่วยงานใหม่ผ่าน
+   * เส้นทางนี้อีกแล้ว
+   *
+   * หน่วยงานเกิดจากผู้ดูแลระบบเท่านั้น (`POST /api/admin/organizations`) แล้วเชิญผู้ประสานงาน
+   * พร้อมหน่วยงาน (`POST /api/admin/invitations` บังคับ organizationId ให้ role ระดับหน่วยงาน)
+   * ส่วนผู้มีอำนาจกระทำการแทนถูกเชิญผ่านคำขอจดทะเบียนของผู้ประสานงาน และมีหน้าที่ลงนาม
+   * ไม่ใช่กรอกคำขอ บัญชีฝั่ง BDI ก็ไม่มีเหตุต้องมีหน่วยงานของตัวเอง
+   *
+   * เดิมผู้ใช้ที่ไม่มีหน่วยงานได้หน่วยงานใหม่ของตัวเองจากเส้นทางนี้ ทางนั้นคือทางที่บัญชีที่ถูก
+   * แทนที่เคยเปิดหน่วยงานซ้ำทับของเดิมที่อนุมัติไปแล้ว (main 2026-08-24 — ดู
+   * `removedFromOrganization()` ใน routes/auth.ts) และคำเชิญทุกแบบในวันนี้มีหน่วยงานติดมา
+   * อยู่แล้ว จึงไม่เหลือใครที่ควรใช้ทางนั้น
+   */
+  if (!session.organizationId || !session.roles.includes(ROLE_CODES.ORGANIZATION_USER)) {
+    res.status(403).json({
+      error: "no_organization",
+      message:
+        "บัญชีของคุณยังไม่ได้รับมอบหมายให้ดูแลหน่วยงานใด จึงยื่นคำขอจดทะเบียนหน่วยงานไม่ได้ — กรุณาติดต่อผู้ดูแลระบบ BDI",
+    });
+    return;
+  }
+  const organizationId = session.organizationId;
+
+  /**
    * หน่วยงานที่เปิดใช้งานแล้วยื่นคำขอจดทะเบียนอีกไม่ได้ (ตัดสินใจ 2026-09-13 — การ์ด
    * "แก้เรื่อง invite org user เพิ่ม": หนึ่งหน่วยงาน หนึ่งผู้ดำเนินการ หนึ่งผู้มีอำนาจอนุมัติ)
    *
@@ -953,43 +977,19 @@ organizationRouter.post("/", async (req, res) => {
    * (ระงับ/ยุติคนเดิม แล้วเชิญคนใหม่) หน้าแรกไม่แสดงปุ่มนี้ให้หน่วยงานที่ ACTIVE อยู่แล้ว
    * ตรงนี้คือกฎจริงสำหรับคนที่ยิง API ตรง
    */
-  /**
-   * ผู้ใช้ที่ถูกถอดออกจากหน่วยงานเพราะผู้ดูแลระบบมอบหน้าที่ให้คนใหม่ สร้างหน่วยงานใหม่เองไม่ได้
-   * (ตัดสินใจ 2026-09-30) — ต้องให้ผู้ดูแลระบบมอบหน่วยงานให้ก่อน
-   *
-   * เดิมหน้าแรกของเขามีปุ่ม "สร้างหน่วยงานใหม่" พร้อมคำอธิบายว่ามันสร้างหน่วยงานคนละแห่ง
-   * แต่ทางนี้คือทางเดียวกับที่บัญชีที่ถูกแทนที่เคยเปิดหน่วยงานซ้ำทับของเดิมที่อนุมัติไปแล้ว
-   * (main 2026-08-24 — ดู `removedFromOrganization()` ใน routes/auth.ts) หน้าจอเอาปุ่มออก
-   * แล้ว ตรงนี้คือกฎจริงสำหรับคนที่ยิง API ตรง
-   *
-   * ดูเฉพาะคนที่ไม่เหลือบทบาทอะไรเลย: ถ้าผู้ดูแลระบบเชิญเขากลับมาใหม่ภายหลัง เขาจะถือบทบาท
-   * ที่ใช้งานได้อีกครั้ง และประวัติการถูกถอดครั้งก่อนต้องไม่ขวางการลงทะเบียนตามคำเชิญนั้น
-   */
-  if (!session.organizationId && session.roles.length === 0) {
-    if (await findReplacementRemoval(session.sub)) {
-      res.status(403).json({
-        error: "removed_from_organization",
-        message:
-          "บัญชีของคุณถูกถอดออกจากหน่วยงานแล้ว จึงสร้างหน่วยงานใหม่เองไม่ได้ — กรุณาติดต่อผู้ดูแลระบบ BDI",
-      });
-      return;
-    }
+  const organization = await prisma.organization.findUnique({ where: { id: organizationId } });
+  if (!organization) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานของคุณ" });
+    return;
   }
-
-  if (session.organizationId) {
-    const own = await prisma.organization.findUnique({
-      where: { id: session.organizationId },
-      select: { status: true },
+  if (organization.status === OrganizationStatus.ACTIVE) {
+    res.status(409).json({
+      error: "organization_active",
+      message:
+        "หน่วยงานของคุณเปิดใช้งานแล้ว จึงไม่ต้องยื่นคำขอจดทะเบียนอีก — " +
+        "หากต้องการเปลี่ยนผู้ดำเนินการหรือผู้มีอำนาจอนุมัติของหน่วยงาน กรุณาติดต่อผู้ประสานงานของ BDI",
     });
-    if (own?.status === OrganizationStatus.ACTIVE) {
-      res.status(409).json({
-        error: "organization_active",
-        message:
-          "หน่วยงานของคุณเปิดใช้งานแล้ว จึงไม่ต้องยื่นคำขอจดทะเบียนอีก — " +
-          "หากต้องการเปลี่ยนผู้ดำเนินการหรือผู้มีอำนาจอนุมัติของหน่วยงาน กรุณาติดต่อผู้ประสานงานของ BDI",
-      });
-      return;
-    }
+    return;
   }
 
   /**
@@ -1002,10 +1002,7 @@ organizationRouter.post("/", async (req, res) => {
   const existing = await prisma.organizationRegistrationRequest.findFirst({
     where: {
       status: { notIn: [RequestStatus.APPROVED, RequestStatus.REJECTED, RequestStatus.CANCELLED] },
-      OR: [
-        { createdBy: session.sub },
-        ...(session.organizationId ? [{ organizationId: session.organizationId }] : []),
-      ],
+      OR: [{ createdBy: session.sub }, { organizationId }],
     },
   });
   if (existing) {
@@ -1023,144 +1020,60 @@ organizationRouter.post("/", async (req, res) => {
   const snapshot = await toRequestData(parsed.data);
 
   /**
-   * ผู้ใช้ที่มาจากคำเชิญมีหน่วยงานอยู่แล้ว — เปิดคำขอให้หน่วยงานนั้น ไม่ใช่สร้างหน่วยงานใหม่
-   * แล้วเติมฟอร์มด้วยสิ่งที่ admin บันทึกไว้ (การ์ด "Admin Prefill Organization Form" ข้อ 4)
+   * เปิดคำขอให้หน่วยงานของผู้ใช้ แล้วเติมฟอร์มด้วยสิ่งที่ admin บันทึกไว้
+   * (การ์ด "Admin Prefill Organization Form" ข้อ 4)
    *
    * คัดลอกตอนนี้ ไม่ใช่ตอนออกคำเชิญ เพื่อให้ได้ค่าล่าสุดที่ admin แก้ไว้จนถึงวินาทีนี้
    */
-  if (session.organizationId) {
-    const organization = await prisma.organization.findUnique({
-      where: { id: session.organizationId },
-    });
-    if (!organization) {
-      res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานของคุณ" });
-      return;
-    }
-
-    const codeEdit = organizationCodeEdit(parsed.data, organization.organizationCode);
-    if (codeEdit) {
-      res.status(400).json({ error: "validation", fields: { organizationCode: codeEdit } });
-      return;
-    }
-
-    const nameEdit = organizationNameEdit(
-      parsed.data,
-      systemOrganizationName({ createdBy: session.sub, organization }),
-    );
-    if (nameEdit) {
-      res.status(400).json({ error: "validation", fields: { name: nameEdit } });
-      return;
-    }
-
-    const account = await prisma.userAccount.findUnique({ where: { id: session.sub } });
-    const prefilled = await prisma.organizationRegistrationRequest.create({
-      data: {
-        requestNumber: await nextOrganizationRequestNumber(prisma),
-        organizationId: organization.id,
-        status: RequestStatus.DRAFT,
-        ...prefillFromOrganization(organization),
-        userCid: account?.cid ?? undefined,
-        // ค่าที่ส่งมากับ body (ถ้ามี) ชนะค่าที่คัดลอกมา
-        ...providedOnly(snapshot),
-        /**
-         * ...ยกเว้นตัวตนของผู้กรอก ซึ่งเป็นของบัญชีที่ ThaID ยืนยันมาแล้ว จึงมาทีหลังสุด
-         * เพื่อทับค่าจาก body — นี่คือจุดที่ "ห้ามผู้ใช้แก้" ถูกบังคับ ไม่ใช่ `disabled`
-         * บนหน้าเว็บ ซึ่งยิง API ตรงข้ามได้เสมอ
-         */
-        ...contactFromAccount(account),
-        createdBy: session.sub,
-        updatedBy: session.sub,
-      },
-      include: { organization: true },
-    });
-
-    await logAudit({
-      action: AuditAction.ORGANIZATION_UPDATED,
-      subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
-      subjectId: prefilled.id,
-      organizationId: organization.id,
-      metadata: {
-        prefilled_from: "ADMIN_ORGANIZATION",
-        organization_code: organization.organizationCode,
-      },
-    });
-
-    res.status(201).json({ organization: await toApiShape(prefilled) });
+  const codeEdit = organizationCodeEdit(parsed.data, organization.organizationCode);
+  if (codeEdit) {
+    res.status(400).json({ error: "validation", fields: { organizationCode: codeEdit } });
     return;
   }
 
-  // หน่วยงานใหม่ยังไม่มีรหัส — รหัสจะออกโดย nextOrganizationCode() ข้างล่าง
-  // ค่าที่ส่งมากับ body จึงเป็นการตั้งรหัสเอง ซึ่งไม่ใช่สิ่งที่ฟอร์มทำได้
-  const newCodeEdit = organizationCodeEdit(parsed.data, null);
-  if (newCodeEdit) {
-    res.status(400).json({ error: "validation", fields: { organizationCode: newCodeEdit } });
+  const nameEdit = organizationNameEdit(
+    parsed.data,
+    systemOrganizationName({ createdBy: session.sub, organization }),
+  );
+  if (nameEdit) {
+    res.status(400).json({ error: "validation", fields: { name: nameEdit } });
     return;
   }
 
-  /**
-   * หน่วยงานที่ผู้กรอกเปิดเองก็ต้องได้ส่วนที่ 3 มาจากบัญชีเหมือนกัน — เดิมสาขานี้ไม่เติมอะไร
-   * เลย ผู้กรอกจึงเจอช่องอีเมล/เบอร์โทรที่ปิดไว้และว่างเปล่า แก้เองก็ไม่ได้ นำส่งก็ไม่ผ่าน
-   */
-  const ownerAccount = await prisma.userAccount.findUnique({
-    where: { id: session.sub },
-    select: CONTACT_ACCOUNT_SELECT,
-  });
-
-  /** คนที่เสีย role ไปเพราะ assignRole ด้านล่าง — ประกาศหลัง transaction commit */
-  let replacedHolders: RevokedAssignment[] = [];
-
-  const created = await prisma.$transaction(async (tx) => {
-    // หน่วยงานถูกสร้างพร้อมคำขอ แต่ยังเป็น PENDING_REGISTRATION จนกว่าจะอนุมัติครบ
-    const organization = await tx.organization.create({
-      data: {
-        organizationCode: await nextOrganizationCode(tx),
-        organizationType: parsed.data.organizationType ?? null,
-        nameTh: parsed.data.name || PLACEHOLDER_ORGANIZATION_NAME,
-        nameEn: parsed.data.nameEn ?? null,
-        status: OrganizationStatus.PENDING_REGISTRATION,
-        createdBy: session.sub,
-        updatedBy: session.sub,
-      },
-    });
-
-    const request = await tx.organizationRegistrationRequest.create({
-      data: {
-        requestNumber: await nextOrganizationRequestNumber(tx),
-        organizationId: organization.id,
-        status: RequestStatus.DRAFT,
-        ...snapshot,
-        ...contactFromAccount(ownerAccount),
-        organizationCode: organization.organizationCode,
-        createdBy: session.sub,
-        updatedBy: session.sub,
-      },
-      include: { organization: true },
-    });
-
-    // ผู้สร้างกลายเป็น ORGANIZATION_USER ของหน่วยงานนี้
-    const { replaced } = await assignRole(tx, {
-      userAccountId: session.sub,
-      roleCode: ROLE_CODES.ORGANIZATION_USER,
+  const account = await prisma.userAccount.findUnique({ where: { id: session.sub } });
+  const prefilled = await prisma.organizationRegistrationRequest.create({
+    data: {
+      requestNumber: await nextOrganizationRequestNumber(prisma),
       organizationId: organization.id,
-      actorId: session.sub,
-    });
-    replacedHolders = replaced;
-
-    return request;
+      status: RequestStatus.DRAFT,
+      ...prefillFromOrganization(organization),
+      userCid: account?.cid ?? undefined,
+      // ค่าที่ส่งมากับ body (ถ้ามี) ชนะค่าที่คัดลอกมา
+      ...providedOnly(snapshot),
+      /**
+       * ...ยกเว้นตัวตนของผู้กรอก ซึ่งเป็นของบัญชีที่ ThaID ยืนยันมาแล้ว จึงมาทีหลังสุด
+       * เพื่อทับค่าจาก body — นี่คือจุดที่ "ห้ามผู้ใช้แก้" ถูกบังคับ ไม่ใช่ `disabled`
+       * บนหน้าเว็บ ซึ่งยิง API ตรงข้ามได้เสมอ
+       */
+      ...contactFromAccount(account),
+      createdBy: session.sub,
+      updatedBy: session.sub,
+    },
+    include: { organization: true },
   });
-
-  // หลัง commit เสมอ — audit กับอีเมลเขียนผ่าน prisma ตัวหลัก ไม่ใช่ tx ข้างบน
-  await announceRoleReplacement(replacedHolders);
 
   await logAudit({
-    action: AuditAction.ORGANIZATION_CREATED,
+    action: AuditAction.ORGANIZATION_UPDATED,
     subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
-    subjectId: created.id,
-    organizationId: created.organizationId,
-    after: { requestNumber: created.requestNumber, name: created.organizationNameTh },
+    subjectId: prefilled.id,
+    organizationId: organization.id,
+    metadata: {
+      prefilled_from: "ADMIN_ORGANIZATION",
+      organization_code: organization.organizationCode,
+    },
   });
 
-  res.status(201).json({ organization: await toApiShape(created) });
+  res.status(201).json({ organization: await toApiShape(prefilled) });
 });
 
 // ---------------------------------------------------------------- detail
