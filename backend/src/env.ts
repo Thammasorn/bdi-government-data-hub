@@ -313,9 +313,10 @@ export const env = {
     db: optional("MONGODB_DB", "bdi_logs"),
     /**
      * เพดานขนาดของ log store (MB ที่ข้อมูลกับ index ใช้อยู่จริงจาก dbStats — ไม่นับพื้นที่ว่างที่ WiredTiger จองไว้
-     * ใช้ซ้ำหลังลบ ซึ่งคืนให้ดิสก์ได้ด้วย `compact` เท่านั้น) มีเพดานเพราะ /hdd1tb ที่ Mongo อยู่คือ
-     * ดิสก์เดียวกับ Postgres ของ production · 5 GB บน production 512 MB ที่อื่น · บน managed Mongo โควตาของบริการ
-     * เป็นตัวคุมอีกชั้น
+     * ใช้ซ้ำหลังลบ ซึ่งคืนให้ดิสก์ได้ด้วย `compact` เท่านั้น บริการที่ไม่บอกพื้นที่ว่างเทียบขนาดที่จองไว้แทน) มีเพดานเพราะ
+     * /hdd1tb ที่ Mongo อยู่คือดิสก์เดียวกับ Postgres ของ production แต่มันคุมไบต์ที่ใช้อยู่ ไม่ใช่ขนาดบนดิสก์: พื้นที่ว่าง
+     * ของ collection หนึ่งไม่ถูกอีก collection ใช้ ขนาดบนดิสก์จึงเกินค่านี้ได้ (`checkQuota` ใน workers/log-upkeep.ts)
+     * · 5 GB บน production 512 MB ที่อื่น · บน managed Mongo โควตาของบริการเป็นตัวคุมอีกชั้น
      *
      * worker เทียบค่านี้ทุกชั่วโมงและตอนบูต (workers/log-upkeep.ts) เกินแล้วตั้งธง `overQuota` ใน relay_state ซึ่ง
      * backend กับ worker อ่านเป็นสถานะ `over_quota` (lib/log-store.ts) และระหว่างนั้นเก็บแค่ตัวนับของ issue
