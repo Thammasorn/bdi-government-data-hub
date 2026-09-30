@@ -88,6 +88,34 @@ export class RoleOccupiedError extends Error {
   }
 }
 
+/**
+ * assignment ล่าสุดที่ผู้ใช้เสียไปเพราะมีคนมารับหน้าที่แทน (`ROLE_REPLACED_REASON`)
+ * ในหน่วยงานใดหน่วยงานหนึ่ง — null ถ้าไม่เคยถูกถอดแบบนั้น
+ *
+ * ใช้สองที่ และต้องเห็นตรงกัน: `removedFromOrganization()` ใน routes/auth.ts เอาไปอธิบาย
+ * ให้ผู้ใช้ฟังบนหน้าแรก ส่วน `POST /api/organizations` เอาไปปฏิเสธการสร้างหน่วยงานใหม่
+ * ถ้าสองที่นี้ถามคนละคำถาม หน้าจอจะซ่อนปุ่มจากคนที่ API ยังยอมให้สร้าง หรือกลับกัน
+ */
+export function findReplacementRemoval(userAccountId: string) {
+  return prisma.userRoleAssignment.findFirst({
+    where: {
+      userAccountId,
+      status: RoleAssignmentStatus.REVOKED,
+      revocationReason: ROLE_REPLACED_REASON,
+      organizationId: { not: null },
+      role: { code: { in: [...ORGANIZATION_SCOPED_ROLES] } },
+    },
+    orderBy: { revokedAt: "desc" },
+    select: {
+      revokedAt: true,
+      organizationId: true,
+      roleId: true,
+      organization: { select: { nameTh: true } },
+      role: { select: { code: true } },
+    },
+  });
+}
+
 /** เงื่อนไข "assignment ใช้งานได้" ตามที่ sheet `user_role_assignment` เขียนไว้ */
 export function activeAssignmentWhere() {
   return {

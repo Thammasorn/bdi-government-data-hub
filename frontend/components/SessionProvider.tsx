@@ -33,7 +33,6 @@ export interface SessionUser {
     role: string;
     roleLabel: string;
     removedAt: string | null;
-    replacedBy: string | null;
   } | null;
 }
 

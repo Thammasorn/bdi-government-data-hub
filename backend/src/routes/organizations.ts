@@ -56,6 +56,7 @@ import {
   activatedApprover,
   activeAssignmentWhere,
   assignRole,
+  findReplacementRemoval,
   issueActivationKey,
   revokeRoleAssignments,
   roleIdByCode,
@@ -952,6 +953,29 @@ organizationRouter.post("/", async (req, res) => {
    * (ระงับ/ยุติคนเดิม แล้วเชิญคนใหม่) หน้าแรกไม่แสดงปุ่มนี้ให้หน่วยงานที่ ACTIVE อยู่แล้ว
    * ตรงนี้คือกฎจริงสำหรับคนที่ยิง API ตรง
    */
+  /**
+   * ผู้ใช้ที่ถูกถอดออกจากหน่วยงานเพราะผู้ดูแลระบบมอบหน้าที่ให้คนใหม่ สร้างหน่วยงานใหม่เองไม่ได้
+   * (ตัดสินใจ 2026-09-30) — ต้องให้ผู้ดูแลระบบมอบหน่วยงานให้ก่อน
+   *
+   * เดิมหน้าแรกของเขามีปุ่ม "สร้างหน่วยงานใหม่" พร้อมคำอธิบายว่ามันสร้างหน่วยงานคนละแห่ง
+   * แต่ทางนี้คือทางเดียวกับที่บัญชีที่ถูกแทนที่เคยเปิดหน่วยงานซ้ำทับของเดิมที่อนุมัติไปแล้ว
+   * (main 2026-08-24 — ดู `removedFromOrganization()` ใน routes/auth.ts) หน้าจอเอาปุ่มออก
+   * แล้ว ตรงนี้คือกฎจริงสำหรับคนที่ยิง API ตรง
+   *
+   * ดูเฉพาะคนที่ไม่เหลือบทบาทอะไรเลย: ถ้าผู้ดูแลระบบเชิญเขากลับมาใหม่ภายหลัง เขาจะถือบทบาท
+   * ที่ใช้งานได้อีกครั้ง และประวัติการถูกถอดครั้งก่อนต้องไม่ขวางการลงทะเบียนตามคำเชิญนั้น
+   */
+  if (!session.organizationId && session.roles.length === 0) {
+    if (await findReplacementRemoval(session.sub)) {
+      res.status(403).json({
+        error: "removed_from_organization",
+        message:
+          "บัญชีของคุณถูกถอดออกจากหน่วยงานแล้ว จึงสร้างหน่วยงานใหม่เองไม่ได้ — กรุณาติดต่อผู้ดูแลระบบ BDI",
+      });
+      return;
+    }
+  }
+
   if (session.organizationId) {
     const own = await prisma.organization.findUnique({
       where: { id: session.organizationId },

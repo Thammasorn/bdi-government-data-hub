@@ -3,14 +3,13 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import {
   OtpPurpose,
-  RoleAssignmentStatus,
   SessionRevokeReason,
   UserAccountStatus,
   type IntegrationOperation,
 } from "@prisma/client";
 
 import { prisma } from "../db.js";
-import { NAME_FIELDS, fullNameTh } from "../lib/person-name.js";
+import { fullNameTh } from "../lib/person-name.js";
 import { env } from "../env.js";
 import {
   SESSION_COOKIE,
@@ -21,12 +20,11 @@ import {
 } from "../lib/auth.js";
 import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
 import {
-  activeAssignmentWhere,
   activeRoleCodes,
   completeActivation,
+  findReplacementRemoval,
   findUsableActivationKey,
   revokeActivationKey,
-  ROLE_REPLACED_REASON,
   RoleOccupiedError,
   roleSeatTaken,
   usableActivationKeyById,
@@ -1063,46 +1061,18 @@ async function removedFromOrganization(userAccountId: string, organizationId: st
   // ยังสังกัดหน่วยงานอยู่ (หรือย้ายไปที่ใหม่แล้ว) ก็ไม่มีอะไรต้องอธิบาย
   if (organizationId) return null;
 
-  const removal = await prisma.userRoleAssignment.findFirst({
-    where: {
-      userAccountId,
-      status: RoleAssignmentStatus.REVOKED,
-      revocationReason: ROLE_REPLACED_REASON,
-      organizationId: { not: null },
-      role: { code: { in: [...ORGANIZATION_SCOPED_ROLES] } },
-    },
-    orderBy: { revokedAt: "desc" },
-    select: {
-      revokedAt: true,
-      organizationId: true,
-      roleId: true,
-      organization: { select: { nameTh: true } },
-      role: { select: { code: true } },
-    },
-  });
+  const removal = await findReplacementRemoval(userAccountId);
   if (!removal) return null;
 
   /**
-   * ใครมารับหน้าที่แทน — อ่านจากคนที่ถือ role เดียวกันในหน่วยงานนั้น **อยู่ตอนนี้**
-   * ไม่ใช่จาก `revoked_by` ซึ่งเป็นแค่ actor ของ transaction นั้น และไม่ได้แปลว่าเป็น
-   * คนที่มาแทนเสมอไป ถ้าหาไม่เจอก็ปล่อยเป็น null — ข้อความยังอ่านรู้เรื่องโดยไม่มีชื่อ
+   * ไม่บอกว่าใครมารับหน้าที่แทนอีกแล้ว (`replacedBy` เดิม) — BDI ให้หน้าจอบอกแค่ว่าถูกถอดออก
+   * (2026-09-30) ชื่อของคนใหม่ไม่ใช่เรื่องที่คนที่ถูกถอดออกต้องรู้
    */
-  const successor = await prisma.userRoleAssignment.findFirst({
-    where: {
-      organizationId: removal.organizationId,
-      roleId: removal.roleId,
-      ...activeAssignmentWhere(),
-    },
-    orderBy: { effectiveFrom: "desc" },
-    select: { userAccount: { select: NAME_FIELDS } },
-  });
-
   return {
     organizationName: removal.organization?.nameTh ?? null,
     role: removal.role.code,
     roleLabel: ROLE_LABELS[removal.role.code as RoleCode] ?? removal.role.code,
     removedAt: removal.revokedAt,
-    replacedBy: fullNameTh(successor?.userAccount) || null,
   };
 }
 
