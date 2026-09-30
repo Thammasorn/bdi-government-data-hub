@@ -22,6 +22,12 @@
  *   - status, เวลาที่ใช้, IP และ user agent (กฎเดียวกับ `audit_event`), fingerprint ของ token ทั้งที่ผ่านและไม่ผ่าน
  *   - ไม่มี body ไม่มี header อื่น — การเปลี่ยนแปลงที่ body สั่งอยู่ใน `audit_event` แล้วพร้อม diff
  *
+ * **ติดตั้งก่อนตัวอ่าน body** (index.ts): คำขอที่ body อ่านไม่ออก ใหญ่เกิน หรือ encoding ที่ไม่รู้จัก (400 `validation`, 413, 415
+ * จาก `parseJsonBody`) ไม่ถึง router ของ admin เลย เดิมตัวนี้ติดตั้งหลังตัวอ่าน คำขอพวกนั้นจึงไม่มีบันทึกที่ไหนทั้งสิ้น ทั้งที่ plan
+ * step 8 ว่าบันทึก "ทุก" การเรียก (ตรวจขั้น 8 แบบค้านรอบสอง, 2026-10-01) — ตอนนี้ได้บันทึกพร้อม `metadata.token_checked: false`
+ * เพราะ `requireAdminToken` ไม่ได้ตรวจ token ของคำขอนั้น (`token_accepted: false` ของมันไม่ได้แปลว่า token ผิด) และไม่มีแถว
+ * `ADMIN_TOKEN_REJECTED` ใน Postgres ด้วยเหตุเดียวกัน: ไม่มีใครตัดสิน token นั้น ไม่มีโค้ดของ admin วิ่งและไม่มีข้อมูลออกไป
+ *
  * ไม่บันทึก `/api/admin/logs*` — API อ่าน log บันทึกตัวเองเป็น `AUDIT_LOG_READ` อยู่แล้ว (สองบันทึกต่อการอ่านหนึ่งครั้งคือเสียงรบกวน)
  * เทียบกับ path ดิบแบบไม่สนตัวพิมพ์ แบบเดียวกับที่ Express ส่งคำขอไปหา router ของ log: `/API/Admin/LOGS/x` ถึง router ของ log
  * จึงไม่ถูกบันทึกที่นี่ ส่วน `/api/admin/%6Cogs` ไม่ถึง (Express ไม่ถอด `%xx` ก่อนเทียบ mount path) จึงถูกบันทึกเป็นการเรียก admin
@@ -105,8 +111,8 @@ export function adminAccessStats(): { recorded: number; suppressed: number; notQ
 }
 
 /**
- * middleware — ติดตั้งด้วย `app.use("/api/admin", recordAdminAccess)` ก่อน router ของ admin ทุกตัว (index.ts) ไม่ throw
- * ไม่ await ไม่เปลี่ยนคำตอบ
+ * middleware — ติดตั้งด้วย `app.use("/api/admin", recordAdminAccess)` หลัง `correlationMiddleware` ก่อนตัวอ่าน body และ router ของ
+ * admin ทุกตัว (index.ts) ไม่ throw ไม่ await ไม่เปลี่ยนคำตอบ
  */
 export function recordAdminAccess(req: Request, res: Response, next: NextFunction): void {
   const ctx = currentContext();
@@ -156,6 +162,9 @@ function write(req: Request, res: Response, ctx: RequestContext, provided: strin
   const finished = res.writableFinished;
   const status = finished ? res.statusCode : null;
   const route = ctx.route;
+  // `requireAdminToken` ตัดสิน token นี้แล้วหรือยัง — ผ่าน (fingerprint อยู่ในบริบท) หรือไม่ผ่าน (401 มีที่มาทางเดียวใต้ /api/admin
+  // คือ guard นั้น) ที่เหลือคือคำขอที่ตัวอ่าน body ปฏิเสธก่อนถึง router (หัวไฟล์ "ติดตั้งก่อนตัวอ่าน body") หรือที่ตัดสายระหว่างส่ง body
+  const checked = accepted || status === 401;
   const target = requestTarget(req.originalUrl);
   const hashKey = env.logStore.hashKey;
   const hashKeys = new Set<string>();
@@ -213,6 +222,7 @@ function write(req: Request, res: Response, ctx: RequestContext, provided: strin
       ...(Object.keys(query).length > 0 ? { query } : {}),
       token_present: Boolean(provided),
       token_accepted: accepted,
+      ...(checked ? {} : { token_checked: false }),
       ...(finished ? {} : { aborted: true }),
       ...(suppressed > 0 ? { suppressed_before: suppressed } : {}),
     },

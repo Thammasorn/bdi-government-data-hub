@@ -152,6 +152,14 @@ app.use(cors({ origin: env.corsOrigins, credentials: true, exposedHeaders: ["x-c
 app.use(correlationMiddleware);
 app.use(referenceOnServerErrors);
 /**
+ * บันทึกการเรียก /api/admin* ทุกครั้ง รวมการอ่าน (lib/admin-access.ts — Mongo อย่างเดียว ไม่มีคำขอไหนรอ) ต้องมาหลัง
+ * `correlationMiddleware` (จับบริบทของคำขอไว้ตอนผูก listener) และ**ก่อน `parseJsonBody`**: body ที่อ่านไม่ออก ใหญ่เกิน หรือ encoding
+ * ที่ไม่รู้จัก ตอบ 400/413/415 จากตัวอ่านโดยไม่ถึง router เดิมตัวนี้อยู่หลังตัวอ่าน คำขอพวกนั้นจึงไม่มีบันทึกเลย (ตรวจขั้น 8
+ * แบบค้านรอบสอง, 2026-10-01) และก่อน router ของ admin ทุกตัว: ผูก listener ไว้ก่อน `requireAdminToken` ตอบ 401 ข้าม
+ * `/api/admin/logs*` เอง (บันทึกตัวเองเป็น AUDIT_LOG_READ)
+ */
+app.use("/api/admin", recordAdminAccess);
+/**
  * รายงาน error จากเบราว์เซอร์และ Next server — ก่อน `parseJsonBody` เพราะมีตัวอ่าน body ของตัวเอง (`text/plain` ของ
  * sendBeacon, เพดาน 16 KB) และตอบ 204 เสมอ แม้ body จะอ่านไม่ออก (routes/client-errors.ts)
  */
@@ -166,11 +174,6 @@ app.get("/", (_req, res) => {
 
 app.use("/health", healthRouter);
 app.use("/api/auth", authRouter);
-/**
- * บันทึกการเรียก /api/admin* ทุกครั้ง รวมการอ่าน (lib/admin-access.ts — Mongo อย่างเดียว ไม่มีคำขอไหนรอ) ต้องมาก่อน router ของ
- * admin ทุกตัว: ผูก listener ไว้ก่อน `requireAdminToken` ตอบ 401 ข้าม `/api/admin/logs*` เอง (บันทึกตัวเองเป็น AUDIT_LOG_READ)
- */
-app.use("/api/admin", recordAdminAccess);
 /**
  * API อ่าน log — token ของตัวเอง (`x-log-token`) ไม่ใช่ admin token และมี 404 ของตัวเองท้าย router: ต้องมาก่อน adminRouter
  * ที่จับ /api/admin ทั้งก้อน ไม่งั้น path ที่พิมพ์ผิดใต้ /api/admin/logs ไปเจอ requireAdminToken แล้วได้แถว

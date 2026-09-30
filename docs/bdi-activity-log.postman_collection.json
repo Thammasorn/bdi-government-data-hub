@@ -481,7 +481,7 @@
             }
           ]
         },
-        "description": "ทุกแถวที่มาทาง `x-admin-token` ใน 7 วันล่าสุด (`from` คำนวณให้ใน pre-request script) — `tokenFps` บอกว่าใช้ token ใบไหน เทียบกับ fingerprint ของ token ปัจจุบันได้ ช่วงยาวกว่านี้แก้ `from` เอง · ตั้งแต่ขั้น 8 รวมบันทึกการเรียก admin API ทุกครั้ง การอ่านด้วย (`action=ADMIN_API_REQUEST`, `source=http` — route, status, path แบบรูปแบบที่อีเมล UUID และเลขยาวถูกแทนแล้ว, ชื่อ query ทุกตัว และ**ค่า**ของ `status` `role` `organizationId` `page` `pageSize` ที่ไม่ชี้ตัวคน — ค่าของ `cid` `email` `q` ไม่ถูกเก็บ ได้แค่ key ค้นหา `cid#`/`email#`) แคบเฉพาะการเปลี่ยนแปลงด้วย `&source=audit_event`"
+        "description": "ทุกแถวที่มาทาง `x-admin-token` ใน 7 วันล่าสุด (`from` คำนวณให้ใน pre-request script) — `tokenFps` บอกว่าใช้ token ใบไหน เทียบกับ fingerprint ของ token ปัจจุบันได้ ช่วงยาวกว่านี้แก้ `from` เอง · ตั้งแต่ขั้น 8 รวมบันทึกการเรียก admin API ทุกครั้ง การอ่านด้วย (`action=ADMIN_API_REQUEST`, `source=http` — route, status, path แบบรูปแบบที่อีเมล UUID และเลขยาวถูกแทนแล้ว, ชื่อ query ทุกตัว (ชื่อที่เป็นอีเมลเหลือ `[email]`) และ**ค่า**ของ `status` `role` `organizationId` `page` `pageSize` เฉพาะที่เป็นค่าที่ API รับจริง (นอกนั้น `[other]`) — ค่าของ `cid` `email` `q` ไม่ถูกเก็บ ได้แค่ key ค้นหา `cid#`/`email#` · คำขอที่ตัวอ่าน body ปฏิเสธ (400/413/415) ก่อนถึง admin API มี `metadata.token_checked: false`) แคบเฉพาะการเปลี่ยนแปลงด้วย `&source=audit_event`"
       },
       "response": [],
       "event": [
