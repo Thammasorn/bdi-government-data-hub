@@ -6,7 +6,7 @@ import { MulterError } from "multer";
 
 import { prisma } from "./db.js";
 import { env } from "./env.js";
-import { markLogApiRequest, recordAdminAccess } from "./lib/admin-access.js";
+import { flushAdminAccessSummaries, markLogApiRequest, recordAdminAccess } from "./lib/admin-access.js";
 import { adminTokenLooksWeak } from "./lib/auth.js";
 import { DocumentRenderError } from "./lib/document-render.js";
 import { correlationMiddleware, currentContext, referenceOf } from "./lib/context.js";
@@ -445,6 +445,8 @@ async function main() {
     // แถวสรุปของ token ที่ถูกปฏิเสธยังค้างอยู่ในหน่วยความจำ — เขียนให้เท่าที่ทันภายใน 2 วินาที
     // ไม่รอนานกว่านั้น เพราะ compose ให้เวลาทั้งหมด 10 วินาทีก่อน SIGKILL
     await Promise.race([flushTokenRejections(), new Promise((resolve) => setTimeout(resolve, 2_000))]);
+    // การเรียก admin API ที่พับลงบันทึกสรุปไว้ (lib/admin-access.ts) — เข้าคิวก่อนเขียนครั้งสุดท้าย ไม่งั้นหายไปกับ process
+    flushAdminAccessSummaries();
     // คิวของ error + บันทึก shutdown ข้างบน ไม่เกิน 2 วินาที แล้วปิด client ไม่เกิน 1.5 — รวมกันยังอยู่ใน 10 วินาที
     await flushErrors(FLUSH_ON_EXIT_MS);
     await closeLogStore();

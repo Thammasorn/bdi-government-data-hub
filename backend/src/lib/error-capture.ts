@@ -243,8 +243,20 @@ export const FLUSH_ON_EXIT_MS = 2_000;
  * สำเนา audit (`activity`) อยู่ชั้นเดียวกับ fatal ไม่ใช่กับ error: มันคือสำเนา**เดียว**ที่เหลือของแถวที่ Postgres ไม่รับ
  * ส่วนตัวอย่าง error ที่ถูกไล่ออกยังเหลือตัวนับของ issue อยู่ เดิมเลขเท่ากับ error — คิวที่เต็มไปด้วย error ตอน Mongo
  * ล่ม (ห้าร้อยตัว ซึ่งเกิดจริงในการทดสอบ) จึงทิ้งสำเนา audit ที่มาทีหลังแทนที่จะทิ้งตัวอย่าง error ตัวเก่าสุด
+ *
+ * บันทึกสรุปของการเรียก admin API ที่เก็บเป็นตัวเดี่ยวไม่ได้ (`accessSummary`) อยู่ชั้นเดียวกับคำเตือน: มันเกิดตอนที่คิวเต็มไป
+ * ด้วยบันทึกการเรียกพอดี ถ้าอยู่ชั้น 1 ก็ไล่ใครไม่ได้และหายไปพร้อมสิ่งที่มันสรุป (lib/admin-access.ts)
  */
-const PRIORITY = { browser: 0, access: 1, warning: 2, error: 3, activity: 4, fatal: 4, runtime: 4 } as const;
+const PRIORITY = {
+  browser: 0,
+  access: 1,
+  accessSummary: 2,
+  warning: 2,
+  error: 3,
+  activity: 4,
+  fatal: 4,
+  runtime: 4,
+} as const;
 
 // --------------------------------------------------------------------------------------------- สถานะ
 
@@ -380,17 +392,23 @@ export function enqueueActivity(doc: ActivityDoc): boolean {
 }
 
 /**
- * บันทึกการเรียก admin API หนึ่งครั้ง (lib/admin-access.ts, `source: "http"`) — คืน false ถ้าไม่ได้เข้าคิว ไม่ throw
+ * บันทึกการเรียก admin API (lib/admin-access.ts, `source: "http"`) — ไม่ throw คืนผลสามแบบ:
+ *   - `queued` เข้าคิวแล้ว
+ *   - `full`   คิวเต็ม (ไม่มีตัวที่ชั้นต่ำกว่าให้ไล่) — ผู้เรียกพับลงบันทึกสรุปแล้วส่งใหม่ทีหลัง
+ *   - `off`    log store ปิดหรือเกินเพดานขนาด — ไม่เก็บเลย ทั้งตัวเดี่ยวและสรุป (plan §3 "Size ceiling")
  *
- * ต่างจากสำเนา audit ข้างบนสองข้อ: เกินเพดานขนาดแล้วไม่เก็บ (plan §3 "Size ceiling": เกินแล้วไม่มีบันทึกการเรียก admin API)
- * และอยู่ชั้นที่ 1 ของคิว ถูกทิ้งหลังรายงานจากเบราว์เซอร์แต่ก่อนทุกอย่างของ server เอง เอกสารต้องผ่าน `fitDocument()` มาแล้ว
+ * ต่างจากสำเนา audit ข้างบนสองข้อ: เกินเพดานขนาดแล้วไม่เก็บ และอยู่ชั้นที่ 1 ของคิว ถูกทิ้งหลังรายงานจากเบราว์เซอร์แต่ก่อน
+ * ทุกอย่างของ server เอง ยกเว้นบันทึกสรุป (`summary: true`) ซึ่งอยู่ชั้นเดียวกับคำเตือน — ตัวเดียวแทนการเรียกเป็นร้อย และมีขึ้น
+ * เพราะคิวหรือเพดานต่อนาทีรับตัวเดี่ยวไม่ไหวแล้ว ถ้าอยู่ชั้นเดียวกับตัวเดี่ยวก็ถูกทิ้งด้วยเหตุเดียวกัน เอกสารต้องผ่าน
+ * `fitDocument()` มาแล้ว
  */
-export function enqueueAccessRecord(doc: ActivityDoc): boolean {
+export function enqueueAccessRecord(doc: ActivityDoc, summary = false): "queued" | "full" | "off" {
   try {
-    if (!env.logStore.enabled || logStoreStatus().status === "over_quota") return false;
-    return enqueue({ kind: "access", doc, bytes: sizeOf(doc), priority: PRIORITY.access });
+    if (!env.logStore.enabled || logStoreStatus().status === "over_quota") return "off";
+    const priority = summary ? PRIORITY.accessSummary : PRIORITY.access;
+    return enqueue({ kind: "access", doc, bytes: sizeOf(doc), priority }) ? "queued" : "full";
   } catch {
-    return false;
+    return "off";
   }
 }
 

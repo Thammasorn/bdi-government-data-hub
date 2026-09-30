@@ -1112,7 +1112,8 @@ adminLogRouter.get("/status", async (req, res) => {
       // Mongo ตอบไม่ทัน — ตัวเลขของ relay และเพดานเป็น null ส่วน status มาจากรอบตรวจของ log-store.ts อยู่แล้ว
     }
   }
-  // บันทึกการเรียก admin API ของ backend process นี้ (lib/admin-access.ts) — `suppressed` = เกินเพดานต่อนาทีจึงไม่ได้บันทึก
+  // บันทึกการเรียก admin API ของ backend process นี้ (lib/admin-access.ts `adminAccessStats`) — `overCap` / `queueFull` =
+  // เก็บเป็นตัวเดี่ยวไม่ได้จึงพับลงบันทึกสรุป · `notStored` = ไม่ได้เก็บที่ไหนเลย (เกินเพดานขนาด)
   res.json({ logStore, adminAccess: adminAccessStats(), alerts, release: env.release });
 });
 

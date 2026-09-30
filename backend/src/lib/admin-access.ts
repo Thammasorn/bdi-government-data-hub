@@ -42,9 +42,16 @@
  * จึงถูกบันทึกที่นี่แบบ `token_checked: false` — การอ่านไม่เกิดและไม่มี `AUDIT_LOG_READ` นี่คือร่องรอยเดียวของมัน
  *
  * เพดานต่อ process (`admit`): token ที่ผ่าน ไม่เกิน 600 ต่อนาที · ไม่ผ่านหรือไม่มี token ไม่เกิน 60 ต่อนาที — คนยิง 401 รัว ๆ
- * ต้องไม่เติมดิสก์ แถว `ADMIN_TOKEN_REJECTED` ใน Postgres (throttle ของ lib/token-rejection.ts) ยังนับทุกครั้ง ที่เกินนับไว้
- * แล้วบอกในบันทึกถัดไปที่ผ่านเพดาน (`metadata.suppressed_before`) และใน `GET /api/admin/logs/status`
- * เกินเพดานขนาด (`over_quota`) ไม่เก็บเลย (plan §3)
+ * ต้องไม่เติมดิสก์ แถว `ADMIN_TOKEN_REJECTED` ใน Postgres (throttle ของ lib/token-rejection.ts) ยังนับทุกครั้ง
+ *
+ * **ที่เกินเพดาน หรือที่คิวเต็มรับไม่ได้ ไม่หายเงียบ — พับลงบันทึกสรุป** (`metadata.summary: true`, หนึ่งใบต่อชนิด token ต่อ
+ * ราวหนึ่งนาที `SUMMARY_AFTER_MS`) ซึ่งเก็บ key ค้นหาของทุกตัวที่พับ (`hashKeys` `relatedUserIds` `tokenFps` รวมกัน มีเพดาน)
+ * subject ที่มี id, route กับจำนวน, status กับจำนวน และ IP เดิมทิ้งทั้งใบเหลือแค่ตัวเลข `suppressed_before` บนบันทึกถัดไป:
+ * คนถือ token ที่หลุดยิงของถูก ๆ ให้ครบ 600 ในนาทีเดียว แล้ว `?cid=` หรือ `/users/:id` ตามหลังได้โดยไม่เหลืออะไรให้ `x-log-cid`
+ * หรือ `x-log-person` ค้นเจอ ยิงเร็วพอให้คิวเต็ม (ห้าร้อยใบใน 2 วินาที) ก็ได้ผลเดียวกันโดยไม่ต้องถึงเพดาน — ทดลองจริงทั้งสอง
+ * ทาง (ตรวจขั้น 8, 2026-10-01) สรุปอยู่ชั้นเดียวกับคำเตือนในคิว (lib/error-capture.ts) คิวยังเต็มก็ถือไว้แล้วลองใหม่
+ * ปิด process ก็เขียนก่อน (`flushAdminAccessSummaries` ใน shutdown ของ index.ts) สิ่งที่สรุปเสีย: เวลาทีละคำขอ (เหลือช่วง
+ * `first_at`–`last_at`) correlation id และ user agent · เกินเพดานขนาด (`over_quota`) ไม่เก็บเลยทั้งตัวเดี่ยวและสรุป (plan §3)
  */
 import { randomUUID } from "node:crypto";
 
@@ -110,13 +117,29 @@ const PER_MINUTE_ACCEPTED = 600;
 const PER_MINUTE_REJECTED = 60;
 
 let window = { start: 0, accepted: 0, rejected: 0 };
-/** เกินเพดานไปกี่ครั้งตั้งแต่บันทึกล่าสุดที่ผ่าน — บอกในบันทึกถัดไป */
-let suppressedSinceLast = 0;
-const stats = { recorded: 0, suppressed: 0, notQueued: 0 };
 
-/** ตัวเลขของ process นี้ — `GET /api/admin/logs/status` แสดง (ไม่มีข้อมูลบุคคล) */
-export function adminAccessStats(): { recorded: number; suppressed: number; notQueued: number } {
-  return { ...stats };
+/**
+ * ตัวเลขของ process นี้ — `GET /api/admin/logs/status` แสดง (ไม่มีข้อมูลบุคคล)
+ *   recorded   — เข้าคิวเป็นบันทึกเดี่ยว
+ *   overCap    — เกินเพดานต่อนาที จึงพับลงบันทึกสรุป
+ *   queueFull  — คิวเต็ม จึงพับลงบันทึกสรุป
+ *   summaries  — บันทึกสรุปที่เข้าคิวแล้ว
+ *   pendingInSummary — การเรียกที่รออยู่ในสรุปที่ยังไม่เข้าคิว
+ *   notStored  — ไม่ได้เก็บที่ไหนเลย: log store เกินเพดานขนาด (ทั้งตัวเดี่ยวและที่อยู่ในสรุป)
+ */
+const stats = { recorded: 0, overCap: 0, queueFull: 0, summaries: 0, notStored: 0 };
+
+export function adminAccessStats(): {
+  recorded: number;
+  overCap: number;
+  queueFull: number;
+  summaries: number;
+  pendingInSummary: number;
+  notStored: number;
+} {
+  let pendingInSummary = 0;
+  for (const summary of summaries.values()) pendingInSummary += summary.count;
+  return { ...stats, pendingInSummary };
 }
 
 /** คำขอที่ถึง router ของ log — ดูหัวไฟล์ WeakSet: คำขอที่จบแล้วถูกเก็บกวาดเอง ไม่ต้องลบ */
@@ -173,14 +196,30 @@ function admit(accepted: boolean, now: number): boolean {
 }
 
 function write(req: Request, res: Response, ctx: RequestContext, provided: string | undefined): void {
-  const now = new Date();
   const accepted = ctx.adminTokenFp !== null;
-  if (!admit(accepted, now.getTime())) {
-    suppressedSinceLast += 1;
-    stats.suppressed += 1;
+  const doc = buildRecord(req, res, ctx, provided, accepted);
+  fitDocument(doc);
+  if (!admit(accepted, doc.mirroredAt.getTime())) {
+    stats.overCap += 1;
+    fold(doc, accepted, "over_cap");
     return;
   }
+  const outcome = enqueueAccessRecord(doc);
+  if (outcome === "queued") stats.recorded += 1;
+  else if (outcome === "full") {
+    stats.queueFull += 1;
+    fold(doc, accepted, "queue_full");
+  } else stats.notStored += 1;
+}
 
+function buildRecord(
+  req: Request,
+  res: Response,
+  ctx: RequestContext,
+  provided: string | undefined,
+  accepted: boolean,
+): ActivityDoc {
+  const now = new Date();
   const finished = res.writableFinished;
   const status = finished ? res.statusCode : null;
   const route = ctx.route;
@@ -215,10 +254,8 @@ function write(req: Request, res: Response, ctx: RequestContext, provided: strin
       : typeof query.organizationId === "string" && UUID.test(query.organizationId)
         ? query.organizationId.toLowerCase()
         : null;
-  const suppressed = suppressedSinceLast;
-  suppressedSinceLast = 0;
 
-  const doc: ActivityDoc = {
+  return {
     _id: randomUUID(),
     source: "http",
     schemaVersion: SCHEMA_VERSION,
@@ -246,7 +283,6 @@ function write(req: Request, res: Response, ctx: RequestContext, provided: strin
       token_accepted: accepted,
       ...(checked ? {} : { token_checked: false }),
       ...(finished ? {} : { aborted: true }),
-      ...(suppressed > 0 ? { suppressed_before: suppressed } : {}),
     },
     request: {
       correlationId: ctx.correlationId,
@@ -263,9 +299,6 @@ function write(req: Request, res: Response, ctx: RequestContext, provided: strin
     hashKeys: [...hashKeys],
     mirroredAt: now,
   };
-  fitDocument(doc);
-  if (enqueueAccessRecord(doc)) stats.recorded += 1;
-  else stats.notQueued += 1;
 }
 
 /**
@@ -277,4 +310,203 @@ function subjectOf(route: string | null, routeId: string | null): { type: string
   const match = SUBJECT_BY_ROUTE.find(([pattern]) => pattern.test(route));
   if (!match) return { type: "ADMIN_API", id: null };
   return { type: match[1], id: routeId && UUID.test(routeId) ? routeId.toLowerCase() : null };
+}
+
+// --------------------------------------------------------------------------------------------- บันทึกสรุป
+
+/** พับอยู่นานเท่านี้แล้วเข้าคิว — หนึ่งนาทีเท่ากับหน้าต่างของเพดาน คนอ่านเห็นสรุปไม่ช้ากว่าบันทึกเดี่ยวราวหนึ่งนาที */
+const SUMMARY_AFTER_MS = 60_000;
+/** คิวยังเต็ม (Mongo ล่มนาน คิวเต็มไปด้วย error) — ลองใหม่ถี่กว่านั้น ระหว่างนี้การเรียกใหม่พับเข้าใบเดิม */
+const SUMMARY_RETRY_MS = 10_000;
+/** รายการค้นหา — เท่ากับเพดานที่ `fitDocument()` ยอมให้เอกสารหนึ่งใบ (SEARCH_LIST_MAX ใน lib/activity-shape.ts) */
+const SUMMARY_SEARCH_MAX = 200;
+const SUMMARY_TOKEN_MAX = 20;
+const SUMMARY_IP_MAX = 20;
+const SUMMARY_SUBJECT_MAX = 50;
+/** ชนิดของ route และ status ที่แยกนับ — ที่เกินรวมเป็น `[other]` */
+const SUMMARY_KINDS_MAX = 50;
+const SUMMARY_OTHER = "[other]";
+
+interface Summary {
+  firstAt: Date;
+  lastAt: Date;
+  count: number;
+  overCap: number;
+  queueFull: number;
+  /** มีสักคำขอที่ได้ 2xx/3xx — ข้อมูลออกไปแล้ว */
+  succeeded: boolean;
+  tokenFps: Set<string>;
+  hashKeys: Set<string>;
+  relatedUserIds: Set<string>;
+  ips: Set<string>;
+  subjects: Map<string, { type: string; id: string }>;
+  routes: Map<string, number>;
+  statuses: Map<string, number>;
+  /** รายการที่เต็มเพดานแล้วมีค่าใหม่ตกไป — `x-log-*` / `tokenFp=` ค้นค่าที่ตกไปไม่เจอ */
+  truncated: Set<string>;
+}
+
+/** ใบที่กำลังพับอยู่ แยกตาม token ผ่าน (`accepted`) กับไม่ผ่าน — `via` ของสองกลุ่มต่างกัน รวมใบเดียวกันแล้ว G5 จะอ่านผิด */
+const summaries = new Map<"accepted" | "rejected", Summary>();
+let summaryTimer: NodeJS.Timeout | null = null;
+
+function fold(doc: ActivityDoc, accepted: boolean, reason: "over_cap" | "queue_full"): void {
+  const key = accepted ? "accepted" : "rejected";
+  let summary = summaries.get(key);
+  if (!summary) {
+    summary = {
+      firstAt: doc.occurredAt,
+      lastAt: doc.occurredAt,
+      count: 0,
+      overCap: 0,
+      queueFull: 0,
+      succeeded: false,
+      tokenFps: new Set(),
+      hashKeys: new Set(),
+      relatedUserIds: new Set(),
+      ips: new Set(),
+      subjects: new Map(),
+      routes: new Map(),
+      statuses: new Map(),
+      truncated: new Set(),
+    };
+    summaries.set(key, summary);
+  }
+  summary.count += 1;
+  if (reason === "over_cap") summary.overCap += 1;
+  else summary.queueFull += 1;
+  if (doc.occurredAt < summary.firstAt) summary.firstAt = doc.occurredAt;
+  if (doc.occurredAt > summary.lastAt) summary.lastAt = doc.occurredAt;
+  if (doc.result === "SUCCESS") summary.succeeded = true;
+
+  addCapped(summary, "tokenFps", summary.tokenFps, doc.tokenFps, SUMMARY_TOKEN_MAX);
+  addCapped(summary, "hashKeys", summary.hashKeys, doc.hashKeys, SUMMARY_SEARCH_MAX);
+  addCapped(summary, "relatedUserIds", summary.relatedUserIds, doc.relatedUserIds, SUMMARY_SEARCH_MAX);
+  if (doc.request.ip) addCapped(summary, "ips", summary.ips, [doc.request.ip], SUMMARY_IP_MAX);
+  if (doc.subject.id) {
+    const subjectKey = `${doc.subject.type}:${doc.subject.id}`;
+    if (summary.subjects.has(subjectKey)) {
+      // มีแล้ว
+    } else if (summary.subjects.size < SUMMARY_SUBJECT_MAX) {
+      summary.subjects.set(subjectKey, { type: doc.subject.type, id: doc.subject.id });
+    } else summary.truncated.add("subjects");
+  }
+  const path = typeof doc.metadata?.path === "string" ? doc.metadata.path : "-";
+  bump(summary.routes, `${doc.request.method ?? "-"} ${doc.request.route ?? path}`);
+  bump(summary.statuses, doc.request.status === null ? "aborted" : String(doc.request.status));
+
+  scheduleSummaries(SUMMARY_AFTER_MS);
+}
+
+function addCapped(summary: Summary, name: string, set: Set<string>, values: string[], max: number): void {
+  for (const value of values) {
+    if (set.has(value)) continue;
+    if (set.size < max) set.add(value);
+    else summary.truncated.add(name);
+  }
+}
+
+function bump(counts: Map<string, number>, key: string): void {
+  const slot = counts.has(key) || counts.size < SUMMARY_KINDS_MAX ? key : SUMMARY_OTHER;
+  counts.set(slot, (counts.get(slot) ?? 0) + 1);
+}
+
+function scheduleSummaries(ms: number): void {
+  if (summaryTimer) return;
+  summaryTimer = setTimeout(() => {
+    summaryTimer = null;
+    emitSummaries();
+  }, ms);
+  // ตัวจับเวลานี้ต้องไม่ถือ process ไว้ — ตอนปิด `flushAdminAccessSummaries()` เขียนให้แทน
+  summaryTimer.unref();
+}
+
+/** เข้าคิวทุกใบที่พับอยู่ — คิวเต็มก็ถือไว้แล้วลองใหม่ log store ปิดหรือเกินเพดานขนาดก็ทิ้ง (นับใน `notStored`) */
+function emitSummaries(): void {
+  for (const [key, summary] of summaries) {
+    let outcome: "queued" | "full" | "off" = "off";
+    try {
+      const doc = summaryRecord(key === "accepted", summary);
+      fitDocument(doc);
+      outcome = enqueueAccessRecord(doc, true);
+    } catch {
+      // สร้างไม่ได้ก็สร้างไม่ได้ทุกรอบ — ทิ้ง ไม่วนลองตลอดไป
+    }
+    if (outcome === "full") continue;
+    summaries.delete(key);
+    if (outcome === "queued") stats.summaries += 1;
+    else stats.notStored += summary.count;
+  }
+  if (summaries.size > 0) scheduleSummaries(SUMMARY_RETRY_MS);
+}
+
+function summaryRecord(accepted: boolean, summary: Summary): ActivityDoc {
+  const id = randomUUID();
+  return {
+    _id: id,
+    source: "http",
+    schemaVersion: SCHEMA_VERSION,
+    // เวลาของการเรียกแรกที่พับ — เรียงอยู่ตรงที่เหตุการณ์เริ่ม ไม่ใช่ตอนที่สรุปเข้าคิว
+    occurredAt: summary.firstAt,
+    action: ADMIN_API_REQUEST,
+    category: "admin-access",
+    result: summary.succeeded ? "SUCCESS" : "FAILURE",
+    actor: { type: accepted ? "SYSTEM" : "ANONYMOUS", id: null, name: null, roles: [], organizationId: null },
+    via: accepted ? "ADMIN_TOKEN" : "ANONYMOUS",
+    tokenFps: [...summary.tokenFps],
+    // หลายคำขอ หลาย subject — ตัวที่มี id อยู่ใน `metadata.subjects` ผู้ใช้อยู่ใน `relatedUserIds` ด้วย
+    subject: { type: "ADMIN_API", id: null },
+    organizationId: null,
+    requestNumber: null,
+    gate: null,
+    before: null,
+    after: null,
+    changedFields: [],
+    reason: null,
+    metadata: {
+      summary: true,
+      count: summary.count,
+      over_cap: summary.overCap,
+      queue_full: summary.queueFull,
+      first_at: summary.firstAt,
+      last_at: summary.lastAt,
+      token_accepted: accepted,
+      routes: [...summary.routes].map(([route, count]) => ({ route, count })),
+      statuses: [...summary.statuses].map(([status, count]) => ({ status, count })),
+      subjects: [...summary.subjects.values()],
+      ips: [...summary.ips],
+      ...(summary.truncated.size > 0 ? { truncated_lists: [...summary.truncated] } : {}),
+    },
+    // ไม่ใช่คำขอเดียว — correlation id เป็นของใบสรุปเอง (ค้นด้วย trace เจอแค่ใบนี้)
+    request: {
+      correlationId: id,
+      reference: referenceOf(id),
+      ip: null,
+      userAgent: null,
+      method: null,
+      route: null,
+      status: null,
+      durationMs: null,
+    },
+    sourceComponent: accepted ? "admin-portal" : "web-portal",
+    relatedUserIds: [...summary.relatedUserIds],
+    hashKeys: [...summary.hashKeys],
+    mirroredAt: new Date(),
+  };
+}
+
+/**
+ * เข้าคิวสรุปที่ค้างอยู่ทันที — shutdown ใน index.ts เรียกก่อนเขียนคิวครั้งสุดท้าย ตัวจับเวลาของสรุปถูก `unref` ไว้ ถ้าไม่เรียก
+ * การเรียกที่พับไว้ในนาทีสุดท้ายก่อน deploy หายไปกับ process
+ */
+export function flushAdminAccessSummaries(): void {
+  if (summaryTimer) {
+    clearTimeout(summaryTimer);
+    summaryTimer = null;
+  }
+  try {
+    emitSummaries();
+  } catch {
+    // ตอนปิด process — ไม่มีอะไรให้ทำต่อ
+  }
 }
