@@ -1,6 +1,6 @@
 /**
  * relay — คัดลอกแถวที่ Postgres commit แล้วจาก `audit.audit_event` ไปเป็นเอกสาร `activity` ใน log store
- * (plan §3 "Write paths", decision 2) พร้อมงานดูแลที่ผูกกับมัน: reconcile รายชั่วโมง
+ * (plan §3 "Write paths", decision 2) พร้อมงานดูแลที่ผูกกับมัน: reconcile รายชั่วโมง และ prune ตามอายุรายวัน
  *
  * Postgres ยังเป็นระบบบันทึกหลัก — `logAudit()` ไม่รู้จัก Mongo เลย และคำขอของผู้ใช้ไม่เคยรอที่นี่ relay อ่านสิ่งที่ commit
  * แล้วตามหลัง คัดลอกตามจริงทุกแถว รวมแถวที่เขียนระหว่าง transaction ยังเปิดแล้ว transaction นั้น rollback (QA A4 —
@@ -24,13 +24,15 @@
  * ซ้ำ (แถวที่มีแล้วถูกข้าม) Mongo มากกว่าเป็นเรื่องปกติหลัง `seed:demo` ลบ Postgres — ยังอ่านซ้ำด้วย เพราะแถวที่ขาดไป
  * ซ่อนอยู่หลังตัวนับที่เกินได้ ผลอยู่ใน `relay_state.lastReconcile`
  *
+ * **prune** วันละครั้งหลัง 03:00 น. เวลาไทย (หรือรอบแรกที่ worker ขึ้นหลังจากนั้น) ตามตารางใน lib/log-retention.ts
+ *
  * **rebuild** (รูปเอกสารเปลี่ยน หรือเปลี่ยน LOG_HASH_KEY) ทำด้วยมือ — ลบ `activity` ที่ `source: "audit_event"` แล้ว
  * `$unset` `cursor` `hashKeyFp` `schemaVersion` ใน relay_state relay เติมใหม่ตั้งแต่แถวแรก (docs/21 runbook) ข้อจำกัด:
  * แถวที่ `seed:demo` ลบจาก Postgres ไปแล้วหายจากสำเนาถาวร, เอกสาร `audit_fallback`/`http` ไม่ถูกสร้างใหม่ (ไม่มีใน
- * Postgres)
+ * Postgres) และเอกสารที่ prune ลบไปแล้วกลับมาจนกว่า prune รอบถัดไปจะลบซ้ำ
  */
 import { AttachmentOwnerType, Prisma, type PrismaClient } from "@prisma/client";
-import type { AnyBulkWriteOperation, Collection, Db } from "mongodb";
+import type { AnyBulkWriteOperation, Collection, Db, Filter } from "mongodb";
 
 import { env } from "../env.js";
 import {
@@ -38,11 +40,19 @@ import {
   categoryOf,
   hashKeyFingerprint,
   projectAuditRow,
+  type ActivityCategory,
   type ActivityDoc,
   type AuditRowLike,
 } from "../lib/activity-shape.js";
 import { referenceOf } from "../lib/context.js";
 import { DOCUMENT_REJECTED, captureError, perDocumentErrors } from "../lib/error-capture.js";
+import {
+  ACTIVITY_RETENTION,
+  BROWSER_EVENT_DAYS,
+  CLOSED_ISSUE_DAYS,
+  ERROR_EVENT_DAYS,
+  RUNTIME_EVENT_DAYS,
+} from "../lib/log-retention.js";
 import { logDb } from "../lib/log-store.js";
 
 const STATE_ID = "audit_event";
@@ -63,6 +73,11 @@ const RECONCILE_WINDOW_MS = 24 * 60 * 60_000;
 const RECONCILE_PAGES_MAX = 200;
 /** reconcile รอจน forward pass ตามทัน — ระหว่าง backfill ตัวนับไม่เท่ากันแน่ ๆ และการอ่านซ้ำเป็นงานซ้ำเปล่า ๆ */
 const CAUGHT_UP_FRESH_MS = 60_000;
+/** 03:00 น. เวลาไทย (UTC+7) = 20:00 UTC ของวันก่อน */
+const PRUNE_HOUR_UTC = 20;
+const DELETE_CHUNK = 5_000;
+/** prune หนึ่งรอบลบไม่เกิน 40 × 5,000 ต่อเงื่อนไข — ค้างมากกว่านั้น (worker ดับไปนาน) รอบถัดไปใน 1 นาทีทำต่อ */
+const DELETE_CHUNKS_MAX = 40;
 
 const PG_TIMEOUT_MS = 15_000;
 const MONGO_READ_MS = 5_000;
@@ -101,6 +116,8 @@ interface RelayStateDoc {
   caughtUpAt?: Date;
   lastReconcileAt?: Date;
   lastReconcile?: Record<string, unknown>;
+  lastPruneAt?: Date;
+  lastPrune?: Record<string, unknown>;
   /** fingerprint ของ LOG_HASH_KEY ที่สำเนานี้ใช้ — `hashKeyFingerprint()` */
   hashKeyFp?: string;
   schemaVersion?: number;
@@ -590,6 +607,25 @@ async function maintenanceTick(): Promise<void> {
     const state = await relay.findOne({ _id: STATE_ID }, { maxTimeMS: MONGO_READ_MS });
     const now = new Date();
 
+    if (pruneDue(state?.lastPruneAt ?? null, now)) {
+      const summary = await pruneLogStore(db, now);
+      await relay.updateOne(
+        { _id: STATE_ID },
+        // ลบไม่หมดในรอบเดียว (ค้างมาก) — ไม่เลื่อน lastPruneAt รอบถัดไปในหนึ่งนาทีทำต่อ
+        { $set: { lastPrune: { at: now, ...summary }, ...(summary.complete ? { lastPruneAt: now } : {}) } },
+        { upsert: true, maxTimeMS: MONGO_READ_MS },
+      );
+      const total =
+        summary.activityDeleted + summary.errorEventsDeleted + summary.runtimeEventsDeleted + summary.issuesDeleted;
+      if (total > 0 || summary.activityStripped > 0) {
+        console.log(
+          `[log-relay] prune ตามอายุ: ลบ activity ${summary.activityDeleted} · ตัด IP/UA ${summary.activityStripped} · ` +
+            `ลบ error_events ${summary.errorEventsDeleted} · runtime_events ${summary.runtimeEventsDeleted} · ` +
+            `error_issues ${summary.issuesDeleted}${summary.complete ? "" : " (ยังไม่หมด ทำต่อรอบหน้า)"}`,
+        );
+      }
+    }
+
     const lastReconcile = state?.lastReconcileAt?.getTime() ?? 0;
     const caughtUpAt = state?.caughtUpAt?.getTime() ?? 0;
     if (now.getTime() - lastReconcile >= RECONCILE_EVERY_MS && now.getTime() - caughtUpAt <= CAUGHT_UP_FRESH_MS) {
@@ -614,6 +650,116 @@ async function maintenanceTick(): Promise<void> {
   } catch (err) {
     captureThrottled("log-relay.maintenance", err);
   }
+}
+
+/** prune ครบกำหนดเมื่อยังไม่เคยทำ หรือทำครั้งล่าสุดก่อน 03:00 น. (เวลาไทย) ล่าสุดที่ผ่านมาแล้ว */
+export function pruneDue(lastPruneAt: Date | null, now: Date): boolean {
+  if (!lastPruneAt) return true;
+  const boundary = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), PRUNE_HOUR_UTC));
+  if (boundary.getTime() > now.getTime()) boundary.setUTCDate(boundary.getUTCDate() - 1);
+  return lastPruneAt.getTime() < boundary.getTime();
+}
+
+export interface PruneSummary {
+  activityDeleted: number;
+  activityStripped: number;
+  errorEventsDeleted: number;
+  runtimeEventsDeleted: number;
+  issuesDeleted: number;
+  complete: boolean;
+}
+
+function daysBefore(now: Date, days: number): Date {
+  return new Date(now.getTime() - days * 24 * 60 * 60_000);
+}
+
+/** หมวดของ activity จัดกลุ่มตามจำนวนวัน — คำสั่งเดียวต่อกลุ่ม ไม่ใช่ต่อหมวด */
+function groupByDays(pick: (category: ActivityCategory) => number | null): Map<number, ActivityCategory[]> {
+  const groups = new Map<number, ActivityCategory[]>();
+  for (const category of Object.keys(ACTIVITY_RETENTION) as ActivityCategory[]) {
+    const days = pick(category);
+    if (days === null) continue;
+    groups.set(days, [...(groups.get(days) ?? []), category]);
+  }
+  return groups;
+}
+
+/**
+ * ลบและตัดตามอายุ (lib/log-retention.ts) ณ เวลา `now` — export ไว้ให้ทดสอบด้วยนาฬิกาที่เลื่อนได้
+ *
+ * ลบทีละก้อน 5,000 ด้วย `_id` (หา id ก่อนแล้วลบ) ไม่ใช่ `deleteMany` ครั้งเดียวทั้งก้อน: คำสั่งเดียวที่ลบเป็นแสนใช้เวลาเกิน
+ * socketTimeoutMS ของ driver แล้ว server ยังลบต่อเบื้องหลังขณะที่ worker คิดว่าล้ม ก้อนเล็กจบในเวลาและนับได้จริง
+ * IP/UA ถูก `$unset` ไม่ใช่ตั้งเป็น null — เอกสารที่ตัดแล้วไม่ตรงเงื่อนไข `$exists` อีก รอบถัดไปจึงไม่แตะซ้ำ
+ */
+export async function pruneLogStore(db: Db, now: Date): Promise<PruneSummary> {
+  const summary: PruneSummary = {
+    activityDeleted: 0,
+    activityStripped: 0,
+    errorEventsDeleted: 0,
+    runtimeEventsDeleted: 0,
+    issuesDeleted: 0,
+    complete: true,
+  };
+  const activity = db.collection("activity") as unknown as ActivityCollection;
+  const tally = (result: { deleted: number; complete: boolean }) => {
+    if (!result.complete) summary.complete = false;
+    return result.deleted;
+  };
+
+  for (const [days, categories] of groupByDays((c) => ACTIVITY_RETENTION[c].deleteAfterDays)) {
+    summary.activityDeleted += tally(
+      await deleteInChunks(activity, { category: { $in: categories }, occurredAt: { $lt: daysBefore(now, days) } }),
+    );
+  }
+  for (const [days, categories] of groupByDays((c) => ACTIVITY_RETENTION[c].stripClientAfterDays)) {
+    const result = await activity.updateMany(
+      {
+        category: { $in: categories },
+        occurredAt: { $lt: daysBefore(now, days) },
+        $or: [{ "request.ip": { $exists: true } }, { "request.userAgent": { $exists: true } }],
+      },
+      { $unset: { "request.ip": "", "request.userAgent": "" } },
+      { maxTimeMS: MONGO_WRITE_MS },
+    );
+    summary.activityStripped += result.modifiedCount;
+  }
+
+  const errors = db.collection("error_events") as unknown as ActivityCollection;
+  summary.errorEventsDeleted += tally(
+    await deleteInChunks(errors, { service: { $ne: "browser" }, occurredAt: { $lt: daysBefore(now, ERROR_EVENT_DAYS) } }),
+  );
+  summary.errorEventsDeleted += tally(
+    await deleteInChunks(errors, { service: "browser", occurredAt: { $lt: daysBefore(now, BROWSER_EVENT_DAYS) } }),
+  );
+  summary.runtimeEventsDeleted += tally(
+    await deleteInChunks(db.collection("runtime_events") as unknown as ActivityCollection, {
+      at: { $lt: daysBefore(now, RUNTIME_EVENT_DAYS) },
+    }),
+  );
+  summary.issuesDeleted += tally(
+    await deleteInChunks(db.collection("error_issues") as unknown as ActivityCollection, {
+      status: { $ne: "open" },
+      lastSeen: { $lt: daysBefore(now, CLOSED_ISSUE_DAYS) },
+    }),
+  );
+  return summary;
+}
+
+async function deleteInChunks(
+  collection: ActivityCollection,
+  filter: Filter<{ _id: string; [key: string]: unknown }>,
+): Promise<{ deleted: number; complete: boolean }> {
+  let deleted = 0;
+  for (let chunk = 0; chunk < DELETE_CHUNKS_MAX && !stopped; chunk++) {
+    const ids = await collection
+      .find(filter, { projection: { _id: 1 }, limit: DELETE_CHUNK, maxTimeMS: MONGO_WRITE_MS })
+      .toArray();
+    if (ids.length === 0) return { deleted, complete: true };
+    const result = await collection.deleteMany({ _id: { $in: ids.map((doc) => doc._id) } }, { maxTimeMS: MONGO_WRITE_MS });
+    deleted += result.deletedCount;
+    if (ids.length < DELETE_CHUNK) return { deleted, complete: true };
+  }
+  return { deleted, complete: false };
 }
 
 interface ReconcileSummary {

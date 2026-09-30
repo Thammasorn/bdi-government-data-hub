@@ -23,8 +23,8 @@ import { logDb } from "../lib/log-store.js";
  * index แบบธรรมดาทั้งหมด (ไม่มี partial / sparse / $text) — ชุดที่ plan §3 ระบุ
  *
  * `activity`: หนึ่งตัวต่อตัวกรองของ API อ่าน log (step 7) ทุกตัวลงท้ายด้วย `occurredAt` เพราะผลเรียงตามเวลาเสมอ
- * `tokenFps` เป็น array (multikey) — แถวสรุปของ token ที่ถูกปฏิเสธมีหลายตัว · รหัสอ้างอิง 8 ตัวค้นด้วย regex ยึดหัวบน
- * `request.correlationId`
+ * `{category, result, occurredAt}` ใช้กับ prune ตามอายุด้วย · `tokenFps` เป็น array (multikey) — แถวสรุปของ token ที่ถูก
+ * ปฏิเสธมีหลายตัว · รหัสอ้างอิง 8 ตัวค้นด้วย regex ยึดหัวบน `request.correlationId`
  */
 const INDEXES: Array<{ collection: string; keys: Record<string, 1 | -1> }> = [
   { collection: "activity", keys: { occurredAt: -1, _id: -1 } },
