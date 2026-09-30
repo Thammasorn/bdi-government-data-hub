@@ -194,6 +194,20 @@ const INTL_PHONE_RUN = /(?<![\d+])\+66[- ]?\d(?:[- ]?\d){7,8}(?!\d)/g;
 const HOLD_OPEN = "\uE000";
 const HOLD_CLOSE = "\uE001";
 const HELD = /\uE000(\d+)\uE001/g;
+const HOLD_MARKS = /[\uE000\uE001]/g;
+
+/**
+ * ตัวคั่นสองตัวข้างบนที่มากับข้อความเอง → U+FFFD ก่อนเริ่มกัน UUID — ทุกทางที่กันแล้วใส่คืน (`applyRules`,
+ * `maskCidText`) เรียกตัวนี้ก่อนเสมอ
+ *
+ * ไม่งั้นตอนใส่คืน ตัวคั่นกับเลขที่ผู้เรียกเขียนมาเอง (`\uE000999\uE001`) ถูกมองเป็นของที่กันไว้ ไม่มีตัวที่ 999
+ * จึงถูกแทนด้วยข้อความว่าง — หายไปหลังกฎทุกตัวผ่านไปแล้ว และสองท่อนที่มันแยกไว้ต่อกันเป็นของดิบ: `110170‹999›0203451`
+ * ออกมาเป็นเลขบัตรเต็ม อีเมลกับ `password=` ก็แบบเดียวกัน (ลองแล้ว 2026-09-30 ทั้ง scrubText, requestTarget, bodyShape
+ * และสำเนากิจกรรม) ข้อความจริงไม่มีสองตัวนี้ (private use area ไม่มีความหมายกลาง) การแทนจึงไม่เสียอะไร
+ */
+function neutraliseHolds(text: string): string {
+  return text.includes(HOLD_OPEN) || text.includes(HOLD_CLOSE) ? text.replace(HOLD_MARKS, "\uFFFD") : text;
+}
 
 /**
  * กวาดข้อมูลส่วนบุคคลและความลับออกจากข้อความอิสระ — ไม่ throw
@@ -218,7 +232,7 @@ export function scrubText(text: string): string {
 
 /** ตารางกวาดทั้งตารางบนข้อความทั้งก้อน ไม่ตัด — ผู้เรียกตัดมาแล้วเสมอ (`scrubText`, `scrubClipped`) */
 function applyRules(text: string): string {
-  let out = text;
+  let out = neutraliseHolds(text);
   for (const [pattern, replacement] of DATABASE_DETAIL_RULES) out = out.replace(pattern, replacement);
   for (const [pattern, replacement] of BEFORE_UUID_RULES) out = out.replace(pattern, replacement);
 
@@ -634,7 +648,7 @@ export interface MaskFindings {
 export function maskCidText(text: string, findings?: MaskFindings): string {
   if (UUID_EXACT.test(text)) return text;
   const held: string[] = [];
-  const out = text
+  const out = neutraliseHolds(text)
     .replace(UUID, (uuid) => `${HOLD_OPEN}${held.push(uuid) - 1}${HOLD_CLOSE}`)
     .replace(ACTIVITY_CID_RUN, (run) => {
       findings?.cids.push(run);
