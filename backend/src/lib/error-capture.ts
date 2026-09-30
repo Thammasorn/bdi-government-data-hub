@@ -151,8 +151,13 @@ type RingItem =
 
 const FLUSH_INTERVAL_MS = 2_000;
 const BACKOFF_MAX_MS = 60_000;
-/** การเขียนหนึ่งก้อนทั้งก้อน — เกินนี้ถือว่าล้ม แล้วเอาทั้งก้อนกลับเข้าคิว (driver เองมี socketTimeoutMS 5 วินาที) */
-const FLUSH_TIMEOUT_MS = 15_000;
+/**
+ * ก้อนที่เขียนนานกว่านี้ได้บรรทัดเตือนหนึ่งบรรทัด — **ไม่ใช่ timeout**: ก้อนนั้นยังเขียนต่อ และก้อนใหม่ยังไม่เริ่มจนกว่า
+ * มันจะจบ ความยาวของแต่ละคำสั่งคุมโดย driver อยู่แล้ว (serverSelectionTimeoutMS 2 วินาที, socketTimeoutMS 5 วินาที)
+ * เดิมเป็น timeout 15 วินาทีที่เอาก้อนกลับเข้าคิวแล้วปล่อยให้ก้อนใหม่เริ่ม ขณะที่ก้อนเดิมยังเขียนอยู่เบื้องหลัง —
+ * Mongo ที่ช้าแต่ไม่ล่ม (คำสั่งละ 4 วินาที) จึงได้ `$inc count` ของ issue ชุดเดียวกันสองรอบ
+ */
+const FLUSH_SLOW_MS = 15_000;
 const RING_MAX_DOCS = 500;
 const RING_MAX_BYTES = 2 * 1024 * 1024;
 /** issue ที่รอเขียนพร้อมกันได้ไม่เกินนี้ — error ร้อยแบบไม่ซ้ำกันระหว่างที่ Mongo ล่มต้องไม่กินหน่วยความจำไม่จบ */
@@ -657,8 +662,13 @@ function reasonOf(err: unknown): string {
  * หยิบจากคิวหนึ่งก้อน (ไม่เกิน 500) กับ issue ที่รอทั้งหมด แล้วเขียน — ส่วนที่ยังไม่ได้เขียนตอนล้มกลับเข้าคิว
  *
  * ลำดับ: event → บันทึกของ process → สำเนา audit → issue ส่วนที่เขียนแล้วไม่เอากลับเข้าคิว event ที่เขียนไปแล้ว
- * บางส่วนแล้วถูกลองซ้ำชน `_id` เดิม ซึ่งถือว่าสำเร็จ (duplicate key 11000) ส่วน issue ที่ bulkWrite ล้มกลางก้อน
- * (เน็ตหลุดระหว่างทาง) อาจถูกนับซ้ำ — ยอมรับ ตัวนับที่เกินจริงเล็กน้อยดีกว่าตัวนับที่หาย
+ * บางส่วนแล้วถูกลองซ้ำชน `_id` เดิม ซึ่งถือว่าสำเร็จ (duplicate key 11000)
+ *
+ * **ตัวนับของ issue นับซ้ำได้ทั้งก้อน** — `$inc` ไม่ idempotent: คำสั่งที่ driver เลิกรอไปแล้ว (socketTimeoutMS 5 วินาที)
+ * แต่ server ได้รับไว้แล้ว ถูกทำจริงทีหลัง แล้วรอบที่ลองซ้ำก็ `$inc` อีกครั้ง ลองแล้ว 2026-09-30: `docker compose pause
+ * mongo` สิบกว่าวินาทีระหว่างที่มี error 20 ตัว ตัวนับขึ้น 40 (Mongo ที่ช้าจนคำสั่งเดียวเกิน 5 วินาทีก็เป็นแบบเดียวกัน)
+ * ยอมรับไว้ก่อน: ตัวนับที่เกินดีกว่าตัวนับที่หาย และ event ทีละตัวไม่ซ้ำ ทางแก้ถ้าต้องการตัวเลขตรงคือให้ก้อนของ issue
+ * มี id ของตัวเองที่ลองซ้ำด้วยตัวเดิม แล้วกรองด้วย id ที่เคยใช้แล้วในเอกสารของ issue
  */
 async function flushOnce(): Promise<void> {
   const db = await logDb();
@@ -669,19 +679,32 @@ async function flushOnce(): Promise<void> {
   const issues = [...pendingIssues.values()];
   pendingIssues.clear();
 
+  // operation ของ issue สร้างตอนนี้ ก่อน await แรก — ตัวเลขใน operation จึงเป็นของก้อนนี้เท่านั้น ไม่ว่าอะไรจะเกิด
+  // กับวัตถุ IssueDelta ระหว่างที่เขียน
+  const issueOps = issues.length > 0 ? issueOperations(issues) : [];
   const done = { items: false, issues: false };
+  const slow = setTimeout(() => {
+    console.warn(
+      `[capture] ${service}: เขียน log store ก้อนนี้เกิน ${FLUSH_SLOW_MS / 1000} วินาทีแล้ว — รอให้จบก่อน ไม่เริ่มก้อนใหม่ซ้อน`,
+    );
+  }, FLUSH_SLOW_MS);
+  slow.unref();
   try {
-    await withTimeout(writeBatch(db, items, issues, done), FLUSH_TIMEOUT_MS);
+    // ไม่มี timeout ครอบ: ก้อนที่ถูกทิ้งไว้กลางทางยังเขียนต่อเบื้องหลัง ถ้าเอาของมันกลับเข้าคิวแล้วเริ่มก้อนใหม่ issue
+    // จะถูกนับสองรอบ ของกลับเข้าคิวเฉพาะเมื่อรู้แน่แล้วว่าก้อนนี้จบ (ล้ม) และเฉพาะส่วนที่ยังไม่ได้เขียน
+    await writeBatch(db, items, issueOps, done);
   } catch (err) {
     requeue(done.items ? [] : items, done.issues ? [] : issues);
     throw err;
+  } finally {
+    clearTimeout(slow);
   }
 }
 
 async function writeBatch(
   db: Db,
   items: RingItem[],
-  issues: IssueDelta[],
+  issueOps: AnyBulkWriteOperation<IssueDoc>[],
   done: { items: boolean; issues: boolean },
 ): Promise<void> {
   // เกินเพดานขนาดระหว่างที่ event รออยู่ในคิว — ทิ้งตัว event (ตัวนับของ issue ยังเดิน) บันทึกของ process กับสำเนา
@@ -701,8 +724,8 @@ async function writeBatch(
   if (activity.length > 0) await insertAll(db, "activity", activity);
   done.items = true;
 
-  if (issues.length > 0) {
-    await db.collection<IssueDoc>("error_issues").bulkWrite(issueOperations(issues), { ordered: true });
+  if (issueOps.length > 0) {
+    await db.collection<IssueDoc>("error_issues").bulkWrite(issueOps, { ordered: true });
   }
   done.issues = true;
 }
@@ -899,13 +922,4 @@ function settleWithin(work: Promise<unknown>, ms: number): Promise<void> {
     () => undefined,
   );
   return Promise.race([settled, deadline]).finally(() => clearTimeout(handle));
-}
-
-/** เหมือน `work` แต่ล้มถ้าไม่จบใน `ms` */
-function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  let handle: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    handle = setTimeout(() => reject(new Error(`เขียน log store เกิน ${ms / 1000} วินาที`)), ms);
-  });
-  return Promise.race([work, timeout]).finally(() => clearTimeout(handle));
 }
