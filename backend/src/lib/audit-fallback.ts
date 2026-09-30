@@ -75,8 +75,14 @@ function maskedInput(input: AuditInput, actorId: string | null): Record<string, 
  *
  * เอกสาร activity ประกอบเป็นแถวแบบที่ logAudit จะเขียน (metadata = snapshot ของผู้กระทำ + ของผู้เรียก + `ip_unparsed`
  * + `admin_token_fp` ลำดับเดียวกับ logAudit) แล้วผ่าน `projectAuditRow()` ตัวเดียวกับ relay — category, via, การปิด
- * ข้อมูล และ hashKeys จึงเหมือนสำเนาของแถวที่ Postgres รับทุกประการ ต่างกันแค่ `source`, `_id` ใหม่ (แถวนี้ไม่มี id ใน
- * Postgres) `occurredAt` = เวลาที่ INSERT ล้ม, method/route ของคำขอ และ `fallback.errorEventId`
+ * ข้อมูล hashKeys และเพดาน 64 KB จึงใช้กฎเดียวกับสำเนาของแถวที่ Postgres รับ ที่ต่างคือ:
+ *   - `source: "audit_fallback"` และ `_id` ใหม่ (แถวนี้ไม่มี id ใน Postgres)
+ *   - `occurredAt` = เวลาที่ INSERT ล้ม ไม่ใช่เวลาที่ logAudit เริ่ม
+ *   - `request.method` / `request.route` ของคำขอ (relay ได้ null เพราะ audit_event ไม่มีสองคอลัมน์นี้)
+ *   - `fallback.errorEventId`
+ *   - `requestNumber` มาจาก `metadata.request_number` เท่านั้น — relay ค้นเลขที่คำขอจากตารางคำขอด้วย (subject ที่เป็นคำขอ
+ *     หรือไฟล์แนบของคำขอ) แต่ทางนี้วิ่งบนเส้นทางของคำขอหลัง Postgres เพิ่งปฏิเสธการเขียน จึงไม่ถามฐานข้อมูลอีก แถวที่ไม่ได้
+ *     ใส่ `request_number` ไว้ใน metadata (การอัปโหลดไฟล์ การดาวน์โหลด …) จึงได้ `requestNumber: null` ขณะที่สำเนาของ relay มี
  */
 export function reportAuditWriteFailure(
   err: unknown,
