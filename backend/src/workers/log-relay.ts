@@ -26,10 +26,18 @@
  *
  * **prune** วันละครั้งหลัง 03:00 น. เวลาไทย (หรือรอบแรกที่ worker ขึ้นหลังจากนั้น) ตามตารางใน lib/log-retention.ts
  *
- * **rebuild** (รูปเอกสารเปลี่ยน หรือเปลี่ยน LOG_HASH_KEY) ทำด้วยมือ — ลบ `activity` ที่ `source: "audit_event"` แล้ว
- * `$unset` `cursor` `hashKeyFp` `schemaVersion` ใน relay_state relay เติมใหม่ตั้งแต่แถวแรก (docs/21 runbook) ข้อจำกัด:
- * แถวที่ `seed:demo` ลบจาก Postgres ไปแล้วหายจากสำเนาถาวร, เอกสาร `audit_fallback`/`http` ไม่ถูกสร้างใหม่ (ไม่มีใน
- * Postgres) และเอกสารที่ prune ลบไปแล้วกลับมาจนกว่า prune รอบถัดไปจะลบซ้ำ
+ * **rebuild** (รูปเอกสารเปลี่ยน หรือเปลี่ยน LOG_HASH_KEY) ทำด้วยมือ สองคำสั่ง (ผู้ใช้ root หรือ bdi_worker):
+ *
+ *     db.activity.deleteMany({ source: "audit_event" })
+ *     db.relay_state.updateOne({ _id: "audit_event" }, { $unset: { cursor: "", hashKeyFp: "", schemaVersion: "" } })
+ *
+ * relay เติมใหม่ตั้งแต่แถวแรกในรอบถัดไป ไม่ต้องเริ่ม worker ใหม่ **`$unset` สามฟิลด์ ไม่ใช่ลบเอกสาร relay_state ทั้งใบ**:
+ * ใบเดียวกันถือตัวเลขของเพดานขนาด (`storageMb` `overQuota` … — workers/log-upkeep.ts) และ `lastPruneAt` ถ้าลบทั้งใบ
+ * log-upkeep เห็นว่าเอกสารไม่ใช่อย่างที่มันเขียนไว้แล้วตรวจเพดานใหม่ในรอบนาทีถัดไป (ก่อนหน้านั้นธงเกินเพดานหายไปราวหนึ่ง
+ * นาที) และ prune วิ่งทันที ซึ่งไม่เสียหาย แต่ไม่ใช่วิธีที่ตั้งใจ — docs/21 §3.8 ต้องบอกแบบเดียวกัน
+ * ข้อจำกัด: แถวที่ `seed:demo` ลบจาก Postgres ไปแล้วหายจากสำเนาถาวร, เอกสาร `audit_fallback`/`http` ไม่ถูกสร้างใหม่ (ไม่มีใน
+ * Postgres) และเอกสารที่ prune ลบไปแล้ว (หรือ IP/UA ที่ตัดไปแล้ว) กลับมาจนกว่า prune รอบถัดไปจะลบซ้ำ — ตั้งใจไม่แก้:
+ * prune รอบถัดไปคือภายในวันเดียวกัน (ตัดสิน 2026-09-30)
  */
 import { AttachmentOwnerType, Prisma, type PrismaClient } from "@prisma/client";
 import type { AnyBulkWriteOperation, Collection, Db, Filter } from "mongodb";

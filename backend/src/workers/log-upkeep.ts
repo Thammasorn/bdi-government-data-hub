@@ -3,7 +3,10 @@
  *
  *   - `ensureIndexes()` ของทุก collection: `activity` (สำเนา audit — workers/log-relay.ts), error_events, error_issues,
  *     runtime_events — ทำครั้งแรกที่ต่อ Mongo ได้ ทีละ index: ตัวไหนล้มเตือนหนึ่งบรรทัด เก็บเป็น warning แล้วไปตัวถัดไป
- *     option ที่บริการบน Azure ไม่รับจึงไม่มีทางหยุด worker (ทุกตัวเป็น index ธรรมดา)
+ *     option ที่บริการบน Azure ไม่รับจึงไม่มีทางหยุด worker (ทุกตัวเป็น index ธรรมดา) แล้วทำซ้ำทุกชั่วโมง และทันทีที่
+ *     relay_state ไม่ใช่อย่างที่ process นี้เขียนไว้ (`storeWasReset`) — `createIndex` ของ index ที่มีแล้วไม่ทำอะไร
+ *   - log store ที่ถูกล้าง (volume ใหม่ขณะ worker ยังวิ่ง, มีคนลบ relay_state ทั้งใบ) ได้ index และตัวเลขเพดานกลับมาใน
+ *     รอบนาทีถัดไป ไม่ต้องรอ worker เริ่มใหม่หรือรอบชั่วโมงหน้า
  *   - ตรวจเพดานขนาดตอนบูตและทุกชั่วโมง: `dbStats` → `relay_state.storageMb` คือข้อมูลกับ index ที่ใช้อยู่จริง ไม่นับ
  *     พื้นที่ว่างที่ WiredTiger จองไว้ใช้ซ้ำ หรือขนาดที่จองไว้ทั้งหมดเมื่อบริการไม่บอกพื้นที่ว่าง (`sizeBasis: "allocated"`
  *     — `readStorageSize`) เกิน LOG_STORE_MAX_MB แล้วตั้ง `overQuota` ซึ่ง backend กับ worker อ่านเป็นสถานะ
@@ -52,6 +55,8 @@ const INDEXES: Array<{ collection: string; keys: Record<string, 1 | -1> }> = [
 const FIRST_TICK_MS = 5_000;
 const TICK_MS = 60_000;
 const QUOTA_EVERY_MS = 60 * 60_000;
+/** ทำ `ensureIndexes()` ซ้ำทั้งชุดทุกเท่านี้ — ตาข่ายของกรณีที่ `storeWasReset` มองไม่เห็น (collection ถูก drop ด้วย root) */
+const INDEX_RECHECK_MS = 60 * 60_000;
 /** ธงลงเมื่อต่ำกว่าสัดส่วนนี้ของเพดาน */
 const CLEAR_BELOW = 0.9;
 /** หนึ่งรอบทั้งรอบ — createIndex บน collection ใหญ่ใช้เวลาได้ แต่ต้องไม่ค้างจนรอบถัดไปซ้อน */
@@ -74,9 +79,20 @@ interface RelayStateDoc {
 let timer: NodeJS.Timeout | null = null;
 let firstTimer: NodeJS.Timeout | null = null;
 let running = false;
-/** index ที่ไม่ต้องลองอีก — สร้างแล้ว หรือถูกปฏิเสธด้วยเหตุที่ลองใหม่ก็ไม่ผ่าน */
-const settledIndexes = new Set<number>();
+/**
+ * index ที่สร้างสำเร็จในรอบนี้ — ล้างทิ้งทุกชั่วโมงและเมื่อ log store ถูกล้าง แล้ว `ensureIndexes()` สร้างซ้ำ
+ *
+ * เดิมเป็นชุดเดียวที่ไม่เคยล้างจนกว่า worker จะเริ่มใหม่: volume ของ mongo ที่ถูกสร้างใหม่ขณะ worker ยังวิ่ง (ขั้นตอน
+ * "เริ่มจาก volume ใหม่" ของแผนเอง) ได้ `activity` ที่มีเอกสารและ relay_state แต่มีแค่ index `_id` — index ทั้งสิบเอ็ดตัว
+ * กลับมาหลัง `restart delivery-worker` เท่านั้น (ตรวจขั้น 6, 2026-09-30)
+ */
+const createdIndexes = new Set<number>();
+/** index ที่ Mongo ปฏิเสธด้วยเหตุที่ลองใหม่ก็ไม่ผ่าน — เตือนไปแล้วครั้งหนึ่ง ไม่ลองอีกจนกว่า process จะเริ่มใหม่ */
+const refusedIndexes = new Set<number>();
+let lastIndexCheckAt = 0;
 let lastQuotaCheckAt = 0;
+/** `quotaCheckedAt` ที่ process นี้เขียนลง relay_state ครั้งล่าสุด — ไม่ตรงกับที่อ่านได้ = log store ถูกล้างหรือมีคนเขียนแทน */
+let lastWrittenQuotaAt: Date | null = null;
 const lastCaptured = new Map<string, number>();
 
 export function startLogUpkeep(): void {
@@ -103,8 +119,13 @@ async function tick(): Promise<void> {
     if (!db) return;
     await withTimeout(
       (async () => {
-        if (settledIndexes.size < INDEXES.length) await ensureIndexes(db);
-        if (Date.now() - lastQuotaCheckAt >= QUOTA_EVERY_MS) {
+        const reset = await storeWasReset(db);
+        if (reset || Date.now() - lastIndexCheckAt >= INDEX_RECHECK_MS) {
+          createdIndexes.clear();
+          lastIndexCheckAt = Date.now();
+        }
+        if (createdIndexes.size + refusedIndexes.size < INDEXES.length) await ensureIndexes(db);
+        if (reset || Date.now() - lastQuotaCheckAt >= QUOTA_EVERY_MS) {
           await checkQuota(db);
           lastQuotaCheckAt = Date.now();
         }
@@ -124,13 +145,13 @@ async function tick(): Promise<void> {
  */
 async function ensureIndexes(db: Db): Promise<void> {
   for (const [index, spec] of INDEXES.entries()) {
-    if (settledIndexes.has(index)) continue;
+    if (createdIndexes.has(index) || refusedIndexes.has(index)) continue;
     try {
       await db.collection(spec.collection).createIndex(spec.keys, { maxTimeMS: 30_000 });
-      settledIndexes.add(index);
+      createdIndexes.add(index);
     } catch (err) {
       if (isTransient(err)) throw err;
-      settledIndexes.add(index);
+      refusedIndexes.add(index);
       const name = err instanceof Error ? err.name : "Error";
       console.warn(
         `[log-store] delivery-worker: สร้าง index ${JSON.stringify(spec.keys)} ของ ${spec.collection} ไม่ได้ (${name}) — ` +
@@ -139,6 +160,31 @@ async function ensureIndexes(db: Db): Promise<void> {
       captureError(err, { level: "warning", tag: "log-upkeep.index", extra: { collection: spec.collection } });
     }
   }
+}
+
+/**
+ * relay_state ไม่ใช่อย่างที่ process นี้เขียนไว้ครั้งล่าสุด — `quotaCheckedAt` หายไปหรือเป็นค่าอื่น
+ *
+ * เกิดได้สามทาง ทุกทางต้องการสิ่งเดียวกัน (ตรวจเพดานและสร้าง index ใหม่ทันที):
+ *   1. volume ของ mongo ถูกสร้างใหม่ขณะ worker ยังวิ่ง — ไม่มี index และไม่มีตัวเลขเพดาน
+ *   2. มีคนลบเอกสาร relay_state ทั้งใบ (แทนการ `$unset` สามฟิลด์ของ rebuild — workers/log-relay.ts) — ธงเกินเพดานหายไป
+ *      store ที่เกินเพดานจริงถูกนับว่าไม่เกินจนถึงรอบชั่วโมงหน้า (ตรวจขั้น 6, 2026-09-30: หายไปราว 55 นาที)
+ *   3. คนอื่นเขียนแทน — `bdi_backend` insert relay_state ได้ตอนที่มันยังไม่มี (plan decision 8) และ `overQuota: true`
+ *      ปลอมทำให้ error ทั้งระบบเหลือแค่ตัวนับ หรือ worker อีกตัวที่ซ้อนอยู่ระหว่าง deploy (ตรวจซ้ำนาทีละครั้งช่วงสั้น ๆ ไม่เสียหาย)
+ * ยังไม่เคยเขียน (รอบแรกหลังบูต) ตอบ false — รอบนั้นตรวจทั้งสองอย่างอยู่แล้ว
+ */
+async function storeWasReset(db: Db): Promise<boolean> {
+  if (lastWrittenQuotaAt === null) return false;
+  const state = await db
+    .collection<RelayStateDoc>("relay_state")
+    .findOne({ _id: "audit_event" }, { projection: { quotaCheckedAt: 1 }, maxTimeMS: 5_000 });
+  const seen = state?.quotaCheckedAt;
+  if (seen instanceof Date && seen.getTime() === lastWrittenQuotaAt.getTime()) return false;
+  console.log(
+    "[log-store] delivery-worker: relay_state ไม่ใช่อย่างที่เขียนไว้ (log store ถูกล้าง หรือมีคนเขียนแทน) — " +
+      "ตรวจเพดานขนาดและสร้าง index ใหม่รอบนี้",
+  );
+  return true;
 }
 
 /**
@@ -306,11 +352,13 @@ async function checkQuota(db: Db): Promise<void> {
   const wasOver = previous?.overQuota === true;
   const overQuota = storageMb > maxMb ? true : storageMb < maxMb * CLEAR_BELOW ? false : wasOver;
 
+  const checkedAt = new Date();
   await relay.updateOne(
     { _id: "audit_event" },
-    { $set: { storageMb, allocatedMb, sizeBasis: basis, overQuota, maxMb, quotaCheckedAt: new Date() } },
+    { $set: { storageMb, allocatedMb, sizeBasis: basis, overQuota, maxMb, quotaCheckedAt: checkedAt } },
     { upsert: true },
   );
+  lastWrittenQuotaAt = checkedAt;
 
   if (overQuota && !wasOver) {
     const message =
