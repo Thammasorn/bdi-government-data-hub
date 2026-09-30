@@ -37,8 +37,14 @@ export interface RequestContext {
   /**
    * route แบบแม่แบบ (`/api/organizations/:id/review`) ไม่ใช่ path จริง — `wrap()` ใน lib/async-route.ts ตั้งให้
    * ก่อน handler ทำงาน ใช้จัดกลุ่ม error ที่เกิดใน route เดียวกันให้เป็น issue เดียว ไม่ว่า id ใน path จะเป็นอะไร
+   * ส่วนที่มาจาก mount path เป็นตัวพิมพ์เล็กเสมอ ไม่ใช่ตัวพิมพ์ที่ผู้เรียกพิมพ์ (ดู `wrap()`)
    */
   route: string | null;
+  /**
+   * ค่า `:id` ของ route ที่ถึง ตามที่ Express จับและถอด `%xx` แล้ว (`req.params.id`) — null ถ้า route ไม่มี `:id` หรือยังไม่ถึง
+   * route ตั้งพร้อม `route` ใน `wrap()` lib/admin-access.ts ใช้เป็น id ของ subject แทนการแกะจาก path ดิบ
+   */
+  routeId: string | null;
   /**
    * สิ่งที่คำขอนี้ทำไปแล้วก่อนจะล้ม (เขียน audit · ลง outbox · ส่งอีเมล · เรนเดอร์ · storage · ThaID) ล่าสุดไม่เกิน
    * BREADCRUMB_MAX รายการ — ติดไปกับ error event ของคำขอนั้น ตอบคำถาม "commit ไปแล้วหรือยังก่อนจะได้ 500"
@@ -108,6 +114,7 @@ export function runWithContext<T>(context: Partial<RequestContext>, fn: () => T)
       startedAt: Date.now(),
       method: null,
       route: null,
+      routeId: null,
       breadcrumbs: [],
       errorCaptured: false,
     },
@@ -182,6 +189,7 @@ export function correlationMiddleware(req: Request, res: Response, next: NextFun
       method: req.method,
       // ยังไม่รู้ว่าจะไปถึง route ไหน — wrap() เติมให้ตอนเข้า handler ของ route
       route: null,
+      routeId: null,
       breadcrumbs: [],
       errorCaptured: false,
     },
@@ -213,10 +221,15 @@ export function setAdminTokenFp(fingerprint: string) {
   if (store) store.adminTokenFp = fingerprint;
 }
 
-/** `wrap()` เรียกก่อน handler ของ route — ดู `RequestContext.route` */
-export function setRoute(route: string) {
+/**
+ * `wrap()` เรียกก่อน handler ของ route — ดู `RequestContext.route` และ `routeId` ตั้งคู่กันทุกครั้ง: คำขอที่ route แรกส่งต่อ
+ * (`next()`) ไปถึง route ที่ไม่มี `:id` ต้องไม่ติด id ของ route แรกไปด้วย
+ */
+export function setRoute(route: string, id: string | null) {
   const store = storage.getStore();
-  if (store) store.route = route;
+  if (!store) return;
+  store.route = route;
+  store.routeId = id;
 }
 
 /**

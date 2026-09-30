@@ -13,12 +13,16 @@
  * ของ token และ `admin-portal`, `wrap()` ใส่ route แบบแม่แบบ ตอนคำตอบจบจึงอ่านได้ครบ
  *
  * เก็บอะไร (plan §7 — ผ่าน lib/redact.ts ทั้งหมด):
- *   - route แบบแม่แบบ (`/api/admin/users/:id`) ถ้าถึง route · path แบบรูปแบบ (`pathPattern()` — อีเมล → `:email` UUID → `:id`
- *     เลขยาว → `:n`) เสมอ คำขอที่ token ไม่ผ่าน (401 ที่ guard) ไม่ถึง route จึงมีแค่ path
+ *   - route แบบแม่แบบ (`/api/admin/users/:id`) ถ้าถึง route — ส่วน mount เป็นตัวเล็กเสมอ (`wrap()` ใน lib/async-route.ts) ·
+ *     path แบบรูปแบบ (`pathPattern()` — อีเมล → `:email` UUID → `:id` เลขยาว → `:n`) เสมอ ตัวพิมพ์ตามที่ผู้เรียกพิมพ์ คำขอที่
+ *     token ไม่ผ่าน (401 ที่ guard) ไม่ถึง route จึงมีแค่ path
  *   - **ชื่อ**ของ query ทุกตัว (ผ่าน `requestTarget()` — ชื่อที่เป็นอีเมลในรูปใดก็ตามเหลือ `[email]`) ค่าเก็บเฉพาะห้าชื่อที่ไม่ใช่
  *     ข้อมูลบุคคล และเฉพาะเมื่อค่าเป็นค่าที่ API รับจริง (`QUERY_VALUE_SHAPES` — นอกนั้น `[other]`) — `cid` ได้แค่ key `cid#`
  *     และ `email` / `q` ที่เป็นอีเมลเต็มได้ key `email#` (`q` ที่เป็นเลขบัตร 13 หลักได้ `cid#`) ค่าจริงไม่ถูกเก็บ ค้นบางส่วนไม่ได้ key
- *   - subject จากแม่แบบของ route (`SUBJECT_BY_ROUTE`) — `/users/:id` เข้า `relatedUserIds` ให้ `x-log-person` หาเจอว่าใครเปิดดู
+ *   - subject จากแม่แบบของ route (`SUBJECT_BY_ROUTE`) กับ `:id` ที่ Express จับได้ (`routeId` ของบริบท — ถอด `%xx` แล้ว ไม่ใช่
+ *     ท่อนของ path ดิบ) — `/users/:id` เข้า `relatedUserIds` ให้ `x-log-person` หาเจอว่าใครเปิดดู เดิมแกะ id จาก path ดิบและเทียบ
+ *     route แบบสนตัวพิมพ์: `/API/Admin/Users/<id>`, `/api/admin/users/%65…` และ request target แบบเต็ม
+ *     (`GET http://host/api/admin/users/<id>`) ได้อีเมลกับเลขบัตรไปครบแต่บันทึกไม่บอกว่าของใคร (ตรวจขั้น 8, 2026-10-01)
  *   - status, เวลาที่ใช้, IP และ user agent (กฎเดียวกับ `audit_event`), fingerprint ของ token ทั้งที่ผ่านและไม่ผ่าน
  *   - ไม่มี body ไม่มี header อื่น — การเปลี่ยนแปลงที่ body สั่งอยู่ใน `audit_event` แล้วพร้อม diff
  *
@@ -60,17 +64,18 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
- * subject ของบันทึกตามแม่แบบของ route — `:id` ที่เป็น UUID ใน path คือ id ของ subject ที่เหลือ (รายการ, route ที่ไม่มี id)
- * เป็น `ADMIN_API` ไม่มี id ตัวแรกที่ตรงชนะ
+ * subject ของบันทึกตามแม่แบบของ route — `:id` ที่ Express จับได้และเป็น UUID คือ id ของ subject ที่เหลือ (รายการ, route ที่ไม่มี
+ * id) เป็น `ADMIN_API` ไม่มี id ตัวแรกที่ตรงชนะ route มาจาก `wrap()` ซึ่งทำส่วน mount เป็นตัวเล็กแล้ว `/i` ที่นี่กันไว้อีกชั้น:
+ * ตารางนี้ต้องไม่พลาดเพราะตัวพิมพ์ ไม่ว่าวันหนึ่งใครจะแก้ `wrap()` อย่างไร
  */
 const SUBJECT_BY_ROUTE: Array<[RegExp, string]> = [
-  [/^\/api\/admin\/users\/:id(?:\/|$)/, "USER_ACCOUNT"],
-  [/^\/api\/admin\/organizations\/:id(?:\/|$)/, "ORGANIZATION"],
-  [/^\/api\/admin\/invitations\/:id(?:\/|$)/, "USER_ACTIVATION_KEY"],
-  [/^\/api\/admin\/registrations\/organizations\/:id(?:\/|$)/, "ORGANIZATION_REGISTRATION_REQUEST"],
-  [/^\/api\/admin\/registrations\/datasets\/:id(?:\/|$)/, "DATASET_REGISTRATION_REQUEST"],
-  [/^\/api\/admin\/legal-documents(?:\/|$)/, "LEGAL_DOCUMENT"],
-  [/^\/api\/admin\/dataset-choices(?:\/|$)/, "DATASET_CHOICE"],
+  [/^\/api\/admin\/users\/:id(?:\/|$)/i, "USER_ACCOUNT"],
+  [/^\/api\/admin\/organizations\/:id(?:\/|$)/i, "ORGANIZATION"],
+  [/^\/api\/admin\/invitations\/:id(?:\/|$)/i, "USER_ACTIVATION_KEY"],
+  [/^\/api\/admin\/registrations\/organizations\/:id(?:\/|$)/i, "ORGANIZATION_REGISTRATION_REQUEST"],
+  [/^\/api\/admin\/registrations\/datasets\/:id(?:\/|$)/i, "DATASET_REGISTRATION_REQUEST"],
+  [/^\/api\/admin\/legal-documents(?:\/|$)/i, "LEGAL_DOCUMENT"],
+  [/^\/api\/admin\/dataset-choices(?:\/|$)/i, "DATASET_CHOICE"],
 ];
 
 /**
@@ -185,7 +190,7 @@ function write(req: Request, res: Response, ctx: RequestContext, provided: strin
     if (emailKey) hashKeys.add(emailKey);
   }
 
-  const subject = subjectOf(route, req.originalUrl);
+  const subject = subjectOf(route, ctx.routeId);
   const tokenFp = ctx.adminTokenFp ?? (provided ? tokenFingerprint(provided) : null);
   const organizationId =
     subject.type === "ORGANIZATION" && subject.id
@@ -247,14 +252,12 @@ function write(req: Request, res: Response, ctx: RequestContext, provided: strin
 }
 
 /**
- * subject จากแม่แบบของ route กับ path จริง — ตำแหน่งของ `:id` ในแม่แบบคือตำแหน่งของ id ใน path (Express จับคู่มาแล้ว)
- * id ที่ไม่ใช่ UUID (404 ของ id ผิดรูป) ไม่ถูกเก็บ
+ * subject จากแม่แบบของ route กับ `:id` ที่ Express จับได้ (`RequestContext.routeId` — ถอด `%xx` แล้ว) id ที่ไม่ใช่ UUID
+ * (404 ของ id ผิดรูป, `:code` ของเอกสาร) ไม่ถูกเก็บ UUID ตัวใหญ่เก็บเป็นตัวเล็ก ให้ตรงกับ id ในฐานข้อมูลและ `x-log-person`
  */
-function subjectOf(route: string | null, originalUrl: string): { type: string; id: string | null } {
+function subjectOf(route: string | null, routeId: string | null): { type: string; id: string | null } {
   if (!route) return { type: "ADMIN_API", id: null };
   const match = SUBJECT_BY_ROUTE.find(([pattern]) => pattern.test(route));
   if (!match) return { type: "ADMIN_API", id: null };
-  const index = route.split("/").indexOf(":id");
-  const segment = index === -1 ? undefined : (originalUrl.split("?")[0] ?? "").split("/")[index];
-  return { type: match[1], id: segment && UUID.test(segment) ? segment.toLowerCase() : null };
+  return { type: match[1], id: routeId && UUID.test(routeId) ? routeId.toLowerCase() : null };
 }

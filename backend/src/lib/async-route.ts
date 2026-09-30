@@ -41,6 +41,16 @@ import { setRoute } from "./context.js";
  * ซึ่ง `baseUrl` ว่างแล้ว **ต้องเช็กก่อนว่ามี `req.route`**: `wrap` ครอบ `router.use(...)` ด้วย (`METHODS` มี "use")
  * ซึ่งเป็นทางที่ `requireAdminToken` กับ `requireAuth` ถูกติดตั้ง และตรงนั้น `req.route` เป็น undefined — อ่านตรง ๆ
  * แล้ว throw ก็กลายเป็น `next(err)` ทุก route ที่มี guard จะตอบ 500 ทั้งหมด typecheck จับไม่ได้เพราะ `req.route` เป็น any
+ *
+ * **`baseUrl` เป็นตัวพิมพ์ตามที่ผู้เรียกพิมพ์** — Express จับ mount path แบบไม่สนตัวพิมพ์ (`/API/Admin/Users/…` เข้า router
+ * เดียวกับ `/api/admin/users/…`) แต่ `baseUrl` คือข้อความส่วนที่จับได้จริง ถ้าต่อตรง ๆ route เดียวกลายเป็นหลายชื่อ: error ของ
+ * route เดียวแตกเป็นหลาย issue ตามตัวพิมพ์ (`http:5xx:<route>`, `prisma:<code>:<route>`) และบันทึกการเรียก admin API ที่เทียบ
+ * route กับตาราง subject ไม่เจอ — การเปิดดูบัญชีหนึ่งผ่าน `/API/Admin/Users/<id>` ได้เลขบัตรกับอีเมลไปโดยบันทึกไม่บอกว่าเป็น
+ * ของใคร (ตรวจขั้น 8, 2026-10-01) mount path ทุกตัวใน index.ts เป็นตัวเล็ก จึงแปลง `baseUrl` เป็นตัวเล็กที่นี่ที่เดียว
+ * ส่วนแม่แบบของ route (`req.route.path`) เป็นข้อความในโค้ด ไม่แตะ (`:assignmentId` ต้องคงรูป)
+ *
+ * id ของ subject มาจาก `req.params.id` — ค่าที่ Express จับได้และถอด `%xx` แล้ว ไม่ใช่ท่อนของ path ดิบ: `%65…` ของ UUID หรือ
+ * request target แบบเต็ม (`GET http://host/api/admin/users/<id>`) ถึง route เดียวกันแต่ท่อนดิบไม่ใช่ UUID
  */
 function wrap(handler: unknown): unknown {
   if (typeof handler !== "function" || handler.length === 4) return handler;
@@ -48,7 +58,10 @@ function wrap(handler: unknown): unknown {
   const fn = handler as RequestHandler;
   const wrapped: RequestHandler = (req, res, next) => {
     const template: unknown = req.route?.path;
-    if (typeof template === "string") setRoute(req.baseUrl + template);
+    if (typeof template === "string") {
+      const id: unknown = req.params?.id;
+      setRoute(req.baseUrl.toLowerCase() + template, typeof id === "string" ? id : null);
+    }
     const resume = AsyncResource.bind(next);
     try {
       Promise.resolve(fn(req, res, resume)).catch(resume);
