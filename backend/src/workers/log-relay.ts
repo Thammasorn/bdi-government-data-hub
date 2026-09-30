@@ -74,6 +74,7 @@ import {
   BROWSER_EVENT_DAYS,
   CLOSED_ISSUE_DAYS,
   ERROR_EVENT_DAYS,
+  OPEN_BROWSER_ISSUE_DAYS,
   RUNTIME_EVENT_DAYS,
 } from "../lib/log-retention.js";
 import { MONGO_COMMAND_MAX_MS, logDb } from "../lib/log-store.js";
@@ -912,10 +913,16 @@ export async function pruneLogStore(db: Db, now: Date): Promise<PruneSummary> {
       at: { $lt: daysBefore(now, RUNTIME_EVENT_DAYS) },
     }),
   );
+  const issues = db.collection("error_issues") as unknown as ActivityCollection;
   summary.issuesDeleted += tally(
-    await deleteInChunks(db.collection("error_issues") as unknown as ActivityCollection, {
-      status: { $ne: "open" },
-      lastSeen: { $lt: daysBefore(now, CLOSED_ISSUE_DAYS) },
+    await deleteInChunks(issues, { status: { $ne: "open" }, lastSeen: { $lt: daysBefore(now, CLOSED_ISSUE_DAYS) } }),
+  );
+  // issue เบราว์เซอร์ที่ยังเปิดแต่ไม่เกิดอีก — ใครก็สร้างได้ จึงมีอายุเท่า event ของมัน (lib/log-retention.ts)
+  summary.issuesDeleted += tally(
+    await deleteInChunks(issues, {
+      service: "browser",
+      status: "open",
+      lastSeen: { $lt: daysBefore(now, OPEN_BROWSER_ISSUE_DAYS) },
     }),
   );
   return summary;

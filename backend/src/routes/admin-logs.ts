@@ -1048,6 +1048,8 @@ adminLogRouter.get("/status", async (req, res) => {
     bufferedBytes: stats.bufferedBytes,
     pendingIssues: stats.pendingIssues,
     dropped: stats.dropped,
+    // รายงานเบราว์เซอร์ที่เดินได้แค่ตัวนับของ issue เดิม (เกินร้อย fingerprint ต่อชั่วโมง หรือเกินเพดานขนาด) — ของ process นี้
+    browserReportsNotCreatingIssues: stats.browserReportsNotCreatingIssues,
     writing: stats.writing,
     hashKey: env.logStore.hashKey ? "set" : "missing",
     relayLagSeconds: null,

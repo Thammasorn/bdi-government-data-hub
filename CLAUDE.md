@@ -1435,7 +1435,11 @@ reports `onRequestError` plus the process's unhandled rejections (through
 `sessionStorage` (`bdi.pendingErrorReports`, five at most) and sent after the next API call
 that succeeds, so the reference in the toast is findable (Postman G6). Only `location.pathname`
 ever leaves the browser. `INGEST_SERVER_TOKEN` is what marks a report as the Next server's; it
-is read at runtime, so it must never become `NEXT_PUBLIC_`.
+is read at runtime, so it must never become `NEXT_PUBLIC_`. A browser report's fingerprint is
+its own message text, so every distinct message is a new `error_issues` document: the backend
+lets browser reports create at most 100 new issues per process per hour and none while the log
+store is over its ceiling (beyond that they only count toward issues that already exist), and
+the worker deletes open browser issues not seen for 30 days.
 
 ## Conventions
 

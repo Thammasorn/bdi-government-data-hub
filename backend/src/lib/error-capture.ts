@@ -16,7 +16,9 @@
  *   - เก็บ event ทีละตัวได้ไม่เกิน 50 ต่อ fingerprint ต่อชั่วโมง และไม่เกิน 600 ต่อ process ต่อนาที — เกินนั้นเดินแค่ตัวนับ
  *     ของ issue (error ที่วนซ้ำหมื่นครั้งยังเห็นว่าหมื่น แต่เก็บตัวอย่างแค่ 50) fatal ไม่ติดเพดานสองตัวนี้
  *     คำขอที่ติดเพดานแล้วตอบ 5xx พร้อมรหัสอ้างอิงได้**ตัวย่อ**หนึ่งตัวแทน ให้รหัสนั้นค้นเจอ (`keepReference`, ≤120/นาที)
- *   - log store เกินเพดานขนาด (สถานะ `over_quota` ที่ worker ตั้ง) — เดินแค่ตัวนับ ไม่เก็บ event
+ *   - log store เกินเพดานขนาด (สถานะ `over_quota` ที่ worker ตั้ง) — เดินแค่ตัวนับ ไม่เก็บ event รายงานจากเบราว์เซอร์ไม่สร้าง
+ *     issue ใหม่ด้วย (นับเข้าได้แค่ issue ที่มีอยู่แล้ว)
+ *   - รายงานจากเบราว์เซอร์สร้าง issue ใหม่ได้ไม่เกิน 100 fingerprint ต่อ process ต่อชั่วโมง (`BROWSER_FINGERPRINTS_PER_HOUR`)
  *   - เอกสารหนึ่งตัวไม่เกิน 64 KB
  *
  * ปิด log store (`LOG_STORE_ENABLED=false`) แล้วยังพิมพ์บรรทัดลง stdout เหมือนเดิม แค่ไม่มีคิวและไม่มีตัวจับเวลา
@@ -181,6 +183,11 @@ interface IssueDelta {
   lastEventId: string | null;
   /** รุ่นของรายงานที่รับเข้ามา (บันเดิลของเบราว์เซอร์) — ไม่มี = รุ่นของ process นี้ (`env.release`) */
   release?: string;
+  /**
+   * สร้าง issue ใหม่ได้ไหม (upsert) — false = เดินตัวนับของ issue ที่มีอยู่แล้วเท่านั้น ไม่มีก็ไม่เกิดอะไร เป็น false เฉพาะรายงาน
+   * จากเบราว์เซอร์ที่มาตอนเกินเพดานขนาด หรือเกินเพดาน fingerprint ใหม่ต่อชั่วโมง (`admitBrowserFingerprint`)
+   */
+  create: boolean;
 }
 
 /**
@@ -214,6 +221,16 @@ const PER_FINGERPRINT_PER_HOUR = 50;
 const PER_PROCESS_PER_MINUTE = 600;
 /** ในจำนวน 600 ต่อนาทีนั้น เป็นรายงานจากเบราว์เซอร์ได้ไม่เกินนี้ (plan §3) — เบราว์เซอร์ส่งอะไรมาก็ได้ ต้องไม่กินที่ของ server */
 const BROWSER_PER_MINUTE = 60;
+/**
+ * fingerprint ของรายงานเบราว์เซอร์ที่สร้าง issue ได้ต่อ process ต่อชั่วโมง — เกินแล้วรายงานของ fingerprint ที่ยังไม่เห็นในชั่วโมงนี้
+ * เดินได้แค่ตัวนับของ issue ที่มีอยู่แล้ว (`captureReport`)
+ *
+ * fingerprint ของเบราว์เซอร์คือข้อความที่ผู้ส่งเขียน (ตัดแค่เลขกับ UUID) ข้อความไม่ซ้ำกันหนึ่งตัวจึงเป็น issue ใหม่หนึ่งใบ เดิม
+ * ไม่มีเพดานนี้ และตอนเกินเพดานขนาดก็ยัง upsert issue: เพดาน 30 ต่อนาทีต่อ IP ที่ผู้ส่งเขียนเองกับ 300 ต่อนาทีรวม ยอมให้ได้ราว
+ * 430,000 issue ใหม่ต่อวัน ซึ่งไม่เคยถูก prune (ตรวจขั้น 10 แบบค้าน, 2026-10-01: ยี่สิบรายงานที่เปลี่ยนคำและ `X-Forwarded-For`
+ * ได้ issue ใหม่ยี่สิบใบ) บั๊กจริงหนึ่งตัวคือ fingerprint ไม่กี่ตัว ร้อยต่อชั่วโมงจึงไม่บังของจริง
+ */
+const BROWSER_FINGERPRINTS_PER_HOUR = 100;
 /** ตอนปิด process รอเขียนคิวที่ค้างไม่เกินเท่านี้ — compose ให้เวลาทั้งหมด 10 วินาที */
 export const FLUSH_ON_EXIT_MS = 2_000;
 
@@ -243,6 +260,10 @@ const pendingIssues = new Map<string, IssueDelta>();
 /** เก็บไปแล้วกี่ตัวในชั่วโมงนี้ ต่อ fingerprint — ล้างรายการที่หมดชั่วโมงทุกครั้งที่เขียนสำเร็จ */
 const perFingerprint = new Map<string, { windowStart: number; stored: number }>();
 let processWindow = { start: 0, stored: 0, browser: 0 };
+/** fingerprint ของรายงานเบราว์เซอร์ที่สร้าง issue ได้ในชั่วโมงนี้ (`BROWSER_FINGERPRINTS_PER_HOUR`) */
+let browserFingerprints = { start: 0, seen: new Set<string>() };
+/** รายงานเบราว์เซอร์ที่ไม่ได้สร้าง issue ตั้งแต่ process เริ่ม (เกินเพดาน fingerprint หรือเกินเพดานขนาด) — `/status` แสดง */
+let browserNotCreated = 0;
 
 /**
  * ทำไมถึงทิ้ง — event สรุปต้องบอกสาเหตุให้ถูก เดิมมันโทษ "log store เขียนไม่ได้นาน" ทุกครั้ง แม้ที่ทิ้งจริงคือเอกสารที่
@@ -389,6 +410,7 @@ export function errorCaptureStats(): {
   pendingIssues: number;
   dropped: number;
   droppedUnreported: number;
+  browserReportsNotCreatingIssues: number;
   writing: "ok" | "failing";
 } {
   return {
@@ -397,6 +419,7 @@ export function errorCaptureStats(): {
     pendingIssues: pendingIssues.size,
     dropped: droppedSinceStart,
     droppedUnreported: dropped.count,
+    browserReportsNotCreatingIssues: browserNotCreated,
     writing: failing ? "failing" : "ok",
   };
 }
@@ -555,10 +578,16 @@ export interface IngestedReport {
  *     อยู่แล้ว — frontend/lib/server-error-report.ts)
  *   - รายงานจากเบราว์เซอร์เก็บได้ไม่เกิน 60 ตัวต่อนาที (BROWSER_PER_MINUTE) และอยู่ชั้นล่างสุดของคิว (ทิ้งก่อนทุกอย่าง)
  *   - issue ได้ `service` ของรายงาน และรุ่นของมัน (`firstRelease` / `lastRelease`) ไม่ใช่ของ backend ที่รับเข้ามา
+ *   - รายงานจากเบราว์เซอร์**สร้าง issue ใหม่ได้เฉพาะ**ตอนที่ไม่เกินเพดานขนาด และ fingerprint ของมันอยู่ในร้อยตัวแรกของชั่วโมงนี้
+ *     (`admitBrowserFingerprint`) นอกนั้นเดินแค่ตัวนับของ issue ที่มีอยู่แล้ว และไม่เก็บตัว event — event ของ fingerprint ที่อาจ
+ *     ไม่มี issue จะเป็น event ที่ไม่มีใครเห็นในรายการ issue (plan §3 "over quota, counters only" ตีความว่า "ตัวนับของที่มีอยู่")
  */
 export function captureReport(report: IngestedReport): string | null {
   try {
     if (!env.logStore.enabled) return null;
+    const browser = report.service === "browser";
+    const overQuota = logStoreStatus().status === "over_quota";
+    const create = !browser || (!overQuota && admitBrowserFingerprint(report.fingerprint, Date.now()));
     const doc: ErrorEventDoc = {
       _id: randomUUID(),
       occurredAt: report.occurredAt,
@@ -585,17 +614,17 @@ export function captureReport(report: IngestedReport): string | null {
       browser: report.browser,
       ingest: report.ingest,
     };
-    const delta = countIssue(doc, report.fingerprint, report.error, report.where);
+    const delta = countIssue(doc, report.fingerprint, report.error, report.where, create);
     if (!delta) {
       noteDropped(doc.occurredAt, 1, "issue_backlog");
       return null;
     }
     delta.release = report.release;
-    if (logStoreStatus().status === "over_quota") return null;
-    if (admit(report.fingerprint, Date.now(), report.service === "browser") !== null) return null;
+    if (!create) browserNotCreated += 1;
+    if (overQuota || !delta.create) return null;
+    if (admit(report.fingerprint, Date.now(), browser) !== null) return null;
     const bytes = fitDocument(doc);
-    const priority =
-      report.service === "browser" ? PRIORITY.browser : report.level === "warning" ? PRIORITY.warning : PRIORITY.error;
+    const priority = browser ? PRIORITY.browser : report.level === "warning" ? PRIORITY.warning : PRIORITY.error;
     if (!enqueue({ kind: "event", doc, bytes, priority })) return null;
     delta.lastEventId = doc._id;
     return doc._id;
@@ -691,12 +720,15 @@ function countIssue(
   fingerprint: string,
   scrubbed: ScrubbedError,
   where: string | null,
+  create = true,
 ): IssueDelta | null {
   const existing = pendingIssues.get(fingerprint);
   if (existing) {
     existing.count += 1;
     existing.lastSeen = doc.occurredAt;
     existing.level = doc.level;
+    // ครั้งไหนก็ตามในก้อนเดียวกันที่สร้างได้ ก็สร้างได้ (เช่นเพดานขนาดลงระหว่างก้อน)
+    if (create) existing.create = true;
     return existing;
   }
   if (pendingIssues.size >= PENDING_ISSUES_MAX) return null;
@@ -711,9 +743,23 @@ function countIssue(
     firstSeen: doc.occurredAt,
     lastSeen: doc.occurredAt,
     lastEventId: null,
+    create,
   };
   pendingIssues.set(fingerprint, delta);
   return delta;
+}
+
+/**
+ * fingerprint ของรายงานเบราว์เซอร์ตัวนี้สร้าง issue ได้ไหม — ได้ถ้าเห็นแล้วในชั่วโมงนี้ หรือยังไม่ครบ BROWSER_FINGERPRINTS_PER_HOUR
+ * (ชั่วโมงเริ่มนับจากรายงานแรกหลังชั่วโมงก่อนจบ) fingerprint ที่มีอยู่แล้วใน log store ก็กินที่ในชุดนี้ด้วย — process ไม่รู้ว่า
+ * ตัวไหนมีอยู่แล้ว ซึ่งไม่เสียอะไร ตัวที่ไม่ได้ที่ยังเดินตัวนับของ issue เดิมได้ (`upsert: false`)
+ */
+function admitBrowserFingerprint(fingerprint: string, now: number): boolean {
+  if (now - browserFingerprints.start >= 3_600_000) browserFingerprints = { start: now, seen: new Set() };
+  if (browserFingerprints.seen.has(fingerprint)) return true;
+  if (browserFingerprints.seen.size >= BROWSER_FINGERPRINTS_PER_HOUR) return false;
+  browserFingerprints.seen.add(fingerprint);
+  return true;
 }
 
 /**
@@ -1038,7 +1084,8 @@ export function perDocumentErrors(err: unknown): Array<{ code?: unknown }> | nul
 
 /**
  * หนึ่ง issue = สอง operation: upsert ตัวนับ แล้วเปิด issue ที่ `resolved` กลับเป็น `open` (regression) ถ้า
- * การเกิดครั้งล่าสุดอยู่หลังเวลาที่ถูกปิด — `ignored` ยังนับต่อแต่ไม่เปิดกลับ
+ * การเกิดครั้งล่าสุดอยู่หลังเวลาที่ถูกปิด — `ignored` ยังนับต่อแต่ไม่เปิดกลับ · `create: false` (รายงานเบราว์เซอร์ที่เกินเพดาน)
+ * ไม่ upsert: issue ที่มีอยู่แล้วนับต่อ ที่ไม่มีก็ไม่ถูกสร้าง
  */
 function issueOperations(issues: IssueDelta[]): AnyBulkWriteOperation<IssueDoc>[] {
   const release = env.release;
@@ -1071,7 +1118,7 @@ function issueOperations(issues: IssueDelta[]): AnyBulkWriteOperation<IssueDoc>[
             ...(d.lastEventId ? {} : { lastEventId: null }),
           },
         },
-        upsert: true,
+        upsert: d.create,
       },
     });
     operations.push({
@@ -1104,6 +1151,7 @@ function requeue(items: RingItem[], issues: IssueDelta[]) {
       current.count += d.count;
       if (d.firstSeen < current.firstSeen) current.firstSeen = d.firstSeen;
       current.lastEventId ??= d.lastEventId;
+      if (d.create) current.create = true;
     } else if (pendingIssues.size < PENDING_ISSUES_MAX) {
       pendingIssues.set(d.fingerprint, d);
     } else {
@@ -1184,6 +1232,7 @@ function enqueueDroppedSummary() {
       firstSeen: now,
       lastSeen: now,
       lastEventId: doc._id,
+      create: true,
     });
   }
 }

@@ -52,5 +52,15 @@ export const ERROR_EVENT_DAYS = 90;
 export const BROWSER_EVENT_DAYS = 30;
 /** process เริ่ม ปิด และตาย — ใช้ดูการวนรีสตาร์ต (step 10) */
 export const RUNTIME_EVENT_DAYS = 90;
-/** issue ที่ปิด (resolved) หรือละเว้น (ignored) แล้วไม่เกิดอีก — issue ที่ยัง `open` ไม่ถูกลบไม่ว่าเก่าแค่ไหน */
+/**
+ * issue ที่ปิด (resolved) หรือละเว้น (ignored) แล้วไม่เกิดอีก — issue ของ server ที่ยัง `open` ไม่ถูกลบไม่ว่าเก่าแค่ไหน
+ * (ของเบราว์เซอร์ดู OPEN_BROWSER_ISSUE_DAYS)
+ */
 export const CLOSED_ISSUE_DAYS = 365;
+/**
+ * issue ของเบราว์เซอร์ที่ยัง `open` และไม่เกิดอีก — เท่าอายุของ event ของมัน (ถึงตอนนั้นไม่เหลือ event ให้เปิดดูแล้ว) ไม่ใช่ไม่มี
+ * กำหนดเหมือนของ server: รายงานจากเบราว์เซอร์ใครก็ส่งได้ และข้อความไม่ซ้ำกันหนึ่งตัวคือ issue ใหม่หนึ่งใบ (lib/error-capture.ts
+ * `BROWSER_FINGERPRINTS_PER_HOUR`) issue ที่คนปิดหรือละเว้นไว้ยังใช้ CLOSED_ISSUE_DAYS — ตัวที่ละเว้นต้องไม่หายแล้วกลับมาเป็น
+ * issue ใหม่ที่แจ้งเตือนอีก
+ */
+export const OPEN_BROWSER_ISSUE_DAYS = BROWSER_EVENT_DAYS;
