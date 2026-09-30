@@ -44,8 +44,9 @@ const CAPTURE_EVERY_MS = 10 * 60_000;
 interface RelayStateDoc {
   _id: string;
   overQuota?: boolean;
-  /** MB ที่ข้อมูลกับ index ใช้อยู่จริง — ตัวที่เทียบกับเพดาน */
+  /** MB ที่เทียบกับเพดาน — ที่ข้อมูลกับ index ใช้อยู่จริง หรือที่จองไว้ถ้าบริการไม่บอกพื้นที่ว่าง (`sizeBasis`) */
   storageMb?: number;
+  sizeBasis?: SizeBasis;
   /** MB ที่ WiredTiger จองไว้ทั้งหมด รวมพื้นที่ว่างที่รอใช้ซ้ำ — ขนาดบนดิสก์จริง ลดลงเมื่อ `compact` เท่านั้น */
   allocatedMb?: number;
   maxMb?: number;
@@ -126,24 +127,77 @@ function isTransient(err: unknown): boolean {
 }
 
 /**
+ * ตัวเลขที่เทียบกับเพดาน — `in_use` คือข้อมูลกับ index ที่ใช้อยู่จริง `allocated` คือที่จองไว้ทั้งหมดรวมพื้นที่ว่างที่รอ
+ * ใช้ซ้ำ (ใช้เมื่อบริการไม่ให้ตัวเลขพื้นที่ว่าง) บันทึกไว้ใน `relay_state.sizeBasis` ให้คนอ่าน storageMb รู้ว่าเป็นตัวไหน
+ */
+export type SizeBasis = "in_use" | "allocated";
+
+export interface StorageFigures {
+  storageMb: number;
+  allocatedMb: number;
+  basis: SizeBasis;
+}
+
+/** บริการนี้ปฏิเสธ `freeStorage` ไปแล้วครั้งหนึ่ง — ไม่ขออีกจนกว่า process จะเริ่มใหม่ */
+let freeStorageRejected = false;
+
+/**
+ * ขนาดของ log store จาก `dbStats` — ขอตัวเลขพื้นที่ว่างด้วย `freeStorage: 1` ก่อน ถ้าบริการไม่รับ field นี้ขอใหม่โดยไม่มีมัน
+ *
+ * mongo ปฏิเสธ field ที่ไม่รู้จักทั้งคำสั่ง ไม่ใช่ข้ามไปเฉย ๆ (ลองกับ mongo:7.0 แล้ว 2026-09-30:
+ * `{dbStats: 1, bogusOption: 1}` → 40415 IDLUnknownField) บริการ managed ที่ไม่รู้จัก `freeStorage` จึงน่าจะทำแบบเดียวกัน
+ * เดิมคำสั่งที่ถูกปฏิเสธ throw ทุกชั่วโมง ถูกเก็บเป็น warning แล้วเพดานไม่เคยถูกเทียบเลย ตอนนี้ถอยไปเทียบขนาดที่จองไว้
+ * (storageSize + indexSize) ซึ่งมากกว่าหรือเท่ากับที่ใช้จริงเสมอ — ธงอาจตั้งเร็วกว่าที่ควร แต่ไม่มีวันไม่ตั้ง
+ * error ชั่วคราว (ต่อไม่ติด หมดเวลา) ไม่ถือว่าเป็นการปฏิเสธ throw ต่อให้รอบหน้าลองใหม่ ไม่งั้นเน็ตสะดุดครั้งเดียวทำให้
+ * เทียบด้วยตัวเลขที่หยาบกว่าไปจนกว่า worker จะเริ่มใหม่
+ *
+ * บริการที่รับ `freeStorage` แต่ไม่ส่งตัวเลขกลับมาก็ได้ `allocated` เช่นกัน
+ */
+export async function readStorageSize(db: Pick<Db, "command">): Promise<StorageFigures> {
+  // คำสั่งนี้อ่านแค่ metadata ของ WiredTiger — เพดานเวลาคือ socketTimeoutMS ของ driver (5 วินาที) กับ TICK_TIMEOUT_MS
+  let stats: Record<string, unknown> | null = null;
+  if (!freeStorageRejected) {
+    try {
+      stats = await db.command({ dbStats: 1, freeStorage: 1 });
+    } catch (err) {
+      if (isTransient(err)) throw err;
+      freeStorageRejected = true;
+      const name = err instanceof Error ? err.name : "Error";
+      const code = (err as { codeName?: unknown; code?: unknown }).codeName ?? (err as { code?: unknown }).code;
+      console.warn(
+        `[log-store] delivery-worker: dbStats ไม่รับ freeStorage (${name}${code === undefined ? "" : ` ${String(code)}`}) — ` +
+          "เทียบเพดานด้วยขนาดที่จองไว้ (storageSize + indexSize) แทนขนาดที่ใช้จริง",
+      );
+      captureError(err, { level: "warning", tag: "log-upkeep.free-storage", fingerprint: "log-store:free-storage-rejected" });
+    }
+  }
+  stats ??= await db.command({ dbStats: 1 });
+
+  const allocated = Number(stats.storageSize ?? 0) + Number(stats.indexSize ?? 0);
+  const freeFields = [stats.freeStorageSize, stats.indexFreeStorageSize].filter((v) => typeof v === "number");
+  const basis: SizeBasis = freeFields.length > 0 ? "in_use" : "allocated";
+  const free = freeFields.reduce((sum: number, v) => sum + Number(v), 0);
+  const inUse = Math.max(0, allocated - (Number.isFinite(free) ? free : 0));
+  return {
+    storageMb: Math.round((inUse / 1024 / 1024) * 10) / 10,
+    allocatedMb: Math.round((allocated / 1024 / 1024) * 10) / 10,
+    basis,
+  };
+}
+
+/**
  * ขนาดที่ใช้อยู่จริงเทียบเพดาน แล้วเขียนธงลง relay_state — นับทั้งข้อมูลและ index เพราะเพดานมีไว้กันดิสก์เต็ม และ index
- * ก็กินดิสก์เหมือนกัน (ของ `activity` ใน step 6 มีสิบเอ็ดตัว)
+ * ก็กินดิสก์เหมือนกัน (ของ `activity` มีสิบเอ็ดตัว)
  *
  * **ที่ใช้อยู่ ไม่ใช่ที่จองไว้**: WiredTiger ไม่คืนพื้นที่ของเอกสารที่ลบแล้วให้ระบบ แต่เก็บไว้ใช้ซ้ำ `storageSize` /
  * `indexSize` จึงไม่ลดลงหลังลบ พื้นที่ว่างนั้นรายงานแยกเป็น `freeStorageSize` / `indexFreeStorageSize` (ต้องขอด้วย
- * `freeStorage: 1`) เดิมเทียบ storageSize + indexSize ตรง ๆ — ธงที่ตั้งแล้วไม่มีวันลง แม้ prune รายวัน (step 6) หรือคน
+ * `freeStorage: 1`) เดิมเทียบ storageSize + indexSize ตรง ๆ — ธงที่ตั้งแล้วไม่มีวันลง แม้ prune รายวัน หรือคน
  * `deleteMany` จนเหลือครึ่ง: ลองกับ mongo:7.0 แล้ว 2026-09-30 ลบหมดทั้ง collection storageSize ไม่ขยับ ขยับแค่ตัว
- * free ถ้าต้องการคืนดิสก์ให้เครื่องจริง ๆ ต้อง `compact` เอง บริการ managed ที่ไม่รู้จัก `freeStorage` ไม่ส่งตัว free
- * มา ก็เท่ากับเทียบขนาดที่จองไว้อย่างเดิม
+ * free ถ้าต้องการคืนดิสก์ให้เครื่องจริง ๆ ต้อง `compact` เอง บริการที่ไม่ให้ตัวเลขพื้นที่ว่างเทียบขนาดที่จองไว้แทน
+ * (`readStorageSize`, `relay_state.sizeBasis`)
  */
 async function checkQuota(db: Db): Promise<void> {
-  // คำสั่งนี้อ่านแค่ metadata ของ WiredTiger — เพดานเวลาคือ socketTimeoutMS ของ driver (5 วินาที) กับ TICK_TIMEOUT_MS
-  const stats = await db.command({ dbStats: 1, freeStorage: 1 });
-  const allocated = Number(stats.storageSize ?? 0) + Number(stats.indexSize ?? 0);
-  const free = Number(stats.freeStorageSize ?? 0) + Number(stats.indexFreeStorageSize ?? 0);
-  const inUse = Math.max(0, allocated - (Number.isFinite(free) ? free : 0));
-  const storageMb = Math.round((inUse / 1024 / 1024) * 10) / 10;
-  const allocatedMb = Math.round((allocated / 1024 / 1024) * 10) / 10;
+  const { storageMb, allocatedMb, basis } = await readStorageSize(db);
   const maxMb = env.logStore.maxMb;
 
   const relay = db.collection<RelayStateDoc>("relay_state");
@@ -153,7 +207,7 @@ async function checkQuota(db: Db): Promise<void> {
 
   await relay.updateOne(
     { _id: "audit_event" },
-    { $set: { storageMb, allocatedMb, overQuota, maxMb, quotaCheckedAt: new Date() } },
+    { $set: { storageMb, allocatedMb, sizeBasis: basis, overQuota, maxMb, quotaCheckedAt: new Date() } },
     { upsert: true },
   );
 
