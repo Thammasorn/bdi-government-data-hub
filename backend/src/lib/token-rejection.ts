@@ -134,9 +134,15 @@ const ENCODED_AT = /%(?:25)*40/gi;
  * ตัดกลุ่มเลขขาด และอีเมลที่ encode สองชั้นรอดกฎอีเมล: เดิมถอดรอบเดียว `some.one%2540example.go.th` เหลือ `some.one%40…` ซึ่ง
  * ไม่มี `@` ให้กฎอีเมลเห็น แล้ว `%` กลายเป็น `_` — `ADMIN_API_REQUEST.metadata.path` เก็บ `some.one_40example.go.th` อ่านกลับ
  * เป็นอีเมลได้ทันที (ตรวจแบบค้าน 2026-10-01) ที่ยังเหลือหลังรอบสุดท้าย `%…40` ทุกชั้นนับเป็น `@`
+ *
+ * ทุกรอบจบด้วย `normalize("NFKC")`: ตัวที่หน้าตาเหมือน `@` แต่เป็นอักษรอื่น — `＠` (U+FF20, `%EF%BC%A0`) กับ `﹫` (U+FE6B,
+ * `%EF%B9%AB`) — อยู่นอกชุดอักษรของ path จึงกลายเป็น `_` โดยกฎอีเมลไม่เคยเห็น แล้วเก็บ `some.one_example.go.th` ซึ่งอ่านกลับ
+ * เป็นอีเมลได้แบบเดียวกับที่ย่อหน้าบนแก้ (ตรวจแบบค้าน 2026-10-01) NFKC แปลงทั้งสองเป็น `@` ตัวจริง และแปลงตัวเลขเต็มความกว้าง
+ * (`１２３`) เป็นเลขธรรมดาให้กฎกลุ่มเลขเห็นด้วย ทำในรอบเดียวกับการถอด เพราะ `％` (U+FF05) ที่ NFKC แปลงเป็น `%` เปิด `%xx`
+ * ช่วงใหม่ให้รอบถัดไปถอด
  */
 function decodePercent(path: string): string {
-  let current = path;
+  let current = path.normalize("NFKC");
   for (let pass = 0; pass < DECODE_PASSES_MAX; pass++) {
     const next = current.replace(PERCENT_RUN, (run) => {
       try {
@@ -150,7 +156,7 @@ function decodePercent(path: string): string {
           return byte < 0x80 ? String.fromCharCode(byte) : "_";
         });
       }
-    });
+    }).normalize("NFKC");
     if (next === current) break;
     current = next;
   }
