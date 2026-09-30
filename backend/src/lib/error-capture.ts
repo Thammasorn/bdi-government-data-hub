@@ -18,7 +18,8 @@
  *     คำขอที่ติดเพดานแล้วตอบ 5xx พร้อมรหัสอ้างอิงได้**ตัวย่อ**หนึ่งตัวแทน ให้รหัสนั้นค้นเจอ (`keepReference`, ≤120/นาที)
  *   - log store เกินเพดานขนาด (สถานะ `over_quota` ที่ worker ตั้ง) — เดินแค่ตัวนับ ไม่เก็บ event รายงานจากเบราว์เซอร์ไม่สร้าง
  *     issue ใหม่ด้วย (นับเข้าได้แค่ issue ที่มีอยู่แล้ว)
- *   - รายงานจากเบราว์เซอร์สร้าง issue ใหม่ได้ไม่เกิน 100 fingerprint ต่อ process ต่อชั่วโมง (`BROWSER_FINGERPRINTS_PER_HOUR`)
+ *   - รายงานจากเบราว์เซอร์สร้าง issue ใหม่ได้ไม่เกิน 100 fingerprint ต่อ process ต่อชั่วโมง (`BROWSER_FINGERPRINTS_PER_HOUR` —
+ *     ยกเว้นสองตัวที่ตั้งชื่อเอง) รายงานที่มีรหัสอ้างอิงยังเก็บตัว event ได้แม้ issue ไม่ถูกสร้าง ให้รหัสนั้นค้นเจอ (`captureReport`)
  *   - เอกสารหนึ่งตัวไม่เกิน 64 KB
  *
  * ปิด log store (`LOG_STORE_ENABLED=false`) แล้วยังพิมพ์บรรทัดลง stdout เหมือนเดิม แค่ไม่มีคิวและไม่มีตัวจับเวลา
@@ -231,6 +232,12 @@ const BROWSER_PER_MINUTE = 60;
  * ได้ issue ใหม่ยี่สิบใบ) บั๊กจริงหนึ่งตัวคือ fingerprint ไม่กี่ตัว ร้อยต่อชั่วโมงจึงไม่บังของจริง
  */
 const BROWSER_FINGERPRINTS_PER_HOUR = 100;
+/**
+ * fingerprint ของเบราว์เซอร์ที่ routes/client-errors.ts ตั้งชื่อเอง — ชุดตายตัวสองตัว ไม่โตตามข้อความที่ผู้ส่งเขียน จึงสร้าง issue
+ * ได้เสมอ ไม่กินที่ในร้อยตัวต่อชั่วโมง เดิมกินที่เหมือนตัวอื่น รายงานขยะร้อยข้อความแรกของชั่วโมงจึงทำให้ 502 ของ proxy (ตอน backend
+ * ล่มจริง) ไม่มี issue ให้เห็นทั้งชั่วโมง (ตรวจขั้น 9, 2026-10-01)
+ */
+const FIXED_BROWSER_FINGERPRINTS: ReadonlySet<string> = new Set(["browser:chunk-load", "proxy:backend_unreachable"]);
 /** ตอนปิด process รอเขียนคิวที่ค้างไม่เกินเท่านี้ — compose ให้เวลาทั้งหมด 10 วินาที */
 export const FLUSH_ON_EXIT_MS = 2_000;
 
@@ -625,15 +632,24 @@ export interface IngestedReport {
  *   - รายงานจากเบราว์เซอร์เก็บได้ไม่เกิน 60 ตัวต่อนาที (BROWSER_PER_MINUTE) และอยู่ชั้นล่างสุดของคิว (ทิ้งก่อนทุกอย่าง)
  *   - issue ได้ `service` ของรายงาน และรุ่นของมัน (`firstRelease` / `lastRelease`) ไม่ใช่ของ backend ที่รับเข้ามา
  *   - รายงานจากเบราว์เซอร์**สร้าง issue ใหม่ได้เฉพาะ**ตอนที่ไม่เกินเพดานขนาด และ fingerprint ของมันอยู่ในร้อยตัวแรกของชั่วโมงนี้
- *     (`admitBrowserFingerprint`) นอกนั้นเดินแค่ตัวนับของ issue ที่มีอยู่แล้ว และไม่เก็บตัว event — event ของ fingerprint ที่อาจ
- *     ไม่มี issue จะเป็น event ที่ไม่มีใครเห็นในรายการ issue (plan §3 "over quota, counters only" ตีความว่า "ตัวนับของที่มีอยู่")
+ *     (`admitBrowserFingerprint` — สองตัวที่ตั้งชื่อเอง `browser:chunk-load` / `proxy:backend_unreachable` ได้เสมอ) นอกนั้นเดินแค่
+ *     ตัวนับของ issue ที่มีอยู่แล้ว และไม่เก็บตัว event — event ของ fingerprint ที่อาจไม่มี issue จะเป็น event ที่ไม่มีใครเห็นในรายการ
+ *     issue (plan §3 "over quota, counters only" ตีความว่า "ตัวนับของที่มีอยู่")
+ *   - **ยกเว้นรายงานที่มีรหัสอ้างอิง** (`browser.reference` — หน้า global-error, 502 ของ proxy): รหัสนั้นผู้ใช้อ่านให้เจ้าหน้าที่ฟัง
+ *     และ Postman G6 ค้นจากตัว event (`reports`) ไม่ใช่จาก issue จึงเก็บตัว event เสมอเมื่อไม่เกินเพดานขนาด แม้ issue ไม่ถูกสร้าง
+ *     (`extra.capped: "browser_fingerprints"` บอกว่า issue ของ fingerprint นี้อาจไม่มี) และไม่ติดเพดาน 50 ตัวต่อ fingerprint ต่อ
+ *     ชั่วโมง (ผู้ใช้ร้อยคนเจอ 502 ตอน backend ล่มได้รหัสร้อยตัว ต้องค้นเจอร้อย) ยังติดเพดาน 60 ต่อนาทีของเบราว์เซอร์และคิว — ที่เก็บ
+ *     จึงไม่โตเกินเดิม เดิมรายงานขยะร้อยข้อความ (`X-Forwarded-For` เขียนเองได้ เพดานต่อ IP จึงไม่ช่วย) ทำให้รหัสบนหน้า global-error
+ *     ที่มาหลังจากนั้นค้นไม่เจอทั้งชั่วโมง (ตรวจขั้น 9, 2026-10-01)
  */
 export function captureReport(report: IngestedReport): string | null {
   try {
     if (!env.logStore.enabled) return null;
     const browser = report.service === "browser";
+    const referenced = browser && typeof report.browser?.reference === "string";
     const overQuota = logStoreStatus().status === "over_quota";
-    const create = !browser || (!overQuota && admitBrowserFingerprint(report.fingerprint, Date.now()));
+    const now = Date.now();
+    const create = !browser || (!overQuota && admitBrowserFingerprint(report.fingerprint, now));
     const doc: ErrorEventDoc = {
       _id: randomUUID(),
       occurredAt: report.occurredAt,
@@ -667,8 +683,10 @@ export function captureReport(report: IngestedReport): string | null {
     }
     delta.release = report.release;
     if (!create) browserNotCreated += 1;
-    if (overQuota || !delta.create) return null;
-    if (admit(report.fingerprint, Date.now(), browser) !== null) return null;
+    if (overQuota) return null;
+    if (!delta.create && !referenced) return null;
+    if (admit(report.fingerprint, now, browser, referenced) !== null) return null;
+    if (!delta.create) doc.extra = { ...(doc.extra ?? {}), capped: "browser_fingerprints" };
     const bytes = fitDocument(doc);
     const priority = browser ? PRIORITY.browser : report.level === "warning" ? PRIORITY.warning : PRIORITY.error;
     if (!enqueue({ kind: "event", doc, bytes, priority })) return null;
@@ -798,9 +816,11 @@ function countIssue(
 /**
  * fingerprint ของรายงานเบราว์เซอร์ตัวนี้สร้าง issue ได้ไหม — ได้ถ้าเห็นแล้วในชั่วโมงนี้ หรือยังไม่ครบ BROWSER_FINGERPRINTS_PER_HOUR
  * (ชั่วโมงเริ่มนับจากรายงานแรกหลังชั่วโมงก่อนจบ) fingerprint ที่มีอยู่แล้วใน log store ก็กินที่ในชุดนี้ด้วย — process ไม่รู้ว่า
- * ตัวไหนมีอยู่แล้ว ซึ่งไม่เสียอะไร ตัวที่ไม่ได้ที่ยังเดินตัวนับของ issue เดิมได้ (`upsert: false`)
+ * ตัวไหนมีอยู่แล้ว ซึ่งไม่เสียอะไร ตัวที่ไม่ได้ที่ยังเดินตัวนับของ issue เดิมได้ (`upsert: false`) · `FIXED_BROWSER_FINGERPRINTS`
+ * ได้เสมอโดยไม่กินที่
  */
 function admitBrowserFingerprint(fingerprint: string, now: number): boolean {
+  if (FIXED_BROWSER_FINGERPRINTS.has(fingerprint)) return true;
   if (now - browserFingerprints.start >= 3_600_000) browserFingerprints = { start: now, seen: new Set() };
   if (browserFingerprints.seen.has(fingerprint)) return true;
   if (browserFingerprints.seen.size >= BROWSER_FINGERPRINTS_PER_HOUR) return false;
@@ -812,20 +832,30 @@ function admitBrowserFingerprint(fingerprint: string, now: number): boolean {
  * เพดาน 50 ตัวต่อ fingerprint ต่อชั่วโมง และ 600 ตัวต่อ process ต่อนาที — เกินแล้วนับอย่างเดียว
  * คืน null ถ้าเก็บได้ หรือบอกว่าติดเพดานตัวไหน: บรรทัดใน stdout ต้องบอกให้ถูก ไม่งั้น error ที่เพิ่งเห็นครั้งแรก
  * แต่ติดเพดานของ process ถูกพิมพ์ว่า "เก็บตัวอย่างของ issue นี้ครบแล้ว" ซึ่งไม่จริง
+ *
+ * `referenced` = รายงานจากเบราว์เซอร์ที่มีรหัสอ้างอิง (`captureReport`) — ไม่ผ่านเพดานต่อ fingerprint และไม่กินที่ของมัน (รหัสทุกตัว
+ * ต้องค้นเจอ ไม่ใช่แค่ห้าสิบตัวแรก) แต่ยังผ่านเพดานต่อนาทีทั้งสองตัว
  */
-function admit(fingerprint: string, now: number, browser = false): "capped_issue" | "capped_process" | null {
+function admit(
+  fingerprint: string,
+  now: number,
+  browser = false,
+  referenced = false,
+): "capped_issue" | "capped_process" | null {
   if (now - processWindow.start >= 60_000) processWindow = { start: now, stored: 0, browser: 0 };
   if (processWindow.stored >= PER_PROCESS_PER_MINUTE) return "capped_process";
   if (browser && processWindow.browser >= BROWSER_PER_MINUTE) return "capped_process";
 
-  let window = perFingerprint.get(fingerprint);
-  if (!window || now - window.windowStart >= 3_600_000) {
-    window = { windowStart: now, stored: 0 };
-    perFingerprint.set(fingerprint, window);
+  if (!referenced) {
+    let window = perFingerprint.get(fingerprint);
+    if (!window || now - window.windowStart >= 3_600_000) {
+      window = { windowStart: now, stored: 0 };
+      perFingerprint.set(fingerprint, window);
+    }
+    if (window.stored >= PER_FINGERPRINT_PER_HOUR) return "capped_issue";
+    window.stored += 1;
   }
-  if (window.stored >= PER_FINGERPRINT_PER_HOUR) return "capped_issue";
 
-  window.stored += 1;
   processWindow.stored += 1;
   if (browser) processWindow.browser += 1;
   return null;

@@ -1473,7 +1473,13 @@ is read at runtime, so it must never become `NEXT_PUBLIC_`. A browser report's f
 its own message text, so every distinct message is a new `error_issues` document: the backend
 lets browser reports create at most 100 new issues per process per hour and none while the log
 store is over its ceiling (beyond that they only count toward issues that already exist), and
-the worker deletes open browser issues not seen for 30 days.
+the worker deletes open browser issues not seen for 30 days. Two exceptions keep references
+findable: `browser:chunk-load` and `proxy:backend_unreachable` never use up that budget, and a
+report that carries a `reference` (the global-error page, the proxy's 502) is stored as an event
+even when its issue is refused (`extra.capped: "browser_fingerprints"`) and past the 50-per-hour
+sample cap. Until 2026-10-01 a hundred junk messages to the unauthenticated endpoint, which a
+spoofed `X-Forwarded-For` gets past the per-IP limit, left every reference sent after them
+unfindable for the rest of the hour.
 **A chunk that fails to load (a deploy under an open page) is a warning filed as
 `browser:chunk-load`, which never alerts, and there are two wordings for it.** `next dev --webpack`
 throws webpack's `ChunkLoadError` ("Loading chunk 123 failed."). Production's `next build` is
