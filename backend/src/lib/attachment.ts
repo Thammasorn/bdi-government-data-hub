@@ -267,13 +267,43 @@ export async function streamAttachment(
   attachment: { storageBucket: string; storageKey: string; mimeType: string; originalFileName: string },
   disposition: "inline" | "attachment" = "inline",
 ) {
-  const stream = await getObjectStream(attachment.storageBucket, attachment.storageKey);
+  let stream: Readable;
+  try {
+    stream = (await getObjectStream(attachment.storageBucket, attachment.storageKey)) as Readable;
+  } catch (err) {
+    /**
+     * storage ล้มก่อนสตรีมเปิด (`download()` ไม่ผ่าน — azurite หยุด, DNS, เครือข่าย, สิทธิ์) ได้คำตอบเดียวกับที่ล้ม
+     * หลังสตรีมเปิดไม่กี่มิลลิวินาที: 503 `storage_unavailable` เดิมตกไปที่ตัวจัดการ error ท้าย index.ts เป็น 500
+     * `internal` "เกิดข้อผิดพลาดภายในระบบ" (ลองแล้ว 2026-09-30: หยุด azurite แล้วดาวน์โหลด — `RestError: getaddrinfo
+     * EAI_AGAIN azurite`) ความล้มเหลวเดียวกันได้สองคำตอบตามจังหวะเวลา
+     *
+     * blob ที่ไม่มีอยู่ (404 ของ storage — แถวชี้ไปไฟล์ที่ไม่มี) ไม่ใช่ storage ล่ม ลองใหม่ก็ไม่หาย จึงยังไปทาง 500
+     * พร้อมรหัสอ้างอิงเหมือนเดิม
+     */
+    if (storageStatusOf(err) === 404) throw err;
+    captureError(err, { req, mechanism: "captured", tag: "storage.stream", status: 503 });
+    answerStorageUnavailable(res);
+    return;
+  }
   res.setHeader("Content-Type", attachment.mimeType);
   res.setHeader(
     "Content-Disposition",
     `${disposition}; filename*=UTF-8''${encodeURIComponent(attachment.originalFileName)}`,
   );
-  pipeToResponse(req, stream as Readable, res);
+  pipeToResponse(req, stream, res);
+}
+
+/** HTTP status ที่ Azure SDK แนบมากับ error (`RestError.statusCode`) — ไฟล์นี้ import SDK ไม่ได้ (storage.ts เป็นเจ้าของ) */
+function storageStatusOf(err: unknown): number | null {
+  const status = (err as { statusCode?: unknown } | null | undefined)?.statusCode;
+  return typeof status === "number" ? status : null;
+}
+
+function answerStorageUnavailable(res: import("express").Response) {
+  res.status(503).json({
+    error: "storage_unavailable",
+    message: "เปิดไฟล์ไม่สำเร็จ ระบบจัดเก็บไฟล์ไม่ตอบ กรุณาลองใหม่อีกครั้ง",
+  });
 }
 
 /**
@@ -284,6 +314,7 @@ export async function streamAttachment(
  * ไฟล์ 80 MB — `AbortError` เป็น fatal แล้ว API ตอบไม่ได้ทุกคำขอ) error ของสตรีมไม่ผ่านตัวจัดการ error ของ Express
  * เพราะมันเกิดหลัง handler คืนค่าไปแล้ว จึงต้องจัดการตรงนี้:
  *   - ยังไม่ได้ส่งอะไรออกไป → ตอบ 503 `storage_unavailable` เป็น JSON ปกติ (ได้รหัสอ้างอิงจาก `referenceOnServerErrors`)
+ *     — คำตอบเดียวกับที่ `streamAttachment()` ให้เมื่อสตรีมเปิดไม่ได้ตั้งแต่แรก
  *   - ส่งไปแล้วบางส่วน → ตอบใหม่ไม่ได้ ตัดการเชื่อมต่อทิ้ง ผู้ใช้ได้ไฟล์ขาด (curl ได้ exit 18) ไม่ใช่ไฟล์ที่ดูเหมือนครบ
  *   - เก็บ error ด้วย tag `storage.stream` ทั้งสองแบบ พร้อม `req` — เดิมเก็บโดยไม่มี `req` เอกสารจึงมีแค่ id ของผู้ใช้
  *     (จาก AsyncLocalStorage) ไม่มี path บทบาท หน่วยงาน หรือ session ของผู้ดาวน์โหลด
@@ -325,10 +356,7 @@ export function pipeToResponse(req: import("express").Request, source: Readable,
       // หัวของไฟล์ที่ตั้งไว้แล้วต้องออกก่อน — `res.json` ไม่ตั้ง Content-Type ทับค่าที่มีอยู่ JSON จะออกไปในชื่อ text/csv
       res.removeHeader("Content-Type");
       res.removeHeader("Content-Disposition");
-      res.status(503).json({
-        error: "storage_unavailable",
-        message: "เปิดไฟล์ไม่สำเร็จ ระบบจัดเก็บไฟล์ไม่ตอบ กรุณาลองใหม่อีกครั้ง",
-      });
+      answerStorageUnavailable(res);
     }),
   );
   source.pipe(res);
