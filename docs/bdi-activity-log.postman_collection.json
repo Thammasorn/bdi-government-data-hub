@@ -625,7 +625,7 @@
             }
           ]
         },
-        "description": "บันทึกการอ่าน log ทุกครั้ง (`AUDIT_LOG_READ`) — ผู้อ่านที่ประกาศ เหตุผล endpoint ตัวกรอง (อีเมลกับเลขบัตรเป็น key HMAC) และ fingerprint ของ log token ที่ใช้ · การเปลี่ยนสถานะ issue ดูด้วย `action=ERROR_ISSUE_STATUS_CHANGED` · การอ่านครั้งนี้ก็ถูกบันทึกเหมือนกัน"
+        "description": "บันทึกการอ่าน log ทุกครั้ง (`AUDIT_LOG_READ`) — ผู้อ่านที่ประกาศ เหตุผล endpoint ตัวกรอง (อีเมลกับเลขบัตรเป็น key HMAC · `person` ที่เป็นบัญชีเป็น uuid ของบัญชี) และ fingerprint ของ log token ที่ใช้ · การเปลี่ยนสถานะ issue ดูด้วย `action=ERROR_ISSUE_STATUS_CHANGED` · การอ่านครั้งนี้ก็ถูกบันทึกเหมือนกัน"
       },
       "response": [],
       "event": [

@@ -13,8 +13,8 @@
  *   - **ทุกการอ่านถูกบันทึกก่อนส่งข้อมูล** (`recordLogRead()` — Postgres ไม่ได้ก็ log store ไม่ได้ทั้งคู่ตอบ 503
  *     `log_read_unrecorded`) ลำดับในแต่ละ route: ตรวจพารามิเตอร์ → log store ต่อได้ไหม → แปลงตัวระบุ (Postgres) →
  *     บันทึก → อ่าน — คำขอที่ผิดรูปหรืออ่านไม่ได้อยู่แล้วจึงไม่เกิดบันทึกเปล่า ๆ ส่วน `GET /status` ไม่ถูกบันทึก (ไม่มีข้อมูลบุคคล)
- *   - ค่าที่ค้นด้วยเลขบัตรหรืออีเมล (`cid` `email` `person` ที่เป็นอีเมล) ลงบันทึกเป็น key HMAC เท่านั้น — บันทึกการอ่านต้อง
- *     ไม่กลายเป็นที่เก็บเลขบัตรแห่งใหม่
+ *   - ค่าที่ค้นด้วยเลขบัตรหรืออีเมล (`cid` `email` `person` ที่เป็นอีเมล) ไม่ลงบันทึกเป็นค่าจริง — เป็น key HMAC และ `person`
+ *     ที่เป็นอีเมลของบัญชีเป็น uuid ของบัญชี (`PersonRef`) บันทึกการอ่านต้องไม่กลายเป็นที่เก็บเลขบัตรแห่งใหม่
  *   - ทุกคำสั่งอ่านของ Mongo มี `maxTimeMS` (READ_MAX_MS) ไม่มีอะไรที่นี่แก้ `activity` ได้ มีแค่สถานะของ issue
  *   - Mongo ล่มหรือช้า = 503 `log_store_unavailable` ภายในราว 2–4 วินาที ปิด log store = 503 `log_store_disabled`
  *   - Postgres ล่มหรือค้าง: ทุกคำสั่งของ Postgres ที่การอ่านรอมีเพดาน (`withDatabaseDeadline()` ใน db.ts — 2 วินาที,
@@ -47,6 +47,9 @@ import { scrubClipped } from "../lib/redact.js";
 import { requireLogReader, requireReadReason } from "../middleware/auth.js";
 
 export const adminLogRouter = Router();
+
+/** ที่ติดตั้ง router นี้ (index.ts) — `metadata.endpoint` ของบันทึกการอ่านประกอบจากค่านี้ ไม่ใช่จาก path ที่ผู้เรียกพิมพ์ */
+export const LOG_API_PATH = "/api/admin/logs";
 
 // --------------------------------------------------------------------------------------------- ค่าคงที่
 
@@ -486,10 +489,14 @@ async function store(res: Response): Promise<Db | null> {
   return null;
 }
 
-/** แม่แบบของ route ที่ถูกเรียก — ลง `metadata.endpoint` (`GET /api/admin/logs/activity/:id`) ไม่ใช่ path ที่มี id จริง */
+/**
+ * แม่แบบของ route ที่ถูกเรียก — ลง `metadata.endpoint` (`GET /api/admin/logs/activity/:id`) ไม่ใช่ path ที่มี id จริง ประกอบจาก
+ * LOG_API_PATH กับแม่แบบของ route ไม่ใช่ `req.baseUrl`: Express จับ path แบบไม่สนตัวพิมพ์ `/API/Admin/LOGS/ACTIVITY` จึงเข้า
+ * route เดียวกันได้ แต่ `baseUrl` เป็นตัวพิมพ์ตามที่ผู้เรียกพิมพ์ — endpoint เดียวจะถูกบันทึกเป็นหลายชื่อ
+ */
 function endpointOf(req: Request): string {
   const template: unknown = req.route?.path;
-  return `${req.method} ${req.baseUrl}${typeof template === "string" ? template : req.path}`;
+  return `${req.method} ${LOG_API_PATH}${typeof template === "string" ? template : "/?"}`;
 }
 
 /**
@@ -620,12 +627,18 @@ function allOf(parts: Array<Filter<Document> | null>): Filter<Document> {
 interface PersonRef {
   accountId: string | null;
   emailKey: string | null;
-  /** ค่าที่ลงบันทึกการอ่าน — uuid ตามจริง อีเมลเป็น key HMAC (หรือ `[email]` ถ้าไม่มีกุญแจ) */
-  recorded: string;
+  /**
+   * ค่าที่ลงตัวกรองของบันทึกการอ่าน — `person` เป็น uuid ของบัญชีเมื่อรู้ว่าเป็นบัญชีไหน (ส่งมาเป็น uuid หรืออีเมลที่มีบัญชี)
+   * ไม่งั้นเป็น key `email#` · อีเมลที่มีบัญชีได้ `personEmailKey` ด้วยเมื่อมีกุญแจ (ค้นทั้งสองทางจริง) ไม่เคยเป็นอีเมลจริง และ
+   * ไม่เคยเป็นค่าที่ไม่บอกว่าใคร: บันทึกการอ่านต้องตอบได้ว่าอ่านประวัติของใคร แม้ระบบจะไม่ได้ตั้ง LOG_HASH_KEY
+   */
+  recorded: { person: string; personEmailKey?: string };
 }
 
 async function resolvePerson(value: string, res: Response): Promise<PersonRef | null> {
-  if (UUID.test(value)) return { accountId: value.toLowerCase(), emailKey: null, recorded: value.toLowerCase() };
+  if (UUID.test(value)) {
+    return { accountId: value.toLowerCase(), emailKey: null, recorded: { person: value.toLowerCase() } };
+  }
   const email = value.trim().toLowerCase();
   const account = await withDatabaseDeadline(() =>
     prisma.userAccount.findFirst({
@@ -634,11 +647,18 @@ async function resolvePerson(value: string, res: Response): Promise<PersonRef | 
     }),
   );
   const emailKey = hashKeyOf("email", email, env.logStore.hashKey);
-  if (!account && !emailKey) {
+  if (account) {
+    return {
+      accountId: account.id,
+      emailKey,
+      recorded: { person: account.id, ...(emailKey ? { personEmailKey: emailKey } : {}) },
+    };
+  }
+  if (!emailKey) {
     hashSearchUnavailable(res, "person");
     return null;
   }
-  return { accountId: account?.id ?? null, emailKey, recorded: emailKey ?? "[email]" };
+  return { accountId: null, emailKey, recorded: { person: emailKey } };
 }
 
 function personFilter(person: PersonRef): Filter<Document> {
@@ -841,7 +861,7 @@ adminLogRouter.get(
         ...(q.actorId ? { actorId: q.actorId } : {}),
         ...(q.subjectType ? { subjectType: q.subjectType } : {}),
         ...(q.subjectId ? { subjectId: q.subjectId } : {}),
-        ...(person ? { person: person.recorded } : {}),
+        ...(person ? person.recorded : {}),
         ...(q.request ? { request: q.request } : {}),
         ...(q.organization ? { organization: q.organization } : {}),
         ...(cidKey ? { cid: cidKey } : {}),
@@ -928,7 +948,7 @@ adminLogRouter.get(
     if (!window) return;
 
     const readId = await recordRead(req, res, {
-      ...(person ? { person: person.recorded } : {}),
+      ...(person ? person.recorded : {}),
       ...(q.request ? { request: q.request } : {}),
       ...(q.organization ? { organization: q.organization } : {}),
       window: windowRecord(window),
