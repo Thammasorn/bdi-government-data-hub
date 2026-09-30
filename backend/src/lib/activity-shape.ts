@@ -346,18 +346,23 @@ function relatedUserIdsOf(row: AuditRowLike, read: { userIds: string[] } | null)
 }
 
 /**
- * key ค้นหาที่ API อ่าน log เขียนลง `metadata.filters` ของ `AUDIT_LOG_READ` เอง — `cidKey` `emailKey` `personEmailKey` และ
- * `person` ของอีเมลที่ไม่มีบัญชี (routes/admin-logs.ts) เป็น HMAC ที่ระบบคำนวณจากค่าที่ผู้อ่านค้น ไม่ใช่ข้อความที่ใครพิมพ์
+ * key ค้นหาที่ API อ่าน log เขียนลง `metadata.filters` ของ `AUDIT_LOG_READ` เอง — `cidKey` `emailKey` `personEmailKey`
+ * `personCidKey` `cidAccountEmailKey` `emailAccountCidKey` และ `person` ของอีเมลที่ไม่มีบัญชี (routes/admin-logs.ts) เป็น HMAC
+ * ที่ระบบคำนวณจากค่าที่ผู้อ่านค้นหรือจากบัญชีของมัน ไม่ใช่ข้อความที่ใครพิมพ์
  */
 const SEARCH_KEY = /^(?:cid|email)#[0-9a-f]{16}$/;
 
 /**
  * สิ่งที่การอ่าน log ครั้งหนึ่งเปิดดู — เฉพาะแถว `AUDIT_LOG_READ` (รหัสอื่นได้ null)
- *   - `keys`: ชื่อตัวกรอง → key ค้นหา (SEARCH_KEY) ที่การอ่านใช้ — เข้า `hashKeys` ของสำเนา และ**ไม่ผ่านการปิด**
- *   - `userIds`: บัญชีที่ประวัติถูกเปิด — `person` และ `actorId` ที่เป็น uuid กับ `subjectId` เมื่อ `subjectType` เป็น
- *     `USER_ACCOUNT` (เข้า `relatedUserIds` ผ่าน `relatedUserIdsOf`)
+ *   - `keys`: ชื่อตัวกรอง → key ค้นหา (SEARCH_KEY) ที่การอ่านบันทึกไว้ — เข้า `hashKeys` ของสำเนา และ**ไม่ผ่านการปิด**
+ *     รวม key ของบัญชีที่ตัวระบุชี้ถึง ไม่ใช่แค่ค่าที่พิมพ์มา (`personEmailKey` `personCidKey` `cidAccountEmailKey`
+ *     `emailAccountCidKey` — routes/admin-logs.ts `AccountKeys`)
+ *   - `userIds`: บัญชีที่ประวัติถูกเปิด — `person` และ `actorId` ที่เป็น uuid, `subjectId` เมื่อ `subjectType` เป็น
+ *     `USER_ACCOUNT`, และบัญชีของเลขบัตร / อีเมลที่ค้น (`cidAccountId` `emailAccountId`) (เข้า `relatedUserIds` ผ่าน
+ *     `relatedUserIdsOf`)
  *
- * สองอย่างนี้ทำให้ `x-log-cid: X` คู่กับ `?action=AUDIT_LOG_READ` (หรือ `x-log-person`) ตอบได้ว่าใครเคยค้นประวัติของ X จาก log store เอง
+ * สองอย่างนี้ทำให้ `?action=AUDIT_LOG_READ` คู่กับตัวระบุตัวไหนก็ได้ของคนคนหนึ่ง (`x-log-person` เป็น uuid หรืออีเมล
+ * `x-log-cid` `x-log-email`) ตอบได้ว่าใครเคยค้นประวัติของเขา ไม่ว่าการค้นครั้งนั้นจะพิมพ์ตัวระบุตัวไหนมา จาก log store เอง
  * เดิมไม่มีทั้งคู่ และ key ของเลขบัตรยังถูกปิดทิ้ง: บันทึกการอ่านเก็บมันไว้ใต้ `filters.cid` ซึ่งเข้ากฎ key เลขบัตร
  * (`CID_KEY` ใน lib/redact.ts) `cid#…` จึงกลายเป็น `{masked: "xxxx…edda"}` — ไม่มีอะไรที่ API ตอบได้ว่าค้นเลขบัตรของใคร
  * (ตรวจแบบค้านขั้น 7, 2026-09-30) ชื่อใหม่ (`cidKey`) ไม่เข้ากฎนั้นแล้ว แต่ key ยังต้องไม่ผ่าน `maskForLogStore` อยู่ดี:
@@ -375,9 +380,14 @@ function logReadTargets(row: AuditRowLike): { keys: Map<string, string>; userIds
   for (const [name, value] of Object.entries(filters)) {
     if (typeof value === "string" && SEARCH_KEY.test(value)) keys.set(name, value);
   }
-  const userIds = [filters.person, filters.actorId, filters.subjectType === "USER_ACCOUNT" ? filters.subjectId : null].filter(
-    (value): value is string => typeof value === "string" && UUID_EXACT.test(value),
-  );
+  const userIds = [
+    filters.person,
+    filters.actorId,
+    filters.subjectType === "USER_ACCOUNT" ? filters.subjectId : null,
+    // บัญชีที่เลขบัตร / อีเมลที่ค้นเป็นของ (`recordedAccountOf` ใน routes/admin-logs.ts)
+    filters.cidAccountId,
+    filters.emailAccountId,
+  ].filter((value): value is string => typeof value === "string" && UUID_EXACT.test(value));
   return { keys, userIds };
 }
 

@@ -47,6 +47,7 @@
  * ของขั้น 8) มาทางคิวของ backend ไม่ผ่าน relay และ relay ที่ค้างจะพาช่วงตั้งต้นค้างไปด้วย การตัดนั้นจึงยังไม่ทำให้ `page` นิ่ง
  * แต่ซ่อนแถวล่าสุดจากคนที่เพิ่งเห็น error — `before` คือทางที่นิ่ง
  */
+import type { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import type { Db, Document, Filter } from "mongodb";
 import { z } from "zod";
@@ -772,36 +773,105 @@ interface PersonRef {
   emailKey: string | null;
   /**
    * ค่าที่ลงตัวกรองของบันทึกการอ่าน — `person` เป็น uuid ของบัญชีเมื่อรู้ว่าเป็นบัญชีไหน (ส่งมาเป็น uuid หรืออีเมลที่มีบัญชี)
-   * ไม่งั้นเป็น key `email#` · อีเมลที่มีบัญชีได้ `personEmailKey` ด้วยเมื่อมีกุญแจ (ค้นทั้งสองทางจริง) ไม่เคยเป็นอีเมลจริง และ
-   * ไม่เคยเป็นค่าที่ไม่บอกว่าใคร: บันทึกการอ่านต้องตอบได้ว่าอ่านประวัติของใคร แม้ระบบจะไม่ได้ตั้ง LOG_HASH_KEY
+   * ไม่งั้นเป็น key `email#` · บัญชีที่รู้ตัวได้ `personEmailKey` / `personCidKey` ของอีเมลและเลขบัตรของบัญชีนั้นด้วย (เมื่อมีกุญแจ
+   * และบัญชีมีค่านั้น — `accountKeysOf`) ไม่เคยเป็นอีเมลหรือเลขบัตรจริง และไม่เคยเป็นค่าที่ไม่บอกว่าใคร: บันทึกการอ่านต้อง
+   * ตอบได้ว่าอ่านประวัติของใคร แม้ระบบจะไม่ได้ตั้ง LOG_HASH_KEY
    */
-  recorded: { person: string; personEmailKey?: string };
+  recorded: Record<string, string>;
 }
 
+/**
+ * บัญชีหนึ่งบัญชีในรูปที่บันทึกการอ่านเก็บ — id กับ key ค้นหา (`email#` `cid#`) ของอีเมลและเลขบัตรของบัญชี
+ *
+ * มีไว้ให้ "ใครเคยค้นประวัติของคนนี้" ไม่ขึ้นกับว่าคนค้นพิมพ์อะไรมา: บันทึกของการค้นด้วย uuid ด้วยอีเมล หรือด้วยเลขบัตร
+ * ได้ครบทั้งสามอย่างของบัญชีนั้นเสมอ (lib/activity-shape.ts `logReadTargets` ยก key เข้า `hashKeys` และ id เข้า
+ * `relatedUserIds`) `?action=AUDIT_LOG_READ` คู่กับตัวระบุตัวไหนก็ได้จึงเจอทุกการค้นของคนนั้น เดิมบันทึกแค่ค่าที่พิมพ์มา
+ * ค้นด้วย uuid แล้วถามด้วยอีเมลไม่เจอ ค้นด้วยเลขบัตรแล้วถามด้วย uuid ไม่เจอ (ตรวจขั้น 7 แบบค้าน, 2026-09-30)
+ */
+interface AccountKeys {
+  id: string;
+  emailKey: string | null;
+  cidKey: string | null;
+}
+
+/** ผลของการหาบัญชี — `unavailable` เมื่อ Postgres ติดต่อไม่ได้หรือไม่ทันเพดานของ db.ts */
+type AccountLookup = { account: AccountKeys | null } | { unavailable: true };
+
+/** บัญชีที่ตรง `where` หรือ null — Postgres ติดต่อไม่ได้ก็ throw ต่อ (ภายในเพดานของ `withDatabaseDeadline()`) */
+async function accountKeysOf(where: Prisma.UserAccountWhereInput): Promise<AccountKeys | null> {
+  const account = await withDatabaseDeadline(() =>
+    prisma.userAccount.findFirst({ where, select: { id: true, email: true, cid: true } }),
+  );
+  if (!account) return null;
+  const hashKey = env.logStore.hashKey;
+  return {
+    id: account.id,
+    emailKey: hashKeyOf("email", account.email, hashKey),
+    cidKey: account.cid ? hashKeyOf("cid", account.cid, hashKey) : null,
+  };
+}
+
+/** แบบเดียวกัน แต่ Postgres ติดต่อไม่ได้ได้ `unavailable` แทน error — ใช้ที่การค้นยังทำต่อได้โดยไม่มีบัญชี */
+async function accountKeysIfReachable(where: Prisma.UserAccountWhereInput): Promise<AccountLookup> {
+  try {
+    return { account: await accountKeysOf(where) };
+  } catch (err) {
+    if (isDatabaseUnreachable(err)) return { unavailable: true };
+    throw err;
+  }
+}
+
+/**
+ * คนที่ค้น → id และ key ของบัญชี — ค้นด้วย uuid ก็ถาม Postgres หาอีเมลกับเลขบัตรของบัญชีด้วย ถาม Postgres ไม่ได้ก็ยังค้นด้วย
+ * uuid ได้ตามเดิม (`accountLookup: "unavailable"` ในบันทึกบอกว่าไม่ได้ key ของบัญชี) ส่วนอีเมลต้องแปลงเป็นบัญชีก่อนค้น จึงยัง
+ * ต้องการ Postgres (ไม่ได้ → 503 `database_unavailable` ของ `storeRoute`)
+ *
+ * ค้นด้วย uuid ของบัญชีที่มีอยู่ ตัวกรองรวม `email#` ของบัญชีด้วย เหมือนค้นด้วยอีเมลของบัญชีนั้น — คนเดียวกันต้องได้ผล
+ * เดียวกันไม่ว่าจะพิมพ์อะไรมา (แถวที่มีแค่อีเมลของบัญชี: resend ของคำเชิญ คำเชิญที่ถูกลบ) `cid#` ของบัญชีไม่เข้าตัวกรอง
+ * เพราะไม่เคยเข้า: มันลงบันทึกไว้ตอบว่าใครค้นใคร ไม่ได้เปลี่ยนสิ่งที่การค้นด้วยคนตอบ
+ */
 async function resolvePerson(value: string, res: Response): Promise<PersonRef | null> {
+  const recordAccount = (account: AccountKeys): Record<string, string> => ({
+    person: account.id,
+    ...(account.emailKey ? { personEmailKey: account.emailKey } : {}),
+    ...(account.cidKey ? { personCidKey: account.cidKey } : {}),
+  });
   if (UUID.test(value)) {
-    return { accountId: value.toLowerCase(), emailKey: null, recorded: { person: value.toLowerCase() } };
+    const id = value.toLowerCase();
+    const lookup = await accountKeysIfReachable({ id });
+    if ("unavailable" in lookup) return { accountId: id, emailKey: null, recorded: { person: id, accountLookup: "unavailable" } };
+    if (!lookup.account) return { accountId: id, emailKey: null, recorded: { person: id } };
+    return { accountId: id, emailKey: lookup.account.emailKey, recorded: recordAccount(lookup.account) };
   }
   const email = value.trim().toLowerCase();
-  const account = await withDatabaseDeadline(() =>
-    prisma.userAccount.findFirst({
-      where: { email: { equals: email, mode: "insensitive" } },
-      select: { id: true },
-    }),
-  );
+  // ต้องรู้ว่าอีเมลนี้เป็นของบัญชีไหนก่อนค้น — Postgres ตอบไม่ได้ error ออกไปถึง storeRoute (503 database_unavailable)
+  const account = await accountKeysOf({ email: { equals: email, mode: "insensitive" } });
   const emailKey = hashKeyOf("email", email, env.logStore.hashKey);
   if (account) {
-    return {
-      accountId: account.id,
-      emailKey,
-      recorded: { person: account.id, ...(emailKey ? { personEmailKey: emailKey } : {}) },
-    };
+    return { accountId: account.id, emailKey, recorded: recordAccount(account) };
   }
   if (!emailKey) {
     hashSearchUnavailable(res, "person");
     return null;
   }
   return { accountId: null, emailKey, recorded: { person: emailKey } };
+}
+
+/**
+ * บัญชีที่เลขบัตรหรืออีเมลที่ค้น (`x-log-cid` / `x-log-email`) เป็นของ — ลงบันทึกการอ่านเท่านั้น ไม่เปลี่ยนตัวกรอง (ค้นด้วย key
+ * ตามเดิม) ชื่อใน `filters`: `<ตัวกรอง>AccountId` กับ key ของอีกค่าหนึ่งของบัญชี (`cidAccountEmailKey`, `emailAccountCidKey`)
+ * Postgres ติดต่อไม่ได้ก็ยังค้นได้ (การค้นด้วย key ไม่ต้องใช้ Postgres) — บันทึกได้ `accountLookup: "unavailable"` แทน
+ */
+async function recordedAccountOf(kind: "cid" | "email", value: string): Promise<Record<string, string>> {
+  const lookup = await accountKeysIfReachable(
+    kind === "cid" ? { cid: value } : { email: { equals: value, mode: "insensitive" } },
+  );
+  if ("unavailable" in lookup) return { accountLookup: "unavailable" };
+  const account = lookup.account;
+  if (!account) return {};
+  const otherKey = kind === "cid" ? account.emailKey : account.cidKey;
+  const otherName = kind === "cid" ? "cidAccountEmailKey" : "emailAccountCidKey";
+  return { [`${kind}AccountId`]: account.id, ...(otherKey ? { [otherName]: otherKey } : {}) };
 }
 
 function personFilter(person: PersonRef): Filter<Document> {
@@ -995,6 +1065,9 @@ adminLogRouter.get(
     if (q.organization && !organizationId) return;
     const cidKey = q.cid ? hashKeyOf("cid", q.cid, hashKey) : null;
     const emailKey = q.email ? hashKeyOf("email", q.email, hashKey) : null;
+    // บัญชีของเลขบัตร / อีเมลที่ค้น — ลงบันทึกการอ่านอย่างเดียว ให้ "ใครค้นคนนี้" ตอบได้ด้วยตัวระบุตัวไหนก็ได้ (`AccountKeys`)
+    const cidAccount = q.cid ? await recordedAccountOf("cid", q.cid) : {};
+    const emailAccount = q.email ? await recordedAccountOf("email", q.email) : {};
 
     const narrowed = Boolean(
       person || request || organizationId || q.actorId || q.subjectId || cidKey || emailKey || q.tokenFp || q.correlationId,
@@ -1047,8 +1120,8 @@ adminLogRouter.get(
         ...(q.organization ? { organization: q.organization } : {}),
         // ชื่อ `cidKey` / `emailKey` ไม่ใช่ `cid` / `email`: ชื่อที่ลงท้าย `cid` เข้ากฎ key เลขบัตรของสำเนา (lib/redact.ts)
         // แล้ว key ถูกปิดทิ้งใน log store — lib/activity-shape.ts `logReadTargets`
-        ...(cidKey ? { cidKey } : {}),
-        ...(emailKey ? { emailKey } : {}),
+        ...(cidKey ? { cidKey, ...cidAccount } : {}),
+        ...(emailKey ? { emailKey, ...emailAccount } : {}),
         ...(q.tokenFp ? { tokenFp: q.tokenFp } : {}),
         ...(q.correlationId ? { correlationId: q.correlationId } : {}),
         ...(q.before ? { before: q.before.raw } : {}),

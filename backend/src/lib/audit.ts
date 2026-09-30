@@ -398,13 +398,16 @@ export const AuditAction = {
    * `metadata`: `reader` (อีเมลที่ผู้อ่าน**ประกาศ**ใน `x-log-reader` — ไม่ได้พิสูจน์) · `reason` (ข้อความจาก `x-log-reason`
    * อาจเป็น null บน endpoint ของ error ที่ไม่บังคับ) · `endpoint` (`GET /api/admin/logs/activity`) · `filters` (ค่าที่ใช้ค้น —
    * เลขบัตรกับอีเมลที่ค้นเก็บเป็น key HMAC เท่านั้น ใต้ชื่อ `cidKey` / `emailKey` (`cid#…` / `email#…` — ไม่ใช่ `cid` / `email`:
-   * ชื่อที่ลงท้าย `cid` เข้ากฎ key เลขบัตรของสำเนาแล้ว key ถูกปิดทิ้ง) · `person` ที่ส่งมาเป็นอีเมลของบัญชีเก็บเป็น uuid ของ
-   * บัญชี บวก `personEmailKey` (`email#…` เมื่อตั้ง LOG_HASH_KEY — ค้นทั้งสองทางจริง) อีเมลที่ไม่มีบัญชีเก็บเป็น `email#…`
-   * ไม่เคยเป็นอีเมลจริง ส่วนเลขที่คำขอกับรหัสหน่วยงานเก็บตามจริงเพราะไม่ใช่ข้อมูลบุคคล) · `token_fp` (12 ตัวแรกของ SHA-256
-   * ของ `x-log-token` ที่ใช้) · `page`
+   * ชื่อที่ลงท้าย `cid` เข้ากฎ key เลขบัตรของสำเนาแล้ว key ถูกปิดทิ้ง) · `person` ที่ชี้บัญชีได้ (uuid หรืออีเมลของบัญชี)
+   * เก็บเป็น uuid ของบัญชี บวก `personEmailKey` / `personCidKey` ของอีเมลและเลขบัตรของบัญชีนั้น อีเมลที่ไม่มีบัญชีเก็บเป็น
+   * `email#…` ไม่เคยเป็นอีเมลจริง · `cidKey` / `emailKey` ที่ตรงกับบัญชีได้ `cidAccountId` + `cidAccountEmailKey` /
+   * `emailAccountId` + `emailAccountCidKey` ด้วย (key มีเมื่อตั้ง LOG_HASH_KEY) · Postgres ตอบไม่ได้ตอนหาบัญชี ได้
+   * `accountLookup: "unavailable"` · เลขที่คำขอกับรหัสหน่วยงานเก็บตามจริงเพราะไม่ใช่ข้อมูลบุคคล) · `token_fp` (12 ตัวแรก
+   * ของ SHA-256 ของ `x-log-token` ที่ใช้) · `page`
    * actor เป็นระบบ (`SYSTEM`, ไม่มี id) เหมือนงานผ่าน admin token · `source_component = log-api` · subject `AUDIT_LOG`
-   * สำเนาใน log store ได้ key ที่ค้นใน `hashKeys` และบัญชีที่ถูกเปิดประวัติใน `relatedUserIds` (lib/activity-shape.ts
-   * `logReadTargets`) — `x-log-cid: X` คู่กับ `?action=AUDIT_LOG_READ` จึงตอบได้ว่าใครค้นประวัติของ X
+   * สำเนาใน log store ได้ key ทั้งหมดนั้นใน `hashKeys` และบัญชีที่ถูกเปิดประวัติใน `relatedUserIds` (lib/activity-shape.ts
+   * `logReadTargets`) — `?action=AUDIT_LOG_READ` คู่กับตัวระบุตัวไหนก็ได้ของคนคนหนึ่งจึงตอบได้ว่าใครค้นประวัติของเขา
+   * ไม่ว่าการค้นครั้งนั้นจะพิมพ์ uuid อีเมล หรือเลขบัตรมา
    */
   AUDIT_LOG_READ: "AUDIT_LOG_READ",
 
