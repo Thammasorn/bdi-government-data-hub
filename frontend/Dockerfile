@@ -38,6 +38,11 @@ ENV NODE_ENV=production
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
+# รุ่นของโค้ด (SHA ที่ build) — ฝังลงบันเดิลทั้งของเบราว์เซอร์และของ server แล้วติดไปกับทุกรายงาน error (lib/report-error.ts,
+# lib/server-error-report.ts) ให้ issue บอกได้ว่าเกิดกับรุ่นไหน ส่งด้วย --build-arg GIT_SHA=… (docker-compose.prod.yml ทำให้)
+ARG GIT_SHA=unknown
+ENV NEXT_PUBLIC_RELEASE=${GIT_SHA}
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build

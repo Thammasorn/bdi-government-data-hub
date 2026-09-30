@@ -1407,6 +1407,19 @@ Two API base URLs, and they are not interchangeable:
   time, so changing it requires `--build`, never just a restart.
 - `INTERNAL_API_URL` — what Next's server side calls, over the compose network.
 
+**Errors in the browser and on the Next server reach the log store, not just the console.**
+`instrumentation-client.ts` reports uncaught `error`/`unhandledrejection` events,
+`app/global-error.tsx` shows a reference it generates and reports it, and `instrumentation.ts`
+reports `onRequestError` plus the process's unhandled rejections (through
+`lib/server-error-report.ts`, loaded only in the Node runtime). All go to
+`POST /api/client-errors`, which always answers 204. `lib/report-error.ts` never reports an
+`ApiError` — the backend already captured every 5xx — except the proxy's own 502
+`backend_unreachable`, which the backend never saw: that one is queued in
+`sessionStorage` (`bdi.pendingErrorReports`, five at most) and sent after the next API call
+that succeeds, so the reference in the toast is findable (Postman G6). Only `location.pathname`
+ever leaves the browser. `INGEST_SERVER_TOKEN` is what marks a report as the Next server's; it
+is read at runtime, so it must never become `NEXT_PUBLIC_`.
+
 ## Conventions
 
 - All user-facing copy is Thai. Body line-height is 1.7 — Thai tone marks need the room.
@@ -1575,9 +1588,13 @@ Two API base URLs, and they are not interchangeable:
   browser's `X-Forwarded-For` as sent, because Next fills that header from the socket only when
   it is absent (`??=` in `base-server.js`). So through the site too it can be any text of any
   length. It is only the caller's address where an edge in front appends it. On `main` that edge
-  is Cloudflare; Cloudflare's docs say it appends, but nobody has checked that for our tunnel.
-  Dropping the header in the proxy is not a fix, because every user would then share
-  the frontend container's address. Every `ip_address` column is `VARCHAR(64)`. Until 2026-09-28 a 100-character
+  is Cloudflare; Cloudflare's docs say it appends, but nobody has checked that for our tunnel —
+  an open question, not a fact. Wherever the backend (`:4000`) or the site (`:3000`) is reached
+  without Cloudflare — the LAN, every dev checkout — the address in audit is whatever the caller
+  wrote. Dropping the header in the proxy is not a fix, because every user would then share
+  the frontend container's address; keeping it was decided on 2026-09-30. The proxy does replace
+  `x-correlation-id` with a fresh one on every request and strips `x-report-*`, so a browser
+  cannot plant rows in someone else's trace or pose as the Next server's error reporter. Every `ip_address` column is `VARCHAR(64)`. Until 2026-09-28 a 100-character
   value made the OTP step answer 400, because the session insert failed, so that user could not
   log in at all. It also made every `audit_event` row of the request vanish, since `logAudit`
   swallows its own failure, and admin-token and password guessing could run with no trace.

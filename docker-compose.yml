@@ -207,6 +207,10 @@ services:
       # token ของ API อ่าน log (x-log-token ของ /api/admin/logs/*) — ว่าง = ค่าของ dev ใน env.ts, production ว่างหรือเป็น
       # ค่าตัวอย่าง = API นั้นตอบ 503 · **backend เท่านั้น** worker ไม่ได้ให้บริการ API นี้
       LOG_READ_TOKEN: ${LOG_READ_TOKEN:-}
+      # ความลับที่ Next server แนบกับรายงาน error ของตัวเอง (POST /api/client-errors) — ตรงแล้วเก็บเป็น frontend-server
+      # ว่าง = ค่าของ dev ใน env.ts, production ว่างหรือเป็นค่าตัวอย่าง = รายงานของ Next server เก็บเป็น browser ที่ยืนยันไม่ได้
+      # **ค่าเดียวกันต้องอยู่ใน frontend ข้างล่าง**
+      INGEST_SERVER_TOKEN: ${INGEST_SERVER_TOKEN:-}
       # ชื่อ deployment ที่ติดไปกับทุก error event (ค่าตั้งต้นคือชื่อ project ของ compose: bdi-main, bdi-dev_…)
       # **ไม่มี RELEASE ตรงนี้โดยตั้งใจ**: image ของ production ฝัง RELEASE=<SHA> ไว้แล้ว (backend/Dockerfile) และค่าว่าง
       # จาก `${RELEASE:-}` จะทับค่านั้นจนกลายเป็น `dev`
@@ -292,6 +296,9 @@ services:
       ALLOWED_DEV_ORIGINS: ${APP_URL:-}
       # Server-side (RSC / route handlers): uses the compose network.
       INTERNAL_API_URL: http://backend:4000
+      # แนบกับรายงาน error ของ Next server (frontend/lib/server-error-report.ts) — อ่านตอนรัน ห้ามเป็น NEXT_PUBLIC_
+      # ค่าตั้งต้นตรงกับค่าของ dev ใน backend/src/env.ts · production ตั้งใน .env ค่าเดียวกับของ backend
+      INGEST_SERVER_TOKEN: ${INGEST_SERVER_TOKEN:-dev-ingest-token-change-me}
     ports:
       # ตรึงไว้ — โดเมนสาธารณะ bdi.thammasorn.org ชี้มาที่พอร์ตนี้
       - "3000:3000"
