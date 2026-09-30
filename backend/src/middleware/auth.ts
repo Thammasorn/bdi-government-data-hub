@@ -145,7 +145,7 @@ export function requireRole(...allowed: RoleCode[]) {
  * จึง hash ทั้งสองฝั่งก่อน — ได้ buffer ยาวเท่ากันเสมอ และความยาวของค่าจริงหายไปด้วย
  * (`activationKeyMatches()` ไม่ต้องทำขั้นนี้เพราะเทียบ hash กับ hash อยู่แล้ว)
  */
-function secretMatches(provided: string, expected: string): boolean {
+export function secretMatches(provided: string, expected: string): boolean {
   return timingSafeEqual(
     Buffer.from(hashToken(provided), "hex"),
     Buffer.from(hashToken(expected), "hex"),

@@ -83,12 +83,23 @@ const MONGODB_URI = optional("MONGODB_URI", "");
  * อยู่พัง ไม่พิมพ์ค่าหรือความยาว
  */
 function logReadToken(): string {
-  const value = optional("LOG_READ_TOKEN", NODE_ENV === "production" ? "" : "dev-log-token-change-me");
+  return productionSecret(
+    "LOG_READ_TOKEN",
+    "dev-log-token-change-me",
+    "ปิด API อ่าน log (/api/admin/logs ตอบ 503 log_access_disabled)",
+  );
+}
+
+/**
+ * ความลับที่ dev มีค่าตัวอย่าง แต่ production ไม่รับค่าตัวอย่าง (`dev-…`, `…change-me`) หรือค่าที่สั้นกว่า 32 ตัว — ถือเป็น
+ * **ไม่ได้ตั้ง** พร้อมคำเตือนตอนบูตที่บอกผล (`effect`) ไม่พิมพ์ค่าหรือความยาว ไม่ throw: สิ่งที่ความลับนี้เปิดแค่ปิดไป
+ */
+function productionSecret(name: string, devValue: string, effect: string): string {
+  const value = optional(name, NODE_ENV === "production" ? "" : devValue);
   if (NODE_ENV !== "production" || value === "") return value;
   if (value.length < 32 || value.startsWith("dev-") || value.includes("change-me")) {
     console.warn(
-      "[env] LOG_READ_TOKEN ยังเป็นค่าตัวอย่างหรือสั้นกว่า 32 ตัว — ปิด API อ่าน log (/api/admin/logs ตอบ 503 " +
-        "log_access_disabled) จนกว่าจะตั้งเป็นค่าจาก `openssl rand -hex 32`",
+      `[env] ${name} ยังเป็นค่าตัวอย่างหรือสั้นกว่า 32 ตัว — ${effect} จนกว่าจะตั้งเป็นค่าจาก \`openssl rand -hex 32\``,
     );
     return "";
   }
@@ -366,6 +377,18 @@ export const env = {
      * ไปเป็น `.env` ของ main/ จะได้ token ที่เขียนอยู่ใน repo สาธารณะ ค่าจริงคือ `openssl rand -hex 32`
      */
     readToken: logReadToken(),
+    /**
+     * ความลับที่ Next server แนบมากับรายงาน error ของตัวเอง (`x-report-token` ของ `POST /api/client-errors` —
+     * routes/client-errors.ts) รายงานที่ token ตรงถูกเก็บเป็น `service: "frontend-server"` ที่เหลือทุกตัวเป็น `browser`
+     * `ingest.verified: false` — backend เรียกได้ตรงไม่ผ่านหน้าเว็บ header อย่างเดียวจึงพิสูจน์อะไรไม่ได้ ต้องเป็นค่าเดียวกับ
+     * `INGEST_SERVER_TOKEN` ของ frontend · ว่าง (หรือค่าตัวอย่างบน production) = ไม่มีรายงานไหนได้เป็น frontend-server
+     * ไม่กระทบอย่างอื่น
+     */
+    ingestToken: productionSecret(
+      "INGEST_SERVER_TOKEN",
+      "dev-ingest-token-change-me",
+      "รายงาน error จาก Next server ถูกเก็บเป็นของเบราว์เซอร์ที่ยืนยันไม่ได้ (ingest.verified: false)",
+    ),
   },
 } as const;
 

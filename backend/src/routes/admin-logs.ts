@@ -1338,6 +1338,12 @@ adminLogRouter.get(
  *
  * `mixedActors: true` = แถวของ id นี้มาจากผู้กระทำหรือช่องทางมากกว่าหนึ่ง ผู้เรียก API ตรงส่ง `x-correlation-id` เองได้
  * (lib/context.ts) id เดียวกันจึงไม่ใช่หลักฐานว่าเป็นคลิกเดียว — docs/21 §2.5
+ *
+ * `reports` = รายงานจากเบราว์เซอร์ที่**อ้าง**รหัสนี้ (`browser.reference` — 8 ตัวแรกของ ref) แยกจาก `errors` เพราะรหัสนั้นผู้ส่ง
+ * เขียนเอง ไม่ใช่ correlation id ที่ระบบออกให้: 502 ของ proxy ที่เบราว์เซอร์ส่งตามมาหลัง backend กลับมา (Postman G6 หาเจอ
+ * ทางนี้ทางเดียว — backend ไม่เคยเห็นคำขอนั้น) และรหัสที่หน้า global-error สร้างเอง ใครก็ส่งรายงานอ้างรหัสของคนอื่นได้
+ * (routes/client-errors.ts) จึงอ่านเป็นคำบอกเล่า ไม่ใช่หลักฐาน · มีแต่ `reports` (ไม่มี activity/error ของรหัสนั้น) ตอบ 200 พร้อม
+ * `correlationId: null` ไม่ใช่ 404
  */
 adminLogRouter.get(
   "/trace/:ref",
@@ -1353,6 +1359,16 @@ adminLogRouter.get(
     if (!db) return;
     const readId = await recordRead(req, res, { ref });
     if (!readId) return;
+
+    const reports = (
+      await db
+        .collection("error_events")
+        .find({ "browser.reference": ref.slice(0, 8) })
+        .sort({ occurredAt: -1, _id: -1 })
+        .limit(TRACE_ERRORS_MAX)
+        .maxTimeMS(READ_MAX_MS)
+        .toArray()
+    ).map(errorEventDto);
 
     let correlationId = ref;
     if (ref.length < 36) {
@@ -1380,8 +1396,27 @@ adminLogRouter.get(
           candidates.set(row._id, entry);
         }
       }
-      if (candidates.size === 0) {
+      if (candidates.size === 0 && reports.length === 0) {
         res.status(404).json({ error: "not_found", message: `ไม่พบรหัสอ้างอิง ${ref} ใน log store`, readId });
+        return;
+      }
+      if (candidates.size === 0) {
+        // มีแต่รายงานที่อ้างรหัสนี้ — คำขอที่ backend ไม่เคยเห็น (502 ของ proxy) หรือรหัสที่หน้า global-error สร้างเอง
+        res.json({
+          correlationId: null,
+          reference: ref.slice(0, 8),
+          actors: [],
+          mixedActors: false,
+          activity: [],
+          activityTruncated: false,
+          errors: [],
+          errorsTruncated: false,
+          reports,
+          deliveries: null,
+          integrations: null,
+          postgres: "not_applicable",
+          readId,
+        });
         return;
       }
       if (candidates.size > 1) {
@@ -1389,7 +1424,14 @@ adminLogRouter.get(
           .sort((a, b) => (b.firstAt?.getTime() ?? 0) - (a.firstAt?.getTime() ?? 0))
           .slice(0, TRACE_CANDIDATES_MAX)
           .map((c) => ({ ...c, firstAtBangkok: bangkok(c.firstAt) }));
-        res.json({ ambiguous: true, ref, candidates: list, candidatesTruncated: candidates.size > TRACE_CANDIDATES_MAX, readId });
+        res.json({
+          ambiguous: true,
+          ref,
+          candidates: list,
+          candidatesTruncated: candidates.size > TRACE_CANDIDATES_MAX,
+          reports,
+          readId,
+        });
         return;
       }
       correlationId = [...candidates.keys()][0]!;
@@ -1439,6 +1481,7 @@ adminLogRouter.get(
       activityTruncated,
       errors: errors.map(errorEventDto),
       errorsTruncated,
+      reports,
       deliveries: postgres?.deliveries ?? null,
       integrations: postgres?.integrations ?? null,
       postgres: postgres ? "ok" : UUID.test(correlationId) ? "unavailable" : "not_applicable",

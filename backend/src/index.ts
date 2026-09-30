@@ -28,6 +28,7 @@ import { adminRouter } from "./routes/admin.js";
 import { adminUserRouter } from "./routes/admin-users.js";
 import { addressRouter } from "./routes/address.js";
 import { authRouter } from "./routes/auth.js";
+import { clientErrorRouter } from "./routes/client-errors.js";
 import { datasetChoiceRouter } from "./routes/dataset-choices.js";
 import { datasetRequestRouter } from "./routes/dataset-requests.js";
 import { healthRouter } from "./routes/health.js";
@@ -150,6 +151,11 @@ app.use(cors({ origin: env.corsOrigins, credentials: true, exposedHeaders: ["x-c
  */
 app.use(correlationMiddleware);
 app.use(referenceOnServerErrors);
+/**
+ * รายงาน error จากเบราว์เซอร์และ Next server — ก่อน `parseJsonBody` เพราะมีตัวอ่าน body ของตัวเอง (`text/plain` ของ
+ * sendBeacon, เพดาน 16 KB) และตอบ 204 เสมอ แม้ body จะอ่านไม่ออก (routes/client-errors.ts)
+ */
+app.use("/api/client-errors", clientErrorRouter);
 app.use(parseJsonBody);
 app.use(cookieParser());
 

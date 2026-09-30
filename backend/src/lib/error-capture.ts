@@ -39,7 +39,22 @@ import { bodyShape, headlineOf, requestTarget, scrubClipped, scrubError, type Sc
 export type ErrorLevel = "fatal" | "error" | "warning";
 /** error มาถึงทางไหน — `captured` คือโค้ดของเราเรียกเองที่จุดที่กลืน error ไว้ */
 export type CaptureMechanism = "express" | "unhandledRejection" | "uncaughtException" | "captured";
+/**
+ * ทางที่รายงานจากนอก process มาถึง (`POST /api/client-errors` — routes/client-errors.ts): `window` / `unhandledrejection`
+ * ของเบราว์เซอร์ หน้า `global-error` · `proxy` = 502 ของ proxy ที่เบราว์เซอร์ส่งตามมาทีหลัง · `onRequestError` และ
+ * `unhandledRejection` / `uncaughtException` ของ Next server
+ */
+export type ReportMechanism =
+  | "window"
+  | "unhandledrejection"
+  | "global-error"
+  | "proxy"
+  | "onRequestError"
+  | "unhandledRejection"
+  | "uncaughtException";
 export type CaptureService = "backend" | "delivery-worker";
+/** service ของ event — ของ process เอง หรือของรายงานที่รับเข้ามา */
+export type EventService = CaptureService | "browser" | "frontend-server";
 
 export interface CaptureOptions {
   /** ค่าตั้งต้น `error` · `warning` ไม่มีวันส่งอีเมลแจ้งเตือน (step 10) */
@@ -68,11 +83,11 @@ interface ErrorEventDoc {
   level: ErrorLevel;
   handled: boolean;
   tag: string | null;
-  service: CaptureService;
+  service: EventService;
   environment: string;
   release: string;
   host: { containerId: string; startedAt: Date };
-  mechanism: CaptureMechanism;
+  mechanism: CaptureMechanism | ReportMechanism;
   error: Omit<ScrubbedError, "topFrame">;
   request: {
     method: string | null;
@@ -90,9 +105,30 @@ interface ErrorEventDoc {
   actor: { id: string; roles: string[]; organizationId: string | null; sessionId: string | null } | null;
   breadcrumbs: Breadcrumb[];
   extra: Record<string, unknown> | null;
-  /** รายงานจากเบราว์เซอร์และการรับเข้า (step 9) — null เสมอสำหรับ error ฝั่ง server */
-  browser: null;
-  ingest: null;
+  /** รายงานที่รับเข้ามา (step 9, `captureReport`) — null เสมอสำหรับ error ของ process เอง */
+  browser: BrowserContext | null;
+  ingest: IngestContext | null;
+}
+
+/**
+ * หน้าที่รายงานมาจาก — `pathname` เท่านั้น ไม่มี query/hash · `reference` = รหัสอ้างอิงที่ผู้ใช้เห็นบนจอ (หน้า global-error สร้าง
+ * เอง, หรือของ 502 จาก proxy) **ผู้ส่งอ้างเอง** จึงไม่อยู่ใน `request.correlationId` — trace ค้นแยก (`browser.reference`)
+ * · `lastApi` = คำขอ API ห้าตัวล่าสุดของหน้านั้น (path ไม่มี query) · `release` = รุ่นของบันเดิลที่เบราว์เซอร์รันอยู่
+ */
+export interface BrowserContext {
+  pathname: string | null;
+  digest: string | null;
+  reference: string | null;
+  release: string | null;
+  lastApi: Array<{ method: string; path: string; status: number; correlationId: string | null }>;
+}
+
+/** รายงานมาทางไหน — `verified` = Next server ที่ `x-report-token` ตรง ที่เหลือคือใครก็ได้ที่เรียก endpoint นี้ */
+export interface IngestContext {
+  verified: boolean;
+  claimedService: string | null;
+  ip: string | null;
+  userAgent: string | null;
 }
 
 export type RuntimeKind = "start" | "shutdown" | "fatal-exit";
@@ -112,7 +148,7 @@ export type ActivityDoc = { _id: string } & Record<string, unknown>;
 
 interface IssueDoc {
   _id: string;
-  service: CaptureService;
+  service: EventService;
   title: string;
   culprit: string;
   level: ErrorLevel;
@@ -134,6 +170,7 @@ interface IssueDoc {
 /** การเปลี่ยนแปลงของ issue หนึ่งตัวที่ยังไม่ได้เขียน — error ร้อยตัวของ fingerprint เดียวกันเป็น update เดียว */
 interface IssueDelta {
   fingerprint: string;
+  service: EventService;
   title: string;
   culprit: string;
   level: ErrorLevel;
@@ -142,6 +179,8 @@ interface IssueDelta {
   firstSeen: Date;
   lastSeen: Date;
   lastEventId: string | null;
+  /** รุ่นของรายงานที่รับเข้ามา (บันเดิลของเบราว์เซอร์) — ไม่มี = รุ่นของ process นี้ (`env.release`) */
+  release?: string;
 }
 
 /**
@@ -173,6 +212,8 @@ const DOC_MAX_BYTES = 64 * 1024;
 const EXTRA_MAX_BYTES = 16 * 1024;
 const PER_FINGERPRINT_PER_HOUR = 50;
 const PER_PROCESS_PER_MINUTE = 600;
+/** ในจำนวน 600 ต่อนาทีนั้น เป็นรายงานจากเบราว์เซอร์ได้ไม่เกินนี้ (plan §3) — เบราว์เซอร์ส่งอะไรมาก็ได้ ต้องไม่กินที่ของ server */
+const BROWSER_PER_MINUTE = 60;
 /** ตอนปิด process รอเขียนคิวที่ค้างไม่เกินเท่านี้ — compose ให้เวลาทั้งหมด 10 วินาที */
 export const FLUSH_ON_EXIT_MS = 2_000;
 
@@ -201,7 +242,7 @@ const pendingIssues = new Map<string, IssueDelta>();
 
 /** เก็บไปแล้วกี่ตัวในชั่วโมงนี้ ต่อ fingerprint — ล้างรายการที่หมดชั่วโมงทุกครั้งที่เขียนสำเร็จ */
 const perFingerprint = new Map<string, { windowStart: number; stored: number }>();
-let processWindow = { start: 0, stored: 0 };
+let processWindow = { start: 0, stored: 0, browser: 0 };
 
 /**
  * ทำไมถึงทิ้ง — event สรุปต้องบอกสาเหตุให้ถูก เดิมมันโทษ "log store เขียนไม่ได้นาน" ทุกครั้ง แม้ที่ทิ้งจริงคือเอกสารที่
@@ -484,6 +525,85 @@ function capture(err: unknown, options: CaptureOptions): string | null {
   return outcome === "queued" ? id : null;
 }
 
+// --------------------------------------------------------------------------------------------- รายงานที่รับเข้ามา
+
+/**
+ * รายงาน error จากนอก process (routes/client-errors.ts) ที่**ผู้เรียกกวาดแล้ว** ด้วย lib/redact.ts — ไฟล์นี้ไม่กวาดให้อีก
+ * `where` = ที่เกิดในรูปที่คนอ่าน (แม่แบบของหน้า `/organizations/:id` หรือ route ของ Next) เป็น culprit ของ issue
+ */
+export interface IngestedReport {
+  service: "browser" | "frontend-server";
+  level: ErrorLevel;
+  mechanism: ReportMechanism;
+  fingerprint: string;
+  where: string | null;
+  error: ScrubbedError;
+  occurredAt: Date;
+  /** รุ่นของโค้ดที่เกิด (บันเดิลของเบราว์เซอร์ หรือ image ของ frontend) — ไม่รู้ = `unknown` */
+  release: string;
+  tag: string | null;
+  request: ErrorEventDoc["request"];
+  browser: BrowserContext | null;
+  ingest: IngestContext;
+}
+
+/**
+ * เก็บรายงานหนึ่งตัว — คืน id ของ event ถ้าได้เข้าคิว หรือ null (ปิดอยู่ เกินเพดาน นับอย่างเดียว คิวเต็ม) ไม่ throw
+ *
+ * กติกาเดียวกับ `captureError` (นับเข้า issue ก่อน แล้วจึงตัดสินว่าจะเก็บตัว event ไหม) ต่างกันสามข้อ:
+ *   - **ไม่พิมพ์ลง stdout** — ใครก็ส่งมาได้ถี่เท่าที่ต้องการ บรรทัดของมันจะกลบ log ของระบบ (Next server พิมพ์บรรทัดของตัวเอง
+ *     อยู่แล้ว — frontend/lib/server-error-report.ts)
+ *   - รายงานจากเบราว์เซอร์เก็บได้ไม่เกิน 60 ตัวต่อนาที (BROWSER_PER_MINUTE) และอยู่ชั้นล่างสุดของคิว (ทิ้งก่อนทุกอย่าง)
+ *   - issue ได้ `service` ของรายงาน และรุ่นของมัน (`firstRelease` / `lastRelease`) ไม่ใช่ของ backend ที่รับเข้ามา
+ */
+export function captureReport(report: IngestedReport): string | null {
+  try {
+    if (!env.logStore.enabled) return null;
+    const doc: ErrorEventDoc = {
+      _id: randomUUID(),
+      occurredAt: report.occurredAt,
+      fingerprint: report.fingerprint,
+      level: report.level,
+      handled: false,
+      tag: report.tag,
+      service: report.service,
+      environment: env.deployEnv,
+      release: report.release,
+      host: HOST,
+      mechanism: report.mechanism,
+      error: {
+        name: report.error.name,
+        message: report.error.message,
+        stack: report.error.stack,
+        props: report.error.props,
+        causes: report.error.causes,
+      },
+      request: report.request,
+      actor: null,
+      breadcrumbs: [],
+      extra: null,
+      browser: report.browser,
+      ingest: report.ingest,
+    };
+    const delta = countIssue(doc, report.fingerprint, report.error, report.where);
+    if (!delta) {
+      noteDropped(doc.occurredAt, 1, "issue_backlog");
+      return null;
+    }
+    delta.release = report.release;
+    if (logStoreStatus().status === "over_quota") return null;
+    if (admit(report.fingerprint, Date.now(), report.service === "browser") !== null) return null;
+    const bytes = fitDocument(doc);
+    const priority =
+      report.service === "browser" ? PRIORITY.browser : report.level === "warning" ? PRIORITY.warning : PRIORITY.error;
+    if (!enqueue({ kind: "event", doc, bytes, priority })) return null;
+    delta.lastEventId = doc._id;
+    return doc._id;
+  } catch {
+    return null;
+  }
+}
+
 // --------------------------------------------------------------------------------------------- รหัสอ้างอิง
 
 /** เก็บรหัสอ้างอิงที่ไม่มีตัวอย่างเต็มได้ไม่เกินนี้ต่อ process ต่อนาที — แยกจากเพดาน 600 ตัวของ event เต็ม */
@@ -582,8 +702,9 @@ function countIssue(
   if (pendingIssues.size >= PENDING_ISSUES_MAX) return null;
   const delta: IssueDelta = {
     fingerprint,
+    service: doc.service,
     title: `${scrubbed.name}: ${normalizeMessage(headlineOf(scrubbed.name, scrubbed.message))}`.slice(0, 200),
-    culprit: (where ?? scrubbed.topFrame ?? service).slice(0, 200),
+    culprit: (where ?? scrubbed.topFrame ?? doc.service).slice(0, 200),
     level: doc.level,
     tag: doc.tag,
     count: 1,
@@ -600,9 +721,10 @@ function countIssue(
  * คืน null ถ้าเก็บได้ หรือบอกว่าติดเพดานตัวไหน: บรรทัดใน stdout ต้องบอกให้ถูก ไม่งั้น error ที่เพิ่งเห็นครั้งแรก
  * แต่ติดเพดานของ process ถูกพิมพ์ว่า "เก็บตัวอย่างของ issue นี้ครบแล้ว" ซึ่งไม่จริง
  */
-function admit(fingerprint: string, now: number): "capped_issue" | "capped_process" | null {
-  if (now - processWindow.start >= 60_000) processWindow = { start: now, stored: 0 };
+function admit(fingerprint: string, now: number, browser = false): "capped_issue" | "capped_process" | null {
+  if (now - processWindow.start >= 60_000) processWindow = { start: now, stored: 0, browser: 0 };
   if (processWindow.stored >= PER_PROCESS_PER_MINUTE) return "capped_process";
+  if (browser && processWindow.browser >= BROWSER_PER_MINUTE) return "capped_process";
 
   let window = perFingerprint.get(fingerprint);
   if (!window || now - window.windowStart >= 3_600_000) {
@@ -613,6 +735,7 @@ function admit(fingerprint: string, now: number): "capped_issue" | "capped_proce
 
   window.stored += 1;
   processWindow.stored += 1;
+  if (browser) processWindow.browser += 1;
   return null;
 }
 
@@ -630,7 +753,7 @@ function defaultFingerprint(scrubbed: ScrubbedError, where: string | null): stri
 
 const UUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
-function normalizeMessage(message: string): string {
+export function normalizeMessage(message: string): string {
   return message.replace(UUID_ANYWHERE, "<uuid>").replace(/\d+/g, "<n>").slice(0, 200);
 }
 
@@ -933,12 +1056,12 @@ function issueOperations(issues: IssueDelta[]): AnyBulkWriteOperation<IssueDoc>[
             culprit: d.culprit,
             level: d.level,
             tag: d.tag,
-            lastRelease: release,
+            lastRelease: d.release ?? release,
             ...(d.lastEventId ? { lastEventId: d.lastEventId } : {}),
           },
           $setOnInsert: {
-            service,
-            firstRelease: release,
+            service: d.service,
+            firstRelease: d.release ?? release,
             status: "open",
             statusChangedAt: d.firstSeen,
             statusReason: null,
@@ -1052,6 +1175,7 @@ function enqueueDroppedSummary() {
   } else {
     pendingIssues.set(fingerprint, {
       fingerprint,
+      service,
       title: "ErrorCaptureDropped: ทิ้งสิ่งที่ควรเก็บไป (สาเหตุแยกอยู่ใน event)",
       culprit: service,
       level: "warning",
