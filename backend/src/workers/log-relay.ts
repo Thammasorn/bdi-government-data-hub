@@ -20,7 +20,8 @@
  *   3. แถวที่มีใน Mongo แล้วข้ามไปเลย ที่เหลือผ่าน `projectAuditRow()` (lib/activity-shape.ts) แล้ว `updateOne` +
  *      `$setOnInsert` + upsert — อ่านซ้ำกี่รอบก็ไม่เปลี่ยนอะไร และ relay สองตัวซ้อนกันระหว่าง deploy ก็ไม่เสียหาย
  *
- * **reconcile** ทุกชั่วโมงเมื่อ forward pass ตามทันแล้ว — นับแถวของ 24 ชั่วโมงที่จบเมื่อสองนาทีก่อน (แถวที่ใหม่กว่านั้นเป็น
+ * **reconcile** ทุกชั่วโมงเมื่อ forward pass ตามทันแล้วนับจากการเริ่มใหม่ครั้งล่าสุด (rebuild, volume ใหม่ — `caughtUpAt`
+ * ถูกล้างตอนเริ่มจากแถวแรก) — นับแถวของ 24 ชั่วโมงที่จบเมื่อสองนาทีก่อน (แถวที่ใหม่กว่านั้นเป็น
  * ของ tail pass) ในทั้งสองฝั่ง ไม่เท่ากันแล้วอ่านช่วงนั้น
  * ซ้ำ (แถวที่มีแล้วถูกข้าม) Mongo มากกว่าเป็นเรื่องปกติหลัง `seed:demo` ลบ Postgres — ยังอ่านซ้ำด้วย เพราะแถวที่ขาดไป
  * ซ่อนอยู่หลังตัวนับที่เกินได้ ผลอยู่ใน `relay_state.lastReconcile`
@@ -243,10 +244,22 @@ async function relayTick(): Promise<void> {
     const started = new Date();
     const upper = new Date(started.getTime() - SETTLE_MS);
     const from = cursorFrom(state);
-    // cursor ที่เก็บไว้ใช้ไม่ได้ (รูปผิด อยู่ในอนาคต) — ลบทิ้งก่อนเริ่มจากแถวแรก การเขียน cursor ของรอบนี้จึงเทียบกับ "ไม่มี
-    // cursor" ได้ แทนการเทียบกับค่าเสียที่อาจอ่านกลับมาไม่ตรงตัว (แล้ว relay ติดอยู่ตรงนั้นตลอดไป)
-    if (from === EPOCH && state?.cursor !== undefined && state.cursor !== null) {
-      await relay.updateOne({ _id: STATE_ID }, { $unset: { cursor: "" } }, { maxTimeMS: MONGO_READ_MS });
+    /**
+     * เริ่มจากแถวแรก (volume ใหม่, rebuild, cursor เสีย) — ล้างสองอย่างก่อนอ่านหน้าแรก:
+     *   - cursor ที่เก็บไว้ถ้าใช้ไม่ได้ (รูปผิด อยู่ในอนาคต) การเขียน cursor ของรอบนี้จึงเทียบกับ "ไม่มี cursor" ได้ แทนการเทียบกับ
+     *     ค่าเสียที่อาจอ่านกลับมาไม่ตรงตัว (แล้ว relay ติดอยู่ตรงนั้นตลอดไป)
+     *   - `caughtUpAt` — มันบอก reconcile ว่าสำเนาครบถึงเมื่อไร ซึ่งไม่จริงแล้วตั้งแต่เริ่มใหม่ เดิมค่าเก่ายังอยู่หลัง rebuild
+     *     reconcile รอบชั่วโมงที่ตรงกับช่วงเติมของค้างเห็นว่า "ตามทันเมื่อครู่" นับ 24 ชั่วโมงแล้วเจอ Mongo ขาด เติมเองแล้วเตือน
+     *     "สำเนาขาดไป N แถว" ว่า relay พลาดทั้งที่มันแค่ยังเติมไม่ถึง (ตรวจขั้น 7 แบบค้าน, 2026-09-30) รอบที่ forward pass
+     *     อ่านจนสุดจริงเป็นตัวเขียนค่าใหม่ (`markCaughtUp`)
+     */
+    if (from === EPOCH) {
+      const unset: Record<string, ""> = {};
+      if (state?.cursor !== undefined && state.cursor !== null) unset.cursor = "";
+      if (state?.caughtUpAt !== undefined) unset.caughtUpAt = "";
+      if (Object.keys(unset).length > 0) {
+        await relay.updateOne({ _id: STATE_ID }, { $unset: unset }, { maxTimeMS: MONGO_READ_MS });
+      }
     }
     let cursor = from;
     let inserted = 0;
@@ -282,16 +295,10 @@ async function relayTick(): Promise<void> {
 
     await relay.updateOne(
       { _id: STATE_ID },
-      {
-        $set: {
-          lastRunAt: new Date(),
-          lastBatch: inserted,
-          lastError: null,
-          ...(caughtUp ? { caughtUpAt: started } : {}),
-        },
-      },
+      { $set: { lastRunAt: new Date(), lastBatch: inserted, lastError: null } },
       { upsert: true, maxTimeMS: MONGO_READ_MS },
     );
+    if (caughtUp) await markCaughtUp(relay, cursor, started);
 
     if (failing) {
       failing = false;
@@ -378,6 +385,19 @@ async function advanceCursor(relay: Collection<RelayStateDoc>, expected: Cursor,
       : { "cursor.exact": expected.exact, "cursor.id": expected.id };
   const result = await relay.updateOne({ _id: STATE_ID, ...guard }, { $set: { cursor: next } }, { maxTimeMS: MONGO_READ_MS });
   return result.matchedCount === 1;
+}
+
+/**
+ * จดว่า forward pass อ่านจนสุดแล้ว (`caughtUpAt`) **เฉพาะเมื่อ cursor ยังเป็นตัวที่รอบนี้เขียนไว้** — rebuild ที่ `$unset` cursor
+ * ระหว่าง tail pass ของรอบนี้ต้องไม่ได้ `caughtUpAt` ของสำเนาเก่ากลับคืน ไม่งั้น reconcile เชื่อว่าตามทันทั้งที่เพิ่งเริ่มเติมใหม่
+ * รอบที่ไม่เคยเขียน cursor (ตาราง audit ว่าง) เทียบกับ "ไม่มี cursor" แบบเดียวกับ `advanceCursor`
+ */
+async function markCaughtUp(relay: Collection<RelayStateDoc>, cursor: Cursor, at: Date): Promise<void> {
+  const guard: Filter<RelayStateDoc> =
+    cursor === EPOCH
+      ? ({ cursor: null } as unknown as Filter<RelayStateDoc>)
+      : { "cursor.exact": cursor.exact, "cursor.id": cursor.id };
+  await relay.updateOne({ _id: STATE_ID, ...guard }, { $set: { caughtUpAt: at } }, { maxTimeMS: MONGO_READ_MS });
 }
 
 function reportBadCursor(why: string) {
@@ -727,7 +747,17 @@ async function maintenanceTick(): Promise<void> {
 
     const lastReconcile = pastDate(state?.lastReconcileAt, "lastReconcileAt", now)?.getTime() ?? 0;
     const caughtUpAt = pastDate(state?.caughtUpAt, "caughtUpAt", now)?.getTime() ?? 0;
-    if (now.getTime() - lastReconcile >= RECONCILE_EVERY_MS && now.getTime() - caughtUpAt <= CAUGHT_UP_FRESH_MS) {
+    /**
+     * reconcile เฉพาะเมื่อ forward pass ตามทันจริงนับจากการเริ่มใหม่ครั้งล่าสุด — `caughtUpAt` ถูกล้างตอน relay เริ่มจากแถวแรก
+     * และเขียนใหม่เมื่ออ่านจนสุดเท่านั้น (`markCaughtUp`) ส่วนช่วงระหว่างที่คน `$unset` cursor (rebuild) ถึงรอบ relay ถัดไป
+     * (ไม่เกินราว 5 วินาที) `caughtUpAt` ยังเป็นค่าเก่า จึงต้องมี cursor อยู่ด้วย: ไม่มี cursor = สำเนากำลังจะเริ่มใหม่ ไม่ใช่ครบ
+     */
+    const hasCursor = state?.cursor !== undefined && state.cursor !== null;
+    if (
+      hasCursor &&
+      now.getTime() - lastReconcile >= RECONCILE_EVERY_MS &&
+      now.getTime() - caughtUpAt <= CAUGHT_UP_FRESH_MS
+    ) {
       const summary = await reconcile(db, client, now);
       await relay.updateOne(
         { _id: STATE_ID },
