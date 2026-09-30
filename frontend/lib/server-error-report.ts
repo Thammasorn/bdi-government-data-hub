@@ -6,13 +6,15 @@
  *      ข้อความผ่านตัวกวาดอย่างย่อ (`scrub`) ก่อนพิมพ์: Next พิมพ์ error เต็มของมันเองอยู่แล้ว (`⨯ …`) บรรทัดนี้ไม่ควรเพิ่มที่รั่ว
  *   2. **POST ไป backend** (`${INTERNAL_API_URL}/api/client-errors`) แนบ `x-report-source: frontend-server` กับ
  *      `x-report-token: $INGEST_SERVER_TOKEN` — backend เก็บเป็น `service: "frontend-server"` เฉพาะเมื่อ token ตรง และกวาดซ้ำ
- *      ด้วยกฎเต็มของ backend/src/lib/redact.ts รอไม่เกิน 1 วินาที ล้มก็เงียบ (บรรทัดที่ 1 มีอยู่แล้ว)
+ *      ด้วยกฎเต็มของ backend/src/lib/redact.ts รอไม่เกิน 1 วินาที ล้มก็เงียบ (บรรทัดที่ 1 มีอยู่แล้ว) body ไม่เกินเพดานเป็นไบต์
+ *      (lib/report-body.ts)
  *
  * เพดาน: ไม่เกิน 60 ตัวต่อนาทีต่อ process และข้อความเดียวกันซ้ำภายในหนึ่งนาทีนับเป็นตัวเดียว — error ที่เกิดกับทุกคำขอรูปภาพ
  * (EACCES ของ `.next/cache` ใน image production — plan §13 #5) ต้องไม่กลายเป็นร้อยบรรทัดต่อวินาที
  *
  * `INGEST_SERVER_TOKEN` อ่านตอนส่ง (runtime env) **ห้ามเป็น `NEXT_PUBLIC_`** — ค่าที่ขึ้นต้นแบบนั้นถูกฝังลงบันเดิลของเบราว์เซอร์
  */
+import { reportBody } from "./report-body";
 
 type ServerMechanism = "onRequestError" | "unhandledRejection" | "uncaughtException";
 
@@ -96,7 +98,7 @@ export async function reportServerError(
         "x-report-source": "frontend-server",
         ...(token ? { "x-report-token": token } : {}),
       },
-      body: JSON.stringify({
+      body: reportBody({
         mechanism: options.mechanism,
         level: "error",
         name: name.slice(0, 200),

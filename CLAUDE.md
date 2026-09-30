@@ -1490,6 +1490,9 @@ and every deploy under open pages would have mailed the team. `isChunkLoadError`
 `lib/report-error.ts` and `isChunkLoadReport` in `routes/client-errors.ts` must learn any new
 wording together. The backend check applies to browser reports only, because a Next server that
 cannot load its own chunk has a broken image.
+Both reporters fit their body into 15,000 **bytes** (`lib/report-body.ts`, trimming whole stack
+frames first), because the ingest's 16 KB limit is in UTF-8 bytes and an oversized body is dropped
+whole, still with a 204. A long stack plus a Thai message used to overflow it.
 
 ## Conventions
 

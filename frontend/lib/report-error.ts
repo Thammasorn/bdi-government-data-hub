@@ -14,8 +14,10 @@
  *     แบบ keepalive ไม่แนบ cookie — endpoint ไม่ต้อง login และไม่ควรรู้ว่าใครส่ง
  *   - กลืนทุกความล้มเหลว: การรายงาน error ต้องไม่เป็นต้นเหตุของ error
  *   - chunk ที่โหลดไม่ขึ้น (`isChunkLoadError`) เป็นคำเตือน ไม่ว่ามาทางไหน (ตัวดักของ `window` หรือหน้า global-error)
+ *   - body ไม่เกินเพดานของ backend เป็นไบต์ (lib/report-body.ts) — เกินแล้ว backend ทิ้งทั้งก้อนเงียบ ๆ
  * backend กวาดทุกช่องซ้ำเอง (lib/redact.ts) ไม่เชื่อสิ่งที่ส่งไป
  */
+import { reportBody } from "./report-body";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 /** รุ่นของบันเดิลนี้ — SHA ที่ build (frontend/Dockerfile: GIT_SHA → NEXT_PUBLIC_RELEASE) dev ไม่มี */
@@ -222,9 +224,10 @@ function withoutUrlQueries(text: string): string {
   }
 }
 
+/** ไม่เกิน 2,000 ตัว — เพดานของ backend (`pathname` ใน zod) เกินแล้วทั้งรายงานถูกปฏิเสธเงียบ ๆ */
 function currentPathname(): string {
   try {
-    return window.location.pathname;
+    return window.location.pathname.slice(0, 2_000);
   } catch {
     return "";
   }
@@ -232,7 +235,7 @@ function currentPathname(): string {
 
 function send(report: Record<string, unknown>): void {
   try {
-    const body = JSON.stringify(report);
+    const body = reportBody(report);
     const beacon =
       typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function"
         ? navigator.sendBeacon(ENDPOINT, new Blob([body], { type: "text/plain" }))
