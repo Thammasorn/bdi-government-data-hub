@@ -1116,7 +1116,8 @@ adminLogRouter.get("/status", async (req, res) => {
     }
   }
   // บันทึกการเรียก admin API ของ backend process นี้ (lib/admin-access.ts `adminAccessStats`) — `overCap` / `queueFull` =
-  // เก็บเป็นตัวเดี่ยวไม่ได้จึงพับลงบันทึกสรุป · `notStored` = ไม่ได้เก็บที่ไหนเลย (เกินเพดานขนาด)
+  // เก็บเป็นตัวเดี่ยวไม่ได้จึงพับลงบันทึกสรุป · `evicted` = เข้าคิวแล้วถูกเบียดออก จึงพับลงสรุป · `notStored` = ไม่ได้เก็บที่ไหน
+  // เลย (เกินเพดานขนาด)
   res.json({ logStore, adminAccess: adminAccessStats(), alerts, release: env.release });
 });
 

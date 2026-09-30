@@ -399,8 +399,8 @@ export function enqueueActivity(doc: ActivityDoc): boolean {
  *
  * ต่างจากสำเนา audit ข้างบนสองข้อ: เกินเพดานขนาดแล้วไม่เก็บ และอยู่ชั้นที่ 1 ของคิว ถูกทิ้งหลังรายงานจากเบราว์เซอร์แต่ก่อน
  * ทุกอย่างของ server เอง ยกเว้นบันทึกสรุป (`summary: true`) ซึ่งอยู่ชั้นเดียวกับคำเตือน — ตัวเดียวแทนการเรียกเป็นร้อย และมีขึ้น
- * เพราะคิวหรือเพดานต่อนาทีรับตัวเดี่ยวไม่ไหวแล้ว ถ้าอยู่ชั้นเดียวกับตัวเดี่ยวก็ถูกทิ้งด้วยเหตุเดียวกัน เอกสารต้องผ่าน
- * `fitDocument()` มาแล้ว
+ * เพราะคิวหรือเพดานต่อนาทีรับตัวเดี่ยวไม่ไหวแล้ว ถ้าอยู่ชั้นเดียวกับตัวเดี่ยวก็ถูกทิ้งด้วยเหตุเดียวกัน แต่สรุปไม่เบียดตัวเดี่ยว
+ * ออกจากคิว (`enqueue`) เอกสารต้องผ่าน `fitDocument()` มาแล้ว
  */
 export function enqueueAccessRecord(doc: ActivityDoc, summary = false): "queued" | "full" | "off" {
   try {
@@ -409,6 +409,32 @@ export function enqueueAccessRecord(doc: ActivityDoc, summary = false): "queued"
     return enqueue({ kind: "access", doc, bytes: sizeOf(doc), priority }) ? "queued" : "full";
   } catch {
     return "off";
+  }
+}
+
+/**
+ * ผู้รับบันทึกการเรียก admin API ที่**เข้าคิวแล้วแต่ถูกเบียดออก** — ของที่ชั้นสูงกว่ามาทีหลัง (คำเตือน error สำเนา audit หรือ
+ * บันทึกสรุปเอง) หรือที่คิวรับกลับไม่ได้หลังเขียนล้ม (`requeue`) lib/admin-access.ts ลงทะเบียนตอนโหลด แล้วพับตัวนั้นลงบันทึกสรุป
+ * ตัวที่ถูกส่งไปที่นี่ไม่นับเป็น "ทิ้ง" (`noteDropped`) เพราะไม่ได้หาย
+ *
+ * เดิมตัวที่ถูกเบียดหายไปเงียบ ๆ เหลือแค่ตัวเลขใน event "ทิ้งไป N ตัว": สรุปหนึ่งใบที่เข้าคิวตอนคิวเต็มไล่บันทึก `?cid=` ที่เข้าคิว
+ * ไว้ก่อนออกไป แล้วไม่มีอะไรให้ `x-log-cid` ค้นเจอ (ตรวจขั้น 8, 2026-10-01) ไฟล์นี้ import lib/admin-access.ts ไม่ได้ (import วน)
+ * จึงเป็นการลงทะเบียน ผู้รับต้องไม่เรียก `enqueue` กลับมาทันที — ถูกเรียกจากกลางลูปไล่ของในคิว
+ */
+let accessEvicted: ((doc: ActivityDoc) => void) | null = null;
+
+export function onAccessRecordEvicted(handler: (doc: ActivityDoc) => void): void {
+  accessEvicted = handler;
+}
+
+/** ส่งบันทึกการเรียก admin API ที่หลุดจากคิวให้ lib/admin-access.ts — false ถ้าไม่มีผู้รับหรือผู้รับล้ม (นับเป็นทิ้งตามเดิม) */
+function handOverAccessRecord(doc: ActivityDoc): boolean {
+  if (!accessEvicted) return false;
+  try {
+    accessEvicted(doc);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -891,7 +917,15 @@ function printLine(doc: ErrorEventDoc, scrubbed: ScrubbedError, where: string | 
 // --------------------------------------------------------------------------------------------- คิว
 
 /** วางลงคิว ไล่ตัวที่สำคัญน้อยกว่าออกถ้าเต็ม — คืน false ถ้าตัวที่เข้ามาใหม่เองถูกทิ้ง */
-function enqueue(item: RingItem): boolean {
+/**
+ * บันทึกการเรียก admin API (`kind: "access"`) มีกติกาของมันเอง:
+ *   - ตัวที่คิวรับไม่ได้ไม่นับเป็น "ทิ้ง" — มาครั้งแรกผู้เรียกได้ `full` แล้วพับลงบันทึกสรุปเอง (lib/admin-access.ts) ตัวที่เคยอยู่
+ *     ในคิวแล้ว (`requeued` — `requeue` หลังเขียนล้ม) ส่งให้ไฟล์นั้นพับ แบบเดียวกับตัวที่ถูกเบียด
+ *   - **บันทึกสรุปไม่เบียดบันทึกเดี่ยว** (ไล่ได้แค่รายงานจากเบราว์เซอร์) — ตัวเดี่ยวที่ถูกเบียดก็ถูกพับเป็นสรุปอีกใบ สรุปใบนั้นก็เบียด
+ *     ตัวถัดไป วนแลกหนึ่งต่อหนึ่งไม่ได้อะไรขึ้นมาตลอดที่คิวเต็ม และเสียรายละเอียดของตัวเดี่ยว (เวลา correlation id) ไปทีละตัว
+ *     สรุปที่เข้าไม่ได้รอแล้วลองใหม่ (ลองแล้ว 2026-10-01: Mongo หยุด คิวเต็มด้วยตัวเดี่ยว ได้สรุปใบละหนึ่งการเรียกสิบกว่าใบ)
+ */
+function enqueue(item: RingItem, requeued = false): boolean {
   if (item.bytes > DOC_MAX_BYTES) {
     noteDropped(new Date(), 1, "too_large", item.kind === "activity" ? 1 : 0);
     return false;
@@ -899,12 +933,20 @@ function enqueue(item: RingItem): boolean {
   while (ring.length >= RING_MAX_DOCS || ringBytes + item.bytes > RING_MAX_BYTES) {
     const victim = lowestPriorityIndex();
     const victimItem = victim === -1 ? undefined : ring[victim];
-    if (!victimItem || victimItem.priority >= item.priority) {
+    if (
+      !victimItem ||
+      victimItem.priority >= item.priority ||
+      (item.kind === "access" && victimItem.kind === "access")
+    ) {
+      if (item.kind === "access") {
+        if (!requeued || handOverAccessRecord(item.doc)) return false;
+      }
       noteDropped(new Date(), 1, "queue_full", item.kind === "activity" ? 1 : 0);
       return false;
     }
     ring.splice(victim, 1);
     ringBytes -= victimItem.bytes;
+    if (victimItem.kind === "access" && handOverAccessRecord(victimItem.doc)) continue;
     noteDropped(new Date(), 1, "queue_full", victimItem.kind === "activity" ? 1 : 0);
   }
   ring.push(item);
@@ -1163,7 +1205,7 @@ function requeue(items: RingItem[], issues: IssueDelta[]) {
   const newer = ring;
   ring = [];
   ringBytes = 0;
-  for (const item of [...items, ...newer]) enqueue(item);
+  for (const item of [...items, ...newer]) enqueue(item, true);
 
   for (const d of issues) {
     const current = pendingIssues.get(d.fingerprint);

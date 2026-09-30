@@ -52,6 +52,17 @@
  * ทาง (ตรวจขั้น 8, 2026-10-01) สรุปอยู่ชั้นเดียวกับคำเตือนในคิว (lib/error-capture.ts) คิวยังเต็มก็ถือไว้แล้วลองใหม่
  * ปิด process ก็เขียนก่อน (`flushAdminAccessSummaries` ใน shutdown ของ index.ts) สิ่งที่สรุปเสีย: เวลาทีละคำขอ (เหลือช่วง
  * `first_at`–`last_at`) correlation id และ user agent · เกินเพดานขนาด (`over_quota`) ไม่เก็บเลยทั้งตัวเดี่ยวและสรุป (plan §3)
+ *
+ * **ตัวที่เข้าคิวแล้วถูกเบียดออกก็พับด้วย** (`onAccessRecordEvicted` ของ lib/error-capture.ts — `evicted` ใน `/status`): ของที่ชั้นสูง
+ * กว่ามาทีหลัง ซึ่งรวมบันทึกสรุปเอง ไล่ตัวเดี่ยวชั้น 1 ออกจากคิวที่เต็ม เดิมตัวนั้นหายไปเหลือแค่ตัวเลข — ตรวจขั้น 8 รอบสามเห็น
+ * สรุปที่เข้าคิวตอน Mongo ล่มไล่บันทึก `?cid=` ตัวแรกออก ค้นด้วย `x-log-cid` ไม่เจอเลย สรุปที่ถูกเบียดออกกลับมารอเข้าคิวใหม่ทั้งใบ
+ *
+ * **ใบสรุปเต็มแล้วปิด ขึ้นใบใหม่** แทนการตัด key ทิ้ง: `hashKeys` `relatedUserIds` ใบละไม่เกิน 200 `tokenFps` 20 subject 50
+ * (ขนาดที่เอกสารหนึ่งใบรับได้) การเรียกที่ key ใหม่ของมันไม่พอที่ในใบ ปิดใบนั้นให้เข้าคิวในวินาทีถัดไปแล้วเปิดใบใหม่ เดิม key
+ * ที่เกินหายไป เหลือ `truncated_lists`: คนถือ token ยิงให้ครบเพดาน แล้ว `?cid=` ขยะสองร้อยตัวก่อนตัวจริง ตัวจริงก็ค้นไม่เจอ (ตรวจขั้น
+ * 8 รอบสาม ราว 810 คำขอในสองวินาที) ใบที่ปิดเข้าคิวในรอบถัดไปของ event loop ใบที่รอจึงสะสมเฉพาะตอนคิวรับไม่ได้ มีได้ไม่เกิน
+ * 20 ใบต่อชนิด token เกินนั้นใบที่มีอยู่รับต่อแบบตัด key และบอกใน `truncated_lists` — เหลือเป็นความเสี่ยงที่ยอมรับ: ต้องยิง
+ * การเรียกที่ key ไม่ซ้ำเกินสี่พันตัวระหว่างที่คิวเต็ม (Mongo ล่ม)
  */
 import { randomUUID } from "node:crypto";
 
@@ -63,7 +74,7 @@ import { SCHEMA_VERSION, fitDocument, hashKeyOf, type ActivityDoc } from "./acti
 import { storedUserAgent } from "./audit.js";
 import { tokenFingerprint } from "./auth.js";
 import { currentContext, referenceOf, type RequestContext } from "./context.js";
-import { enqueueAccessRecord } from "./error-capture.js";
+import { enqueueAccessRecord, onAccessRecordEvicted } from "./error-capture.js";
 import { maskCidText, requestTarget } from "./redact.js";
 import { ROLE_CODES } from "./system.js";
 import { pathPattern } from "./token-rejection.js";
@@ -123,22 +134,24 @@ let window = { start: 0, accepted: 0, rejected: 0 };
  *   recorded   — เข้าคิวเป็นบันทึกเดี่ยว
  *   overCap    — เกินเพดานต่อนาที จึงพับลงบันทึกสรุป
  *   queueFull  — คิวเต็ม จึงพับลงบันทึกสรุป
- *   summaries  — บันทึกสรุปที่เข้าคิวแล้ว
+ *   evicted    — เข้าคิวเป็นบันทึกเดี่ยวแล้ว (นับใน `recorded`) แต่ถูกของชั้นสูงกว่าเบียดออก จึงพับลงบันทึกสรุป
+ *   summaries  — บันทึกสรุปที่เข้าคิวแล้ว (ใบที่ถูกเบียดออกแล้วกลับมารอ นับใหม่ตอนเข้าคิวอีกครั้ง)
  *   pendingInSummary — การเรียกที่รออยู่ในสรุปที่ยังไม่เข้าคิว
  *   notStored  — ไม่ได้เก็บที่ไหนเลย: log store เกินเพดานขนาด (ทั้งตัวเดี่ยวและที่อยู่ในสรุป)
  */
-const stats = { recorded: 0, overCap: 0, queueFull: 0, summaries: 0, notStored: 0 };
+const stats = { recorded: 0, overCap: 0, queueFull: 0, evicted: 0, summaries: 0, notStored: 0 };
 
 export function adminAccessStats(): {
   recorded: number;
   overCap: number;
   queueFull: number;
+  evicted: number;
   summaries: number;
   pendingInSummary: number;
   notStored: number;
 } {
   let pendingInSummary = 0;
-  for (const summary of summaries.values()) pendingInSummary += summary.count;
+  for (const list of summaries.values()) for (const summary of list) pendingInSummary += summary.count;
   return { ...stats, pendingInSummary };
 }
 
@@ -316,6 +329,11 @@ function subjectOf(route: string | null, routeId: string | null): { type: string
 
 /** พับอยู่นานเท่านี้แล้วเข้าคิว — หนึ่งนาทีเท่ากับหน้าต่างของเพดาน คนอ่านเห็นสรุปไม่ช้ากว่าบันทึกเดี่ยวราวหนึ่งนาที */
 const SUMMARY_AFTER_MS = 60_000;
+/**
+ * มีใบที่เต็มแล้วปิด — เข้าคิวในรอบถัดไปของ event loop ไม่รอครบนาที ใบที่รอจึงสะสมได้ก็ต่อเมื่อคิวรับไม่ได้ (Mongo ล่ม คิวเต็ม)
+ * ไม่ใช่เพราะยิงเร็วกว่าตัวจับเวลา (0 ไม่ใช่ทันที: ถูกเรียกจากกลางลูปไล่ของในคิวได้ — `onEvicted`)
+ */
+const SUMMARY_CLOSED_MS = 0;
 /** คิวยังเต็ม (Mongo ล่มนาน คิวเต็มไปด้วย error) — ลองใหม่ถี่กว่านั้น ระหว่างนี้การเรียกใหม่พับเข้าใบเดิม */
 const SUMMARY_RETRY_MS = 10_000;
 /** รายการค้นหา — เท่ากับเพดานที่ `fitDocument()` ยอมให้เอกสารหนึ่งใบ (SEARCH_LIST_MAX ใน lib/activity-shape.ts) */
@@ -326,6 +344,13 @@ const SUMMARY_SUBJECT_MAX = 50;
 /** ชนิดของ route และ status ที่แยกนับ — ที่เกินรวมเป็น `[other]` */
 const SUMMARY_KINDS_MAX = 50;
 const SUMMARY_OTHER = "[other]";
+/**
+ * ใบที่รอเข้าคิวได้ต่อชนิด token — ใบละไม่เกิน 200 key ค้นหาต่อรายการ ยี่สิบใบคือสี่พันการเรียกที่ key ไม่ซ้ำ ราว 1 MB ในหน่วยความจำ
+ * เกินนี้ (คิวเต็มนานและมีคนยิงไม่หยุด) ใบสุดท้ายรับต่อแบบตัด key (`truncated_lists`) — หน่วยความจำของ process ต้องมีเพดาน
+ */
+const SUMMARIES_PENDING_MAX = 20;
+
+type SummaryKind = "accepted" | "rejected";
 
 interface Summary {
   firstAt: Date;
@@ -333,6 +358,7 @@ interface Summary {
   count: number;
   overCap: number;
   queueFull: number;
+  evicted: number;
   /** มีสักคำขอที่ได้ 2xx/3xx — ข้อมูลออกไปแล้ว */
   succeeded: boolean;
   tokenFps: Set<string>;
@@ -346,35 +372,71 @@ interface Summary {
   truncated: Set<string>;
 }
 
-/** ใบที่กำลังพับอยู่ แยกตาม token ผ่าน (`accepted`) กับไม่ผ่าน — `via` ของสองกลุ่มต่างกัน รวมใบเดียวกันแล้ว G5 จะอ่านผิด */
-const summaries = new Map<"accepted" | "rejected", Summary>();
+/**
+ * ใบที่รอเข้าคิว แยกตาม token ผ่าน (`accepted`) กับไม่ผ่าน — `via` ของสองกลุ่มต่างกัน รวมใบเดียวกันแล้ว G5 จะอ่านผิด ตัวสุดท้าย
+ * ของรายการคือใบที่กำลังพับ ตัวก่อนหน้าคือใบที่เต็มแล้วหรือที่คิวยังรับไม่ได้
+ */
+const summaries = new Map<SummaryKind, Summary[]>();
+/** ใบสรุปที่เข้าคิวไปแล้ว — ถูกเบียดออกจากคิวก่อนเขียนก็เอาใบเดิมกลับมารอ (`onEvicted`) WeakMap: เขียนแล้วก็หายไปเอง */
+const queuedSummaries = new WeakMap<object, { kind: SummaryKind; summary: Summary }>();
 let summaryTimer: NodeJS.Timeout | null = null;
+let summaryDue = 0;
 
-function fold(doc: ActivityDoc, accepted: boolean, reason: "over_cap" | "queue_full"): void {
-  const key = accepted ? "accepted" : "rejected";
-  let summary = summaries.get(key);
-  if (!summary) {
-    summary = {
-      firstAt: doc.occurredAt,
-      lastAt: doc.occurredAt,
-      count: 0,
-      overCap: 0,
-      queueFull: 0,
-      succeeded: false,
-      tokenFps: new Set(),
-      hashKeys: new Set(),
-      relatedUserIds: new Set(),
-      ips: new Set(),
-      subjects: new Map(),
-      routes: new Map(),
-      statuses: new Map(),
-      truncated: new Set(),
-    };
-    summaries.set(key, summary);
+function emptySummary(at: Date): Summary {
+  return {
+    firstAt: at,
+    lastAt: at,
+    count: 0,
+    overCap: 0,
+    queueFull: 0,
+    evicted: 0,
+    succeeded: false,
+    tokenFps: new Set(),
+    hashKeys: new Set(),
+    relatedUserIds: new Set(),
+    ips: new Set(),
+    subjects: new Map(),
+    routes: new Map(),
+    statuses: new Map(),
+    truncated: new Set(),
+  };
+}
+
+function subjectKeyOf(doc: ActivityDoc): string | null {
+  return doc.subject.id ? `${doc.subject.type}:${doc.subject.id}` : null;
+}
+
+/** key ค้นหาทุกตัวของการเรียกนี้ลงใบนี้ได้ครบไหม — ไม่ได้ก็ปิดใบแล้วเปิดใหม่ ไม่ตัดทิ้ง */
+function fits(summary: Summary, doc: ActivityDoc): boolean {
+  const room = (set: Set<string>, values: string[], max: number) =>
+    set.size + values.filter((value) => !set.has(value)).length <= max;
+  const subjectKey = subjectKeyOf(doc);
+  return (
+    room(summary.hashKeys, doc.hashKeys, SUMMARY_SEARCH_MAX) &&
+    room(summary.relatedUserIds, doc.relatedUserIds, SUMMARY_SEARCH_MAX) &&
+    room(summary.tokenFps, doc.tokenFps, SUMMARY_TOKEN_MAX) &&
+    (subjectKey === null || summary.subjects.has(subjectKey) || summary.subjects.size < SUMMARY_SUBJECT_MAX)
+  );
+}
+
+function fold(doc: ActivityDoc, accepted: boolean, reason: "over_cap" | "queue_full" | "evicted"): void {
+  const kind: SummaryKind = accepted ? "accepted" : "rejected";
+  let list = summaries.get(kind);
+  if (!list) {
+    list = [];
+    summaries.set(kind, list);
+  }
+  let summary = list[list.length - 1];
+  let closed = false;
+  if (!summary || (!fits(summary, doc) && list.length < SUMMARIES_PENDING_MAX)) {
+    closed = summary !== undefined;
+    summary = emptySummary(doc.occurredAt);
+    list.push(summary);
   }
   summary.count += 1;
   if (reason === "over_cap") summary.overCap += 1;
-  else summary.queueFull += 1;
+  else if (reason === "queue_full") summary.queueFull += 1;
+  else summary.evicted += 1;
   if (doc.occurredAt < summary.firstAt) summary.firstAt = doc.occurredAt;
   if (doc.occurredAt > summary.lastAt) summary.lastAt = doc.occurredAt;
   if (doc.result === "SUCCESS") summary.succeeded = true;
@@ -383,22 +445,16 @@ function fold(doc: ActivityDoc, accepted: boolean, reason: "over_cap" | "queue_f
   addCapped(summary, "hashKeys", summary.hashKeys, doc.hashKeys, SUMMARY_SEARCH_MAX);
   addCapped(summary, "relatedUserIds", summary.relatedUserIds, doc.relatedUserIds, SUMMARY_SEARCH_MAX);
   if (doc.request.ip) addCapped(summary, "ips", summary.ips, [doc.request.ip], SUMMARY_IP_MAX);
-  if (doc.subject.id) {
-    const subjectKey = `${doc.subject.type}:${doc.subject.id}`;
-    if (summary.subjects.has(subjectKey)) {
-      // มีแล้ว
-    } else if (summary.subjects.size < SUMMARY_SUBJECT_MAX) {
-      summary.subjects.set(subjectKey, { type: doc.subject.type, id: doc.subject.id });
-    } else summary.truncated.add("subjects");
-  }
+  const subjectKey = subjectKeyOf(doc);
+  if (subjectKey && doc.subject.id) addSubject(summary, subjectKey, { type: doc.subject.type, id: doc.subject.id });
   const path = typeof doc.metadata?.path === "string" ? doc.metadata.path : "-";
-  bump(summary.routes, `${doc.request.method ?? "-"} ${doc.request.route ?? path}`);
-  bump(summary.statuses, doc.request.status === null ? "aborted" : String(doc.request.status));
+  bump(summary.routes, `${doc.request.method ?? "-"} ${doc.request.route ?? path}`, 1);
+  bump(summary.statuses, doc.request.status === null ? "aborted" : String(doc.request.status), 1);
 
-  scheduleSummaries(SUMMARY_AFTER_MS);
+  scheduleSummaries(closed ? SUMMARY_CLOSED_MS : SUMMARY_AFTER_MS);
 }
 
-function addCapped(summary: Summary, name: string, set: Set<string>, values: string[], max: number): void {
+function addCapped(summary: Summary, name: string, set: Set<string>, values: Iterable<string>, max: number): void {
   for (const value of values) {
     if (set.has(value)) continue;
     if (set.size < max) set.add(value);
@@ -406,13 +462,74 @@ function addCapped(summary: Summary, name: string, set: Set<string>, values: str
   }
 }
 
-function bump(counts: Map<string, number>, key: string): void {
-  const slot = counts.has(key) || counts.size < SUMMARY_KINDS_MAX ? key : SUMMARY_OTHER;
-  counts.set(slot, (counts.get(slot) ?? 0) + 1);
+function addSubject(summary: Summary, key: string, subject: { type: string; id: string }): void {
+  if (summary.subjects.has(key)) return;
+  if (summary.subjects.size < SUMMARY_SUBJECT_MAX) summary.subjects.set(key, subject);
+  else summary.truncated.add("subjects");
 }
 
+function bump(counts: Map<string, number>, key: string, by: number): void {
+  const slot = counts.has(key) || counts.size < SUMMARY_KINDS_MAX ? key : SUMMARY_OTHER;
+  counts.set(slot, (counts.get(slot) ?? 0) + by);
+}
+
+/** ใบสรุปที่ยังเข้าคิวไม่ได้ (หรือถูกเบียดออกมา) กลับไปรอ — หน้าใบที่กำลังพับ เต็มยี่สิบใบแล้วรวมเข้ากับใบที่เก่าที่สุด */
+function putBack(kind: SummaryKind, summary: Summary): void {
+  let list = summaries.get(kind);
+  if (!list) {
+    list = [];
+    summaries.set(kind, list);
+  }
+  const oldest = list[0];
+  if (list.length < SUMMARIES_PENDING_MAX || !oldest) {
+    list.unshift(summary);
+    return;
+  }
+  oldest.count += summary.count;
+  oldest.overCap += summary.overCap;
+  oldest.queueFull += summary.queueFull;
+  oldest.evicted += summary.evicted;
+  if (summary.firstAt < oldest.firstAt) oldest.firstAt = summary.firstAt;
+  if (summary.lastAt > oldest.lastAt) oldest.lastAt = summary.lastAt;
+  oldest.succeeded ||= summary.succeeded;
+  addCapped(oldest, "tokenFps", oldest.tokenFps, summary.tokenFps, SUMMARY_TOKEN_MAX);
+  addCapped(oldest, "hashKeys", oldest.hashKeys, summary.hashKeys, SUMMARY_SEARCH_MAX);
+  addCapped(oldest, "relatedUserIds", oldest.relatedUserIds, summary.relatedUserIds, SUMMARY_SEARCH_MAX);
+  addCapped(oldest, "ips", oldest.ips, summary.ips, SUMMARY_IP_MAX);
+  for (const [key, subject] of summary.subjects) addSubject(oldest, key, subject);
+  for (const [key, count] of summary.routes) bump(oldest.routes, key, count);
+  for (const [key, count] of summary.statuses) bump(oldest.statuses, key, count);
+  for (const name of summary.truncated) oldest.truncated.add(name);
+}
+
+/**
+ * lib/error-capture.ts ส่งบันทึกที่เข้าคิวแล้วแต่หลุดออกมากลับมาที่นี่ — ใบสรุปกลับไปรอทั้งใบ ตัวเดี่ยวพับลงสรุป ห้ามเรียก
+ * `enqueueAccessRecord` ตรงนี้ (ถูกเรียกจากกลางลูปไล่ของในคิว) — แค่พับแล้วตั้งเวลา
+ */
+function onEvicted(raw: { _id: string } & Record<string, unknown>): void {
+  const queued = queuedSummaries.get(raw);
+  if (queued) {
+    queuedSummaries.delete(raw);
+    stats.summaries -= 1;
+    putBack(queued.kind, queued.summary);
+    scheduleSummaries(SUMMARY_RETRY_MS);
+    return;
+  }
+  const doc = raw as unknown as ActivityDoc;
+  stats.evicted += 1;
+  fold(doc, doc.via === "ADMIN_TOKEN", "evicted");
+}
+
+onAccessRecordEvicted(onEvicted);
+
+/** ตั้งเวลาเข้าคิว — มีตัวจับเวลาที่ครบช้ากว่านี้อยู่ก็เลื่อนให้เร็วขึ้น เร็วกว่าอยู่แล้วก็ปล่อยไว้ */
 function scheduleSummaries(ms: number): void {
-  if (summaryTimer) return;
+  const due = Date.now() + ms;
+  if (summaryTimer) {
+    if (summaryDue <= due) return;
+    clearTimeout(summaryTimer);
+  }
+  summaryDue = due;
   summaryTimer = setTimeout(() => {
     summaryTimer = null;
     emitSummaries();
@@ -421,21 +538,34 @@ function scheduleSummaries(ms: number): void {
   summaryTimer.unref();
 }
 
-/** เข้าคิวทุกใบที่พับอยู่ — คิวเต็มก็ถือไว้แล้วลองใหม่ log store ปิดหรือเกินเพดานขนาดก็ทิ้ง (นับใน `notStored`) */
+/**
+ * เข้าคิวทุกใบที่รออยู่ รวมใบที่กำลังพับ — คิวเต็มก็กลับไปรอแล้วลองใหม่ log store ปิดหรือเกินเพดานขนาดก็ทิ้ง (นับใน `notStored`)
+ * หยิบทั้งหมดออกก่อนแล้วค่อยเข้าคิว: ใบสรุปที่เข้าคิวเบียดตัวเดี่ยวออกได้ ตัวนั้นพับลงใบใหม่ (`onEvicted`) ไม่ใช่ใบที่กำลังส่ง
+ * ซึ่งเอกสารของมันสร้างเสร็จไปแล้ว
+ */
 function emitSummaries(): void {
-  for (const [key, summary] of summaries) {
-    let outcome: "queued" | "full" | "off" = "off";
-    try {
-      const doc = summaryRecord(key === "accepted", summary);
-      fitDocument(doc);
-      outcome = enqueueAccessRecord(doc, true);
-    } catch {
-      // สร้างไม่ได้ก็สร้างไม่ได้ทุกรอบ — ทิ้ง ไม่วนลองตลอดไป
+  const work = [...summaries];
+  summaries.clear();
+  for (const [kind, list] of work) {
+    for (const summary of list) {
+      let outcome: "queued" | "full" | "off" = "off";
+      let doc: ActivityDoc | null = null;
+      try {
+        doc = summaryRecord(kind === "accepted", summary);
+        fitDocument(doc);
+        outcome = enqueueAccessRecord(doc, true);
+      } catch {
+        // สร้างไม่ได้ก็สร้างไม่ได้ทุกรอบ — ทิ้ง ไม่วนลองตลอดไป
+      }
+      if (outcome === "full") {
+        putBack(kind, summary);
+        continue;
+      }
+      if (outcome === "queued" && doc) {
+        stats.summaries += 1;
+        queuedSummaries.set(doc, { kind, summary });
+      } else stats.notStored += summary.count;
     }
-    if (outcome === "full") continue;
-    summaries.delete(key);
-    if (outcome === "queued") stats.summaries += 1;
-    else stats.notStored += summary.count;
   }
   if (summaries.size > 0) scheduleSummaries(SUMMARY_RETRY_MS);
 }
@@ -468,6 +598,7 @@ function summaryRecord(accepted: boolean, summary: Summary): ActivityDoc {
       count: summary.count,
       over_cap: summary.overCap,
       queue_full: summary.queueFull,
+      ...(summary.evicted > 0 ? { evicted: summary.evicted } : {}),
       first_at: summary.firstAt,
       last_at: summary.lastAt,
       token_accepted: accepted,
@@ -505,8 +636,13 @@ export function flushAdminAccessSummaries(): void {
     summaryTimer = null;
   }
   try {
-    emitSummaries();
+    // ใบสรุปที่เข้าคิวเบียดตัวเดี่ยวออกได้ ตัวนั้นพับลงใบใหม่ — ส่งซ้ำอีกไม่กี่รอบให้ใบใหม่นั้นเข้าคิวด้วย
+    for (let round = 0; round < 3 && summaries.size > 0; round++) emitSummaries();
   } catch {
     // ตอนปิด process — ไม่มีอะไรให้ทำต่อ
+  }
+  if (summaryTimer) {
+    clearTimeout(summaryTimer);
+    summaryTimer = null;
   }
 }
