@@ -33,21 +33,29 @@
  * **ส่งทีละฉบับ ทีละผู้รับ ไม่มีสองการเชื่อมต่อซ้อนกัน** ผ่าน `sendRaw(…, {timeoutMs: 30 วินาที})` — Office 365 รับได้ราวสาม
  * การเชื่อมต่อพร้อมกัน (outbox ใช้ไม่ได้: `recipient_user_id` เป็น NOT NULL และผู้รับพวกนี้ไม่ใช่บัญชีในระบบ) ครบ 30 วินาที
  * lib/mail.ts ปิดการเชื่อมต่อของฉบับนั้นเอง (`sendWithDeadline` — เดิมเป็นแค่ `Promise.race` ที่เลิกรอ การส่งที่ค้างยังถือการ
- * เชื่อมต่อต่อไปได้เป็นนาที) แล้ว**รอบนี้หยุด**: SMTP ที่ช้าจนฉบับหนึ่งเกิน 30 วินาทีน่าจะช้ากับฉบับถัดไปด้วย
+ * เชื่อมต่อต่อไปได้เป็นนาที) ฉบับที่เกิน 30 วินาทีจบแค่การส่งถึง**ผู้รับคนนั้น** ไม่ใช่ทั้งรอบ คนถัดไปได้ส่งต่อ ทั้งรอบมีงบ
+ * 90 วินาที (`ROUND_BUDGET_MS`) ครบแล้วไม่เริ่มฉบับใหม่ SMTP ที่ช้ากับทุกคนจึงถือลูปนี้ไว้ไม่เกินราวสองนาที ผู้รับที่ช้าในรอบก่อน
+ * และผู้รับที่ยังค้างฉบับเก่าถูกเรียงไว้ท้ายคิว (`deliverRound`) — คนที่อยู่หลังคนช้าในรายชื่อไม่ต้องรอคนช้าทุกรอบ
  *
- * **ผู้รับที่ยังไม่ได้ฉบับนี้ไม่หายไป** (`pending`): ตัวที่หมดเวลา ตัวที่ยังไม่ถึงคิวตอนรอบหยุด และตัวที่ล้มชั่วคราว (ต่อไม่ได้
- * เงียบเกิน 20 วินาที SMTP ตอบ 4xx) ถูกจดเป็น key ของที่อยู่พร้อมหัวเรื่องกับเนื้อความของฉบับนั้น แล้วได้ฉบับนั้น (หัวเรื่องบอกว่า
- * "ส่งช้า") ก่อนฉบับใหม่ในรอบถัดไป 15 นาทีให้หลัง (`deliverPending`) — ผู้รับที่ค้างจึงได้สองฉบับในรอบนั้นได้ เก็บไม่เกิน 3 ฉบับ
- * ฉบับละไม่เกินหกชั่วโมง ตัวที่ SMTP ปฏิเสธถาวร (ตอบ 5xx: ไม่มีผู้รับนี้ รหัสผ่านผิด) ไม่ถูกเก็บ ส่งซ้ำก็ได้ผลเดิม เดิม issue
- * ของฉบับที่ส่งถึงอย่างน้อยหนึ่งคนถูกนับว่าแจ้งแล้วทั้งชุด ผู้รับที่อยู่หลังตัวที่ค้างจึงไม่ได้ยินเรื่องนั้นเลย ทั้งที่ความเห็นนี้กับ
- * CLAUDE.md เขียนว่า "รอฉบับหน้า" (issue ใหม่ไม่ "ใหม่" อีก และติดช่วงพักหกชั่วโมง — ตรวจแบบค้าน 2026-10-01)
- * ส่งไม่ได้สักคน issue ยังไม่ถูกนับว่าแจ้งแล้ว และไม่มีอะไรถูกเก็บ ฉบับหน้าประกอบใหม่ทั้งชุดหลัง 15 นาที ไม่ใช่ทุกนาที
+ * **ผู้รับหนึ่งคนได้ไม่เกินหนึ่งอีเมลต่อรอบ 15 นาที และฉบับที่ค้างไม่กั้นฉบับใหม่** (`pending`): ผู้รับที่ยังไม่ได้ฉบับหนึ่ง —
+ * หมดเวลา ล้มชั่วคราว (ต่อไม่ได้ เงียบเกิน 20 วินาที SMTP ตอบ 4xx) หรือไม่ได้ลองเพราะงบของรอบหมด — ถูกจดเป็น key ของที่อยู่
+ * (`recipientKey`) พร้อมหัวเรื่องกับเนื้อความของฉบับนั้น รอบถัดไปฉบับนั้น**ต่อท้ายฉบับใหม่ของผู้รับคนนั้นในอีเมลเดียวกัน**
+ * (`messageFor`) รอบที่ไม่มีเรื่องใหม่ส่งเฉพาะที่ค้าง หัวเรื่องบอกว่า "ส่งช้า" เก็บไม่เกิน 3 ฉบับ ฉบับละไม่เกินหกชั่วโมง ตัวที่ SMTP
+ * ปฏิเสธถาวร (ตอบ 5xx: ไม่มีผู้รับนี้ รหัสผ่านผิด) ไม่ถูกเก็บ ส่งซ้ำก็ได้ผลเดิม
+ *
+ * เดิม (6407cb5) ฉบับที่ค้างถูกส่งแยกเป็นอีเมลของมันเองก่อนประกอบฉบับใหม่ และรอบหยุดที่ฉบับแรกที่เกิน 30 วินาที ผู้รับที่ช้าตลอด
+ * คนเดียวจึงกั้น**ทุก**การแจ้งใหม่ (fatal วนรีสตาร์ต เกินเพดาน) ของ**ทุกคน**ไว้จนฉบับที่ค้างหมดอายุหกชั่วโมง ผู้รับที่อยู่หลังเขา
+ * ไม่ได้อะไรเลย และผู้รับที่ล้มชั่วคราวซ้ำ ๆ ได้ฉบับที่ค้างทีละฉบับบวกฉบับใหม่ — สี่อีเมลในรอบเดียว (ตรวจแบบค้าน 2026-10-01)
+ *
+ * issue ในฉบับใหม่ถูกนับว่าแจ้งแล้วเมื่อฉบับนั้นถึงผู้รับอย่างน้อยหนึ่งคน (คนที่ยังไม่ได้อยู่ใน `pending`) ถึงไม่ได้สักคน issue
+ * ยังไม่ถูกนับ และไม่มีอะไรถูกเก็บ ฉบับหน้าประกอบใหม่ทั้งชุดหลัง 15 นาที ไม่ใช่ทุกนาที — `lastError` (`alertError`) บอกทั้งสองกรณี
+ * และบอกผู้รับที่ช้ากับผู้รับที่ไม่ได้ลองเพราะงบหมด
  *
  * **ไม่มีข้อมูลบุคคลในอีเมล:** หัวเรื่องของ issue ของ server (ข้อความ error ที่ผ่าน lib/redact.ts แล้วตัด id กับตัวเลขทิ้ง), service,
  * ที่เกิด (แม่แบบของ route), จำนวน, เวลา, รุ่น, id ของ event และ fingerprint ที่เปิดดูใน Postman — ไม่มีผู้ใช้ IP อีเมล
  *
  * สถานะของลูปอยู่ในเอกสาร `relay_state` `_id: "error_alerts"` (`enabled`, `recipients`, `checkedAt`, `enabledAt`,
- * `lastDigestAt`, `crashLoopAlertedAt`, `overQuotaAlertedAt`, `lastError`, `pending`) — worker เริ่มใหม่ก็ไม่ส่งซ้ำ และ issue ที่มีอยู่ก่อน
+ * `lastDigestAt`, `crashLoopAlertedAt`, `overQuotaAlertedAt`, `lastError`, `pending`, `slow`) — worker เริ่มใหม่ก็ไม่ส่งซ้ำ และ issue ที่มีอยู่ก่อน
  * เปิดการแจ้งเตือน (เห็นล่าสุดก่อน `enabledAt`) ไม่ถูกแจ้งย้อนหลังทั้งกอง `enabled` กับ `checkedAt` คือคำของ worker เองว่าตอนนี้
  * เปิดอยู่ไหม (`GET /api/admin/logs/status` แสดง) — เปิดอยู่เขียนทุกนาที ปิดอยู่เขียนครั้งเดียวตอนเริ่มพร้อมล้าง `enabledAt`
  * เปิดกลับมาจึงนับใหม่จากตอนนั้น ไม่ใช่แจ้งทุกอย่างที่เกิดระหว่างที่ปิด
@@ -71,7 +79,9 @@ const ISSUES_PER_DIGEST = 20;
 const BROWSER_ALERTS_PER_WINDOW = 5;
 const BROWSER_WINDOW_MS = 6 * 60 * 60_000;
 const SEND_TIMEOUT_MS = 30_000;
-/** ฉบับที่ยังส่งไม่ถึงผู้รับบางคน เก็บไว้ส่งซ้ำไม่เกินเท่านี้ฉบับ ฉบับละไม่เกินหกชั่วโมง (หัวไฟล์ "ผู้รับที่ยังไม่ได้ฉบับนี้") */
+/** งบเวลาของหนึ่งรอบ ครบแล้วไม่เริ่มส่งฉบับใหม่ — รอบหนึ่งยาวไม่เกินงบนี้บวกหนึ่งฉบับ (หัวไฟล์ "ส่งทีละฉบับ") */
+const ROUND_BUDGET_MS = 90_000;
+/** ฉบับที่ยังส่งไม่ถึงผู้รับบางคน เก็บไว้ส่งซ้ำไม่เกินเท่านี้ฉบับ ฉบับละไม่เกินหกชั่วโมง (หัวไฟล์ "ผู้รับหนึ่งคน…") */
 const PENDING_MAX = 3;
 const PENDING_MAX_AGE_MS = 6 * 60 * 60_000;
 /** เนื้อความที่เก็บไว้ส่งซ้ำยาวไม่เกินนี้ — ฉบับจริงยี่สิบ issue ราว 15 KB เอกสารของ relay_state ต้องไม่โตไม่รู้จบ */
@@ -144,9 +154,11 @@ interface AlertState {
   lastDigest?: Record<string, unknown>;
   /** ฉบับที่ยังไม่ถึงผู้รับบางคน — อ่านผ่าน `pendingList` เท่านั้น (ค่าจาก Mongo ไม่เชื่อรูป) */
   pending?: unknown;
+  /** key ของผู้รับที่ช้าในรอบล่าสุด (`RoundResult.slow`) — รอบหน้าอยู่ท้ายคิว อ่านผ่าน `slowKeys` */
+  slow?: unknown;
 }
 
-/** ฉบับหนึ่งที่ยังส่งไม่ถึงผู้รับบางคน (หัวไฟล์ "ผู้รับที่ยังไม่ได้ฉบับนี้") */
+/** ฉบับหนึ่งที่ยังส่งไม่ถึงผู้รับบางคน (หัวไฟล์ "ผู้รับหนึ่งคน…") */
 interface PendingDigest {
   createdAt: Date;
   subject: string;
@@ -155,15 +167,27 @@ interface PendingDigest {
   recipients: string[];
 }
 
-/** ผลของการส่งหนึ่งฉบับถึงรายชื่อหนึ่ง (`sendToAll`) */
-interface SendRound {
-  delivered: number;
+interface Message {
+  subject: string;
+  body: string;
+}
+
+/** ผลของหนึ่งรอบ (`deliverRound`) — ทุกชุดเป็น key ของผู้รับ (`recipientKey`) */
+interface RoundResult {
+  /** ผู้รับที่รอบนี้ต้องส่งให้ — ทุกคนเมื่อมีฉบับใหม่ ไม่งั้นเฉพาะคนที่ค้างฉบับเก่า */
+  addressed: number;
+  /** ได้อีเมลของตัวเองในรอบนี้แล้ว (ฉบับใหม่ ถ้ามี พร้อมทุกฉบับที่ค้างของเขา) */
+  delivered: Set<string>;
   /** SMTP ปฏิเสธถาวร (ตอบ 5xx) — ส่งซ้ำก็ได้ผลเดิม จึงไม่ถูกเก็บไว้ส่งซ้ำ */
-  rejected: number;
-  /** key ของผู้รับที่ยังไม่ได้ฉบับนี้และควรลองอีก: หมดเวลา ล้มชั่วคราว หรือยังไม่ถึงคิวตอนรอบหยุด */
-  missed: string[];
-  /** มีฉบับที่เกิน 30 วินาที — SMTP ช้า ผู้เรียกไม่เปิดการส่งอื่นอีกในรอบนี้ */
-  stalled: boolean;
+  rejected: Set<string>;
+  /** ยังไม่ได้และควรลองอีก: หมดเวลา ล้มชั่วคราว หรือไม่ได้ลองเพราะงบของรอบหมด / worker กำลังหยุด */
+  missed: Set<string>;
+  /** ส่งเกิน 30 วินาทีในรอบนี้ หรือช้าในรอบก่อนแล้วรอบนี้ไม่ได้ลอง — รอบหน้าอยู่ท้ายคิว */
+  slow: Set<string>;
+  /** ไม่ได้ลองเพราะงบของรอบหมด หรือ worker กำลังหยุด */
+  skipped: number;
+  /** ฉบับที่ค้างซึ่งส่งถึงแล้วในรอบนี้ นับต่อผู้รับ */
+  late: number;
 }
 
 interface Candidate {
@@ -263,47 +287,44 @@ async function tick(): Promise<void> {
     const quota = await overQuotaChange(db, states, state);
     if (state.lastDigestAt && now.getTime() - state.lastDigestAt.getTime() < DIGEST_EVERY_MS) return;
 
-    // ฉบับก่อน ๆ ที่ยังไม่ถึงผู้รับบางคน — ส่งก่อนฉบับใหม่ SMTP ยังช้าอยู่ก็หยุดตรงนั้น ฉบับใหม่รอรอบหน้า (issue ยังไม่ถูกนับว่าแจ้ง)
-    const carried = await deliverPending(state.pending, now);
-    if (carried.stalled) {
-      await states.updateOne(
-        { _id: STATE_ID },
-        { $set: { lastDigestAt: now, pending: carried.pending, lastError: pendingError(carried.pending) } },
-        { upsert: true, maxTimeMS: MONGO_COMMAND_MAX_MS },
-      );
-      return;
-    }
-
+    const configured = new Map(env.logStore.alertEmails.map((address) => [recipientKey(address), address]));
+    const carried = carriedPending(state.pending, configured, now);
     const browserBudget = await browserBudgetOf(db, now);
     const candidates = await collect(db, state, now, browserBudget);
     const crashLoops = await crashLoopsOf(db, state, now);
     const chosen = choose(candidates, browserBudget);
-    // มีแค่ issue เบราว์เซอร์ที่โควตาหกชั่วโมงหมดแล้ว = ไม่มีอะไรจะส่ง ไม่ใช่ฉบับที่มีแต่บรรทัด "และอีก N รายการ"
-    if (chosen.length === 0 && crashLoops.length === 0 && !quota) {
+    // มีแค่ issue เบราว์เซอร์ที่โควตาหกชั่วโมงหมดแล้ว = ไม่มีเรื่องใหม่ ไม่ใช่ฉบับที่มีแต่บรรทัด "และอีก N รายการ"
+    const fresh =
+      chosen.length > 0 || crashLoops.length > 0 || quota
+        ? compose(chosen, candidates.length - chosen.length, crashLoops, quota)
+        : null;
+    if (!fresh && carried.pending.length === 0) {
+      // ฉบับที่ค้างหมดอายุหรือผู้รับถูกถอดหมดแล้ว — จดว่าไม่มีอะไรค้าง
       if (carried.changed) {
         await states.updateOne(
           { _id: STATE_ID },
-          {
-            $set: {
-              pending: carried.pending,
-              lastError: pendingError(carried.pending),
-              // ส่งฉบับที่ค้างไปแล้วในรอบนี้ = ใช้รอบนี้ไปแล้ว ครั้งต่อไปอีก 15 นาที
-              ...(carried.attempted ? { lastDigestAt: now } : {}),
-            },
-          },
+          { $set: { pending: [], lastError: null } },
           { upsert: true, maxTimeMS: MONGO_COMMAND_MAX_MS },
         );
       }
       return;
     }
 
-    const { subject, body } = compose(chosen, candidates.length - chosen.length, crashLoops, quota);
-    const round = await sendToAll(subject, body, env.logStore.alertEmails);
-    const delivered = round.delivered;
-    let pending = carried.pending;
-    // ถึงบางคนแต่ไม่ครบ — คนที่ยังไม่ได้ได้ฉบับนี้ในรอบหน้า (ไม่ถึงใครเลย = ไม่เก็บ ฉบับหน้าประกอบใหม่ทั้งชุด)
-    if (delivered > 0 && round.missed.length > 0) {
-      pending = [...pending, { createdAt: now, subject, body: body.slice(0, PENDING_BODY_MAX), recipients: round.missed }];
+    // หนึ่งอีเมลต่อผู้รับ: ฉบับใหม่ (ถ้ามี) ต่อด้วยทุกฉบับที่เขายังค้าง — ฉบับที่ค้างไม่กั้นฉบับใหม่อีกต่อไป (หัวไฟล์)
+    const round = await deliverRound(fresh, carried.pending, configured, slowKeys(state.slow, configured));
+    // ฉบับที่ค้าง: คนที่ได้อีเมลของรอบนี้ (ซึ่งรวมฉบับนั้นไว้) กับคนที่ถูกปฏิเสธถาวรหลุดออก เหลือคนที่ยังไม่ได้
+    let pending = carried.pending
+      .map((item) => ({ ...item, recipients: item.recipients.filter((key) => round.missed.has(key)) }))
+      .filter((item) => item.recipients.length > 0);
+    const delivered = fresh ? round.delivered.size : 0;
+    // ฉบับใหม่ถึงบางคนแต่ไม่ครบ — คนที่ยังไม่ได้ได้ฉบับนี้รวมกับอีเมลรอบหน้า (ไม่ถึงใครเลย = ไม่เก็บ ฉบับหน้าประกอบใหม่ทั้งชุด)
+    if (fresh && delivered > 0 && round.missed.size > 0) {
+      pending.push({
+        createdAt: now,
+        subject: fresh.subject,
+        body: fresh.body.slice(0, PENDING_BODY_MAX),
+        recipients: [...round.missed],
+      });
       if (pending.length > PENDING_MAX) {
         for (const dropped of pending.slice(0, pending.length - PENDING_MAX)) warnDropped(dropped, "เก็บได้ไม่เกิน 3 ฉบับ");
         pending = pending.slice(-PENDING_MAX);
@@ -313,20 +334,26 @@ async function tick(): Promise<void> {
     // ส่งถึงอย่างน้อยหนึ่งคน = แจ้งแล้ว (คนที่ยังไม่ได้อยู่ใน `pending`) ไม่ถึงใครเลย = ยังไม่ได้แจ้ง ฉบับหน้า (15 นาที) ลองใหม่ทั้งชุด
     const update: Document = {
       lastDigestAt: now,
-      lastError: delivered === 0 ? "ส่งไม่สำเร็จทุกผู้รับ" : pendingError(pending),
+      lastError: alertError(pending, fresh !== null && delivered === 0, round),
       pending,
-      lastDigest: {
+      slow: [...round.slow],
+    };
+    if (fresh) {
+      update.lastDigest = {
         at: now,
         issues: chosen.map((c) => ({ fingerprint: c.issue._id, trigger: c.trigger })),
         crashLoops: crashLoops.map((c) => c.service),
         overQuota: quota !== null,
         delivered,
-        rejected: round.rejected,
-        missed: round.missed.length,
-        recipients: env.logStore.alertEmails.length,
-      },
-    };
-    if (delivered > 0) {
+        rejected: round.rejected.size,
+        missed: round.missed.size,
+        slow: round.slow.size,
+        skipped: round.skipped,
+        late: round.late,
+        recipients: configured.size,
+      };
+    }
+    if (fresh && delivered > 0) {
       for (const loop of crashLoops) update[`crashLoopAlertedAt.${loop.service}`] = now;
       if (quota) update.overQuotaAlertedAt = now;
       if (chosen.length > 0) {
@@ -340,13 +367,23 @@ async function tick(): Promise<void> {
       }
     }
     await states.updateOne({ _id: STATE_ID }, { $set: update }, { upsert: true, maxTimeMS: MONGO_COMMAND_MAX_MS });
-    console.log(
-      `[error-alerts] สรุป ${chosen.length} issue` +
+    const head = fresh
+      ? `สรุป ${chosen.length} issue` +
         `${crashLoops.length > 0 ? ` · วนรีสตาร์ต ${crashLoops.map((c) => c.service).join(", ")}` : ""}` +
-        `${quota ? " · เกินเพดานขนาด" : ""} — ส่งถึง ${delivered}/${env.logStore.alertEmails.length} ผู้รับ` +
-        `${round.rejected > 0 ? ` · ถูกปฏิเสธ ${round.rejected}` : ""}` +
-        `${delivered > 0 && round.missed.length > 0 ? ` · ยังไม่ถึง ${round.missed.length} (ส่งให้ในรอบหน้า)` : ""} ` +
-        `(${chosen.map((c) => `${c.trigger}:${shortFingerprint(c.issue._id)}`).join(" ") || "ไม่มี issue"})`,
+        `${quota ? " · เกินเพดานขนาด" : ""}`
+      : "ไม่มีเรื่องใหม่ ส่งเฉพาะสรุปที่ค้าง";
+    console.log(
+      `[error-alerts] ${head} — ส่งถึง ${round.delivered.size}/${round.addressed} ผู้รับ` +
+        `${round.late > 0 ? ` · รวมสรุปที่ค้าง ${round.late} ฉบับ` : ""}` +
+        `${round.rejected.size > 0 ? ` · ถูกปฏิเสธ ${round.rejected.size}` : ""}` +
+        `${
+          fresh && delivered === 0
+            ? " · ไม่ถึงใครเลย (issue ยังไม่ถูกนับว่าแจ้งแล้ว ประกอบใหม่ในรอบหน้า)"
+            : round.missed.size > 0
+              ? ` · ยังไม่ถึง ${round.missed.size} (รวมไว้ในอีเมลรอบหน้าของผู้รับนั้น)`
+              : ""
+        }` +
+        `${fresh ? ` (${chosen.map((c) => `${c.trigger}:${shortFingerprint(c.issue._id)}`).join(" ") || "ไม่มี issue"})` : ""}`,
     );
   } catch (err) {
     captureThrottled("error-alerts.tick", err);
@@ -642,42 +679,109 @@ function browserLines(number: number, candidate: Candidate): string[] {
 }
 
 /**
- * ส่งถึง `recipients` ทีละคน (Office 365 รับการเชื่อมต่อพร้อมกันได้น้อย) คนละไม่เกิน 30 วินาที — ไม่ throw
- * SMTP ที่ยังไม่ได้ตั้ง (dev) `sendRaw` พิมพ์แค่ผู้รับกับหัวเรื่อง จึงพิมพ์เนื้อความทั้งฉบับไว้ที่นี่ด้วย (ไม่มีข้อมูลบุคคล)
+ * หนึ่งรอบของการส่ง: ผู้รับหนึ่งคนได้อีเมลเดียว (`messageFor` — ฉบับใหม่ต่อด้วยทุกฉบับที่เขาค้าง) ทีละคน ไม่มีสองการเชื่อมต่อ
+ * ซ้อนกัน (Office 365 รับการเชื่อมต่อพร้อมกันได้น้อย) คนละไม่เกิน 30 วินาที — ไม่ throw ไม่มีฉบับใหม่ส่งเฉพาะคนที่ค้าง
+ * SMTP ที่ยังไม่ได้ตั้ง (dev) `sendRaw` พิมพ์แค่ผู้รับกับหัวเรื่อง จึงพิมพ์เนื้อความไว้ที่นี่ด้วย (ไม่มีข้อมูลบุคคล)
  *
- * **ฉบับที่เกิน 30 วินาทีหยุดทั้งรอบ** (`stalled`): lib/mail.ts ปิดการเชื่อมต่อของมันแล้ว แต่ SMTP ที่ช้าขนาดนั้นน่าจะช้ากับคน
- * ถัดไปด้วย ตัวที่หมดเวลากับทุกคนที่ยังไม่ถึงคิวอยู่ใน `missed` ให้ผู้เรียกเก็บไว้ส่งรอบหน้า ความล้มเหลวอื่นจบการเชื่อมต่อของมัน
- * เองแล้ว จึงส่งคนถัดไปต่อ: SMTP ตอบ 5xx (ไม่มีผู้รับนี้ รหัสผ่านผิด) นับเป็น `rejected` ไม่ลองซ้ำ ที่เหลือ (ต่อไม่ได้ เงียบเกิน
- * 20 วินาที ตอบ 4xx) ชั่วคราว อยู่ใน `missed`
+ * **ลำดับ:** คนที่ไม่ค้างอะไร → คนที่ค้างฉบับเก่า → คนที่ช้าในรอบก่อน (`slowBefore`) ตามลำดับในรายชื่อภายในแต่ละกลุ่ม ผู้รับที่ช้า
+ * ตลอดจึงอยู่ท้ายเสมอ และกินงบของรอบหลังคนอื่นได้ของไปแล้ว
+ *
+ * **ฉบับที่เกิน 30 วินาทีจบแค่ผู้รับคนนั้น** (`slow` + `missed`) lib/mail.ts ปิดการเชื่อมต่อของมันแล้ว จึงส่งคนถัดไปต่อได้โดยไม่มี
+ * การเชื่อมต่อซ้อน เดิมทั้งรอบหยุดที่ตรงนั้น ผู้รับที่ตามหลังคนช้าจึงไม่เคยได้อะไร (ตรวจแบบค้าน 2026-10-01) ทั้งรอบมีงบ
+ * `ROUND_BUDGET_MS` ครบแล้วไม่เริ่มฉบับใหม่ — ที่เหลือเป็น `missed` และ `skipped` SMTP ตอบ 5xx (ไม่มีผู้รับนี้ รหัสผ่านผิด) นับเป็น
+ * `rejected` ไม่ลองซ้ำ ความล้มเหลวอื่น (ต่อไม่ได้ เงียบเกิน 20 วินาที ตอบ 4xx) ชั่วคราว อยู่ใน `missed`
  */
-async function sendToAll(subject: string, body: string, recipients: readonly string[]): Promise<SendRound> {
-  if (!env.smtp.enabled) console.log(`[error-alerts] (dry-run) เนื้อความ:\n${body}`);
-  const round: SendRound = { delivered: 0, rejected: 0, missed: [], stalled: false };
-  for (const [index, to] of recipients.entries()) {
-    if (stopped || round.stalled) {
-      round.missed.push(recipientKey(to));
+async function deliverRound(
+  fresh: Message | null,
+  pending: PendingDigest[],
+  configured: Map<string, string>,
+  slowBefore: Set<string>,
+): Promise<RoundResult> {
+  const lateFor = new Map<string, PendingDigest[]>();
+  for (const item of pending) {
+    for (const key of item.recipients) lateFor.set(key, [...(lateFor.get(key) ?? []), item]);
+  }
+  const rank = (key: string) => (slowBefore.has(key) ? 2 : lateFor.has(key) ? 1 : 0);
+  const order = [...configured]
+    .filter(([key]) => fresh !== null || lateFor.has(key))
+    .map(([key, address], index) => ({ key, address, index }))
+    .sort((a, b) => rank(a.key) - rank(b.key) || a.index - b.index);
+  const result: RoundResult = {
+    addressed: order.length,
+    delivered: new Set(),
+    rejected: new Set(),
+    missed: new Set(),
+    slow: new Set(),
+    skipped: 0,
+    late: 0,
+  };
+  if (!env.smtp.enabled && fresh) console.log(`[error-alerts] (dry-run) เนื้อความ:\n${fresh.body}`);
+  const startedAt = Date.now();
+  for (const [position, { key, address }] of order.entries()) {
+    const late = lateFor.get(key) ?? [];
+    if (stopped || Date.now() - startedAt >= ROUND_BUDGET_MS) {
+      result.missed.add(key);
+      if (slowBefore.has(key)) result.slow.add(key);
+      result.skipped += 1;
       continue;
     }
+    const message = messageFor(fresh, late);
+    if (!env.smtp.enabled && late.length > 0) {
+      console.log(
+        `[error-alerts] (dry-run) ฉบับที่ ${position + 1}/${order.length} รวมสรุปที่ค้าง ${late.length} ฉบับ:\n${message.body}`,
+      );
+    }
     try {
-      await sendRaw(to, subject, body, { lineBreaks: true, timeoutMs: SEND_TIMEOUT_MS });
-      round.delivered += 1;
+      await sendRaw(address, message.subject, message.body, { lineBreaks: true, timeoutMs: SEND_TIMEOUT_MS });
+      result.delivered.add(key);
+      result.late += late.length;
     } catch (err) {
       captureThrottled("error-alerts.send", err);
       if (permanentFailure(err)) {
-        round.rejected += 1;
+        result.rejected.add(key);
         continue;
       }
-      round.missed.push(recipientKey(to));
+      result.missed.add(key);
       if (err instanceof SendDeadlineError) {
-        round.stalled = true;
+        result.slow.add(key);
         console.warn(
-          `[error-alerts] ส่งฉบับที่ ${index + 1}/${recipients.length} เกิน ${SEND_TIMEOUT_MS / 1000} วินาที — ปิดการเชื่อมต่อแล้ว ` +
-            "หยุดรอบนี้ ผู้รับที่ยังไม่ได้ได้ฉบับนี้ในรอบหน้า",
+          `[error-alerts] ส่งฉบับที่ ${position + 1}/${order.length} เกิน ${SEND_TIMEOUT_MS / 1000} วินาที — ปิดการเชื่อมต่อแล้ว ` +
+            "ส่งผู้รับคนถัดไปต่อ ผู้รับคนนี้ได้ฉบับนี้รวมกับอีเมลรอบหน้า (ท้ายคิว)",
         );
       }
     }
   }
-  return round;
+  if (result.skipped > 0) {
+    console.warn(
+      `[error-alerts] ยังไม่ได้ลอง ${result.skipped} ผู้รับ (ครบงบ ${ROUND_BUDGET_MS / 1000} วินาทีของรอบ หรือ worker กำลังหยุด)` +
+        " — ได้ฉบับนี้รวมกับอีเมลรอบหน้า",
+    );
+  }
+  return result;
+}
+
+/**
+ * อีเมลของผู้รับหนึ่งคนในรอบนี้ — ฉบับใหม่ แล้วต่อท้ายด้วยทุกฉบับที่เขายังค้าง (เก่าสุดก่อน) แต่ละฉบับมีเวลาที่มันออก ตัวเลขในนั้น
+ * เป็นของตอนนั้น ไม่มีฉบับใหม่ = เฉพาะที่ค้าง หัวเรื่องบอกว่า "ส่งช้า"
+ */
+function messageFor(fresh: Message | null, late: PendingDigest[]): Message {
+  if (fresh && late.length === 0) return fresh;
+  const sections = late.map(
+    (item) =>
+      `---------- สรุปเมื่อ ${bangkok(item.createdAt)} ที่ส่งถึงคุณไม่ได้ในรอบนั้น (ตัวเลขเป็นของเวลานั้น) ----------\n\n${item.body}`,
+  );
+  if (fresh) {
+    return {
+      subject: `${fresh.subject} + สรุปที่ส่งไม่ถึงก่อนหน้า ${late.length} ฉบับ`,
+      body: `${fresh.body}\n\n${sections.join("\n\n")}`,
+    };
+  }
+  return {
+    subject: `[D2 ${env.deployEnv}] สรุปที่ส่งถึงคุณไม่ได้ ${late.length} ฉบับ (ส่งช้า — ฉบับแรกเมื่อ ${bangkok(late[0]?.createdAt)})`,
+    body:
+      "สรุปข้างล่างออกไปแล้วแต่ส่งถึงคุณไม่ได้ในรอบนั้น ตัวเลขเป็นของเวลาที่ระบุ — ดูสถานะล่าสุดด้วย Postman E1\n\n" +
+      sections.join("\n\n"),
+  };
 }
 
 /** SMTP ปฏิเสธถาวร — รหัสตอบกลับ 5xx (nodemailer ใส่ไว้ที่ `responseCode`) ส่งซ้ำก็ได้ผลเดิม */
@@ -699,29 +803,25 @@ const RECIPIENT_KEY_SECRET = env.logStore.hashKey || randomBytes(32).toString("h
  * เดิมเป็น SHA-256 เปล่า ๆ ใครอ่าน `relay_state` ได้ (รวม `bdi_backend`) ก็ยืนยันที่อยู่ของเจ้าหน้าที่ที่เดาไว้ได้ด้วยการ hash เอง
  * (ตรวจแบบค้าน 2026-10-01) — อีเมลใน log store ที่อื่นเป็น HMAC ใต้ `LOG_HASH_KEY` ทั้งหมด (plan §7) ข้อความนำหน้าแยก key ชุดนี้
  * ออกจาก `email#…` ของ `activity.hashKeys` ที่อยู่เดียวกันจึงได้ key คนละตัว โยงกันไม่ได้ `LOG_HASH_KEY` เปลี่ยน key เก่าก็หา
- * ไม่เจอ ผู้รับที่ค้างในตอนนั้นไม่ได้ฉบับที่ค้าง (บรรทัดเตือนของ `deliverPending`)
+ * ไม่เจอ ผู้รับที่ค้างในตอนนั้นไม่ได้ฉบับที่ค้าง (บรรทัดเตือนของ `carriedPending`)
  */
 function recipientKey(address: string): string {
   return createHmac("sha256", RECIPIENT_KEY_SECRET).update(`error-alert-recipient\0${address}`).digest("hex").slice(0, 16);
 }
 
 /**
- * ฉบับก่อน ๆ ที่ยังไม่ถึงผู้รับบางคน — ส่งให้คนที่ยังอยู่ในรายชื่อ ตามลำดับที่เกิด ก่อนประกอบฉบับใหม่ (`tick`)
- *
- * หัวเรื่องบอกว่าส่งช้าและเนื้อความบอกเวลาที่ฉบับนั้นออก ตัวเลขในนั้นเป็นของตอนนั้น ฉบับที่ค้างเกินหกชั่วโมงทิ้งพร้อมบรรทัดเตือน:
- * issue ที่ยังเกิดอยู่แจ้งใหม่ได้แล้วหลังช่วงพักหกชั่วโมง และ E1 แสดงทุกตัวที่ยังเปิดอยู่ `changed` = รายการต่างจากที่อ่านมา ต้องจดใหม่
+ * ฉบับก่อน ๆ ที่ยังไม่ถึงผู้รับบางคน ในรูปที่รอบนี้ใช้ได้ — ทิ้งฉบับที่ค้างเกินหกชั่วโมง (พร้อมบรรทัดเตือน: issue ที่ยังเกิดอยู่แจ้ง
+ * ใหม่ได้แล้วหลังช่วงพักหกชั่วโมง และ E1 แสดงทุกตัวที่ยังเปิดอยู่) และผู้รับที่ไม่อยู่ในรายชื่อแล้ว `changed` = ต่างจากที่อ่านมา
+ * ไม่ส่งอะไร — `deliverRound` รวมฉบับเหล่านี้เข้าอีเมลของแต่ละคน
  */
-async function deliverPending(
+function carriedPending(
   stored: unknown,
+  configured: Map<string, string>,
   now: Date,
-): Promise<{ pending: PendingDigest[]; attempted: boolean; stalled: boolean; changed: boolean }> {
+): { pending: PendingDigest[]; changed: boolean } {
   const items = pendingList(stored);
   let changed = items.length !== (Array.isArray(stored) ? stored.length : 0);
-  if (items.length === 0) return { pending: [], attempted: false, stalled: false, changed };
-  const configured = new Map(env.logStore.alertEmails.map((address) => [recipientKey(address), address]));
   const kept: PendingDigest[] = [];
-  let attempted = false;
-  let stalled = false;
   for (const item of items) {
     if (now.getTime() - item.createdAt.getTime() > PENDING_MAX_AGE_MS) {
       warnDropped(item, "ค้างเกิน 6 ชั่วโมง");
@@ -733,28 +833,15 @@ async function deliverPending(
       changed = true;
       warnUnknown(item, item.recipients.length - keys.length);
     }
-    if (keys.length === 0) continue;
-    if (stalled || stopped) {
-      kept.push({ ...item, recipients: keys });
-      continue;
-    }
-    attempted = true;
-    changed = true;
-    const targets = keys.map((key) => configured.get(key)!);
-    const round = await sendToAll(
-      `${item.subject} (ส่งช้า — สรุปเมื่อ ${bangkok(item.createdAt)})`,
-      `สรุปฉบับนี้ออกเมื่อ ${bangkok(item.createdAt)} (เวลาไทย) แต่ส่งถึงคุณไม่ได้ในรอบนั้น — ตัวเลขข้างล่างเป็นของเวลานั้น` +
-        ` ดูสถานะล่าสุดด้วย Postman E1\n\n${item.body}`,
-      targets,
-    );
-    console.log(
-      `[error-alerts] ส่งสรุปของ ${bangkok(item.createdAt)} ที่ค้างอยู่ถึง ${round.delivered}/${targets.length} ผู้รับ` +
-        `${round.missed.length > 0 ? ` · ยังไม่ถึง ${round.missed.length} (ลองอีกในรอบหน้า)` : ""}`,
-    );
-    if (round.missed.length > 0) kept.push({ ...item, recipients: round.missed });
-    stalled = round.stalled;
+    if (keys.length > 0) kept.push({ ...item, recipients: keys });
   }
-  return { pending: kept, attempted, stalled, changed };
+  return { pending: kept, changed };
+}
+
+/** `slow` ที่อ่านจาก Mongo — เฉพาะ key ของผู้รับที่ยังอยู่ในรายชื่อ */
+function slowKeys(value: unknown, configured: Map<string, string>): Set<string> {
+  if (!Array.isArray(value)) return new Set();
+  return new Set(value.filter((key): key is string => typeof key === "string" && configured.has(key)));
 }
 
 /** `pending` ที่อ่านจาก Mongo ในรูปที่ใช้ได้ — ตัวที่ผิดรูปข้ามไป (รอบถัดไปจดทับ) */
@@ -773,10 +860,20 @@ function pendingList(value: unknown): PendingDigest[] {
   return list.slice(-PENDING_MAX);
 }
 
-function pendingError(pending: PendingDigest[]): string | null {
-  if (pending.length === 0) return null;
-  const people = pending.reduce((sum, item) => sum + item.recipients.length, 0);
-  return `ยังส่งไม่ถึงผู้รับ ${people} รายการใน ${pending.length} ฉบับ — ส่งให้ในรอบหน้า`;
+/**
+ * `lastError` ของรอบล่าสุด (`GET /api/admin/logs/status` แสดง) — ฉบับใหม่ที่ไม่ถึงใครเลย (issue ในนั้นยังไม่ถูกนับว่าแจ้ง)
+ * ผู้รับที่ยังค้าง ผู้รับที่ช้า และผู้รับที่ไม่ได้ลองเพราะงบหมด ไม่มีอะไรผิดปกติ = null
+ */
+function alertError(pending: PendingDigest[], freshReachedNobody: boolean, round: RoundResult): string | null {
+  const parts: string[] = [];
+  if (freshReachedNobody) {
+    parts.push("สรุปฉบับล่าสุดส่งไม่ถึงผู้รับคนไหนเลย — ปัญหาในฉบับนั้นยังไม่ถูกนับว่าแจ้งแล้ว ประกอบใหม่ในรอบหน้า");
+  }
+  const owed = new Set(pending.flatMap((item) => item.recipients)).size;
+  if (owed > 0) parts.push(`ผู้รับ ${owed} คนยังไม่ได้สรุป ${pending.length} ฉบับ — รวมไว้ในอีเมลรอบหน้าของผู้รับนั้น`);
+  if (round.slow.size > 0) parts.push(`ผู้รับ ${round.slow.size} คนส่งเกิน ${SEND_TIMEOUT_MS / 1000} วินาที (อยู่ท้ายคิว)`);
+  if (round.skipped > 0) parts.push(`ผู้รับ ${round.skipped} คนไม่ได้ลองในรอบล่าสุด (ครบงบ ${ROUND_BUDGET_MS / 1000} วินาที)`);
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 /** ผู้รับในฉบับที่ค้างซึ่งไม่อยู่ในรายชื่อแล้ว — ถูกถอดออก หรือ key ใช้ไม่ได้แล้ว (`recipientKey`: `LOG_HASH_KEY` เปลี่ยน หรือไม่ได้ตั้งแล้ว worker เริ่มใหม่) */

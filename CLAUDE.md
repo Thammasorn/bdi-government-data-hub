@@ -1023,14 +1023,22 @@ through `sendRaw(…, {timeoutMs: 30_000})`. That is a hard 30 s per message: `s
 nodemailer's own timeouts only bound *silence* (10 s to greet, 20 s mid-conversation), so a server
 that answers every 19 s kept a send alive for minutes. A `Promise.race` gives up waiting without
 closing anything, and `close()` on a non-pooled transport does not touch a send in flight either.
-The first send that hits the deadline ends that round, because SMTP that slow will be slow for the
-next recipient too. Everyone it did not reach (the one that timed out, the ones not yet tried, and
-temporary failures) is kept in `pending` as a hash of the address plus that digest's text, and
-gets it, marked "ส่งช้า", ahead of the next digest 15 minutes later. It used to mark the issues
-alerted as soon as one recipient had the mail, so the others never heard of them at all. A 5xx
-rejection is not retried. The SMTP server is Office 365, which takes about three
-connections. At most one digest per 15 minutes and one alert per issue per 6 hours unless it
-regressed. A regression alerts only an issue that would alert anyway (level error or fatal, or a
+A send that hits the deadline ends that recipient's attempt, not the round: the next recipient is
+tried, the round as a whole stops starting sends after 90 s (`ROUND_BUDGET_MS`), and a recipient
+that was slow or still owed mail last time is tried last. **Each recipient gets at most one message
+per 15-minute slot, and nothing owed ever holds back a new digest.** Whoever a digest did not reach
+(timed out, a temporary failure, or not tried before the budget ran out) is kept in `pending` under
+an HMAC of the address (`LOG_HASH_KEY`; without it a per-process key, so pending is forgotten on
+restart), and that digest's text is appended to the same recipient's next message — or sent alone,
+marked "ส่งช้า", when there is nothing new. At most three digests are kept, none older than six
+hours. Until 2026-10-01 a late digest went out as its own mail *before* the new one and a round
+stopped at the first slow send, so one mailbox that was always slow held back every new alert
+(fatal, crash loop, over-quota) for every recipient for six hours, and one that kept failing
+temporarily got four mails in one slot. A 5xx rejection is not retried. A digest's issues count as
+alerted once it reaches one recipient; if it reaches nobody they do not, the next digest is composed
+afresh, and `lastError` on `/status` says so, as it says who is owed mail or slow. The SMTP server is
+Office 365, which takes about three connections. At most one digest per 15 minutes and one alert per
+issue per 6 hours unless it regressed. A regression alerts only an issue that would alert anyway (level error or fatal, or a
 sustained route-answered 5xx); `browser:chunk-load` and `…:log_access_disabled` never alert.
 Browser issues, which anyone can create, are held to five per six hours across digests and go
 into the mail without their message text. Its state lives in `relay_state` `_id: "error_alerts"`,
