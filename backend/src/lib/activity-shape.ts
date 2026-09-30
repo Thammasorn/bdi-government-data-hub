@@ -492,8 +492,13 @@ const TRUNCATE_STEPS: Array<{ text: number; items: number }> = [
   { text: 256, items: 100 },
   { text: 32, items: 20 },
 ];
-/** รายการค้นหา (`hashKeys` `relatedUserIds` `tokenFps`) ที่เก็บได้เมื่อย่อก้อนข้อมูลแล้วยังเกิน — ใบแรก ๆ ตามลำดับที่พบ */
+/**
+ * รายการค้นหา (`hashKeys` `relatedUserIds` `tokenFps`) ที่เก็บได้เมื่อย่อก้อนข้อมูลแล้วยังเกิน — ใบแรก ๆ ตามลำดับที่พบ
+ * สามรายการเต็มเพดานรวมกันราว 20 KB (BSON) เหลือที่ให้ก้อนข้อมูลที่ย่อแล้วอีกมาก
+ */
 const SEARCH_LIST_MAX = 200;
+/** `changedFields` ที่เก็บได้ในขั้นเดียวกับรายการค้นหา — ชื่อละไม่เกิน NAME_MAX ตัว */
+const CHANGED_FIELDS_MAX = 200;
 /** ชื่อ key และชื่อช่องที่เหลือในสรุปของก้อนที่ย่อเต็มที่ (`{truncated, keys}`) และใน `changedFields` */
 const NAME_MAX = 64;
 
@@ -531,55 +536,76 @@ const SEARCH_LISTS = [
 /**
  * ให้เอกสารไม่เกิน 64 KB **เมื่อเป็น BSON** โดยไม่ทิ้งทั้งใบ — ทีละขั้น หยุดทันทีที่ผ่าน:
  *   1. ย่อ before / after / metadata ตาม TRUNCATE_STEPS (ข้อความ 2 KB/256/32 ตัว, array และ object 500/100/20 ใบ)
- *   2. ยังเกิน: สามก้อนนั้นเหลือ `{truncated: true, keys}` (ชื่อ key ไม่เกิน 50 ตัว) และ `changedFields` ไม่เกิน 200 ชื่อ
- *   3. ยังเกิน: รายการค้นหาแต่ละรายการเหลือ SEARCH_LIST_MAX ใบแรกพร้อมธง `hashKeysTruncated` ฯลฯ — แถวที่ข้อความมีเลขบัตร
- *      สี่พันตัวได้ `cid#` สี่พันตัว (125 KB) ซึ่งขั้น 1–2 แตะไม่ได้ (ตรวจขั้น 6, 2026-09-30)
+ *   2. ยังเกิน และมีรายการที่ยาวผิดปกติ: รายการค้นหาแต่ละรายการเหลือ SEARCH_LIST_MAX ใบแรกพร้อมธง `hashKeysTruncated`
+ *      ฯลฯ และ `changedFields` เหลือ CHANGED_FIELDS_MAX ชื่อ ชื่อละไม่เกิน NAME_MAX ตัว — แล้ว**ย่อสามก้อนใหม่ตามขั้น 1
+ *      จากตัวตั้งต้น** แถวที่ข้อความมีเลขบัตรสี่พันตัวได้ `cid#` สี่พันตัว (125 KB) ซึ่งขั้น 1 แตะไม่ได้
+ *   3. ยังเกิน: สามก้อนนั้นเหลือ `{truncated: true, keys}` (ชื่อ key ของตัวตั้งต้นไม่เกิน 50 ตัว)
  *   4. ยังเกิน (ต้องมีข้อความยาวมากในฟิลด์ชั้นบน เช่น `actor.name` หรือ `reason`): โครงของเอกสาร (`skeletonOf`) — ทุกฟิลด์
  *      ของรูปใน docs/21 §3.2 ครบ ข้อความไม่เกิน NAME_MAX ตัว ทุกรายการไม่เกิน 20 ใบ ฟิลด์อื่นที่ผู้เรียกเติมเหลือแค่
  *      `fallback.errorEventId` กับ `projectionFailed` — ขนาดมีขอบบนตามโครงสร้าง (ราว 40 KB ถ้าทุกข้อความยาวเต็มและเป็นอักษร
  *      3 ไบต์ทั้งหมด) จึงไม่มีทางเกิน 64 KB ไม่ว่าแถวจะเป็นอย่างไร id ทุกตัว (uuid 36 ตัว) รอดทั้งตัว
+ *
+ * ตัดรายการก่อนสรุปก้อนข้อมูล เพราะเนื้อที่อ่านได้มีค่ากว่ารายการใบที่ 201 ขึ้นไป: เดิมสรุปก่อน แถวที่เกินเพราะ `cid#`
+ * อย่างเดียวจึงเหลือแค่ชื่อ key (`{truncated, keys: ["notes"]}` ที่ 7 KB) ทั้งที่ข้อความ 2 KB แรกยังใส่ได้สบาย — สำหรับ
+ * audit_fallback นั่นคือสำเนาเดียวของแถว (ตรวจขั้น 6, 2026-09-30) ขั้น 2 ข้ามไปเลยเมื่อไม่มีรายการไหนยาวเกิน เนื้อที่ย่อ
+ * ตามขั้น 1 ไม่พอเพราะก้อนข้อมูลเอง รายการที่สั้นอยู่แล้วไม่ต้องเสียอะไร
  *
  * เดิมวัดด้วยความยาวของ JSON และไม่แตะรายการค้นหา — เอกสารที่ "ตัดแล้ว" ยังเกินได้ (BSON 80 KB และ 124 KB) และทางของ
  * audit_fallback ทิ้งมันเป็น `too_large` ทั้งที่เป็นสำเนาเดียวของแถวที่ Postgres ไม่รับ
  *
  * ผลเหมือนเดิมทุกครั้งกับแถวเดิม (ขึ้นกับเนื้อหาอย่างเดียว): relay ที่ rebuild ได้เอกสารเดียวกัน `truncated: true` บอกว่า
  * เกิดขึ้น ตัวเต็มยังอยู่ใน Postgres (ยกเว้น audit_fallback ซึ่งไม่มีใน Postgres — ส่วนที่ถูกตัดหายไปจริง)
- * เรียกซ้ำกับเอกสารที่ผ่านแล้วได้ (audit-fallback เติมฟิลด์แล้วเรียกอีกรอบ) — ผ่านแล้วก็คืนทันที
+ * เรียกซ้ำกับเอกสารที่ผ่านแล้วได้ (audit-fallback เติมฟิลด์แล้วเรียกอีกรอบ) — ผ่านแล้วก็คืนทันที และก้อนที่ถูกสรุปไปแล้ว
+ * ไม่ถูกสรุปซ้ำ (ชื่อ key เดิมไม่กลายเป็น `["truncated", "keys"]`)
  */
 export function fitDocument(doc: ActivityDoc): void {
   const fits = () => bsonSize(doc) <= DOC_MAX_BYTES;
   if (fits()) return;
   doc.truncated = true;
 
-  for (const limits of TRUNCATE_STEPS) {
-    doc.before = truncateValues(doc.before, limits);
-    doc.after = truncateValues(doc.after, limits);
-    doc.metadata = truncateValues(doc.metadata, limits) as Record<string, unknown> | null;
-    if (fits()) return;
-  }
-
-  const summary = (value: unknown) =>
-    value === null || value === undefined
-      ? null
-      : {
-          truncated: true,
-          keys: isPlainObject(value) ? Object.keys(value).slice(0, 50).map((key) => clipText(key, NAME_MAX)) : [],
-        };
-  doc.before = summary(doc.before);
-  doc.after = summary(doc.after);
-  doc.metadata = summary(doc.metadata) as Record<string, unknown> | null;
-  doc.changedFields = doc.changedFields.slice(0, 200).map((name) => clipText(name, NAME_MAX));
-  if (fits()) return;
-
-  const capLists = (max: number) => {
+  // ตัวตั้งต้นของสามก้อน — ขั้น 1 ขั้น 2 และขั้น 3 ย่อจากตัวนี้ทุกครั้ง ไม่ย่อซ้ำจากผลของขั้นก่อน
+  const original = { before: doc.before, after: doc.after, metadata: doc.metadata };
+  const shrinkBlobs = (): boolean => {
+    for (const limits of TRUNCATE_STEPS) {
+      doc.before = truncateValues(original.before, limits);
+      doc.after = truncateValues(original.after, limits);
+      doc.metadata = truncateValues(original.metadata, limits) as Record<string, unknown> | null;
+      if (fits()) return true;
+    }
+    return false;
+  };
+  const capLists = (max: number): boolean => {
+    let cut = false;
     for (const [list, flag] of SEARCH_LISTS) {
       if (doc[list].length > max) {
         doc[list] = doc[list].slice(0, max);
         doc[flag] = true;
+        cut = true;
       }
     }
+    return cut;
   };
-  capLists(SEARCH_LIST_MAX);
+
+  if (shrinkBlobs()) return;
+
+  let listsCut = capLists(SEARCH_LIST_MAX);
+  if (doc.changedFields.length > CHANGED_FIELDS_MAX || doc.changedFields.some((name) => name.length > NAME_MAX)) {
+    doc.changedFields = doc.changedFields.slice(0, CHANGED_FIELDS_MAX).map((name) => clipText(name, NAME_MAX));
+    listsCut = true;
+  }
+  if (listsCut && shrinkBlobs()) return;
+
+  const summary = (value: unknown) => {
+    if (value === null || value === undefined) return null;
+    if (isPlainObject(value) && value.truncated === true && Array.isArray(value.keys)) return value;
+    return {
+      truncated: true,
+      keys: isPlainObject(value) ? Object.keys(value).slice(0, 50).map((key) => clipText(key, NAME_MAX)) : [],
+    };
+  };
+  doc.before = summary(original.before);
+  doc.after = summary(original.after);
+  doc.metadata = summary(original.metadata) as Record<string, unknown> | null;
   if (fits()) return;
 
   capLists(SKELETON_LIST_MAX);
