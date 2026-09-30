@@ -290,11 +290,16 @@ async function relayTick(): Promise<void> {
 /**
  * cursor ที่บันทึกไว้ — ไม่มี (volume ใหม่, หลัง rebuild) หรือรูปผิดเริ่มจากแถวแรก
  *
- * cursor ที่อยู่ในอนาคตถือว่าเสียด้วย: forward pass จะข้ามทุกแถวจนกว่านาฬิกาจะไปถึง `bdi_backend` มีสิทธิ์ insert ทุก
- * collection รวม relay_state (plan decision 8) backend ที่ถูกยึดจึงวาง cursor ปลอมได้ตอนที่เอกสารนี้ยังไม่มี (volume
- * ใหม่ หรือหลัง rebuild) แล้ว backfill ของแถวเก่าทั้งหมดจะไม่เกิด — แถวใหม่ยังรอดเพราะ tail pass กับ reconcile ไม่ใช้
- * cursor ตัวนี้ cursor แบบนั้นถูกทิ้งแล้วเริ่มจากแถวแรก (upsert ซ้ำได้ ราคาแค่การอ่านทั้งตาราง) และเก็บเป็น error ไว้ให้เห็น
- * ตรวจที่ `exact` เพราะเป็นตัวที่ใช้เทียบจริง ไม่ใช่ `at` ที่มีไว้ให้คนอ่าน
+ * cursor ที่อยู่ในอนาคตถือว่าเสียด้วย: forward pass จะข้ามทุกแถวจนกว่านาฬิกาจะไปถึง แล้ว backfill ของแถวเก่าทั้งหมด
+ * จะไม่เกิด — แถวใหม่ยังรอดเพราะ tail pass กับ reconcile ไม่ใช้ cursor ตัวนี้ cursor แบบนั้นถูกทิ้งแล้วเริ่มจากแถวแรก
+ * (upsert ซ้ำได้ ราคาแค่การอ่านทั้งตาราง) และเก็บเป็น error ไว้ให้เห็น ตรวจที่ `exact` เพราะเป็นตัวที่ใช้เทียบจริง ไม่ใช่
+ * `at` ที่มีไว้ให้คนอ่าน
+ *
+ * ตัวนี้เป็นชั้นที่สอง: เดิม `bdi_backend` insert ได้ทุก collection รวม relay_state (plan decision 8) backend ที่ถูกยึดจึง
+ * วางเอกสารนี้เองได้ตอนที่มันยังไม่มี (volume ใหม่ หรือมีคนลบทั้งใบ) และ cursor ที่เป็น**เวลาปัจจุบัน**ผ่านการตรวจนี้ได้
+ * — relay ข้าม backfill ทั้งหมดเงียบ ๆ ส่วน reconcile เติมแค่ 24 ชั่วโมงล่าสุด ตอนนี้ role ของ backend insert ได้แค่
+ * activity / error_events / error_issues / runtime_events (mongo/init/01-users.js) ช่องนั้นจึงปิดที่สิทธิ์ ที่เหลือคือ
+ * คนที่ถือสิทธิ์ของ worker หรือ root ซึ่งแก้อะไรใน Mongo ก็ได้อยู่แล้ว
  */
 function cursorFrom(state: RelayStateDoc | null): Cursor {
   const cursor = state?.cursor;
@@ -664,7 +669,7 @@ async function maintenanceTick(): Promise<void> {
 /**
  * เวลาที่อ่านจาก relay_state — ไม่ใช่ Date หรืออยู่ในอนาคตเกิน FUTURE_TOLERANCE_MS ถือว่าไม่มี (แล้วเก็บเป็น error ให้เห็น)
  *
- * เหตุผลเดียวกับ `cursorFrom`: `bdi_backend` insert relay_state ได้ตอนที่เอกสารยังไม่มี (volume ใหม่ หรือหลังมีคนลบทั้งใบ)
+ * เหตุผลเดียวกับ `cursorFrom` (ชั้นที่สองหลังสิทธิ์ของ role: เดิม `bdi_backend` insert relay_state ได้ตอนที่เอกสารยังไม่มี)
  * `lastPruneAt` ปลอมในอนาคตทำให้ `pruneDue()` ตอบ false ไปจนกว่านาฬิกาจะถึง — การลบตามอายุ (PDPA) หยุดเงียบ ๆ และ
  * `lastReconcileAt` ปลอมก็หยุด reconcile แบบเดียวกัน ค่าที่ไม่ใช่ Date เลย (ข้อความ ตัวเลข) เดิมทำให้ `getTime()` throw
  * ทุกนาที งานดูแลทั้งรอบจึงไม่เคยวิ่ง (ตรวจขั้น 6, 2026-09-30) ถือว่าไม่มีแล้ว prune วิ่งทันที (ลบซ้ำได้ไม่เสียหาย)

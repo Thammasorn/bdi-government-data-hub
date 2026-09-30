@@ -169,8 +169,9 @@ async function ensureIndexes(db: Db): Promise<void> {
  *   1. volume ของ mongo ถูกสร้างใหม่ขณะ worker ยังวิ่ง — ไม่มี index และไม่มีตัวเลขเพดาน
  *   2. มีคนลบเอกสาร relay_state ทั้งใบ (แทนการ `$unset` สามฟิลด์ของ rebuild — workers/log-relay.ts) — ธงเกินเพดานหายไป
  *      store ที่เกินเพดานจริงถูกนับว่าไม่เกินจนถึงรอบชั่วโมงหน้า (ตรวจขั้น 6, 2026-09-30: หายไปราว 55 นาที)
- *   3. คนอื่นเขียนแทน — `bdi_backend` insert relay_state ได้ตอนที่มันยังไม่มี (plan decision 8) และ `overQuota: true`
- *      ปลอมทำให้ error ทั้งระบบเหลือแค่ตัวนับ หรือ worker อีกตัวที่ซ้อนอยู่ระหว่าง deploy (ตรวจซ้ำนาทีละครั้งช่วงสั้น ๆ ไม่เสียหาย)
+ *   3. คนอื่นเขียนแทน — worker อีกตัวที่ซ้อนอยู่ระหว่าง deploy (ตรวจซ้ำนาทีละครั้งช่วงสั้น ๆ ไม่เสียหาย) หรือคนที่ถือสิทธิ์
+ *      ของ worker/root `overQuota: true` ปลอมทำให้ error ทั้งระบบเหลือแค่ตัวนับ (`bdi_backend` เคย insert relay_state ได้
+ *      ตอนที่มันยังไม่มี — ตอนนี้ role ของมัน insert ได้แค่สี่ collection ที่เขียนจริง mongo/init/01-users.js)
  * ยังไม่เคยเขียน (รอบแรกหลังบูต) ตอบ false — รอบนั้นตรวจทั้งสองอย่างอยู่แล้ว
  */
 async function storeWasReset(db: Db): Promise<boolean> {

@@ -10,8 +10,14 @@
 // (รหัสผ่านของ root เองเปลี่ยนด้วยไฟล์นี้ไม่ได้ ใช้ db.changeUserPassword)
 //
 // แบ่งสองคนเพราะ backend คือ process ที่รับคำขอจากอินเทอร์เน็ต: ถ้ามันถูกยึด ต้องลบหรือแก้ activity ย้อนหลังไม่ได้
-//   bdi_backend — find + insert ทุก collection ของฐานนี้ และ update เฉพาะ error_issues (ตัวนับของ issue
-//                 กับสถานะ open/resolved/ignored) ไม่มี remove ไม่มี drop ไม่มี createIndex
+//   bdi_backend — find ทุก collection ของฐานนี้ · insert เฉพาะสี่ collection ที่มันเขียนจริง (BACKEND_WRITES —
+//                 error_events, error_issues, runtime_events และ activity ของ audit_fallback) · update เฉพาะ
+//                 error_issues (ตัวนับของ issue กับสถานะ open/resolved/ignored) ไม่มี remove ไม่มี drop ไม่มี createIndex
+//                 ไม่มี insert บน relay_state: เอกสารนั้นถือ cursor ของ relay กับธงเกินเพดาน และตอนที่มันยังไม่มี
+//                 (volume ใหม่ หรือมีคนลบทั้งใบ) backend ที่ถูกยึดเคยวางใบปลอมได้ — cursor ที่เป็นเวลาปัจจุบันทำให้ relay
+//                 ข้าม backfill ทั้งหมดเงียบ ๆ และ `overQuota: true` ทำให้ error ทั้งระบบเหลือแค่ตัวนับ (ตรวจขั้น 6,
+//                 2026-09-30) collection ใหม่ที่ backend ต้องเขียน ต้องเพิ่มชื่อใน BACKEND_WRITES แล้วรันไฟล์นี้ซ้ำ
+//                 ไม่งั้นได้ "not authorized on bdi_logs to execute command { insert: … }"
 //   bdi_worker  — เพิ่ม update/remove (relay upsert, prune ตามอายุ) createIndex กับ listIndexes (ensureIndexes
 //                 ตอนบูต ดูว่ามีอะไรอยู่แล้วก่อนสร้าง) listCollections, collStats และ dbStats (ตรวจเพดานขนาด
 //                 รวมทั้งฐานและราย collection) ยังไม่มี drop ใด ๆ — รายการเต็มคือ ROLES.bdiLogWorker ข้างล่าง
@@ -53,11 +59,18 @@ checkPasswords();
 
 const logs = db.getSiblingDB(DB_NAME);
 const everything = { db: DB_NAME, collection: "" };
+const only = (collection) => ({ db: DB_NAME, collection });
+
+/** collection ที่ backend insert — lib/error-capture.ts (`insertAll` กับ upsert ของ issue) ที่เดียว */
+const BACKEND_WRITES = ["activity", "error_events", "error_issues", "runtime_events"];
 
 const ROLES = {
   bdiLogBackend: [
-    { resource: everything, actions: ["find", "insert"] },
-    { resource: { db: DB_NAME, collection: "error_issues" }, actions: ["update"] },
+    { resource: everything, actions: ["find"] },
+    ...BACKEND_WRITES.map((collection) => ({
+      resource: only(collection),
+      actions: collection === "error_issues" ? ["insert", "update"] : ["insert"],
+    })),
   ],
   bdiLogWorker: [
     {
