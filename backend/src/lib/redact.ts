@@ -544,6 +544,21 @@ export function allowedHeaders(headers: Record<string, unknown>): Record<string,
 const CID_KEY = /cid$|nationalid|^pid$|^thaid_subject$/i;
 
 /**
+ * เลข 13 หลักในข้อความ → `[cid]` โดยไม่แตะ UUID — กันไว้ก่อนแล้วใส่คืน แบบเดียวกับ `scrubText`
+ *
+ * UUID ที่ขึ้นต้นด้วยเลขล้วน 12 ตัว (`12345678-1234-4abc-…`: กลุ่มที่สามของ v4 ขึ้นต้นด้วยเลข 4 เสมอ) คือเลข 13 หลักที่
+ * คั่นด้วยขีด ตาม CID_RUN — เดิมกลายเป็น `[cid]abc-9def-…` ทั้ง id ใน metadata (`user_account_id`,
+ * `integration_operation_id`) และ id ในข้อความ ลองกับ UUID สุ่มสองแสนตัว (2026-09-30) โดนไป 1.2% — id ที่ใช้ตามรอยและ
+ * join กลับไป Postgres ทุกตัวที่ร้อยเสียไปหนึ่ง
+ */
+export function maskCidText(text: string): string {
+  if (UUID_EXACT.test(text)) return text;
+  const held: string[] = [];
+  const out = text.replace(UUID, (uuid) => `${HOLD_OPEN}${held.push(uuid) - 1}${HOLD_CLOSE}`).replace(CID_RUN, "[cid]");
+  return held.length > 0 ? out.replace(HELD, (_all, index: string) => held[Number(index)] ?? "") : out;
+}
+
+/**
  * เลข 13 หลักใน**ทุก**ค่าที่เป็นข้อความ ไม่ใช่แค่ `note` / `reason` อย่างที่ plan §7.6 เขียนไว้ — ช่องข้อความอิสระที่
  * audit บันทึกมีอีกมาก (`notes`, `objectiveOther`, `dataFields`, `title`, ความเห็น) ผู้ตรวจพิมพ์เลขบัตรลง `notes`
  * ของร่างคำขอแล้วเลขนั้นไปถึงทั้ง `activity` และ `error_events.extra.audit` ครบทั้ง 13 หลัก (2026-09-30)
@@ -551,7 +566,7 @@ const CID_KEY = /cid$|nationalid|^pid$|^thaid_subject$/i;
  * จึงไม่มีอะไรถูกปิดผิดตัวในวันนี้ และ key ของ object ก็ผ่านกฎเดียวกัน (object ที่ใช้เลขบัตรเป็น key)
  */
 function maskCidRuns(value: unknown): unknown {
-  if (typeof value === "string") return value.replace(CID_RUN, "[cid]");
+  if (typeof value === "string") return maskCidText(value);
   if (typeof value === "number" && Number.isInteger(value) && Math.abs(value) >= 1e12 && Math.abs(value) < 1e13) {
     return "[cid]";
   }
@@ -575,7 +590,7 @@ function maskedCid(value: unknown, depth: number): unknown {
     if (proto === Object.prototype || proto === null) {
       if ("masked" in value) return maskForLogStore(value, depth + 1);
       return Object.fromEntries(
-        Object.entries(value).map(([k, v]) => [k.replace(CID_RUN, "[cid]"), maskedCid(v, depth + 1)]),
+        Object.entries(value).map(([k, v]) => [maskCidText(k), maskedCid(v, depth + 1)]),
       );
     }
     // Date, Buffer, … — `plain()` ของ audit-fallback แปลงเป็นข้อความมาก่อนแล้ว ถึงตรงนี้ได้ก็ไม่รู้ว่าข้างในคืออะไร
@@ -609,7 +624,7 @@ export function maskForLogStore(value: unknown, depth = 0): unknown {
   if (proto === Object.prototype || proto === null) {
     return Object.fromEntries(
       Object.entries(value as object).map(([k, v]) => {
-        const key = k.replace(CID_RUN, "[cid]");
+        const key = maskCidText(k);
         if (CID_KEY.test(k)) return [key, maskedCid(v, depth + 1)];
         return [key, maskForLogStore(v, depth + 1)];
       }),
