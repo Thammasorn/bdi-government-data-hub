@@ -26,6 +26,7 @@ import {
   recordRuntimeEvent,
 } from "../lib/error-capture.js";
 import { closeLogStore, startLogStore } from "../lib/log-store.js";
+import { startLogRelay, stopLogRelay } from "./log-relay.js";
 import { startLogUpkeep, stopLogUpkeep } from "./log-upkeep.js";
 import { renderAndSend } from "./render.js";
 
@@ -190,11 +191,13 @@ async function main() {
 
   /**
    * log store (MongoDB) — ไม่ await โดยตั้งใจ: ลูปส่งอีเมลข้างล่างต้องเริ่มทันทีและต้องไม่ผูกกับ Mongo เลย
-   * startLogStore ไม่ reject และปิดอยู่ก็ไม่โหลด driver (ดู lib/log-store.ts) งานดูแล (index, เพดานขนาด) เป็นลูป
-   * ของตัวเองเช่นกัน
+   * startLogStore ไม่ reject และปิดอยู่ก็ไม่โหลด driver (ดู lib/log-store.ts) งานดูแล (index, เพดานขนาด) และ relay ที่
+   * คัดลอก audit_event ลง Mongo (workers/log-relay.ts) เป็นลูปของตัวเองทั้งคู่ — ใช้ PrismaClient ตัวเดียวกับลูปอีเมล
+   * แต่อ่านทีละคำสั่ง จึงถือ connection ของ pool ไม่เกินหนึ่งตัวต่อลูป
    */
   void startLogStore({ service: "delivery-worker", maxPoolSize: 3 });
   startLogUpkeep();
+  startLogRelay(prisma);
   recordRuntimeEvent("start", { node: process.version });
 
   let running = true;
@@ -202,8 +205,10 @@ async function main() {
     console.log(`[delivery] ${signal} received, shutting down`);
     running = false;
     stopLogUpkeep();
+    // รอบของ relay ที่กำลังเขียนไม่เกิน 1.5 วินาที — ที่ค้างอ่านซ้ำตอนเริ่มใหม่ได้
+    await stopLogRelay();
     recordRuntimeEvent("shutdown", { signal });
-    // ไม่เกิน 2 + 1.5 วินาที — อยู่ใน 10 วินาทีของ compose
+    // ไม่เกิน 1.5 + 2 + 1.5 วินาที — อยู่ใน 10 วินาทีของ compose
     await flushErrors(FLUSH_ON_EXIT_MS);
     await closeLogStore();
     await prisma.$disconnect();

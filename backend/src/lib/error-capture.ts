@@ -808,7 +808,7 @@ async function writeBatch(
  * DollarPrefixedFieldName, DocumentValidationFailure, BSONObjectTooLarge, KeyTooLong
  * รหัสอื่นทั้งหมด (ปิดเครื่อง 11600/91, สลับ primary, สิทธิ์ 13, throttle 16500 ของ Cosmos, …) คือทั้งก้อนต้องลองใหม่
  */
-const DOCUMENT_REJECTED = new Set([2, 9, 52, 121, 10334, 17280]);
+export const DOCUMENT_REJECTED = new Set([2, 9, 52, 121, 10334, 17280]);
 
 /**
  * insertMany ที่ทนการลองซ้ำ — `_id` ที่มีอยู่แล้ว (11000) คือเขียนไปแล้วรอบก่อน ถือว่าสำเร็จ ตัวที่ Mongo ปฏิเสธด้วย
@@ -833,7 +833,8 @@ async function insertAll(db: Db, collection: string, docs: Array<{ _id: string }
   }
 }
 
-function perDocumentErrors(err: unknown): Array<{ code?: unknown }> | null {
+/** error รายเอกสารของ `MongoBulkWriteError` — null ถ้าไม่ใช่ error ชนิดนั้น (ใช้ร่วมกับ relay ใน workers/log-relay.ts) */
+export function perDocumentErrors(err: unknown): Array<{ code?: unknown }> | null {
   if (!err || typeof err !== "object" || (err as { name?: unknown }).name !== "MongoBulkWriteError") return null;
   const writeErrors = (err as { writeErrors?: unknown }).writeErrors;
   if (Array.isArray(writeErrors)) return writeErrors as Array<{ code?: unknown }>;

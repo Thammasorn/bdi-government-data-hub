@@ -1,9 +1,9 @@
 /**
  * งานดูแล log store ที่ worker เป็นเจ้าของ (plan §3 "Who owns what") — backend ไม่สร้าง index และไม่ตั้งธงเพดาน
  *
- *   - `ensureIndexes()` ของ collection ที่เก็บ error: error_events, error_issues, runtime_events (index ของ `activity`
- *     มากับงานสำเนา audit ใน step 6) — ทำครั้งแรกที่ต่อ Mongo ได้ ทีละ index: ตัวไหนล้มเตือนหนึ่งบรรทัด เก็บเป็น
- *     warning แล้วไปตัวถัดไป option ที่บริการบน Azure ไม่รับจึงไม่มีทางหยุด worker (ทุกตัวเป็น index ธรรมดา)
+ *   - `ensureIndexes()` ของทุก collection: `activity` (สำเนา audit — workers/log-relay.ts), error_events, error_issues,
+ *     runtime_events — ทำครั้งแรกที่ต่อ Mongo ได้ ทีละ index: ตัวไหนล้มเตือนหนึ่งบรรทัด เก็บเป็น warning แล้วไปตัวถัดไป
+ *     option ที่บริการบน Azure ไม่รับจึงไม่มีทางหยุด worker (ทุกตัวเป็น index ธรรมดา)
  *   - ตรวจเพดานขนาดตอนบูตและทุกชั่วโมง: `dbStats` (ข้อมูลกับ index ที่ใช้อยู่จริง ไม่นับพื้นที่ว่างที่ WiredTiger
  *     จองไว้ใช้ซ้ำ — `checkQuota`) → `relay_state.storageMb` เกิน
  *     LOG_STORE_MAX_MB แล้วตั้ง `overQuota` ซึ่ง backend กับ worker อ่านเป็นสถานะ `over_quota` ภายใน 30 วินาที
@@ -19,8 +19,25 @@ import { env } from "../env.js";
 import { captureError } from "../lib/error-capture.js";
 import { logDb } from "../lib/log-store.js";
 
-/** index แบบธรรมดาทั้งหมด (ไม่มี partial / sparse / $text) — ชุดที่ plan §3 ระบุสำหรับ collection ของ error */
-const ERROR_INDEXES: Array<{ collection: string; keys: Record<string, 1 | -1> }> = [
+/**
+ * index แบบธรรมดาทั้งหมด (ไม่มี partial / sparse / $text) — ชุดที่ plan §3 ระบุ
+ *
+ * `activity`: หนึ่งตัวต่อตัวกรองของ API อ่าน log (step 7) ทุกตัวลงท้ายด้วย `occurredAt` เพราะผลเรียงตามเวลาเสมอ
+ * `tokenFps` เป็น array (multikey) — แถวสรุปของ token ที่ถูกปฏิเสธมีหลายตัว · รหัสอ้างอิง 8 ตัวค้นด้วย regex ยึดหัวบน
+ * `request.correlationId`
+ */
+const INDEXES: Array<{ collection: string; keys: Record<string, 1 | -1> }> = [
+  { collection: "activity", keys: { occurredAt: -1, _id: -1 } },
+  { collection: "activity", keys: { "subject.type": 1, "subject.id": 1, occurredAt: -1 } },
+  { collection: "activity", keys: { relatedUserIds: 1, occurredAt: -1 } },
+  { collection: "activity", keys: { "actor.id": 1, occurredAt: -1 } },
+  { collection: "activity", keys: { organizationId: 1, occurredAt: -1 } },
+  { collection: "activity", keys: { action: 1, occurredAt: -1 } },
+  { collection: "activity", keys: { category: 1, result: 1, occurredAt: -1 } },
+  { collection: "activity", keys: { requestNumber: 1, occurredAt: -1 } },
+  { collection: "activity", keys: { "request.correlationId": 1 } },
+  { collection: "activity", keys: { hashKeys: 1, occurredAt: -1 } },
+  { collection: "activity", keys: { tokenFps: 1, occurredAt: -1 } },
   { collection: "error_events", keys: { fingerprint: 1, occurredAt: -1 } },
   { collection: "error_events", keys: { occurredAt: -1 } },
   { collection: "error_events", keys: { "request.correlationId": 1 } },
@@ -85,7 +102,7 @@ async function tick(): Promise<void> {
     if (!db) return;
     await withTimeout(
       (async () => {
-        if (settledIndexes.size < ERROR_INDEXES.length) await ensureIndexes(db);
+        if (settledIndexes.size < INDEXES.length) await ensureIndexes(db);
         if (Date.now() - lastQuotaCheckAt >= QUOTA_EVERY_MS) {
           await checkQuota(db);
           lastQuotaCheckAt = Date.now();
@@ -102,7 +119,7 @@ async function tick(): Promise<void> {
 
 /** ทีละ index — ตัวที่ล้มเพราะต่อไม่ได้ลองใหม่รอบหน้า ตัวที่ Mongo ปฏิเสธเตือนครั้งเดียวแล้วเลิก */
 async function ensureIndexes(db: Db): Promise<void> {
-  for (const [index, spec] of ERROR_INDEXES.entries()) {
+  for (const [index, spec] of INDEXES.entries()) {
     if (settledIndexes.has(index)) continue;
     try {
       await db.collection(spec.collection).createIndex(spec.keys, { maxTimeMS: 30_000 });
