@@ -257,8 +257,12 @@ export function isUsable(attachment: { status: AttachmentStatus; scanStatus: Sca
  *
  * ค่าปกติเป็น inline เพราะหน้ารายละเอียดฝัง PDF ไว้ใน <iframe> ส่วนปุ่มดาวน์โหลด
  * ในรายการต้องการ attachment เพื่อให้เบราว์เซอร์บันทึกไฟล์แทนที่จะเปิดดู
+ *
+ * `req` ไปถึง error ที่เก็บเมื่อ storage ล้ม — ผู้ดาวน์โหลด (บทบาท หน่วยงาน session) กับ path ของคำขออยู่ที่นั่น
+ * ไม่ใช่ใน AsyncLocalStorage ซึ่งมีแค่ id ของผู้ใช้
  */
 export async function streamAttachment(
+  req: import("express").Request,
   res: import("express").Response,
   attachment: { storageBucket: string; storageKey: string; mimeType: string; originalFileName: string },
   disposition: "inline" | "attachment" = "inline",
@@ -269,7 +273,7 @@ export async function streamAttachment(
     "Content-Disposition",
     `${disposition}; filename*=UTF-8''${encodeURIComponent(attachment.originalFileName)}`,
   );
-  pipeToResponse(stream as Readable, res);
+  pipeToResponse(req, stream as Readable, res);
 }
 
 /**
@@ -281,7 +285,8 @@ export async function streamAttachment(
  * เพราะมันเกิดหลัง handler คืนค่าไปแล้ว จึงต้องจัดการตรงนี้:
  *   - ยังไม่ได้ส่งอะไรออกไป → ตอบ 503 `storage_unavailable` เป็น JSON ปกติ (ได้รหัสอ้างอิงจาก `referenceOnServerErrors`)
  *   - ส่งไปแล้วบางส่วน → ตอบใหม่ไม่ได้ ตัดการเชื่อมต่อทิ้ง ผู้ใช้ได้ไฟล์ขาด (curl ได้ exit 18) ไม่ใช่ไฟล์ที่ดูเหมือนครบ
- *   - เก็บ error ด้วย tag `storage.stream` ทั้งสองแบบ
+ *   - เก็บ error ด้วย tag `storage.stream` ทั้งสองแบบ พร้อม `req` — เดิมเก็บโดยไม่มี `req` เอกสารจึงมีแค่ id ของผู้ใช้
+ *     (จาก AsyncLocalStorage) ไม่มี path บทบาท หน่วยงาน หรือ session ของผู้ดาวน์โหลด
  * ผู้ใช้ปิดแท็บหรือยกเลิกกลางทางก็ปิดสตรีมของ storage ตามไป ไม่ปล่อย connection ค้างรอคนอ่าน และ error ที่ตามมาจาก
  * การปิดนั้นไม่ใช่ความล้มเหลวของ storage จึงไม่ถูกเก็บ
  *
@@ -289,7 +294,7 @@ export async function streamAttachment(
  * (กับดักเดียวกับ multer ใน CLAUDE.md) ไม่ผูกแล้ว error ที่เก็บได้จะไม่มี correlation id ไม่มี route และคำตอบ 503
  * จะถูกเก็บซ้ำเป็น issue ที่สอง
  */
-export function pipeToResponse(source: Readable, res: import("express").Response) {
+export function pipeToResponse(req: import("express").Request, source: Readable, res: import("express").Response) {
   let clientGone = false;
   let failed = false;
   res.on(
@@ -307,7 +312,12 @@ export function pipeToResponse(source: Readable, res: import("express").Response
       failed = true;
       source.unpipe(res);
       addBreadcrumb("storage", "สตรีมไฟล์ขาดกลางทาง", false);
-      captureError(err, { tag: "storage.stream", status: res.headersSent ? res.statusCode : 503 });
+      captureError(err, {
+        req,
+        mechanism: "captured",
+        tag: "storage.stream",
+        status: res.headersSent ? res.statusCode : 503,
+      });
       if (res.headersSent) {
         res.destroy();
         return;

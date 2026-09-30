@@ -1122,7 +1122,7 @@ datasetRequestRouter.get("/:id/attachments/:attachmentId", async (req, res) => {
 
   // ค่าปกติเป็น inline เพราะหน้ารายละเอียดฝัง PDF ไว้ใน <iframe>
   // ปุ่ม "ดาวน์โหลด" ในรายการส่ง ?download=1 มาเพื่อให้เบราว์เซอร์บันทึกไฟล์แทนที่จะเปิดดู
-  await streamAttachment(res, attachment, "download" in req.query ? "attachment" : "inline");
+  await streamAttachment(req, res, attachment, "download" in req.query ? "attachment" : "inline");
 });
 
 /**
@@ -1749,7 +1749,7 @@ datasetRequestRouter.get("/:id/legal-documents/:versionId/file", async (req, res
     after: { filename: file.originalFileName, legalDocumentVersionId: versionId },
   });
 
-  await streamAttachment(res, file);
+  await streamAttachment(req, res, file);
 });
 
 // ---------------------------------------------------------------- review

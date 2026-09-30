@@ -1684,7 +1684,7 @@ organizationRouter.get("/:id/attachments/:attachmentId", async (req, res) => {
     after: { filename: attachment.originalFileName },
   });
 
-  await streamAttachment(res, attachment);
+  await streamAttachment(req, res, attachment);
 });
 
 /**
@@ -2185,7 +2185,7 @@ organizationRouter.get("/:id/legal-documents/:versionId/file", async (req, res) 
     after: { filename: file.originalFileName, legalDocumentVersionId: versionId },
   });
 
-  await streamAttachment(res, file);
+  await streamAttachment(req, res, file);
 });
 
 // ---------------------------------------------------------------- submit
