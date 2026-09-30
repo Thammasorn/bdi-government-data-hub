@@ -11,13 +11,15 @@
  *   - **การปิดข้อมูล** — เลขบัตรทุกคีย์ที่ชื่อบอก (รวม `thaid_subject`) และเลข 13 หลักในข้อความทุกค่า
  *     (`maskForLogStore` ใน lib/redact.ts) อีเมลที่**พิมพ์มา**ตอนล็อกอินไม่ผ่าน · ค่าที่ Postgres ปิดมาแล้วผ่านไปตามเดิม
  *   - **hashKeys** — `cid#<hmac16>` ของทุกเลขบัตรที่สำเนาปิดเอง และ `email#<hmac16>` ของทุกอีเมลในแถว (`hashKeyOf`)
- *   - เอกสารไม่เกิน 64 KB — ตัดแบบกำหนดได้ (`fitDocument`) ไม่ทิ้งทั้งใบ
+ *   - เอกสารไม่เกิน 64 KB **เมื่อเป็น BSON** (ขนาดที่ Mongo เก็บ — lib/bson-size.ts) — ตัดแบบกำหนดได้ (`fitDocument`)
+ *     ไม่ทิ้งทั้งใบ ทุกเอกสารที่ออกจากไฟล์นี้ผ่านเพดานนี้แล้ว ทั้งของ relay และของ audit_fallback
  *
  * Postgres ไม่ถูกแตะ: ทุกอย่างที่นี่ทำกับสำเนา แถวใน audit_event ยังเก็บสิ่งที่มันเก็บ (plan Q4)
  */
 import { createHmac } from "node:crypto";
 
 import { AuditAction, storedUserAgent, type AuditActionCode } from "./audit.js";
+import { bsonSize } from "./bson-size.js";
 import { referenceOf } from "./context.js";
 import { asciiDigits, maskCidText, maskForLogStore, maskedTypedEmail, type MaskFindings } from "./redact.js";
 
@@ -273,8 +275,12 @@ export interface ActivityDoc {
   relatedUserIds: string[];
   hashKeys: string[];
   mirroredAt: Date;
-  /** มีเฉพาะเมื่อ before/after/metadata ถูกตัดให้เอกสารไม่เกิน 64 KB */
+  /** มีเฉพาะเมื่อเอกสารถูกตัดให้ไม่เกิน 64 KB (BSON) — `fitDocument` บอกว่าตัดอะไรไปบ้าง */
   truncated?: true;
+  /** มีเฉพาะเมื่อรายการค้นหาถูกตัดเหลือ SEARCH_LIST_MAX ใบแรก — ค่าที่ตกไปค้นด้วย `?cid=` `person=` `tokenFp=` ไม่เจอ */
+  hashKeysTruncated?: true;
+  relatedUserIdsTruncated?: true;
+  tokenFpsTruncated?: true;
   [extra: string]: unknown;
 }
 
@@ -292,6 +298,7 @@ const TOKEN_FP = /^[0-9a-f]{12}$/;
 const ACTOR_KEYS = ["actor_name", "actor_roles", "actor_organization_id"] as const;
 /** ข้อความของ admin ที่ยกขึ้นมาเป็น `reason` ยาวไม่เกินนี้ — ตัวเต็ม (ปิดเลขบัตรแล้ว) ยังอยู่ใน metadata */
 const REASON_MAX = 1_000;
+/** เพดานของเอกสารหนึ่งใบ วัดเป็น BSON (lib/bson-size.ts) — เท่ากับ DOC_MAX_BYTES ของ lib/error-capture.ts */
 export const DOC_MAX_BYTES = 64 * 1024;
 
 function stringOrNull(value: unknown): string | null {
@@ -458,47 +465,184 @@ export function projectAuditRow(row: AuditRowLike, options: ProjectOptions): Act
   return doc;
 }
 
-/** ความยาวของข้อความแต่ละค่าที่ลองตัดทีละขั้น — เอกสารที่เกิน 64 KB ส่วนใหญ่มาจากข้อความยาวตัวเดียว (บันทึก, ความเห็น) */
-const TRUNCATE_STEPS = [2_048, 256, 32];
+/**
+ * ขั้นของการย่อ before / after / metadata — ข้อความยาวไม่เกิน `text` ตัว, array และ object ไม่เกิน `items` ใบ
+ * เอกสารที่เกิน 64 KB ส่วนใหญ่มาจากข้อความยาวตัวเดียว (บันทึก, ความเห็น) แต่ array ของค่าสั้น ๆ เป็นพันใบก็เกินได้ทั้งที่
+ * ไม่มีข้อความยาวสักตัว (BSON เก็บชนิด ชื่อ key และความยาวของทุกใบ — lib/bson-size.ts) จึงตัดทั้งสองอย่าง
+ */
+const TRUNCATE_STEPS: Array<{ text: number; items: number }> = [
+  { text: 2_048, items: 500 },
+  { text: 256, items: 100 },
+  { text: 32, items: 20 },
+];
+/** รายการค้นหา (`hashKeys` `relatedUserIds` `tokenFps`) ที่เก็บได้เมื่อย่อก้อนข้อมูลแล้วยังเกิน — ใบแรก ๆ ตามลำดับที่พบ */
+const SEARCH_LIST_MAX = 200;
+/** ชื่อ key และชื่อช่องที่เหลือในสรุปของก้อนที่ย่อเต็มที่ (`{truncated, keys}`) และใน `changedFields` */
+const NAME_MAX = 64;
 
-function sizeOf(value: unknown): number {
-  return Buffer.byteLength(JSON.stringify(value));
+function clipText(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-function truncateStrings(value: unknown, max: number, depth = 0): unknown {
-  if (typeof value === "string") return value.length > max ? `${value.slice(0, max)}…` : value;
-  if (depth > 10) return value;
-  if (Array.isArray(value)) return value.map((v) => truncateStrings(v, max, depth + 1));
+/** ย่อค่าหนึ่งก้อนตาม `limits` — ส่วนที่ตัดทิ้งเหลือเครื่องหมาย (`…(+N)` ท้าย array, key `…` ของ object) ให้รู้ว่ามีอีก */
+function truncateValues(value: unknown, limits: { text: number; items: number }, depth = 0): unknown {
+  if (typeof value === "string") return clipText(value, limits.text);
+  if (depth > 10) return "[ลึกเกิน]";
+  if (Array.isArray(value)) {
+    const kept = value.slice(0, limits.items).map((v) => truncateValues(v, limits, depth + 1));
+    if (value.length > limits.items) kept.push(`…(+${value.length - limits.items})`);
+    return kept;
+  }
   if (isPlainObject(value)) {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, truncateStrings(v, max, depth + 1)]));
+    const entries = Object.entries(value);
+    const kept = entries
+      .slice(0, limits.items)
+      .map(([k, v]) => [clipText(k, NAME_MAX), truncateValues(v, limits, depth + 1)] as const);
+    const out: Record<string, unknown> = Object.fromEntries(kept);
+    if (entries.length > limits.items) out["…"] = `+${entries.length - limits.items} keys`;
+    return out;
   }
   return value;
 }
 
+const SEARCH_LISTS = [
+  ["hashKeys", "hashKeysTruncated"],
+  ["relatedUserIds", "relatedUserIdsTruncated"],
+  ["tokenFps", "tokenFpsTruncated"],
+] as const;
+
 /**
- * ให้เอกสารไม่เกิน 64 KB โดยไม่ทิ้งทั้งใบ — ตัดข้อความยาวใน before / after / metadata ทีละขั้น (2 KB, 256, 32 ตัว)
- * ยังเกินอีกก็เหลือ `{truncated: true, keys}` ของสามก้อนนั้น ส่วนอื่นของเอกสาร (ใคร อะไร เมื่อไร) อยู่ครบเสมอ
+ * ให้เอกสารไม่เกิน 64 KB **เมื่อเป็น BSON** โดยไม่ทิ้งทั้งใบ — ทีละขั้น หยุดทันทีที่ผ่าน:
+ *   1. ย่อ before / after / metadata ตาม TRUNCATE_STEPS (ข้อความ 2 KB/256/32 ตัว, array และ object 500/100/20 ใบ)
+ *   2. ยังเกิน: สามก้อนนั้นเหลือ `{truncated: true, keys}` (ชื่อ key ไม่เกิน 50 ตัว) และ `changedFields` ไม่เกิน 200 ชื่อ
+ *   3. ยังเกิน: รายการค้นหาแต่ละรายการเหลือ SEARCH_LIST_MAX ใบแรกพร้อมธง `hashKeysTruncated` ฯลฯ — แถวที่ข้อความมีเลขบัตร
+ *      สี่พันตัวได้ `cid#` สี่พันตัว (125 KB) ซึ่งขั้น 1–2 แตะไม่ได้ (ตรวจขั้น 6, 2026-09-30)
+ *   4. ยังเกิน (ต้องมีข้อความยาวมากในฟิลด์ชั้นบน เช่น `actor.name` หรือ `reason`): โครงของเอกสาร (`skeletonOf`) — ทุกฟิลด์
+ *      ของรูปใน docs/21 §3.2 ครบ ข้อความไม่เกิน NAME_MAX ตัว ทุกรายการไม่เกิน 20 ใบ ฟิลด์อื่นที่ผู้เรียกเติมเหลือแค่
+ *      `fallback.errorEventId` กับ `projectionFailed` — ขนาดมีขอบบนตามโครงสร้าง (ราว 40 KB ถ้าทุกข้อความยาวเต็มและเป็นอักษร
+ *      3 ไบต์ทั้งหมด) จึงไม่มีทางเกิน 64 KB ไม่ว่าแถวจะเป็นอย่างไร id ทุกตัว (uuid 36 ตัว) รอดทั้งตัว
  *
- * ผลเหมือนเดิมทุกครั้งกับแถวเดิม: relay ที่ rebuild ได้เอกสารเดียวกัน `truncated: true` บอกว่าเกิดขึ้น
- * ตัวเต็มยังอยู่ใน Postgres
+ * เดิมวัดด้วยความยาวของ JSON และไม่แตะรายการค้นหา — เอกสารที่ "ตัดแล้ว" ยังเกินได้ (BSON 80 KB และ 124 KB) และทางของ
+ * audit_fallback ทิ้งมันเป็น `too_large` ทั้งที่เป็นสำเนาเดียวของแถวที่ Postgres ไม่รับ
+ *
+ * ผลเหมือนเดิมทุกครั้งกับแถวเดิม (ขึ้นกับเนื้อหาอย่างเดียว): relay ที่ rebuild ได้เอกสารเดียวกัน `truncated: true` บอกว่า
+ * เกิดขึ้น ตัวเต็มยังอยู่ใน Postgres (ยกเว้น audit_fallback ซึ่งไม่มีใน Postgres — ส่วนที่ถูกตัดหายไปจริง)
+ * เรียกซ้ำกับเอกสารที่ผ่านแล้วได้ (audit-fallback เติมฟิลด์แล้วเรียกอีกรอบ) — ผ่านแล้วก็คืนทันที
  */
 export function fitDocument(doc: ActivityDoc): void {
-  if (sizeOf(doc) <= DOC_MAX_BYTES) return;
+  const fits = () => bsonSize(doc) <= DOC_MAX_BYTES;
+  if (fits()) return;
   doc.truncated = true;
-  for (const max of TRUNCATE_STEPS) {
-    doc.before = truncateStrings(doc.before, max);
-    doc.after = truncateStrings(doc.after, max);
-    doc.metadata = truncateStrings(doc.metadata, max) as Record<string, unknown> | null;
-    if (sizeOf(doc) <= DOC_MAX_BYTES) return;
+
+  for (const limits of TRUNCATE_STEPS) {
+    doc.before = truncateValues(doc.before, limits);
+    doc.after = truncateValues(doc.after, limits);
+    doc.metadata = truncateValues(doc.metadata, limits) as Record<string, unknown> | null;
+    if (fits()) return;
   }
+
   const summary = (value: unknown) =>
     value === null || value === undefined
       ? null
-      : { truncated: true, keys: isPlainObject(value) ? Object.keys(value).slice(0, 50) : [] };
+      : {
+          truncated: true,
+          keys: isPlainObject(value) ? Object.keys(value).slice(0, 50).map((key) => clipText(key, NAME_MAX)) : [],
+        };
   doc.before = summary(doc.before);
   doc.after = summary(doc.after);
   doc.metadata = summary(doc.metadata) as Record<string, unknown> | null;
-  doc.changedFields = doc.changedFields.slice(0, 200);
+  doc.changedFields = doc.changedFields.slice(0, 200).map((name) => clipText(name, NAME_MAX));
+  if (fits()) return;
+
+  const capLists = (max: number) => {
+    for (const [list, flag] of SEARCH_LISTS) {
+      if (doc[list].length > max) {
+        doc[list] = doc[list].slice(0, max);
+        doc[flag] = true;
+      }
+    }
+  };
+  capLists(SEARCH_LIST_MAX);
+  if (fits()) return;
+
+  capLists(SKELETON_LIST_MAX);
+  skeletonOf(doc);
+}
+
+/** จำนวนใบของทุกรายการในโครงของเอกสาร (ขั้น 4 ของ `fitDocument`) */
+const SKELETON_LIST_MAX = 20;
+
+/**
+ * แทนเนื้อของเอกสารด้วยโครงที่มีขอบบนของขนาด — ขั้นสุดท้ายของ `fitDocument` ทุกฟิลด์ของรูปเอกสารยังอยู่ (API อ่าน log
+ * ไม่ต้องรู้จักรูปพิเศษ) แต่ข้อความถูกตัดที่ NAME_MAX ตัว รายการไม่เกิน SKELETON_LIST_MAX ใบ ก้อนข้อมูลเหลือแค่ชื่อ key
+ * ฟิลด์อื่นที่ผู้เรียกเติมไว้ (`[extra]`) หายไป ยกเว้นสองตัวที่ API ใช้: `fallback.errorEventId` และ `projectionFailed`
+ */
+function skeletonOf(doc: ActivityDoc): void {
+  const text = (value: unknown): string | null => (typeof value === "string" ? clipText(value, NAME_MAX) : null);
+  const names = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value
+          .filter((item): item is string => typeof item === "string")
+          .slice(0, SKELETON_LIST_MAX)
+          .map((item) => clipText(item, NAME_MAX))
+      : [];
+  const blob = (value: unknown) =>
+    value === null || value === undefined
+      ? null
+      : { truncated: true, keys: names(isPlainObject(value) && Array.isArray(value.keys) ? value.keys : []) };
+  const count = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
+
+  const fallback = isPlainObject(doc.fallback) ? { errorEventId: text(doc.fallback.errorEventId) } : undefined;
+  const projectionFailed = doc.projectionFailed === true ? true : undefined;
+  const skeleton: ActivityDoc = {
+    _id: doc._id,
+    source: doc.source,
+    schemaVersion: doc.schemaVersion,
+    occurredAt: doc.occurredAt,
+    action: text(doc.action) ?? "",
+    category: doc.category,
+    result: text(doc.result) ?? "",
+    actor: {
+      type: text(doc.actor.type) ?? "",
+      id: text(doc.actor.id),
+      name: text(doc.actor.name),
+      roles: names(doc.actor.roles),
+      organizationId: text(doc.actor.organizationId),
+    },
+    via: doc.via,
+    tokenFps: names(doc.tokenFps),
+    subject: { type: text(doc.subject.type) ?? "", id: text(doc.subject.id) },
+    organizationId: text(doc.organizationId),
+    requestNumber: text(doc.requestNumber),
+    gate: text(doc.gate),
+    before: blob(doc.before),
+    after: blob(doc.after),
+    changedFields: names(doc.changedFields),
+    reason: text(doc.reason),
+    metadata: blob(doc.metadata),
+    request: {
+      correlationId: text(doc.request.correlationId) ?? "",
+      reference: text(doc.request.reference) ?? "",
+      ip: text(doc.request.ip),
+      userAgent: text(doc.request.userAgent),
+      method: text(doc.request.method),
+      route: text(doc.request.route),
+      status: count(doc.request.status),
+      durationMs: count(doc.request.durationMs),
+    },
+    sourceComponent: text(doc.sourceComponent) ?? "",
+    relatedUserIds: names(doc.relatedUserIds),
+    hashKeys: names(doc.hashKeys),
+    mirroredAt: doc.mirroredAt,
+    truncated: true,
+    ...(doc.hashKeysTruncated ? { hashKeysTruncated: true as const } : {}),
+    ...(doc.relatedUserIdsTruncated ? { relatedUserIdsTruncated: true as const } : {}),
+    ...(doc.tokenFpsTruncated ? { tokenFpsTruncated: true as const } : {}),
+    ...(fallback ? { fallback } : {}),
+    ...(projectionFailed ? { projectionFailed } : {}),
+  };
+  for (const key of Object.keys(doc)) delete doc[key];
+  Object.assign(doc, skeleton);
 }
 
 /**

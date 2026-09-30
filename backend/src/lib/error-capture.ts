@@ -31,6 +31,7 @@ import type { Request } from "express";
 import type { AnyBulkWriteOperation, Db } from "mongodb";
 
 import { env } from "../env.js";
+import { bsonSize } from "./bson-size.js";
 import { currentContext, referenceOf, type Breadcrumb, type RequestContext } from "./context.js";
 import { logDb, logStoreStatus } from "./log-store.js";
 import { bodyShape, headlineOf, requestTarget, scrubClipped, scrubError, type ScrubbedError } from "./redact.js";
@@ -294,6 +295,9 @@ export function recordRuntimeEvent(kind: RuntimeKind, detail: Record<string, unk
 /**
  * สำเนาของแถว audit ที่ Postgres ไม่รับ (lib/audit-fallback.ts) — เก็บแม้เกินเพดานขนาด เพราะเป็นบันทึกของสิ่งที่
  * เกิดขึ้นจริง ไม่ใช่ error (plan §3: activity เดินต่อตอนเกินเพดาน) คืน false ถ้าเข้าคิวไม่ได้ ไม่ throw
+ *
+ * เอกสารที่ส่งมาผ่าน `fitDocument()` ของ lib/activity-shape.ts แล้ว ซึ่งรับประกันว่าไม่เกิน 64 KB ด้วยตัววัดเดียวกับ
+ * `sizeOf` ข้างล่าง (BSON) — การทิ้งแบบ `too_large` ใน `enqueue` จึงไม่เกิดกับสำเนาพวกนี้ ทางที่ทิ้งได้เหลือแค่คิวเต็ม
  */
 export function enqueueActivity(doc: ActivityDoc): boolean {
   try {
@@ -581,15 +585,21 @@ function normalizeMessage(message: string): string {
 function boundedExtra(extra: Record<string, unknown> | undefined): Record<string, unknown> | null {
   if (!extra) return null;
   try {
-    const bytes = Buffer.byteLength(JSON.stringify(extra));
+    const bytes = bsonSize(extra);
     return bytes <= EXTRA_MAX_BYTES ? extra : { truncated: true, bytes, keys: Object.keys(extra).slice(0, 20) };
   } catch {
     return { unserialisable: true };
   }
 }
 
+/**
+ * ขนาดของเอกสารเมื่อเป็น BSON — ตัวที่ Mongo เก็บจริง และตัวเดียวกับที่ `fitDocument()` ของ lib/activity-shape.ts ใช้
+ * เดิมเป็นความยาวของ JSON: array ของค่าสั้น ๆ ใน BSON แพงกว่ามาก (สำเนา audit ที่ "พอดี 64 KB" ด้วย JSON เป็น 80 KB) และ
+ * ข้อความที่มีเครื่องหมายคำพูดกลับถูกนับเกิน — สองตัววัดต้องตรงกัน ไม่งั้นสำเนาที่ activity-shape ตัดจนผ่านแล้วถูกทิ้งที่นี่
+ * เป็น `too_large` ได้ (ใช้เป็นตัวนับหน่วยความจำของคิวด้วย ซึ่งตัววัดไหนก็ใช้ได้)
+ */
 function sizeOf(doc: unknown): number {
-  return Buffer.byteLength(JSON.stringify(doc));
+  return bsonSize(doc);
 }
 
 /** ให้เอกสารไม่เกิน 64 KB — ตัดของที่ช่วยน้อยที่สุดก่อน คืนขนาดสุดท้าย */
