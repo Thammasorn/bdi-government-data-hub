@@ -15,8 +15,9 @@
  * เก็บอะไร (plan §7 — ผ่าน lib/redact.ts ทั้งหมด):
  *   - route แบบแม่แบบ (`/api/admin/users/:id`) ถ้าถึง route · path แบบรูปแบบ (`pathPattern()` — อีเมล → `:email` UUID → `:id`
  *     เลขยาว → `:n`) เสมอ คำขอที่ token ไม่ผ่าน (401 ที่ guard) ไม่ถึง route จึงมีแค่ path
- *   - **ชื่อ**ของ query ทุกตัว ค่าเฉพาะที่ไม่ใช่ข้อมูลบุคคล (`QUERY_VALUES_KEPT`) — `cid` ได้แค่ key `cid#` และ `email` / `q`
- *     ที่เป็นอีเมลเต็มได้ key `email#` (`q` ที่เป็นเลขบัตร 13 หลักได้ `cid#`) ค่าจริงไม่ถูกเก็บ ค้นบางส่วนไม่ได้ key
+ *   - **ชื่อ**ของ query ทุกตัว (ผ่าน `requestTarget()` — ชื่อที่เป็นอีเมลในรูปใดก็ตามเหลือ `[email]`) ค่าเก็บเฉพาะห้าชื่อที่ไม่ใช่
+ *     ข้อมูลบุคคล และเฉพาะเมื่อค่าเป็นค่าที่ API รับจริง (`QUERY_VALUE_SHAPES` — นอกนั้น `[other]`) — `cid` ได้แค่ key `cid#`
+ *     และ `email` / `q` ที่เป็นอีเมลเต็มได้ key `email#` (`q` ที่เป็นเลขบัตร 13 หลักได้ `cid#`) ค่าจริงไม่ถูกเก็บ ค้นบางส่วนไม่ได้ key
  *   - subject จากแม่แบบของ route (`SUBJECT_BY_ROUTE`) — `/users/:id` เข้า `relatedUserIds` ให้ `x-log-person` หาเจอว่าใครเปิดดู
  *   - status, เวลาที่ใช้, IP และ user agent (กฎเดียวกับ `audit_event`), fingerprint ของ token ทั้งที่ผ่านและไม่ผ่าน
  *   - ไม่มี body ไม่มี header อื่น — การเปลี่ยนแปลงที่ body สั่งอยู่ใน `audit_event` แล้วพร้อม diff
@@ -32,6 +33,7 @@
  */
 import { randomUUID } from "node:crypto";
 
+import { ActivationKeyStatus, OrganizationStatus, UserAccountStatus } from "@prisma/client";
 import type { NextFunction, Request, Response } from "express";
 
 import { env } from "../env.js";
@@ -40,7 +42,8 @@ import { storedUserAgent } from "./audit.js";
 import { tokenFingerprint } from "./auth.js";
 import { currentContext, referenceOf, type RequestContext } from "./context.js";
 import { enqueueAccessRecord } from "./error-capture.js";
-import { maskCidText, requestTarget, scrubClipped } from "./redact.js";
+import { maskCidText, requestTarget } from "./redact.js";
+import { ROLE_CODES } from "./system.js";
 import { pathPattern } from "./token-rejection.js";
 
 /** รหัสของบันทึก — ไม่อยู่ใน `AuditAction` เพราะไม่เคยลง `audit_event` (category อยู่ใน lib/activity-shape.ts) */
@@ -64,8 +67,29 @@ const SUBJECT_BY_ROUTE: Array<[RegExp, string]> = [
   [/^\/api\/admin\/dataset-choices(?:\/|$)/, "DATASET_CHOICE"],
 ];
 
-/** query ที่เก็บค่าได้ — ไม่ใช่ข้อมูลบุคคล (สถานะ role หน่วยงาน การแบ่งหน้า) ตัวอื่นเก็บแค่ชื่อ */
-const QUERY_VALUES_KEPT = new Set(["status", "role", "organizationId", "page", "pageSize"]);
+/**
+ * query ที่เก็บค่าได้ **เฉพาะเมื่อค่าอยู่ในรูปที่ admin API รับจริง** — สถานะ role หน่วยงาน การแบ่งหน้า ตัวอื่นเก็บแค่ชื่อ
+ * ค่านอกรูปเก็บเป็น `QUERY_VALUE_OTHER` (มีค่าส่งมา แต่ไม่ใช่ค่าที่ API รู้จัก — API ตอบ 400 ไปแล้ว)
+ *
+ * เดิมเก็บทุกค่าของห้าชื่อนี้หลังกวาดอย่างเดียว ค่าคือข้อความที่ผู้เรียกพิมพ์เอง อีเมลที่เขียนด้วย `＠` หรือ `%2540` รอดกฎอีเมล:
+ * `?status=v8.status%EF%BC%A0example.go.th` เก็บ `status: "v8.status＠example.go.th"` 400 วัน (ตรวจขั้น 8 แบบค้านรอบสอง,
+ * 2026-10-01) ชุดค่าจึงมาจาก enum ตัวเดียวกับที่ route ตรวจ ไม่ใช่รูปแบบคร่าว ๆ: ข้อความตัวใหญ่ล้วนยังเป็นชื่อคนได้
+ */
+const QUERY_VALUE_SHAPES = new Map<string, (value: string) => boolean>([
+  // `/users?status=` (UserAccountStatus) · `/invitations?status=` (ActivationKeyStatus) · `/organizations?status=`
+  ["status", (value) => STATUS_VALUES.has(value)],
+  ["role", (value) => ROLE_VALUES.has(value)],
+  ["organizationId", (value) => UUID.test(value)],
+  ["page", (value) => /^\d{1,6}$/.test(value)],
+  ["pageSize", (value) => /^\d{1,6}$/.test(value)],
+]);
+const STATUS_VALUES = new Set<string>([
+  ...Object.values(UserAccountStatus),
+  ...Object.values(ActivationKeyStatus),
+  ...Object.values(OrganizationStatus),
+]);
+const ROLE_VALUES = new Set<string>(Object.values(ROLE_CODES));
+const QUERY_VALUE_OTHER = "[other]";
 
 const PER_MINUTE_ACCEPTED = 600;
 const PER_MINUTE_REJECTED = 60;
@@ -139,8 +163,10 @@ function write(req: Request, res: Response, ctx: RequestContext, provided: strin
   for (const [name, raw] of Object.entries(req.query)) {
     const value = typeof raw === "string" ? raw.trim() : null;
     if (value === null) continue;
-    if (QUERY_VALUES_KEPT.has(name)) {
-      query[name] = scrubClipped(value, 64);
+    // Map ไม่ใช่ object: ชื่อ query อย่าง `constructor` ต้องไม่ได้ฟังก์ชันของ Object.prototype มาเป็นตัวตรวจ
+    const shape = QUERY_VALUE_SHAPES.get(name);
+    if (shape) {
+      query[name] = shape(value) ? value : QUERY_VALUE_OTHER;
       continue;
     }
     // ค่าที่ชี้ตัวคนได้ — เก็บเป็น key ค้นหาเท่านั้น ค่าที่ไม่ครบ (ค้นบางส่วน) ไม่ได้ key และไม่ถูกเก็บ

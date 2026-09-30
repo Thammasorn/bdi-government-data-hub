@@ -191,6 +191,87 @@ export function replaceEmails(text: string, replacement: string): string {
   return text.replace(EMAIL_RUN, replacement);
 }
 
+/** ถอด `%xx` ซ้ำได้ไม่เกินเท่านี้รอบ — ของจริงถูก encode ชั้นเดียว ที่ซ้อนเกินนี้คือคนตั้งใจหลบ (`ENCODED_AT` รับช่วงต่อ) */
+const DECODE_PASSES_MAX = 4;
+/** `%xx` ที่ติดกัน — ถอดทีละช่วง ช่วงที่เสียช่วงเดียวจะได้ไม่ทำให้ทั้งข้อความไม่ถูกถอด */
+const PERCENT_RUN = /(?:%[0-9A-Fa-f]{2})+/g;
+/** `@` ที่ยังเป็น `%40` หลังถอดครบทุกรอบ ซ้อนกี่ชั้นก็ตาม (`%2540` `%252540` …) */
+const ENCODED_AT = /%(?:25)*40/gi;
+/** อักษร tag (U+E0020–E007E) — สำเนาที่มองไม่เห็นของ ASCII (`U+E0040` คือ `@`) แปลงกลับเป็นตัวที่มันแทน */
+const TAG_CHAR = /[\u{E0020}-\u{E007E}]/gu;
+/** อักษรจัดรูปแบบที่มองไม่เห็น (`\p{Cf}`: zero-width space U+200B, soft hyphen U+00AD, BOM, เครื่องหมายทิศทาง …) */
+const FORMAT_CHAR = /\p{Cf}/gu;
+/**
+ * ช่องว่างทุกชนิด (`\s` ของ JavaScript รวม NBSP U+00A0 และ `\p{Zs}` ทั้งหมด) ที่ติด `@` — ขึ้นต้นด้วย lookbehind ให้แต่ละช่วง
+ * ของช่องว่างถูกลองครั้งเดียว (เส้นตรง ดูหมายเหตุเหนือ BEFORE_UUID_RULES)
+ */
+const SPACE_AROUND_AT = /(?<!\s)\s+(?=@)|(?<=@)\s+/g;
+
+function foldOnce(text: string): string {
+  return text
+    .normalize("NFKC")
+    .replace(TAG_CHAR, (tag) => String.fromCharCode(tag.codePointAt(0)! - 0xe0000))
+    .replace(FORMAT_CHAR, "");
+}
+
+function decodeRun(run: string): string {
+  try {
+    return decodeURIComponent(run);
+  } catch {
+    // ไบต์ที่ไม่ใช่ UTF-8 ในช่วง — ถอดเฉพาะไบต์ ASCII ไบต์อื่นเป็น `_` เดิมทิ้งทั้งช่วงเป็น `_` ตัวเดียว ซึ่งทิ้ง `%40`
+    // ที่อยู่ในช่วงเดียวกันไปด้วย (`some.one%C0%40example.go.th` เหลือ `some.one_example.go.th` — อีเมลที่ไม่มี `@` ให้กฎเห็น)
+    return run.replace(/%([0-9A-Fa-f]{2})/g, (_, hex: string) => {
+      const byte = parseInt(hex, 16);
+      return byte < 0x80 ? String.fromCharCode(byte) : "_";
+    });
+  }
+}
+
+/**
+ * ข้อความจาก URL (path, ชื่อของ query) ในรูปที่กฎอีเมลและกฎตัวเลขเห็นได้ — **เรียกก่อนกวาดทุกครั้ง** (`requestTarget`,
+ * `pathPattern()` ของ lib/token-rejection.ts) ไม่ใช่ตัวกวาดเอง ผลยังต้องผ่าน `scrubClipped` หรือ `replaceEmails`
+ *
+ *   1. ถอด `%xx` **ซ้ำจนไม่เปลี่ยน** (ไม่เกิน DECODE_PASSES_MAX รอบ) — ไม่งั้น `1%2D1017…` เหลือ `1_2D1017…` ซึ่งตัว `D` ตัดกลุ่ม
+ *      เลขขาด และอีเมลที่ encode สองชั้นรอดกฎอีเมล: เดิมถอดรอบเดียว `some.one%2540example.go.th` เหลือ `some.one%40…` ซึ่งไม่มี
+ *      `@` ให้กฎอีเมลเห็น (ตรวจแบบค้าน 2026-10-01) ที่ยังเหลือหลังรอบสุดท้าย `%…40` ทุกชั้นนับเป็น `@`
+ *   2. ทุกรอบจบด้วย `normalize("NFKC")`: ตัวที่หน้าตาเหมือน `@` แต่เป็นอักษรอื่น — `＠` (U+FF20) กับ `﹫` (U+FE6B) — กลายเป็น
+ *      `@` ตัวจริง และเลขเต็มความกว้าง (`１２３`) เป็นเลขธรรมดา ทำในรอบเดียวกับการถอด เพราะ `％` (U+FF05) ที่ NFKC แปลงเป็น `%`
+ *      เปิด `%xx` ช่วงใหม่ให้รอบถัดไปถอด
+ *   3. ...แล้วลบอักษรจัดรูปแบบที่มองไม่เห็น (`\p{Cf}`) และแปลงอักษร tag กลับเป็น ASCII ที่มันแทน
+ *   4. สุดท้ายลบช่องว่างทุกชนิดที่ติด `@`
+ *
+ * ข้อ 3 กับ 4 มาจากตรวจขั้น 8 แบบค้านรอบสอง (2026-10-01): อีเมลที่คัดลอกจากข้อความแบบ rich text มักพา zero-width space หรือ
+ * NBSP มาติด `@` (`some.one%E2%80%8B%40example.go.th`) หลังถอดแล้วกฎอีเมลไม่ตรง และกฎอักษรนอกชุดของ `pathPattern()` เปลี่ยน
+ * มันเป็น `_` — `ADMIN_API_REQUEST.metadata.path` (400 วัน) กับ `ADMIN_TOKEN_REJECTED.metadata.path` ใน Postgres (ไม่มี
+ * retention) เก็บ `some.one__example.go.th` ส่วนชื่อของ query ไม่ได้ผ่านขั้นไหนเลย (`requestTarget` กวาดชื่อที่
+ * `URLSearchParams` ถอดชั้นเดียว) `?v8.key%EF%BC%A0example.go.th=1` จึงเก็บ `v8.key＠example.go.th` ตรง ๆ
+ *
+ * ที่ยังรอดได้: อีเมลที่สะกดด้วยตัวอักษรอื่นที่ NFKC ไม่แปลงเป็น `@` — ผู้เรียกจึงปิดทั้งท่อนที่ยังมี `@` ซ้ำอีกชั้น
+ * (`maskAtSegments`) ส่วนคนที่ตั้งใจเขียนอีเมลโดยไม่มี `@` เลย (`some.one at example`) ไม่มีกฎไหนเห็น
+ */
+export function foldForMasking(text: string): string {
+  let current = foldOnce(text);
+  for (let pass = 0; pass < DECODE_PASSES_MAX; pass++) {
+    const next = foldOnce(current.replace(PERCENT_RUN, decodeRun));
+    if (next === current) break;
+    current = next;
+  }
+  return current.replace(ENCODED_AT, "@").replace(SPACE_AROUND_AT, "");
+}
+
+/**
+ * ท่อน (คั่นด้วย `/`) ที่ยังมี `@` หลังกฎอีเมลผ่านไปแล้ว → `replacement` ทั้งท่อน — ชั้นสำรองของ `foldForMasking` สำหรับอีเมล
+ * ที่กฎอีเมลไม่ตรง (พิมพ์ไม่ครบ `some.one@example`, `@` ที่มีเครื่องหมายกำกับติดมา) path ของระบบนี้ไม่มีท่อนไหนที่มี `@` จริง
+ */
+export function maskAtSegments(path: string, replacement: string): string {
+  return path.includes("@")
+    ? path
+        .split("/")
+        .map((segment) => (segment.includes("@") ? replacement : segment))
+        .join("/")
+    : path;
+}
+
 /**
  * ความลับยาว ๆ (ฐานสิบหกหรือ base64url ตั้งแต่ 32 ตัว) — ต้องมีตัวเลขอย่างน้อยหนึ่งตัว ไม่งั้นชื่อฟังก์ชันหรือชื่อคลาส
  * ยาว ๆ ใน stack (`PrismaClientInitializationError`) โดนไปด้วย token สุ่มยาว 32 ตัวที่ไม่มีเลขเลยแทบไม่มีทางเกิด
@@ -637,9 +718,17 @@ export function bodyShape(body: unknown): Record<string, string> | null {
   return Object.keys(shape).length > 0 ? shape : null;
 }
 
+/** ข้อความดิบจาก URL ที่ถอดก่อนกวาดได้ไม่เกินเท่านี้ — ถอดแล้วสั้นลงได้ถึงสามเท่า ยังเหลือเกินกว่าที่เก็บบวก CLIP_CONTEXT เสมอ */
+const PATH_FOLD_MAX = 4_096;
+const QUERY_KEY_FOLD_MAX = 2_048;
+
 /**
  * path ของคำขอ (ไม่มี query) กับ**ชื่อ** ของ query — ค่าของ query ไม่ออกไปเลย (`?token=` `?cid=` `?code&state`)
- * path ผ่านตารางกวาด เพราะผู้เรียกเขียนอะไรลงไปใน path ก็ได้ (เลขบัตร อีเมล)
+ * path และชื่อผ่านตารางกวาด เพราะผู้เรียกเขียนอะไรลงไปก็ได้ (เลขบัตร อีเมล) — ถอดและพับตัวที่หน้าตาเหมือนกันก่อน
+ * (`foldForMasking`) แล้วท่อนหรือชื่อที่ยังมี `@` หลังกวาดถูกแทนทั้งท่อนด้วย `[email]` เดิมกวาดข้อความดิบ: `%40` `%2540`
+ * `＠` และ zero-width space ข้าง `@` รอดกฎอีเมลทั้งใน `request.path` ของ error event และใน `queryKeys` ของทั้ง error event และ
+ * บันทึกการเรียก admin API (ตรวจขั้น 8 แบบค้านรอบสอง, 2026-10-01 — หัวของ `foldForMasking`) path ที่ไม่มี `%` ไม่มีอักษร
+ * นอก ASCII และไม่มี `@` ออกมาเหมือนเดิมทุกตัวอักษร fingerprint ของรายงานเบราว์เซอร์ (หน้า) จึงไม่เปลี่ยน
  */
 export function requestTarget(originalUrl: string): { path: string; queryKeys: string[] } {
   const cut = originalUrl.indexOf("?");
@@ -649,14 +738,16 @@ export function requestTarget(originalUrl: string): { path: string; queryKeys: s
   if (query) {
     try {
       for (const key of new URLSearchParams(query).keys()) {
-        keys.add(scrubClipped(key, 64));
+        const name = scrubClipped(foldForMasking(key.slice(0, QUERY_KEY_FOLD_MAX)), 64);
+        keys.add(name.includes("@") ? "[email]" : name);
         if (keys.size >= 20) break;
       }
     } catch {
       keys.add("(อ่าน query ไม่ออก)");
     }
   }
-  return { path: scrubClipped(rawPath, 300), queryKeys: [...keys] };
+  const path = maskAtSegments(scrubClipped(foldForMasking(rawPath.slice(0, PATH_FOLD_MAX)), 300), "[email]");
+  return { path, queryKeys: [...keys] };
 }
 
 /** header ที่ออกไปได้ — ไม่มี cookie, x-admin-token, x-log-token, authorization, referer หรืออะไรนอกรายการ */

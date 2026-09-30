@@ -59,7 +59,7 @@ import { AuditSubject, logAudit, type AuditActionCode, type AuditSubjectType } f
 import { tokenFingerprint } from "./auth.js";
 import { currentContext, parseClientIp, runWithContext } from "./context.js";
 import { captureError } from "./error-capture.js";
-import { replaceEmails } from "./redact.js";
+import { foldForMasking, maskAtSegments, replaceEmails } from "./redact.js";
 
 const WINDOW_MS = 10 * 60_000;
 const SWEEP_MS = 60_000;
@@ -101,8 +101,6 @@ const MAX_LISTED = 20;
 const MAX_PATH = 120;
 
 const UUID_IN_PATH = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
-/** `%xx` ที่ติดกัน — ถอดทีละช่วง ช่วงที่เสียช่วงเดียวจะได้ไม่ทำให้ทั้ง path ไม่ถูกถอด */
-const PERCENT_RUN = /(?:%[0-9A-Fa-f]{2})+/g;
 const OUTSIDE_PATH_CHARS = /[^A-Za-z0-9/_.:-]/g;
 /**
  * กลุ่มตัวเลขที่ติดกันหรือคั่นด้วย `-` `.` `_` `:` — เลขบัตรพิมพ์กันเป็น `1-1017-00203-45-1` หรือ
@@ -122,45 +120,6 @@ function digitCount(text: string): number {
  */
 function identifyingNumber(group: string): boolean {
   return /\d{6}/.test(group) || digitCount(group) >= IDENTIFYING_DIGITS;
-}
-
-/** ถอด `%xx` ซ้ำได้ไม่เกินเท่านี้รอบ — path ของจริงถูก encode ชั้นเดียว ที่ซ้อนเกินนี้คือคนตั้งใจหลบ (`ENCODED_AT` รับช่วงต่อ) */
-const DECODE_PASSES_MAX = 4;
-/** `@` ที่ยังเป็น `%40` หลังถอดครบทุกรอบ ซ้อนกี่ชั้นก็ตาม (`%2540` `%252540` …) */
-const ENCODED_AT = /%(?:25)*40/gi;
-
-/**
- * ถอด `%xx` ก่อนจัดรูป **ซ้ำจนไม่เปลี่ยน** (ไม่เกิน DECODE_PASSES_MAX รอบ) — ไม่งั้น `1%2D1017…` เหลือ `1_2D1017…` ซึ่งตัว `D`
- * ตัดกลุ่มเลขขาด และอีเมลที่ encode สองชั้นรอดกฎอีเมล: เดิมถอดรอบเดียว `some.one%2540example.go.th` เหลือ `some.one%40…` ซึ่ง
- * ไม่มี `@` ให้กฎอีเมลเห็น แล้ว `%` กลายเป็น `_` — `ADMIN_API_REQUEST.metadata.path` เก็บ `some.one_40example.go.th` อ่านกลับ
- * เป็นอีเมลได้ทันที (ตรวจแบบค้าน 2026-10-01) ที่ยังเหลือหลังรอบสุดท้าย `%…40` ทุกชั้นนับเป็น `@`
- *
- * ทุกรอบจบด้วย `normalize("NFKC")`: ตัวที่หน้าตาเหมือน `@` แต่เป็นอักษรอื่น — `＠` (U+FF20, `%EF%BC%A0`) กับ `﹫` (U+FE6B,
- * `%EF%B9%AB`) — อยู่นอกชุดอักษรของ path จึงกลายเป็น `_` โดยกฎอีเมลไม่เคยเห็น แล้วเก็บ `some.one_example.go.th` ซึ่งอ่านกลับ
- * เป็นอีเมลได้แบบเดียวกับที่ย่อหน้าบนแก้ (ตรวจแบบค้าน 2026-10-01) NFKC แปลงทั้งสองเป็น `@` ตัวจริง และแปลงตัวเลขเต็มความกว้าง
- * (`１２３`) เป็นเลขธรรมดาให้กฎกลุ่มเลขเห็นด้วย ทำในรอบเดียวกับการถอด เพราะ `％` (U+FF05) ที่ NFKC แปลงเป็น `%` เปิด `%xx`
- * ช่วงใหม่ให้รอบถัดไปถอด
- */
-function decodePercent(path: string): string {
-  let current = path.normalize("NFKC");
-  for (let pass = 0; pass < DECODE_PASSES_MAX; pass++) {
-    const next = current.replace(PERCENT_RUN, (run) => {
-      try {
-        return decodeURIComponent(run);
-      } catch {
-        // ไบต์ที่ไม่ใช่ UTF-8 ในช่วง — ถอดเฉพาะไบต์ ASCII ไบต์อื่นเป็น `_` เดิมทิ้งทั้งช่วงเป็น `_` ตัวเดียว ซึ่งทิ้ง `%40`
-        // ที่อยู่ในช่วงเดียวกันไปด้วย (`some.one%C0%40example.go.th` เหลือ `some.one_example.go.th` — อีเมลที่ไม่มี `@` ให้กฎเห็น)
-        // เลขที่ถอดออกมายังโดนกฎกลุ่มเลขและกฎนับเลขทั้ง path ข้างล่าง (`_` เป็นตัวคั่นของกลุ่ม)
-        return run.replace(/%([0-9A-Fa-f]{2})/g, (_, hex: string) => {
-          const byte = parseInt(hex, 16);
-          return byte < 0x80 ? String.fromCharCode(byte) : "_";
-        });
-      }
-    }).normalize("NFKC");
-    if (next === current) break;
-    current = next;
-  }
-  return current.replace(ENCODED_AT, "@");
 }
 
 /** บริบทที่แถวหนึ่งถูกเขียนจาก — แถวสรุปเขียนจาก timer ซึ่งไม่มี request ให้อ่าน จึงต้องเก็บไว้ */
@@ -195,15 +154,19 @@ function remember(list: Set<string>, value: string | null, onFull: () => void) {
 }
 
 /**
- * เส้นทางที่ถูกยิงในรูปที่จัดกลุ่มได้: ไม่เอา query string, ถอด `%xx`, อีเมล → `:email` (กฎของ lib/redact.ts), UUID → `:id`,
- * ตัวอักษรนอกชุดที่ path ปกติใช้ → `_`, กลุ่มเลขที่ชี้ตัวคนได้ (`identifyingNumber()`) → `:n` แล้วตัดที่ `MAX_PATH`
+ * เส้นทางที่ถูกยิงในรูปที่จัดกลุ่มได้: ไม่เอา query string, ถอด `%xx` และพับตัวที่หน้าตาเหมือนกัน (`foldForMasking` ของ
+ * lib/redact.ts), อีเมล → `:email` (กฎอีเมลของ lib/redact.ts) แล้วท่อนที่ยังมี `@` → `:email` ทั้งท่อน (`maskAtSegments`), UUID →
+ * `:id`, ตัวอักษรนอกชุดที่ path ปกติใช้ → `_`, กลุ่มเลขที่ชี้ตัวคนได้ (`identifyingNumber()`) → `:n` แล้วตัดที่ `MAX_PATH`
  *
  * อีเมลต้องแทนก่อนแปลงอักษรนอกชุด: `@` กลายเป็น `_` แล้วกฎอีเมลก็ไม่เห็นมันอีก เดิมไม่มีขั้นนี้ 401 ของ
  * `/api/admin/users/someone.private%40example.go.th` จึงเก็บ `…/someone.private_example.go.th` ทั้งใน `ADMIN_TOKEN_REJECTED`
  * ของ Postgres (ไม่มี retention) และบันทึกการเรียก admin API ใน Mongo 400 วัน (ตรวจขั้น 8 แบบค้าน, 2026-10-01) — plan §7
- * ว่าอีเมลเป็น `[email]` ที่นี่ใช้ `:email` เพราะ `[` `]` อยู่นอกชุดอักษรของ path อีเมลที่พิมพ์ไม่ครบ (ไม่มีโดเมน) ยังเหลือเป็นตัวอักษร
+ * ว่าอีเมลเป็น `[email]` ที่นี่ใช้ `:email` เพราะ `[` `]` อยู่นอกชุดอักษรของ path ท่อนที่ยังมี `@` หลังกฎอีเมล (อีเมลที่พิมพ์ไม่ครบ
+ * `some.one@example`, `@` ที่มีเครื่องหมายกำกับติดมา) ถูกปิดทั้งท่อน: รอบแรกของการแก้ถอดและ NFKC แล้วก็ยังเหลือ zero-width space
+ * หรือ NBSP ข้าง `@` ที่ทำให้กฎอีเมลไม่ตรง แล้ว `@` กลายเป็น `_` (`some.one__example.go.th` — ตรวจขั้น 8 แบบค้านรอบสอง,
+ * 2026-10-01) อีเมลที่เขียนโดยไม่มี `@` เลยยังเหลือเป็นตัวอักษร
  *
- * ลำดับสำคัญ: ถอด (ซ้ำจนไม่เปลี่ยน — `decodePercent`) ก่อนเพื่อให้ตัวคั่นและ `@` ที่ encode มาเป็นตัวจริง แทน `_` ก่อนหาเลข
+ * ลำดับสำคัญ: ถอด (ซ้ำจนไม่เปลี่ยน — `foldForMasking`) ก่อนเพื่อให้ตัวคั่นและ `@` ที่ encode มาเป็นตัวจริง แทน `_` ก่อนหาเลข
  * เพื่อให้ช่องว่างและตัวคั่นแปลก ๆ ยังนับเป็นตัวคั่น และ UUID ก่อนเลขเพราะ UUID มีเลขปนขีดยาวพอจะโดนนับเป็นเลข
  *
  * กฎกลุ่มดูทีละกลุ่ม คนที่ตั้งใจแยกเลขบัตรด้วย `/` (`1/1017/00203/45/1`) ด้วยตัวคั่นเกินสามตัว
@@ -214,7 +177,7 @@ function remember(list: Set<string>, value: string | null, onFull: () => void) {
  */
 export function pathPattern(req: Request): string {
   const path = (req.originalUrl ?? req.url).split("?")[0] ?? "";
-  const pattern = replaceEmails(decodePercent(path), ":email")
+  const pattern = maskAtSegments(replaceEmails(foldForMasking(path), ":email"), ":email")
     .replace(UUID_IN_PATH, ":id")
     .replace(OUTSIDE_PATH_CHARS, "_")
     .replace(DIGIT_GROUP, (group) => (identifyingNumber(group) ? ":n" : group));
