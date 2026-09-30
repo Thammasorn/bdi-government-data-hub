@@ -49,7 +49,7 @@ import {
   HOW_IT_WORKS,
   LEGAL_ANNEXES,
   LEGAL_ANNEX_LABEL,
-  LEGAL_ITEMS,
+  LEGAL_DOCUMENTS,
   LEGAL_PRIMARY,
   LEGAL_REGULATIONS,
   MORE_INFO_EYEBROW,
@@ -940,14 +940,15 @@ function DocCode({ code, muted = false }: { code: string; muted?: boolean }) {
  * ชื่อเอกสาร — เป็นลิงก์ดาวน์โหลดเมื่อรายการนั้นมีไฟล์ ไม่มีก็เป็นข้อความเฉย ๆ (ดู `LegalItem`)
  *
  * เปิดในแท็บใหม่ด้วย เพราะเบราว์เซอร์ส่วนใหญ่เปิด PDF ให้อ่านแทนการบันทึกอยู่ดี
- * คนที่แค่อยากอ่านจะได้ไม่หลุดออกจากหน้าแรก
+ * คนที่แค่อยากอ่านจะได้ไม่หลุดออกจากหน้าแรก ถ้าบันทึก ไฟล์ได้ชื่อภาษาไทยของรายการ
+ * ไม่ใช่ชื่อภาษาอังกฤษใน URL
  */
 function LegalTitle({ item, className }: { item: LegalItem; className: string }) {
   if (!item.file) return <span className={className}>{item.title}</span>;
   return (
     <a
       href={item.file}
-      download
+      download={`${item.title}${item.file.slice(item.file.lastIndexOf("."))}`}
       target="_blank"
       rel="noopener"
       className={clsx(
@@ -968,7 +969,7 @@ function LegalTitle({ item, className }: { item: LegalItem; className: string })
 }
 
 function Legal() {
-  const pendingDownloads = LEGAL_ITEMS.some((item) => !item.file);
+  const pendingDownloads = LEGAL_DOCUMENTS.some((item) => !item.file);
   return (
     <Section id="legal" tone="canvas">
       <Heading id="legal" />
