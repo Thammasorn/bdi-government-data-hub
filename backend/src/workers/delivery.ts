@@ -193,7 +193,9 @@ async function main() {
    * log store (MongoDB) — ไม่ await โดยตั้งใจ: ลูปส่งอีเมลข้างล่างต้องเริ่มทันทีและต้องไม่ผูกกับ Mongo เลย
    * startLogStore ไม่ reject และปิดอยู่ก็ไม่โหลด driver (ดู lib/log-store.ts) งานดูแล (index, เพดานขนาด) และ relay ที่
    * คัดลอก audit_event ลง Mongo (workers/log-relay.ts) เป็นลูปของตัวเองทั้งคู่ — ใช้ PrismaClient ตัวเดียวกับลูปอีเมล
-   * แต่อ่านทีละคำสั่ง จึงถือ connection ของ pool ไม่เกินหนึ่งตัวต่อลูป
+   * และอ่านทีละคำสั่ง ปกติจึงถือ connection ของ pool ครั้งละหนึ่งตัวต่อลูป ยกเว้นตอน Postgres ช้าจนคำสั่งเกิน 15 วินาที:
+   * `withTimeout` ใน log-relay.ts เลิกรอแต่ไม่ได้ยกเลิก คำสั่งนั้นถือ connection ต่อจนจบ ขณะที่รอบถัดไปเริ่มคำสั่งใหม่ —
+   * ช่วงนั้น relay ถือได้หลายตัว และลูปอีเมลรอ connection นานขึ้น (ช้าเพราะ Postgres ตัวเดียวกันอยู่แล้ว) Mongo ไม่เกี่ยว
    */
   void startLogStore({ service: "delivery-worker", maxPoolSize: 3 });
   startLogUpkeep();

@@ -36,8 +36,11 @@
  * log-upkeep เห็นว่าเอกสารไม่ใช่อย่างที่มันเขียนไว้แล้วตรวจเพดานใหม่ในรอบนาทีถัดไป (ก่อนหน้านั้นธงเกินเพดานหายไปราวหนึ่ง
  * นาที) และ prune วิ่งทันที ซึ่งไม่เสียหาย แต่ไม่ใช่วิธีที่ตั้งใจ — docs/21 §3.8 ต้องบอกแบบเดียวกัน
  * ข้อจำกัด: แถวที่ `seed:demo` ลบจาก Postgres ไปแล้วหายจากสำเนาถาวร, เอกสาร `audit_fallback`/`http` ไม่ถูกสร้างใหม่ (ไม่มีใน
- * Postgres) และเอกสารที่ prune ลบไปแล้ว (หรือ IP/UA ที่ตัดไปแล้ว) กลับมาจนกว่า prune รอบถัดไปจะลบซ้ำ — ตั้งใจไม่แก้:
- * prune รอบถัดไปคือภายในวันเดียวกัน (ตัดสิน 2026-09-30)
+ * Postgres) และเอกสารที่ prune ลบไปแล้ว (หรือ IP/UA ที่ตัดไปแล้ว) กลับมาจนกว่า prune รอบถัดไปจะลบซ้ำ — ตั้งใจไม่แก้
+ * (ตัดสิน 2026-09-30): rebuild ไม่แตะ `lastPruneAt` prune รอบถัดไปจึงเป็นรอบแรกหลัง 03:00 น. เวลาไทยครั้งถัดไป — ช้าสุด
+ * ราว 24 ชั่วโมงหลัง rebuild ถ้าต้องการให้ลบทันที รอให้ relay พิมพ์ "เติมของค้างครบแล้ว" ก่อน แล้วค่อย `$unset`
+ * `lastPruneAt` — prune วิ่งในรอบงานดูแลถัดไป (ไม่เกินหนึ่งนาที) ถ้า `$unset` พร้อมกับ rebuild prune อาจวิ่งก่อน relay
+ * เติมถึงแถวเก่า แถวที่เติมหลังจากนั้นก็ค้างไปจนถึง 03:00 น. อยู่ดี (relay เติมราวหมื่นแถวต่อรอบ 5 วินาที)
  */
 import { AttachmentOwnerType, Prisma, type PrismaClient } from "@prisma/client";
 import type { AnyBulkWriteOperation, Collection, Db, Filter } from "mongodb";
@@ -228,7 +231,8 @@ async function relayTick(): Promise<void> {
 
     const started = new Date();
     const upper = new Date(started.getTime() - SETTLE_MS);
-    let cursor = cursorFrom(state);
+    const from = cursorFrom(state);
+    let cursor = from;
     let inserted = 0;
     let caughtUp = false;
     for (let page = 0; page < FORWARD_PAGES_MAX && !stopped; page++) {
@@ -268,7 +272,16 @@ async function relayTick(): Promise<void> {
 
     if (failing) {
       failing = false;
-      console.log("[log-relay] คัดลอก audit_event ลง log store ได้อีกครั้ง — ตามต่อจาก cursor เดิม ไม่มีแถวหาย");
+      // บอก cursor ที่รอบนี้ใช้จริง — volume ที่ถูกสร้างใหม่ระหว่างล่มไม่มี cursor ให้ตามต่อ relay เริ่มจากแถวแรก
+      // (แถวที่ seed:demo ลบจาก Postgres ไปแล้วไม่กลับมา) เดิมบรรทัดนี้บอก "ตามต่อจาก cursor เดิม ไม่มีแถวหาย" เสมอ
+      // แม้ในกรณีนั้น (ตรวจขั้น 6, 2026-09-30) · cursorFrom() คืน EPOCH ทั้งตอนไม่มี cursor และตอน cursor เสีย
+      console.log(
+        `[log-relay] คัดลอก audit_event ลง log store ได้อีกครั้ง — ${
+          from === EPOCH
+            ? "ไม่มี cursor ที่ใช้ได้ใน relay_state (volume ใหม่ ถูกลบ หรือเสีย) เริ่มจากแถวแรก"
+            : `อ่านต่อจาก cursor ที่บันทึกไว้ (${from.exact})`
+        }`,
+      );
     }
     if (!caughtUp) {
       backfilling = true;
@@ -280,7 +293,7 @@ async function relayTick(): Promise<void> {
   } catch (err) {
     if (!failing) {
       failing = true;
-      console.warn(`[log-relay] คัดลอกไม่สำเร็จ (${errorName(err)}) — ลองใหม่ทุก 5 วินาที ตามต่อจาก cursor เดิม`);
+      console.warn(`[log-relay] คัดลอกไม่สำเร็จ (${errorName(err)}) — ลองใหม่ทุก 5 วินาที`);
     }
     captureThrottled("log-relay.tick", err);
     await noteError(err);
@@ -861,7 +874,12 @@ function captureThrottled(tag: string, err: unknown, level: "warning" | "error" 
   captureError(err, { level, tag });
 }
 
-/** เหมือน `work` แต่ล้มถ้าไม่จบใน `ms` — คำสั่งของ Prisma ที่ค้างยังวิ่งต่อเบื้องหลังได้ แต่เป็นการอ่านอย่างเดียว */
+/**
+ * เหมือน `work` แต่ล้มถ้าไม่จบใน `ms` — เลิก**รอ** ไม่ได้ยกเลิก: คำสั่งของ Prisma ที่ค้างยังวิ่งต่อใน Postgres และถือ
+ * connection ของ pool ไว้จนจบ (เป็นการอ่านอย่างเดียว ไม่เสียข้อมูล) ระหว่างนั้นรอบถัดไปของลูปเดียวกันเริ่มคำสั่งใหม่ได้อีก
+ * ตัว — Postgres ที่ช้าจนถึงเพดานนี้ทำให้ relay ถือ connection ได้มากกว่าหนึ่งตัวต่อลูป (ราวหนึ่งตัวต่อ 20 วินาทีที่ช้า)
+ * จนกว่าคำสั่งที่ค้างจะจบ pool นั้นใช้ร่วมกับลูปส่งอีเมล (workers/delivery.ts)
+ */
 function withTimeout<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
   let handle: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
