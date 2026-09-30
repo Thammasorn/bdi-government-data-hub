@@ -81,9 +81,10 @@ services:
   #
   # ไม่มี `volumes:` โดยตั้งใจ — `!reset` จะทิ้ง mongo-data ไปพร้อมกับ bind mount ของสคริปต์
   # **ที่ main/ ห้าม `down -v`**: mongo-data คือ log ของ production
+  # `--slowOpSampleRate 0` เหมือน dev และด้วยเหตุผลเดียวกัน (ดู docker-compose.yml) — command ในไฟล์นี้แทนของ dev ทั้งบรรทัด
   mongo:
     restart: unless-stopped
-    command: ["mongod", "--quiet", "--wiredTigerCacheSizeGB", "0.5"]
+    command: ["mongod", "--quiet", "--wiredTigerCacheSizeGB", "0.5", "--slowOpSampleRate", "0"]
     environment:
       MONGO_REFUSE_DEV_PASSWORDS: "true"
 

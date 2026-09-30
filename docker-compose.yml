@@ -99,11 +99,17 @@ services:
   # รหัสผ่านทั้งสามใช้**ครั้งเดียวตอน volume ว่าง** (init/01-users.js) — เปลี่ยนใน .env ทีหลังไม่มีผลกับ volume เดิม
   # ค่าตั้งต้นเป็นค่าตัวอย่างสาธารณะ ซึ่ง prod overlay สั่งให้ entrypoint.sh ไม่ยอมเริ่มถ้ายังใช้อยู่
   # รหัสผ่านของ backend/worker ถูกแทนลง URI ตรง ๆ ต้องเป็นฐานสิบหก (`openssl rand -hex 32`)
+  #
+  # `--slowOpSampleRate 0` ปิดบรรทัด "Slow query" ใน log ของคอนเทนเนอร์: mongod พิมพ์คำสั่งที่ช้ากว่า slowms (100 ms)
+  # ทั้งคำสั่ง รวม `$setOnInsert` ของเอกสาร activity ทั้งใบ (ชื่อ อีเมลบัญชี IP UA บันทึกที่ปิดเลขแล้ว) และตัวกรองของการค้น
+  # สำเนานั้นอยู่นอกตาราง retention และการตัด IP/UA ไปจนกว่า json-file จะหมุนทิ้ง ซึ่งกับ `--quiet` อาจเป็นเดือน (ตรวจขั้น 6,
+  # 2026-09-30) Community ไม่มี redactClientLogData ให้ใช้ · เปิดชั่วคราวตอนไล่ความช้าด้วย root:
+  # `db.setProfilingLevel(0, { slowms: 100, sampleRate: 1 })` แล้วตั้ง `sampleRate: 0` คืนเมื่อเสร็จ (restart ก็กลับเป็น 0)
   mongo:
     image: mongo:7.0
     restart: unless-stopped
     entrypoint: ["sh", "/opt/bdi-mongo/entrypoint.sh"]
-    command: ["mongod", "--quiet", "--wiredTigerCacheSizeGB", "0.25"]
+    command: ["mongod", "--quiet", "--wiredTigerCacheSizeGB", "0.25", "--slowOpSampleRate", "0"]
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-bdi}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-dev-mongo-root-change-me}
