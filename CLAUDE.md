@@ -1526,16 +1526,23 @@ Two API base URLs, and they are not interchangeable:
   organizations instead of fetching one and still passed. Ids captured at runtime belong in
   collection variables only; an environment carries `baseUrl`, `adminToken`, `logToken` and
   `logReader` and nothing else (the last two are for `bdi-activity-log`). The same goes for the
-  inputs a reader types — `readReason`, `person`, `requestNumber`, `reference` … are collection
-  variables. The admin collection has **no** pre-request scripts: a request whose captured id is
-  still empty goes out and answers 400 or 404, so read the response. `bdi-activity-log` has two
-  kinds, and nothing else: the one-line collection script that sends `readReason` as
-  `x-log-reason` (percent-encoded — a raw Thai header arrives as latin1 bytes and is refused),
-  and a guard on G6, G8 and E2–E4 that skips the request (`pm.execution.skipRequest()`, or
-  throws on a Postman too old to have it) and names what to fill in or run first. Newman sends a
-  request whose pre-request script *throws*, so the skip is what actually stops it there.
-  `console.table` does not exist in newman's sandbox — the collection's tests fall back to
-  `console.log` per row, and anything a test captures is set before it prints.
+  inputs a reader types — `readReason`, `person`, `requestNumber`, `reference`, `issueFingerprint`
+  … are collection variables. The admin collection has **no** pre-request scripts: a request whose
+  captured id is still empty goes out and answers 400 or 404, so read the response.
+  `bdi-activity-log` has four kinds: the one-line collection script that sends `readReason` as
+  `x-log-reason` (percent-encoded — a raw Thai header arrives as latin1 bytes and is refused);
+  G5's, which sets the request-local `weekAgo` its `from` reads; a guard on G6, G8, E2 and E3 that
+  skips the request (`pm.execution.skipRequest()`, or throws on a Postman too old to have it) and
+  names what to fill in or run first; and E4's, which is that guard over **three inputs the reader
+  types** (`issueFingerprint`, `issueStatus`, `issueReason`) and then sets the request-local
+  `issuePath` / `issueReasonEscaped` its URL and body read. **E4 must never run on a captured
+  value** — until 2026-09-30 it took E1's auto-captured `errorFingerprint` and a sample reason in
+  its body, so running the collection as a whole resolved the newest open issue with the words
+  "แก้แล้วในรุ่น <SHA>"; its test now blanks the three inputs after a 200, and the API refuses a
+  reason still holding `<…>` or `{{…}}`. Newman sends a request whose pre-request script *throws*,
+  so the skip is what actually stops it there. `console.table` does not exist in newman's
+  sandbox — the collection's tests fall back to `console.log` per row, and anything a test
+  captures is set before it prints.
 - **An environment's `adminToken` and `logToken` are committed empty — run
   `python3 docs/tools/check-postman-secrets.py` before committing any Postman file.** `0d0a0d4` (2026-09-24) committed the real production
   token in `bdi-public`, and it reached Bitbucket and the public GitHub `origin` before anyone

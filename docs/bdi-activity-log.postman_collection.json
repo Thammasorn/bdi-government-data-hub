@@ -3,7 +3,7 @@
     "name": "D2 — Activity log API (อ่าน log)",
     "_postman_id": "4f0c2d6e-8b1a-4c3e-9d57-a1e6b3c9f210",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "อ่าน activity log และ error ที่ระบบเก็บไว้ใน MongoDB (docs/21-activity-log.md) — **ไม่ใช่ admin API** และแยก collection ไว้โดยตั้งใจ: คนที่ถือ admin token ไม่ได้สิทธิ์อ่าน log ไปด้วย\n\n## ก่อนเริ่ม\n\n1. **เลือก environment** (ไฟล์อยู่ข้างไฟล์นี้ใน `docs/`) แล้วใส่ค่าสองตัว:\n\n| ตัวแปร | ใส่อะไร |\n| --- | --- |\n| `logToken` | `LOG_READ_TOKEN` จาก `.env` ของเครื่องนั้น — **ความลับ** ไฟล์ `bdi-main-local` กับ `bdi-public` เว้นว่างไว้ (`bdi-dev-checkout` ใส่ค่าตัวอย่าง `dev-log-token-change-me` ไว้แล้ว) |\n| `logReader` | อีเมลของคุณ (ASCII) — ส่งเป็น header `x-log-reader` ทุกคำขอ และลงบันทึกการอ่าน |\n\n2. **ใส่เหตุผลที่อ่าน** ในตัวแปร `readReason` ของ collection (10–500 ตัว ภาษาไทยได้) — script ของ collection แปลงเป็น header `x-log-reason` ให้เองทุกคำขอ **ห้ามใส่เหตุผลใน URL** (API ตอบ 400): เหตุผลมักมีชื่อคนที่ถูกสอบสวน และ URL ไปอยู่ใน log ของ proxy ทุกชั้น activity · timeline · trace บังคับให้มีเหตุผล\n\n3. **ทุกการอ่านถูกบันทึกก่อนได้ข้อมูล** เป็น `AUDIT_LOG_READ` ใน audit_event: ผู้อ่าน เหตุผล endpoint ตัวกรอง และ fingerprint ของ token (G7 ดูได้ว่าใครอ่านอะไร) บันทึกไม่ได้ = ไม่ได้ข้อมูล (503 `log_read_unrecorded`)\n\n`baseUrl` ต้องชี้ **backend ตรง** (`https://bdi-api.thammasorn.org`, `http://localhost:4000` หรือ 41N0 ของ dev checkout) — proxy ของหน้าเว็บ (`bdi.thammasorn.org/api/...`) ตอบ 404 ให้ทุก `/api/admin/logs*` โดยตั้งใจ\n\n## ตัวแปรของ collection\n\n| ตัวแปร | ใช้กับ |\n| --- | --- |\n| `readReason` | ทุกคำขอ (header `x-log-reason`) |\n| `person` | G1 G2 — อีเมลหรือ uuid ของบัญชี |\n| `requestNumber` | G1 G3 — เลขที่คำขอ เช่น `DS-REG-2026-0010` |\n| `email` | G1 G4 — อีเมลที่พิมพ์มาตอนล็อกอิน |\n| `oldTokenFp` | G1 G8 — fingerprint 12 ตัวของ token ที่หมุนแล้ว (ไม่ใช่ตัว token) |\n| `reference` | G1 G6 — รหัสอ้างอิง 8 ตัวบนข้อความ error |\n| `errorFingerprint` · `errorEventId` | E1 → E2 → E3/E4 เก็บให้อัตโนมัติ |\n\nid ที่ script เก็บอยู่ใน**ตัวแปรของ collection เท่านั้น** — ถ้าชื่อเดียวกันอยู่ใน environment ด้วย Postman ใช้ค่าจาก environment เสมอ แล้วค่าที่เก็บได้จะไม่มีผล (CLAUDE.md)\n\n## คำตอบที่พบบ่อย\n\n| status | error | แปลว่า |\n| --- | --- | --- |\n| 400 | `validation` | พารามิเตอร์ผิดหรือไม่รู้จัก — `fields` บอกทีละตัว (รวม `x-log-reader` / `x-log-reason`) |\n| 401 | `unauthenticated` | `logToken` ผิด — การปฏิเสธถูกบันทึกเป็น `LOG_TOKEN_REJECTED` |\n| 404 | `not_found` | ไม่มี path นี้ หรือไม่พบสิ่งที่ขอ |\n| 503 | `log_access_disabled` | เครื่องนี้ยังไม่ได้ตั้ง `LOG_READ_TOKEN` |\n| 503 | `log_store_unavailable` / `log_store_disabled` | MongoDB ล่ม หรือปิดไว้ |\n| 503 | `hash_search_unavailable` | ค้นด้วยเลขบัตรหรืออีเมลไม่ได้ เพราะไม่ได้ตั้ง `LOG_HASH_KEY` |\n| 503 | `log_read_unrecorded` | บันทึกการอ่านไม่ได้ทั้ง Postgres และ MongoDB — ไม่ส่งข้อมูล |\n"
+    "description": "อ่าน activity log และ error ที่ระบบเก็บไว้ใน MongoDB (docs/21-activity-log.md) — **ไม่ใช่ admin API** และแยก collection ไว้โดยตั้งใจ: คนที่ถือ admin token ไม่ได้สิทธิ์อ่าน log ไปด้วย\n\n## ก่อนเริ่ม\n\n1. **เลือก environment** (ไฟล์อยู่ข้างไฟล์นี้ใน `docs/`) แล้วใส่ค่าสองตัว:\n\n| ตัวแปร | ใส่อะไร |\n| --- | --- |\n| `logToken` | `LOG_READ_TOKEN` จาก `.env` ของเครื่องนั้น — **ความลับ** ไฟล์ `bdi-main-local` กับ `bdi-public` เว้นว่างไว้ (`bdi-dev-checkout` ใส่ค่าตัวอย่าง `dev-log-token-change-me` ไว้แล้ว) |\n| `logReader` | อีเมลของคุณ (ASCII) — ส่งเป็น header `x-log-reader` ทุกคำขอ และลงบันทึกการอ่าน |\n\n2. **ใส่เหตุผลที่อ่าน** ในตัวแปร `readReason` ของ collection (10–500 ตัว ภาษาไทยได้) — script ของ collection แปลงเป็น header `x-log-reason` ให้เองทุกคำขอ **ห้ามใส่เหตุผลใน URL** (API ตอบ 400): เหตุผลมักมีชื่อคนที่ถูกสอบสวน และ URL ไปอยู่ใน log ของ proxy ทุกชั้น activity · timeline · trace บังคับให้มีเหตุผล\n\n3. **ทุกการอ่านถูกบันทึกก่อนได้ข้อมูล** เป็น `AUDIT_LOG_READ` ใน audit_event: ผู้อ่าน เหตุผล endpoint ตัวกรอง และ fingerprint ของ token (G7 ดูได้ว่าใครอ่านอะไร) บันทึกไม่ได้ = ไม่ได้ข้อมูล (503 `log_read_unrecorded`)\n\n`baseUrl` ต้องชี้ **backend ตรง** (`https://bdi-api.thammasorn.org`, `http://localhost:4000` หรือ 41N0 ของ dev checkout) — proxy ของหน้าเว็บ (`bdi.thammasorn.org/api/...`) ตอบ 404 ให้ทุก `/api/admin/logs*` โดยตั้งใจ\n\n## ตัวแปรของ collection\n\n| ตัวแปร | ใช้กับ |\n| --- | --- |\n| `readReason` | ทุกคำขอ (header `x-log-reason`) |\n| `person` | G1 G2 — อีเมลหรือ uuid ของบัญชี |\n| `requestNumber` | G1 G3 — เลขที่คำขอ เช่น `DS-REG-2026-0010` |\n| `email` | G1 G4 — อีเมลที่พิมพ์มาตอนล็อกอิน |\n| `oldTokenFp` | G1 G8 — fingerprint 12 ตัวของ token ที่หมุนแล้ว (ไม่ใช่ตัว token) |\n| `reference` | G1 G6 — รหัสอ้างอิง 8 ตัวบนข้อความ error |\n| `errorFingerprint` · `errorEventId` | E1 → E2 → E3 เก็บให้อัตโนมัติ |\n| `issueFingerprint` · `issueStatus` · `issueReason` | E4 — **กรอกเองทั้งสามตัว** ขาดตัวใด E4 ไม่ถูกส่ง และล้างทั้งสามหลังเปลี่ยนสำเร็จ: การรันทั้ง collection (Runner, newman) จึงไม่เปลี่ยนสถานะ issue ใดเอง |\n\nid ที่ script เก็บอยู่ใน**ตัวแปรของ collection เท่านั้น** — ถ้าชื่อเดียวกันอยู่ใน environment ด้วย Postman ใช้ค่าจาก environment เสมอ แล้วค่าที่เก็บได้จะไม่มีผล (CLAUDE.md)\n\n## คำตอบที่พบบ่อย\n\n| status | error | แปลว่า |\n| --- | --- | --- |\n| 400 | `validation` | พารามิเตอร์ผิดหรือไม่รู้จัก — `fields` บอกทีละตัว (รวม `x-log-reader` / `x-log-reason`) |\n| 401 | `unauthenticated` | `logToken` ผิด — การปฏิเสธถูกบันทึกเป็น `LOG_TOKEN_REJECTED` |\n| 404 | `not_found` | ไม่มี path นี้ หรือไม่พบสิ่งที่ขอ |\n| 503 | `log_access_disabled` | เครื่องนี้ยังไม่ได้ตั้ง `LOG_READ_TOKEN` |\n| 503 | `log_store_unavailable` / `log_store_disabled` | MongoDB ล่ม หรือปิดไว้ |\n| 503 | `hash_search_unavailable` | ค้นด้วยเลขบัตรหรืออีเมลไม่ได้ เพราะไม่ได้ตั้ง `LOG_HASH_KEY` |\n| 503 | `log_read_unrecorded` | บันทึกการอ่านไม่ได้ทั้ง Postgres และ MongoDB — ไม่ส่งข้อมูล |\n"
   },
   "item": [
     {
@@ -763,7 +763,7 @@
             }
           ]
         },
-        "description": "error ที่รวมเป็น issue — ค่าตั้งต้นเฉพาะที่ยังเปิด เรียงตามที่เห็นล่าสุด ไม่บังคับเหตุผล (ส่งมาก็ถูกบันทึก) · script เก็บ fingerprint ของตัวแรกไว้ใน `errorFingerprint` (encode แล้ว) ให้ E2/E4 ใช้"
+        "description": "error ที่รวมเป็น issue — ค่าตั้งต้นเฉพาะที่ยังเปิด เรียงตามที่เห็นล่าสุด ไม่บังคับเหตุผล (ส่งมาก็ถูกบันทึก) · script เก็บ fingerprint ของตัวแรกไว้ใน `errorFingerprint` (encode แล้ว) ให้ E2 ใช้ — E4 **ไม่ใช้** ค่านี้ (ต้องกรอก `issueFingerprint` เอง)"
       },
       "response": [],
       "event": [
@@ -850,6 +850,7 @@
               "    const r = pm.response.json();",
               "    if (r.recentEvents && r.recentEvents[0]) pm.collectionVariables.set('errorEventId', r.recentEvents[0].id);",
               "    console.log(r.issue.title, '· count', r.issue.count, '· status', r.issue.status);",
+              "    console.log('เปลี่ยนสถานะด้วย E4: กรอก issueFingerprint =', r.issue.fingerprint, 'กับ issueStatus และ issueReason');",
               "    table((r.recentEvents || []).map((e) => ({ id: e.id, เวลา: e.occurredAtBangkok, route: e.request && e.request.route, ref: e.request && e.request.reference })));",
               "} catch (e) {",
               "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
@@ -942,7 +943,7 @@
           }
         ],
         "url": {
-          "raw": "{{baseUrl}}/api/admin/logs/errors/issues/{{errorFingerprint}}",
+          "raw": "{{baseUrl}}/api/admin/logs/errors/issues/{{issuePath}}",
           "host": [
             "{{baseUrl}}"
           ],
@@ -952,13 +953,13 @@
             "logs",
             "errors",
             "issues",
-            "{{errorFingerprint}}"
+            "{{issuePath}}"
           ]
         },
-        "description": "เปลี่ยนสถานะเป็น `resolved` (เกิดซ้ำเมื่อไรเปิดกลับเอง) `ignored` (นับต่อแต่ไม่แจ้งเตือน) หรือ `open` — ต้องมีเหตุผล 10–500 ตัวใน body **แก้ `reason` ก่อนส่งทุกครั้ง** · ทุกครั้งได้แถว `ERROR_ISSUE_STATUS_CHANGED` ใน audit_event",
+        "description": "เปลี่ยนสถานะเป็น `resolved` (เกิดซ้ำเมื่อไรเปิดกลับเอง) `ignored` (นับต่อแต่ไม่แจ้งเตือน) หรือ `open`\n\n**กรอกตัวแปรของ collection เองทั้งสามตัวก่อนส่ง** — `issueFingerprint` (fingerprint ตามที่ E1/E2 แสดง ไม่ต้อง encode) `issueStatus` และ `issueReason` (10–500 ตัว) ขาดตัวใดคำขอนี้ไม่ถูกส่ง ส่งสำเร็จแล้ว script ล้างทั้งสามตัว: หนึ่งการกรอกคือหนึ่งการเปลี่ยน การรันทั้ง collection (Runner, newman) จึงไม่ไปเปลี่ยนสถานะ issue ใดเอง ด้วยเหตุผลเดียวกัน E4 **ไม่ใช้** `errorFingerprint` ที่ E1 เก็บให้อัตโนมัติ\n\n- body ประกอบจากตัวแปร — `issuePath` กับ `issueReasonEscaped` คือค่าที่ pre-request script แปลงให้ (encode ลง path · escape ลง JSON)\n- API ปฏิเสธเหตุผลที่ยังมีตัวยึดตำแหน่ง `<…>` หรือ `{{…}}`\n- ทุกครั้งได้แถว `ERROR_ISSUE_STATUS_CHANGED` ใน audit_event (G7 ด้วย `action=ERROR_ISSUE_STATUS_CHANGED`)",
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"status\": \"resolved\",\n  \"reason\": \"แก้แล้วในรุ่น <SHA> — <อธิบายสั้น ๆ ว่าแก้อะไร>\"\n}",
+          "raw": "{\n  \"status\": \"{{issueStatus}}\",\n  \"reason\": \"{{issueReasonEscaped}}\"\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -973,11 +974,21 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "// ไม่ส่งถ้ายังไม่มี errorFingerprint — ค่าว่างทำให้ path กลายเป็นอีก endpoint หนึ่ง (หรือ 400 ที่ไม่บอกว่าขาดอะไร)",
-              "const missing = 'ยังไม่มี errorFingerprint — รัน E1 ก่อน';",
-              "if (!pm.variables.get('errorFingerprint')) {",
-              "    if (pm.execution && typeof pm.execution.skipRequest === 'function') { console.warn(missing); pm.execution.skipRequest(); }",
-              "    else throw new Error(missing);",
+              "// E4 เปลี่ยนสถานะจริง — ส่งเฉพาะเมื่อกรอกครบสามตัวเอง ไม่ใช้ errorFingerprint ที่ E1 เก็บให้ (รันทั้ง collection แล้วจะไปปิด issue ล่าสุด)",
+              "const fp = (pm.variables.get('issueFingerprint') || '').trim();",
+              "const status = (pm.variables.get('issueStatus') || '').trim();",
+              "const reason = (pm.variables.get('issueReason') || '').trim();",
+              "const missing = !fp ? 'issueFingerprint (fingerprint ตามที่ E1/E2 แสดง)'",
+              "    : !['open', 'resolved', 'ignored'].includes(status) ? 'issueStatus (open · resolved · ignored)'",
+              "    : reason.length < 10 ? 'issueReason (เหตุผล 10–500 ตัว)' : null;",
+              "if (missing) {",
+              "    const message = 'E4 ไม่ส่ง — ยังไม่ได้กรอก ' + missing + ' ในตัวแปรของ collection';",
+              "    if (pm.execution && typeof pm.execution.skipRequest === 'function') { console.warn(message); pm.execution.skipRequest(); }",
+              "    else throw new Error(message);",
+              "} else {",
+              "    // ตัวแปรชั่วคราวของคำขอนี้: fingerprint มี ':' ' ' '/' ได้ (encode ลง path) เหตุผลอาจมี \" หรือ \\ (escape ลง JSON)",
+              "    pm.variables.set('issuePath', encodeURIComponent(fp));",
+              "    pm.variables.set('issueReasonEscaped', JSON.stringify(reason).slice(1, -1));",
               "}"
             ]
           }
@@ -987,13 +998,13 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "// console.table ไม่มีใน sandbox ทุกรุ่น (newman ไม่มี) — ไม่มีก็พิมพ์ทีละแถว",
-              "const table = (rows) => (typeof console.table === 'function' ? console.table(rows) : rows.forEach((row) => console.log(row)));",
               "try {",
               "    const i = pm.response.json().issue;",
               "    console.log(i.fingerprint, '→', i.status, '·', i.statusReason);",
+              "    // หนึ่งการกรอก = หนึ่งการเปลี่ยน — ครั้งหน้า (และการรันทั้ง collection) ต้องกรอกใหม่",
+              "    if (pm.response.code === 200) ['issueFingerprint', 'issueStatus', 'issueReason'].forEach((key) => pm.collectionVariables.set(key, ''));",
               "} catch (e) {",
-              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 404, 503 …) — ดูที่ตัว response ได้เลย ตัวแปรที่กรอกไว้ยังอยู่",
               "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",
               "}"
             ]
@@ -1139,13 +1150,31 @@
       "key": "errorFingerprint",
       "value": "",
       "type": "string",
-      "description": "E1 เก็บให้ (encode แล้ว)"
+      "description": "E1 เก็บให้ (encode แล้ว) — ใช้กับ E2 เท่านั้น E4 ไม่ใช้"
     },
     {
       "key": "errorEventId",
       "value": "",
       "type": "string",
-      "description": "E2 เก็บให้"
+      "description": "E2 เก็บให้ — ใช้กับ E3"
+    },
+    {
+      "key": "issueFingerprint",
+      "value": "",
+      "type": "string",
+      "description": "E4 — fingerprint ของ issue ที่จะเปลี่ยนสถานะ ตามที่ E1/E2 แสดง (ไม่ต้อง encode) กรอกเอง"
+    },
+    {
+      "key": "issueStatus",
+      "value": "",
+      "type": "string",
+      "description": "E4 — open · resolved · ignored กรอกเอง"
+    },
+    {
+      "key": "issueReason",
+      "value": "",
+      "type": "string",
+      "description": "E4 — เหตุผล 10–500 ตัว (ลง statusReason และแถว ERROR_ISSUE_STATUS_CHANGED) กรอกเอง · E4 ล้างสามตัวนี้หลังเปลี่ยนสำเร็จ"
     }
   ]
 }
