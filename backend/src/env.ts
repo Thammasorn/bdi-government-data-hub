@@ -399,17 +399,17 @@ export const env = {
      * `INGEST_SERVER_TOKEN` ของ frontend · ว่าง (หรือค่าตัวอย่างบน production) = ไม่มีรายงานไหนได้เป็น frontend-server
      * ไม่กระทบอย่างอื่น
      */
+    ingestToken: productionSecret(
+      "INGEST_SERVER_TOKEN",
+      "dev-ingest-token-change-me",
+      "รายงาน error จาก Next server ถูกเก็บเป็นของเบราว์เซอร์ที่ยืนยันไม่ได้ (ingest.verified: false)",
+    ),
     /**
      * ผู้รับอีเมลสรุป error (workers/error-alerts.ts — delivery-worker เท่านั้น) คั่นด้วย comma **ว่าง = ปิดการแจ้งเตือน**
      * ทั้งหมด (issue ยังถูกเก็บตามปกติ) ค่าที่ไม่ใช่อีเมลถูกข้ามพร้อมคำเตือนตอนบูต ไม่ throw — ผู้รับพิมพ์ผิดคนเดียวต้องไม่ทำให้
      * worker บูตไม่ขึ้นแล้วอีเมลทั้งระบบหยุดตาม
      */
     alertEmails: emailList("ERROR_ALERT_EMAILS"),
-    ingestToken: productionSecret(
-      "INGEST_SERVER_TOKEN",
-      "dev-ingest-token-change-me",
-      "รายงาน error จาก Next server ถูกเก็บเป็นของเบราว์เซอร์ที่ยืนยันไม่ได้ (ingest.verified: false)",
-    ),
   },
 } as const;
 
