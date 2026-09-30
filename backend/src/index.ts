@@ -6,7 +6,7 @@ import { MulterError } from "multer";
 
 import { prisma } from "./db.js";
 import { env } from "./env.js";
-import { recordAdminAccess } from "./lib/admin-access.js";
+import { markLogApiRequest, recordAdminAccess } from "./lib/admin-access.js";
 import { adminTokenLooksWeak } from "./lib/auth.js";
 import { DocumentRenderError } from "./lib/document-render.js";
 import { correlationMiddleware, currentContext, referenceOf } from "./lib/context.js";
@@ -155,8 +155,8 @@ app.use(referenceOnServerErrors);
  * บันทึกการเรียก /api/admin* ทุกครั้ง รวมการอ่าน (lib/admin-access.ts — Mongo อย่างเดียว ไม่มีคำขอไหนรอ) ต้องมาหลัง
  * `correlationMiddleware` (จับบริบทของคำขอไว้ตอนผูก listener) และ**ก่อน `parseJsonBody`**: body ที่อ่านไม่ออก ใหญ่เกิน หรือ encoding
  * ที่ไม่รู้จัก ตอบ 400/413/415 จากตัวอ่านโดยไม่ถึง router เดิมตัวนี้อยู่หลังตัวอ่าน คำขอพวกนั้นจึงไม่มีบันทึกเลย (ตรวจขั้น 8
- * แบบค้านรอบสอง, 2026-10-01) และก่อน router ของ admin ทุกตัว: ผูก listener ไว้ก่อน `requireAdminToken` ตอบ 401 ข้าม
- * `/api/admin/logs*` เอง (บันทึกตัวเองเป็น AUDIT_LOG_READ)
+ * แบบค้านรอบสอง, 2026-10-01) และก่อน router ของ admin ทุกตัว: ผูก listener ไว้ก่อน `requireAdminToken` ตอบ 401 คำขอที่ถึง
+ * router ของ log ไม่ถูกบันทึกที่นี่ (บันทึกตัวเองเป็น AUDIT_LOG_READ) — `markLogApiRequest` ที่ mount ของมันข้างล่างเป็นตัวบอก
  */
 app.use("/api/admin", recordAdminAccess);
 /**
@@ -178,8 +178,12 @@ app.use("/api/auth", authRouter);
  * API อ่าน log — token ของตัวเอง (`x-log-token`) ไม่ใช่ admin token และมี 404 ของตัวเองท้าย router: ต้องมาก่อน adminRouter
  * ที่จับ /api/admin ทั้งก้อน ไม่งั้น path ที่พิมพ์ผิดใต้ /api/admin/logs ไปเจอ requireAdminToken แล้วได้แถว
  * ADMIN_TOKEN_REJECTED ที่ชวนเข้าใจผิด (proxy ของหน้าเว็บตอบ 404 ให้ /api/admin/logs* อยู่แล้ว — เรียกได้ทาง backend ตรง)
+ *
+ * `markLogApiRequest` อยู่ที่ mount เดียวกันเพื่อให้ lib/admin-access.ts รู้จากสิ่งที่ Express ทำจริงว่าคำขอไหนถึง router นี้
+ * ไม่ใช่จากการเดา path เอง (request target แบบเต็ม `GET http://host/api/admin/logs/…` ถึงที่นี่แต่ `originalUrl` ไม่ขึ้นต้นด้วย
+ * `/api`) ห้ามแยกสองตัวนี้ออกจากกัน
  */
-app.use(LOG_API_PATH, adminLogRouter);
+app.use(LOG_API_PATH, markLogApiRequest, adminLogRouter);
 app.use("/api/admin/users", adminUserRouter);
 // ต้องมาก่อน adminRouter ที่จับ /api/admin ทั้งก้อน ไม่งั้น /registrations/* ตกไปที่ 404 ของมัน
 app.use("/api/admin/registrations", adminRegistrationRouter);

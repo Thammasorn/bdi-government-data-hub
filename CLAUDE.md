@@ -1657,6 +1657,15 @@ the worker deletes open browser issues not seen for 30 days.
   `AsyncResource.bind`, so routes built on that `Router` are covered. A middleware mounted with
   `app.use` in `index.ts` is not; `express.json` is safe only because raw-body binds its own
   callback. Test uploads with a file of realistic size.
+- **`req.baseUrl` and `req.originalUrl` are what the caller typed, not what Express matched.**
+  Express matches mount paths case-insensitively and decodes `%xx` in route params, and
+  `GET http://host/api/…` (absolute-form) routes like `/api/…`. So `/API/Admin/Users/%65…` reaches
+  `GET /api/admin/users/:id`, while `baseUrl` says `/API/Admin/Users` and the raw id segment is not a
+  UUID. Until 2026-10-01 the admin access record matched its subject table against that `baseUrl`
+  and took the id out of `originalUrl`, so such a view of a person's e-mail and CID was recorded
+  without saying whose. Take ids from `req.params` (or `routeId` in the context), and routes from
+  the context, whose mount part `wrap()` lowercases. To learn whether a request reached a router,
+  mark it at that router's mount (`markLogApiRequest`). Don't regex-test the URL.
 - **Never print a body-parser error.** The `entity.parse.failed` error carries the raw body in
   `err.body`, and V8's message can quote it too (`Unexpected token 'S', ..."assword": S...`). The
   final error middleware used to `console.error(err)` it, so a truncated login JSON put the

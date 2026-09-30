@@ -32,9 +32,14 @@
  * เพราะ `requireAdminToken` ไม่ได้ตรวจ token ของคำขอนั้น (`token_accepted: false` ของมันไม่ได้แปลว่า token ผิด) และไม่มีแถว
  * `ADMIN_TOKEN_REJECTED` ใน Postgres ด้วยเหตุเดียวกัน: ไม่มีใครตัดสิน token นั้น ไม่มีโค้ดของ admin วิ่งและไม่มีข้อมูลออกไป
  *
- * ไม่บันทึก `/api/admin/logs*` — API อ่าน log บันทึกตัวเองเป็น `AUDIT_LOG_READ` อยู่แล้ว (สองบันทึกต่อการอ่านหนึ่งครั้งคือเสียงรบกวน)
- * เทียบกับ path ดิบแบบไม่สนตัวพิมพ์ แบบเดียวกับที่ Express ส่งคำขอไปหา router ของ log: `/API/Admin/LOGS/x` ถึง router ของ log
- * จึงไม่ถูกบันทึกที่นี่ ส่วน `/api/admin/%6Cogs` ไม่ถึง (Express ไม่ถอด `%xx` ก่อนเทียบ mount path) จึงถูกบันทึกเป็นการเรียก admin
+ * ไม่บันทึกคำขอที่ถึง router ของ log (`/api/admin/logs*`) — API อ่าน log บันทึกตัวเองเป็น `AUDIT_LOG_READ` อยู่แล้ว (สองบันทึก
+ * ต่อการอ่านหนึ่งครั้งคือเสียงรบกวน) ตัดสินจาก**สิ่งที่ Express ทำจริง**: index.ts ติด `markLogApiRequest` ไว้ที่ mount เดียวกับ
+ * router ของ log คำขอที่ถึงตรงนั้นถูกจำไว้ แล้วตอนคำตอบจบจึงข้าม เดิมเทียบ regex กับ `req.originalUrl` ซึ่งไม่ใช่ path ที่ Express
+ * ใช้: request target แบบเต็ม (`GET http://host/api/admin/logs/activity`) หรือ `#` ต่อท้าย `/logs` ถึง router ของ log แต่ regex
+ * ไม่ตรง การอ่าน log จึงได้ `ADMIN_API_REQUEST` แบบ `ANONYMOUS` ติดมาด้วย (ตรวจขั้น 8, 2026-10-01) ผลที่ตามมา:
+ * `/API/Admin/LOGS/x` ถึง router ของ log (Express ไม่สนตัวพิมพ์) จึงไม่ถูกบันทึกที่นี่ · `/api/admin/%6Cogs` ไม่ถึง (Express
+ * ไม่ถอด `%xx` ก่อนเทียบ mount path) จึงเป็นการเรียก admin · คำขอของ log API ที่ตัวอ่าน body ปฏิเสธก็ไม่ถึง router ของ log
+ * จึงถูกบันทึกที่นี่แบบ `token_checked: false` — การอ่านไม่เกิดและไม่มี `AUDIT_LOG_READ` นี่คือร่องรอยเดียวของมัน
  *
  * เพดานต่อ process (`admit`): token ที่ผ่าน ไม่เกิน 600 ต่อนาที · ไม่ผ่านหรือไม่มี token ไม่เกิน 60 ต่อนาที — คนยิง 401 รัว ๆ
  * ต้องไม่เติมดิสก์ แถว `ADMIN_TOKEN_REJECTED` ใน Postgres (throttle ของ lib/token-rejection.ts) ยังนับทุกครั้ง ที่เกินนับไว้
@@ -59,7 +64,6 @@ import { pathPattern } from "./token-rejection.js";
 /** รหัสของบันทึก — ไม่อยู่ใน `AuditAction` เพราะไม่เคยลง `audit_event` (category อยู่ใน lib/activity-shape.ts) */
 export const ADMIN_API_REQUEST = "ADMIN_API_REQUEST";
 
-const LOG_API = /^\/api\/admin\/logs(?:\/|\?|$)/i;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -115,13 +119,25 @@ export function adminAccessStats(): { recorded: number; suppressed: number; notQ
   return { ...stats };
 }
 
+/** คำขอที่ถึง router ของ log — ดูหัวไฟล์ WeakSet: คำขอที่จบแล้วถูกเก็บกวาดเอง ไม่ต้องลบ */
+const logApiRequests = new WeakSet<Request>();
+
+/**
+ * middleware — index.ts ติดไว้ที่ mount เดียวกับ router ของ log (`app.use(LOG_API_PATH, markLogApiRequest, adminLogRouter)`)
+ * คำขอที่ Express ส่งมาถึงตรงนี้คือคำขอที่ router ของ log รับไป ไม่ว่าผู้เรียกจะเขียน path แบบไหน
+ */
+export function markLogApiRequest(req: Request, _res: Response, next: NextFunction): void {
+  logApiRequests.add(req);
+  next();
+}
+
 /**
  * middleware — ติดตั้งด้วย `app.use("/api/admin", recordAdminAccess)` หลัง `correlationMiddleware` ก่อนตัวอ่าน body และ router ของ
- * admin ทุกตัว (index.ts) ไม่ throw ไม่ await ไม่เปลี่ยนคำตอบ
+ * admin ทุกตัว (index.ts) ไม่ throw ไม่ await ไม่เปลี่ยนคำตอบ ยังไม่รู้ตอนนี้ว่าคำขอจะถึง router ของ log ไหม — ตัดสินตอนคำตอบจบ
  */
 export function recordAdminAccess(req: Request, res: Response, next: NextFunction): void {
   const ctx = currentContext();
-  if (!env.logStore.enabled || !ctx || LOG_API.test(req.originalUrl)) {
+  if (!env.logStore.enabled || !ctx) {
     next();
     return;
   }
@@ -130,6 +146,7 @@ export function recordAdminAccess(req: Request, res: Response, next: NextFunctio
   const record = () => {
     if (recorded) return;
     recorded = true;
+    if (logApiRequests.has(req)) return;
     try {
       write(req, res, ctx, provided);
     } catch {
