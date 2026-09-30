@@ -46,6 +46,17 @@ const CHECK_TIMEOUT_MS = 6_000;
 /** ตอนปิด process รอ client ปิดไม่เกินเท่านี้ — compose ให้เวลาทั้งหมด 10 วินาทีก่อน SIGKILL */
 const CLOSE_WAIT_MS = 1_500;
 
+/** driver เลิกรอคำตอบของคำสั่งใดก็ตามหลังเท่านี้ (socketTimeoutMS) — ทุกคำสั่งของทุก process มีเพดานนี้ ไม่ว่าจะใส่อะไรไว้ */
+const SOCKET_TIMEOUT_MS = 5_000;
+
+/**
+ * `maxTimeMS` ที่ใส่ให้คำสั่งได้โดยไม่สัญญาเกินจริง — ต่ำกว่า SOCKET_TIMEOUT_MS หนึ่งวินาทีโดยตั้งใจ: server ยกเลิกคำสั่งเองแล้ว
+ * ตอบ error ของคำสั่งนั้นก่อนที่ driver จะตัด socket (ถ้าเท่ากันหรือมากกว่า driver ตัดก่อน pool ทั้งก้อนถูกล้าง —
+ * `PoolClearedOnNetworkError` — และ server ยังทำคำสั่งนั้นต่อเบื้องหลัง) งานที่ใหญ่กว่านี้ต้องแบ่งเป็นก้อน ไม่ใช่ขยายเพดาน:
+ * `maxTimeMS: 60_000` ไม่ได้ให้เวลาหกสิบวินาที มันถูก socketTimeoutMS ตัดที่ห้าวินาทีเสมอ
+ */
+export const MONGO_COMMAND_MAX_MS = SOCKET_TIMEOUT_MS - 1_000;
+
 /**
  * Mongo ช้าหรือล่มต้องรู้ผลเร็ว ไม่ใช่ค้างตาม default ของ driver (เลือก server 30 วินาที, socket ไม่มีเพดาน)
  * pool เล็ก: backend 5, worker 3 — ตั้งจาก startLogStore()
@@ -53,7 +64,7 @@ const CLOSE_WAIT_MS = 1_500;
 const CLIENT_TIMEOUTS = {
   serverSelectionTimeoutMS: 2_000,
   connectTimeoutMS: 2_000,
-  socketTimeoutMS: 5_000,
+  socketTimeoutMS: SOCKET_TIMEOUT_MS,
 } satisfies MongoClientOptions;
 
 /**

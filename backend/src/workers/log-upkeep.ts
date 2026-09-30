@@ -22,7 +22,7 @@ import type { Db } from "mongodb";
 
 import { env } from "../env.js";
 import { captureError } from "../lib/error-capture.js";
-import { logDb } from "../lib/log-store.js";
+import { MONGO_COMMAND_MAX_MS, logDb } from "../lib/log-store.js";
 
 /**
  * index แบบธรรมดาทั้งหมด (ไม่มี partial / sparse / $text) — ชุดที่ plan §3 ระบุ
@@ -60,7 +60,9 @@ const QUOTA_EVERY_MS = 60 * 60_000;
 const INDEX_RECHECK_MS = 60 * 60_000;
 /** ธงลงเมื่อต่ำกว่าสัดส่วนนี้ของเพดาน */
 const CLEAR_BELOW = 0.9;
-/** หนึ่งรอบทั้งรอบ — createIndex บน collection ใหญ่ใช้เวลาได้ แต่ต้องไม่ค้างจนรอบถัดไปซ้อน */
+/**
+ * หนึ่งรอบทั้งรอบ (index สิบแปดตัวกับ dbStats — แต่ละคำสั่งถูก driver ตัดที่ 5 วินาทีอยู่แล้ว) ต้องไม่ค้างจนรอบถัดไปซ้อน
+ */
 const TICK_TIMEOUT_MS = 45_000;
 const CAPTURE_EVERY_MS = 10 * 60_000;
 
@@ -148,7 +150,10 @@ async function ensureIndexes(db: Db): Promise<void> {
   for (const [index, spec] of INDEXES.entries()) {
     if (createdIndexes.has(index) || refusedIndexes.has(index)) continue;
     try {
-      await db.collection(spec.collection).createIndex(spec.keys, { maxTimeMS: 30_000 });
+      // ไม่มี maxTimeMS: เพดานจริงคือ socketTimeoutMS 5 วินาทีของ driver (lib/log-store.ts) — เดิมใส่ 30 วินาทีซึ่ง driver ไม่เคยให้
+      // index ที่สร้างนานกว่านั้น (collection ใหญ่) driver เลิกรอแล้วได้ error ชั่วคราว (`isTransient`) ส่วน server สร้างต่อจนเสร็จ
+      // รอบหน้า createIndex ของ index ที่เสร็จแล้วไม่ทำอะไร
+      await db.collection(spec.collection).createIndex(spec.keys);
       createdIndexes.add(index);
     } catch (err) {
       if (isTransient(err)) throw err;
@@ -179,7 +184,7 @@ async function storeWasReset(db: Db): Promise<boolean> {
   if (lastWrittenQuotaAt === null) return false;
   const state = await db
     .collection<RelayStateDoc>("relay_state")
-    .findOne({ _id: "audit_event" }, { projection: { quotaCheckedAt: 1 }, maxTimeMS: 5_000 });
+    .findOne({ _id: "audit_event" }, { projection: { quotaCheckedAt: 1 }, maxTimeMS: MONGO_COMMAND_MAX_MS });
   const seen = state?.quotaCheckedAt;
   if (seen instanceof Date && seen.getTime() === lastWrittenQuotaAt.getTime()) return false;
   console.log(
@@ -350,7 +355,10 @@ async function checkQuota(db: Db): Promise<void> {
   const maxMb = env.logStore.maxMb;
 
   const relay = db.collection<RelayStateDoc>("relay_state");
-  const previous = await relay.findOne({ _id: "audit_event" }, { projection: { overQuota: 1 }, maxTimeMS: 5_000 });
+  const previous = await relay.findOne(
+    { _id: "audit_event" },
+    { projection: { overQuota: 1 }, maxTimeMS: MONGO_COMMAND_MAX_MS },
+  );
   const wasOver = previous?.overQuota === true;
   const overQuota = storageMb > maxMb ? true : storageMb < maxMb * CLEAR_BELOW ? false : wasOver;
 

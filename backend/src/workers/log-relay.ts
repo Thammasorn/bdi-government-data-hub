@@ -76,7 +76,7 @@ import {
   ERROR_EVENT_DAYS,
   RUNTIME_EVENT_DAYS,
 } from "../lib/log-retention.js";
-import { logDb } from "../lib/log-store.js";
+import { MONGO_COMMAND_MAX_MS, logDb } from "../lib/log-store.js";
 
 const STATE_ID = "audit_event";
 
@@ -98,13 +98,22 @@ const RECONCILE_PAGES_MAX = 200;
 const CAUGHT_UP_FRESH_MS = 60_000;
 /** 03:00 น. เวลาไทย (UTC+7) = 20:00 UTC ของวันก่อน */
 const PRUNE_HOUR_UTC = 20;
-const DELETE_CHUNK = 5_000;
-/** prune หนึ่งรอบลบไม่เกิน 40 × 5,000 ต่อเงื่อนไข — ค้างมากกว่านั้น (worker ดับไปนาน) รอบถัดไปใน 1 นาทีทำต่อ */
-const DELETE_CHUNKS_MAX = 40;
+/**
+ * prune ทำทีละก้อนเท่านี้ (`inChunks`) ทั้งการลบและการตัด IP/UA — ก้อนหนึ่งคือคำสั่งหา id หนึ่งคำสั่งกับคำสั่งลบหรือแก้หนึ่งคำสั่ง
+ * แต่ละคำสั่งต้องจบใน MONGO_MS
+ */
+const PRUNE_CHUNK = 5_000;
+/** prune หนึ่งรอบทำไม่เกิน 40 × 5,000 ต่อเงื่อนไข — ค้างมากกว่านั้น (worker ดับไปนาน) รอบถัดไปใน 1 นาทีทำต่อ */
+const PRUNE_CHUNKS_MAX = 40;
 
 const PG_TIMEOUT_MS = 15_000;
-const MONGO_READ_MS = 5_000;
-const MONGO_WRITE_MS = 60_000;
+/**
+ * `maxTimeMS` ของทุกคำสั่ง Mongo ในไฟล์นี้ ทั้งอ่านและเขียน — เพดานจริงของทุกคำสั่งคือ socketTimeoutMS 5 วินาทีของ driver
+ * (lib/log-store.ts) ค่านี้ต่ำกว่านั้นหนึ่งวินาทีให้ server ยกเลิกเองก่อน เดิมมี `MONGO_MS = 60_000` ของการเขียนและ prune
+ * ซึ่งสัญญาหกสิบวินาทีที่ driver ไม่เคยให้ — `updateMany` ที่ตัด IP/UA ทั้งปีในคำสั่งเดียวโดนตัดที่ห้าวินาทีแล้ว server ยังทำต่อ
+ * เบื้องหลังขณะที่ worker นับว่าล้ม (ตรวจขั้น 7 แบบค้าน, 2026-09-30) งานที่ยาวกว่านี้แบ่งก้อน (`inChunks`) ไม่ขยายเพดาน
+ */
+const MONGO_MS = MONGO_COMMAND_MAX_MS;
 /** cursor ที่อยู่ในอนาคตเกินนี้ถือว่าเสีย — เริ่มใหม่จากแถวแรก (ดู `cursorFrom`) */
 const FUTURE_TOLERANCE_MS = 5 * 60_000;
 const CAPTURE_EVERY_MS = 10 * 60_000;
@@ -238,7 +247,7 @@ async function relayTick(): Promise<void> {
     // ต่อไม่ได้ — log-store.ts พิมพ์สถานะไปแล้ว รอบหน้าลองใหม่
     if (!db) return;
     const relay = db.collection<RelayStateDoc>("relay_state");
-    const state = await relay.findOne({ _id: STATE_ID }, { maxTimeMS: MONGO_READ_MS });
+    const state = await relay.findOne({ _id: STATE_ID }, { maxTimeMS: MONGO_MS });
     await checkIdentity(relay, state);
 
     const started = new Date();
@@ -258,7 +267,7 @@ async function relayTick(): Promise<void> {
       if (state?.cursor !== undefined && state.cursor !== null) unset.cursor = "";
       if (state?.caughtUpAt !== undefined) unset.caughtUpAt = "";
       if (Object.keys(unset).length > 0) {
-        await relay.updateOne({ _id: STATE_ID }, { $unset: unset }, { maxTimeMS: MONGO_READ_MS });
+        await relay.updateOne({ _id: STATE_ID }, { $unset: unset }, { maxTimeMS: MONGO_MS });
       }
     }
     let cursor = from;
@@ -296,7 +305,7 @@ async function relayTick(): Promise<void> {
     await relay.updateOne(
       { _id: STATE_ID },
       { $set: { lastRunAt: new Date(), lastBatch: inserted, lastError: null } },
-      { upsert: true, maxTimeMS: MONGO_READ_MS },
+      { upsert: true, maxTimeMS: MONGO_MS },
     );
     if (caughtUp) await markCaughtUp(relay, cursor, started);
 
@@ -383,7 +392,7 @@ async function advanceCursor(relay: Collection<RelayStateDoc>, expected: Cursor,
     expected === EPOCH
       ? ({ cursor: null } as unknown as Filter<RelayStateDoc>)
       : { "cursor.exact": expected.exact, "cursor.id": expected.id };
-  const result = await relay.updateOne({ _id: STATE_ID, ...guard }, { $set: { cursor: next } }, { maxTimeMS: MONGO_READ_MS });
+  const result = await relay.updateOne({ _id: STATE_ID, ...guard }, { $set: { cursor: next } }, { maxTimeMS: MONGO_MS });
   return result.matchedCount === 1;
 }
 
@@ -397,7 +406,7 @@ async function markCaughtUp(relay: Collection<RelayStateDoc>, cursor: Cursor, at
     cursor === EPOCH
       ? ({ cursor: null } as unknown as Filter<RelayStateDoc>)
       : { "cursor.exact": cursor.exact, "cursor.id": cursor.id };
-  await relay.updateOne({ _id: STATE_ID, ...guard }, { $set: { caughtUpAt: at } }, { maxTimeMS: MONGO_READ_MS });
+  await relay.updateOne({ _id: STATE_ID, ...guard }, { $set: { caughtUpAt: at } }, { maxTimeMS: MONGO_MS });
 }
 
 function reportBadCursor(why: string) {
@@ -489,7 +498,7 @@ function rowLike(row: RawAuditRow): AuditRowLike {
 async function writeRows(db: Db, client: PrismaClient, rows: RawAuditRow[]): Promise<number> {
   const activity = db.collection("activity") as unknown as ActivityCollection;
   const existing = await activity
-    .find({ _id: { $in: rows.map((row) => row.id) } }, { projection: { _id: 1 }, maxTimeMS: MONGO_READ_MS })
+    .find({ _id: { $in: rows.map((row) => row.id) } }, { projection: { _id: 1 }, maxTimeMS: MONGO_MS })
     .toArray();
   const have = new Set(existing.map((doc) => doc._id));
   const missing = rows.filter((row) => !have.has(row.id));
@@ -502,7 +511,7 @@ async function writeRows(db: Db, client: PrismaClient, rows: RawAuditRow[]): Pro
     return { updateOne: { filter: { _id }, update: { $setOnInsert: fields }, upsert: true } };
   });
   try {
-    const result = await activity.bulkWrite(operations, { ordered: false, maxTimeMS: MONGO_WRITE_MS });
+    const result = await activity.bulkWrite(operations, { ordered: false, maxTimeMS: MONGO_MS });
     return result.upsertedCount;
   } catch (err) {
     // เหมือน insertAll ใน lib/error-capture.ts: 11000 = อีกตัวเขียนไปแล้ว (สำเร็จ) · รหัสใน DOCUMENT_REJECTED =
@@ -694,7 +703,7 @@ async function checkIdentity(relay: Collection<RelayStateDoc>, state: RelayState
     captureError(new Error(message), { level: "warning", tag: "log-relay.schema", fingerprint: "log-relay:schema-changed" });
   }
   if (Object.keys(set).length > 0) {
-    await relay.updateOne({ _id: STATE_ID }, { $set: set }, { upsert: true, maxTimeMS: MONGO_READ_MS });
+    await relay.updateOne({ _id: STATE_ID }, { $set: set }, { upsert: true, maxTimeMS: MONGO_MS });
   }
 }
 
@@ -706,7 +715,7 @@ async function noteError(err: unknown) {
       .updateOne(
         { _id: STATE_ID },
         { $set: { lastRunAt: new Date(), lastError: errorName(err) } },
-        { upsert: true, maxTimeMS: MONGO_READ_MS },
+        { upsert: true, maxTimeMS: MONGO_MS },
       );
   } catch {
     // Mongo เองที่ล้ม — ไม่มีที่ให้จด บรรทัดใน stdout กับ error ที่เก็บไว้พอแล้ว
@@ -722,7 +731,7 @@ async function maintenanceTick(): Promise<void> {
     const db = await logDb();
     if (!db) return;
     const relay = db.collection<RelayStateDoc>("relay_state");
-    const state = await relay.findOne({ _id: STATE_ID }, { maxTimeMS: MONGO_READ_MS });
+    const state = await relay.findOne({ _id: STATE_ID }, { maxTimeMS: MONGO_MS });
     const now = new Date();
     const lastPruneAt = pastDate(state?.lastPruneAt, "lastPruneAt", now);
 
@@ -732,7 +741,7 @@ async function maintenanceTick(): Promise<void> {
         { _id: STATE_ID },
         // ลบไม่หมดในรอบเดียว (ค้างมาก) — ไม่เลื่อน lastPruneAt รอบถัดไปในหนึ่งนาทีทำต่อ
         { $set: { lastPrune: { at: now, ...summary }, ...(summary.complete ? { lastPruneAt: now } : {}) } },
-        { upsert: true, maxTimeMS: MONGO_READ_MS },
+        { upsert: true, maxTimeMS: MONGO_MS },
       );
       const total =
         summary.activityDeleted + summary.errorEventsDeleted + summary.runtimeEventsDeleted + summary.issuesDeleted;
@@ -762,7 +771,7 @@ async function maintenanceTick(): Promise<void> {
       await relay.updateOne(
         { _id: STATE_ID },
         { $set: { lastReconcileAt: now, lastReconcile: summary } },
-        { upsert: true, maxTimeMS: MONGO_READ_MS },
+        { upsert: true, maxTimeMS: MONGO_MS },
       );
       if (summary.inserted > 0) {
         console.warn(
@@ -844,9 +853,10 @@ function groupByDays(pick: (category: ActivityCategory) => number | null): Map<n
 /**
  * ลบและตัดตามอายุ (lib/log-retention.ts) ณ เวลา `now` — export ไว้ให้ทดสอบด้วยนาฬิกาที่เลื่อนได้
  *
- * ลบทีละก้อน 5,000 ด้วย `_id` (หา id ก่อนแล้วลบ) ไม่ใช่ `deleteMany` ครั้งเดียวทั้งก้อน: คำสั่งเดียวที่ลบเป็นแสนใช้เวลาเกิน
- * socketTimeoutMS ของ driver แล้ว server ยังลบต่อเบื้องหลังขณะที่ worker คิดว่าล้ม ก้อนเล็กจบในเวลาและนับได้จริง
- * IP/UA ถูก `$unset` ไม่ใช่ตั้งเป็น null — เอกสารที่ตัดแล้วไม่ตรงเงื่อนไข `$exists` อีก รอบถัดไปจึงไม่แตะซ้ำ
+ * ทั้งการลบและการตัด IP/UA ทำทีละก้อน 5,000 ด้วย `_id` (`inChunks`) ไม่ใช่ `deleteMany` / `updateMany` ครั้งเดียวทั้งก้อน —
+ * เดิมการตัด IP/UA เป็น `updateMany` คำสั่งเดียว ซึ่งวันแรกที่แถวอายุครบปี (หรือหลัง rebuild) คือทั้งปีในคำสั่งเดียว เกิน
+ * socketTimeoutMS ของ driver แน่นอน IP/UA ถูก `$unset` ไม่ใช่ตั้งเป็น null — เอกสารที่ตัดแล้วไม่ตรงเงื่อนไข `$exists` อีก
+ * ก้อนถัดไปและรอบถัดไปจึงไม่แตะซ้ำ
  */
 export async function pruneLogStore(db: Db, now: Date): Promise<PruneSummary> {
   const summary: PruneSummary = {
@@ -858,9 +868,9 @@ export async function pruneLogStore(db: Db, now: Date): Promise<PruneSummary> {
     complete: true,
   };
   const activity = db.collection("activity") as unknown as ActivityCollection;
-  const tally = (result: { deleted: number; complete: boolean }) => {
+  const tally = (result: { count: number; complete: boolean }) => {
     if (!result.complete) summary.complete = false;
-    return result.deleted;
+    return result.count;
   };
 
   for (const [days, categories] of groupByDays((c) => ACTIVITY_RETENTION[c].deleteAfterDays)) {
@@ -868,17 +878,26 @@ export async function pruneLogStore(db: Db, now: Date): Promise<PruneSummary> {
       await deleteInChunks(activity, { category: { $in: categories }, occurredAt: { $lt: daysBefore(now, days) } }),
     );
   }
+  // ตัด IP/UA ทีละก้อนเหมือนการลบ — เอกสารที่ตัดแล้วไม่ตรง `$exists` อีก ก้อนถัดไปจึงเป็นเอกสารชุดใหม่เสมอ
   for (const [days, categories] of groupByDays((c) => ACTIVITY_RETENTION[c].stripClientAfterDays)) {
-    const result = await activity.updateMany(
-      {
-        category: { $in: categories },
-        occurredAt: { $lt: daysBefore(now, days) },
-        $or: [{ "request.ip": { $exists: true } }, { "request.userAgent": { $exists: true } }],
-      },
-      { $unset: { "request.ip": "", "request.userAgent": "" } },
-      { maxTimeMS: MONGO_WRITE_MS },
+    summary.activityStripped += tally(
+      await inChunks(
+        activity,
+        {
+          category: { $in: categories },
+          occurredAt: { $lt: daysBefore(now, days) },
+          $or: [{ "request.ip": { $exists: true } }, { "request.userAgent": { $exists: true } }],
+        },
+        async (ids) =>
+          (
+            await activity.updateMany(
+              { _id: { $in: ids } },
+              { $unset: { "request.ip": "", "request.userAgent": "" } },
+              { maxTimeMS: MONGO_MS },
+            )
+          ).modifiedCount,
+      ),
     );
-    summary.activityStripped += result.modifiedCount;
   }
 
   const errors = db.collection("error_events") as unknown as ActivityCollection;
@@ -902,21 +921,40 @@ export async function pruneLogStore(db: Db, now: Date): Promise<PruneSummary> {
   return summary;
 }
 
-async function deleteInChunks(
+function deleteInChunks(
   collection: ActivityCollection,
   filter: Filter<{ _id: string; [key: string]: unknown }>,
-): Promise<{ deleted: number; complete: boolean }> {
-  let deleted = 0;
-  for (let chunk = 0; chunk < DELETE_CHUNKS_MAX && !stopped; chunk++) {
-    const ids = await collection
-      .find(filter, { projection: { _id: 1 }, limit: DELETE_CHUNK, maxTimeMS: MONGO_WRITE_MS })
+): Promise<{ count: number; complete: boolean }> {
+  return inChunks(
+    collection,
+    filter,
+    async (ids) => (await collection.deleteMany({ _id: { $in: ids } }, { maxTimeMS: MONGO_MS })).deletedCount,
+  );
+}
+
+/**
+ * ทำ `apply` กับเอกสารที่ตรง `filter` ทีละ PRUNE_CHUNK ตัว (หา id ก่อน แล้วสั่งด้วย `_id`) ไม่เกิน PRUNE_CHUNKS_MAX ก้อน —
+ * คืนจำนวนที่ `apply` นับได้ และ `complete: false` ถ้ายังเหลือ (รอบหน้าทำต่อ) `apply` ต้องทำให้เอกสารที่ทำแล้วไม่ตรง `filter`
+ * อีก (ลบ หรือ `$unset` ฟิลด์ที่ filter ถามหา) ไม่งั้นก้อนถัดไปได้ id ชุดเดิม
+ *
+ * ไม่ใช่คำสั่งเดียวทั้งก้อน: คำสั่งเดียวที่แตะเป็นแสนใช้เวลาเกิน socketTimeoutMS ของ driver แล้ว server ยังทำต่อเบื้องหลังขณะที่
+ * worker คิดว่าล้ม ก้อนเล็กจบในเวลาและนับได้จริง
+ */
+async function inChunks(
+  collection: ActivityCollection,
+  filter: Filter<{ _id: string; [key: string]: unknown }>,
+  apply: (ids: string[]) => Promise<number>,
+): Promise<{ count: number; complete: boolean }> {
+  let count = 0;
+  for (let chunk = 0; chunk < PRUNE_CHUNKS_MAX && !stopped; chunk++) {
+    const found = await collection
+      .find(filter, { projection: { _id: 1 }, limit: PRUNE_CHUNK, maxTimeMS: MONGO_MS })
       .toArray();
-    if (ids.length === 0) return { deleted, complete: true };
-    const result = await collection.deleteMany({ _id: { $in: ids.map((doc) => doc._id) } }, { maxTimeMS: MONGO_WRITE_MS });
-    deleted += result.deletedCount;
-    if (ids.length < DELETE_CHUNK) return { deleted, complete: true };
+    if (found.length === 0) return { count, complete: true };
+    count += await apply(found.map((doc) => doc._id));
+    if (found.length < PRUNE_CHUNK) return { count, complete: true };
   }
-  return { deleted, complete: false };
+  return { count, complete: false };
 }
 
 interface ReconcileSummary {
@@ -953,7 +991,7 @@ async function reconcile(db: Db, client: PrismaClient, now: Date): Promise<Recon
   const activity = db.collection("activity") as unknown as ActivityCollection;
   const mongo = await activity.countDocuments(
     { source: "audit_event", occurredAt: { $gte: from, $lt: to } },
-    { maxTimeMS: MONGO_READ_MS },
+    { maxTimeMS: MONGO_MS },
   );
   let inserted = 0;
   if (mongo !== postgres) {

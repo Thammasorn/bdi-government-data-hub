@@ -58,7 +58,7 @@ import { hashKeyOf, type ActivityCategory, type ActivitySource, type ActivityVia
 import { Router } from "../lib/async-route.js";
 import { AuditAction, AuditSubject, logAudit, recordLogRead } from "../lib/audit.js";
 import { captureError, errorCaptureStats } from "../lib/error-capture.js";
-import { logDb, logStoreStatus } from "../lib/log-store.js";
+import { MONGO_COMMAND_MAX_MS, logDb, logStoreStatus } from "../lib/log-store.js";
 import { maskCidText, scrubClipped } from "../lib/redact.js";
 import { requireLogReader, requireReadReason } from "../middleware/auth.js";
 
@@ -73,12 +73,8 @@ const PAGE_SIZE_DEFAULT = 50;
 const PAGE_SIZE_MAX = 200;
 /** นับจำนวนไม่เกินนี้ — เกินแล้ว `totalIsLowerBound: true` และห้ามเปิดหน้าที่เริ่มเลยจากนี้ (ให้แคบตัวกรองแทน) */
 const TOTAL_CAP = 10_000;
-/**
- * เพดานของทุกคำสั่งอ่านฝั่ง server — ต่ำกว่า socketTimeoutMS 5 วินาทีของ driver (lib/log-store.ts) โดยตั้งใจ: ถ้าเท่ากัน driver
- * ตัด socket ก่อนที่ server จะยกเลิกคำสั่งเอง แล้ว pool ทั้งก้อนถูกล้าง (`PoolClearedOnNetworkError`) แทนที่จะได้ error ของ
- * คำสั่งเดียว
- */
-const READ_MAX_MS = 4_000;
+/** เพดานของทุกคำสั่งอ่านฝั่ง server — ต่ำกว่า socketTimeoutMS ของ driver โดยตั้งใจ (`MONGO_COMMAND_MAX_MS` ใน lib/log-store.ts) */
+const READ_MAX_MS = MONGO_COMMAND_MAX_MS;
 /**
  * เพดานของ `store()` (ต่อ + ping) — Mongo ที่หยุดตอบภายใน serverSelectionTimeoutMS 2 วินาทีอยู่แล้ว แต่ Mongo ที่ค้าง (ต่อได้
  * แต่ไม่ตอบ: `docker compose pause`, เครื่องแกว่ง) ค้าง ping ไว้จนถึง socketTimeoutMS 5 วินาที เพดานนี้ทำให้ทั้งสองกรณีตอบ 503
