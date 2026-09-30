@@ -11,6 +11,7 @@
  *     (frontend/app/api/[...path]/route.ts) — เรียกได้ทาง backend ตรงเท่านั้น
  *   - ทุกคำขอผ่าน `requireLogReader` (token แยก ผู้อ่าน เหตุผล) activity · timeline · trace ต้องมีเหตุผลด้วย (`requireReadReason`)
  *   - ตัวระบุบุคคล (`person` `cid` `email`) มาทาง header `x-log-*` เท่านั้น เหมือนเหตุผล — ไม่อยู่ใน URL (`SUBJECT_HEADERS`)
+ *     และรับเฉพาะที่ endpoint กรองด้วยมันได้จริง (`SUBJECT_ENDPOINTS`) ที่อื่นตอบ 400 ไม่เพิกเฉยเงียบ ๆ
  *   - **ทุกการอ่านถูกบันทึกก่อนส่งข้อมูล** ลำดับในแต่ละ route: ตรวจพารามิเตอร์ → log store ตอบได้ไหม (`store()`) →
  *     แปลงตัวระบุ (Postgres — คำขอที่ถูกลบไปแล้วจาก log store) → บันทึก (`recordRead()`) → อ่าน — คำขอที่ผิดรูปหรืออ่าน
  *     ไม่ได้อยู่แล้วจึงไม่เกิดบันทึกเปล่า ๆ
@@ -371,6 +372,47 @@ function parse<T extends z.ZodType>(
 const SUBJECT_HEADERS = { person: "x-log-person", cid: "x-log-cid", email: "x-log-email" } as const;
 type SubjectName = keyof typeof SUBJECT_HEADERS;
 
+/**
+ * endpoint ที่รับตัวระบุแต่ละตัว — ที่เดียวที่บอก ข้อความ 400 ทุกข้อ (header ผิดที่ และชื่อเดียวกันใน query) อ่านจากตารางนี้
+ * ต้องตรงกับ `withSubjectHeaders(req, res, [...])` ของแต่ละ route: `/activity` รับทั้งสาม `/timeline` รับแค่ `person`
+ * (เส้นเวลาของคนเปิดด้วยเลขบัตรหรืออีเมลที่ไม่มีบัญชีไม่ได้ — ต้องแปลงเป็นคนก่อน) endpoint อื่นไม่รับเลย
+ */
+const SUBJECT_ENDPOINTS: Readonly<Record<SubjectName, readonly string[]>> = {
+  person: [`GET ${LOG_API_PATH}/activity`, `GET ${LOG_API_PATH}/timeline`],
+  cid: [`GET ${LOG_API_PATH}/activity`],
+  email: [`GET ${LOG_API_PATH}/activity`],
+};
+
+/** "ใช้ได้เฉพาะ GET …/activity และ GET …/timeline" ของตัวระบุหนึ่งตัว — ใช้ในข้อความ 400 ทุกข้อของตัวระบุ */
+function whereAccepted(name: SubjectName): string {
+  return `${SUBJECT_HEADERS[name]} ใช้ได้เฉพาะ ${SUBJECT_ENDPOINTS[name].join(" และ ")}`;
+}
+
+/** ชื่อใน query ที่เป็นตัวระบุบุคคล (ไม่สนตัวพิมพ์ — `?Person=` ก็นับ) */
+const SUBJECT_IN_QUERY = /^(?:person|cid|email)$/i;
+
+/**
+ * ตัวระบุบุคคลใน URL → 400 ทุก endpoint (ติดตั้งต่อจาก `requireLogReader` ให้ token ผิดยังได้ 401 ก่อน) — ด้วยเหตุผลเดียวกับ
+ * `x-log-reason`: URL ไปจบใน log ของ proxy และ edge ทุกชั้น และ production เรียกผ่าน Cloudflare ปฏิเสธดัง ๆ ให้คนแก้ Postman
+ * ไม่ใช่ทิ้งค่าเงียบ ๆ ซึ่งได้ผลที่ไม่ได้กรอง การปฏิเสธไม่ลบ URL ที่ส่งไปแล้ว มันกันไม่ให้ใครสร้างงานบนทางนั้น
+ *
+ * ข้อความบอก header ที่ใช้แทน **และ endpoint ที่รับมัน** — เดิมบอกแค่ "ส่งใน header x-log-person" คนที่ส่ง `?person=` ไปที่
+ * `/errors/issues` ทำตามแล้วได้ผลเต็มที่ไม่ได้กรอง (header ถูกเพิกเฉยเงียบ ๆ) ตอนนี้ endpoint นั้นตอบ 400 ด้วย
+ * (`withSubjectHeaders`) แต่ข้อความที่พาไปถูกที่ตั้งแต่แรกดีกว่าข้อความที่พาไปชนอีกข้อ
+ */
+function refuseSubjectsInQuery(req: Request, res: Response, next: () => void) {
+  const key = Object.keys(req.query).find((name) => SUBJECT_IN_QUERY.test(name));
+  if (key === undefined) {
+    next();
+    return;
+  }
+  const name = key.toLowerCase() as SubjectName;
+  const message =
+    `ห้ามส่ง ${key} ใน URL (URL ถูกเก็บใน log ของ proxy และ edge ทุกชั้น) — ส่งใน header ${SUBJECT_HEADERS[name]} แทน ` +
+    `(ค่าที่ไม่ใช่ ASCII ให้ encodeURIComponent) · ${whereAccepted(name)}`;
+  res.status(400).json({ error: "validation", message, fields: { [key]: message } });
+}
+
 /** ค่าของ header ตัวระบุ — ASCII ที่พิมพ์ได้ ถอด percent-encoding แล้ว หรือ null ถ้าใช้ไม่ได้ */
 function decodeSubjectHeader(raw: string): string | null {
   if (/[^\x20-\x7e]/.test(raw)) return null;
@@ -383,8 +425,11 @@ function decodeSubjectHeader(raw: string): string | null {
 
 /**
  * query รวมกับตัวระบุบุคคลจาก header ที่ endpoint นี้รับ (`accepted`) — ตอบ 400 เองแล้วคืน null ถ้า header ถอดไม่ได้ หรือเป็นตัวที่
- * endpoint นี้ไม่รับ: header ที่ถูกเพิกเฉยเงียบ ๆ ทำให้ผลที่ไม่ได้กรองดูเหมือนผลที่กรองแล้ว · header ว่างส่งต่อเป็นค่าว่าง ให้
- * schema ตอบว่าต้องใส่อะไร (ตัวแปร Postman ที่ยังไม่ได้กรอก — เหมือน `?person=` ว่างเดิม)
+ * endpoint นี้ไม่รับ **รวมถึง endpoint ที่ไม่รับตัวไหนเลย** (`accepted` ว่าง — ทุก route นอกจาก `/activity` กับ `/timeline`
+ * เรียกด้วย `[]`): header ที่ถูกเพิกเฉยเงียบ ๆ ทำให้ผลที่ไม่ได้กรองดูเหมือนผลที่กรองแล้ว เดิมห้า endpoint (`/errors/issues`
+ * `/trace/:ref` `/activity/:id` `/errors/…` `/status`) ไม่ได้ดู header เลย ตอบเต็มโดยไม่มีอะไรบอกว่าตัวกรองไม่ได้ใช้ (ตรวจขั้น 7
+ * แบบค้าน, 2026-09-30) · header ว่างส่งต่อเป็นค่าว่าง ให้ schema ตอบว่าต้องใส่อะไร (ตัวแปร Postman ที่ยังไม่ได้กรอก)
+ * header ที่ Postman ปิดไว้ (`disabled`) ไม่ถูกส่ง จึงไม่ชนข้อนี้
  */
 function withSubjectHeaders(req: Request, res: Response, accepted: readonly SubjectName[]): Record<string, unknown> | null {
   const input: Record<string, unknown> = { ...req.query };
@@ -393,8 +438,11 @@ function withSubjectHeaders(req: Request, res: Response, accepted: readonly Subj
     const raw = req.header(header);
     if (raw === undefined) continue;
     if (!accepted.includes(name)) {
-      const usable = accepted.map((n) => SUBJECT_HEADERS[n]).join(" ");
-      invalid(res, { [header]: `endpoint นี้ไม่รับ ${header}${usable ? ` — รับแค่ ${usable}` : ""}` });
+      invalid(res, {
+        [header]:
+          `endpoint นี้ไม่กรองด้วย ${header} — ${whereAccepted(name)} ส่งมาที่นี่ผลจะไม่ได้กรองตามคนนั้น ` +
+          "เอา header นี้ออก หรือเรียก endpoint ข้างต้นแทน",
+      });
       return null;
     }
     const value = decodeSubjectHeader(raw);
@@ -405,6 +453,11 @@ function withSubjectHeaders(req: Request, res: Response, accepted: readonly Subj
     input[name] = value;
   }
   return input;
+}
+
+/** endpoint ที่ไม่รับตัวระบุบุคคล — ตอบ 400 เองแล้วคืน false ถ้ามี `x-log-person` / `x-log-cid` / `x-log-email` มา */
+function noSubjectHeaders(req: Request, res: Response): boolean {
+  return withSubjectHeaders(req, res, []) !== null;
 }
 
 /** ค่าจาก path (`:id`, `:fingerprint`) — ข้อผิดลงชื่อพารามิเตอร์นั้น ไม่ใช่ `_` */
@@ -860,7 +913,7 @@ function correlationFilter(prefix: string): Filter<Document> {
 
 // --------------------------------------------------------------------------------------------- routes
 
-adminLogRouter.use(requireLogReader);
+adminLogRouter.use(requireLogReader, refuseSubjectsInQuery);
 
 /**
  * สถานะของ log store — **ไม่บันทึกการอ่าน** (ไม่มีข้อมูลบุคคล) รายละเอียดที่ `/health/ready` ไม่แสดงต่อสาธารณะอยู่ที่นี่
@@ -868,7 +921,7 @@ adminLogRouter.use(requireLogReader);
  * forward pass ของ relay อ่านจนสุดครั้งล่าสุด (`relay_state.caughtUpAt`) — null ถ้า relay ยังไม่เคยตามทัน
  */
 adminLogRouter.get("/status", async (req, res) => {
-  if (!parse(noQuery, req.query, res)) return;
+  if (!noSubjectHeaders(req, res) || !parse(noQuery, req.query, res)) return;
   const stats = errorCaptureStats();
   const logStore: Record<string, unknown> = {
     status: logStoreStatus().status,
@@ -1034,7 +1087,7 @@ adminLogRouter.get(
   "/activity/:id",
   requireReadReason,
   storeRoute(async (req, res) => {
-    if (!parse(noQuery, req.query, res)) return;
+    if (!noSubjectHeaders(req, res) || !parse(noQuery, req.query, res)) return;
     const id = parseParam(uuidParam, req.params.id, "id", res);
     if (!id) return;
     const db = await store(res);
@@ -1167,7 +1220,7 @@ adminLogRouter.get(
   "/trace/:ref",
   requireReadReason,
   storeRoute(async (req, res) => {
-    if (!parse(noQuery, req.query, res)) return;
+    if (!noSubjectHeaders(req, res) || !parse(noQuery, req.query, res)) return;
     const ref = canonicalPrefix(String(req.params.ref ?? ""));
     if (!ref) {
       invalid(res, { ref: "ต้องเป็น correlation id หรือรหัสอ้างอิงฐานสิบหกอย่างน้อย 8 ตัว" });
@@ -1331,6 +1384,7 @@ async function postgresOfTrace(correlationId: string) {
 adminLogRouter.get(
   "/errors/issues",
   storeRoute(async (req, res) => {
+    if (!noSubjectHeaders(req, res)) return;
     const q = parse(issuesQuery, req.query, res);
     if (!q) return;
     if (beyondCap(q.page, q.pageSize, res)) return;
@@ -1377,6 +1431,7 @@ adminLogRouter.get(
 adminLogRouter.get(
   "/errors/issues/:fingerprint",
   storeRoute(async (req, res) => {
+    if (!noSubjectHeaders(req, res)) return;
     const q = parse(issueQuery, req.query, res);
     if (!q) return;
     const fingerprint = parseParam(fingerprintParam, req.params.fingerprint, "fingerprint", res);
@@ -1409,7 +1464,7 @@ adminLogRouter.get(
 adminLogRouter.get(
   "/errors/events/:id",
   storeRoute(async (req, res) => {
-    if (!parse(noQuery, req.query, res)) return;
+    if (!noSubjectHeaders(req, res) || !parse(noQuery, req.query, res)) return;
     const id = parseParam(uuidParam, req.params.id, "id", res);
     if (!id) return;
     const db = await store(res);
@@ -1446,7 +1501,7 @@ adminLogRouter.get(
 adminLogRouter.patch(
   "/errors/issues/:fingerprint",
   storeRoute(async (req, res) => {
-    if (!parse(noQuery, req.query, res)) return;
+    if (!noSubjectHeaders(req, res) || !parse(noQuery, req.query, res)) return;
     const fingerprint = parseParam(fingerprintParam, req.params.fingerprint, "fingerprint", res);
     if (fingerprint === null) return;
     const body = parse(issueStatusBody, req.body ?? {}, res);

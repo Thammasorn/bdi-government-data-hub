@@ -75,7 +75,9 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   `AUDIT_LOG_READ` before any data comes back; the reason goes in the `readReason` collection
   variable (sent as a percent-encoded header, never in the URL). So does the person being looked
   up: an e-mail, national ID or account uuid travels as `x-log-email` / `x-log-cid` /
-  `x-log-person`, and `?person=` / `?cid=` / `?email=` answer 400 — `baseUrl` defaults to
+  `x-log-person`, and `?person=` / `?cid=` / `?email=` answer 400. Only `/activity` takes all three
+  headers and `/timeline` takes `x-log-person`; every other endpoint answers 400 when one arrives,
+  because a filter that is silently ignored returns everything and looks filtered — `baseUrl` defaults to
   `bdi-api.thammasorn.org`, so a URL crosses Cloudflare. It must be pointed at the backend
   itself — the site's proxy answers 404 for `/api/admin/logs*`. Page `/activity` with
   `before=<nextBefore>` from the previous answer, not `page=2`: every read adds an
