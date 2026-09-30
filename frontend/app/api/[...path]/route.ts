@@ -27,7 +27,31 @@ const HOP_BY_HOP = ["host", "connection", "content-length", "transfer-encoding"]
 /** header ขากลับที่ปล่อยผ่านไม่ได้ เพราะ body ถูกแกะ/ประกอบใหม่แล้ว */
 const STRIP_FROM_UPSTREAM = ["content-encoding", "content-length", "transfer-encoding"];
 
+/**
+ * API อ่าน log (`/api/admin/logs*` — backend/src/routes/admin-logs.ts) ไม่เปิดผ่านหน้าเว็บสาธารณะ (plan decision 19)
+ *
+ * log รวมทุกการกระทำของทุกคน ต่อให้มี token ของมันเองก็ไม่ควรเรียกได้จาก bdi.thammasorn.org คนที่ต้องอ่านเรียก backend ตรง
+ * (Postman) การจำกัดทางเครือข่ายต่อจากนี้เป็นเรื่องของ infra ไม่ใช่ของโค้ด
+ *
+ * เทียบแบบไม่สนตัวพิมพ์เล็กใหญ่ เพราะ Express จับ route แบบนั้น (`/api/ADMIN/Logs/activity` ถึง router ของ log เหมือนกัน)
+ * และเทียบทั้งรูปดิบกับรูปที่ถอด `%xx` แล้วยุบ `/` ซ้อน — Express เทียบกับ path ดิบ (`%6Cogs` ไม่ถึง router ของ log) แต่
+ * การปฏิเสธเกินไว้ไม่เสียอะไร ไม่มีหน้าไหนของเว็บเรียก path แบบนั้น
+ */
+function isLogApi(pathname: string): boolean {
+  const forms = [pathname];
+  try {
+    forms.push(decodeURIComponent(pathname));
+  } catch {
+    // %xx ที่เสีย — เหลือรูปดิบให้เทียบ
+  }
+  return forms.some((form) => form.toLowerCase().replace(/\/{2,}/g, "/").startsWith("/api/admin/logs"));
+}
+
 async function proxy(req: NextRequest) {
+  if (isLogApi(req.nextUrl.pathname)) {
+    return Response.json({ error: "not_found", message: "ไม่พบเส้นทางนี้" }, { status: 404 });
+  }
+
   // ใช้ pathname ตรง ๆ แทนการประกอบใหม่จาก params เพื่อให้ path ที่ encode มา
   // เดินทางถึง backend เหมือนเดิมทุกตัวอักษร (เหมือนที่ rewrite เคยทำ)
   const url = `${target()}${req.nextUrl.pathname}${req.nextUrl.search}`;
