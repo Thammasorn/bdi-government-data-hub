@@ -937,33 +937,54 @@ function DocCode({ code, muted = false }: { code: string; muted?: boolean }) {
 }
 
 /**
- * ชื่อเอกสาร — เป็นลิงก์ดาวน์โหลดเมื่อรายการนั้นมีไฟล์ ไม่มีก็เป็นข้อความเฉย ๆ (ดู `LegalItem`)
+ * ทรงเดียวกับปุ่ม "ดาวน์โหลด" / "ดูรายละเอียด" ในรายการคำขอ (home/DatasetSection)
  *
- * เปิดในแท็บใหม่ด้วย เพราะเบราว์เซอร์ส่วนใหญ่เปิด PDF ให้อ่านแทนการบันทึกอยู่ดี
- * คนที่แค่อยากอ่านจะได้ไม่หลุดออกจากหน้าแรก ถ้าบันทึก ไฟล์ได้ชื่อภาษาไทยของรายการ
- * ไม่ใช่ชื่อภาษาอังกฤษใน URL
+ * จอแคบเหลือแต่ไอคอน — ชื่อเอกสารยาวสองสามบรรทัดอยู่แล้ว ปุ่มที่มีคำด้วยบีบคอลัมน์ชื่อจน
+ * ผนวกแต่ละฉบับกลายเป็นห้าบรรทัด ชื่อปุ่มยังอยู่ใน `aria-label`
  */
-function LegalTitle({ item, className }: { item: LegalItem; className: string }) {
-  if (!item.file) return <span className={className}>{item.title}</span>;
+const DOWNLOAD_PILL =
+  "inline-flex shrink-0 items-center gap-1.5 self-start rounded-full border border-line p-2 text-[13px] font-medium sm:self-center sm:px-3.5 sm:py-1.5";
+
+/**
+ * ปุ่มดาวน์โหลดท้ายแถวของเอกสารหนึ่งรายการ — แบบเดียวกับปุ่มท้ายแถวของเอกสาร A0–A4
+ * ในหน้าคำขอ ชื่อเอกสารทางซ้ายจึงเป็นข้อความธรรมดา ไม่ต้องขีดเส้นใต้ทั้งบรรทัดให้เป็นลิงก์
+ *
+ * รายการที่ยังไม่มีไฟล์ (ดู `LegalItem`) ยังมีปุ่มอยู่แต่กดไม่ได้ พร้อมบอกว่าทำไม — ตามที่
+ * DatasetSection ทำ: ซ่อนไปเลยแล้วแถวหนึ่งมีปุ่มอีกแถวไม่มี อ่านเหมือนลืมใส่
+ *
+ * เปิดในแท็บใหม่ด้วย เพราะเบราว์เซอร์ส่วนใหญ่เปิด PDF ให้อ่านแทนการบันทึกอยู่ดี คนที่แค่
+ * อยากอ่านจะได้ไม่หลุดออกจากหน้าแรก ถ้าบันทึก ไฟล์ได้ชื่อภาษาไทยของรายการ ไม่ใช่ชื่อภาษาอังกฤษ
+ * ใน URL
+ */
+function DownloadButton({ item }: { item: LegalItem }) {
+  const icon = (
+    <svg className="h-4 w-4" {...iconProps}>
+      <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />
+    </svg>
+  );
+  if (!item.file) {
+    return (
+      <span
+        title="อยู่ระหว่างจัดเตรียมไฟล์"
+        aria-label={`${item.title} — ยังไม่มีไฟล์ให้ดาวน์โหลด`}
+        className={clsx(DOWNLOAD_PILL, "cursor-not-allowed text-ink-subtle opacity-60")}
+      >
+        {icon}
+        <span className="hidden sm:inline">ดาวน์โหลด</span>
+      </span>
+    );
+  }
   return (
     <a
       href={item.file}
       download={`${item.title}${item.file.slice(item.file.lastIndexOf("."))}`}
       target="_blank"
       rel="noopener"
-      className={clsx(
-        className,
-        "group inline-flex items-start gap-2 underline decoration-navy-200 underline-offset-4 transition-colors hover:text-coral-500 hover:decoration-coral-300",
-      )}
+      aria-label={`ดาวน์โหลด ${item.title}`}
+      className={clsx(DOWNLOAD_PILL, "bg-white text-navy-700 transition-colors hover:bg-navy-50")}
     >
-      <span>{item.title}</span>
-      <svg
-        className="mt-[0.35em] h-4 w-4 shrink-0 text-ink-subtle transition-colors group-hover:text-coral-500"
-        {...iconProps}
-      >
-        <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />
-      </svg>
-      <span className="sr-only">(ดาวน์โหลด)</span>
+      {icon}
+      <span className="hidden sm:inline">ดาวน์โหลด</span>
     </a>
   );
 }
@@ -979,8 +1000,12 @@ function Legal() {
       </h3>
       <ul className="reveal mt-3 rounded-2xl bg-white px-6 py-1.5 shadow-card">
         {LEGAL_REGULATIONS.map((item) => (
-          <li key={item.title} className="border-t border-line py-3.5 first:border-t-0">
-            <LegalTitle item={item} className="text-[16px] leading-[1.85] text-ink" />
+          <li
+            key={item.title}
+            className="flex items-start justify-between gap-4 border-t border-line py-3.5 first:border-t-0 sm:items-center"
+          >
+            <span className="min-w-0 text-[16px] leading-[1.85] text-ink">{item.title}</span>
+            <DownloadButton item={item} />
           </li>
         ))}
       </ul>
@@ -993,7 +1018,8 @@ function Legal() {
       {/* ข้อความตัดบรรทัดเฉพาะจอแคบ ป้ายรหัสจึงชิดบนที่นั่น ส่วนจอกว้างเป็นบรรทัดเดียว จัดกึ่งกลางถูกกว่า */}
       <div className="reveal mt-3 flex items-start gap-4 rounded-2xl bg-white px-6 py-4 shadow-card sm:items-center">
         <DocCode code={LEGAL_PRIMARY.code} />
-        <LegalTitle item={LEGAL_PRIMARY} className="text-[16px] leading-[1.7] text-ink" />
+        <span className="min-w-0 flex-1 text-[16px] leading-[1.7] text-ink">{LEGAL_PRIMARY.title}</span>
+        <DownloadButton item={LEGAL_PRIMARY} />
       </div>
 
       {/*
@@ -1013,7 +1039,8 @@ function Legal() {
               className="flex items-start gap-4 border-t border-line py-3.5 first:border-t-0 first:pt-0 last:pb-0 sm:items-center"
             >
               <DocCode code={doc.code} muted />
-              <LegalTitle item={doc} className="text-[15px] leading-[1.7] text-ink" />
+              <span className="min-w-0 flex-1 text-[15px] leading-[1.7] text-ink">{doc.title}</span>
+              <DownloadButton item={doc} />
             </li>
           ))}
         </ul>
