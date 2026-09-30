@@ -52,3 +52,5 @@ __pycache__/
 # Chrome profile that render-manual-pdf.py leaves next to the manuals
 docs/manuals-pdf/tmpd/
 docs/manuals-pdf/cr/
+
+notebooks/*
