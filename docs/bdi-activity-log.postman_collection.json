@@ -3,7 +3,7 @@
     "name": "D2 — Activity log API (อ่าน log)",
     "_postman_id": "4f0c2d6e-8b1a-4c3e-9d57-a1e6b3c9f210",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "อ่าน activity log และ error ที่ระบบเก็บไว้ใน MongoDB (docs/21-activity-log.md) — **ไม่ใช่ admin API** และแยก collection ไว้โดยตั้งใจ: คนที่ถือ admin token ไม่ได้สิทธิ์อ่าน log ไปด้วย\n\n## ก่อนเริ่ม\n\n1. **เลือก environment** (ไฟล์อยู่ข้างไฟล์นี้ใน `docs/`) แล้วใส่ค่าสองตัว:\n\n| ตัวแปร | ใส่อะไร |\n| --- | --- |\n| `logToken` | `LOG_READ_TOKEN` จาก `.env` ของเครื่องนั้น — **ความลับ** ไฟล์ `bdi-main-local` กับ `bdi-public` เว้นว่างไว้ (`bdi-dev-checkout` ใส่ค่าตัวอย่าง `dev-log-token-change-me` ไว้แล้ว) |\n| `logReader` | อีเมลของคุณ (ASCII) — ส่งเป็น header `x-log-reader` ทุกคำขอ และลงบันทึกการอ่าน |\n\n2. **ใส่เหตุผลที่อ่าน** ในตัวแปร `readReason` ของ collection (10–500 ตัว ภาษาไทยได้) — script ของ collection แปลงเป็น header `x-log-reason` ให้เองทุกคำขอ **ห้ามใส่เหตุผลใน URL** (API ตอบ 400): เหตุผลมักมีชื่อคนที่ถูกสอบสวน และ URL ไปอยู่ใน log ของ proxy ทุกชั้น activity · timeline · trace บังคับให้มีเหตุผล\n\n3. **ทุกการอ่านถูกบันทึกก่อนได้ข้อมูล** เป็น `AUDIT_LOG_READ` ใน audit_event: ผู้อ่าน เหตุผล endpoint ตัวกรอง และ fingerprint ของ token (G7 ดูได้ว่าใครอ่านอะไร) บันทึกไม่ได้ = ไม่ได้ข้อมูล (503 `log_read_unrecorded`)\n\n`baseUrl` ต้องชี้ **backend ตรง** (`https://bdi-api.thammasorn.org`, `http://localhost:4000` หรือ 41N0 ของ dev checkout) — proxy ของหน้าเว็บ (`bdi.thammasorn.org/api/...`) ตอบ 404 ให้ทุก `/api/admin/logs*` โดยตั้งใจ\n\n## ตัวแปรของ collection\n\n| ตัวแปร | ใช้กับ |\n| --- | --- |\n| `readReason` | ทุกคำขอ (header `x-log-reason`) |\n| `person` | G1 G2 — อีเมลหรือ uuid ของบัญชี |\n| `requestNumber` | G1 G3 — เลขที่คำขอ เช่น `DS-REG-2026-0010` |\n| `email` | G1 G4 — อีเมลที่พิมพ์มาตอนล็อกอิน |\n| `oldTokenFp` | G1 G8 — fingerprint 12 ตัวของ token ที่หมุนแล้ว (ไม่ใช่ตัว token) |\n| `reference` | G1 G6 — รหัสอ้างอิง 8 ตัวบนข้อความ error |\n| `errorFingerprint` · `errorEventId` | E1 → E2 → E3 เก็บให้อัตโนมัติ |\n| `issueFingerprint` · `issueStatus` · `issueReason` | E4 — **กรอกเองทั้งสามตัว** ขาดตัวใด E4 ไม่ถูกส่ง และล้างทั้งสามหลังเปลี่ยนสำเร็จ: การรันทั้ง collection (Runner, newman) จึงไม่เปลี่ยนสถานะ issue ใดเอง |\n\nid ที่ script เก็บอยู่ใน**ตัวแปรของ collection เท่านั้น** — ถ้าชื่อเดียวกันอยู่ใน environment ด้วย Postman ใช้ค่าจาก environment เสมอ แล้วค่าที่เก็บได้จะไม่มีผล (CLAUDE.md)\n\n## คำตอบที่พบบ่อย\n\n| status | error | แปลว่า |\n| --- | --- | --- |\n| 400 | `validation` | พารามิเตอร์ผิดหรือไม่รู้จัก — `fields` บอกทีละตัว (รวม `x-log-reader` / `x-log-reason`) |\n| 401 | `unauthenticated` | `logToken` ผิด — การปฏิเสธถูกบันทึกเป็น `LOG_TOKEN_REJECTED` |\n| 404 | `not_found` | ไม่มี path นี้ หรือไม่พบสิ่งที่ขอ |\n| 503 | `log_access_disabled` | เครื่องนี้ยังไม่ได้ตั้ง `LOG_READ_TOKEN` |\n| 503 | `log_store_unavailable` / `log_store_disabled` | MongoDB ล่ม หรือปิดไว้ |\n| 503 | `hash_search_unavailable` | ค้นด้วยเลขบัตรหรืออีเมลไม่ได้ เพราะไม่ได้ตั้ง `LOG_HASH_KEY` |\n| 503 | `log_read_unrecorded` | บันทึกการอ่านไม่ได้ทั้ง Postgres และ MongoDB — ไม่ส่งข้อมูล |\n"
+    "description": "อ่าน activity log และ error ที่ระบบเก็บไว้ใน MongoDB (docs/21-activity-log.md) — **ไม่ใช่ admin API** และแยก collection ไว้โดยตั้งใจ: คนที่ถือ admin token ไม่ได้สิทธิ์อ่าน log ไปด้วย\n\n## ก่อนเริ่ม\n\n1. **เลือก environment** (ไฟล์อยู่ข้างไฟล์นี้ใน `docs/`) แล้วใส่ค่าสองตัว:\n\n| ตัวแปร | ใส่อะไร |\n| --- | --- |\n| `logToken` | `LOG_READ_TOKEN` จาก `.env` ของเครื่องนั้น — **ความลับ** ไฟล์ `bdi-main-local` กับ `bdi-public` เว้นว่างไว้ (`bdi-dev-checkout` ใส่ค่าตัวอย่าง `dev-log-token-change-me` ไว้แล้ว) |\n| `logReader` | อีเมลของคุณ (ASCII) — ส่งเป็น header `x-log-reader` ทุกคำขอ และลงบันทึกการอ่าน |\n\n2. **ใส่เหตุผลที่อ่าน** ในตัวแปร `readReason` ของ collection (10–500 ตัว ภาษาไทยได้) — script ของ collection แปลงเป็น header `x-log-reason` ให้เองทุกคำขอ **ห้ามใส่เหตุผลใน URL** (API ตอบ 400): เหตุผลมักมีชื่อคนที่ถูกสอบสวน และ URL ไปอยู่ใน log ของ proxy ทุกชั้น activity · timeline · trace บังคับให้มีเหตุผล\n\n3. **ทุกการอ่านถูกบันทึกก่อนได้ข้อมูล** เป็น `AUDIT_LOG_READ` ใน audit_event: ผู้อ่าน เหตุผล endpoint ตัวกรอง และ fingerprint ของ token (G7 ดูได้ว่าใครอ่านอะไร) บันทึกไม่ได้ = ไม่ได้ข้อมูล (503 `log_read_unrecorded`)\n\n`baseUrl` ต้องชี้ **backend ตรง** (`https://bdi-api.thammasorn.org`, `http://localhost:4000` หรือ 41N0 ของ dev checkout) — proxy ของหน้าเว็บ (`bdi.thammasorn.org/api/...`) ตอบ 404 ให้ทุก `/api/admin/logs*` โดยตั้งใจ\n\n## ตัวแปรของ collection\n\n| ตัวแปร | ใช้กับ |\n| --- | --- |\n| `readReason` | ทุกคำขอ (header `x-log-reason`) |\n| `person` | G1 G2 — อีเมลหรือ uuid ของบัญชี |\n| `requestNumber` | G1 G3 — เลขที่คำขอ เช่น `DS-REG-2026-0010` |\n| `email` | G1 G4 — อีเมลที่พิมพ์มาตอนล็อกอิน |\n| `oldTokenFp` | G1 G8 — fingerprint 12 ตัวของ token ที่หมุนแล้ว (ไม่ใช่ตัว token) |\n| `reference` | G1 G6 — รหัสอ้างอิง 8 ตัวบนข้อความ error |\n| `errorFingerprint` · `errorEventId` | E1 → E2 → E3 เก็บให้อัตโนมัติ |\n| `issueFingerprint` · `issueStatus` · `issueReason` | E4 — **กรอกเองทั้งสามตัว** ขาดตัวใด E4 ไม่ถูกส่ง และล้างทั้งสามหลังเปลี่ยนสำเร็จ: การรันทั้ง collection (Runner, newman) จึงไม่เปลี่ยนสถานะ issue ใดเอง |\n\nid ที่ script เก็บอยู่ใน**ตัวแปรของ collection เท่านั้น** — ถ้าชื่อเดียวกันอยู่ใน environment ด้วย Postman ใช้ค่าจาก environment เสมอ แล้วค่าที่เก็บได้จะไม่มีผล (CLAUDE.md)\n\n## หน้าถัดไปของ activity (G1 G2 G4 G5 G7 G8)\n\nคำตอบที่หน้าเต็มมี `nextBefore` — เปิด query `before` แล้วใส่ค่านั้น **อย่าเพิ่ม `page`**: log โตตลอดเวลา และการอ่านแต่ละครั้งก็เพิ่มแถว `AUDIT_LOG_READ` ขึ้นบนสุดในไม่กี่วินาที `page=2` ที่เปิดทีหลังจึงเห็นท้ายหน้าแรกซ้ำ `before` ต่อจากแถวสุดท้ายที่เห็นพอดี (ใช้คู่กับ `page` ไม่ได้) คำตอบยังบอกช่วงที่ใช้จริงใน `window` — ถ้าจะใช้ `page` ให้ส่ง `to` เท่ากับ `window.to` ของหน้าแรกทุกหน้า\n\n## คำตอบที่พบบ่อย\n\n| status | error | แปลว่า |\n| --- | --- | --- |\n| 400 | `validation` | พารามิเตอร์ผิดหรือไม่รู้จัก — `fields` บอกทีละตัว (รวม `x-log-reader` / `x-log-reason`) |\n| 401 | `unauthenticated` | `logToken` ผิด — การปฏิเสธถูกบันทึกเป็น `LOG_TOKEN_REJECTED` |\n| 404 | `not_found` | ไม่มี path นี้ หรือไม่พบสิ่งที่ขอ |\n| 503 | `log_access_disabled` | เครื่องนี้ยังไม่ได้ตั้ง `LOG_READ_TOKEN` |\n| 503 | `log_store_unavailable` / `log_store_disabled` | MongoDB ล่ม หรือปิดไว้ |\n| 503 | `hash_search_unavailable` | ค้นด้วยเลขบัตรหรืออีเมลไม่ได้ เพราะไม่ได้ตั้ง `LOG_HASH_KEY` |\n| 503 | `log_read_unrecorded` | บันทึกการอ่านไม่ได้ทั้ง Postgres และ MongoDB — ไม่ส่งข้อมูล |\n"
   },
   "item": [
     {
@@ -133,9 +133,15 @@
               "disabled": true
             },
             {
+              "key": "before",
+              "value": "",
+              "description": "หน้าถัดไป: ค่า nextBefore จากคำตอบก่อนหน้า — ใช้แทน page (ใช้คู่กันไม่ได้)",
+              "disabled": true
+            },
+            {
               "key": "page",
               "value": "1",
-              "description": "เริ่มที่ 1 — เปิดได้ถึงรายการที่ 10,000",
+              "description": "เริ่มที่ 1 — เปิดได้ถึงรายการที่ 10,000 · หน้าถัดไปใช้ before (ดูคำอธิบายของ collection) หรือส่ง to = window.to ของหน้าแรก",
               "disabled": true
             },
             {
@@ -146,7 +152,7 @@
             }
           ]
         },
-        "description": "ค้นสำเนาของ audit_event ใน log store — ตัวกรองทุกตัว AND กัน ติ๊กเปิดตัวที่ต้องการใน Params\n\n- ไม่ระบุช่วงเวลาและไม่มีตัวกรองที่แคบลง (person, request, organization, actorId, subjectId, cid, email, tokenFp, correlationId) = 30 วันล่าสุด\n- เรียงใหม่ไปเก่า `total` นับถึง 10,000 (`totalIsLowerBound: true` = อย่างน้อยเท่านี้)\n- **ทุกคำขอถูกบันทึกเป็น `AUDIT_LOG_READ` ก่อนได้ข้อมูล** พร้อมผู้อ่าน เหตุผล และตัวกรอง — `readId` ในคำตอบคือ id ของบันทึกนั้น\n- ต้องมีเหตุผล (`readReason`) ไม่งั้น 400"
+        "description": "ค้นสำเนาของ audit_event ใน log store — ตัวกรองทุกตัว AND กัน ติ๊กเปิดตัวที่ต้องการใน Params\n\n- ไม่ระบุช่วงเวลาและไม่มีตัวกรองที่แคบลง (person, request, organization, actorId, subjectId, cid, email, tokenFp, correlationId) = 30 วันล่าสุด\n- เรียงใหม่ไปเก่า `total` นับถึง 10,000 (`totalIsLowerBound: true` = อย่างน้อยเท่านี้)\n- หน้าเต็มได้ `nextBefore` — หน้าถัดไปคือ `before=<nextBefore>` ไม่ใช่ `page=2` · `window` คือช่วงที่ใช้จริง\n- **ทุกคำขอถูกบันทึกเป็น `AUDIT_LOG_READ` ก่อนได้ข้อมูล** พร้อมผู้อ่าน เหตุผล และตัวกรอง — `readId` ในคำตอบคือ id ของบันทึกนั้น\n- ต้องมีเหตุผล (`readReason`) ไม่งั้น 400"
       },
       "response": [],
       "event": [
@@ -162,6 +168,7 @@
               "    table(events.map((e) => ({ เวลา: e.occurredAtBangkok, action: e.action, via: e.via, ผู้กระทำ: e.actor.name || e.actor.type,",
               "        subject: e.subject.type, คำขอ: e.requestNumber, ผล: e.result, ref: e.request.reference })));",
               "    console.log('total =', pm.response.json().total, pm.response.json().totalIsLowerBound ? '(อย่างน้อย)' : '', '· readId =', pm.response.json().readId);",
+              "    if (pm.response.json().nextBefore) console.log('หน้าถัดไป: เปิด query before แล้วใส่', pm.response.json().nextBefore);",
               "} catch (e) {",
               "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
               "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",
@@ -206,6 +213,12 @@
               "description": "สูงสุด 200"
             },
             {
+              "key": "before",
+              "value": "",
+              "description": "หน้าถัดไป: ค่า nextBefore จากคำตอบก่อนหน้า — ใช้แทน page (ใช้คู่กันไม่ได้)",
+              "disabled": true
+            },
+            {
               "key": "page",
               "value": "1",
               "description": "",
@@ -241,6 +254,7 @@
               "    table(events.map((e) => ({ เวลา: e.occurredAtBangkok, action: e.action, via: e.via, ผู้กระทำ: e.actor.name || e.actor.type,",
               "        subject: e.subject.type, คำขอ: e.requestNumber, ผล: e.result, ref: e.request.reference })));",
               "    console.log('total =', pm.response.json().total, pm.response.json().totalIsLowerBound ? '(อย่างน้อย)' : '', '· readId =', pm.response.json().readId);",
+              "    if (pm.response.json().nextBefore) console.log('หน้าถัดไป: เปิด query before แล้วใส่', pm.response.json().nextBefore);",
               "} catch (e) {",
               "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
               "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",
@@ -375,6 +389,12 @@
               "value": "",
               "description": "ISO 8601 ที่มี offset",
               "disabled": true
+            },
+            {
+              "key": "before",
+              "value": "",
+              "description": "หน้าถัดไป: ค่า nextBefore จากคำตอบก่อนหน้า — ใช้แทน page (ใช้คู่กันไม่ได้)",
+              "disabled": true
             }
           ]
         },
@@ -392,6 +412,7 @@
               "try {",
               "    const events = pm.response.json().events || [];",
               "    table(events.map((e) => ({ เวลา: e.occurredAtBangkok, เหตุ: e.metadata && e.metadata.failure_reason, บัญชี: e.subject.id, ip: e.request.ip })));",
+              "    if (pm.response.json().nextBefore) console.log('หน้าถัดไป: เปิด query before แล้วใส่', pm.response.json().nextBefore);",
               "} catch (e) {",
               "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
               "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",
@@ -445,6 +466,12 @@
               "value": "",
               "description": "จำกัดเฉพาะบางรหัส",
               "disabled": true
+            },
+            {
+              "key": "before",
+              "value": "",
+              "description": "หน้าถัดไป: ค่า nextBefore จากคำตอบก่อนหน้า — ใช้แทน page (ใช้คู่กันไม่ได้)",
+              "disabled": true
             }
           ]
         },
@@ -474,6 +501,7 @@
               "    table(events.map((e) => ({ เวลา: e.occurredAtBangkok, action: e.action, via: e.via, ผู้กระทำ: e.actor.name || e.actor.type,",
               "        subject: e.subject.type, คำขอ: e.requestNumber, ผล: e.result, ref: e.request.reference })));",
               "    console.log('total =', pm.response.json().total, pm.response.json().totalIsLowerBound ? '(อย่างน้อย)' : '', '· readId =', pm.response.json().readId);",
+              "    if (pm.response.json().nextBefore) console.log('หน้าถัดไป: เปิด query before แล้วใส่', pm.response.json().nextBefore);",
               "} catch (e) {",
               "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
               "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",
@@ -588,6 +616,12 @@
               "value": "",
               "description": "ISO 8601 ที่มี offset",
               "disabled": true
+            },
+            {
+              "key": "before",
+              "value": "",
+              "description": "หน้าถัดไป: ค่า nextBefore จากคำตอบก่อนหน้า — ใช้แทน page (ใช้คู่กันไม่ได้)",
+              "disabled": true
             }
           ]
         },
@@ -606,6 +640,7 @@
               "    const events = pm.response.json().events || [];",
               "    table(events.map((e) => ({ เวลา: e.occurredAtBangkok, ผู้อ่าน: e.metadata && e.metadata.reader, เหตุผล: e.reason,",
               "        endpoint: e.metadata && e.metadata.endpoint, ตัวกรอง: JSON.stringify(e.metadata && e.metadata.filters) })));",
+              "    if (pm.response.json().nextBefore) console.log('หน้าถัดไป: เปิด query before แล้วใส่', pm.response.json().nextBefore);",
               "} catch (e) {",
               "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
               "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",
@@ -648,6 +683,12 @@
               "key": "pageSize",
               "value": "200",
               "description": ""
+            },
+            {
+              "key": "before",
+              "value": "",
+              "description": "หน้าถัดไป: ค่า nextBefore จากคำตอบก่อนหน้า — ใช้แทน page (ใช้คู่กันไม่ได้)",
+              "disabled": true
             }
           ]
         },
@@ -680,6 +721,7 @@
               "    const events = pm.response.json().events || [];",
               "    table(events.map((e) => ({ เวลา: e.occurredAtBangkok, action: e.action, path: e.metadata && (e.metadata.path || (e.metadata.paths || []).join(' ')),",
               "        ครั้งที่นับ: e.metadata && e.metadata.suppressed_count, ip: e.request.ip })));",
+              "    if (pm.response.json().nextBefore) console.log('หน้าถัดไป: เปิด query before แล้วใส่', pm.response.json().nextBefore);",
               "} catch (e) {",
               "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
               "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",

@@ -19,8 +19,14 @@
  *   - Mongo ล่มหรือช้า = 503 `log_store_unavailable` ภายในราว 2–4 วินาที ปิด log store = 503 `log_store_disabled`
  *
  * ข้อตกลงของรายการ (ตามรายการของ admin API): zod แบบ strict — พารามิเตอร์ที่ไม่รู้จักก็ 400 `{error:"validation", fields}`
- * · `page` เริ่ม 1 · `pageSize` 50 สูงสุด 200 · เรียง `occurredAt` ใหม่ไปเก่าแล้ว `_id` (ลำดับคงที่ข้ามหน้า) · `total` จาก
- * `countDocuments` ตัดที่ 10,000 พร้อม `totalIsLowerBound`
+ * · `page` เริ่ม 1 · `pageSize` 50 สูงสุด 200 · เรียง `occurredAt` ใหม่ไปเก่าแล้ว `_id` · `total` จาก `countDocuments` ตัดที่
+ * 10,000 พร้อม `totalIsLowerBound`
+ *
+ * **เปิดหน้าถัดไปของ `/activity` ด้วย `before=<nextBefore>` ไม่ใช่ `page`** — log โตตลอดเวลา และทุกการอ่านเองก็เพิ่มแถว
+ * `AUDIT_LOG_READ` ที่ relay คัดลอกขึ้นมาอยู่บนสุดในราว 5 วินาที ช่วงที่ไม่ระบุ `to` คิด `to` = ตอนนี้ใหม่ทุกคำขอ `page=2` ที่เปิด
+ * ช้ากว่านั้นจึงเห็นท้ายของหน้า 1 ซ้ำ `before` เป็นตำแหน่ง (เวลา + `_id`) ของแถวสุดท้ายที่เห็น จึงไม่ซ้ำและไม่ข้ามแถวที่มีอยู่
+ * แล้ว ใช้ `page` ต่อได้ถ้าส่ง `to` ตามที่คำตอบแรกบอก (`window.to`) — แต่ยังซ้ำได้เมื่อ relay คัดลอกแถวที่เกิดก่อน `to` มาทีหลัง
+ * (แถวของไม่กี่วินาทีก่อนหน้าแรก หรือทั้งก้อนหลัง Mongo ล่ม) ส่วน `before` แค่ไม่แสดงแถวที่มาทีหลังซึ่งใหม่กว่าหน้าที่เห็นไปแล้ว
  */
 import type { Request, Response } from "express";
 import type { Db, Document, Filter } from "mongodb";
@@ -145,6 +151,22 @@ const emailParam = z
   .max(254, "ยาวเกิน")
   .refine((value) => EMAIL.test(value), "ต้องเป็นอีเมล")
   .transform((value) => value.toLowerCase());
+/**
+ * ตำแหน่งต่อจากหน้าก่อน = `nextBefore` ของคำตอบ (`<occurredAt ISO>,<_id>` ของแถวสุดท้ายที่เห็น) — ได้แถวที่อยู่ถัดลงไป
+ * ตามลำดับ `occurredAt desc, _id desc` ดูหัวไฟล์ว่าทำไมไม่ใช้ `page`
+ */
+const beforeParam = z
+  .string()
+  .trim()
+  .transform((value, ctx) => {
+    const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z),([0-9A-Za-z-]{1,64})$/.exec(value);
+    const at = match ? new Date(match[1]!) : null;
+    if (!match || !at || Number.isNaN(at.getTime())) {
+      ctx.addIssue({ code: "custom", message: "ใส่ค่า nextBefore จากคำตอบของหน้าก่อนตามที่ได้มา (<เวลา ISO>,<id>)" });
+      return z.NEVER;
+    }
+    return { at, id: match[2]!, raw: value };
+  });
 /** correlation id เต็ม หรือ prefix ตั้งแต่ 8 ตัว (รหัสอ้างอิงบนข้อความ 5xx) — ขีดใส่หรือไม่ใส่ก็ได้ */
 const correlationParam = z
   .string()
@@ -186,6 +208,7 @@ const activityQuery = z
     source: z.enum(SOURCES, { error: `ต้องเป็นหนึ่งใน ${SOURCES.join(" ")}` }).optional(),
     from: isoParam.optional(),
     to: isoParam.optional(),
+    before: beforeParam.optional(),
     page: pageParam,
     pageSize: pageSizeParam,
   })
@@ -193,6 +216,10 @@ const activityQuery = z
   .refine((q) => !q.subjectId || q.subjectType, {
     path: ["subjectType"],
     error: "ต้องระบุ subjectType คู่กับ subjectId (index ค้นด้วยทั้งคู่)",
+  })
+  .refine((q) => !q.before || q.page === 1, {
+    path: ["page"],
+    error: "ใช้ page คู่กับ before ไม่ได้ — before คือหน้าถัดไปอยู่แล้ว เอา page ออก",
   });
 
 const timelineQuery = z
@@ -711,6 +738,9 @@ adminLogRouter.get("/status", async (req, res) => {
 /**
  * ค้นกิจกรรม — ตัวกรองทั้งหมด AND กัน `person` `request` `organization` แปลงที่ server (Postgres) `cid` `email` จับด้วย key
  * HMAC เท่านั้น ไม่ระบุช่วงเวลาและไม่มีตัวกรองที่แคบลง = 30 วันล่าสุด
+ *
+ * คำตอบบอกช่วงที่ใช้จริง (`window`) และตำแหน่งของหน้าถัดไป (`nextBefore` — null เมื่อหน้านี้ไม่เต็ม) `total` นับทั้งช่วงของ
+ * ตัวกรอง ไม่ขึ้นกับ `before`
  */
 adminLogRouter.get(
   "/activity",
@@ -758,6 +788,15 @@ adminLogRouter.get(
       q.correlationId ? correlationFilter(q.correlationId) : null,
       timeFilter("occurredAt", window),
     ]);
+    const pageFilter = q.before
+      ? allOf([
+          filter,
+          // `_id` ของ activity เป็น string (uuid) — Filter<Document> ของ driver ถือว่า `_id` เป็น ObjectId
+          {
+            $or: [{ occurredAt: { $lt: q.before.at } }, { occurredAt: q.before.at, _id: { $lt: q.before.id } }],
+          } as Document as Filter<Document>,
+        ])
+      : filter;
 
     const readId = await recordRead(
       req,
@@ -778,6 +817,7 @@ adminLogRouter.get(
         ...(emailKey ? { email: emailKey } : {}),
         ...(q.tokenFp ? { tokenFp: q.tokenFp } : {}),
         ...(q.correlationId ? { correlationId: q.correlationId } : {}),
+        ...(q.before ? { before: q.before.raw } : {}),
         window: windowRecord(window),
         pageSize: q.pageSize,
       },
@@ -788,7 +828,7 @@ adminLogRouter.get(
     const collection = db.collection("activity");
     const [events, counted] = await Promise.all([
       collection
-        .find(filter)
+        .find(pageFilter)
         .sort({ occurredAt: -1, _id: -1 })
         .skip((q.page - 1) * q.pageSize)
         .limit(q.pageSize)
@@ -796,7 +836,16 @@ adminLogRouter.get(
         .toArray(),
       countCapped(db, "activity", filter),
     ]);
-    res.json({ events: events.map(activityDto), ...counted, page: q.page, pageSize: q.pageSize, readId });
+    const last = events.length === q.pageSize ? events[events.length - 1] : undefined;
+    res.json({
+      events: events.map(activityDto),
+      ...counted,
+      page: q.page,
+      pageSize: q.pageSize,
+      window: windowRecord(window),
+      nextBefore: last && last.occurredAt instanceof Date ? `${last.occurredAt.toISOString()},${String(last._id)}` : null,
+      readId,
+    });
   }),
 );
 
