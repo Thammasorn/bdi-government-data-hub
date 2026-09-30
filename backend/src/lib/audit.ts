@@ -404,7 +404,7 @@ export const AuditAction = {
    * ของ `x-log-token` ที่ใช้) · `page`
    * actor เป็นระบบ (`SYSTEM`, ไม่มี id) เหมือนงานผ่าน admin token · `source_component = log-api` · subject `AUDIT_LOG`
    * สำเนาใน log store ได้ key ที่ค้นใน `hashKeys` และบัญชีที่ถูกเปิดประวัติใน `relatedUserIds` (lib/activity-shape.ts
-   * `logReadTargets`) — `?cid=X&action=AUDIT_LOG_READ` จึงตอบได้ว่าใครค้นประวัติของ X
+   * `logReadTargets`) — `x-log-cid: X` คู่กับ `?action=AUDIT_LOG_READ` จึงตอบได้ว่าใครค้นประวัติของ X
    */
   AUDIT_LOG_READ: "AUDIT_LOG_READ",
 

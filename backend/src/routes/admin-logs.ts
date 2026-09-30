@@ -10,6 +10,7 @@
  *     ถึง `requireAdminToken` ซึ่งจะเขียน `ADMIN_TOKEN_REJECTED` ที่ชวนเข้าใจผิด proxy ของหน้าเว็บตอบ 404 ให้ทั้งก้อนนี้
  *     (frontend/app/api/[...path]/route.ts) — เรียกได้ทาง backend ตรงเท่านั้น
  *   - ทุกคำขอผ่าน `requireLogReader` (token แยก ผู้อ่าน เหตุผล) activity · timeline · trace ต้องมีเหตุผลด้วย (`requireReadReason`)
+ *   - ตัวระบุบุคคล (`person` `cid` `email`) มาทาง header `x-log-*` เท่านั้น เหมือนเหตุผล — ไม่อยู่ใน URL (`SUBJECT_HEADERS`)
  *   - **ทุกการอ่านถูกบันทึกก่อนส่งข้อมูล** ลำดับในแต่ละ route: ตรวจพารามิเตอร์ → log store ตอบได้ไหม (`store()`) →
  *     แปลงตัวระบุ (Postgres) → บันทึก (`recordRead()`) → อ่าน — คำขอที่ผิดรูปหรืออ่านไม่ได้อยู่แล้วจึงไม่เกิดบันทึกเปล่า ๆ
  *     ผลจึงแยกตามว่าอะไรล่มก่อน: Mongo ล่มหรือค้างอยู่แล้ว (จะมี Postgres หรือไม่) = 503 `log_store_unavailable` ก่อนบันทึก
@@ -18,7 +19,7 @@
  *     ระหว่างคำขอ) ส่วน `GET /status` ไม่ถูกบันทึก (ไม่มีข้อมูลบุคคล)
  *   - ค่าที่ค้นด้วยเลขบัตรหรืออีเมล (`cid` `email` `person` ที่เป็นอีเมล) ไม่ลงบันทึกเป็นค่าจริง — เป็น key HMAC (`cidKey`
  *     `emailKey`) และ `person` ที่เป็นอีเมลของบัญชีเป็น uuid ของบัญชี (`PersonRef`) บันทึกการอ่านต้องไม่กลายเป็นที่เก็บเลขบัตร
- *     แห่งใหม่ สำเนาของบันทึกใน log store ค้นกลับด้วยค่าเดียวกันได้ (`?cid=X&action=AUDIT_LOG_READ` — lib/activity-shape.ts)
+ *     แห่งใหม่ สำเนาของบันทึกใน log store ค้นกลับด้วยค่าเดียวกันได้ (`x-log-cid: X` คู่กับ `?action=AUDIT_LOG_READ` — lib/activity-shape.ts)
  *   - ทุกคำสั่งอ่านของ Mongo มี `maxTimeMS` (READ_MAX_MS) ไม่มีอะไรที่นี่แก้ `activity` ได้ มีแค่สถานะของ issue — เหตุผลที่
  *     ลง `error_issues.statusReason` ผ่านกฎเลขบัตรของสำเนากิจกรรมก่อน (`maskCidText`)
  *   - Mongo หยุดหรือค้าง = 503 `log_store_unavailable` ภายในราว 2 วินาที (เพดานของ `store()` — STORE_CHECK_MS) Mongo ที่
@@ -261,7 +262,7 @@ const timelineQuery = z
   .strict()
   .refine((q) => [q.person, q.request, q.organization].filter(Boolean).length === 1, {
     path: ["person"],
-    error: "ต้องระบุอย่างใดอย่างหนึ่ง: person หรือ request หรือ organization",
+    error: "ต้องระบุอย่างใดอย่างหนึ่ง: header x-log-person หรือ query request หรือ organization",
   });
 
 const noQuery = z.object({}).strict();
@@ -341,13 +342,68 @@ function invalid(res: Response, fields: Record<string, string>) {
   res.status(400).json({ error: "validation", message: "พารามิเตอร์ไม่ถูกต้อง", fields });
 }
 
-function parse<T extends z.ZodType>(schema: T, value: unknown, res: Response): z.output<T> | null {
+/** `names` เปลี่ยนชื่อช่องในข้อผิด — ตัวระบุบุคคลมาทาง header ข้อผิดจึงต้องชี้ชื่อ header (`SUBJECT_HEADERS`) ไม่ใช่ชื่อใน schema */
+function parse<T extends z.ZodType>(
+  schema: T,
+  value: unknown,
+  res: Response,
+  names: Readonly<Record<string, string>> = {},
+): z.output<T> | null {
   const parsed = schema.safeParse(value);
   if (!parsed.success) {
-    invalid(res, fieldsOf(parsed.error));
+    const fields = fieldsOf(parsed.error);
+    invalid(res, Object.fromEntries(Object.entries(fields).map(([field, message]) => [names[field] ?? field, message])));
     return null;
   }
   return parsed.data;
+}
+
+/**
+ * ตัวระบุบุคคลที่รับทาง **header เท่านั้น** — เลขบัตร อีเมล หรือ uuid ของคนที่ถูกสอบสวน (plan decision 9 ใช้เหตุผลเดียวกันกับ
+ * `x-log-reason`: URL ไปอยู่ใน log ของ proxy และ edge ทุกชั้นระหว่างทาง และ production เรียกผ่าน `bdi-api.thammasorn.org`
+ * ซึ่งผ่าน Cloudflare) · ชื่อเดียวกันใน query ถูกปฏิเสธที่ `requireLogReader` · ค่า ASCII ส่งตรง ๆ ได้ (เลขบัตร uuid อีเมล
+ * ทั่วไป — `%` ในค่าถูกถอดเป็น percent-encoding) ค่าที่มีอักษรอื่นต้อง `encodeURIComponent`
+ *
+ * เดิมสามตัวนี้เป็น query (`?cid=` `?email=` `?person=`) ตาม plan §6 — ตรวจแบบค้านขั้น 7 (2026-09-30) ชี้ว่า G2 G4 ของ Postman
+ * ส่งอีเมลและเลขบัตรไปใน URL ผ่าน Cloudflare ทั้งที่เหตุผลของการอ่านซึ่งไวน้อยกว่าถูกกันไม่ให้อยู่ใน URL แล้ว
+ */
+const SUBJECT_HEADERS = { person: "x-log-person", cid: "x-log-cid", email: "x-log-email" } as const;
+type SubjectName = keyof typeof SUBJECT_HEADERS;
+
+/** ค่าของ header ตัวระบุ — ASCII ที่พิมพ์ได้ ถอด percent-encoding แล้ว หรือ null ถ้าใช้ไม่ได้ */
+function decodeSubjectHeader(raw: string): string | null {
+  if (/[^\x20-\x7e]/.test(raw)) return null;
+  try {
+    return decodeURIComponent(raw).trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * query รวมกับตัวระบุบุคคลจาก header ที่ endpoint นี้รับ (`accepted`) — ตอบ 400 เองแล้วคืน null ถ้า header ถอดไม่ได้ หรือเป็นตัวที่
+ * endpoint นี้ไม่รับ: header ที่ถูกเพิกเฉยเงียบ ๆ ทำให้ผลที่ไม่ได้กรองดูเหมือนผลที่กรองแล้ว · header ว่างส่งต่อเป็นค่าว่าง ให้
+ * schema ตอบว่าต้องใส่อะไร (ตัวแปร Postman ที่ยังไม่ได้กรอก — เหมือน `?person=` ว่างเดิม)
+ */
+function withSubjectHeaders(req: Request, res: Response, accepted: readonly SubjectName[]): Record<string, unknown> | null {
+  const input: Record<string, unknown> = { ...req.query };
+  for (const name of Object.keys(SUBJECT_HEADERS) as SubjectName[]) {
+    const header = SUBJECT_HEADERS[name];
+    const raw = req.header(header);
+    if (raw === undefined) continue;
+    if (!accepted.includes(name)) {
+      const usable = accepted.map((n) => SUBJECT_HEADERS[n]).join(" ");
+      invalid(res, { [header]: `endpoint นี้ไม่รับ ${header}${usable ? ` — รับแค่ ${usable}` : ""}` });
+      return null;
+    }
+    const value = decodeSubjectHeader(raw);
+    if (value === null) {
+      invalid(res, { [header]: `${header} ต้องเป็น ASCII หรือค่าที่ผ่าน encodeURIComponent แล้ว` });
+      return null;
+    }
+    input[name] = value;
+  }
+  return input;
 }
 
 /** ค่าจาก path (`:id`, `:fingerprint`) — ข้อผิดลงชื่อพารามิเตอร์นั้น ไม่ใช่ `_` */
@@ -560,11 +616,12 @@ async function recordRead(
   return recorded.readId;
 }
 
-function hashSearchUnavailable(res: Response, field: string) {
+function hashSearchUnavailable(res: Response, field: SubjectName) {
+  const header = SUBJECT_HEADERS[field];
   res.status(503).json({
     error: "hash_search_unavailable",
-    message: `ค้นด้วย ${field} ไม่ได้บนระบบนี้ — ไม่ได้ตั้ง LOG_HASH_KEY สำเนาจึงไม่มี key ค้นหา cid#/email#`,
-    fields: { [field]: "ไม่มี LOG_HASH_KEY" },
+    message: `ค้นด้วย ${header} ไม่ได้บนระบบนี้ — ไม่ได้ตั้ง LOG_HASH_KEY สำเนาจึงไม่มี key ค้นหา cid#/email#`,
+    fields: { [header]: "ไม่มี LOG_HASH_KEY" },
   });
 }
 
@@ -820,7 +877,8 @@ adminLogRouter.get("/status", async (req, res) => {
 
 /**
  * ค้นกิจกรรม — ตัวกรองทั้งหมด AND กัน `person` `request` `organization` แปลงที่ server (Postgres) `cid` `email` จับด้วย key
- * HMAC เท่านั้น ไม่ระบุช่วงเวลาและไม่มีตัวกรองที่แคบลง = 30 วันล่าสุด
+ * HMAC เท่านั้น ไม่ระบุช่วงเวลาและไม่มีตัวกรองที่แคบลง = 30 วันล่าสุด · `person` `cid` `email` มาทาง header
+ * (`x-log-person` `x-log-cid` `x-log-email` — `SUBJECT_HEADERS`) ที่เหลือเป็น query
  *
  * คำตอบบอกช่วงที่ใช้จริง (`window`) และตำแหน่งของหน้าถัดไป (`nextBefore` — null เมื่อหน้านี้ไม่เต็ม) `total` นับทั้งช่วงของ
  * ตัวกรอง ไม่ขึ้นกับ `before`
@@ -829,7 +887,9 @@ adminLogRouter.get(
   "/activity",
   requireReadReason,
   storeRoute(async (req, res) => {
-    const q = parse(activityQuery, req.query, res);
+    const input = withSubjectHeaders(req, res, ["person", "cid", "email"]);
+    if (!input) return;
+    const q = parse(activityQuery, input, res, SUBJECT_HEADERS);
     if (!q) return;
     if (beyondCap(q.page, q.pageSize, res)) return;
     const hashKey = env.logStore.hashKey;
@@ -966,7 +1026,9 @@ adminLogRouter.get(
   "/timeline",
   requireReadReason,
   storeRoute(async (req, res) => {
-    const q = parse(timelineQuery, req.query, res);
+    const input = withSubjectHeaders(req, res, ["person"]);
+    if (!input) return;
+    const q = parse(timelineQuery, input, res, SUBJECT_HEADERS);
     if (!q) return;
     const db = await store(res);
     if (!db) return;

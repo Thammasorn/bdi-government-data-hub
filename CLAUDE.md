@@ -73,7 +73,10 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   apart from the admin collection on purpose, with its own `x-log-token` (`LOG_READ_TOKEN`), so
   holding the admin token does not hand out the log. Every read is written to `audit_event` as
   `AUDIT_LOG_READ` before any data comes back; the reason goes in the `readReason` collection
-  variable (sent as a percent-encoded header, never in the URL). It must be pointed at the backend
+  variable (sent as a percent-encoded header, never in the URL). So does the person being looked
+  up: an e-mail, national ID or account uuid travels as `x-log-email` / `x-log-cid` /
+  `x-log-person`, and `?person=` / `?cid=` / `?email=` answer 400 — `baseUrl` defaults to
+  `bdi-api.thammasorn.org`, so a URL crosses Cloudflare. It must be pointed at the backend
   itself — the site's proxy answers 404 for `/api/admin/logs*`. Page `/activity` with
   `before=<nextBefore>` from the previous answer, not `page=2`: every read adds an
   `AUDIT_LOG_READ` that the relay mirrors to the top within seconds, and an open-ended window

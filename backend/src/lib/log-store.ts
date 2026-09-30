@@ -280,13 +280,13 @@ function warnIfDevPassword() {
 
 /**
  * ไม่มี LOG_HASH_KEY (production ที่ยังไม่ได้ตั้ง — dev มีค่าตั้งต้น) — ปิดค่าได้ แต่ทำ key ค้นหาไม่ได้ ไม่ใช่ error
- * เตือนทุกครั้งที่บูต เพราะผลของมันเงียบ: ทุกเอกสารที่เขียนระหว่างนี้ค้นด้วย ?cid= / ?email= ไม่เจอไปตลอด จนกว่าจะ rebuild
+ * เตือนทุกครั้งที่บูต เพราะผลของมันเงียบ: ทุกเอกสารที่เขียนระหว่างนี้ค้นด้วยเลขบัตรหรืออีเมล (`x-log-cid` / `x-log-email`) ไม่เจอไปตลอด จนกว่าจะ rebuild
  */
 function warnIfNoHashKey() {
   if (env.logStore.hashKey) return;
   console.warn(
     `[log-store] ${service}: คำเตือน: ไม่ได้ตั้ง LOG_HASH_KEY — เลขบัตรและอีเมลที่พิมพ์มาในสำเนากิจกรรมถูกปิดอย่างเดียว ` +
-      "ไม่มี key ค้นหา cid#/email# (ค้นด้วย ?cid= / ?email= ไม่ได้) ตั้งเป็นค่าจาก `openssl rand -hex 32` ใน .env " +
+      "ไม่มี key ค้นหา cid#/email# (API อ่าน log ค้นด้วย x-log-cid / x-log-email ไม่ได้) ตั้งเป็นค่าจาก `openssl rand -hex 32` ใน .env " +
       "ค่าเดียวกันทั้ง backend และ delivery-worker",
   );
 }

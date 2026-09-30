@@ -201,6 +201,11 @@ const REASON_MIN = 10;
 const REASON_MAX = 500;
 /** ชื่อ query ที่ดูเป็นเหตุผล — `?reason=`, `?x-log-reason=`, `?readReason=` … */
 const REASON_IN_QUERY = /reason/i;
+/**
+ * ตัวระบุบุคคลที่ API อ่าน log รับทาง header `x-log-<ชื่อ>` เท่านั้น (routes/admin-logs.ts `SUBJECT_HEADERS`) — เลขบัตร อีเมล
+ * หรือ uuid ของคนที่ถูกสอบสวน เป็นข้อมูลที่ไวกว่าเหตุผลเสียอีก
+ */
+const SUBJECT_IN_QUERY = /^(?:person|cid|email)$/i;
 
 function validationError(res: Response, field: string, message: string) {
   res.status(400).json({ error: "validation", message, fields: { [field]: message } });
@@ -238,7 +243,10 @@ function decodeReason(raw: string): { reason: string } | { error: string } {
  *   2. `x-log-token` ผิดหรือไม่ได้ส่ง → 401 และ `LOG_TOKEN_REJECTED` แบบ throttle (lib/token-rejection.ts ตัวเดียวกับของ admin
  *      token) เทียบด้วย `secretMatches` ใช้เวลาเท่ากันเสมอ
  *   3. มีชื่อ query ที่ดูเป็นเหตุผล → 400: เหตุผลมักมีชื่อคนที่ถูกสอบสวน และ URL ไปจบใน log ของ proxy/edge ทุกชั้น จึงรับได้
- *      ทาง header เท่านั้น — ปฏิเสธดัง ๆ ให้คนแก้ Postman ไม่ใช่ทิ้งค่านั้นเงียบ ๆ ซึ่งทำให้คิดว่าส่งถูกแล้ว
+ *      ทาง header เท่านั้น — ปฏิเสธดัง ๆ ให้คนแก้ Postman ไม่ใช่ทิ้งค่านั้นเงียบ ๆ ซึ่งทำให้คิดว่าส่งถูกแล้ว · `person` `cid`
+ *      `email` ใน query ก็ 400 ด้วยเหตุผลเดียวกัน (ส่งใน `x-log-person` `x-log-cid` `x-log-email`) — เดิมรับใน query และ
+ *      Postman ส่ง G2 G4 ไปทาง `bdi-api.thammasorn.org` (Cloudflare) เลขบัตรกับอีเมลของคนที่ถูกสอบสวนจึงไปอยู่ใน URL ของ
+ *      ทุกชั้นระหว่างทาง (ตรวจแบบค้านขั้น 7, 2026-09-30) การปฏิเสธไม่ลบ URL ที่ส่งไปแล้ว มันกันไม่ให้ใครสร้างงานบนทางนั้น
  *   4. `x-log-reader` ต้องเป็นอีเมล ASCII ไม่เกิน 100 ตัว — **ประกาศเอง ไม่ได้พิสูจน์** ใครถือ token ก็ใส่ชื่อใครก็ได้ มันบอกว่า
  *      ผู้ถือ token *อ้างว่า* เป็นใคร (ตัวที่ผูกกับ token จริงคือ `token_fp`)
  *   5. `x-log-reason` ถ้าส่งมาต้องถอดได้และยาว 10–500 ตัว — endpoint ที่บังคับให้ส่งใช้ `requireReadReason` ต่ออีกชั้น
@@ -269,6 +277,16 @@ export function requireLogReader(req: Request, res: Response, next: NextFunction
       res,
       reasonKey,
       "ห้ามส่งเหตุผลใน URL (URL ถูกเก็บใน log ของ proxy ทุกชั้น) — ส่งใน header x-log-reason แบบ encodeURIComponent",
+    );
+    return;
+  }
+  const subjectKey = Object.keys(req.query).find((key) => SUBJECT_IN_QUERY.test(key));
+  if (subjectKey !== undefined) {
+    validationError(
+      res,
+      subjectKey,
+      `ห้ามส่ง ${subjectKey} ใน URL (URL ถูกเก็บใน log ของ proxy และ edge ทุกชั้น) — ส่งใน header ` +
+        `x-log-${subjectKey.toLowerCase()} (ค่าที่ไม่ใช่ ASCII ให้ encodeURIComponent)`,
     );
     return;
   }

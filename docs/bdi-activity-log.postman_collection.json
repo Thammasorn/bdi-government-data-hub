@@ -3,7 +3,7 @@
     "name": "D2 — Activity log API (อ่าน log)",
     "_postman_id": "4f0c2d6e-8b1a-4c3e-9d57-a1e6b3c9f210",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "อ่าน activity log และ error ที่ระบบเก็บไว้ใน MongoDB (docs/21-activity-log.md) — **ไม่ใช่ admin API** และแยก collection ไว้โดยตั้งใจ: คนที่ถือ admin token ไม่ได้สิทธิ์อ่าน log ไปด้วย\n\n## ก่อนเริ่ม\n\n1. **เลือก environment** (ไฟล์อยู่ข้างไฟล์นี้ใน `docs/`) แล้วใส่ค่าสองตัว:\n\n| ตัวแปร | ใส่อะไร |\n| --- | --- |\n| `logToken` | `LOG_READ_TOKEN` จาก `.env` ของเครื่องนั้น — **ความลับ** ไฟล์ `bdi-main-local` กับ `bdi-public` เว้นว่างไว้ (`bdi-dev-checkout` ใส่ค่าตัวอย่าง `dev-log-token-change-me` ไว้แล้ว) |\n| `logReader` | อีเมลของคุณ (ASCII) — ส่งเป็น header `x-log-reader` ทุกคำขอ และลงบันทึกการอ่าน |\n\n2. **ใส่เหตุผลที่อ่าน** ในตัวแปร `readReason` ของ collection (10–500 ตัว ภาษาไทยได้) — script ของ collection แปลงเป็น header `x-log-reason` ให้เองทุกคำขอ **ห้ามใส่เหตุผลใน URL** (API ตอบ 400): เหตุผลมักมีชื่อคนที่ถูกสอบสวน และ URL ไปอยู่ใน log ของ proxy ทุกชั้น activity · timeline · trace บังคับให้มีเหตุผล\n\n3. **ทุกการอ่านถูกบันทึกก่อนได้ข้อมูล** เป็น `AUDIT_LOG_READ` ใน audit_event: ผู้อ่าน เหตุผล endpoint ตัวกรอง และ fingerprint ของ token (G7 ดูได้ว่าใครอ่านอะไร) บันทึกไม่ได้ = ไม่ได้ข้อมูล (503 `log_read_unrecorded`)\n\n`baseUrl` ต้องชี้ **backend ตรง** (`https://bdi-api.thammasorn.org`, `http://localhost:4000` หรือ 41N0 ของ dev checkout) — proxy ของหน้าเว็บ (`bdi.thammasorn.org/api/...`) ตอบ 404 ให้ทุก `/api/admin/logs*` โดยตั้งใจ\n\n## ตัวแปรของ collection\n\n| ตัวแปร | ใช้กับ |\n| --- | --- |\n| `readReason` | ทุกคำขอ (header `x-log-reason`) |\n| `person` | G1 G2 — อีเมลหรือ uuid ของบัญชี |\n| `requestNumber` | G1 G3 — เลขที่คำขอ เช่น `DS-REG-2026-0010` |\n| `email` | G1 G4 — อีเมลที่พิมพ์มาตอนล็อกอิน |\n| `oldTokenFp` | G1 G8 — fingerprint 12 ตัวของ token ที่หมุนแล้ว (ไม่ใช่ตัว token) |\n| `reference` | G1 G6 — รหัสอ้างอิง 8 ตัวบนข้อความ error |\n| `errorFingerprint` · `errorEventId` | E1 → E2 → E3 เก็บให้อัตโนมัติ |\n| `issueFingerprint` · `issueStatus` · `issueReason` | E4 — **กรอกเองทั้งสามตัว** ขาดตัวใด E4 ไม่ถูกส่ง และล้างทั้งสามหลังเปลี่ยนสำเร็จ: การรันทั้ง collection (Runner, newman) จึงไม่เปลี่ยนสถานะ issue ใดเอง |\n\nid ที่ script เก็บอยู่ใน**ตัวแปรของ collection เท่านั้น** — ถ้าชื่อเดียวกันอยู่ใน environment ด้วย Postman ใช้ค่าจาก environment เสมอ แล้วค่าที่เก็บได้จะไม่มีผล (CLAUDE.md)\n\n## หน้าถัดไปของ activity (G1 G2 G4 G5 G7 G8)\n\nคำตอบที่หน้าเต็มมี `nextBefore` — เปิด query `before` แล้วใส่ค่านั้น **อย่าเพิ่ม `page`**: log โตตลอดเวลา และการอ่านแต่ละครั้งก็เพิ่มแถว `AUDIT_LOG_READ` ขึ้นบนสุดในไม่กี่วินาที `page=2` ที่เปิดทีหลังจึงเห็นท้ายหน้าแรกซ้ำ `before` ต่อจากแถวสุดท้ายที่เห็นพอดี (ใช้คู่กับ `page` ไม่ได้) คำตอบยังบอกช่วงที่ใช้จริงใน `window` — **ส่ง `to` เท่ากับ `window.to` ก็ยังไม่ทำให้ `page` นิ่ง**: สำเนาตามหลังแถวจริงไม่กี่วินาที แถวที่เกิดก่อน `to` แต่ยังคัดลอกไม่ถึง (ปกติคือบันทึกการอ่านครั้งก่อนของคุณเอง) จึงเข้ามาทีหลังแล้วดันหน้าถัดไปให้ซ้ำ `page` นิ่งเฉพาะช่วงในอดีตที่ไม่มีอะไรมาเพิ่มแล้ว (`to` ที่ผ่านไปเกินสองนาทีในเวลาปกติ — หลัง MongoDB ล่ม relay กับคิวยังเติมแถวเก่าย้อนหลังได้อีก) หน้าถัดไปของช่วงล่าสุดใช้ `before` อย่างเดียว\n\n## คำตอบที่พบบ่อย\n\n| status | error | แปลว่า |\n| --- | --- | --- |\n| 400 | `validation` | พารามิเตอร์ผิดหรือไม่รู้จัก — `fields` บอกทีละตัว (รวม `x-log-reader` / `x-log-reason`) |\n| 401 | `unauthenticated` | `logToken` ผิด — การปฏิเสธถูกบันทึกเป็น `LOG_TOKEN_REJECTED` |\n| 404 | `not_found` | ไม่มี path นี้ หรือไม่พบสิ่งที่ขอ |\n| 503 | `log_access_disabled` | เครื่องนี้ยังไม่ได้ตั้ง `LOG_READ_TOKEN` |\n| 503 | `log_store_unavailable` / `log_store_disabled` | MongoDB ล่ม ค้าง หรือปิดไว้ — ตอบในราว 2 วินาที ก่อนบันทึกการอ่าน (ไม่มีอะไรให้ส่ง) แม้ Postgres จะล่มด้วย |\n| 503 | `hash_search_unavailable` | ค้นด้วยเลขบัตรหรืออีเมลไม่ได้ เพราะไม่ได้ตั้ง `LOG_HASH_KEY` |\n| 503 | `log_read_unrecorded` | Postgres บันทึกการอ่านไม่ได้ และ MongoDB ล้มระหว่างเขียนสำเนาแทน (ตอบ ping ได้ตอนเริ่มคำขอ) — ไม่ส่งข้อมูล |\n| 503 | `database_unavailable` | Postgres ไม่พร้อม จึงแปลงอีเมล เลขที่คำขอ หรือรหัสหน่วยงานไม่ได้ — ค้นด้วย uuid ได้ระหว่างนี้ |\n"
+    "description": "อ่าน activity log และ error ที่ระบบเก็บไว้ใน MongoDB (docs/21-activity-log.md) — **ไม่ใช่ admin API** และแยก collection ไว้โดยตั้งใจ: คนที่ถือ admin token ไม่ได้สิทธิ์อ่าน log ไปด้วย\n\n## ก่อนเริ่ม\n\n1. **เลือก environment** (ไฟล์อยู่ข้างไฟล์นี้ใน `docs/`) แล้วใส่ค่าสองตัว:\n\n| ตัวแปร | ใส่อะไร |\n| --- | --- |\n| `logToken` | `LOG_READ_TOKEN` จาก `.env` ของเครื่องนั้น — **ความลับ** ไฟล์ `bdi-main-local` กับ `bdi-public` เว้นว่างไว้ (`bdi-dev-checkout` ใส่ค่าตัวอย่าง `dev-log-token-change-me` ไว้แล้ว) |\n| `logReader` | อีเมลของคุณ (ASCII) — ส่งเป็น header `x-log-reader` ทุกคำขอ และลงบันทึกการอ่าน |\n\n2. **ใส่เหตุผลที่อ่าน** ในตัวแปร `readReason` ของ collection (10–500 ตัว ภาษาไทยได้) — script ของ collection แปลงเป็น header `x-log-reason` ให้เองทุกคำขอ **ห้ามใส่เหตุผลใน URL** (API ตอบ 400): เหตุผลมักมีชื่อคนที่ถูกสอบสวน และ URL ไปอยู่ใน log ของ proxy ทุกชั้น activity · timeline · trace บังคับให้มีเหตุผล\n\n   **ตัวระบุบุคคลก็ห้ามอยู่ใน URL ด้วยเหตุผลเดียวกัน** — อีเมล เลขบัตร หรือ uuid ของบัญชีไปทาง header `x-log-email` `x-log-cid` `x-log-person` (G1–G4 ตั้งไว้ให้แล้ว ใส่ค่าในตัวแปร) `?person=` `?cid=` `?email=` ตอบ 400 ค่า ASCII ส่งตรง ๆ ได้ ค่าที่มีอักษรอื่นต้อง `encodeURIComponent`\n\n3. **ทุกการอ่านถูกบันทึกก่อนได้ข้อมูล** เป็น `AUDIT_LOG_READ` ใน audit_event: ผู้อ่าน เหตุผล endpoint ตัวกรอง และ fingerprint ของ token (G7 ดูได้ว่าใครอ่านอะไร) บันทึกไม่ได้ = ไม่ได้ข้อมูล (503 `log_read_unrecorded`)\n\n`baseUrl` ต้องชี้ **backend ตรง** (`https://bdi-api.thammasorn.org`, `http://localhost:4000` หรือ 41N0 ของ dev checkout) — proxy ของหน้าเว็บ (`bdi.thammasorn.org/api/...`) ตอบ 404 ให้ทุก `/api/admin/logs*` โดยตั้งใจ\n\n## ตัวแปรของ collection\n\n| ตัวแปร | ใช้กับ |\n| --- | --- |\n| `readReason` | ทุกคำขอ (header `x-log-reason`) |\n| `person` | G1 G2 G3 — อีเมลหรือ uuid ของบัญชี (header `x-log-person`) |\n| `requestNumber` | G1 G3 — เลขที่คำขอ เช่น `DS-REG-2026-0010` |\n| `email` | G1 G4 — อีเมลที่พิมพ์มาตอนล็อกอิน (header `x-log-email`) |\n| `oldTokenFp` | G1 G8 — fingerprint 12 ตัวของ token ที่หมุนแล้ว (ไม่ใช่ตัว token) |\n| `reference` | G1 G6 — รหัสอ้างอิง 8 ตัวบนข้อความ error |\n| `errorFingerprint` · `errorEventId` | E1 → E2 → E3 เก็บให้อัตโนมัติ |\n| `issueFingerprint` · `issueStatus` · `issueReason` | E4 — **กรอกเองทั้งสามตัว** ขาดตัวใด E4 ไม่ถูกส่ง และล้างทั้งสามหลังเปลี่ยนสำเร็จ: การรันทั้ง collection (Runner, newman) จึงไม่เปลี่ยนสถานะ issue ใดเอง |\n\nid ที่ script เก็บอยู่ใน**ตัวแปรของ collection เท่านั้น** — ถ้าชื่อเดียวกันอยู่ใน environment ด้วย Postman ใช้ค่าจาก environment เสมอ แล้วค่าที่เก็บได้จะไม่มีผล (CLAUDE.md)\n\n## หน้าถัดไปของ activity (G1 G2 G4 G5 G7 G8)\n\nคำตอบที่หน้าเต็มมี `nextBefore` — เปิด query `before` แล้วใส่ค่านั้น **อย่าเพิ่ม `page`**: log โตตลอดเวลา และการอ่านแต่ละครั้งก็เพิ่มแถว `AUDIT_LOG_READ` ขึ้นบนสุดในไม่กี่วินาที `page=2` ที่เปิดทีหลังจึงเห็นท้ายหน้าแรกซ้ำ `before` ต่อจากแถวสุดท้ายที่เห็นพอดี (ใช้คู่กับ `page` ไม่ได้) คำตอบยังบอกช่วงที่ใช้จริงใน `window` — **ส่ง `to` เท่ากับ `window.to` ก็ยังไม่ทำให้ `page` นิ่ง**: สำเนาตามหลังแถวจริงไม่กี่วินาที แถวที่เกิดก่อน `to` แต่ยังคัดลอกไม่ถึง (ปกติคือบันทึกการอ่านครั้งก่อนของคุณเอง) จึงเข้ามาทีหลังแล้วดันหน้าถัดไปให้ซ้ำ `page` นิ่งเฉพาะช่วงในอดีตที่ไม่มีอะไรมาเพิ่มแล้ว (`to` ที่ผ่านไปเกินสองนาทีในเวลาปกติ — หลัง MongoDB ล่ม relay กับคิวยังเติมแถวเก่าย้อนหลังได้อีก) หน้าถัดไปของช่วงล่าสุดใช้ `before` อย่างเดียว\n\n## คำตอบที่พบบ่อย\n\n| status | error | แปลว่า |\n| --- | --- | --- |\n| 400 | `validation` | พารามิเตอร์ผิดหรือไม่รู้จัก — `fields` บอกทีละตัว (รวม `x-log-reader` / `x-log-reason` / `x-log-person` / `x-log-cid` / `x-log-email`) |\n| 401 | `unauthenticated` | `logToken` ผิด — การปฏิเสธถูกบันทึกเป็น `LOG_TOKEN_REJECTED` |\n| 404 | `not_found` | ไม่มี path นี้ หรือไม่พบสิ่งที่ขอ |\n| 503 | `log_access_disabled` | เครื่องนี้ยังไม่ได้ตั้ง `LOG_READ_TOKEN` |\n| 503 | `log_store_unavailable` / `log_store_disabled` | MongoDB ล่ม ค้าง หรือปิดไว้ — ตอบในราว 2 วินาที ก่อนบันทึกการอ่าน (ไม่มีอะไรให้ส่ง) แม้ Postgres จะล่มด้วย |\n| 503 | `hash_search_unavailable` | ค้นด้วยเลขบัตรหรืออีเมลไม่ได้ เพราะไม่ได้ตั้ง `LOG_HASH_KEY` |\n| 503 | `log_read_unrecorded` | Postgres บันทึกการอ่านไม่ได้ และ MongoDB ล้มระหว่างเขียนสำเนาแทน (ตอบ ping ได้ตอนเริ่มคำขอ) — ไม่ส่งข้อมูล |\n| 503 | `database_unavailable` | Postgres ไม่พร้อม จึงแปลงอีเมล เลขที่คำขอ หรือรหัสหน่วยงานไม่ได้ — ค้นด้วย uuid ได้ระหว่างนี้ |\n"
   },
   "item": [
     {
@@ -16,6 +16,27 @@
             "value": "{{logReader}}",
             "type": "text",
             "description": "อีเมลของผู้อ่าน (ASCII ไม่เกิน 100 ตัว) — ประกาศเอง ไม่ได้พิสูจน์ แต่ลงบันทึกการอ่านทุกครั้ง"
+          },
+          {
+            "key": "x-log-person",
+            "value": "{{person}}",
+            "type": "text",
+            "description": "uuid ของบัญชี หรืออีเมล — server แปลงอีเมลเป็น id เอง (ไม่มีบัญชี = ค้นด้วย key HMAC ของอีเมล) · ส่งใน header ไม่ใช่ URL — URL ไปอยู่ใน log ของ proxy และ edge ทุกชั้น (API ตอบ 400 ถ้าอยู่ใน query)",
+            "disabled": true
+          },
+          {
+            "key": "x-log-cid",
+            "value": "",
+            "type": "text",
+            "description": "เลขบัตร 13 หลัก — จับด้วย key HMAC เท่านั้น บันทึกการอ่านเก็บแค่ key ไม่เก็บเลข · ส่งใน header ไม่ใช่ URL — URL ไปอยู่ใน log ของ proxy และ edge ทุกชั้น (API ตอบ 400 ถ้าอยู่ใน query)",
+            "disabled": true
+          },
+          {
+            "key": "x-log-email",
+            "value": "{{email}}",
+            "type": "text",
+            "description": "อีเมลที่อยู่ในแถว (รวมอีเมลที่พิมพ์มาตอนล็อกอินไม่ผ่าน) — จับด้วย key HMAC · ส่งใน header ไม่ใช่ URL — URL ไปอยู่ใน log ของ proxy และ edge ทุกชั้น (API ตอบ 400 ถ้าอยู่ใน query)",
+            "disabled": true
           }
         ],
         "url": {
@@ -55,12 +76,6 @@
               "disabled": true
             },
             {
-              "key": "person",
-              "value": "{{person}}",
-              "description": "uuid ของบัญชี หรืออีเมล — server แปลงอีเมลเป็น id เอง (ไม่มีบัญชี = ค้นด้วย key HMAC ของอีเมล)",
-              "disabled": true
-            },
-            {
               "key": "actorId",
               "value": "",
               "description": "uuid ของผู้กระทำ",
@@ -88,18 +103,6 @@
               "key": "organization",
               "value": "",
               "description": "รหัสหน่วยงาน (organization_code) หรือ uuid",
-              "disabled": true
-            },
-            {
-              "key": "cid",
-              "value": "",
-              "description": "เลขบัตร 13 หลัก — จับด้วย key HMAC เท่านั้น บันทึกการอ่านเก็บแค่ key ไม่เก็บเลข",
-              "disabled": true
-            },
-            {
-              "key": "email",
-              "value": "{{email}}",
-              "description": "อีเมลที่อยู่ในแถว (รวมอีเมลที่พิมพ์มาตอนล็อกอินไม่ผ่าน) — จับด้วย key HMAC",
               "disabled": true
             },
             {
@@ -152,7 +155,7 @@
             }
           ]
         },
-        "description": "ค้นสำเนาของ audit_event ใน log store — ตัวกรองทุกตัว AND กัน ติ๊กเปิดตัวที่ต้องการใน Params\n\n- ไม่ระบุช่วงเวลาและไม่มีตัวกรองที่แคบลง (person, request, organization, actorId, subjectId, cid, email, tokenFp, correlationId) = 30 วันล่าสุด\n- เรียงใหม่ไปเก่า `total` นับถึง 10,000 (`totalIsLowerBound: true` = อย่างน้อยเท่านี้)\n- หน้าเต็มได้ `nextBefore` — หน้าถัดไปคือ `before=<nextBefore>` ไม่ใช่ `page=2` · `window` คือช่วงที่ใช้จริง\n- **ทุกคำขอถูกบันทึกเป็น `AUDIT_LOG_READ` ก่อนได้ข้อมูล** พร้อมผู้อ่าน เหตุผล และตัวกรอง — `readId` ในคำตอบคือ id ของบันทึกนั้น\n- ต้องมีเหตุผล (`readReason`) ไม่งั้น 400"
+        "description": "ค้นสำเนาของ audit_event ใน log store — ตัวกรองทุกตัว AND กัน ติ๊กเปิดตัวที่ต้องการใน Params — ตัวระบุบุคคล (`x-log-person` `x-log-cid` `x-log-email`) อยู่ใน **Headers** ไม่ใช่ Params\n\n- ไม่ระบุช่วงเวลาและไม่มีตัวกรองที่แคบลง (person, request, organization, actorId, subjectId, cid, email, tokenFp, correlationId) = 30 วันล่าสุด\n- เรียงใหม่ไปเก่า `total` นับถึง 10,000 (`totalIsLowerBound: true` = อย่างน้อยเท่านี้)\n- หน้าเต็มได้ `nextBefore` — หน้าถัดไปคือ `before=<nextBefore>` ไม่ใช่ `page=2` · `window` คือช่วงที่ใช้จริง\n- **ทุกคำขอถูกบันทึกเป็น `AUDIT_LOG_READ` ก่อนได้ข้อมูล** พร้อมผู้อ่าน เหตุผล และตัวกรอง — `readId` ในคำตอบคือ id ของบันทึกนั้น\n- ต้องมีเหตุผล (`readReason`) ไม่งั้น 400"
       },
       "response": [],
       "event": [
@@ -188,10 +191,16 @@
             "value": "{{logReader}}",
             "type": "text",
             "description": "อีเมลของผู้อ่าน (ASCII ไม่เกิน 100 ตัว) — ประกาศเอง ไม่ได้พิสูจน์ แต่ลงบันทึกการอ่านทุกครั้ง"
+          },
+          {
+            "key": "x-log-person",
+            "value": "{{person}}",
+            "type": "text",
+            "description": "อีเมลหรือ uuid ของบัญชี · ส่งใน header ไม่ใช่ URL — URL ไปอยู่ใน log ของ proxy และ edge ทุกชั้น (API ตอบ 400 ถ้าอยู่ใน query)"
           }
         ],
         "url": {
-          "raw": "{{baseUrl}}/api/admin/logs/activity?person={{person}}&pageSize=200",
+          "raw": "{{baseUrl}}/api/admin/logs/activity?pageSize=200",
           "host": [
             "{{baseUrl}}"
           ],
@@ -202,11 +211,6 @@
             "activity"
           ],
           "query": [
-            {
-              "key": "person",
-              "value": "{{person}}",
-              "description": "อีเมลหรือ uuid ของบัญชี"
-            },
             {
               "key": "pageSize",
               "value": "200",
@@ -238,7 +242,7 @@
             }
           ]
         },
-        "description": "ทุกแถวที่คนนี้เกี่ยว — เป็นผู้กระทำ เป็น subject (บัญชีของเขา) ได้ role ถูกเชิญ ถูกขอความเห็น (`relatedUserIds`) และแถวที่มีแค่อีเมลของเขา (`email#` เช่นคำเชิญที่ถูกลบ) ใส่อีเมลหรือ uuid ในตัวแปร `person` ของ collection\n\nไม่ระบุช่วงเวลา = ทั้งประวัติ · เรียงตามเวลาแบบเก่าไปใหม่รวม error ด้วยใช้ `timeline?person=` แทน · นี่คือทางตอบคำขอเข้าถึงข้อมูลของเจ้าของข้อมูล (PDPA) — บันทึกการอ่านเก็บอีเมลเป็น key HMAC เท่านั้น"
+        "description": "ทุกแถวที่คนนี้เกี่ยว — เป็นผู้กระทำ เป็น subject (บัญชีของเขา) ได้ role ถูกเชิญ ถูกขอความเห็น (`relatedUserIds`) และแถวที่มีแค่อีเมลของเขา (`email#` เช่นคำเชิญที่ถูกลบ) ใส่อีเมลหรือ uuid ในตัวแปร `person` ของ collection (ส่งเป็น header `x-log-person` — ตัวระบุบุคคลไม่อยู่ใน URL)\n\nไม่ระบุช่วงเวลา = ทั้งประวัติ · เรียงตามเวลาแบบเก่าไปใหม่รวม error ด้วยใช้ `timeline` กับ header `x-log-person` แทน · นี่คือทางตอบคำขอเข้าถึงข้อมูลของเจ้าของข้อมูล (PDPA) — บันทึกการอ่านเก็บอีเมลเป็น key HMAC เท่านั้น · ผลรวมการอ่านประวัติของคนนี้ครั้งก่อน ๆ (`AUDIT_LOG_READ`) ด้วย — ใครเปิดประวัติของเขาก็เป็นสิ่งที่เกิดกับข้อมูลของเขา"
       },
       "response": [],
       "event": [
@@ -274,6 +278,13 @@
             "value": "{{logReader}}",
             "type": "text",
             "description": "อีเมลของผู้อ่าน (ASCII ไม่เกิน 100 ตัว) — ประกาศเอง ไม่ได้พิสูจน์ แต่ลงบันทึกการอ่านทุกครั้ง"
+          },
+          {
+            "key": "x-log-person",
+            "value": "{{person}}",
+            "type": "text",
+            "description": "อีเมลหรือ uuid — แทน request · ส่งใน header ไม่ใช่ URL — URL ไปอยู่ใน log ของ proxy และ edge ทุกชั้น (API ตอบ 400 ถ้าอยู่ใน query)",
+            "disabled": true
           }
         ],
         "url": {
@@ -292,12 +303,6 @@
               "key": "request",
               "value": "{{requestNumber}}",
               "description": "เลขที่คำขอหรือ uuid"
-            },
-            {
-              "key": "person",
-              "value": "",
-              "description": "อีเมลหรือ uuid — แทน request",
-              "disabled": true
             },
             {
               "key": "organization",
@@ -319,7 +324,7 @@
             }
           ]
         },
-        "description": "ทุกอย่างของคำขอหนึ่งใบเรียงเก่าไปใหม่ — บันทึกร่าง → สร้างเอกสาร → นำส่ง → การตรวจแต่ละด่าน รวมไฟล์แนบ และ error ที่เกิดกับคำขอนั้น (คำขอ HTTP เดียวกัน หรือ path ที่มี id ของคำขอ) ไม่เกิน 500 รายการ (`truncated: true` = มีมากกว่านี้ ให้แคบด้วย from/to)\n\nใส่เลขที่คำขอในตัวแปร `requestNumber` — ไม่ระบุช่วง = ทั้งชีวิตของคำขอ · ใช้ `person=` หรือ `organization=` แทนได้ (อย่างใดอย่างหนึ่ง ค่าตั้งต้น 7 วัน)"
+        "description": "ทุกอย่างของคำขอหนึ่งใบเรียงเก่าไปใหม่ — บันทึกร่าง → สร้างเอกสาร → นำส่ง → การตรวจแต่ละด่าน รวมไฟล์แนบ และ error ที่เกิดกับคำขอนั้น (คำขอ HTTP เดียวกัน หรือ path ที่มี id ของคำขอ) ไม่เกิน 500 รายการ (`truncated: true` = มีมากกว่านี้ ให้แคบด้วย from/to)\n\nใส่เลขที่คำขอในตัวแปร `requestNumber` — ไม่ระบุช่วง = ทั้งชีวิตของคำขอ · ใช้ header `x-log-person` หรือ `organization=` แทนได้ (อย่างใดอย่างหนึ่ง ค่าตั้งต้น 7 วัน)"
       },
       "response": [],
       "event": [
@@ -355,10 +360,16 @@
             "value": "{{logReader}}",
             "type": "text",
             "description": "อีเมลของผู้อ่าน (ASCII ไม่เกิน 100 ตัว) — ประกาศเอง ไม่ได้พิสูจน์ แต่ลงบันทึกการอ่านทุกครั้ง"
+          },
+          {
+            "key": "x-log-email",
+            "value": "{{email}}",
+            "type": "text",
+            "description": "อีเมลที่พิมพ์มา · ส่งใน header ไม่ใช่ URL — URL ไปอยู่ใน log ของ proxy และ edge ทุกชั้น (API ตอบ 400 ถ้าอยู่ใน query)"
           }
         ],
         "url": {
-          "raw": "{{baseUrl}}/api/admin/logs/activity?action=LOGIN_FAILED&email={{email}}&pageSize=200",
+          "raw": "{{baseUrl}}/api/admin/logs/activity?action=LOGIN_FAILED&pageSize=200",
           "host": [
             "{{baseUrl}}"
           ],
@@ -373,11 +384,6 @@
               "key": "action",
               "value": "LOGIN_FAILED",
               "description": ""
-            },
-            {
-              "key": "email",
-              "value": "{{email}}",
-              "description": "อีเมลที่พิมพ์มา"
             },
             {
               "key": "pageSize",
@@ -398,7 +404,7 @@
             }
           ]
         },
-        "description": "การล็อกอินไม่ผ่านของอีเมลหนึ่งตัว — รวมอีเมลที่ไม่มีบัญชีในระบบ (อีเมลที่พิมพ์มาถูกปิดในสำเนา ค้นได้ด้วย key HMAC เท่านั้น) ใส่อีเมลในตัวแปร `email` · ช่วงเวลาตั้งต้นคือทั้งประวัติ เพราะมีตัวกรองอีเมลแล้ว\n\nระบบที่ไม่ได้ตั้ง `LOG_HASH_KEY` ตอบ 503 `hash_search_unavailable`"
+        "description": "การล็อกอินไม่ผ่านของอีเมลหนึ่งตัว — รวมอีเมลที่ไม่มีบัญชีในระบบ (อีเมลที่พิมพ์มาถูกปิดในสำเนา ค้นได้ด้วย key HMAC เท่านั้น) ใส่อีเมลในตัวแปร `email` (ส่งเป็น header `x-log-email`) · ช่วงเวลาตั้งต้นคือทั้งประวัติ เพราะมีตัวกรองอีเมลแล้ว\n\nระบบที่ไม่ได้ตั้ง `LOG_HASH_KEY` ตอบ 503 `hash_search_unavailable`"
       },
       "response": [],
       "event": [
@@ -625,7 +631,7 @@
             }
           ]
         },
-        "description": "บันทึกการอ่าน log ทุกครั้ง (`AUDIT_LOG_READ`) — ผู้อ่านที่ประกาศ เหตุผล endpoint ตัวกรอง (อีเมลกับเลขบัตรเป็น key HMAC · `person` ที่เป็นบัญชีเป็น uuid ของบัญชี) และ fingerprint ของ log token ที่ใช้ · การเปลี่ยนสถานะ issue ดูด้วย `action=ERROR_ISSUE_STATUS_CHANGED` · การอ่านครั้งนี้ก็ถูกบันทึกเหมือนกัน"
+        "description": "บันทึกการอ่าน log ทุกครั้ง (`AUDIT_LOG_READ`) — ผู้อ่านที่ประกาศ เหตุผล endpoint ตัวกรอง (อีเมลกับเลขบัตรเป็น key HMAC ใต้ `emailKey` / `cidKey` · `person` ที่เป็นบัญชีเป็น uuid ของบัญชี) และ fingerprint ของ log token ที่ใช้ · การเปลี่ยนสถานะ issue ดูด้วย `action=ERROR_ISSUE_STATUS_CHANGED` · การอ่านครั้งนี้ก็ถูกบันทึกเหมือนกัน\n\n**ใครเคยค้นประวัติของคนหนึ่ง** — เปิด header `x-log-person` `x-log-cid` หรือ `x-log-email` (ของ G1) คู่กับ `action=AUDIT_LOG_READ`: สำเนาของบันทึกการอ่านมี key ที่ค้นและบัญชีที่ถูกเปิดประวัติเป็นตัวค้นหาของมันเอง"
       },
       "response": [],
       "event": [
@@ -1162,7 +1168,7 @@
       "key": "person",
       "value": "",
       "type": "string",
-      "description": "G1 G2 — อีเมลหรือ uuid ของบัญชี"
+      "description": "G1 G2 G3 — อีเมลหรือ uuid ของบัญชี (ส่งเป็น header x-log-person ไม่ใช่ query)"
     },
     {
       "key": "requestNumber",
@@ -1174,7 +1180,7 @@
       "key": "email",
       "value": "",
       "type": "string",
-      "description": "G1 G4 — อีเมลที่พิมพ์มาตอนล็อกอิน"
+      "description": "G1 G4 — อีเมลที่พิมพ์มาตอนล็อกอิน (ส่งเป็น header x-log-email ไม่ใช่ query)"
     },
     {
       "key": "oldTokenFp",

@@ -194,7 +194,7 @@ export function viaOf(row: {
 /**
  * key ค้นหาของค่าหนึ่งค่า — `cid#` / `email#` + 16 ตัวแรกของ HMAC-SHA256 (กุญแจ LOG_HASH_KEY) ของค่าที่ normalise แล้ว
  *   - เลขบัตร: เลขไทยและเลขเต็มความกว้างเป็นอารบิก (`asciiDigits`) แล้วเหลือแค่ตัวเลข ต้องครบ 13 หลัก (ค่าที่ไม่ครบ
- *     เช่นร่างที่กรอกครึ่งทาง ไม่มีทางถูกค้นด้วย ?cid= อยู่แล้ว) — `๑๑๐๑…` ที่พิมพ์ในบันทึกจึงได้ key ตัวเดียวกับ `1101…`
+ *     เช่นร่างที่กรอกครึ่งทาง ไม่มีทางถูกค้นด้วย `x-log-cid` อยู่แล้ว) — `๑๑๐๑…` ที่พิมพ์ในบันทึกจึงได้ key ตัวเดียวกับ `1101…`
  *   - อีเมล: ตัดช่องว่างหัวท้าย ตัวพิมพ์เล็ก ต้องมี `@`
  * คืน null เมื่อไม่มีกุญแจหรือค่าไม่เข้ารูป — ใช้ตัวเดียวกันทั้งตอนเขียน (ที่นี่) และตอนค้น (API อ่าน log, step 7)
  * 16 ตัว (64 บิต) พอสำหรับ index ที่มีคนไม่กี่ล้าน และกุญแจลับทำให้ไล่ย้อนเลขบัตร 10¹³ ค่าไม่ได้ถ้าไม่มีกุญแจ
@@ -289,7 +289,7 @@ export interface ActivityDoc {
   mirroredAt: Date;
   /** มีเฉพาะเมื่อเอกสารถูกตัดให้ไม่เกิน 64 KB (BSON) — `fitDocument` บอกว่าตัดอะไรไปบ้าง */
   truncated?: true;
-  /** มีเฉพาะเมื่อรายการค้นหาถูกตัดเหลือ SEARCH_LIST_MAX ใบแรก — ค่าที่ตกไปค้นด้วย `?cid=` `person=` `tokenFp=` ไม่เจอ */
+  /** มีเฉพาะเมื่อรายการค้นหาถูกตัดเหลือ SEARCH_LIST_MAX ใบแรก — ค่าที่ตกไปค้นด้วย `x-log-cid` `x-log-person` `tokenFp=` ไม่เจอ */
   hashKeysTruncated?: true;
   relatedUserIdsTruncated?: true;
   tokenFpsTruncated?: true;
@@ -318,7 +318,7 @@ function stringOrNull(value: unknown): string | null {
 }
 
 /**
- * คนที่แถวนี้เกี่ยวข้อง (index ของ `person=` ใน step 7) — ผู้กระทำ, บัญชีที่เป็น subject, และ id ของบัญชีที่แต่ละรหัส
+ * คนที่แถวนี้เกี่ยวข้อง (index ของ `x-log-person` ใน step 7) — ผู้กระทำ, บัญชีที่เป็น subject, และ id ของบัญชีที่แต่ละรหัส
  * วางไว้ใน metadata / before / after (ตาราง "คนอยู่ตรงไหน" ใน docs/21 §2.10) อ่านจากค่าดิบก่อนปิด
  * แถวที่มีแค่อีเมลของบัญชี (resend ของ ACTIVATION_KEY_ISSUED, INVITATION_DELETED, APPROVER_INVITATION_RECALLED ที่บัญชีถูก
  * ลบไปแล้ว) ไม่มี id ให้ใส่ — หาได้ด้วย `email#` ใน hashKeys แทน · แถว `AUDIT_LOG_READ` ได้บัญชีที่การอ่านเปิดประวัติ
@@ -357,14 +357,14 @@ const SEARCH_KEY = /^(?:cid|email)#[0-9a-f]{16}$/;
  *   - `userIds`: บัญชีที่ประวัติถูกเปิด — `person` และ `actorId` ที่เป็น uuid กับ `subjectId` เมื่อ `subjectType` เป็น
  *     `USER_ACCOUNT` (เข้า `relatedUserIds` ผ่าน `relatedUserIdsOf`)
  *
- * สองอย่างนี้ทำให้ `?cid=X&action=AUDIT_LOG_READ` (หรือ `person=`) ตอบได้ว่าใครเคยค้นประวัติของ X จาก log store เอง
+ * สองอย่างนี้ทำให้ `x-log-cid: X` คู่กับ `?action=AUDIT_LOG_READ` (หรือ `x-log-person`) ตอบได้ว่าใครเคยค้นประวัติของ X จาก log store เอง
  * เดิมไม่มีทั้งคู่ และ key ของเลขบัตรยังถูกปิดทิ้ง: บันทึกการอ่านเก็บมันไว้ใต้ `filters.cid` ซึ่งเข้ากฎ key เลขบัตร
  * (`CID_KEY` ใน lib/redact.ts) `cid#…` จึงกลายเป็น `{masked: "xxxx…edda"}` — ไม่มีอะไรที่ API ตอบได้ว่าค้นเลขบัตรของใคร
  * (ตรวจแบบค้านขั้น 7, 2026-09-30) ชื่อใหม่ (`cidKey`) ไม่เข้ากฎนั้นแล้ว แต่ key ยังต้องไม่ผ่าน `maskForLogStore` อยู่ดี:
  * ฐานสิบหก 16 ตัวราวหนึ่งในสี่ร้อยมีเลขติดกันพอดี 13 ตัว กฎเลขบัตรในข้อความจะเปลี่ยนมันเป็น `cid#[cid]…` ทุกครั้งที่ค้น
  * คนคนนั้น และทำ key `cid#` ปลอมจากเลขนั้น ส่วนแถวเก่าที่ยังใช้ชื่อ `cid` / `email` ก็ได้ key คืนด้วยกฎเดียวกันนี้เมื่อ rebuild
  *
- * ผลข้างเคียงที่ตั้งใจ: การอ่านประวัติของ X เป็นแถวหนึ่งในผลของ `person=X` / `cid=X` / `timeline?person=X` ครั้งถัดไป — การเปิด
+ * ผลข้างเคียงที่ตั้งใจ: การอ่านประวัติของ X เป็นแถวหนึ่งในผลของการค้นด้วย `x-log-person` / `x-log-cid` ของ X (activity และ timeline) ครั้งถัดไป — การเปิด
  * ประวัติของเขาเป็นสิ่งที่เกิดกับข้อมูลของเขา (docs/21 §3.11)
  */
 function logReadTargets(row: AuditRowLike): { keys: Map<string, string>; userIds: string[] } | null {
