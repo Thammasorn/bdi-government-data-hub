@@ -49,13 +49,15 @@ import {
   HOW_IT_WORKS,
   LEGAL_ANNEXES,
   LEGAL_ANNEX_LABEL,
+  LEGAL_ITEMS,
   LEGAL_PRIMARY,
-  LEGAL_REGULATION,
+  LEGAL_REGULATIONS,
   MORE_INFO_EYEBROW,
   OBJECTIVES,
   OBJECTIVES_BANNER,
   OBJECTIVES_LEAD,
   SECTIONS,
+  type LegalItem,
   type Section,
 } from "./content";
 
@@ -934,7 +936,39 @@ function DocCode({ code, muted = false }: { code: string; muted?: boolean }) {
   );
 }
 
+/**
+ * ชื่อเอกสาร — เป็นลิงก์ดาวน์โหลดเมื่อรายการนั้นมีไฟล์ ไม่มีก็เป็นข้อความเฉย ๆ (ดู `LegalItem`)
+ *
+ * เปิดในแท็บใหม่ด้วย เพราะเบราว์เซอร์ส่วนใหญ่เปิด PDF ให้อ่านแทนการบันทึกอยู่ดี
+ * คนที่แค่อยากอ่านจะได้ไม่หลุดออกจากหน้าแรก
+ */
+function LegalTitle({ item, className }: { item: LegalItem; className: string }) {
+  if (!item.file) return <span className={className}>{item.title}</span>;
+  return (
+    <a
+      href={item.file}
+      download
+      target="_blank"
+      rel="noopener"
+      className={clsx(
+        className,
+        "group inline-flex items-start gap-2 underline decoration-navy-200 underline-offset-4 transition-colors hover:text-coral-500 hover:decoration-coral-300",
+      )}
+    >
+      <span>{item.title}</span>
+      <svg
+        className="mt-[0.35em] h-4 w-4 shrink-0 text-ink-subtle transition-colors group-hover:text-coral-500"
+        {...iconProps}
+      >
+        <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />
+      </svg>
+      <span className="sr-only">(ดาวน์โหลด)</span>
+    </a>
+  );
+}
+
 function Legal() {
+  const pendingDownloads = LEGAL_ITEMS.some((item) => !item.file);
   return (
     <Section id="legal" tone="canvas">
       <Heading id="legal" />
@@ -942,9 +976,13 @@ function Legal() {
       <h3 className="reveal mt-12 font-heading text-[17px] font-semibold text-navy-800">
         กฎหมายที่เกี่ยวข้อง
       </h3>
-      <p className="reveal mt-3 rounded-2xl bg-white px-6 py-5 text-[16px] leading-[1.85] text-ink shadow-card">
-        {LEGAL_REGULATION}
-      </p>
+      <ul className="reveal mt-3 rounded-2xl bg-white px-6 py-1.5 shadow-card">
+        {LEGAL_REGULATIONS.map((item) => (
+          <li key={item.title} className="border-t border-line py-3.5 first:border-t-0">
+            <LegalTitle item={item} className="text-[16px] leading-[1.85] text-ink" />
+          </li>
+        ))}
+      </ul>
 
       <h3 className="reveal mt-10 font-heading text-[17px] font-semibold text-navy-800">
         เอกสารที่เกี่ยวข้อง
@@ -954,7 +992,7 @@ function Legal() {
       {/* ข้อความตัดบรรทัดเฉพาะจอแคบ ป้ายรหัสจึงชิดบนที่นั่น ส่วนจอกว้างเป็นบรรทัดเดียว จัดกึ่งกลางถูกกว่า */}
       <div className="reveal mt-3 flex items-start gap-4 rounded-2xl bg-white px-6 py-4 shadow-card sm:items-center">
         <DocCode code={LEGAL_PRIMARY.code} />
-        <span className="text-[16px] leading-[1.7] text-ink">{LEGAL_PRIMARY.title}</span>
+        <LegalTitle item={LEGAL_PRIMARY} className="text-[16px] leading-[1.7] text-ink" />
       </div>
 
       {/*
@@ -974,15 +1012,17 @@ function Legal() {
               className="flex items-start gap-4 border-t border-line py-3.5 first:border-t-0 first:pt-0 last:pb-0 sm:items-center"
             >
               <DocCode code={doc.code} muted />
-              <span className="text-[15px] leading-[1.7] text-ink">{doc.title}</span>
+              <LegalTitle item={doc} className="text-[15px] leading-[1.7] text-ink" />
             </li>
           ))}
         </ul>
       </div>
 
-      <p className="reveal mt-5 text-[14px] text-ink-subtle">
-        ลิงก์ดาวน์โหลดเอกสารแต่ละฉบับอยู่ระหว่างจัดเตรียม
-      </p>
+      {pendingDownloads ? (
+        <p className="reveal mt-5 text-[14px] text-ink-subtle">
+          ลิงก์ดาวน์โหลดเอกสารแต่ละฉบับอยู่ระหว่างจัดเตรียม
+        </p>
+      ) : null}
     </Section>
   );
 }
