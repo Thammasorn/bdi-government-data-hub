@@ -1059,6 +1059,8 @@ adminLogRouter.get("/status", async (req, res) => {
     overQuota: null,
     quotaCheckedAt: null,
   };
+  /** ลูปอีเมลสรุป error ของ worker (workers/error-alerts.ts) — null = ไม่เคยวิ่ง (ไม่ได้ตั้ง ERROR_ALERT_EMAILS หรือ log store ใหม่) */
+  let alerts: Record<string, unknown> | null = null;
   const db = env.logStore.enabled ? await logDb() : null;
   if (db) {
     try {
@@ -1076,12 +1078,22 @@ adminLogRouter.get("/status", async (req, res) => {
         logStore.overQuota = typeof state.overQuota === "boolean" ? state.overQuota : null;
         logStore.quotaCheckedAt = state.quotaCheckedAt ?? null;
       }
+      const alertState = await db
+        .collection<{ _id: string } & Document>("relay_state")
+        .findOne({ _id: "error_alerts" }, { projection: { enabledAt: 1, lastDigestAt: 1, lastError: 1 }, maxTimeMS: READ_MAX_MS });
+      if (alertState) {
+        alerts = {
+          enabledAt: alertState.enabledAt ?? null,
+          lastDigestAt: alertState.lastDigestAt ?? null,
+          lastError: typeof alertState.lastError === "string" ? alertState.lastError : null,
+        };
+      }
     } catch {
       // Mongo ตอบไม่ทัน — ตัวเลขของ relay และเพดานเป็น null ส่วน status มาจากรอบตรวจของ log-store.ts อยู่แล้ว
     }
   }
   // บันทึกการเรียก admin API ของ backend process นี้ (lib/admin-access.ts) — `suppressed` = เกินเพดานต่อนาทีจึงไม่ได้บันทึก
-  res.json({ logStore, adminAccess: adminAccessStats(), release: env.release });
+  res.json({ logStore, adminAccess: adminAccessStats(), alerts, release: env.release });
 });
 
 /**

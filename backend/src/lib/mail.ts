@@ -336,8 +336,16 @@ export function stepsBlock(progress: JourneyProgress | null | undefined): string
  * ไม่ได้ถือ template ของแต่ละเหตุการณ์ จึงห่อด้วย layout กลางให้หน้าตาเหมือนฉบับอื่น
  * ไม่รับ HTML จากผู้เรียก เพราะข้อความมาจากฐานข้อมูล ต้อง escape ก่อนเสมอ
  */
-export async function sendRaw(to: string, title: string, message: string): Promise<void> {
-  await send(to, title, layout({ title, intro: escapeHtml(message) }));
+export async function sendRaw(
+  to: string,
+  title: string,
+  message: string,
+  options: { lineBreaks?: boolean } = {},
+): Promise<void> {
+  // `lineBreaks`: ขึ้นบรรทัดใหม่ตาม `\n` ของข้อความ (สรุป error ของ workers/error-alerts.ts) — ผู้เรียกเดิมไม่ส่งมา อีเมลของ
+  // notification จึงหน้าตาเหมือนเดิมทุกตัว
+  const intro = options.lineBreaks ? escapeHtml(message).replace(/\n/g, "<br>") : escapeHtml(message);
+  await send(to, title, layout({ title, intro }));
 }
 
 /**

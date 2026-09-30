@@ -1014,6 +1014,15 @@ be destroyed for our mistake. `docs/07-thaid-integration.md` §4.2 has the full 
 and the OTP to stdout instead of sending — that is the normal way to exercise the flows.
 Templates are table-based with inline styles because Gmail and Outlook strip `<style>`.
 
+The error digest (`workers/error-alerts.ts`, on only when `ERROR_ALERT_EMAILS` is set, worker
+only) is the one mail that is neither inline nor outbox: its recipients are not accounts, and
+`notification_delivery.recipient_user_id` is NOT NULL. It runs in its own loop in the
+delivery-worker, never inside the outbox `tick()`, and sends one message per recipient at a time
+through `sendRaw()` with a 30 s limit each — the SMTP server is Office 365, which takes about
+three connections. At most one digest per 15 minutes and one alert per issue per 6 hours unless
+it regressed; its state lives in `relay_state` `_id: "error_alerts"`, so a restart does not
+resend. In dry-run it prints the whole digest to `docker compose logs delivery-worker`.
+
 ### PDF — every document comes from a .docx template
 
 **Nothing in the system draws a PDF in code any more.** `lib/pdf.ts` and the `pdfkit`

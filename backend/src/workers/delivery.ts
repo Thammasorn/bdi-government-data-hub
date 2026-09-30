@@ -26,6 +26,7 @@ import {
   recordRuntimeEvent,
 } from "../lib/error-capture.js";
 import { closeLogStore, startLogStore } from "../lib/log-store.js";
+import { startErrorAlerts, stopErrorAlerts } from "./error-alerts.js";
 import { startLogRelay, stopLogRelay } from "./log-relay.js";
 import { startLogUpkeep, stopLogUpkeep } from "./log-upkeep.js";
 import { renderAndSend } from "./render.js";
@@ -200,6 +201,9 @@ async function main() {
   void startLogStore({ service: "delivery-worker", maxPoolSize: 3 });
   startLogUpkeep();
   startLogRelay(prisma);
+  // อีเมลสรุป error — ลูปของตัวเอง ไม่อยู่ใน tick() ข้างล่าง: ส่งทีละฉบับผ่าน sendRaw เพดาน 30 วินาทีต่อฉบับ SMTP ที่ช้าจึงไม่รั้ง
+  // outbox ไว้ ปิดอยู่จนกว่าจะตั้ง ERROR_ALERT_EMAILS (workers/error-alerts.ts)
+  startErrorAlerts();
   recordRuntimeEvent("start", { node: process.version });
 
   let running = true;
@@ -207,6 +211,7 @@ async function main() {
     console.log(`[delivery] ${signal} received, shutting down`);
     running = false;
     stopLogUpkeep();
+    stopErrorAlerts();
     // รอบของ relay ที่กำลังเขียนไม่เกิน 1.5 วินาที — ที่ค้างอ่านซ้ำตอนเริ่มใหม่ได้
     await stopLogRelay();
     recordRuntimeEvent("shutdown", { signal });

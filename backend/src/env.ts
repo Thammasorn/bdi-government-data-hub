@@ -68,6 +68,21 @@ function positiveNumber(name: string, fallback: number): number {
   return fallback;
 }
 
+/**
+ * รายการอีเมลคั่นด้วย comma — ค่าที่ไม่ใช่อีเมลถูกข้ามพร้อมคำเตือน (บอกจำนวน ไม่พิมพ์ค่า) ตัวพิมพ์เล็ก ไม่ซ้ำ
+ */
+function emailList(name: string): string[] {
+  const entries = optional(name, "")
+    .split(",")
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean);
+  const valid = [...new Set(entries.filter((v) => /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(v)))];
+  if (valid.length < new Set(entries).size) {
+    console.warn(`[env] ${name}: ข้าม ${new Set(entries).size - valid.length} ค่าที่ไม่ใช่อีเมล`);
+  }
+  return valid;
+}
+
 /** อ่านก่อนสร้าง env เพราะ redirect_uri ของ ThaID ตั้งต้นจากค่านี้ */
 const APP_URL = optional("APP_URL", "http://localhost:3000").replace(/\/$/, "");
 /** อ่านก่อนสร้าง env เพราะค่าตั้งต้นบางตัว (เพดานของ log store) ต่างกันระหว่าง production กับที่อื่น */
@@ -384,6 +399,12 @@ export const env = {
      * `INGEST_SERVER_TOKEN` ของ frontend · ว่าง (หรือค่าตัวอย่างบน production) = ไม่มีรายงานไหนได้เป็น frontend-server
      * ไม่กระทบอย่างอื่น
      */
+    /**
+     * ผู้รับอีเมลสรุป error (workers/error-alerts.ts — delivery-worker เท่านั้น) คั่นด้วย comma **ว่าง = ปิดการแจ้งเตือน**
+     * ทั้งหมด (issue ยังถูกเก็บตามปกติ) ค่าที่ไม่ใช่อีเมลถูกข้ามพร้อมคำเตือนตอนบูต ไม่ throw — ผู้รับพิมพ์ผิดคนเดียวต้องไม่ทำให้
+     * worker บูตไม่ขึ้นแล้วอีเมลทั้งระบบหยุดตาม
+     */
+    alertEmails: emailList("ERROR_ALERT_EMAILS"),
     ingestToken: productionSecret(
       "INGEST_SERVER_TOKEN",
       "dev-ingest-token-change-me",
