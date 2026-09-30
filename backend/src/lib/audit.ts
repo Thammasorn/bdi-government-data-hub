@@ -397,11 +397,14 @@ export const AuditAction = {
    *
    * `metadata`: `reader` (อีเมลที่ผู้อ่าน**ประกาศ**ใน `x-log-reader` — ไม่ได้พิสูจน์) · `reason` (ข้อความจาก `x-log-reason`
    * อาจเป็น null บน endpoint ของ error ที่ไม่บังคับ) · `endpoint` (`GET /api/admin/logs/activity`) · `filters` (ค่าที่ใช้ค้น —
-   * `cid` `email` เก็บเป็น key HMAC `cid#…` / `email#…` เท่านั้น · `person` ที่ส่งมาเป็นอีเมลของบัญชีเก็บเป็น uuid ของบัญชี
-   * บวก `personEmailKey` (`email#…` เมื่อตั้ง LOG_HASH_KEY — ค้นทั้งสองทางจริง) อีเมลที่ไม่มีบัญชีเก็บเป็น `email#…` ไม่เคย
-   * เป็นอีเมลจริง ส่วนเลขที่คำขอกับรหัสหน่วยงานเก็บตามจริงเพราะไม่ใช่ข้อมูลบุคคล) · `token_fp` (12 ตัวแรกของ SHA-256 ของ
-   * `x-log-token` ที่ใช้) · `page`
+   * เลขบัตรกับอีเมลที่ค้นเก็บเป็น key HMAC เท่านั้น ใต้ชื่อ `cidKey` / `emailKey` (`cid#…` / `email#…` — ไม่ใช่ `cid` / `email`:
+   * ชื่อที่ลงท้าย `cid` เข้ากฎ key เลขบัตรของสำเนาแล้ว key ถูกปิดทิ้ง) · `person` ที่ส่งมาเป็นอีเมลของบัญชีเก็บเป็น uuid ของ
+   * บัญชี บวก `personEmailKey` (`email#…` เมื่อตั้ง LOG_HASH_KEY — ค้นทั้งสองทางจริง) อีเมลที่ไม่มีบัญชีเก็บเป็น `email#…`
+   * ไม่เคยเป็นอีเมลจริง ส่วนเลขที่คำขอกับรหัสหน่วยงานเก็บตามจริงเพราะไม่ใช่ข้อมูลบุคคล) · `token_fp` (12 ตัวแรกของ SHA-256
+   * ของ `x-log-token` ที่ใช้) · `page`
    * actor เป็นระบบ (`SYSTEM`, ไม่มี id) เหมือนงานผ่าน admin token · `source_component = log-api` · subject `AUDIT_LOG`
+   * สำเนาใน log store ได้ key ที่ค้นใน `hashKeys` และบัญชีที่ถูกเปิดประวัติใน `relatedUserIds` (lib/activity-shape.ts
+   * `logReadTargets`) — `?cid=X&action=AUDIT_LOG_READ` จึงตอบได้ว่าใครค้นประวัติของ X
    */
   AUDIT_LOG_READ: "AUDIT_LOG_READ",
 
@@ -725,8 +728,9 @@ export interface LogReadRecord {
   /** `GET /api/admin/logs/activity` — method กับ route แบบแม่แบบ */
   endpoint: string;
   /**
-   * ตัวกรองที่ใช้ — ไม่มีเลขบัตรหรืออีเมลจริง: `cid` `email` เป็น `cid#…` / `email#…` แล้ว · `person` ที่เป็นอีเมลของบัญชีเป็น
-   * uuid ของบัญชี (บวก `personEmailKey`) อีเมลที่ไม่มีบัญชีเป็น `email#…` (`PersonRef.recorded` ใน routes/admin-logs.ts)
+   * ตัวกรองที่ใช้ — ไม่มีเลขบัตรหรืออีเมลจริง: `cidKey` `emailKey` เป็น `cid#…` / `email#…` แล้ว · `person` ที่เป็นอีเมลของ
+   * บัญชีเป็น uuid ของบัญชี (บวก `personEmailKey`) อีเมลที่ไม่มีบัญชีเป็น `email#…` (`PersonRef.recorded` ใน
+   * routes/admin-logs.ts) · ชื่อ key ห้ามลงท้าย `cid` (กฎ key เลขบัตรของสำเนาจะปิดค่าทิ้ง)
    */
   filters: Record<string, unknown>;
   page?: number | null;

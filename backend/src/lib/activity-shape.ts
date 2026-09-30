@@ -14,7 +14,8 @@
  *     ค่าที่ Postgres ปิดมาแล้วผ่านไปตามเดิม
  *   - **hashKeys** — `cid#<hmac16>` ของทุกเลขบัตรที่สำเนาปิดเอง และ `email#<hmac16>` ของอีเมลที่เป็นค่าข้อความใต้ key ที่
  *     ชื่อลงท้าย `email` / `e-mail` ทุกชั้นของ before/after/metadata (`emailsIn`, `hashKeyOf`) — อีเมลในข้อความอิสระ
- *     (บันทึก เหตุผล) และใน array ใต้ key พหูพจน์ไม่ได้ key (วันนี้ audit ไม่มีแถวแบบหลัง)
+ *     (บันทึก เหตุผล) และใน array ใต้ key พหูพจน์ไม่ได้ key (วันนี้ audit ไม่มีแถวแบบหลัง) · แถว `AUDIT_LOG_READ` ได้ key
+ *     ที่การอ่านครั้งนั้นใช้ค้นด้วย และบัญชีที่มันเปิดประวัติเข้า `relatedUserIds` (`logReadTargets`)
  *   - เอกสารไม่เกิน 64 KB **เมื่อเป็น BSON** (ขนาดที่ Mongo เก็บ — lib/bson-size.ts) — ตัดแบบกำหนดได้ (`fitDocument`)
  *     ไม่ทิ้งทั้งใบ ทุกเอกสารที่ออกจากไฟล์นี้ผ่านเพดานนี้แล้ว ทั้งของ relay และของ audit_fallback
  *
@@ -320,14 +321,16 @@ function stringOrNull(value: unknown): string | null {
  * คนที่แถวนี้เกี่ยวข้อง (index ของ `person=` ใน step 7) — ผู้กระทำ, บัญชีที่เป็น subject, และ id ของบัญชีที่แต่ละรหัส
  * วางไว้ใน metadata / before / after (ตาราง "คนอยู่ตรงไหน" ใน docs/21 §2.10) อ่านจากค่าดิบก่อนปิด
  * แถวที่มีแค่อีเมลของบัญชี (resend ของ ACTIVATION_KEY_ISSUED, INVITATION_DELETED, APPROVER_INVITATION_RECALLED ที่บัญชีถูก
- * ลบไปแล้ว) ไม่มี id ให้ใส่ — หาได้ด้วย `email#` ใน hashKeys แทน
+ * ลบไปแล้ว) ไม่มี id ให้ใส่ — หาได้ด้วย `email#` ใน hashKeys แทน · แถว `AUDIT_LOG_READ` ได้บัญชีที่การอ่านเปิดประวัติ
+ * (`logReadTargets`)
  */
-function relatedUserIdsOf(row: AuditRowLike): string[] {
+function relatedUserIdsOf(row: AuditRowLike, read: { userIds: string[] } | null): string[] {
   const ids = new Set<string>();
   const add = (value: unknown) => {
     if (typeof value === "string" && UUID_EXACT.test(value)) ids.add(value.toLowerCase());
   };
   add(row.actorId);
+  for (const id of read?.userIds ?? []) add(id);
   if (row.subjectType === "USER_ACCOUNT") add(row.subjectId);
   if (isPlainObject(row.metadata)) {
     add(row.metadata.user_account_id);
@@ -340,6 +343,42 @@ function relatedUserIdsOf(row: AuditRowLike): string[] {
     add(side.assignedSpecialistId);
   }
   return [...ids];
+}
+
+/**
+ * key ค้นหาที่ API อ่าน log เขียนลง `metadata.filters` ของ `AUDIT_LOG_READ` เอง — `cidKey` `emailKey` `personEmailKey` และ
+ * `person` ของอีเมลที่ไม่มีบัญชี (routes/admin-logs.ts) เป็น HMAC ที่ระบบคำนวณจากค่าที่ผู้อ่านค้น ไม่ใช่ข้อความที่ใครพิมพ์
+ */
+const SEARCH_KEY = /^(?:cid|email)#[0-9a-f]{16}$/;
+
+/**
+ * สิ่งที่การอ่าน log ครั้งหนึ่งเปิดดู — เฉพาะแถว `AUDIT_LOG_READ` (รหัสอื่นได้ null)
+ *   - `keys`: ชื่อตัวกรอง → key ค้นหา (SEARCH_KEY) ที่การอ่านใช้ — เข้า `hashKeys` ของสำเนา และ**ไม่ผ่านการปิด**
+ *   - `userIds`: บัญชีที่ประวัติถูกเปิด — `person` และ `actorId` ที่เป็น uuid กับ `subjectId` เมื่อ `subjectType` เป็น
+ *     `USER_ACCOUNT` (เข้า `relatedUserIds` ผ่าน `relatedUserIdsOf`)
+ *
+ * สองอย่างนี้ทำให้ `?cid=X&action=AUDIT_LOG_READ` (หรือ `person=`) ตอบได้ว่าใครเคยค้นประวัติของ X จาก log store เอง
+ * เดิมไม่มีทั้งคู่ และ key ของเลขบัตรยังถูกปิดทิ้ง: บันทึกการอ่านเก็บมันไว้ใต้ `filters.cid` ซึ่งเข้ากฎ key เลขบัตร
+ * (`CID_KEY` ใน lib/redact.ts) `cid#…` จึงกลายเป็น `{masked: "xxxx…edda"}` — ไม่มีอะไรที่ API ตอบได้ว่าค้นเลขบัตรของใคร
+ * (ตรวจแบบค้านขั้น 7, 2026-09-30) ชื่อใหม่ (`cidKey`) ไม่เข้ากฎนั้นแล้ว แต่ key ยังต้องไม่ผ่าน `maskForLogStore` อยู่ดี:
+ * ฐานสิบหก 16 ตัวราวหนึ่งในสี่ร้อยมีเลขติดกันพอดี 13 ตัว กฎเลขบัตรในข้อความจะเปลี่ยนมันเป็น `cid#[cid]…` ทุกครั้งที่ค้น
+ * คนคนนั้น และทำ key `cid#` ปลอมจากเลขนั้น ส่วนแถวเก่าที่ยังใช้ชื่อ `cid` / `email` ก็ได้ key คืนด้วยกฎเดียวกันนี้เมื่อ rebuild
+ *
+ * ผลข้างเคียงที่ตั้งใจ: การอ่านประวัติของ X เป็นแถวหนึ่งในผลของ `person=X` / `cid=X` / `timeline?person=X` ครั้งถัดไป — การเปิด
+ * ประวัติของเขาเป็นสิ่งที่เกิดกับข้อมูลของเขา (docs/21 §3.11)
+ */
+function logReadTargets(row: AuditRowLike): { keys: Map<string, string>; userIds: string[] } | null {
+  if (row.action !== AuditAction.AUDIT_LOG_READ || !isPlainObject(row.metadata)) return null;
+  const filters = row.metadata.filters;
+  if (!isPlainObject(filters)) return null;
+  const keys = new Map<string, string>();
+  for (const [name, value] of Object.entries(filters)) {
+    if (typeof value === "string" && SEARCH_KEY.test(value)) keys.set(name, value);
+  }
+  const userIds = [filters.person, filters.actorId, filters.subjectType === "USER_ACCOUNT" ? filters.subjectId : null].filter(
+    (value): value is string => typeof value === "string" && UUID_EXACT.test(value),
+  );
+  return { keys, userIds };
 }
 
 /** fingerprint ของ token ในแถว — แถว admin (`admin_token_fp`), แถวปฏิเสธทันที (`token_fp`), แถวสรุป (`token_fps`) */
@@ -400,6 +439,7 @@ function changedFieldsOf(row: AuditRowLike): string[] {
 export function projectAuditRow(row: AuditRowLike, options: ProjectOptions): ActivityDoc {
   const now = options.now ?? new Date();
   const rawMeta = isPlainObject(row.metadata) ? row.metadata : null;
+  const read = logReadTargets(row);
   const findings: MaskFindings = { cids: [] };
   const emails: string[] = [];
   emailsIn(row.before, emails);
@@ -416,7 +456,13 @@ export function projectAuditRow(row: AuditRowLike, options: ProjectOptions): Act
     // อีเมลที่**พิมพ์มา**ตอนล็อกอินไม่ผ่านอาจไม่ใช่ของบัญชีไหน — ปิด (key ค้นหามาจากค่าดิบข้างบนแล้ว)
     // อีเมลของบัญชีในที่อื่น (PASSWORD_RESET_REQUESTED.metadata.email) เก็บตามเดิม
     if (row.action === AuditAction.LOGIN_FAILED && "email" in rest) rest.email = maskedTypedEmail(rest.email);
+    // key ค้นหาของการอ่าน log ไม่ผ่านการปิด (`logReadTargets`) — แยกออกก่อนปิด แล้วใส่คืนท้าย `filters` ตามเดิม
+    const searchKeys = read && read.keys.size > 0 && isPlainObject(rest.filters) ? read.keys : null;
+    if (searchKeys && isPlainObject(rest.filters)) {
+      rest.filters = Object.fromEntries(Object.entries(rest.filters).filter(([name]) => !searchKeys.has(name)));
+    }
     const masked = maskForLogStore(rest, findings) as Record<string, unknown>;
+    if (searchKeys && isPlainObject(masked.filters)) masked.filters = { ...masked.filters, ...Object.fromEntries(searchKeys) };
     metadata = Object.keys(masked).length > 0 ? masked : null;
   }
 
@@ -439,6 +485,7 @@ export function projectAuditRow(row: AuditRowLike, options: ProjectOptions): Act
     const key = hashKeyOf("email", email, options.hashKey);
     if (key) hashKeys.add(key);
   }
+  for (const key of read?.keys.values() ?? []) hashKeys.add(key);
 
   const adminTokenFp = rawMeta ? stringOrNull(rawMeta.admin_token_fp) : null;
   const roles = rawMeta && Array.isArray(rawMeta.actor_roles) ? rawMeta.actor_roles.filter((r) => typeof r === "string") : [];
@@ -481,7 +528,7 @@ export function projectAuditRow(row: AuditRowLike, options: ProjectOptions): Act
       durationMs: null,
     },
     sourceComponent: row.sourceComponent,
-    relatedUserIds: relatedUserIdsOf(row),
+    relatedUserIds: relatedUserIdsOf(row, read),
     hashKeys: [...hashKeys],
     mirroredAt: now,
   };

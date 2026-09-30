@@ -16,8 +16,9 @@
  *     เพราะไม่มีอะไรให้ส่ง · Postgres ล่มแต่ Mongo ตอบ = บันทึกลง log store แทนแล้วอ่านตามปกติ · `log_read_unrecorded`
  *     เกิดเฉพาะเมื่อ Postgres บันทึกไม่ได้**และ**การเขียนสำเนาลง Mongo ล้มหลังจากที่ `store()` ping ผ่านไปแล้ว (Mongo ล่ม
  *     ระหว่างคำขอ) ส่วน `GET /status` ไม่ถูกบันทึก (ไม่มีข้อมูลบุคคล)
- *   - ค่าที่ค้นด้วยเลขบัตรหรืออีเมล (`cid` `email` `person` ที่เป็นอีเมล) ไม่ลงบันทึกเป็นค่าจริง — เป็น key HMAC และ `person`
- *     ที่เป็นอีเมลของบัญชีเป็น uuid ของบัญชี (`PersonRef`) บันทึกการอ่านต้องไม่กลายเป็นที่เก็บเลขบัตรแห่งใหม่
+ *   - ค่าที่ค้นด้วยเลขบัตรหรืออีเมล (`cid` `email` `person` ที่เป็นอีเมล) ไม่ลงบันทึกเป็นค่าจริง — เป็น key HMAC (`cidKey`
+ *     `emailKey`) และ `person` ที่เป็นอีเมลของบัญชีเป็น uuid ของบัญชี (`PersonRef`) บันทึกการอ่านต้องไม่กลายเป็นที่เก็บเลขบัตร
+ *     แห่งใหม่ สำเนาของบันทึกใน log store ค้นกลับด้วยค่าเดียวกันได้ (`?cid=X&action=AUDIT_LOG_READ` — lib/activity-shape.ts)
  *   - ทุกคำสั่งอ่านของ Mongo มี `maxTimeMS` (READ_MAX_MS) ไม่มีอะไรที่นี่แก้ `activity` ได้ มีแค่สถานะของ issue — เหตุผลที่
  *     ลง `error_issues.statusReason` ผ่านกฎเลขบัตรของสำเนากิจกรรมก่อน (`maskCidText`)
  *   - Mongo หยุดหรือค้าง = 503 `log_store_unavailable` ภายในราว 2 วินาที (เพดานของ `store()` — STORE_CHECK_MS) Mongo ที่
@@ -895,8 +896,10 @@ adminLogRouter.get(
         ...(person ? person.recorded : {}),
         ...(q.request ? { request: q.request } : {}),
         ...(q.organization ? { organization: q.organization } : {}),
-        ...(cidKey ? { cid: cidKey } : {}),
-        ...(emailKey ? { email: emailKey } : {}),
+        // ชื่อ `cidKey` / `emailKey` ไม่ใช่ `cid` / `email`: ชื่อที่ลงท้าย `cid` เข้ากฎ key เลขบัตรของสำเนา (lib/redact.ts)
+        // แล้ว key ถูกปิดทิ้งใน log store — lib/activity-shape.ts `logReadTargets`
+        ...(cidKey ? { cidKey } : {}),
+        ...(emailKey ? { emailKey } : {}),
         ...(q.tokenFp ? { tokenFp: q.tokenFp } : {}),
         ...(q.correlationId ? { correlationId: q.correlationId } : {}),
         ...(q.before ? { before: q.before.raw } : {}),
