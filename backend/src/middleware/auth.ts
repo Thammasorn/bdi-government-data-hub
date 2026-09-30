@@ -244,7 +244,8 @@ function decodeReason(raw: string): { reason: string } | { error: string } {
  *   5. `x-log-reason` ถ้าส่งมาต้องถอดได้และยาว 10–500 ตัว — endpoint ที่บังคับให้ส่งใช้ `requireReadReason` ต่ออีกชั้น
  *
  * ผ่านแล้วประทับคำขอเป็น `log-api` (source_component ของ `AUDIT_LOG_READ` และ `ERROR_ISSUE_STATUS_CHANGED`) และวาง
- * `req.logReader` ไว้ให้ route ใช้บันทึกการอ่าน ไม่แตะ Postgres หรือ Mongo — ด่านนี้ยังทำงานเมื่อทั้งสองล่ม
+ * `req.logReader` ไว้ให้ route ใช้บันทึกการอ่าน **ไม่รอ** Postgres หรือ Mongo — ด่านนี้ยังตอบได้เมื่อทั้งสองล่ม (ขา 401 สั่งเขียน
+ * `LOG_TOKEN_REJECTED` ลง Postgres แต่ไม่รอผล: `logTokenRejections.record()` ยิงแล้วไปต่อ เขียนไม่ได้ก็ไปทางสำรองของ `logAudit()`)
  */
 export function requireLogReader(req: Request, res: Response, next: NextFunction) {
   const expected = env.logStore.readToken;
