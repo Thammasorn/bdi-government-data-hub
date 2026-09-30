@@ -228,17 +228,40 @@ function ingest(req: Request, ip: string | null, userAgent: string | null): void
   });
 }
 
+/**
+ * URL ในข้อความเหลือแค่ path — query และ `#…` ถูกตัดทิ้ง เหลือ `:บรรทัด:คอลัมน์` ท้ายเฟรมไว้ (ถ้ามี)
+ *
+ * เบราว์เซอร์ส่ง `location.pathname` อย่างเดียว (plan §7 ข้อ 2) แต่ URL เต็มของหน้ายังโผล่มาในข้อความและ stack ได้เอง: เฟรมของ
+ * สคริปต์ในหน้า (`at http://…/activate?token=…:1:2`), ลิงก์ของ React (`…/errors/418?args[]=<ข้อความบนจอ>`), fetch ที่ล้ม
+ * (`/api/…?cid=…`) กฎกวาดข้อความ (lib/redact.ts) ปิดได้เฉพาะชื่อที่รู้จัก (`token=` `code=` `state=`) และรูปที่รู้จัก (อีเมล
+ * เลขบัตร) — `?q=ชื่อคน` หรือข้อความบนจอใน `args[]` รอด ตัดทั้ง query ปลอดภัยกว่าไล่ชื่อ ไม่มีรายงานไหนต้องใช้ค่าของ query
+ * ตัดเฉพาะคำ (ช่วงที่ไม่มีช่องว่าง วงเล็บ หรือเครื่องหมายคำพูด) ที่มี `/` ก่อน `?`/`#` ตัวแรก — `ไหม?` ในประโยคไม่ถูกแตะ
+ * ไล่ทีละคำ ไม่ใช่ regex ตัวเดียวที่ย้อนกลับได้: endpoint นี้ไม่ต้อง login ข้อความยาวที่มีแต่ `/` ต้องไม่กิน CPU เป็นวินาที
+ */
+const WORD = /[^\s"'`()<>]+/g;
+const LINE_AND_COLUMN = /(?::\d{1,9}){1,2}$/;
+
+function withoutUrlQueries(text: string): string {
+  return text.replace(WORD, (word) => {
+    const cut = word.search(/[?#]/);
+    if (cut <= 0) return word;
+    const path = word.slice(0, cut);
+    if (!path.includes("/")) return word;
+    return path + (LINE_AND_COLUMN.exec(word.slice(cut))?.[0] ?? "");
+  });
+}
+
 /** ข้อความของรายงานในรูปเดียวกับ error ของ server (`scrubError`) — กวาดซ้ำทุกช่อง เฟรมละไม่เกิน 1 KB รวมไม่เกิน 16 KB */
 function scrubbedError(report: Report): ScrubbedError {
   const name = scrubClipped(report.name?.trim() || "Error", 100);
-  const message = scrubClipped(report.message ?? "", MESSAGE_MAX);
+  const message = scrubClipped(withoutUrlQueries(report.message ?? ""), MESSAGE_MAX);
   let stack: string | null = null;
   if (report.stack) {
     const lines: string[] = [];
     let length = 0;
     for (const line of report.stack.split("\n")) {
       if (length > STACK_MAX) break;
-      const clean = scrubClipped(line, FRAME_MAX);
+      const clean = scrubClipped(withoutUrlQueries(line), FRAME_MAX);
       lines.push(clean);
       length += clean.length + 1;
     }

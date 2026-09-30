@@ -141,13 +141,25 @@ function describe(error: unknown): { name: string; message: string; stack?: stri
 
 /**
  * ตัวกวาดอย่างย่อสำหรับบรรทัดใน stdout ของ Next server — อีเมล, JWT, `key=value` ของความลับ, ฐานสิบหก/base64 ยาว, เลขยาว
- * (เลขบัตร เบอร์โทร) ไม่ใช่ตัวเต็มของ backend (backend กวาดซ้ำเองทุกครั้งที่รับ) แค่กันของที่เห็นชัดไม่ให้ไปถึง docker logs
+ * (เลขบัตร เบอร์โทร) และ query ของ URL (เหลือแค่ path — กฎเดียวกับ `withoutUrlQueries` ของ backend) ไม่ใช่ตัวเต็มของ backend
+ * (backend กวาดซ้ำเองทุกครั้งที่รับ) แค่กันของที่เห็นชัดไม่ให้ไปถึง docker logs
  */
 function scrub(text: string): string {
-  return text
+  return withoutUrlQueries(text)
     .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[email]")
     .replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g, "[jwt]")
     .replace(/\b(token|key|secret|password|otp|code|state)=[^&\s"']+/gi, "$1=[redacted]")
     .replace(/[A-Za-z0-9_+/-]{32,}={0,2}/g, "[secret]")
     .replace(/\d(?:[\s.-]?\d){8,}/g, "[n]");
+}
+
+/** URL ในข้อความเหลือแค่ path: คำที่มี `/` ก่อน `?`/`#` ตัวแรกถูกตัดตรงนั้น เหลือ `:บรรทัด:คอลัมน์` ท้ายเฟรมไว้ */
+function withoutUrlQueries(text: string): string {
+  return text.replace(/[^\s"'`()<>]+/g, (word) => {
+    const cut = word.search(/[?#]/);
+    if (cut <= 0) return word;
+    const path = word.slice(0, cut);
+    if (!path.includes("/")) return word;
+    return path + (/(?::\d{1,9}){1,2}$/.exec(word.slice(cut))?.[0] ?? "");
+  });
 }

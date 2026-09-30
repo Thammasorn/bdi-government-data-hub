@@ -7,7 +7,8 @@
  *     ส่วน 502 ของ proxy คือคำขอที่ backend ไม่เคยเห็น จึงต้องมาจากที่นี่ แต่ส่งตอนนั้นไม่ได้ (backend ล่มอยู่) — เก็บไว้ใน
  *     `sessionStorage` (`bdi.pendingErrorReports` ไม่เกิน 5 รายการ ไม่เขียนอะไรอื่นลงไป) แล้วส่งหลังคำขอ API ถัดไปที่สำเร็จ
  *   - ส่งแค่ `location.pathname` ไม่เคยส่ง query hash หรือค่าใด ๆ จาก `sessionStorage` ของหน้า (`?token=` ของหน้า activate,
- *     `?code&state` ของ ThaID) path ของคำขอ API ห้าตัวล่าสุดก็ตัด query ทิ้ง (`noteApiCall`)
+ *     `?code&state` ของ ThaID) path ของคำขอ API ห้าตัวล่าสุดก็ตัด query ทิ้ง (`noteApiCall`) และ URL ที่โผล่ในข้อความหรือ stack
+ *     ของ error เองก็เหลือแค่ path (`withoutUrlQueries`)
  *   - ซ้ำกัน (ข้อความ + เฟรมแรก) ส่งครั้งเดียวต่อการเปิดหน้า และไม่เกิน 10 รายงานต่อการเปิดหน้า
  *   - `navigator.sendBeacon` เป็น `text/plain` (ไม่มี preflight ข้าม origin ในเครื่อง dev และส่งได้แม้หน้ากำลังปิด) ไม่ได้ก็ `fetch`
  *     แบบ keepalive ไม่แนบ cookie — endpoint ไม่ต้อง login และไม่ควรรู้ว่าใครส่ง
@@ -88,7 +89,9 @@ export function reportError(
     const api = apiErrorOf(error);
     if (api) return; // 4xx: เรื่องของคำขอ · 5xx: backend เก็บแล้ว · backend_unreachable: lib/api.ts เข้าคิวเอง
     if (sent >= MAX_PER_PAGE) return;
-    const { name, message, stack } = describe(error);
+    const { name, message: rawMessage, stack: rawStack } = describe(error);
+    const message = withoutUrlQueries(rawMessage);
+    const stack = rawStack === undefined ? undefined : withoutUrlQueries(rawStack);
     const firstFrame = (stack ?? "").split("\n").find((line) => /^\s+at\s|@/.test(line)) ?? "";
     const key = `${name}|${message}|${firstFrame}`;
     // รายงานที่มีรหัสอ้างอิงไม่ถูกตัดเป็นตัวซ้ำ: error ที่เรนเดอร์ไม่ผ่านมาถึง `window` `error` ก่อน (React ส่งต่อ) แล้วหน้า
@@ -174,6 +177,25 @@ function writePending(items: PendingReport[]): void {
     else window.sessionStorage.setItem(PENDING_KEY, JSON.stringify(items));
   } catch {
     // ไม่มีอะไรต้องทำ
+  }
+}
+
+/**
+ * URL ในข้อความเหลือแค่ path — ตัด `?…` และ `#…` ทิ้ง เหลือ `:บรรทัด:คอลัมน์` ท้ายเฟรมไว้ ข้อความของ error มี URL เต็มของหน้าได้เอง
+ * (เฟรมของสคริปต์ในหน้า, ลิงก์ของ React ที่ยกข้อความบนจอมาใน `?args[]=`, fetch ที่ล้ม) — กฎเดียวกับ backend
+ * (`withoutUrlQueries` ใน backend/src/routes/client-errors.ts ซึ่งตัดซ้ำอีกรอบ) ไล่ทีละคำ: คำที่มี `/` ก่อน `?`/`#` ตัวแรกเท่านั้น
+ */
+function withoutUrlQueries(text: string): string {
+  try {
+    return text.replace(/[^\s"'`()<>]+/g, (word) => {
+      const cut = word.search(/[?#]/);
+      if (cut <= 0) return word;
+      const path = word.slice(0, cut);
+      if (!path.includes("/")) return word;
+      return path + (/(?::\d{1,9}){1,2}$/.exec(word.slice(cut))?.[0] ?? "");
+    });
+  } catch {
+    return text;
   }
 }
 
