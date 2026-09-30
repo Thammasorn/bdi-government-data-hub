@@ -414,7 +414,8 @@ export const AuditAction = {
    * ที่ส่งมาใน body `metadata.reader` / `token_fp` เหมือน `AUDIT_LOG_READ`
    *
    * `after.statusReason` และ `metadata.reason` เป็นข้อความตามที่พิมพ์ ส่วน `error_issues.statusReason` ใน Mongo (และ
-   * `before.statusReason` ที่อ่านจากที่นั่น) ผ่านกฎเลขบัตรของสำเนากิจกรรมแล้ว — เลข 13 หลักเป็น `[cid]`
+   * `before.statusReason` ที่อ่านจากที่นั่น) ผ่านกฎเลขบัตรของสำเนากิจกรรมแล้ว — เลข 13 หลักเป็น `[cid]` · เขียนภายในเพดาน
+   * ของ `withDatabaseDeadline()` ไม่ทันก็เป็นสำเนา `audit_fallback` (`LogAuditOptions.deadline`)
    */
   ERROR_ISSUE_STATUS_CHANGED: "ERROR_ISSUE_STATUS_CHANGED",
 
@@ -653,6 +654,16 @@ function auditEventData(
   };
 }
 
+export interface LogAuditOptions {
+  /**
+   * รอ Postgres ไม่เกินเพดานของ `withDatabaseDeadline()` (db.ts: 2 วินาที, 0.3 วินาทีถ้าเพิ่งติดต่อไม่ได้) — ไม่ทันก็ไปทาง
+   * สำรองเดียวกับตอนเขียนไม่ได้ (`audit.write-failed` + สำเนา `audit_fallback`) สำหรับ route ที่ไม่ได้รอ Postgres ที่อื่น
+   * (PATCH ของ error issue ใน routes/admin-logs.ts) route อื่นรอ Postgres ในคำสั่งของตัวเองก่อนถึง audit อยู่แล้ว
+   * INSERT ที่เลิกรอแล้วยัง commit ทีหลังได้ เหตุการณ์นั้นจึงอาจมีสองบันทึก (แถวกับสำเนา) — ดีกว่าคำขอที่ค้างไม่มีกำหนด
+   */
+  deadline?: boolean;
+}
+
 /**
  * เขียน audit event หนึ่งแถว
  *
@@ -660,13 +671,13 @@ function auditEventData(
  * ไปเป็น error event `audit.write-failed` กับสำเนาของแถวใน log store (lib/audit-fallback.ts) และทิ้ง breadcrumb ไว้
  * ให้ error ตัวถัดไปของคำขอเดียวกันเห็นว่า audit ของมันเขียนแล้วหรือยัง
  */
-export async function logAudit(input: AuditInput): Promise<void> {
+export async function logAudit(input: AuditInput, options: LogAuditOptions = {}): Promise<void> {
   const ctx = currentContext();
   const actorId = input.actorId ?? ctx?.actorId ?? null;
   const userAgent = storedUserAgent(ctx?.userAgent);
   // ชื่อและ role ณ เวลานั้น — ดีไซน์ไม่มีคอลัมน์ให้ จึงเก็บลง metadata_json
   let actorSnapshot: Record<string, unknown> | undefined;
-  try {
+  const write = async () => {
     if (actorId) {
       const actor = await prisma.userAccount.findUnique({
         where: { id: actorId },
@@ -691,6 +702,9 @@ export async function logAudit(input: AuditInput): Promise<void> {
     }
 
     await prisma.auditEvent.create({ data: auditEventData(input, actorId, actorSnapshot, userAgent) });
+  };
+  try {
+    await (options.deadline ? withDatabaseDeadline(write) : write());
     addBreadcrumb("audit", input.action);
   } catch (err) {
     addBreadcrumb("audit", `${input.action} — เขียนไม่สำเร็จ`, false);

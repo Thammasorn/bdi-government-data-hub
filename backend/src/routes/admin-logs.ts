@@ -23,10 +23,10 @@
  *   - Mongo หยุดหรือค้าง = 503 `log_store_unavailable` ภายในราว 2 วินาที (เพดานของ `store()` — STORE_CHECK_MS) Mongo ที่
  *     ค้างหลังจาก ping ผ่านแล้ว คำขอนั้นรอได้ถึง socketTimeoutMS 5 วินาทีของ driver (`maxTimeMS` ไม่ช่วย: server ที่ค้างไม่ได้
  *     นับเวลาให้) แล้วจึงได้ 503 เดียวกันจาก `storeRoute()` · ปิด log store = 503 `log_store_disabled`
- *   - Postgres ล่มหรือค้าง: ทุกคำสั่งของ Postgres ที่การอ่านรอมีเพดาน (`withDatabaseDeadline()` ใน db.ts — 2 วินาที,
+ *   - Postgres ล่มหรือค้าง: ทุกคำสั่งของ Postgres ที่คำขอรอมีเพดาน (`withDatabaseDeadline()` ใน db.ts — 2 วินาที,
  *     0.3 วินาทีเมื่อเพิ่งติดต่อไม่ได้) บันทึกการอ่านไปลง log store แทน ตัวระบุที่ต้องแปลง (อีเมล เลขที่คำขอ รหัสหน่วยงาน)
- *     ตอบ 503 `database_unavailable` ส่วน Postgres ของ trace เป็น `postgres: "unavailable"` — PATCH ของ issue รอ `logAudit()`
- *     ตามทางปกติ ไม่มีเพดานนี้
+ *     ตอบ 503 `database_unavailable` ส่วน Postgres ของ trace เป็น `postgres: "unavailable"` · PATCH ของ issue เขียนแถว
+ *     `ERROR_ISSUE_STATUS_CHANGED` ภายในเพดานเดียวกัน (`logAudit(…, { deadline: true })`) ไม่ทันก็ไปทางสำรอง `audit_fallback`
  *
  * ข้อตกลงของรายการ (ตามรายการของ admin API): zod แบบ strict — พารามิเตอร์ที่ไม่รู้จักก็ 400 `{error:"validation", fields}`
  * · `page` เริ่ม 1 · `pageSize` 50 สูงสุด 200 · เรียง `occurredAt` ใหม่ไปเก่าแล้ว `_id` · `total` จาก `countDocuments` ตัดที่
@@ -1327,7 +1327,10 @@ adminLogRouter.get(
  * เกิดก่อนปิดเปิดมันกลับทันที · ตั้งสถานะเดิมซ้ำก็เขียน (เวลากับเหตุผลเปลี่ยน) และได้แถว `ERROR_ISSUE_STATUS_CHANGED`
  *
  * แถวเขียนด้วย `logAudit()` หลังเปลี่ยนแล้ว ไม่ใช่ `recordLogRead()`: นี่คือการแก้ ไม่ใช่การอ่าน — การแก้เกิดไปแล้วใน
- * Mongo แถวที่เขียนไม่ได้จึงไปตามทางสำรองปกติ (`audit_fallback` ผ่านคิว) ไม่ย้อนการแก้
+ * Mongo แถวที่เขียนไม่ได้จึงไปตามทางสำรองปกติ (`audit_fallback` ผ่านคิว) ไม่ย้อนการแก้ รอ Postgres ไม่เกินเพดานของ
+ * `withDatabaseDeadline()` (`deadline: true`): route นี้ไม่แตะ Postgres ที่อื่นเลย Postgres ที่ค้าง (ไม่ใช่ล่ม) เคยทำให้คำขอ
+ * ค้างไม่มีกำหนดทั้งที่สถานะเปลี่ยนไปแล้ว (ตรวจแบบค้านขั้น 7: เกิน 45 วินาที) INSERT ที่เลิกรอแล้วยัง commit ทีหลังได้ — การ
+ * เปลี่ยนครั้งนั้นจึงอาจมีสองบันทึก (แถวใน Postgres กับสำเนา `audit_fallback`) แบบเดียวกับ `recordLogRead()`
  *
  * เหตุผลที่ลง `error_issues.statusReason` (และที่คำตอบส่งกลับ) ผ่าน `maskCidText` ก่อน — กฎเลขบัตรตัวเดียวกับที่สำเนา
  * กิจกรรมใช้กับ `reason` (plan §7.6) เดิมเหตุผลลงตามที่พิมพ์ เป็นข้อความอิสระทางเดียวที่เข้า Mongo โดยไม่ผ่าน lib/redact.ts
@@ -1360,19 +1363,22 @@ adminLogRouter.patch(
     }
 
     const reader = req.logReader!;
-    await logAudit({
-      action: AuditAction.ERROR_ISSUE_STATUS_CHANGED,
-      subjectType: AuditSubject.ERROR_ISSUE,
-      actorType: "SYSTEM",
-      before: { status: before.status ?? null, statusReason: before.statusReason ?? null },
-      after: { status: body.status, statusReason: body.reason },
-      metadata: {
-        fingerprint,
-        reason: body.reason,
-        reader: reader.reader,
-        token_fp: reader.tokenFp,
+    await logAudit(
+      {
+        action: AuditAction.ERROR_ISSUE_STATUS_CHANGED,
+        subjectType: AuditSubject.ERROR_ISSUE,
+        actorType: "SYSTEM",
+        before: { status: before.status ?? null, statusReason: before.statusReason ?? null },
+        after: { status: body.status, statusReason: body.reason },
+        metadata: {
+          fingerprint,
+          reason: body.reason,
+          reader: reader.reader,
+          token_fp: reader.tokenFp,
+        },
       },
-    });
+      { deadline: true },
+    );
 
     const issue = { ...before, status: body.status, statusChangedAt: changedAt, statusReason: storedReason };
     res.json({ issue: issueDto(issue) });
