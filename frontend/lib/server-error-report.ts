@@ -9,6 +9,10 @@
  *      ด้วยกฎเต็มของ backend/src/lib/redact.ts รอไม่เกิน 1 วินาที ล้มก็เงียบ (บรรทัดที่ 1 มีอยู่แล้ว) body ไม่เกินเพดานเป็นไบต์
  *      (lib/report-body.ts)
  *
+ * path ของคำขอ: บรรทัดใน stdout ได้แค่ pathname ส่วนที่ POST ไป backend ได้ pathname กับ**ชื่อ** key ของ query ไม่มีค่า
+ * (`/activate?token` ไม่ใช่ `/activate?token=…` — `keyNamesOnly`) backend ดึงชื่อไปเป็น `request.queryKeys` (plan §3 เก็บชื่อ
+ * key ไว้ ค่าไม่เก็บ) เดิมตัด query ทิ้งทั้งหมดก่อนส่ง event ของ Next server จึงได้ `queryKeys: []` เสมอ
+ *
  * เพดาน: ไม่เกิน 60 ตัวต่อนาทีต่อ process และข้อความเดียวกันซ้ำภายในหนึ่งนาทีนับเป็นตัวเดียว — error ที่เกิดกับทุกคำขอรูปภาพ
  * (EACCES ของ `.next/cache` ใน image production — plan §13 #5) ต้องไม่กลายเป็นร้อยบรรทัดต่อวินาที
  *
@@ -67,13 +71,15 @@ export async function reportServerError(
     const now = Date.now();
     if (!admit(`${options.mechanism}|${name}|${message}|${options.route?.path ?? ""}`, now)) return;
 
+    const rawPath = options.route?.requestPath ?? null;
+    const pathname = rawPath ? rawPath.split(/[?#]/)[0]!.slice(0, 500) : null;
     const route = options.route
       ? {
           path: options.route.path ?? null,
           type: options.route.type ?? null,
           routerKind: options.route.routerKind ?? null,
           method: options.route.method ?? null,
-          requestPath: options.route.requestPath ? options.route.requestPath.split("?")[0]!.slice(0, 500) : null,
+          requestPath: rawPath ? keyNamesOnly(rawPath) : null,
         }
       : undefined;
     console.error(
@@ -83,7 +89,7 @@ export async function reportServerError(
         name,
         message: scrub(message).slice(0, 300),
         route: route?.path ?? null,
-        path: route?.requestPath ? scrub(route.requestPath) : null,
+        path: pathname ? scrub(pathname) : null,
         digest,
         release: RELEASE,
       })}`,
@@ -153,6 +159,24 @@ function scrub(text: string): string {
     .replace(/\b(token|key|secret|password|otp|code|state)=[^&\s"']+/gi, "$1=[redacted]")
     .replace(/[A-Za-z0-9_+/-]{32,}={0,2}/g, "[secret]")
     .replace(/\d(?:[\s.-]?\d){8,}/g, "[n]");
+}
+
+/**
+ * `/p?cid=1101700203451&tab=2#x` → `/p?cid&tab` — pathname กับชื่อ key ของ query เท่านั้น ไม่มีค่า ไม่มี `#…` ชื่อไม่เกิน 20 ตัว
+ * ตัวละไม่เกิน 64 อักษร (เพดานเดียวกับ `requestTarget` ของ backend ซึ่งกวาดชื่อซ้ำอีกรอบ) ชื่อยังเข้ารหัส URL อยู่ backend ถอดเอง
+ */
+function keyNamesOnly(requestPath: string): string {
+  const [beforeHash] = requestPath.split("#");
+  const cut = beforeHash!.indexOf("?");
+  const path = (cut === -1 ? beforeHash! : beforeHash!.slice(0, cut)).slice(0, 500);
+  if (cut === -1) return path;
+  const names = new Set<string>();
+  for (const pair of beforeHash!.slice(cut + 1).split("&")) {
+    const name = pair.split("=")[0]!.slice(0, 64);
+    if (name) names.add(name);
+    if (names.size >= 20) break;
+  }
+  return names.size > 0 ? `${path}?${[...names].join("&")}` : path;
 }
 
 /** URL ในข้อความเหลือแค่ path: คำที่มี `/` ก่อน `?`/`#` ตัวแรกถูกตัดตรงนั้น เหลือ `:บรรทัด:คอลัมน์` ท้ายเฟรมไว้ */

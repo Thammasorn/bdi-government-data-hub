@@ -1493,6 +1493,8 @@ cannot load its own chunk has a broken image.
 Both reporters fit their body into 15,000 **bytes** (`lib/report-body.ts`, trimming whole stack
 frames first), because the ingest's 16 KB limit is in UTF-8 bytes and an oversized body is dropped
 whole, still with a 204. A long stack plus a Thai message used to overflow it.
+The Next server's report keeps the query's key names, never its values (`request.queryKeys`); its
+stdout line keeps the pathname only.
 
 ## Conventions
 
