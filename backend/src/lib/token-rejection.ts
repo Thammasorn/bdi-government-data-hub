@@ -59,6 +59,7 @@ import { AuditSubject, logAudit, type AuditActionCode, type AuditSubjectType } f
 import { tokenFingerprint } from "./auth.js";
 import { currentContext, parseClientIp, runWithContext } from "./context.js";
 import { captureError } from "./error-capture.js";
+import { replaceEmails } from "./redact.js";
 
 const WINDOW_MS = 10 * 60_000;
 const SWEEP_MS = 60_000;
@@ -167,8 +168,13 @@ function remember(list: Set<string>, value: string | null, onFull: () => void) {
 }
 
 /**
- * เส้นทางที่ถูกยิงในรูปที่จัดกลุ่มได้: ไม่เอา query string, ถอด `%xx`, UUID → `:id`, ตัวอักษรนอกชุด
- * ที่ path ปกติใช้ → `_`, กลุ่มเลขที่ชี้ตัวคนได้ (`identifyingNumber()`) → `:n` แล้วตัดที่ `MAX_PATH`
+ * เส้นทางที่ถูกยิงในรูปที่จัดกลุ่มได้: ไม่เอา query string, ถอด `%xx`, อีเมล → `:email` (กฎของ lib/redact.ts), UUID → `:id`,
+ * ตัวอักษรนอกชุดที่ path ปกติใช้ → `_`, กลุ่มเลขที่ชี้ตัวคนได้ (`identifyingNumber()`) → `:n` แล้วตัดที่ `MAX_PATH`
+ *
+ * อีเมลต้องแทนก่อนแปลงอักษรนอกชุด: `@` กลายเป็น `_` แล้วกฎอีเมลก็ไม่เห็นมันอีก เดิมไม่มีขั้นนี้ 401 ของ
+ * `/api/admin/users/someone.private%40example.go.th` จึงเก็บ `…/someone.private_example.go.th` ทั้งใน `ADMIN_TOKEN_REJECTED`
+ * ของ Postgres (ไม่มี retention) และบันทึกการเรียก admin API ใน Mongo 400 วัน (ตรวจขั้น 8 แบบค้าน, 2026-10-01) — plan §7
+ * ว่าอีเมลเป็น `[email]` ที่นี่ใช้ `:email` เพราะ `[` `]` อยู่นอกชุดอักษรของ path อีเมลที่พิมพ์ไม่ครบ (ไม่มีโดเมน) ยังเหลือเป็นตัวอักษร
  *
  * ลำดับสำคัญ: ถอดก่อนเพื่อให้ตัวคั่นที่ encode มาเป็นตัวคั่นจริง แทน `_` ก่อนหาเลขเพื่อให้ช่องว่าง
  * และตัวคั่นแปลก ๆ ยังนับเป็นตัวคั่น และ UUID ก่อนเลขเพราะ UUID มีเลขปนขีดยาวพอจะโดนนับเป็นเลข
@@ -181,7 +187,7 @@ function remember(list: Set<string>, value: string | null, onFull: () => void) {
  */
 export function pathPattern(req: Request): string {
   const path = (req.originalUrl ?? req.url).split("?")[0] ?? "";
-  const pattern = decodePercent(path)
+  const pattern = replaceEmails(decodePercent(path), ":email")
     .replace(UUID_IN_PATH, ":id")
     .replace(OUTSIDE_PATH_CHARS, "_")
     .replace(DIGIT_GROUP, (group) => (identifyingNumber(group) ? ":n" : group));

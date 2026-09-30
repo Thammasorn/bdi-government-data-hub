@@ -13,8 +13,8 @@
  * ของ token และ `admin-portal`, `wrap()` ใส่ route แบบแม่แบบ ตอนคำตอบจบจึงอ่านได้ครบ
  *
  * เก็บอะไร (plan §7 — ผ่าน lib/redact.ts ทั้งหมด):
- *   - route แบบแม่แบบ (`/api/admin/users/:id`) ถ้าถึง route · path แบบรูปแบบ (`pathPattern()` — UUID → `:id` เลขยาว → `:n`)
- *     เสมอ คำขอที่ token ไม่ผ่าน (401 ที่ guard) ไม่ถึง route จึงมีแค่ path
+ *   - route แบบแม่แบบ (`/api/admin/users/:id`) ถ้าถึง route · path แบบรูปแบบ (`pathPattern()` — อีเมล → `:email` UUID → `:id`
+ *     เลขยาว → `:n`) เสมอ คำขอที่ token ไม่ผ่าน (401 ที่ guard) ไม่ถึง route จึงมีแค่ path
  *   - **ชื่อ**ของ query ทุกตัว ค่าเฉพาะที่ไม่ใช่ข้อมูลบุคคล (`QUERY_VALUES_KEPT`) — `cid` ได้แค่ key `cid#` และ `email` / `q`
  *     ที่เป็นอีเมลเต็มได้ key `email#` (`q` ที่เป็นเลขบัตร 13 หลักได้ `cid#`) ค่าจริงไม่ถูกเก็บ ค้นบางส่วนไม่ได้ key
  *   - subject จากแม่แบบของ route (`SUBJECT_BY_ROUTE`) — `/users/:id` เข้า `relatedUserIds` ให้ `x-log-person` หาเจอว่าใครเปิดดู

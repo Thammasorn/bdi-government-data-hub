@@ -152,6 +152,9 @@ function keyValueRules(key: string, phraseKey: string, flags: string): Array<[Re
   ];
 }
 
+/** อีเมล — ใช้ใน BEFORE_UUID_RULES และ `replaceEmails()` (ตัวเดียวกัน อย่าแยกเป็นสองรูป) */
+const EMAIL_RUN = /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
+
 /**
  * ตารางกวาดข้อความอิสระ (plan §7.5) — ลำดับมีผล: userinfo ของ URI กับ JWT ก่อน (ไม่งั้นท่อนข้างในโดนกฎอื่นกินไปครึ่งเดียว)
  * แล้ว `key=value` แล้วอีเมล แล้วกฎตัวเลข/ความลับที่รันหลังกัน UUID ไว้แล้ว (`scrubText`)
@@ -177,8 +180,16 @@ const BEFORE_UUID_RULES: Array<[RegExp, string]> = [
   ...keyValueRules(CAMEL_SECRET_KEY, CAMEL_PHRASE_KEY, "g"),
   // `otp 482913` · `code 482913` — คั่นด้วยช่องว่าง นับเฉพาะเลข 4–8 หลัก (ทุกรูปของ DIGIT): `status code 500` ต้องรอด
   [new RegExp(`(?<![A-Za-z0-9_-])(otp|code|pin|passcode)(\\s+)${DIGIT}{4,8}(?!${DIGIT})`, "gi"), "$1$2[redacted]"],
-  [/(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g, "[email]"],
+  [EMAIL_RUN, "[email]"],
 ];
+
+/**
+ * แทนทุกอีเมลใน `text` ด้วย `replacement` — กฎอีเมลตัวเดียวกับ `scrubText` สำหรับที่ที่ต้องการตัวแทนอื่นที่ไม่ใช่ `[email]`
+ * (`pathPattern()` ของ lib/token-rejection.ts แปลงอักษรนอกชุดของ path เป็น `_` ทีหลัง `[email]` จึงกลายเป็น `_email_`)
+ */
+export function replaceEmails(text: string, replacement: string): string {
+  return text.replace(EMAIL_RUN, replacement);
+}
 
 /**
  * ความลับยาว ๆ (ฐานสิบหกหรือ base64url ตั้งแต่ 32 ตัว) — ต้องมีตัวเลขอย่างน้อยหนึ่งตัว ไม่งั้นชื่อฟังก์ชันหรือชื่อคลาส
