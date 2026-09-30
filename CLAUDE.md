@@ -66,6 +66,15 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   catalogue, L4 publishes a new `.docx`) and the registration requests (**R1–R5**), with three
   `*.postman_environment.json` files beside it (dev checkout / main / public). The admin token
   is left empty in the last two on purpose — it is a real secret from `.env`
+- `docs/bdi-activity-log.postman_collection.json` — the log read API (`/api/admin/logs/*`,
+  `backend/src/routes/admin-logs.ts`): **G1–G8** activity search, one person, a request's
+  timeline, failed logins of an e-mail, admin-token work, trace by reference, who read the log,
+  a rotated token's use; **E1–E4** error issues, one event, resolve/ignore; **S1** status. Kept
+  apart from the admin collection on purpose, with its own `x-log-token` (`LOG_READ_TOKEN`), so
+  holding the admin token does not hand out the log. Every read is written to `audit_event` as
+  `AUDIT_LOG_READ` before any data comes back; the reason goes in the `readReason` collection
+  variable (sent as a percent-encoded header, never in the URL). It must be pointed at the backend
+  itself — the site's proxy answers 404 for `/api/admin/logs*`
 
 Read `docs/01-user-journey.md` before touching anything in `backend/src/routes/organizations.ts`
 or `backend/src/routes/dataset-requests.ts`.
@@ -1515,11 +1524,20 @@ Two API base URLs, and they are not interchangeable:
   every captured value: `POST /api/admin/invitations` went out with `"organizationId": ""` and
   answered 400 `validation`, revoke and PATCH answered 404, and `D` quietly listed *all*
   organizations instead of fetching one and still passed. Ids captured at runtime belong in
-  collection variables only; an environment carries `baseUrl` and `adminToken` and nothing
-  else. The requests that depend on a captured id now refuse to send in a pre-request script
-  that names the request to run first, so the next occurrence says what it is.
-- **An environment's `adminToken` is committed empty — run `python3 docs/tools/check-postman-secrets.py`
-  before committing any Postman file.** `0d0a0d4` (2026-09-24) committed the real production
+  collection variables only; an environment carries `baseUrl`, `adminToken`, `logToken` and
+  `logReader` and nothing else (the last two are for `bdi-activity-log`). The same goes for the
+  inputs a reader types — `readReason`, `person`, `requestNumber`, `reference` … are collection
+  variables. The admin collection has **no** pre-request scripts: a request whose captured id is
+  still empty goes out and answers 400 or 404, so read the response. `bdi-activity-log` has two
+  kinds, and nothing else: the one-line collection script that sends `readReason` as
+  `x-log-reason` (percent-encoded — a raw Thai header arrives as latin1 bytes and is refused),
+  and a guard on G6, G8 and E2–E4 that skips the request (`pm.execution.skipRequest()`, or
+  throws on a Postman too old to have it) and names what to fill in or run first. Newman sends a
+  request whose pre-request script *throws*, so the skip is what actually stops it there.
+  `console.table` does not exist in newman's sandbox — the collection's tests fall back to
+  `console.log` per row, and anything a test captures is set before it prints.
+- **An environment's `adminToken` and `logToken` are committed empty — run
+  `python3 docs/tools/check-postman-secrets.py` before committing any Postman file.** `0d0a0d4` (2026-09-24) committed the real production
   token in `bdi-public`, and it reached Bitbucket and the public GitHub `origin` before anyone
   noticed; the rule above was written down and did not stop it. The check goes by variable
   *name*, not `type`, because `bdi-dev-checkout` declares its token `type: "default"`. With no
