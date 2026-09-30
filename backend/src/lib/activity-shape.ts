@@ -19,7 +19,7 @@ import { createHmac } from "node:crypto";
 
 import { AuditAction, storedUserAgent, type AuditActionCode } from "./audit.js";
 import { referenceOf } from "./context.js";
-import { maskCidText, maskForLogStore, maskedTypedEmail, type MaskFindings } from "./redact.js";
+import { asciiDigits, maskCidText, maskForLogStore, maskedTypedEmail, type MaskFindings } from "./redact.js";
 
 /** เพิ่มเมื่อรูปของเอกสารเปลี่ยนจนของเดิมต้อง rebuild — relay เตือนเมื่อค่าที่บันทึกไว้ไม่ตรง */
 export const SCHEMA_VERSION = 1;
@@ -179,7 +179,8 @@ export function viaOf(row: {
 
 /**
  * key ค้นหาของค่าหนึ่งค่า — `cid#` / `email#` + 16 ตัวแรกของ HMAC-SHA256 (กุญแจ LOG_HASH_KEY) ของค่าที่ normalise แล้ว
- *   - เลขบัตร: เหลือแค่ตัวเลข ต้องครบ 13 หลัก (ค่าที่ไม่ครบ เช่นร่างที่กรอกครึ่งทาง ไม่มีทางถูกค้นด้วย ?cid= อยู่แล้ว)
+ *   - เลขบัตร: เลขไทยและเลขเต็มความกว้างเป็นอารบิก (`asciiDigits`) แล้วเหลือแค่ตัวเลข ต้องครบ 13 หลัก (ค่าที่ไม่ครบ
+ *     เช่นร่างที่กรอกครึ่งทาง ไม่มีทางถูกค้นด้วย ?cid= อยู่แล้ว) — `๑๑๐๑…` ที่พิมพ์ในบันทึกจึงได้ key ตัวเดียวกับ `1101…`
  *   - อีเมล: ตัดช่องว่างหัวท้าย ตัวพิมพ์เล็ก ต้องมี `@`
  * คืน null เมื่อไม่มีกุญแจหรือค่าไม่เข้ารูป — ใช้ตัวเดียวกันทั้งตอนเขียน (ที่นี่) และตอนค้น (API อ่าน log, step 7)
  * 16 ตัว (64 บิต) พอสำหรับ index ที่มีคนไม่กี่ล้าน และกุญแจลับทำให้ไล่ย้อนเลขบัตร 10¹³ ค่าไม่ได้ถ้าไม่มีกุญแจ
@@ -188,7 +189,7 @@ export function hashKeyOf(kind: "cid" | "email", value: string, key: string): st
   if (!key) return null;
   let normalised: string;
   if (kind === "cid") {
-    normalised = value.replace(/\D/g, "");
+    normalised = asciiDigits(value).replace(/\D/g, "");
     if (normalised.length !== 13) return null;
   } else {
     normalised = value.trim().toLowerCase();
