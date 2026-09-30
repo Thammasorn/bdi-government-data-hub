@@ -614,8 +614,9 @@ async function maintenanceTick(): Promise<void> {
     const relay = db.collection<RelayStateDoc>("relay_state");
     const state = await relay.findOne({ _id: STATE_ID }, { maxTimeMS: MONGO_READ_MS });
     const now = new Date();
+    const lastPruneAt = pastDate(state?.lastPruneAt, "lastPruneAt", now);
 
-    if (pruneDue(state?.lastPruneAt ?? null, now)) {
+    if (pruneDue(lastPruneAt, now)) {
       const summary = await pruneLogStore(db, now);
       await relay.updateOne(
         { _id: STATE_ID },
@@ -634,8 +635,8 @@ async function maintenanceTick(): Promise<void> {
       }
     }
 
-    const lastReconcile = state?.lastReconcileAt?.getTime() ?? 0;
-    const caughtUpAt = state?.caughtUpAt?.getTime() ?? 0;
+    const lastReconcile = pastDate(state?.lastReconcileAt, "lastReconcileAt", now)?.getTime() ?? 0;
+    const caughtUpAt = pastDate(state?.caughtUpAt, "caughtUpAt", now)?.getTime() ?? 0;
     if (now.getTime() - lastReconcile >= RECONCILE_EVERY_MS && now.getTime() - caughtUpAt <= CAUGHT_UP_FRESH_MS) {
       const summary = await reconcile(db, client, now);
       await relay.updateOne(
@@ -658,6 +659,34 @@ async function maintenanceTick(): Promise<void> {
   } catch (err) {
     captureThrottled("log-relay.maintenance", err);
   }
+}
+
+/**
+ * เวลาที่อ่านจาก relay_state — ไม่ใช่ Date หรืออยู่ในอนาคตเกิน FUTURE_TOLERANCE_MS ถือว่าไม่มี (แล้วเก็บเป็น error ให้เห็น)
+ *
+ * เหตุผลเดียวกับ `cursorFrom`: `bdi_backend` insert relay_state ได้ตอนที่เอกสารยังไม่มี (volume ใหม่ หรือหลังมีคนลบทั้งใบ)
+ * `lastPruneAt` ปลอมในอนาคตทำให้ `pruneDue()` ตอบ false ไปจนกว่านาฬิกาจะถึง — การลบตามอายุ (PDPA) หยุดเงียบ ๆ และ
+ * `lastReconcileAt` ปลอมก็หยุด reconcile แบบเดียวกัน ค่าที่ไม่ใช่ Date เลย (ข้อความ ตัวเลข) เดิมทำให้ `getTime()` throw
+ * ทุกนาที งานดูแลทั้งรอบจึงไม่เคยวิ่ง (ตรวจขั้น 6, 2026-09-30) ถือว่าไม่มีแล้ว prune วิ่งทันที (ลบซ้ำได้ไม่เสียหาย)
+ * และรอบถัดไปเขียนค่าจริงทับ
+ */
+function pastDate(value: unknown, field: string, now: Date): Date | null {
+  if (value === undefined || value === null) return null;
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
+    reportBadState(field, `${field} ใน relay_state ไม่ใช่วันเวลา — ถือว่าไม่มี`);
+    return null;
+  }
+  if (value.getTime() > now.getTime() + FUTURE_TOLERANCE_MS) {
+    reportBadState(field, `${field} ใน relay_state อยู่ในอนาคต (${value.toISOString()}) — ถือว่าไม่มี`);
+    return null;
+  }
+  return value;
+}
+
+/** tag แยกต่อฟิลด์ — ฟิลด์ปลอมสองตัวในรอบเดียวกันต้องได้ issue ทั้งสองตัว ไม่ใช่ตัวแรกแล้วตัวที่สองติด throttle สิบนาที */
+function reportBadState(field: string, message: string) {
+  console.warn(`[log-relay] ${message}`);
+  captureThrottled(`log-relay.state.${field}`, new Error(message), "error");
 }
 
 /** prune ครบกำหนดเมื่อยังไม่เคยทำ หรือทำครั้งล่าสุดก่อน 03:00 น. (เวลาไทย) ล่าสุดที่ผ่านมาแล้ว */
