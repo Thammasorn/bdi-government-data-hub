@@ -481,7 +481,7 @@
             }
           ]
         },
-        "description": "ทุกแถวที่มาทาง `x-admin-token` ใน 7 วันล่าสุด (`from` คำนวณให้ใน pre-request script) — `tokenFps` บอกว่าใช้ token ใบไหน เทียบกับ fingerprint ของ token ปัจจุบันได้ ช่วงยาวกว่านี้แก้ `from` เอง · ตั้งแต่ขั้น 8 รวมบันทึกการเรียก admin API ทุกครั้ง การอ่านด้วย (`action=ADMIN_API_REQUEST`, `source=http` — route, status, ชื่อ query ไม่มีค่า) แคบเฉพาะการเปลี่ยนแปลงด้วย `&source=audit_event`"
+        "description": "ทุกแถวที่มาทาง `x-admin-token` ใน 7 วันล่าสุด (`from` คำนวณให้ใน pre-request script) — `tokenFps` บอกว่าใช้ token ใบไหน เทียบกับ fingerprint ของ token ปัจจุบันได้ ช่วงยาวกว่านี้แก้ `from` เอง · ตั้งแต่ขั้น 8 รวมบันทึกการเรียก admin API ทุกครั้ง การอ่านด้วย (`action=ADMIN_API_REQUEST`, `source=http` — route, status, path แบบรูปแบบที่อีเมล UUID และเลขยาวถูกแทนแล้ว, ชื่อ query ทุกตัว และ**ค่า**ของ `status` `role` `organizationId` `page` `pageSize` ที่ไม่ชี้ตัวคน — ค่าของ `cid` `email` `q` ไม่ถูกเก็บ ได้แค่ key ค้นหา `cid#`/`email#`) แคบเฉพาะการเปลี่ยนแปลงด้วย `&source=audit_event`"
       },
       "response": [],
       "event": [
@@ -1084,7 +1084,7 @@
             "status"
           ]
         },
-        "description": "สถานะของ log store ที่ `/health/ready` ไม่แสดงต่อสาธารณะ — คิวของ backend process นี้ (`buffered`, `dropped`) ความล่าช้าของ relay (วินาที) กุญแจ hash ตั้งแล้วหรือยัง ขนาดเทียบเพดาน · **ไม่ถูกบันทึกเป็นการอ่าน** (ไม่มีข้อมูลบุคคล) แต่ยังต้องมี token และผู้อ่าน · `adminAccess` = บันทึกการเรียก admin API ของ process นี้ (`suppressed` = เกินเพดานต่อนาที) · `alerts` = ลูปอีเมลสรุป error ของ worker (`lastDigestAt`, `lastError` — null ถ้าไม่ได้ตั้ง ERROR_ALERT_EMAILS)"
+        "description": "สถานะของ log store ที่ `/health/ready` ไม่แสดงต่อสาธารณะ — คิวของ backend process นี้ (`buffered`, `dropped`, `browserReportsNotCreatingIssues` = รายงานเบราว์เซอร์ที่เดินได้แค่ตัวนับของ issue เดิม เพราะเกินร้อย fingerprint ใหม่ต่อชั่วโมงหรือเกินเพดานขนาด) ความล่าช้าของ relay (วินาที) กุญแจ hash ตั้งแล้วหรือยัง ขนาดเทียบเพดาน · **ไม่ถูกบันทึกเป็นการอ่าน** (ไม่มีข้อมูลบุคคล) แต่ยังต้องมี token และผู้อ่าน · `adminAccess` = บันทึกการเรียก admin API ของ process นี้ (`suppressed` = เกินเพดานต่อนาที) · `alerts` = ลูปอีเมลสรุป error ของ worker ตามที่ worker บอกเอง (backend อ่าน `ERROR_ALERT_EMAILS` ของ worker ไม่ได้): `enabled` กับ `recipients` ณ `checkedAt` — เปิดอยู่เขียนทุกนาที ปิดอยู่เขียนครั้งเดียวตอน worker เริ่ม ดังนั้น `enabled: true` ที่ `checkedAt` เก่ากว่าสองสามนาทีแปลว่าลูปไม่ได้วิ่งแล้ว (worker ดับ) · `enabledAt` เริ่มนับใหม่ทุกครั้งที่เปิดกลับมา · `lastDigestAt`, `lastError` ของฉบับล่าสุด · `alerts: null` = worker ยังไม่เคยเขียน (log store ใหม่)"
       },
       "response": [],
       "event": [

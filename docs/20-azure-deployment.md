@@ -165,9 +165,10 @@ names this system used before the move, though `bdi-uploads` satisfies both.
 export ADMIN_API_TOKEN=$(openssl rand -base64 48)
 export ACTIVATION_KEY_SECRET=$(openssl rand -base64 48)
 export LOG_READ_TOKEN=$(openssl rand -hex 32)
+export INGEST_SERVER_TOKEN=$(openssl rand -hex 32)
 ```
 
-Keep all three. `ACTIVATION_KEY_SECRET` is the HMAC key behind every activation link
+Keep all four. `ACTIVATION_KEY_SECRET` is the HMAC key behind every activation link
 (`key_hash = HMAC-SHA-256(secret, raw_key)`) — **rotating it invalidates every activation key
 that has not been used yet**, and the backend refuses to boot without it when
 `NODE_ENV=production`.
@@ -178,6 +179,15 @@ holding the admin token does not open the activity log. Hand it only to the peop
 investigate. Empty, the `dev-…-change-me` sample, or shorter than 32 characters, and that API
 answers 503 `log_access_disabled` while everything else runs normally; the backend never
 refuses to boot over it.
+
+`INGEST_SERVER_TOKEN` is the `x-report-token` the Next server attaches to its own error reports
+(`POST /api/client-errors`); the **backend and the frontend both get the same value** (§4.3,
+§4.5). A report whose token matches is stored as `service: "frontend-server"`; anything else,
+including every report from a browser, is stored as an unverified `browser` report, because the
+backend is reachable without the frontend and a header on its own proves nothing. Empty, the
+`dev-…-change-me` sample or anything under 32 characters in production (the backend then treats
+it as empty), or a mismatch between the two apps: Next server errors are still stored, only as
+unverified browser reports. Nothing refuses to boot over it.
 
 ---
 
@@ -254,6 +264,7 @@ az containerapp create \
       admin-api-token="$ADMIN_API_TOKEN" \
       activation-key-secret="$ACTIVATION_KEY_SECRET" \
       log-read-token="$LOG_READ_TOKEN" \
+      ingest-server-token="$INGEST_SERVER_TOKEN" \
       smtp-pass="<gmail-app-password>" \
       thaid-client-secret="<thaid-client-secret>" \
       thaid-api-key="<thaid-api-key>" \
@@ -264,6 +275,7 @@ az containerapp create \
       ADMIN_API_TOKEN=secretref:admin-api-token \
       ACTIVATION_KEY_SECRET=secretref:activation-key-secret \
       LOG_READ_TOKEN=secretref:log-read-token \
+      INGEST_SERVER_TOKEN=secretref:ingest-server-token \
       AZURE_STORAGE_ACCOUNT_URL="https://${SANAME}.blob.core.windows.net" \
       AZURE_STORAGE_CONTAINER=bdi-uploads \
       GOTENBERG_URL="https://${GOTENBERG_FQDN}" \
@@ -295,7 +307,9 @@ it. On its own it opens nothing yet: the log read API also needs the log store, 
 Azure until BDI chooses a managed MongoDB service (`LOG_STORE_ENABLED=false` in
 `deploy/azure/backend.env`, which also lists `MONGODB_URI` and `LOG_HASH_KEY` for that day), so
 the API answers 503 `log_store_disabled` until then. Setting the token now means turning the log
-store on later needs no second secret.
+store on later needs no second secret. `INGEST_SERVER_TOKEN` is set now for the same reason: with
+the log store off, `POST /api/client-errors` still answers 204 and stores nothing, and the frontend
+(§4.5) must carry the same value.
 
 Now grant the backend's identity access to blob data:
 
@@ -360,8 +374,17 @@ az containerapp create \
       DELIVERY_POLL_INTERVAL_MS=15000 DELIVERY_MAX_ATTEMPTS=5 \
       ADMIN_API_TOKEN=secretref:admin-api-token \
       ACTIVATION_KEY_SECRET=secretref:activation-key-secret \
-      AZURE_STORAGE_ACCOUNT_URL="https://${SANAME}.blob.core.windows.net"
+      AZURE_STORAGE_ACCOUNT_URL="https://${SANAME}.blob.core.windows.net" \
+      ERROR_ALERT_EMAILS="<team-list-comma-separated>"
 ```
+
+`ERROR_ALERT_EMAILS` is the list that gets the error digest (`workers/error-alerts.ts`: new
+errors, regressions, fatals, dead letters, sustained 5xx, crash loops, the log store over its
+size ceiling — at most one mail per 15 minutes). It is not a secret, and it belongs to the
+**delivery-worker only**. Empty switches alerting off. It also does nothing while the log store is
+off (`LOG_STORE_ENABLED=false` in `deploy/azure/delivery-worker.env`), since the digest is built
+from the issues stored there. The digest goes through the same `SMTP_*` settings as every other
+mail, one message at a time.
 
 Four details decide whether this app works at all:
 
@@ -392,12 +415,19 @@ az containerapp create \
   --ingress external --target-port 3000 \
   --min-replicas 1 --max-replicas 3 \
   --cpu 0.5 --memory 1Gi \
+  --secrets \
+      ingest-server-token="$INGEST_SERVER_TOKEN" \
   --env-vars \
       NODE_ENV=production \
       PORT=3000 \
       HOSTNAME=0.0.0.0 \
-      INTERNAL_API_URL="https://${BACKEND_INTERNAL}"
+      INTERNAL_API_URL="https://${BACKEND_INTERNAL}" \
+      INGEST_SERVER_TOKEN=secretref:ingest-server-token
 ```
+
+`INGEST_SERVER_TOKEN` must be the **same value as the backend's** (§3.4). The Next server reads it
+at runtime and attaches it to its own error reports; it is never `NEXT_PUBLIC_`, so it never
+reaches the browser bundle.
 
 `HOSTNAME=0.0.0.0` is set explicitly. Next's standalone server defaults to `0.0.0.0` already, but
 if anything ever binds it to localhost the ingress health check fails and the revision never goes
@@ -718,6 +748,7 @@ rather than overriding it.
 | `ADMIN_TOKEN_WATCH_FPS` | | empty | comma-separated 12-hex fingerprints of retired admin tokens; each gets its own `ADMIN_TOKEN_REJECTED` row (`docs/09` §4.1). Fingerprints only, never a token |
 | `ACTIVATION_KEY_SECRET` | **in production** | dev value | HMAC key for activation keys |
 | `LOG_READ_TOKEN` | | empty (dev value outside production) | `x-log-token` of `/api/admin/logs/*`, backend only; `openssl rand -hex 32`. Empty, `dev-…` or under 32 characters = 503 `log_access_disabled`. Useless until the log store is on (§4.3) |
+| `INGEST_SERVER_TOKEN` | | empty (dev value outside production) | `x-report-token` of the Next server's error reports; `openssl rand -hex 32`, **same value in the frontend**. Empty, `dev-…`, under 32 characters or mismatched = those reports are stored as unverified browser reports (§3.4) |
 | `AZURE_STORAGE_ACCOUNT_URL` | one of the two | — | managed identity; the production answer |
 | `AZURE_STORAGE_CONNECTION_STRING` | one of the two | — | account key; dev only. Wins if both are set |
 | `AZURE_STORAGE_CONTAINER` | | `bdi-uploads` | must match the container that exists |
@@ -743,7 +774,8 @@ rather than overriding it.
 `NODE_ENV`, `DATABASE_URL`, `APP_URL`, all six `SMTP_*`, `SUPPORT_EMAIL`, `SUPPORT_PHONE`,
 `DELIVERY_POLL_INTERVAL_MS` (default `15000`), `DELIVERY_MAX_ATTEMPTS` (default `5`), plus
 `ADMIN_API_TOKEN`, `ACTIVATION_KEY_SECRET` and one Azure Storage variable that exist only to get
-`env.ts` past its boot checks.
+`env.ts` past its boot checks. `ERROR_ALERT_EMAILS` (default empty = no error digest; comma-separated,
+worker only, inert while the log store is off — §4.4).
 
 ### frontend
 
@@ -753,6 +785,7 @@ rather than overriding it.
 | `PORT=3000` | must equal `--target-port` |
 | `HOSTNAME=0.0.0.0` | |
 | `INTERNAL_API_URL` | `https://<backend-internal-fqdn>`, no port. Read per request |
+| `INGEST_SERVER_TOKEN` | secret, same value as the backend's (§4.5). Read at runtime, never `NEXT_PUBLIC_` |
 | ~~`NEXT_PUBLIC_API_URL`~~ | build-time only, must stay empty — see §4.5 |
 | ~~`ALLOWED_DEV_ORIGINS`~~ | affects `next dev` only; irrelevant in production |
 
