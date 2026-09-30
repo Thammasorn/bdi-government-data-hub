@@ -72,10 +72,12 @@ function apiErrorOf(value: unknown): { status: number; code: string } | null {
  * chunk ของบันเดิลโหลดไม่ขึ้น — ส่วนใหญ่คือ deploy ใหม่ระหว่างที่หน้าเก่ายังเปิดอยู่ (ไฟล์ของ build เก่าหายไปแล้ว) ไม่ใช่บั๊ก
  * บันทึกเป็นคำเตือนและไม่ส่งอีเมลแจ้งเตือน (plan §5) backend จัดทุกตัวไว้ใน issue เดียว `browser:chunk-load`
  *
- * **สองถ้อยคำ เพราะสอง bundler:** `next dev --webpack` ของ dev checkout ได้ `ChunkLoadError` ("Loading chunk 123 failed.",
- * "Loading CSS chunk …") ส่วน `next build` ของ production เป็น **Turbopack** (ค่าตั้งต้นของ Next 16) ซึ่ง throw `Error` ธรรมดา
- * ชื่อ `Error` ข้อความ "Failed to load chunk /_next/static/chunks/<hash>.js from module 83412" — เดิมรู้จักแค่แบบแรก
- * chunk ที่หายบน production จึงเป็น error ระดับ error หนึ่ง issue ต่อ hash ของ chunk ต่อ build และส่งอีเมลแจ้งเตือนทุก deploy
+ * **สองถ้อยคำ เพราะสอง bundler:** `next dev --webpack` ของ dev checkout ได้ "Loading chunk 123 failed." / "Loading CSS chunk …"
+ * ส่วน `next build` ของ production เป็น **Turbopack** (ค่าตั้งต้นของ Next 16) ได้ "Failed to load chunk
+ * /_next/static/chunks/<hash>.js from module 83412" ชื่อ `ChunkLoadError` ทั้งคู่ใน runtime ที่ Next 16.2.12 ใส่ลงบันเดิล (ตรวจกับ
+ * build จริง 2026-10-01) แต่ดูชื่ออย่างเดียวไม่พอ: runtime ของ Turbopack อีกชุดที่มากับ Next (`next/dist/bundle-analyzer`)
+ * throw `Error` ชื่อ `Error` ด้วยถ้อยคำเดียวกัน และ `window` `error` ที่ไม่มี `event.error` มีแค่ข้อความ — ตัวที่หลุดจะเป็น error
+ * หนึ่ง issue ต่อ hash ของ chunk ต่อ build และส่งอีเมลแจ้งเตือนทุก deploy จึงดูถ้อยคำด้วย
  * ตรวจคู่กันกับ `isChunkLoadReport` ใน backend/src/routes/client-errors.ts — แก้ที่หนึ่งต้องแก้อีกที่
  */
 export function isChunkLoadError(value: unknown): boolean {

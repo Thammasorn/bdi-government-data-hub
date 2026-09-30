@@ -280,12 +280,14 @@ function scrubbedError(report: Report): ScrubbedError {
  * รายงานจากเบราว์เซอร์นี้คือ chunk ของบันเดิลที่โหลดไม่ขึ้นไหม — deploy ใหม่ระหว่างที่หน้าเก่ายังเปิดอยู่ ไม่ใช่บั๊ก: คำเตือน
  * ใน issue เดียว `browser:chunk-load` ที่ไม่ส่งอีเมลแจ้งเตือน (plan §5, workers/error-alerts.ts) ไม่เชื่อ `level` ที่ผู้ส่งบอก
  *
- * **สองถ้อยคำ เพราะสอง bundler:** webpack (`next dev --webpack` ของ dev checkout) ตั้งชื่อ `ChunkLoadError` ข้อความ
- * "Loading chunk 123 failed." / "Loading CSS chunk …" ส่วน Turbopack (`next build` ของ production — ค่าตั้งต้นของ Next 16)
- * throw `Error` ธรรมดา ข้อความ "Failed to load chunk /_next/static/chunks/<hash>.js from module 83412" (หรือ `.css`) เดิม
- * รู้จักแค่แบบแรก chunk ที่หายบน production จึงเป็นระดับ error หนึ่ง issue ต่อ hash ต่อ build และส่งอีเมลทุก deploy ที่มีหน้า
- * เปิดค้าง (ตรวจขั้น 9, 2026-10-01) ข้อความเดียวกันจาก Next server **ไม่ใช่**คำเตือน: server โหลด chunk ของตัวเองไม่ขึ้นคือ
- * image เสีย จึงเช็กเฉพาะ `browser` · คู่กับ `isChunkLoadError` ใน frontend/lib/report-error.ts — แก้ที่หนึ่งต้องแก้อีกที่
+ * **สองถ้อยคำ เพราะสอง bundler:** webpack (`next dev --webpack` ของ dev checkout) ข้อความ "Loading chunk 123 failed." /
+ * "Loading CSS chunk …" ส่วน Turbopack (`next build` ของ production — ค่าตั้งต้นของ Next 16) ข้อความ "Failed to load chunk
+ * /_next/static/chunks/<hash>.js from module 83412" (หรือ `.css`) ชื่อ `ChunkLoadError` ทั้งคู่ใน runtime ที่ Next 16.2.12
+ * ใส่ลงบันเดิล (build จริง + Chrome, 2026-10-01) แต่ดูชื่ออย่างเดียวไม่พอ: runtime ของ Turbopack อีกชุดที่มากับ Next
+ * (`next/dist/bundle-analyzer`) throw `Error` ชื่อ `Error` ด้วยถ้อยคำเดียวกัน และ `window` `error` ที่ไม่มี `event.error` ส่งมาแค่
+ * ข้อความ ตัวที่หลุดเป็นระดับ error หนึ่ง issue ต่อ hash ต่อ build และส่งอีเมลทุก deploy ที่มีหน้าเปิดค้าง (ตรวจขั้น 9) จึงดู
+ * ถ้อยคำด้วย ข้อความเดียวกันจาก Next server **ไม่ใช่**คำเตือน: server โหลด chunk ของตัวเองไม่ขึ้นคือ image เสีย จึงเช็กเฉพาะ
+ * `browser` · คู่กับ `isChunkLoadError` ใน frontend/lib/report-error.ts — แก้ที่หนึ่งต้องแก้อีกที่
  */
 function isChunkLoadReport(error: ScrubbedError): boolean {
   return (
