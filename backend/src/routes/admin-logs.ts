@@ -1065,8 +1065,10 @@ adminLogRouter.get("/status", async (req, res) => {
   };
   /**
    * ลูปอีเมลสรุป error ของ worker (workers/error-alerts.ts) ตามที่ worker บอกไว้เอง — backend อ่าน ERROR_ALERT_EMAILS ไม่ได้ (เป็น env
-   * ของ worker) `enabled` คือคำของ worker ณ `checkedAt`: เปิดอยู่เขียนทุกนาที ปิดอยู่เขียนครั้งเดียวตอน worker เริ่ม ·
-   * `enabled: true` ที่ `checkedAt` เก่ากว่าสองสามนาที = ลูปไม่ได้วิ่งแล้ว (worker ดับ หรือ Mongo ของ worker ต่อไม่ได้) ·
+   * ของ worker) `enabled` คือคำของ worker ณ `checkedAt`: เปิดอยู่เขียนทุกนาที (และก่อนทุกฉบับระหว่างรอบที่กำลังส่ง — ช่วงห่าง
+   * มากสุดราวหนึ่งนาที, workers/error-alerts.ts `heartbeatOf`) ปิดอยู่เขียนครั้งเดียวตอน worker เริ่ม ·
+   * `enabled: true` ที่ `checkedAt` เก่ากว่าสามนาที = ลูปไม่ได้วิ่งแล้ว (worker ดับ หรือ Mongo ของ worker ต่อไม่ได้) ·
+   * `lastDigestAt` = สรุปฉบับใหม่ล่าสุด (การส่งซ้ำของฉบับที่ค้างไม่ขยับค่านี้) ·
    * null ทั้งก้อน = worker ยังไม่เคยเขียน (log store ใหม่) · `enabled: null` = เอกสารจาก worker รุ่นก่อนที่ยังไม่บอกค่านี้
    */
   let alerts: Record<string, unknown> | null = null;

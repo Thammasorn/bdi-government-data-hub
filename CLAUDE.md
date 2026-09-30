@@ -1025,25 +1025,37 @@ that answers every 19 s kept a send alive for minutes. A `Promise.race` gives up
 closing anything, and `close()` on a non-pooled transport does not touch a send in flight either.
 A send that hits the deadline ends that recipient's attempt, not the round: the next recipient is
 tried, the round as a whole stops starting sends after 90 s (`ROUND_BUDGET_MS`), and a recipient
-that was slow or still owed mail last time is tried last. **Each recipient gets at most one message
-per 15-minute slot, and nothing owed ever holds back a new digest.** Whoever a digest did not reach
-(timed out, a temporary failure, or not tried before the budget ran out) is kept in `pending` under
-an HMAC of the address (`LOG_HASH_KEY`; without it a per-process key, so pending is forgotten on
-restart), and that digest's text is appended to the same recipient's next message — or sent alone,
-marked "ส่งช้า", when there is nothing new. At most three digests are kept, none older than six
-hours. Until 2026-10-01 a late digest went out as its own mail *before* the new one and a round
-stopped at the first slow send, so one mailbox that was always slow held back every new alert
-(fatal, crash loop, over-quota) for every recipient for six hours, and one that kept failing
-temporarily got four mails in one slot. A 5xx rejection is not retried. A digest's issues count as
-alerted once it reaches one recipient; if it reaches nobody they do not, the next digest is composed
-afresh, and `lastError` on `/status` says so, as it says who is owed mail or slow. The SMTP server is
-Office 365, which takes about three connections. At most one digest per 15 minutes and one alert per
-issue per 6 hours unless it regressed. A regression alerts only an issue that would alert anyway (level error or fatal, or a
-sustained route-answered 5xx); `browser:chunk-load` and `…:log_access_disabled` never alert.
-Browser issues, which anyone can create, are held to five per six hours across digests and go
-into the mail without their message text. Its state lives in `relay_state` `_id: "error_alerts"`,
-so a restart does not resend; `GET /api/admin/logs/status` shows whether the worker last said it
-was on. In dry-run it prints the whole digest to `docker compose logs delivery-worker`.
+that was slow or still owed mail last time is tried last. **Nothing owed holds back a new digest,
+because the two clocks are separate.** A new digest goes out at most once per 15 minutes, counted
+from `lastDigestAt`, which only a round carrying a new digest moves. A digest someone is still owed
+is resent on its own at most once per 15 minutes *per recipient*, counted from that recipient's last
+attempt (`triedAt`). So a recipient gets at most two mails in any 15 minutes, and a fatal, crash
+loop or over-quota that arrives just after a resend still goes out on the next minute's tick, to
+everyone. Whoever a digest did not reach (timed out, a temporary failure, or not tried before the
+budget ran out) is kept in `pending` under an HMAC of the address (`LOG_HASH_KEY`; without it a
+per-process key, so pending is forgotten on restart), and that digest's text is appended to the same
+recipient's next new digest — or resent alone, marked "ส่งช้า", when their resend is due and there
+is nothing new. At most three digests are kept, none older than six hours. Until 2026-10-01 a late
+digest went out as its own mail *before* the new one and a round stopped at the first slow send, so
+one mailbox that was always slow held back every new alert (fatal, crash loop, over-quota) for every
+recipient for six hours, and one that kept failing temporarily got four mails in one slot. The first
+fix (`ea9ccbb`) still let a resend-only round move `lastDigestAt`, so one owed recipient delayed every
+new fatal, for everyone, by up to 15 minutes, every slot for six hours. **Only a 5xx answering
+`RCPT TO` or `DATA` is permanent** (no such mailbox, message refused): it is not retried, the owed
+digests it drops are logged, and `lastError` says so. Every other failure is retried, including a
+5xx at login (530/535 after the sending account's password changes) or at `MAIL FROM`, since those
+are our configuration, not the recipient; until the same fix every 5xx dropped the owed digests
+silently. A digest's issues count as alerted once it reaches one recipient; if it reaches nobody they
+do not, the next digest is composed afresh, and `lastError` on `/status` says so, as it says who is
+owed mail or slow. The SMTP server is Office 365, which takes about three connections. At most one
+digest per 15 minutes and one alert per issue per 6 hours unless it regressed. A regression alerts
+only an issue that would alert anyway (level error or fatal, or a sustained route-answered 5xx);
+`browser:chunk-load` and `…:log_access_disabled` never alert. Browser issues, which anyone can
+create, are held to five per six hours across digests and go into the mail without their message
+text. Its state lives in `relay_state` `_id: "error_alerts"`, so a restart does not resend;
+`GET /api/admin/logs/status` shows whether the worker last said it was on. The loop writes
+`checkedAt` every minute and before each send, so a `checkedAt` older than three minutes means it is
+not running. In dry-run it prints the whole digest to `docker compose logs delivery-worker`.
 
 ### PDF — every document comes from a .docx template
 
