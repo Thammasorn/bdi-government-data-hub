@@ -544,6 +544,15 @@ export function allowedHeaders(headers: Record<string, unknown>): Record<string,
 const CID_KEY = /cid$|nationalid|^pid$|^thaid_subject$/i;
 
 /**
+ * ค่าจริงที่การปิดของสำเนากิจกรรมปิดไปเอง — lib/activity-shape.ts ทำ key ค้นหา `cid#…` จากค่าพวกนี้ (ก่อนปิด)
+ * ค่าที่ถูกปิดมาแล้วตั้งแต่ Postgres (`{masked, changed}`) ไม่อยู่ในนี้: ค่าจริงของมันไม่เหลือให้ทำ key
+ */
+export interface MaskFindings {
+  /** ค่าใต้ key ที่ชื่อบอกว่าถือเลขบัตร และเลข 13 หลักที่พบในข้อความอื่น — ตามที่เจอ ยังไม่ normalise */
+  cids: string[];
+}
+
+/**
  * เลข 13 หลักในข้อความ → `[cid]` โดยไม่แตะ UUID — กันไว้ก่อนแล้วใส่คืน แบบเดียวกับ `scrubText`
  *
  * UUID ที่ขึ้นต้นด้วยเลขล้วน 12 ตัว (`12345678-1234-4abc-…`: กลุ่มที่สามของ v4 ขึ้นต้นด้วยเลข 4 เสมอ) คือเลข 13 หลักที่
@@ -551,10 +560,15 @@ const CID_KEY = /cid$|nationalid|^pid$|^thaid_subject$/i;
  * `integration_operation_id`) และ id ในข้อความ ลองกับ UUID สุ่มสองแสนตัว (2026-09-30) โดนไป 1.2% — id ที่ใช้ตามรอยและ
  * join กลับไป Postgres ทุกตัวที่ร้อยเสียไปหนึ่ง
  */
-export function maskCidText(text: string): string {
+export function maskCidText(text: string, findings?: MaskFindings): string {
   if (UUID_EXACT.test(text)) return text;
   const held: string[] = [];
-  const out = text.replace(UUID, (uuid) => `${HOLD_OPEN}${held.push(uuid) - 1}${HOLD_CLOSE}`).replace(CID_RUN, "[cid]");
+  const out = text
+    .replace(UUID, (uuid) => `${HOLD_OPEN}${held.push(uuid) - 1}${HOLD_CLOSE}`)
+    .replace(CID_RUN, (run) => {
+      findings?.cids.push(run);
+      return "[cid]";
+    });
   return held.length > 0 ? out.replace(HELD, (_all, index: string) => held[Number(index)] ?? "") : out;
 }
 
@@ -565,9 +579,10 @@ export function maskCidText(text: string): string {
  * ตัวเลข (number) 13 หลักก็นับ — audit ส่งวันเวลามาเป็น ISO string (`plain()` ใน audit-fallback) ไม่ใช่ epoch ms
  * จึงไม่มีอะไรถูกปิดผิดตัวในวันนี้ และ key ของ object ก็ผ่านกฎเดียวกัน (object ที่ใช้เลขบัตรเป็น key)
  */
-function maskCidRuns(value: unknown): unknown {
-  if (typeof value === "string") return maskCidText(value);
+function maskCidRuns(value: unknown, findings: MaskFindings | undefined): unknown {
+  if (typeof value === "string") return maskCidText(value, findings);
   if (typeof value === "number" && Number.isInteger(value) && Math.abs(value) >= 1e12 && Math.abs(value) < 1e13) {
+    findings?.cids.push(String(Math.abs(value)));
     return "[cid]";
   }
   return value;
@@ -581,22 +596,23 @@ function maskCidRuns(value: unknown): unknown {
  * เดียวก็เหลือท้ายของใบสุดท้ายแค่ใบเดียว `{masked}` ที่ปิดไว้แล้วตั้งแต่ Postgres (`sanitizeDiff()` →
  * `{masked, changed}`) ไม่ปิดซ้ำ แต่ยังผ่านกฎเลข 13 หลักของ `maskForLogStore` — `masked` ที่ใครส่งมาเป็นเลขเต็มจึงไม่หลุด
  */
-function maskedCid(value: unknown, depth: number): unknown {
+function maskedCid(value: unknown, depth: number, findings: MaskFindings | undefined): unknown {
   if (value === null || value === undefined) return value;
   if (depth > 8) return "[ลึกเกิน]";
-  if (Array.isArray(value)) return value.map((v) => maskedCid(v, depth + 1));
+  if (Array.isArray(value)) return value.map((v) => maskedCid(v, depth + 1, findings));
   if (typeof value === "object") {
     const proto = Object.getPrototypeOf(value);
     if (proto === Object.prototype || proto === null) {
-      if ("masked" in value) return maskForLogStore(value, depth + 1);
+      if ("masked" in value) return maskValue(value, depth + 1, findings);
       return Object.fromEntries(
-        Object.entries(value).map(([k, v]) => [maskCidText(k), maskedCid(v, depth + 1)]),
+        Object.entries(value).map(([k, v]) => [maskCidText(k, findings), maskedCid(v, depth + 1, findings)]),
       );
     }
     // Date, Buffer, … — `plain()` ของ audit-fallback แปลงเป็นข้อความมาก่อนแล้ว ถึงตรงนี้ได้ก็ไม่รู้ว่าข้างในคืออะไร
     return { masked: "***" };
   }
   const text = String(value);
+  findings?.cids.push(text);
   const shown = text.length > 4 ? text.slice(-4) : "";
   return { masked: "x".repeat(text.length - shown.length) + shown };
 }
@@ -610,27 +626,33 @@ export function maskedTypedEmail(value: unknown): unknown {
 }
 
 /**
- * ปิดเลขบัตรในสิ่งที่จะออกไปเป็นสำเนากิจกรรม — plan §7.6 ข้อที่ใช้ได้โดยไม่มี LOG_HASH_KEY
- * (key ค้นหา `cid#…` มากับงานสำเนา audit ใน step 6)
+ * ปิดเลขบัตรในสิ่งที่จะออกไปเป็นสำเนากิจกรรม — plan §7.6
  *   - key ที่ชื่อบอกว่าถือเลขบัตร (ทุกชั้น) → `{masked: "xxxxxxxxx1234"}` เหลือ 4 ตัวท้ายไว้เทียบกับคนได้
  *     ค่าที่เป็น object หรือ array ปิดทีละใบข้างใน (`maskedCid`)
  *   - เลข 13 หลักที่อยู่ในค่าอื่นทุกตัว → `[cid]` (`maskCidRuns`)
  * อีเมลของบัญชี ชื่อ เบอร์ IP และ UA ไม่ถูกแตะ ตามที่ตัดสินไว้ (decision 10, plan §7.6)
+ *
+ * `findings` (ถ้าส่งมา) ได้ค่าจริงของทุกตัวที่ถูกปิดที่นี่ — lib/activity-shape.ts ทำ key ค้นหา `cid#…` จากมัน
+ * ค่าจริงไม่ออกจาก process ทางอื่น
  */
-export function maskForLogStore(value: unknown, depth = 0): unknown {
+export function maskForLogStore(value: unknown, findings?: MaskFindings): unknown {
+  return maskValue(value, 0, findings);
+}
+
+function maskValue(value: unknown, depth: number, findings: MaskFindings | undefined): unknown {
   if (depth > 8) return "[ลึกเกิน]";
-  if (Array.isArray(value)) return value.map((v) => maskForLogStore(v, depth + 1));
+  if (Array.isArray(value)) return value.map((v) => maskValue(v, depth + 1, findings));
   const proto = value !== null && typeof value === "object" ? Object.getPrototypeOf(value) : undefined;
   if (proto === Object.prototype || proto === null) {
     return Object.fromEntries(
       Object.entries(value as object).map(([k, v]) => {
-        const key = maskCidText(k);
-        if (CID_KEY.test(k)) return [key, maskedCid(v, depth + 1)];
-        return [key, maskForLogStore(v, depth + 1)];
+        const key = maskCidText(k, findings);
+        if (CID_KEY.test(k)) return [key, maskedCid(v, depth + 1, findings)];
+        return [key, maskValue(v, depth + 1, findings)];
       }),
     );
   }
-  return maskCidRuns(value);
+  return maskCidRuns(value, findings);
 }
 
 /** ใช้ใน lib/error-capture.ts: id ที่หน้าตาเป็น UUID ให้ผ่าน ที่เหลือถือเป็นข้อความอิสระ */

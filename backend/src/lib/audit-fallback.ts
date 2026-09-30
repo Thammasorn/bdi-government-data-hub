@@ -6,7 +6,7 @@
  * ลง log store (plan §3 "Postgres down", §5):
  *
  *   1. error event `audit.write-failed` พร้อม input ของแถวนั้นที่ปิดเลขบัตรแล้ว (`extra.audit`)
- *   2. เอกสารใน `activity` ที่ `source: "audit_fallback"` — รูปเดียวกับสำเนาของแถวที่ worker จะ mirror มา (step 6)
+ *   2. เอกสารใน `activity` ที่ `source: "audit_fallback"` — รูปเดียวกับสำเนาของแถวที่ relay ของ worker คัดลอกมา
  *      ค้นเจอด้วยตัวกรองเดียวกัน และชี้กลับไปหา error event ด้วย `fallback.errorEventId`
  *
  * ทั้งสองเข้าคิวของ lib/error-capture.ts ซึ่ง**ไม่เรียก logAudit กลับ** — ความล้มเหลวหนึ่งครั้งจึงไม่มีทางวน
@@ -14,45 +14,12 @@
  */
 import { randomUUID } from "node:crypto";
 
+import { env } from "../env.js";
+import { fitDocument, projectAuditRow } from "./activity-shape.js";
 import type { AuditInput } from "./audit.js";
-import { currentContext, referenceOf } from "./context.js";
+import { correlationId, currentContext } from "./context.js";
 import { captureError, enqueueActivity } from "./error-capture.js";
 import { maskForLogStore, maskedTypedEmail } from "./redact.js";
-
-/** เพดานของเอกสารใน log store (เหมือน error event) — diff ของแบบฟอร์มชุดข้อมูล 36 ช่องยังห่างจากนี้มาก */
-const DOC_MAX_BYTES = 64 * 1024;
-
-/**
- * หมวดของ action — **ชั่วคราว** จนกว่าตารางหมวดจริงของสำเนา audit (`lib/activity-shape.ts`, step 6) จะมา
- * ตอนนั้นให้ย้ายไปใช้ตารางนั้นแทน ค่าที่ออกจากที่นี่อยู่ในรายการหมวดของ plan §3 เสมอ
- */
-const CATEGORY_RULES: Array<[RegExp, string]> = [
-  [/^(LOGIN_|PASSWORD_RESET_|IDENTITY_VERIF|ADMIN_TOKEN_|LOG_TOKEN_)/, "auth"],
-  [/^SESSION_/, "session"],
-  [/^(USER_ACCOUNT_|USER_IDENTITY_|ACTIVATION_KEY_)/, "account"],
-  [/^ROLE_/, "role"],
-  [/^(INVITATION_|APPROVER_INVITATION_)/, "invitation"],
-  [/^ORGANIZATION_/, "organization"],
-  [/^REQUEST_(APPROVED|REJECTED|RETURNED)$|^SPECIALIST_COMMENT/, "review"],
-  [/^REQUEST_/, "request"],
-  [/^(ATTACHMENT_|DOCUMENT_|DATA_EXPORTED)/, "document"],
-  [/^(LEGAL_DOCUMENT_|DATASET_CHOICE_)/, "config"],
-  [/^AUDIT_LOG_READ$/, "log-access"],
-];
-
-function categoryOf(action: string): string {
-  return CATEGORY_RULES.find(([pattern]) => pattern.test(action))?.[1] ?? "other";
-}
-
-/** แถวนี้มาทางไหน (plan §3 `via`) — จากบริบทของคำขอ ไม่ใช่จาก input */
-function viaOf(actorId: string | null, actorType: string | undefined): string {
-  const ctx = currentContext();
-  if (ctx?.adminTokenFp) return "ADMIN_TOKEN";
-  if (ctx?.sourceComponent === "notification-worker") return "WORKER";
-  if (ctx?.sourceComponent === "seed-demo" || ctx?.sourceComponent === "admin-script") return "SCRIPT";
-  if (actorType === "ANONYMOUS" || !actorId) return "ANONYMOUS";
-  return "SESSION";
-}
 
 /** Date → ISO, Decimal ของ Prisma → ข้อความ — ให้ได้ค่าที่ Mongo เก็บแล้วอ่านกลับมาเหมือนที่ Postgres จะเก็บ */
 function plain(value: unknown): unknown {
@@ -69,12 +36,8 @@ function actorTypeOf(input: AuditInput, actorId: string | null): string {
   return input.actorType ?? (actorId ? "USER" : "SYSTEM");
 }
 
-function keysOf(value: unknown): string[] {
-  return value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value) : [];
-}
-
 /**
- * input ของแถว audit ในรูปที่ออกไปถึง log store ได้ — plan §7.6
+ * input ของแถว audit ในรูปที่ออกไปถึง log store ได้ (`extra.audit` ของ error event) — plan §7.6
  *
  * ผู้กระทำคือคนที่ `logAudit()` หามาได้ (`actorId`: input ก่อน แล้วค่อยบริบทของคำขอ) ไม่ใช่ `input.actorId` เฉย ๆ —
  * แถวที่มาจาก session ส่วนใหญ่ไม่ได้ส่ง actorId มา event กับเอกสาร activity ของความล้มเหลวเดียวกันเคยบอกผู้กระทำ
@@ -105,6 +68,11 @@ function maskedInput(input: AuditInput, actorId: string | null): Record<string, 
  *
  * `known` คือสิ่งที่ logAudit หามาได้ก่อนล้ม (ผู้กระทำ และชื่อกับ role ของเขาถ้าอ่านจากฐานข้อมูลทัน — ถ้า Postgres
  * ล่มตั้งแต่ตอนอ่านผู้กระทำ ก็มีแค่ id) กับ user agent ในรูปที่ audit_event เก็บ
+ *
+ * เอกสาร activity ประกอบเป็นแถวแบบที่ logAudit จะเขียน (metadata = snapshot ของผู้กระทำ + ของผู้เรียก + `ip_unparsed`
+ * + `admin_token_fp` ลำดับเดียวกับ logAudit) แล้วผ่าน `projectAuditRow()` ตัวเดียวกับ relay — category, via, การปิด
+ * ข้อมูล และ hashKeys จึงเหมือนสำเนาของแถวที่ Postgres รับทุกประการ ต่างกันแค่ `source`, `_id` ใหม่ (แถวนี้ไม่มี id ใน
+ * Postgres) `occurredAt` = เวลาที่ INSERT ล้ม, method/route ของคำขอ และ `fallback.errorEventId`
  */
 export function reportAuditWriteFailure(
   err: unknown,
@@ -112,64 +80,42 @@ export function reportAuditWriteFailure(
   known: { actorId: string | null; actorSnapshot?: Record<string, unknown>; userAgent: string | null },
 ): void {
   try {
-    const masked = maskedInput(input, known.actorId);
-    const eventId = captureError(err, { tag: "audit.write-failed", extra: { audit: masked } });
+    const eventId = captureError(err, { tag: "audit.write-failed", extra: { audit: maskedInput(input, known.actorId) } });
 
     const ctx = currentContext();
     const now = new Date();
-    const metadata = { ...((masked.metadata as Record<string, unknown> | null) ?? {}) };
-    const after = masked.after as Record<string, unknown> | null;
-    const snapshot = known.actorSnapshot ?? {};
-    const doc: Record<string, unknown> & { _id: string } = {
-      _id: randomUUID(),
-      source: "audit_fallback",
-      schemaVersion: 1,
-      occurredAt: now,
-      action: input.action,
-      category: categoryOf(input.action),
-      result: masked.result,
-      actor: {
-        type: actorTypeOf(input, known.actorId),
-        id: known.actorId,
-        name: typeof snapshot.actor_name === "string" ? snapshot.actor_name : null,
-        roles: Array.isArray(snapshot.actor_roles) ? snapshot.actor_roles : [],
-        organizationId: typeof snapshot.actor_organization_id === "string" ? snapshot.actor_organization_id : null,
-      },
-      via: viaOf(known.actorId, input.actorType),
-      tokenFp: ctx?.adminTokenFp ?? null,
-      subject: { type: input.subjectType, id: input.subjectId ?? null },
-      organizationId: input.organizationId ?? null,
-      requestNumber: typeof metadata.request_number === "string" ? metadata.request_number : null,
-      gate: after && typeof after.taskType === "string" ? after.taskType : null,
-      before: masked.before ?? null,
-      after: masked.after ?? null,
-      changedFields: [...new Set([...keysOf(masked.before), ...keysOf(masked.after)])],
-      reason: typeof metadata.reason === "string" ? metadata.reason : null,
-      metadata: Object.keys(metadata).length > 0 ? metadata : null,
-      request: {
-        correlationId: ctx?.correlationId ?? null,
-        reference: ctx ? referenceOf(ctx.correlationId) : null,
-        ip: ctx?.ipAddress ?? null,
-        // ผ่าน `storedUserAgent()` มาแล้ว — ค่าเดียวกับที่ Postgres จะได้
-        userAgent: known.userAgent,
-        method: ctx?.method ?? null,
-        route: ctx?.route ?? null,
-        status: null,
-        durationMs: null,
-      },
-      sourceComponent: ctx?.sourceComponent ?? "request-service",
-      relatedUserIds: [],
-      // key ค้นหา `cid#…` / `email#…` ต้องใช้ LOG_HASH_KEY ซึ่งมากับงานสำเนา audit (step 6)
-      hashKeys: [],
-      mirroredAt: now,
-      fallback: { errorEventId: eventId },
+    const callerMetadata = plain(input.metadata ?? null);
+    const metadata: Record<string, unknown> = {
+      ...(known.actorSnapshot ?? {}),
+      ...(callerMetadata && typeof callerMetadata === "object" ? (callerMetadata as Record<string, unknown>) : {}),
+      ...(ctx?.ipUnparsed ? { ip_unparsed: true } : {}),
+      ...(ctx?.adminTokenFp ? { admin_token_fp: ctx.adminTokenFp } : {}),
     };
-
-    if (Buffer.byteLength(JSON.stringify(doc)) > DOC_MAX_BYTES) {
-      doc.before = { truncated: true };
-      doc.after = { truncated: true };
-    }
-    if (Buffer.byteLength(JSON.stringify(doc)) > DOC_MAX_BYTES) doc.metadata = { truncated: true };
+    const doc = projectAuditRow(
+      {
+        id: randomUUID(),
+        occurredAt: now,
+        actorType: actorTypeOf(input, known.actorId),
+        actorId: known.actorId,
+        action: input.action,
+        subjectType: input.subjectType,
+        subjectId: input.subjectId ?? null,
+        organizationId: input.organizationId ?? null,
+        result: input.result ?? "SUCCESS",
+        before: plain(input.before),
+        after: plain(input.after),
+        ipAddress: ctx?.ipAddress ?? null,
+        userAgent: known.userAgent,
+        correlationId: correlationId(),
+        sourceComponent: ctx?.sourceComponent ?? "request-service",
+        metadata,
+      },
+      { source: "audit_fallback", hashKey: env.logStore.hashKey, now },
+    );
+    doc.request.method = ctx?.method ?? null;
+    doc.request.route = ctx?.route ?? null;
+    doc.fallback = { errorEventId: eventId };
+    fitDocument(doc);
     enqueueActivity(doc);
   } catch {
     // ทางสำรองของทางสำรอง — ไม่มีอะไรเหลือให้ทำ captureError พิมพ์บรรทัดไปแล้วถ้าไปถึง

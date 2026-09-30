@@ -105,6 +105,7 @@ export function startLogStore(options: { service: LogStoreService; maxPoolSize: 
   }
 
   warnIfDevPassword();
+  warnIfNoHashKey();
 
   timer = setInterval(() => void refresh(), REFRESH_MS);
   // ตัวตรวจซ้ำต้องไม่รั้ง process ไว้ตอนที่อย่างอื่นจบหมดแล้ว
@@ -275,6 +276,19 @@ function warnIfDevPassword() {
         "(mongo ใน prod overlay ไม่ยอมเริ่มด้วยค่าเหล่านี้อยู่แล้ว)",
     );
   }
+}
+
+/**
+ * ไม่มี LOG_HASH_KEY (production ที่ยังไม่ได้ตั้ง — dev มีค่าตั้งต้น) — ปิดค่าได้ แต่ทำ key ค้นหาไม่ได้ ไม่ใช่ error
+ * เตือนทุกครั้งที่บูต เพราะผลของมันเงียบ: ทุกเอกสารที่เขียนระหว่างนี้ค้นด้วย ?cid= / ?email= ไม่เจอไปตลอด จนกว่าจะ rebuild
+ */
+function warnIfNoHashKey() {
+  if (env.logStore.hashKey) return;
+  console.warn(
+    `[log-store] ${service}: คำเตือน: ไม่ได้ตั้ง LOG_HASH_KEY — เลขบัตรและอีเมลที่พิมพ์มาในสำเนากิจกรรมถูกปิดอย่างเดียว ` +
+      "ไม่มี key ค้นหา cid#/email# (ค้นด้วย ?cid= / ?email= ไม่ได้) ตั้งเป็นค่าจาก `openssl rand -hex 32` ใน .env " +
+      "ค่าเดียวกันทั้ง backend และ delivery-worker",
+  );
 }
 
 /** สาเหตุสำหรับเทียบใน setState: ตัวเลขทุกชุดเป็น `#` ("after 2001ms" กับ "after 2002ms" คือสาเหตุเดียวกัน) */

@@ -546,7 +546,7 @@ const USER_AGENT_DIGIT_GROUP = /\d(?:[-_: ]{0,3}\d)*/g;
  * ใช้กับทุกแถวของ audit_event ไม่ใช่เฉพาะแถวนิรนาม กฎเดียวง่ายกว่าให้คนอ่านรู้ว่าคอลัมน์นี้ผ่านอะไรมา
  * ส่วน `iam.session` กับหลักฐานการลงนามยังเก็บค่าที่ได้รับ เพราะเกิดได้หลังยืนยันตัวตนแล้วเท่านั้น
  */
-function storedUserAgent(raw: string | null | undefined): string | null {
+export function storedUserAgent(raw: string | null | undefined): string | null {
   if (!raw) return null;
   return raw
     .replace(USER_AGENT_DIGIT_GROUP, (group) => (group.replace(/\D/g, "").length >= 9 ? ":n" : group))

@@ -322,6 +322,17 @@ export const env = {
      * ธงลงเมื่อขนาดต่ำกว่า 90% ของเพดาน
      */
     maxMb: positiveNumber("LOG_STORE_MAX_MB", NODE_ENV === "production" ? 5120 : 512),
+    /**
+     * กุญแจ HMAC ของ key ค้นหาในสำเนากิจกรรม — `cid#…` / `email#…` ใน `activity.hashKeys` (lib/activity-shape.ts) ที่ทำให้
+     * `?cid=` `?email=` หาแถวเจอโดยไม่ต้องเก็บเลขบัตรหรืออีเมลที่พิมพ์มาไว้ตรง ๆ ใช้ทั้ง backend (สำเนาของแถวที่ Postgres
+     * ไม่รับ) และ delivery-worker (relay) ต้องเป็นค่าเดียวกัน
+     *
+     * ไม่ตั้ง → ปิดค่าอย่างเดียว `hashKeys` ว่าง บรรทัดเตือนตอนบูต (lib/log-store.ts) และ `?cid=` / `?email=` ตอบ 503
+     * `hash_search_unavailable` — ไม่ทำให้ process ไหนบูตไม่ขึ้น dev มีค่าตั้งต้น production ไม่มี: กุญแจที่อยู่ในซอร์สคือ
+     * กุญแจที่ทุกคนรู้ และเลขบัตรมีแค่ 10¹³ ค่า ใครได้ hashKeys ไปก็ไล่ย้อนหาเลขบัตรได้ทั้งหมด
+     * **เปลี่ยนค่าแล้วต้อง rebuild สำเนา** — key เดิมหาด้วยกุญแจใหม่ไม่เจอ (workers/log-relay.ts เตือนเมื่อเห็นว่าเปลี่ยน)
+     */
+    hashKey: optional("LOG_HASH_KEY", NODE_ENV === "production" ? "" : "dev-log-hash-key"),
   },
 } as const;
 
