@@ -18,7 +18,8 @@
  *     ระหว่างคำขอ) ส่วน `GET /status` ไม่ถูกบันทึก (ไม่มีข้อมูลบุคคล)
  *   - ค่าที่ค้นด้วยเลขบัตรหรืออีเมล (`cid` `email` `person` ที่เป็นอีเมล) ไม่ลงบันทึกเป็นค่าจริง — เป็น key HMAC และ `person`
  *     ที่เป็นอีเมลของบัญชีเป็น uuid ของบัญชี (`PersonRef`) บันทึกการอ่านต้องไม่กลายเป็นที่เก็บเลขบัตรแห่งใหม่
- *   - ทุกคำสั่งอ่านของ Mongo มี `maxTimeMS` (READ_MAX_MS) ไม่มีอะไรที่นี่แก้ `activity` ได้ มีแค่สถานะของ issue
+ *   - ทุกคำสั่งอ่านของ Mongo มี `maxTimeMS` (READ_MAX_MS) ไม่มีอะไรที่นี่แก้ `activity` ได้ มีแค่สถานะของ issue — เหตุผลที่
+ *     ลง `error_issues.statusReason` ผ่านกฎเลขบัตรของสำเนากิจกรรมก่อน (`maskCidText`)
  *   - Mongo หยุดหรือค้าง = 503 `log_store_unavailable` ภายในราว 2 วินาที (เพดานของ `store()` — STORE_CHECK_MS) Mongo ที่
  *     ค้างหลังจาก ping ผ่านแล้ว คำขอนั้นรอได้ถึง socketTimeoutMS 5 วินาทีของ driver (`maxTimeMS` ไม่ช่วย: server ที่ค้างไม่ได้
  *     นับเวลาให้) แล้วจึงได้ 503 เดียวกันจาก `storeRoute()` · ปิด log store = 503 `log_store_disabled`
@@ -48,7 +49,7 @@ import { Router } from "../lib/async-route.js";
 import { AuditAction, AuditSubject, logAudit, recordLogRead } from "../lib/audit.js";
 import { captureError, errorCaptureStats } from "../lib/error-capture.js";
 import { logDb, logStoreStatus } from "../lib/log-store.js";
-import { scrubClipped } from "../lib/redact.js";
+import { maskCidText, scrubClipped } from "../lib/redact.js";
 import { requireLogReader, requireReadReason } from "../middleware/auth.js";
 
 export const adminLogRouter = Router();
@@ -1327,6 +1328,11 @@ adminLogRouter.get(
  *
  * แถวเขียนด้วย `logAudit()` หลังเปลี่ยนแล้ว ไม่ใช่ `recordLogRead()`: นี่คือการแก้ ไม่ใช่การอ่าน — การแก้เกิดไปแล้วใน
  * Mongo แถวที่เขียนไม่ได้จึงไปตามทางสำรองปกติ (`audit_fallback` ผ่านคิว) ไม่ย้อนการแก้
+ *
+ * เหตุผลที่ลง `error_issues.statusReason` (และที่คำตอบส่งกลับ) ผ่าน `maskCidText` ก่อน — กฎเลขบัตรตัวเดียวกับที่สำเนา
+ * กิจกรรมใช้กับ `reason` (plan §7.6) เดิมเหตุผลลงตามที่พิมพ์ เป็นข้อความอิสระทางเดียวที่เข้า Mongo โดยไม่ผ่าน lib/redact.ts
+ * เลขบัตรที่พิมพ์ในเหตุผลจึงอยู่ครบใน log store และออกทาง `GET /errors/issues` (ตรวจแบบค้านขั้น 7) ส่วนแถว
+ * `ERROR_ISSUE_STATUS_CHANGED` ใน Postgres เก็บข้อความตามที่พิมพ์ เหมือนเหตุผลของแถวอื่น
  */
 adminLogRouter.patch(
   "/errors/issues/:fingerprint",
@@ -1340,11 +1346,12 @@ adminLogRouter.patch(
     if (!db) return;
 
     const changedAt = new Date();
+    const storedReason = maskCidText(body.reason);
     const before = await db
       .collection<{ _id: string } & Document>("error_issues")
       .findOneAndUpdate(
         { _id: fingerprint },
-        { $set: { status: body.status, statusChangedAt: changedAt, statusReason: body.reason } },
+        { $set: { status: body.status, statusChangedAt: changedAt, statusReason: storedReason } },
         { returnDocument: "before", maxTimeMS: READ_MAX_MS },
       );
     if (!before) {
@@ -1367,7 +1374,7 @@ adminLogRouter.patch(
       },
     });
 
-    const issue = { ...before, status: body.status, statusChangedAt: changedAt, statusReason: body.reason };
+    const issue = { ...before, status: body.status, statusChangedAt: changedAt, statusReason: storedReason };
     res.json({ issue: issueDto(issue) });
   }),
 );

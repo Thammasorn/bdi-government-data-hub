@@ -412,6 +412,9 @@ export const AuditAction = {
    * การตัดสินใจที่ต้องตอบได้ว่าใครทำด้วยเหตุผลอะไร `before`/`after` คือ `{status, statusReason}` ก่อนและหลัง
    * `metadata.fingerprint` คือ issue (`subject_id` เป็น null เพราะ fingerprint ไม่ใช่ uuid) `metadata.reason` คือเหตุผล
    * ที่ส่งมาใน body `metadata.reader` / `token_fp` เหมือน `AUDIT_LOG_READ`
+   *
+   * `after.statusReason` และ `metadata.reason` เป็นข้อความตามที่พิมพ์ ส่วน `error_issues.statusReason` ใน Mongo (และ
+   * `before.statusReason` ที่อ่านจากที่นั่น) ผ่านกฎเลขบัตรของสำเนากิจกรรมแล้ว — เลข 13 หลักเป็น `[cid]`
    */
   ERROR_ISSUE_STATUS_CHANGED: "ERROR_ISSUE_STATUS_CHANGED",
 
