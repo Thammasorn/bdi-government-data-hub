@@ -295,11 +295,91 @@ function propsOf(err: unknown): Record<string, unknown> {
   return props;
 }
 
-/** บรรทัด `at …` ของ stack ดิบ — บรรทัดหัว (ซึ่งมี message ดิบอยู่) ถูกทิ้ง */
+/**
+ * เพดานของการอ่าน stack — หลังตัดส่วนหัว (ข้อความ) ทิ้งแล้ว อ่านแค่ STACK_PARSE_MAX ตัวแรก เก็บไม่เกิน FRAMES_MAX
+ * เฟรม และบรรทัดละไม่เกิน FRAME_LINE_MAX ตัว stack จริงของเรามีสิบเฟรม (Error.stackTraceLimit) บรรทัดละไม่ถึง 200 ตัว
+ * `err.stack` ไม่มีเพดานของตัวเอง: มันถือข้อความทั้งก้อน ซึ่งมาจากค่าที่ผู้เรียกส่งมาได้ (ถึง 1 MB ของ body)
+ */
+const STACK_PARSE_MAX = 64 * 1024;
+const FRAMES_MAX = 50;
+const FRAME_LINE_MAX = 1_024;
+
+/**
+ * ส่วนของ stack ที่อยู่**ใต้**ข้อความ — V8 เขียนหัวเป็น `${name}: ${message}` (หรือ `${name}` เมื่อข้อความว่าง) แล้วตามด้วยเฟรม
+ *
+ * เดิมหยิบทุกบรรทัดของ stack ดิบที่ขึ้นต้นด้วยช่องว่าง + `at ` ซึ่งรวมบรรทัดในข้อความด้วย: ข้อความที่มีบรรทัด
+ * `    at evil (/app/src/routes/evil.ts:1:1)` กลายเป็น topFrame (fingerprint ของ issue) และบรรทัดนั้นถูกยกไปเก็บใน stack
+ * โดยไม่ผ่านการตัด DETAIL ที่ข้อความผ่าน ตัดหัวทิ้งด้วยการเทียบตรงตำแหน่ง (`startsWith` เส้นตรง ไม่ค้นหา)
+ * stack ที่ถูกแต่งเอง (หัวไม่ตรงกับข้อความ) อ่านทั้งก้อนเหมือนเดิม แต่ยังอยู่ใต้เพดานทุกตัว
+ */
+function belowMessage(stack: string, message: string): string {
+  if (message === "") {
+    const newline = stack.indexOf("\n");
+    return newline === -1 ? "" : stack.slice(newline + 1);
+  }
+  const colon = stack.indexOf(": ");
+  if (colon !== -1 && colon <= 200 && stack.startsWith(message, colon + 2)) {
+    return stack.slice(colon + 2 + message.length);
+  }
+  return stack;
+}
+
+/** บรรทัด `at …` ของ stack — ไม่รวมบรรทัดหัวหรือบรรทัดในข้อความ และไม่เกินเพดานข้างบน */
 function framesOf(err: unknown): string[] {
-  const stack = err instanceof Error ? err.stack : undefined;
-  if (typeof stack !== "string") return [];
-  return stack.split("\n").filter((line) => /^\s+at /.test(line));
+  if (!(err instanceof Error) || typeof err.stack !== "string") return [];
+  const message = typeof err.message === "string" ? err.message : "";
+  const region = belowMessage(err.stack, message).slice(0, STACK_PARSE_MAX);
+  const frames: string[] = [];
+  for (const line of region.split("\n")) {
+    if (!/^\s+at /.test(line)) continue;
+    frames.push(line.length > FRAME_LINE_MAX ? line.slice(0, FRAME_LINE_MAX) : line);
+    if (frames.length >= FRAMES_MAX) break;
+  }
+  return frames;
+}
+
+const DIGITS = /^\d+$/;
+
+/**
+ * แยกเฟรมหนึ่งบรรทัดเป็นชื่อฟังก์ชันกับไฟล์ ด้วยการหาตำแหน่งตรง ๆ ไม่ใช้ regex ที่ย้อนรอยได้
+ *
+ * เดิมเป็น `/at (?:async )?(?:(.+?) \()?…:\d+:\d+\)?$/` ที่ไม่ยึดหัว: ทุกตำแหน่งของ `at ` ในบรรทัด `.+?` ไล่ไปจน
+ * สุดบรรทัด บรรทัดที่มี `at ` ซ้ำหมื่นครั้ง (30 KB) ใช้ 122 ms ยี่สิบบรรทัดแบบนั้น 400 ms (วัด 2026-09-30) ขณะที่
+ * captureError เป็น synchronous บนเส้นทางของคำขอ ผลของรูปปกติเท่าเดิมทุกรูป: `at fn (/app/src/x.ts:1:2)`,
+ * `at async fn (file:///…)`, `at /app/src/x.ts:1:2`, `at new Foo (…)`, `at A.b [as c] (…)`
+ */
+function frameParts(frame: string): { fn: string | null; file: string } | null {
+  let text = frame.trim();
+  if (!text.startsWith("at ")) return null;
+  text = text.slice(3);
+  if (text.startsWith("async ")) text = text.slice(6);
+  let fn: string | null = null;
+  let location = text;
+  if (text.endsWith(")")) {
+    const open = text.indexOf(" (");
+    if (open === -1) return null;
+    fn = text.slice(0, open);
+    location = text.slice(open + 2, -1);
+  }
+  if (location.startsWith("file://")) location = location.slice(7);
+  const column = location.lastIndexOf(":");
+  const line = column <= 0 ? -1 : location.lastIndexOf(":", column - 1);
+  if (line <= 0) return null;
+  if (!DIGITS.test(location.slice(column + 1)) || !DIGITS.test(location.slice(line + 1, column))) return null;
+  const file = location.slice(0, line);
+  if (/[()\s]/.test(file)) return null;
+  return { fn, file };
+}
+
+/** `/app/src/lib/audit.ts` → `lib/audit` — ส่วนหลัง `/src/` หรือ `/dist/` ตัวแรก ไม่รวมนามสกุล หรือ null ถ้าไม่ใช่โค้ดเรา */
+function inAppModule(file: string): string | null {
+  const starts = [file.indexOf("/src/"), file.indexOf("/dist/")].filter((index) => index !== -1);
+  if (starts.length === 0) return null;
+  const start = Math.min(...starts);
+  const bodyStart = start + (file.startsWith("/src/", start) ? 5 : 6);
+  const extension = /\.[cm]?[jt]s$/.exec(file);
+  if (!extension || extension.index <= bodyStart) return null;
+  return file.slice(bodyStart, extension.index);
 }
 
 /**
@@ -309,14 +389,13 @@ function framesOf(err: unknown): string[] {
  */
 function topFrameOf(frames: string[]): string | null {
   for (const frame of frames) {
-    const match = /at (?:async )?(?:(.+?) \()?(?:file:\/\/)?([^()\s]+?):\d+:\d+\)?$/.exec(frame.trim());
-    if (!match) continue;
-    const file = match[2] ?? "";
-    if (file.includes("node_modules") || file.startsWith("node:")) continue;
-    const inApp = /\/(?:src|dist)\/(.+?)\.[cm]?[jt]s$/.exec(file);
-    if (!inApp) continue;
-    const fn = (match[1] ?? "<anonymous>").replace(/^new /, "").slice(0, 100);
-    return `${inApp[1]}:${fn}`;
+    const parts = frameParts(frame);
+    if (!parts) continue;
+    if (parts.file.includes("node_modules") || parts.file.startsWith("node:")) continue;
+    const module = inAppModule(parts.file);
+    if (!module) continue;
+    const fn = (parts.fn ?? "<anonymous>").replace(/^new /, "").slice(0, 100);
+    return `${module}:${fn}`;
   }
   return null;
 }
