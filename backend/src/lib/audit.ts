@@ -391,12 +391,16 @@ export const AuditAction = {
    *
    * log รวมทุกอย่างที่ admin API เห็นบวกประวัติการกระทำของทุกคน การอ่านจึงต้องทิ้งร่องรอยเสมอ (plan decision 9)
    * ต่างจากแถวอื่นตรงที่**ไม่กลืน error**: เขียน Postgres ไม่ได้ก็เขียนสำเนาลง log store (`source: "audit_fallback"`)
-   * และรอผล ไม่ได้ทั้งคู่ API ตอบ 503 `log_read_unrecorded` โดยไม่ส่งข้อมูลใด ๆ `GET /status` ไม่มีแถวนี้ (ไม่มีข้อมูลบุคคล)
+   * และรอผล ไม่ได้ทั้งคู่ API ตอบ 503 `log_read_unrecorded` โดยไม่ส่งข้อมูลใด ๆ — ซึ่งเกิดได้เฉพาะเมื่อ Mongo ล้มระหว่างคำขอ:
+   * API ping Mongo ก่อนบันทึก Mongo ที่ล่มอยู่แล้วจึงได้ 503 `log_store_unavailable` ก่อนถึงแถวนี้ (ไม่มีอะไรให้ส่ง จึงไม่มี
+   * การอ่านให้บันทึก) แม้ Postgres จะล่มด้วย · `GET /status` ไม่มีแถวนี้ (ไม่มีข้อมูลบุคคล)
    *
    * `metadata`: `reader` (อีเมลที่ผู้อ่าน**ประกาศ**ใน `x-log-reader` — ไม่ได้พิสูจน์) · `reason` (ข้อความจาก `x-log-reason`
    * อาจเป็น null บน endpoint ของ error ที่ไม่บังคับ) · `endpoint` (`GET /api/admin/logs/activity`) · `filters` (ค่าที่ใช้ค้น —
-   * `cid` `email` และ `person` ที่เป็นอีเมลเก็บเป็น key HMAC `cid#…` / `email#…` เท่านั้น ส่วนเลขที่คำขอกับรหัสหน่วยงาน
-   * เก็บตามจริงเพราะไม่ใช่ข้อมูลบุคคล) · `token_fp` (12 ตัวแรกของ SHA-256 ของ `x-log-token` ที่ใช้) · `page`
+   * `cid` `email` เก็บเป็น key HMAC `cid#…` / `email#…` เท่านั้น · `person` ที่ส่งมาเป็นอีเมลของบัญชีเก็บเป็น uuid ของบัญชี
+   * บวก `personEmailKey` (`email#…` เมื่อตั้ง LOG_HASH_KEY — ค้นทั้งสองทางจริง) อีเมลที่ไม่มีบัญชีเก็บเป็น `email#…` ไม่เคย
+   * เป็นอีเมลจริง ส่วนเลขที่คำขอกับรหัสหน่วยงานเก็บตามจริงเพราะไม่ใช่ข้อมูลบุคคล) · `token_fp` (12 ตัวแรกของ SHA-256 ของ
+   * `x-log-token` ที่ใช้) · `page`
    * actor เป็นระบบ (`SYSTEM`, ไม่มี id) เหมือนงานผ่าน admin token · `source_component = log-api` · subject `AUDIT_LOG`
    */
   AUDIT_LOG_READ: "AUDIT_LOG_READ",
@@ -703,7 +707,10 @@ export interface LogReadRecord {
   reason: string | null;
   /** `GET /api/admin/logs/activity` — method กับ route แบบแม่แบบ */
   endpoint: string;
-  /** ตัวกรองที่ใช้ — `cid` `email` และ `person` ที่เป็นอีเมลต้องเป็น `cid#…` / `email#…` แล้ว ไม่ใช่ค่าจริง */
+  /**
+   * ตัวกรองที่ใช้ — ไม่มีเลขบัตรหรืออีเมลจริง: `cid` `email` เป็น `cid#…` / `email#…` แล้ว · `person` ที่เป็นอีเมลของบัญชีเป็น
+   * uuid ของบัญชี (บวก `personEmailKey`) อีเมลที่ไม่มีบัญชีเป็น `email#…` (`PersonRef.recorded` ใน routes/admin-logs.ts)
+   */
   filters: Record<string, unknown>;
   page?: number | null;
   /** `tokenFingerprint()` ของ `x-log-token` ที่ใช้ */
@@ -719,7 +726,8 @@ export interface LogReadRecord {
  *      การอ่านครั้งนั้นจึงอาจมีสองบันทึก (ดู `recordLogReadFallback()`)
  *   2. ไม่ได้ → เก็บ error (`audit.log-read-failed`) แล้วเขียนสำเนาลง log store (`source: "audit_fallback"`) และรอผล
  *      ไม่เกิน 2 วินาที — ได้ `_id` ของสำเนาเป็น `readId`
- *   3. ไม่ได้ทั้งคู่ → คืน null ผู้เรียกตอบ 503 `log_read_unrecorded` โดยไม่ส่งข้อมูลใด ๆ
+ *   3. ไม่ได้ทั้งคู่ → คืน null ผู้เรียกตอบ 503 `log_read_unrecorded` โดยไม่ส่งข้อมูลใด ๆ — route ใน admin-logs.ts ping
+ *      Mongo ก่อนเรียกที่นี่ ข้อนี้จึงเกิดเมื่อ Mongo ล้มระหว่างคำขอ Mongo ที่ล่มอยู่แล้วได้ `log_store_unavailable` ไปก่อน
  *
  * แถวมาจาก `auditEventData()` ตัวเดียวกับ logAudit (IP, user agent, correlation id, source_component ของคำขอ) actor
  * เป็น `SYSTEM` ไม่มี id — ผู้อ่านไม่ใช่บัญชีในระบบ ตัวตนที่ประกาศมาอยู่ใน `metadata.reader`

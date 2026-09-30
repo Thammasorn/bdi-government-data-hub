@@ -10,13 +10,18 @@
  *     ถึง `requireAdminToken` ซึ่งจะเขียน `ADMIN_TOKEN_REJECTED` ที่ชวนเข้าใจผิด proxy ของหน้าเว็บตอบ 404 ให้ทั้งก้อนนี้
  *     (frontend/app/api/[...path]/route.ts) — เรียกได้ทาง backend ตรงเท่านั้น
  *   - ทุกคำขอผ่าน `requireLogReader` (token แยก ผู้อ่าน เหตุผล) activity · timeline · trace ต้องมีเหตุผลด้วย (`requireReadReason`)
- *   - **ทุกการอ่านถูกบันทึกก่อนส่งข้อมูล** (`recordLogRead()` — Postgres ไม่ได้ก็ log store ไม่ได้ทั้งคู่ตอบ 503
- *     `log_read_unrecorded`) ลำดับในแต่ละ route: ตรวจพารามิเตอร์ → log store ต่อได้ไหม → แปลงตัวระบุ (Postgres) →
- *     บันทึก → อ่าน — คำขอที่ผิดรูปหรืออ่านไม่ได้อยู่แล้วจึงไม่เกิดบันทึกเปล่า ๆ ส่วน `GET /status` ไม่ถูกบันทึก (ไม่มีข้อมูลบุคคล)
+ *   - **ทุกการอ่านถูกบันทึกก่อนส่งข้อมูล** ลำดับในแต่ละ route: ตรวจพารามิเตอร์ → log store ตอบได้ไหม (`store()`) →
+ *     แปลงตัวระบุ (Postgres) → บันทึก (`recordRead()`) → อ่าน — คำขอที่ผิดรูปหรืออ่านไม่ได้อยู่แล้วจึงไม่เกิดบันทึกเปล่า ๆ
+ *     ผลจึงแยกตามว่าอะไรล่มก่อน: Mongo ล่มหรือค้างอยู่แล้ว (จะมี Postgres หรือไม่) = 503 `log_store_unavailable` ก่อนบันทึก
+ *     เพราะไม่มีอะไรให้ส่ง · Postgres ล่มแต่ Mongo ตอบ = บันทึกลง log store แทนแล้วอ่านตามปกติ · `log_read_unrecorded`
+ *     เกิดเฉพาะเมื่อ Postgres บันทึกไม่ได้**และ**การเขียนสำเนาลง Mongo ล้มหลังจากที่ `store()` ping ผ่านไปแล้ว (Mongo ล่ม
+ *     ระหว่างคำขอ) ส่วน `GET /status` ไม่ถูกบันทึก (ไม่มีข้อมูลบุคคล)
  *   - ค่าที่ค้นด้วยเลขบัตรหรืออีเมล (`cid` `email` `person` ที่เป็นอีเมล) ไม่ลงบันทึกเป็นค่าจริง — เป็น key HMAC และ `person`
  *     ที่เป็นอีเมลของบัญชีเป็น uuid ของบัญชี (`PersonRef`) บันทึกการอ่านต้องไม่กลายเป็นที่เก็บเลขบัตรแห่งใหม่
  *   - ทุกคำสั่งอ่านของ Mongo มี `maxTimeMS` (READ_MAX_MS) ไม่มีอะไรที่นี่แก้ `activity` ได้ มีแค่สถานะของ issue
- *   - Mongo ล่มหรือช้า = 503 `log_store_unavailable` ภายในราว 2–4 วินาที ปิด log store = 503 `log_store_disabled`
+ *   - Mongo หยุดหรือค้าง = 503 `log_store_unavailable` ภายในราว 2 วินาที (เพดานของ `store()` — STORE_CHECK_MS) Mongo ที่
+ *     ค้างหลังจาก ping ผ่านแล้ว คำขอนั้นรอได้ถึง socketTimeoutMS 5 วินาทีของ driver (`maxTimeMS` ไม่ช่วย: server ที่ค้างไม่ได้
+ *     นับเวลาให้) แล้วจึงได้ 503 เดียวกันจาก `storeRoute()` · ปิด log store = 503 `log_store_disabled`
  *   - Postgres ล่มหรือค้าง: ทุกคำสั่งของ Postgres ที่การอ่านรอมีเพดาน (`withDatabaseDeadline()` ใน db.ts — 2 วินาที,
  *     0.3 วินาทีเมื่อเพิ่งติดต่อไม่ได้) บันทึกการอ่านไปลง log store แทน ตัวระบุที่ต้องแปลง (อีเมล เลขที่คำขอ รหัสหน่วยงาน)
  *     ตอบ 503 `database_unavailable` ส่วน Postgres ของ trace เป็น `postgres: "unavailable"` — PATCH ของ issue รอ `logAudit()`
@@ -63,6 +68,12 @@ const TOTAL_CAP = 10_000;
  * คำสั่งเดียว
  */
 const READ_MAX_MS = 4_000;
+/**
+ * เพดานของ `store()` (ต่อ + ping) — Mongo ที่หยุดตอบภายใน serverSelectionTimeoutMS 2 วินาทีอยู่แล้ว แต่ Mongo ที่ค้าง (ต่อได้
+ * แต่ไม่ตอบ: `docker compose pause`, เครื่องแกว่ง) ค้าง ping ไว้จนถึง socketTimeoutMS 5 วินาที เพดานนี้ทำให้ทั้งสองกรณีตอบ 503
+ * ในราว 2 วินาทีเท่ากัน ping ที่เลิกรอยังวิ่งต่อจนหมดเวลาของ driver เอง (แล้ว pool ถูกล้าง ตามปกติของ server ที่ค้าง)
+ */
+const STORE_CHECK_MS = 2_000;
 const DAY_MS = 24 * 60 * 60_000;
 const WINDOW_MAX_DAYS = 366;
 /** activity ที่ไม่มีตัวกรองที่แคบลง (คน คำขอ หน่วยงาน …) ดูย้อนหลังเท่านี้ถ้าไม่ระบุ from/to */
@@ -468,25 +479,38 @@ function storeRoute(fn: (req: Request, res: Response) => Promise<void>) {
  * ฐานข้อมูลของ log store ที่ตอบ ping ได้จริง หรือตอบ 503 เองแล้วคืน null
  *
  * ping ก่อนทุกครั้ง (หนึ่ง round trip) แทนการเชื่อสถานะที่ log-store.ts จำไว้ทุก 30 วินาที: สถานะนั้นอาจเก่าได้ทั้งสองทาง
- * และถ้าไม่ ping การอ่านจะถูกบันทึกก่อนแล้วค่อยพบว่า Mongo ล่ม — บันทึกการอ่านที่ไม่มีใครได้อะไร Mongo ที่ล่มตอบภายใน
- * serverSelectionTimeoutMS (2 วินาที)
+ * และถ้าไม่ ping การอ่านจะถูกบันทึกก่อนแล้วค่อยพบว่า Mongo ล่ม — บันทึกการอ่านที่ไม่มีใครได้อะไร ผลตามมาคือ Mongo ที่ล่ม
+ * อยู่แล้วตอบ `log_store_unavailable` เสมอ แม้ Postgres จะล่มด้วย — `log_read_unrecorded` ของ `recordRead()` เหลือไว้ให้
+ * Mongo ที่ล่มหลังจากนี้ (หัวไฟล์) Mongo ที่หยุดหรือค้างตอบภายในราว 2 วินาที (STORE_CHECK_MS)
  */
 async function store(res: Response): Promise<Db | null> {
   if (!env.logStore.enabled) {
     res.status(503).json({ error: "log_store_disabled", message: STORE_MESSAGE });
     return null;
   }
-  const db = await logDb();
-  if (db) {
-    try {
-      await db.command({ ping: 1 });
-      return db;
-    } catch {
-      // ตกไปตอบ 503 ข้างล่าง — สาเหตุอยู่ในบรรทัด [log-store] ของรอบตรวจถัดไป
-    }
-  }
+  const db = await answeredWithin(async () => {
+    const db = await logDb();
+    if (!db) return null;
+    await db.command({ ping: 1 });
+    return db;
+  }, STORE_CHECK_MS);
+  if (db) return db;
+  // ไม่เรียก captureError เอง: `res.json` ของ 5xx ถูกเก็บเป็น warning `http:5xx:<route>:log_store_unavailable` พร้อมรหัส
+  // อ้างอิงอยู่แล้ว (index.ts) ส่วนสาเหตุอยู่ในบรรทัด [log-store] ของรอบตรวจถัดไป
   res.status(503).json({ error: "log_store_unavailable", message: STORE_MESSAGE });
   return null;
+}
+
+/**
+ * ผลของ `work` ถ้าจบภายใน `ms` — ไม่ทัน หรือ reject ได้ null ตัวจับเวลาถูกล้างทันทีที่ work จบ และ work ที่ถูกทิ้งแล้ว reject
+ * ทีหลังไม่กลายเป็น unhandled rejection (มี catch ผูกไว้ใน race แล้ว)
+ */
+function answeredWithin<T>(work: () => Promise<T | null>, ms: number): Promise<T | null> {
+  let handle: NodeJS.Timeout | undefined;
+  const deadline = new Promise<null>((resolve) => {
+    handle = setTimeout(() => resolve(null), ms);
+  });
+  return Promise.race([work().catch(() => null), deadline]).finally(() => clearTimeout(handle));
 }
 
 /**
@@ -501,6 +525,7 @@ function endpointOf(req: Request): string {
 
 /**
  * บันทึกการอ่าน — คืน `readId` หรือตอบ 503 `log_read_unrecorded` เองแล้วคืน null (ผู้เรียกต้องหยุดทันที ไม่ส่งข้อมูลใด ๆ)
+ * ถึงที่นี่ได้ `store()` ต้อง ping ผ่านแล้ว: 503 นี้จึงแปลว่า Postgres บันทึกไม่ได้และ Mongo ล้มระหว่างเขียนสำเนา
  */
 async function recordRead(
   req: Request,
