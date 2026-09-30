@@ -312,7 +312,8 @@ export const env = {
     uri: MONGODB_URI,
     db: optional("MONGODB_DB", "bdi_logs"),
     /**
-     * เพดานขนาดของ log store (MB ของ `storageSize + indexSize` จาก dbStats) มีเพดานเพราะ /hdd1tb ที่ Mongo อยู่คือ
+     * เพดานขนาดของ log store (MB ที่ข้อมูลกับ index ใช้อยู่จริงจาก dbStats — ไม่นับพื้นที่ว่างที่ WiredTiger จองไว้
+     * ใช้ซ้ำหลังลบ ซึ่งคืนให้ดิสก์ได้ด้วย `compact` เท่านั้น) มีเพดานเพราะ /hdd1tb ที่ Mongo อยู่คือ
      * ดิสก์เดียวกับ Postgres ของ production · 5 GB บน production 512 MB ที่อื่น · บน managed Mongo โควตาของบริการ
      * เป็นตัวคุมอีกชั้น
      *

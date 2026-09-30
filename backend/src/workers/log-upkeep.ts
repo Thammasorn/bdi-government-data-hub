@@ -4,7 +4,8 @@
  *   - `ensureIndexes()` ของ collection ที่เก็บ error: error_events, error_issues, runtime_events (index ของ `activity`
  *     มากับงานสำเนา audit ใน step 6) — ทำครั้งแรกที่ต่อ Mongo ได้ ทีละ index: ตัวไหนล้มเตือนหนึ่งบรรทัด เก็บเป็น
  *     warning แล้วไปตัวถัดไป option ที่บริการบน Azure ไม่รับจึงไม่มีทางหยุด worker (ทุกตัวเป็น index ธรรมดา)
- *   - ตรวจเพดานขนาดตอนบูตและทุกชั่วโมง: `dbStats` (storageSize + indexSize) → `relay_state.storageMb` เกิน
+ *   - ตรวจเพดานขนาดตอนบูตและทุกชั่วโมง: `dbStats` (ข้อมูลกับ index ที่ใช้อยู่จริง ไม่นับพื้นที่ว่างที่ WiredTiger
+ *     จองไว้ใช้ซ้ำ — `checkQuota`) → `relay_state.storageMb` เกิน
  *     LOG_STORE_MAX_MB แล้วตั้ง `overQuota` ซึ่ง backend กับ worker อ่านเป็นสถานะ `over_quota` ภายใน 30 วินาที
  *     และระหว่างนั้นเก็บแค่ตัวนับของ issue (lib/error-capture.ts) ธงลงเมื่อต่ำกว่า 90% ของเพดาน — ช่องว่างกันธง
  *     กะพริบทุกชั่วโมงตอนขนาดอยู่แถวเพดานพอดี
@@ -43,7 +44,10 @@ const CAPTURE_EVERY_MS = 10 * 60_000;
 interface RelayStateDoc {
   _id: string;
   overQuota?: boolean;
+  /** MB ที่ข้อมูลกับ index ใช้อยู่จริง — ตัวที่เทียบกับเพดาน */
   storageMb?: number;
+  /** MB ที่ WiredTiger จองไว้ทั้งหมด รวมพื้นที่ว่างที่รอใช้ซ้ำ — ขนาดบนดิสก์จริง ลดลงเมื่อ `compact` เท่านั้น */
+  allocatedMb?: number;
   maxMb?: number;
   quotaCheckedAt?: Date;
 }
@@ -122,14 +126,24 @@ function isTransient(err: unknown): boolean {
 }
 
 /**
- * ขนาดจริงเทียบเพดาน แล้วเขียนธงลง relay_state — ใช้ storageSize + indexSize เพราะเพดานมีไว้กันดิสก์เต็ม และ index
+ * ขนาดที่ใช้อยู่จริงเทียบเพดาน แล้วเขียนธงลง relay_state — นับทั้งข้อมูลและ index เพราะเพดานมีไว้กันดิสก์เต็ม และ index
  * ก็กินดิสก์เหมือนกัน (ของ `activity` ใน step 6 มีสิบเอ็ดตัว)
+ *
+ * **ที่ใช้อยู่ ไม่ใช่ที่จองไว้**: WiredTiger ไม่คืนพื้นที่ของเอกสารที่ลบแล้วให้ระบบ แต่เก็บไว้ใช้ซ้ำ `storageSize` /
+ * `indexSize` จึงไม่ลดลงหลังลบ พื้นที่ว่างนั้นรายงานแยกเป็น `freeStorageSize` / `indexFreeStorageSize` (ต้องขอด้วย
+ * `freeStorage: 1`) เดิมเทียบ storageSize + indexSize ตรง ๆ — ธงที่ตั้งแล้วไม่มีวันลง แม้ prune รายวัน (step 6) หรือคน
+ * `deleteMany` จนเหลือครึ่ง: ลองกับ mongo:7.0 แล้ว 2026-09-30 ลบหมดทั้ง collection storageSize ไม่ขยับ ขยับแค่ตัว
+ * free ถ้าต้องการคืนดิสก์ให้เครื่องจริง ๆ ต้อง `compact` เอง บริการ managed ที่ไม่รู้จัก `freeStorage` ไม่ส่งตัว free
+ * มา ก็เท่ากับเทียบขนาดที่จองไว้อย่างเดิม
  */
 async function checkQuota(db: Db): Promise<void> {
   // คำสั่งนี้อ่านแค่ metadata ของ WiredTiger — เพดานเวลาคือ socketTimeoutMS ของ driver (5 วินาที) กับ TICK_TIMEOUT_MS
-  const stats = await db.command({ dbStats: 1 });
-  const bytes = Number(stats.storageSize ?? 0) + Number(stats.indexSize ?? 0);
-  const storageMb = Math.round((bytes / 1024 / 1024) * 10) / 10;
+  const stats = await db.command({ dbStats: 1, freeStorage: 1 });
+  const allocated = Number(stats.storageSize ?? 0) + Number(stats.indexSize ?? 0);
+  const free = Number(stats.freeStorageSize ?? 0) + Number(stats.indexFreeStorageSize ?? 0);
+  const inUse = Math.max(0, allocated - (Number.isFinite(free) ? free : 0));
+  const storageMb = Math.round((inUse / 1024 / 1024) * 10) / 10;
+  const allocatedMb = Math.round((allocated / 1024 / 1024) * 10) / 10;
   const maxMb = env.logStore.maxMb;
 
   const relay = db.collection<RelayStateDoc>("relay_state");
@@ -139,24 +153,28 @@ async function checkQuota(db: Db): Promise<void> {
 
   await relay.updateOne(
     { _id: "audit_event" },
-    { $set: { storageMb, overQuota, maxMb, quotaCheckedAt: new Date() } },
+    { $set: { storageMb, allocatedMb, overQuota, maxMb, quotaCheckedAt: new Date() } },
     { upsert: true },
   );
 
   if (overQuota && !wasOver) {
     const message =
-      `log store ใช้ดิสก์ ${storageMb} MB เกินเพดาน LOG_STORE_MAX_MB ${maxMb} MB — ต่อจากนี้เก็บแค่ตัวนับของ issue ` +
-      `ไม่เก็บ error event ทีละตัว จนกว่าจะต่ำกว่า ${Math.round(maxMb * CLEAR_BELOW * 10) / 10} MB (สำเนา audit ยังเก็บต่อ)`;
+      `log store ใช้พื้นที่ ${storageMb} MB (จองไว้ ${allocatedMb} MB) เกินเพดาน LOG_STORE_MAX_MB ${maxMb} MB — ` +
+      "ต่อจากนี้เก็บแค่ตัวนับของ issue ไม่เก็บ error event ทีละตัว จนกว่าจะต่ำกว่า " +
+      `${Math.round(maxMb * CLEAR_BELOW * 10) / 10} MB (สำเนา audit ยังเก็บต่อ)`;
     console.warn(`[log-store] delivery-worker: ${message}`);
     captureError(new Error(message), {
       level: "warning",
       tag: "log-store.over-quota",
       fingerprint: "log-store:over-quota",
-      extra: { storageMb, maxMb },
+      extra: { storageMb, allocatedMb, maxMb },
       print: false,
     });
   } else if (!overQuota && wasOver) {
-    console.log(`[log-store] delivery-worker: log store ใช้ดิสก์ ${storageMb} MB ต่ำกว่าเพดานแล้ว — กลับมาเก็บ error event ตามปกติ`);
+    console.log(
+      `[log-store] delivery-worker: log store ใช้พื้นที่ ${storageMb} MB (จองไว้ ${allocatedMb} MB) ต่ำกว่าเพดานแล้ว — ` +
+        "กลับมาเก็บ error event ตามปกติ",
+    );
   }
 }
 
