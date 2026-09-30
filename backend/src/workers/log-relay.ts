@@ -37,19 +37,27 @@
  * copy is bounded by the size ceiling" ในตารางความเสี่ยงของแผน (§11) ไม่จริงแล้ว — ตัวแก้คือ rate limit ของ `/api/auth/*`
  * (plan §13 #30) ไม่ใช่ที่นี่
  *
- * **rebuild** (รูปเอกสารเปลี่ยน หรือเปลี่ยน LOG_HASH_KEY) ทำด้วยมือ สองคำสั่ง (ผู้ใช้ root หรือ bdi_worker):
+ * **rebuild** (รูปเอกสารเปลี่ยน หรือเปลี่ยน LOG_HASH_KEY) — **คำสั่งเดียว** (ผู้ใช้ root หรือ bdi_worker) แล้ว worker ทำเอง:
  *
- *     db.activity.deleteMany({ source: "audit_event" })
- *     db.relay_state.updateOne({ _id: "audit_event" }, { $unset: { cursor: "", hashKeyFp: "", schemaVersion: "" } })
+ *     db.relay_state.updateOne({ _id: "audit_event" }, { $set: { rebuildRequestedAt: new Date() } })
  *
- * relay เติมใหม่ตั้งแต่แถวแรกในรอบถัดไป ไม่ต้องเริ่ม worker ใหม่ — รอบที่วิ่งค้างอยู่ตอน `$unset` เขียน cursor เก่าคืนไม่ได้
- * (`advanceCursor` เทียบก่อนเขียน) มันทิ้งรอบแล้วพิมพ์บรรทัดหนึ่ง **`$unset` สามฟิลด์ ไม่ใช่ลบเอกสาร relay_state ทั้งใบ**:
- * ใบเดียวกันถือตัวเลขของเพดานขนาด (`storageMb` `overQuota` … — workers/log-upkeep.ts) และ `lastPruneAt` ถ้าลบทั้งใบ
- * log-upkeep เห็นว่าเอกสารไม่ใช่อย่างที่มันเขียนไว้แล้วตรวจเพดานใหม่ในรอบนาทีถัดไป (ก่อนหน้านั้นธงเกินเพดานหายไปราวหนึ่ง
- * นาที) และ prune วิ่งทันที ซึ่งไม่เสียหาย แต่ไม่ใช่วิธีที่ตั้งใจ — docs/21 §3.8 ต้องบอกแบบเดียวกัน
+ * รอบ relay ถัดไป (ไม่เกินราว 5 วินาที, `rebuildTick`) ลบเอกสาร `source: "audit_event"` ทีละก้อน แล้วใน `updateOne` เดียว
+ * `$unset` `cursor` `hashKeyFp` `schemaVersion` `caughtUpAt` กับตัว `rebuildRequestedAt` และจด `lastRebuild` — รอบถัดจากนั้น
+ * เติมใหม่ตั้งแต่แถวแรก ไม่ต้องเริ่ม worker ใหม่ ระหว่างที่ `rebuildRequestedAt` ยังอยู่ relay ไม่คัดลอกอะไร และ reconcile ไม่วิ่ง
+ * (`maintenanceTick`) ส่วน relay ไม่เริ่มลบขณะที่รอบงานดูแลกำลังวิ่ง (reconcile ที่นับไปครึ่งทาง)
+ *
+ * เดิมเป็นสองคำสั่งด้วยมือ — `deleteMany` แล้ว `$unset` cursor ระหว่างสองคำสั่งนั้น cursor ยังอยู่และทุกรอบ relay ต่ออายุ
+ * `caughtUpAt` reconcile ที่ถึงกำหนดในช่วงนั้นจึงนับ Mongo 0 เทียบ Postgres N เติมเอง แล้วเตือนและเก็บ warning ว่า "relay พลาดไป
+ * N แถว" ทั้งที่ไม่ได้พลาด (ตรวจแบบค้าน, 2026-10-01: สองคำสั่งห่างกัน 31 วินาที ได้คำเตือน 43,498 แถว) ช่องนั้นไม่ใช่แค่ราว
+ * 5 วินาทีหลัง `$unset` อย่างที่ความเห็นเดิมเขียน แต่คือทั้งช่วงระหว่างสองคำสั่ง ซึ่งคนพิมพ์ทีละคำสั่งได้เป็นนาที สองคำสั่งแบบเดิม
+ * ยังทำงานได้ (cursor เทียบก่อนเขียน — `advanceCursor`) แค่ได้คำเตือนนั้นถ้า reconcile ตรงช่วงพอดี ใช้คำสั่งเดียวข้างบน
+ *
+ * **อย่าลบเอกสาร relay_state ทั้งใบ**: ใบเดียวกันถือตัวเลขของเพดานขนาด (`storageMb` `overQuota` … — workers/log-upkeep.ts) และ
+ * `lastPruneAt` ถ้าลบทั้งใบ log-upkeep เห็นว่าเอกสารไม่ใช่อย่างที่มันเขียนไว้แล้วตรวจเพดานใหม่ในรอบนาทีถัดไป (ก่อนหน้านั้น
+ * ธงเกินเพดานหายไปราวหนึ่งนาที) และ prune วิ่งทันที ซึ่งไม่เสียหาย แต่ไม่ใช่วิธีที่ตั้งใจ — docs/21 §3.8 ต้องบอกแบบเดียวกัน
  * ข้อจำกัด: แถวที่ `seed:demo` ลบจาก Postgres ไปแล้วหายจากสำเนาถาวร, เอกสาร `audit_fallback`/`http` ไม่ถูกสร้างใหม่ (ไม่มีใน
- * Postgres) และเอกสารที่ prune ลบไปแล้ว (หรือ IP/UA ที่ตัดไปแล้ว) กลับมาจนกว่า prune รอบถัดไปจะลบซ้ำ — ตั้งใจไม่แก้
- * (ตัดสิน 2026-09-30): rebuild ไม่แตะ `lastPruneAt` prune รอบถัดไปจึงเป็นรอบแรกหลัง 03:00 น. เวลาไทยครั้งถัดไป — ช้าสุด
+ * Postgres และ rebuild ไม่ลบ) และเอกสารที่ prune ลบไปแล้ว (หรือ IP/UA ที่ตัดไปแล้ว) กลับมาจนกว่า prune รอบถัดไปจะลบซ้ำ — ตั้งใจ
+ * ไม่แก้ (ตัดสิน 2026-09-30): rebuild ไม่แตะ `lastPruneAt` prune รอบถัดไปจึงเป็นรอบแรกหลัง 03:00 น. เวลาไทยครั้งถัดไป — ช้าสุด
  * ราว 24 ชั่วโมงหลัง rebuild ถ้าต้องการให้ลบทันที รอให้ relay พิมพ์ "เติมของค้างครบแล้ว" ก่อน แล้วค่อย `$unset`
  * `lastPruneAt` — prune วิ่งในรอบงานดูแลถัดไป (ไม่เกินหนึ่งนาที) ถ้า `$unset` พร้อมกับ rebuild prune อาจวิ่งก่อน relay
  * เติมถึงแถวเก่า แถวที่เติมหลังจากนั้นก็ค้างไปจนถึง 03:00 น. อยู่ดี (relay เติมราวหมื่นแถวต่อรอบ 5 วินาที)
@@ -154,6 +162,9 @@ interface RelayStateDoc {
   /** fingerprint ของ LOG_HASH_KEY ที่สำเนานี้ใช้ — `hashKeyFingerprint()` */
   hashKeyFp?: string;
   schemaVersion?: number;
+  /** คนสั่ง rebuild (หัวไฟล์) — ค่าอะไรก็ได้ที่ไม่ใช่ null ถือว่าสั่ง `rebuildTick` ล้างเมื่อลบครบ */
+  rebuildRequestedAt?: unknown;
+  lastRebuild?: Record<string, unknown>;
 }
 
 /** แถวตามที่ `$queryRaw` คืน — enum เป็นข้อความ uuid เป็นข้อความ และเวลาละเอียดถึงไมโครวินาทีใน `occurred_exact` */
@@ -191,6 +202,8 @@ let failing = false;
 let backfilling = false;
 let warnedHashKey = false;
 let warnedSchema = false;
+/** rebuild ที่กำลังลบอยู่ — ลบไปแล้วกี่ใบ (รอบละไม่เกิน 200,000 ใบ ค้างมากกว่านั้นลบต่อรอบถัดไป) */
+let rebuilding: { deleted: number; started: Date } | null = null;
 const lastCaptured = new Map<string, number>();
 
 /** เริ่มสองลูป — เรียกจาก main() ของ delivery-worker หลัง startLogStore ปิด log store อยู่ก็ไม่ทำอะไร */
@@ -249,6 +262,11 @@ async function relayTick(): Promise<void> {
     if (!db) return;
     const relay = db.collection<RelayStateDoc>("relay_state");
     const state = await relay.findOne({ _id: STATE_ID }, { maxTimeMS: MONGO_MS });
+    // ก่อน checkIdentity: กุญแจที่เปลี่ยนคือเหตุผลของ rebuild เอง ไม่ต้องเตือนซ้ำระหว่างที่กำลังทำ
+    if (state?.rebuildRequestedAt !== undefined && state.rebuildRequestedAt !== null) {
+      await rebuildTick(db, relay, state.rebuildRequestedAt);
+      return;
+    }
     await checkIdentity(relay, state);
 
     const started = new Date();
@@ -341,6 +359,49 @@ async function relayTick(): Promise<void> {
 }
 
 /**
+ * rebuild ที่คนสั่งไว้ (`rebuildRequestedAt` — หัวไฟล์) หนึ่งรอบ: ลบสำเนา `source: "audit_event"` ทีละก้อน (ก้อนละ 5,000 ไม่เกิน
+ * 40 ก้อนต่อรอบ เหมือน prune) ลบครบแล้วล้าง cursor และค่าที่ผูกกับสำเนาเดิมในคำสั่งเดียว รอบถัดไปเติมใหม่ตั้งแต่แถวแรก
+ *
+ * การล้างเทียบ `rebuildRequestedAt` กับค่าที่อ่านมา: คนที่สั่งซ้ำระหว่างที่กำลังลบ (ค่าใหม่) ได้อีกรอบ ไม่ใช่ถูกล้างทิ้ง
+ * ไม่เริ่มลบขณะที่รอบงานดูแลกำลังวิ่ง — reconcile ที่นับ Mongo ไปครึ่งทางระหว่างที่ถูกลบจะเติมเองแล้วเตือนว่า relay พลาด
+ * รอบงานดูแลที่เริ่มหลังจากนี้เห็น `rebuildRequestedAt` แล้วข้าม reconcile เอง (ใน process เดียวกัน — worker สองตัวซ้อนกันตอน
+ * deploy ยังชนกันได้ ผลคือคำเตือนหนึ่งบรรทัด ไม่ใช่ข้อมูลเสีย)
+ */
+async function rebuildTick(db: Db, relay: Collection<RelayStateDoc>, requestedAt: unknown): Promise<void> {
+  if (maintenanceRunning) return;
+  if (!rebuilding) {
+    rebuilding = { deleted: 0, started: new Date() };
+    console.log("[log-relay] rebuild: ลบสำเนาของ audit_event ใน log store แล้วจะเติมใหม่ตั้งแต่แถวแรก (relay หยุดคัดลอกระหว่างนี้)");
+  }
+  const activity = db.collection("activity") as unknown as ActivityCollection;
+  const result = await deleteInChunks(activity, { source: "audit_event" });
+  rebuilding.deleted += result.count;
+  if (!result.complete) {
+    console.log(`[log-relay] rebuild: ลบไปแล้ว ${rebuilding.deleted} ใบ — ยังเหลือ ลบต่อรอบถัดไป`);
+    return;
+  }
+  const done = await relay.updateOne(
+    { _id: STATE_ID, rebuildRequestedAt: requestedAt } as Filter<RelayStateDoc>,
+    {
+      $unset: { cursor: "", hashKeyFp: "", schemaVersion: "", caughtUpAt: "", rebuildRequestedAt: "" },
+      $set: { lastRebuild: { requestedAt, startedAt: rebuilding.started, completedAt: new Date(), deleted: rebuilding.deleted } },
+    },
+    { maxTimeMS: MONGO_MS },
+  );
+  if (done.matchedCount === 0) {
+    // มีคนสั่งซ้ำระหว่างที่ลบ — รอบถัดไปอ่านค่าใหม่แล้วลบอีกรอบ (เอกสารที่ relay ไม่ได้เขียนระหว่างนี้ ลบรอบสองเร็ว)
+    console.log("[log-relay] rebuild: มีคำสั่ง rebuild ใหม่ระหว่างที่ลบ — ทำอีกรอบ");
+    return;
+  }
+  console.log(
+    `[log-relay] rebuild: ลบสำเนาเดิมครบ ${rebuilding.deleted} ใบ — ล้าง cursor แล้ว รอบถัดไปเติมใหม่ตั้งแต่แถวแรก`,
+  );
+  rebuilding = null;
+  warnedHashKey = false;
+  warnedSchema = false;
+}
+
+/**
  * cursor ที่บันทึกไว้ — ไม่มี (volume ใหม่, หลัง rebuild) หรือรูปผิดเริ่มจากแถวแรก
  *
  * cursor ที่อยู่ในอนาคตถือว่าเสียด้วย: forward pass จะข้ามทุกแถวจนกว่านาฬิกาจะไปถึง แล้ว backfill ของแถวเก่าทั้งหมด
@@ -377,7 +438,8 @@ function cursorFrom(state: RelayStateDoc | null): Cursor {
 /**
  * บันทึก cursor ใหม่ **เฉพาะเมื่อค่าที่เก็บยังเป็น `expected`** (compare-and-set) — คืน false ถ้ามีคนเปลี่ยนมันไปแล้ว
  *
- * เดิมเป็น `$set` เฉย ๆ จากค่าที่อ่านตอนเริ่มรอบ rebuild ตามคู่มือ (`deleteMany` แล้ว `$unset` cursor ขณะ worker วิ่งอยู่) จึง
+ * เดิมเป็น `$set` เฉย ๆ จากค่าที่อ่านตอนเริ่มรอบ rebuild ตามคู่มือเดิม (`deleteMany` แล้ว `$unset` cursor ด้วยมือขณะ worker วิ่งอยู่
+ * — คู่มือตอนนี้เป็นคำสั่งเดียวที่ worker ลบเอง `rebuildTick` แต่สองคำสั่งแบบเดิมยังพิมพ์ได้) จึง
  * แข่งกับรอบที่อ่าน state ก่อน `$unset` แล้วเขียนหน้าถัดไปหลังจากนั้นได้: cursor เก่าถูกเขียนคืน relay อ่านต่อจากเกือบปัจจุบัน
  * เอกสารก่อนหน้านั้นที่ `deleteMany` ลบไปแล้วไม่กลับมาอีก reconcile เติมแค่ 24 ชั่วโมงล่าสุด และไม่มีบรรทัดไหนบอก (ตรวจแบบค้าน
  * ขั้น 7, 2026-09-30 — จากการอ่านโค้ด) ตอนนี้รอบนั้นเขียนไม่ติด ทิ้งรอบ แล้วรอบถัดไปเริ่มจากแถวแรก
@@ -759,12 +821,15 @@ async function maintenanceTick(): Promise<void> {
     const caughtUpAt = pastDate(state?.caughtUpAt, "caughtUpAt", now)?.getTime() ?? 0;
     /**
      * reconcile เฉพาะเมื่อ forward pass ตามทันจริงนับจากการเริ่มใหม่ครั้งล่าสุด — `caughtUpAt` ถูกล้างตอน relay เริ่มจากแถวแรก
-     * และเขียนใหม่เมื่ออ่านจนสุดเท่านั้น (`markCaughtUp`) ส่วนช่วงระหว่างที่คน `$unset` cursor (rebuild) ถึงรอบ relay ถัดไป
-     * (ไม่เกินราว 5 วินาที) `caughtUpAt` ยังเป็นค่าเก่า จึงต้องมี cursor อยู่ด้วย: ไม่มี cursor = สำเนากำลังจะเริ่มใหม่ ไม่ใช่ครบ
+     * และตอน rebuild ลบครบ แล้วเขียนใหม่เมื่ออ่านจนสุดเท่านั้น (`markCaughtUp`) · มี `rebuildRequestedAt` = สำเนากำลังถูกลบ
+     * (`rebuildTick`) ตัวนับของ Mongo ไม่มีความหมาย · ไม่มี cursor = สำเนากำลังจะเริ่มใหม่ ไม่ใช่ครบ (ช่องระหว่าง `$unset`
+     * cursor ด้วยมือถึงรอบ relay ถัดไป — rebuild แบบคำสั่งเดียวไม่มีช่องนี้ เพราะล้าง cursor กับ `caughtUpAt` พร้อมกัน)
      */
     const hasCursor = state?.cursor !== undefined && state.cursor !== null;
+    const rebuildPending = state?.rebuildRequestedAt !== undefined && state.rebuildRequestedAt !== null;
     if (
       hasCursor &&
+      !rebuildPending &&
       now.getTime() - lastReconcile >= RECONCILE_EVERY_MS &&
       now.getTime() - caughtUpAt <= CAUGHT_UP_FRESH_MS
     ) {
