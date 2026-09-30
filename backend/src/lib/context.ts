@@ -153,12 +153,16 @@ export function clientIp(req: Request): string | null {
  * รับค่าจาก header x-correlation-id ถ้าผู้เรียกส่งมา เพื่อให้ trace ข้ามระบบได้
  * (ต้องเป็น UUID เพราะคอลัมน์เป็น uuid — ค่าที่ไม่ผ่านจะถูกแทนด้วยค่าใหม่)
  * และส่งกลับใน response header เสมอ เพื่อให้ผู้เรียกอ้างถึงได้เวลาแจ้งปัญหา
+ *
+ * เก็บเป็น**ตัวพิมพ์เล็กเสมอ**: คอลัมน์ uuid ของ Postgres เก็บตัวเล็ก (สำเนาที่ relay คัดลอกจึงตัวเล็ก) แต่ error event กับสำเนา
+ * `audit_fallback` เขียนค่าจากบริบทนี้ตรง ๆ — ถ้าคงตัวพิมพ์ที่ส่งมา รหัสอ้างอิงบนข้อความ 5xx เป็นตัวใหญ่ และค้นด้วย
+ * `trace/` หรือ `?correlationId=` (ซึ่งแปลงเป็นตัวเล็กแล้วจับด้วย prefix ที่ใช้ index) ไม่เจอ
  */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function correlationMiddleware(req: Request, res: Response, next: NextFunction) {
   const incoming = req.header("x-correlation-id");
-  const id = incoming && UUID_RE.test(incoming) ? incoming : randomUUID();
+  const id = incoming && UUID_RE.test(incoming) ? incoming.toLowerCase() : randomUUID();
 
   res.setHeader("x-correlation-id", id);
   const client = parseClientIp(req.ip);
