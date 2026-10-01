@@ -724,10 +724,12 @@ function compose(
 ): { subject: string; body: string } {
   const total = chosen.length + crashLoops.length + (quota ? 1 : 0);
   const subject = `[D2 ${env.deployEnv}] ระบบพบปัญหาที่ควรตรวจสอบ ${total} รายการ`;
+  // ทุกส่วนข้างล่างขึ้นต้นด้วยบรรทัดว่างของตัวเอง — เดิมหัวก็ใส่บรรทัดว่าง ฉบับที่ไม่มีรายการ issue (มีแค่วนรีสตาร์ตหรือเกินเพดาน)
+  // จึงมีบรรทัดว่างสองบรรทัดก่อนส่วนแรก
   const lines: string[] = [
     `ระบบ ${env.deployEnv} (worker รุ่น ${env.release}) พบปัญหาที่ควรตรวจสอบ ${total} รายการ เวลาเป็นเวลาไทย`,
-    "",
   ];
+  if (chosen.length > 0) lines.push("");
   chosen.forEach((candidate, index) => {
     const issue = candidate.issue;
     if (issue.service === "browser") {
