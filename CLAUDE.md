@@ -1492,6 +1492,11 @@ page load, apart from the ten every other report shares; before that, ten earlie
 page load left the global-error page showing a reference that was never sent. Until 2026-10-01 a
 hundred junk messages to the unauthenticated endpoint, which a spoofed `X-Forwarded-For` gets
 past the per-IP limit, left every reference sent after them unfindable for the rest of the hour.
+The same goes for the 60-a-minute cap on stored browser events: a referenced report past it is
+kept as a reference-only stub (`extra.referenceOnly`, 240 a minute), so hiding a user's reference
+takes more than the ingest's own 300 reports a minute, at which point the route drops everything
+anyway; one junk report a second used to be enough. `/status` counts references that were still
+lost (`browserReferencesLost`).
 **A chunk that fails to load (a deploy under an open page) is a warning filed as
 `browser:chunk-load`, which never alerts, and there are two wordings for it.** `next dev --webpack`
 throws webpack's "Loading chunk 123 failed.". Production's `next build` is **Turbopack** (Next 16's

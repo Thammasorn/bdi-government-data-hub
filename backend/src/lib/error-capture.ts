@@ -283,6 +283,8 @@ let processWindow = { start: 0, stored: 0, browser: 0 };
 let browserFingerprints = { start: 0, seen: new Set<string>() };
 /** รายงานเบราว์เซอร์ที่ไม่ได้สร้าง issue ตั้งแต่ process เริ่ม (เกินเพดาน fingerprint หรือเกินเพดานขนาด) — `/status` แสดง */
 let browserNotCreated = 0;
+/** รายงานเบราว์เซอร์ที่มีรหัสอ้างอิงซึ่งไม่ได้เก็บทั้งตัวเต็มและตัวย่อ ตั้งแต่ process เริ่ม — `/status` แสดง (G6 จะตอบว่าไม่พบ) */
+let browserReferencesLost = 0;
 
 /**
  * ทำไมถึงทิ้ง — event สรุปต้องบอกสาเหตุให้ถูก เดิมมันโทษ "log store เขียนไม่ได้นาน" ทุกครั้ง แม้ที่ทิ้งจริงคือเอกสารที่
@@ -452,6 +454,7 @@ function handOverAccessRecord(doc: ActivityDoc): boolean {
  *   pendingIssues  — issue ที่ตัวนับยังไม่ได้เขียน
  *   dropped        — ทิ้งไปทั้งหมดตั้งแต่ process เริ่ม (คิวเต็ม ใหญ่เกิน Mongo ไม่รับ issue ค้างเกิน)
  *   droppedUnreported — ในนั้นที่ยังไม่มี event สรุป "ทิ้งไป N รายการ" (เข้าคิวเมื่อเขียนได้อีกครั้ง)
+ *   browserReferencesLost — รายงานเบราว์เซอร์ที่มีรหัสอ้างอิงซึ่งไม่ได้เก็บเลย (เกินเพดานขนาด, ตัวย่อเกิน 240 ต่อนาที, คิวเต็ม)
  *   writing        — `failing` ระหว่างที่เขียน log store ไม่ได้และกำลังถอยห่าง
  * เป็นของ process ที่ตอบเท่านั้น: คิวของ delivery-worker และของ backend replica อื่นแยกกัน
  */
@@ -462,6 +465,7 @@ export function errorCaptureStats(): {
   dropped: number;
   droppedUnreported: number;
   browserReportsNotCreatingIssues: number;
+  browserReferencesLost: number;
   writing: "ok" | "failing";
 } {
   return {
@@ -471,6 +475,7 @@ export function errorCaptureStats(): {
     dropped: droppedSinceStart,
     droppedUnreported: dropped.count,
     browserReportsNotCreatingIssues: browserNotCreated,
+    browserReferencesLost,
     writing: failing ? "failing" : "ok",
   };
 }
@@ -638,9 +643,12 @@ export interface IngestedReport {
  *   - **ยกเว้นรายงานที่มีรหัสอ้างอิง** (`browser.reference` — หน้า global-error, 502 ของ proxy): รหัสนั้นผู้ใช้อ่านให้เจ้าหน้าที่ฟัง
  *     และ Postman G6 ค้นจากตัว event (`reports`) ไม่ใช่จาก issue จึงเก็บตัว event เสมอเมื่อไม่เกินเพดานขนาด แม้ issue ไม่ถูกสร้าง
  *     (`extra.capped: "browser_fingerprints"` บอกว่า issue ของ fingerprint นี้อาจไม่มี) และไม่ติดเพดาน 50 ตัวต่อ fingerprint ต่อ
- *     ชั่วโมง (ผู้ใช้ร้อยคนเจอ 502 ตอน backend ล่มได้รหัสร้อยตัว ต้องค้นเจอร้อย) ยังติดเพดาน 60 ต่อนาทีของเบราว์เซอร์และคิว — ที่เก็บ
- *     จึงไม่โตเกินเดิม เดิมรายงานขยะร้อยข้อความ (`X-Forwarded-For` เขียนเองได้ เพดานต่อ IP จึงไม่ช่วย) ทำให้รหัสบนหน้า global-error
- *     ที่มาหลังจากนั้นค้นไม่เจอทั้งชั่วโมง (ตรวจขั้น 9, 2026-10-01)
+ *     ชั่วโมง (ผู้ใช้ร้อยคนเจอ 502 ตอน backend ล่มได้รหัสร้อยตัว ต้องค้นเจอร้อย) เดิมรายงานขยะร้อยข้อความ (`X-Forwarded-For`
+ *     เขียนเองได้ เพดานต่อ IP จึงไม่ช่วย) ทำให้รหัสบนหน้า global-error ที่มาหลังจากนั้นค้นไม่เจอทั้งชั่วโมง (ตรวจขั้น 9, 2026-10-01)
+ *   - รายงานที่มีรหัสอ้างอิงซึ่ง**เกินเพดานต่อนาที** (60 ของเบราว์เซอร์ หรือ 600 ของ process) เก็บเป็น**ตัวย่อ**แทน
+ *     (`keepBrowserReference`) — เดิมทิ้งไปเลย ใครก็ยิงรายงานขยะนาทีละหกสิบตัว (หนึ่งตัวต่อวินาที) ทำให้รหัสทุกตัวที่ผู้ใช้เห็นใน
+ *     นาทีนั้นค้นไม่เจอ (ตรวจขั้น 9 แบบค้าน 2026-10-01) ตอนนี้ต้องยิงเกินเพดานรวมของ routes/client-errors.ts (300 ต่อนาที) ซึ่งที่
+ *     นั่นรายงานถูกทิ้งก่อนถึงตรงนี้อยู่แล้ว — endpoint ที่ไม่ต้อง login ป้องกันได้แค่นั้น
  */
 export function captureReport(report: IngestedReport): string | null {
   try {
@@ -683,18 +691,64 @@ export function captureReport(report: IngestedReport): string | null {
     }
     delta.release = report.release;
     if (!create) browserNotCreated += 1;
-    if (overQuota) return null;
+    if (overQuota) {
+      if (referenced) browserReferencesLost += 1;
+      return null;
+    }
     if (!delta.create && !referenced) return null;
-    if (admit(report.fingerprint, now, browser, referenced) !== null) return null;
     if (!delta.create) doc.extra = { ...(doc.extra ?? {}), capped: "browser_fingerprints" };
+    const cap = admit(report.fingerprint, now, browser, referenced);
+    if (cap !== null) return referenced ? keepBrowserReference(doc, cap, delta.create, now) : null;
     const bytes = fitDocument(doc);
     const priority = browser ? PRIORITY.browser : report.level === "warning" ? PRIORITY.warning : PRIORITY.error;
-    if (!enqueue({ kind: "event", doc, bytes, priority })) return null;
+    if (!enqueue({ kind: "event", doc, bytes, priority })) {
+      if (referenced) browserReferencesLost += 1;
+      return null;
+    }
     delta.lastEventId = doc._id;
     return doc._id;
   } catch {
     return null;
   }
+}
+
+/**
+ * ตัวย่อของรายงานเบราว์เซอร์ที่มีรหัสอ้างอิงซึ่งเกินเพดานต่อนาทีที่เก็บได้ต่อ process ต่อนาที — 240 บวก 60 ตัวเต็มเท่ากับเพดานรวม
+ * ของเบราว์เซอร์ใน routes/client-errors.ts (300) คนที่จะกลบรหัสของผู้ใช้จึงต้องยิงเกินนั้น ซึ่งที่นั่นรายงานถูกทิ้งตั้งแต่ต้นทางอยู่แล้ว
+ * แยกจาก `REFERENCE_STUBS_PER_MINUTE` ของ 5xx ฝั่ง server — รายงานที่ใครก็ส่งได้ต้องไม่กินที่ของรหัสที่ backend ออกเอง
+ */
+const BROWSER_REFERENCE_STUBS_PER_MINUTE = 240;
+let browserStubWindow = { start: 0, stored: 0 };
+
+/**
+ * เก็บรายงานเบราว์เซอร์ที่มีรหัสอ้างอิงซึ่งติดเพดานต่อนาที (`cap`) เป็นตัวย่อ: รหัส หน้า รุ่น ชื่อกับข้อความสั้น ๆ ของ error
+ * ไม่มี stack และคำขอ API ห้าตัวล่าสุด (`extra.referenceOnly: true`) — G6 ค้นจาก `browser.reference` เหมือนตัวเต็ม คืน id หรือ null
+ * อยู่ชั้นล่างสุดของคิวเหมือนรายงานเบราว์เซอร์อื่น
+ */
+function keepBrowserReference(
+  doc: ErrorEventDoc,
+  cap: "capped_issue" | "capped_process",
+  issueCreated: boolean,
+  now: number,
+): string | null {
+  if (now - browserStubWindow.start >= 60_000) browserStubWindow = { start: now, stored: 0 };
+  if (browserStubWindow.stored >= BROWSER_REFERENCE_STUBS_PER_MINUTE) {
+    browserReferencesLost += 1;
+    return null;
+  }
+  const stub: ErrorEventDoc = {
+    ...doc,
+    error: { name: doc.error.name, message: doc.error.message.slice(0, 300), stack: null, props: {}, causes: [] },
+    browser: doc.browser ? { ...doc.browser, lastApi: [] } : null,
+    // `capped` ของตัวย่อคือเพดานต่อนาทีที่ติด (แบบเดียวกับตัวย่อของ server) · issue ที่ไม่ถูกสร้างบอกแยกใน `issueCapped`
+    extra: { referenceOnly: true, capped: cap, ...(issueCreated ? {} : { issueCapped: "browser_fingerprints" }) },
+  };
+  if (!enqueue({ kind: "event", doc: stub, bytes: sizeOf(stub), priority: PRIORITY.browser })) {
+    browserReferencesLost += 1;
+    return null;
+  }
+  browserStubWindow.stored += 1;
+  return stub._id;
 }
 
 // --------------------------------------------------------------------------------------------- รหัสอ้างอิง

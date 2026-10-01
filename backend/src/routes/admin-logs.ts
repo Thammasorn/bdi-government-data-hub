@@ -1055,6 +1055,8 @@ adminLogRouter.get("/status", async (req, res) => {
     dropped: stats.dropped,
     // รายงานเบราว์เซอร์ที่เดินได้แค่ตัวนับของ issue เดิม (เกินร้อย fingerprint ต่อชั่วโมง หรือเกินเพดานขนาด) — ของ process นี้
     browserReportsNotCreatingIssues: stats.browserReportsNotCreatingIssues,
+    // รายงานเบราว์เซอร์ที่มีรหัสอ้างอิงซึ่งไม่ได้เก็บทั้งตัวเต็มและตัวย่อ — รหัสเหล่านั้น G6 ตอบว่าไม่พบ (lib/error-capture.ts)
+    browserReferencesLost: stats.browserReferencesLost,
     writing: stats.writing,
     hashKey: env.logStore.hashKey ? "set" : "missing",
     relayLagSeconds: null,
