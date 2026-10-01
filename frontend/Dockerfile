@@ -43,9 +43,11 @@ COPY . .
 
 # รุ่นของโค้ด (SHA ที่ build) — ฝังลงบันเดิลทั้งของเบราว์เซอร์และของ server แล้วติดไปกับทุกรายงาน error (lib/report-error.ts,
 # lib/server-error-report.ts) ให้ issue บอกได้ว่าเกิดกับรุ่นไหน ส่งด้วย --build-arg GIT_SHA=… (docker-compose.prod.yml ทำให้)
-# **วางหลัง COPY ทั้งสอง ติดกับ `npm run build`** ค่านี้เปลี่ยนทุก commit และ ENV ที่เปลี่ยนทำให้ cache ของทุกชั้นข้างล่างหลุด
-# เดิมวางไว้เหนือ `COPY --from=deps` node_modules (541 MB) จึงถูกคัดลอกใหม่ทุก deploy — build cache โตราวครึ่ง GB ต่อครั้ง
-# บนดิสก์ที่เต็มอยู่แล้ว (backend/Dockerfile วางท้ายสุดด้วยเหตุผลเดียวกัน)
+# **วางติดกับ `npm run build`** ซึ่งเป็นขั้นเดียวที่อ่านค่านี้ ค่าเปลี่ยนทุก commit — BuildKit ทำ cache ของ `RUN` ที่อยู่ใต้
+# ARG/ENV ที่เปลี่ยนหลุด (ค่าเป็นส่วนหนึ่งของ env ที่คำสั่งเห็น) แต่ไม่แตะ `COPY` (cache ของ COPY ดูแค่ไฟล์) จึงห้ามมี `RUN`
+# อื่นคั่นระหว่างสองบรรทัดนี้กับ build ส่วนตำแหน่งเหนือหรือใต้ COPY ไม่มีผลกับ cache (ตรวจกับ BuildKit แล้ว: COPY ใต้ ENV ที่
+# เปลี่ยนค่ายัง CACHED) — c408ad4 เคยเขียนว่าการย้ายลงมาใต้ COPY ประหยัด build cache ครึ่ง GB ต่อ deploy ซึ่งไม่จริง
+# backend/Dockerfile วางท้ายสุดด้วยเหตุผลข้อแรก: ให้ `RUN npm ci` ข้างบนยังใช้ cache ได้
 ARG GIT_SHA=unknown
 ENV NEXT_PUBLIC_RELEASE=${GIT_SHA}
 RUN npm run build
