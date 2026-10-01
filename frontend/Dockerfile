@@ -38,13 +38,16 @@ ENV NODE_ENV=production
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
-# รุ่นของโค้ด (SHA ที่ build) — ฝังลงบันเดิลทั้งของเบราว์เซอร์และของ server แล้วติดไปกับทุกรายงาน error (lib/report-error.ts,
-# lib/server-error-report.ts) ให้ issue บอกได้ว่าเกิดกับรุ่นไหน ส่งด้วย --build-arg GIT_SHA=… (docker-compose.prod.yml ทำให้)
-ARG GIT_SHA=unknown
-ENV NEXT_PUBLIC_RELEASE=${GIT_SHA}
-
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+
+# รุ่นของโค้ด (SHA ที่ build) — ฝังลงบันเดิลทั้งของเบราว์เซอร์และของ server แล้วติดไปกับทุกรายงาน error (lib/report-error.ts,
+# lib/server-error-report.ts) ให้ issue บอกได้ว่าเกิดกับรุ่นไหน ส่งด้วย --build-arg GIT_SHA=… (docker-compose.prod.yml ทำให้)
+# **วางหลัง COPY ทั้งสอง ติดกับ `npm run build`** ค่านี้เปลี่ยนทุก commit และ ENV ที่เปลี่ยนทำให้ cache ของทุกชั้นข้างล่างหลุด
+# เดิมวางไว้เหนือ `COPY --from=deps` node_modules (541 MB) จึงถูกคัดลอกใหม่ทุก deploy — build cache โตราวครึ่ง GB ต่อครั้ง
+# บนดิสก์ที่เต็มอยู่แล้ว (backend/Dockerfile วางท้ายสุดด้วยเหตุผลเดียวกัน)
+ARG GIT_SHA=unknown
+ENV NEXT_PUBLIC_RELEASE=${GIT_SHA}
 RUN npm run build
 
 # ---------- production ----------
