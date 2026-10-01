@@ -415,7 +415,7 @@ async function main() {
 
   const server = app.listen(env.port, () => {
     console.log(`[backend] listening on http://localhost:${env.port}`);
-    // บันทึกของ process — การเริ่มที่ไม่มี shutdown นำหน้าคือการล่มแล้ววนกลับมา (step 10 ใช้จับ crash loop)
+    // บันทึกของ process — การเริ่มที่ไม่มี shutdown นำหน้าและไม่มีป้าย cleanExit คือการล่มแล้ววนกลับมา (step 10 ใช้จับ crash loop)
     recordRuntimeEvent("start", { node: process.version });
     if (!env.smtp.enabled) {
       console.log("[backend] SMTP ยังไม่ได้ตั้งค่า — อีเมลจะถูกพิมพ์ลง log แทนการส่งจริง");
@@ -441,6 +441,7 @@ async function main() {
   const shutdown = async (signal: string) => {
     console.log(`[backend] ${signal} received, shutting down`);
     server.close();
+    // เข้าคิว และเขียนป้าย "ปิดตามปกติ" ลงไฟล์ใน container — บันทึกในคิวหายได้ถ้า Mongo หยุดพร้อมกัน ป้ายไม่หาย (lib/error-capture.ts)
     recordRuntimeEvent("shutdown", { signal });
     // แถวสรุปของ token ที่ถูกปฏิเสธยังค้างอยู่ในหน่วยความจำ — เขียนให้เท่าที่ทันภายใน 2 วินาที
     // ไม่รอนานกว่านั้น เพราะ compose ให้เวลาทั้งหมด 10 วินาทีก่อน SIGKILL

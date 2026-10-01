@@ -13,14 +13,18 @@
  *   4. 5xx ที่ route ตอบเองต่อเนื่อง — issue ระดับ warning ที่ fingerprint ขึ้นต้น `http:5xx:` มี event ตั้งแต่ 5 ตัวใน 15 นาที
  *      (`sustained_5xx` — 503 `no_reviewer`, `no_legal_documents`, 501 ThaID ไม่ได้ตั้งค่า)
  *   5. วนรีสตาร์ต — ในชั่วโมงที่ผ่านมา service หนึ่งมี `fatal-exit` ตั้งแต่ 2 ครั้ง หรือ `start` ที่**บันทึกก่อนหน้าของ container
- *      เดียวกัน**ไม่ใช่ `shutdown` ตั้งแต่ 3 ครั้ง (`crashLoopsOf`) — process ก่อนหน้าตายโดยไม่ได้ปิดตามปกติ (SIGKILL, OOM,
- *      fatal) restart ปกติ หยุดแล้วเปิดใหม่ทีหลังนานเท่าไรก็ตาม และ container ใหม่ตอน deploy (ยังไม่มีบันทึกของตัวเอง) ไม่นับ
+ *      เดียวกัน**ไม่ใช่ `shutdown` และไม่มีป้าย `cleanExit` ตั้งแต่ 3 ครั้ง (`crashLoopsOf`) — process ก่อนหน้าตายโดยไม่ได้ปิดตาม
+ *      ปกติ (SIGKILL, OOM, fatal) restart ปกติ หยุดแล้วเปิดใหม่ทีหลังนานเท่าไรก็ตาม และ container ใหม่ตอน deploy (ยังไม่มีบันทึก
+ *      ของตัวเอง) ไม่นับ — **เมื่อการปิดนั้นทิ้งร่องรอยไว้ได้**: บันทึก `shutdown` ถึง Mongo หรือป้ายในไฟล์ของ container
+ *      (lib/error-capture.ts) อยู่รอดถึงการเริ่มครั้งถัดไป restart ที่ไม่มีทั้งสองอย่าง (Mongo หยุดหรือล่มตอนปิด **และ** container
+ *      เริ่มใหม่ด้วย filesystem ใหม่ในชื่อเครื่องเดิม หรือเขียนไฟล์ไม่ได้) ยังนับเป็นการเริ่มที่ไม่มีคำอธิบาย
  *   6. log store เกินเพดานขนาด (`relay_state.overQuota`) — ครั้งเดียวต่อครั้งที่เกิน
  *   warning อื่นไม่แจ้งเลย issue ที่ `ignored` ไม่แจ้งไม่ว่าอะไร และสองตัวนี้**ไม่แจ้งด้วยข้อไหนทั้งสิ้น** (`NEVER_ALERT`):
  *   `browser:chunk-load` กับ `http:5xx:…:log_access_disabled` — ตัวหลังคือคนลองเรียก API อ่าน log ที่ปิดไว้ ไม่ใช่ระบบเสีย
  *
- * **อัตรา:** สรุปไม่เกินหนึ่งฉบับต่อ 15 นาที ฉบับละไม่เกิน 20 issue issue หนึ่งแจ้งไม่เกินหนึ่งครั้งต่อหกชั่วโมง เว้นแต่เกิดซ้ำหลัง
- * ปิด วนรีสตาร์ตของ service เดียวกันก็หกชั่วโมง ที่เกิน 20 เหลือไว้ฉบับหน้า (ยังไม่ถูกนับว่าแจ้งแล้ว)
+ * **อัตรา:** สรุปฉบับใหม่ไม่เกินหนึ่งฉบับต่อ 15 นาที (การส่งซ้ำของฉบับที่ค้างนับแยก — "จังหวะมีสองตัว" ข้างล่าง) ฉบับละไม่เกิน
+ * 20 issue issue หนึ่งแจ้งไม่เกินหนึ่งครั้งต่อหกชั่วโมง เว้นแต่เกิดซ้ำหลังปิด วนรีสตาร์ตของ service เดียวกันก็หกชั่วโมง ที่เกิน 20
+ * เหลือไว้ฉบับหน้า (ยังไม่ถูกนับว่าแจ้งแล้ว)
  *
  * **รายงานจากเบราว์เซอร์** (`service: "browser"` — `POST /api/client-errors` ไม่ต้อง login ใครก็ส่งได้ และ IP ที่ใช้นับเพดาน
  * ผู้ส่งเขียนเอง) มีโควตาของตัวเอง: ไม่เกิน 5 issue ต่อหกชั่วโมง**รวมทุกฉบับ** (`BROWSER_ALERTS_PER_WINDOW`) นับจาก
@@ -563,6 +567,8 @@ interface RuntimeRecord {
   service: string;
   kind: string;
   host?: { containerId?: unknown };
+  /** `cleanExit: true` บน `start` = process ก่อนหน้าใน container นี้ปิดตามปกติ (lib/error-capture.ts `recordRuntimeEvent`) */
+  detail?: { cleanExit?: unknown } | null;
 }
 
 /**
@@ -571,9 +577,18 @@ interface RuntimeRecord {
  *
  * **`start` ที่ไม่มีคำอธิบาย** = บันทึกก่อนหน้าของ container เดียวกัน (service + `host.containerId` ซึ่งคือชื่อเครื่องของ
  * container — restart policy เริ่ม container เดิม ชื่อเดิม) ไม่ใช่ `shutdown`: เป็น `start` (process ก่อนตายโดยไม่ได้บันทึกอะไร —
- * SIGKILL, OOM) หรือ `fatal-exit` บันทึกก่อนหน้าเป็น `shutdown` = ปิดตามปกติ ไม่ว่าจะเปิดใหม่หลังจากนั้นนานเท่าไร container ที่ยัง
- * ไม่มีบันทึกก่อนหน้าเลย (deploy สร้างใหม่ ชื่อใหม่ — ตัวเก่าบันทึก shutdown ของมันเองไว้แล้ว) ก็ไม่นับ บันทึกก่อนหน้าของ start
- * แรกในชั่วโมงอาจอยู่ก่อนชั่วโมงนั้น จึงหาแยกหนึ่งคำสั่ง (ย้อนได้เท่าอายุของ `runtime_events`)
+ * SIGKILL, OOM) หรือ `fatal-exit` **และ** ตัว `start` เองไม่มี `detail.cleanExit` บันทึกก่อนหน้าเป็น `shutdown` หรือตัว start
+ * มี `cleanExit` = ปิดตามปกติ ไม่ว่าจะเปิดใหม่หลังจากนั้นนานเท่าไร container ที่ยังไม่มีบันทึกก่อนหน้าเลย (deploy สร้างใหม่ ชื่อใหม่ —
+ * ตัวเก่าบันทึก shutdown ของมันเองไว้แล้ว) ก็ไม่นับ บันทึกก่อนหน้าของ start แรกในชั่วโมงอาจอยู่ก่อนชั่วโมงนั้น จึงหาแยกหนึ่งคำสั่ง
+ * (ย้อนได้เท่าอายุของ `runtime_events`)
+ *
+ * **ทำไมต้องมี `cleanExit`:** บันทึก `shutdown` เดินทางผ่านคิวในหน่วยความจำ และตอนปิดมีเวลา flush สองวินาที Mongo ที่กำลังหยุดหรือ
+ * ล่มอยู่ตอนนั้น (`docker compose restart` ทั้ง stack, stop/start ทั้ง project, daemon หรือเครื่องรีบูต, restart backend ระหว่าง
+ * Mongo ล่ม) ทำให้บันทึกนั้นหาย — `docker compose restart mongo backend delivery-worker` สามรอบได้ "เริ่มใหม่โดยไม่ได้ปิดตามปกติ
+ * 3 ครั้ง" ของทั้ง backend และ worker (ตรวจขั้น 10 แบบค้าน 2026-10-01) process ที่ปิดตามปกติจึงเขียนป้ายลงไฟล์ใน container ด้วย
+ * และ `start` ถัดไปประทับ `cleanExit: true` (lib/error-capture.ts `recordRuntimeEvent`) ป้ายอยู่รอด restart กับ stop/start ของ
+ * container เดิม แต่ไม่รอด container ที่ถูกเริ่มด้วย filesystem ใหม่ในชื่อเครื่องเดิม (Kubernetes / Container Apps เริ่ม container
+ * ใหม่ใน replica เดิม) หรือ root filesystem ที่เขียนไม่ได้ — ตรงนั้น restart ที่บันทึก `shutdown` ไปไม่ถึง Mongo ยังนับ
  *
  * เดิมนับ start ที่ไม่มี `shutdown` ของ service เดียวกันภายใน 60 วินาทีก่อนหน้า ตามถ้อยคำของแผน: `docker compose stop backend`
  * แล้ว `start` หลังจากนั้นเกินหนึ่งนาที สามรอบในชั่วโมงเดียว (ปิดตามปกติทุกรอบ — ทดสอบหน้า 502 ของ proxy) ได้อีเมล "วนรีสตาร์ต
@@ -584,19 +599,25 @@ async function crashLoopsOf(db: Db, state: AlertState, now: Date): Promise<Crash
   const runtime = db.collection<RuntimeRecord>("runtime_events");
   const windowStart = new Date(now.getTime() - CRASH_WINDOW_MS);
   const recent = await runtime
-    .find({ at: { $gte: windowStart } }, { projection: { at: 1, service: 1, kind: 1, "host.containerId": 1 } })
+    .find(
+      { at: { $gte: windowStart } },
+      { projection: { at: 1, service: 1, kind: 1, "host.containerId": 1, "detail.cleanExit": 1 } },
+    )
     .sort({ at: -1 })
     .limit(CRASH_EVENTS_MAX)
     .maxTimeMS(MONGO_COMMAND_MAX_MS)
     .toArray();
   // แยกตาม container (service + ชื่อเครื่อง) เรียงเก่าไปใหม่
-  const homes = new Map<string, { service: string; containerId: string | null; events: Array<{ at: number; kind: string }> }>();
+  const homes = new Map<
+    string,
+    { service: string; containerId: string | null; events: Array<{ at: number; kind: string; cleanExit: boolean }> }
+  >();
   for (const event of recent.reverse()) {
     if (!(event.at instanceof Date) || typeof event.service !== "string" || typeof event.kind !== "string") continue;
     const containerId = typeof event.host?.containerId === "string" ? event.host.containerId : null;
     const key = homeKey(event.service, containerId);
     const home = homes.get(key) ?? { service: event.service, containerId, events: [] };
-    home.events.push({ at: event.at.getTime(), kind: event.kind });
+    home.events.push({ at: event.at.getTime(), kind: event.kind, cleanExit: event.detail?.cleanExit === true });
     homes.set(key, home);
   }
   if (homes.size === 0) return [];
@@ -634,7 +655,9 @@ async function crashLoopsOf(db: Db, state: AlertState, now: Date): Promise<Crash
     let previous = before.get(key) ?? null;
     for (const event of home.events) {
       if (event.kind === "fatal-exit") counts.fatalExits += 1;
-      if (event.kind === "start" && previous !== null && previous !== "shutdown") counts.unexplainedStarts += 1;
+      if (event.kind === "start" && !event.cleanExit && previous !== null && previous !== "shutdown") {
+        counts.unexplainedStarts += 1;
+      }
       previous = event.kind;
     }
     perService.set(home.service, counts);

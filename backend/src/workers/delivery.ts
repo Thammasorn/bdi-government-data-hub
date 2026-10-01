@@ -214,6 +214,7 @@ async function main() {
     stopErrorAlerts();
     // รอบของ relay ที่กำลังเขียนไม่เกิน 1.5 วินาที — ที่ค้างอ่านซ้ำตอนเริ่มใหม่ได้
     await stopLogRelay();
+    // เข้าคิว และเขียนป้าย "ปิดตามปกติ" ลงไฟล์ใน container — บันทึกในคิวหายได้ถ้า Mongo หยุดพร้อมกัน ป้ายไม่หาย (lib/error-capture.ts)
     recordRuntimeEvent("shutdown", { signal });
     // ไม่เกิน 1.5 + 2 + 1.5 วินาที — อยู่ใน 10 วินาทีของ compose
     await flushErrors(FLUSH_ON_EXIT_MS);

@@ -380,9 +380,10 @@ az containerapp create \
 
 `ERROR_ALERT_EMAILS` is the list that gets the error digest (`workers/error-alerts.ts`: new
 errors, regressions, fatals, dead letters, sustained 5xx, crash loops, the log store over its
-size ceiling — at most one mail per 15 minutes). It is not a secret, and it belongs to the
-**delivery-worker only**. Empty switches alerting off. It also does nothing while the log store is
-off (`LOG_STORE_ENABLED=false` in `deploy/azure/delivery-worker.env`), since the digest is built
+size ceiling — at most one new digest per 15 minutes; a recipient still owed an earlier digest
+may also get that one resent, so at most two mails per recipient in any 15 minutes). It is not a
+secret, and it belongs to the **delivery-worker only**. Empty switches alerting off. It also does
+nothing while the log store is off (`LOG_STORE_ENABLED=false` in `deploy/azure/delivery-worker.env`), since the digest is built
 from the issues stored there. The digest goes through the same `SMTP_*` settings as every other
 mail, one message at a time.
 

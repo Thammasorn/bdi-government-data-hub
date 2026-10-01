@@ -28,7 +28,9 @@
  * ถ้าทางกลับกันมีได้ ความล้มเหลวหนึ่งครั้งจะวนไม่จบ
  */
 import { createHash, randomUUID } from "node:crypto";
-import { hostname } from "node:os";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { hostname, tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { Request } from "express";
 import type { AnyBulkWriteOperation, Db } from "mongodb";
@@ -316,6 +318,13 @@ let failing = false;
 
 const HOST = { containerId: hostname(), startedAt: new Date(Date.now() - process.uptime() * 1000) };
 
+/**
+ * เวลาที่ process ก่อนหน้า**ใน container เดียวกัน**ปิดตามปกติ อ่านจากป้ายในไฟล์ตอน `initErrorCapture` (`takeCleanExitMarker`)
+ * null = ไม่มีป้าย — ก่อนหน้าตาย ถูก SIGKILL เป็น container ใหม่ หรือเขียนป้ายไม่ได้ ใช้ประทับบันทึก `start` (`recordRuntimeEvent`)
+ */
+let cleanExitBefore: Date | null = null;
+let cleanExitTaken = false;
+
 // --------------------------------------------------------------------------------------------- API
 
 /**
@@ -328,6 +337,11 @@ const HOST = { containerId: hostname(), startedAt: new Date(Date.now() - process
  */
 export function initErrorCapture(options: { service: CaptureService }): void {
   service = options.service;
+  // ป้าย "ปิดตามปกติ" ของ process ก่อนหน้า — อ่านแล้วลบตั้งแต่ต้น ไม่ว่าเปิด log store หรือไม่ ป้ายเก่าจึงไม่ค้างไปถึงการเริ่มรอบหลัง
+  if (!cleanExitTaken) {
+    cleanExitTaken = true;
+    cleanExitBefore = takeCleanExitMarker();
+  }
   if (!handlersInstalled) {
     handlersInstalled = true;
     process.on("unhandledRejection", (reason) => {
@@ -365,10 +379,22 @@ export function captureError(err: unknown, options: CaptureOptions = {}): string
   }
 }
 
-/** บันทึกของ process (start / shutdown / fatal-exit) — ใช้ดูว่าวนรีสตาร์ตไหม (step 10) ไม่ throw */
+/**
+ * บันทึกของ process (start / shutdown / fatal-exit) — ใช้ดูว่าวนรีสตาร์ตไหม (step 10, `crashLoopsOf` ใน workers/error-alerts.ts)
+ * ไม่ throw
+ *
+ * นอกจากเข้าคิวแล้ว `shutdown` ยังเขียนป้ายลงไฟล์ (`writeCleanExitMarker`) และ `fatal-exit` ลบป้ายนั้น `start` ของ process ถัดไป
+ * ที่พบป้ายได้ `detail.cleanExit: true` กับ `cleanExitAt` บันทึก `shutdown` อยู่ในคิวในหน่วยความจำ และ flush ตอนปิดมีเวลาสอง
+ * วินาที ถ้า Mongo กำลังหยุดหรือล่มอยู่ตอนนั้น บันทึกนี้หายไปพร้อม process ป้ายในไฟล์ไม่ต้องพึ่ง Mongo จึงบอกได้แทนว่าการเริ่มครั้งนี้
+ * ตามหลังการปิดตามปกติ เดิมไม่มีป้าย: `docker compose restart mongo backend delivery-worker` สามรอบในชั่วโมงเดียว (ปิดตามปกติ
+ * ทุกรอบ) ได้ `start` สามตัวโดยไม่มี `shutdown` นำหน้า แล้วสรุปแจ้ง "delivery-worker วนรีสตาร์ต" (ตรวจขั้น 10 แบบค้าน 2026-10-01)
+ */
 export function recordRuntimeEvent(kind: RuntimeKind, detail: Record<string, unknown> | null = null): void {
   try {
     if (!env.logStore.enabled) return;
+    // ป้ายก่อนคิว — การปิดที่ถูก SIGKILL ระหว่าง flush ยังเป็นการปิดที่มีคนสั่ง ไม่ใช่การตาย
+    if (kind === "shutdown") writeCleanExitMarker();
+    if (kind === "fatal-exit") removeCleanExitMarker();
     const doc: RuntimeEventDoc = {
       _id: randomUUID(),
       at: new Date(),
@@ -376,7 +402,8 @@ export function recordRuntimeEvent(kind: RuntimeKind, detail: Record<string, unk
       host: HOST,
       release: env.release,
       kind,
-      detail,
+      detail:
+        kind === "start" && cleanExitBefore ? { ...(detail ?? {}), cleanExit: true, cleanExitAt: cleanExitBefore } : detail,
     };
     enqueue({ kind: "runtime", doc, bytes: sizeOf(doc), priority: PRIORITY.runtime });
   } catch {
@@ -519,6 +546,60 @@ export function exitAfterFatal(err: unknown, options: { mechanism: CaptureMechan
   // เผื่อ event loop ค้างจนสัญญาข้างล่างไม่มีวันจบ — ต้องออกให้ได้ docker จะเริ่ม process ใหม่ให้
   setTimeout(() => process.exit(1), FLUSH_ON_EXIT_MS + 1_000).unref();
   void flushErrors(FLUSH_ON_EXIT_MS).finally(() => process.exit(1));
+}
+
+// --------------------------------------------------------------------------------------------- ป้าย "ปิดตามปกติ"
+
+/**
+ * ป้ายอยู่ใน `os.tmpdir()` ของ container (`/tmp` — ไม่มี volume ทับใน compose) ซึ่งเป็นชั้นที่เขียนได้ของ container นั้นเอง:
+ * อยู่รอด `docker compose restart`, stop แล้ว start, Docker daemon หรือเครื่องรีบูต (ตัว container เดิม) และหายเมื่อ container ถูก
+ * สร้างใหม่ (deploy, `up` ที่ config เปลี่ยน) — ซึ่งได้ชื่อเครื่องใหม่ จึงไม่มีบันทึกก่อนหน้าให้นับอยู่แล้ว
+ *
+ * ที่ป้ายช่วยไม่ได้: container ที่ระบบเริ่มใหม่ด้วยชั้นที่เขียนได้ชุดใหม่แต่ชื่อเครื่องเดิม (Kubernetes / Container Apps เริ่ม
+ * container ใหม่ใน replica เดิม) กับ root filesystem ที่เขียนไม่ได้หรือดิสก์เต็ม — ตรงนั้นเหลือแค่บันทึก `shutdown` ใน Mongo
+ * เหมือนก่อนมีป้าย restart ที่บันทึกนั้นไปไม่ถึง Mongo ยังนับเป็นการเริ่มที่ไม่มีคำอธิบาย
+ */
+function cleanExitMarkerPath(): string {
+  return join(tmpdir(), `bdi-${service}.clean-exit.json`);
+}
+
+function writeCleanExitMarker(): void {
+  try {
+    writeFileSync(
+      cleanExitMarkerPath(),
+      JSON.stringify({ at: new Date().toISOString(), containerId: HOST.containerId, pid: process.pid }),
+      { mode: 0o600 },
+    );
+  } catch {
+    // เขียนไม่ได้ — กลับไปพึ่งบันทึก shutdown ใน Mongo อย่างเดียว ห้ามทำให้การปิดสะดุด
+  }
+}
+
+function removeCleanExitMarker(): void {
+  try {
+    rmSync(cleanExitMarkerPath(), { force: true });
+  } catch {
+    // ลบไม่ได้ก็ไม่มีอะไรให้ทำ
+  }
+}
+
+/**
+ * อ่านป้ายของ process ก่อนหน้าแล้วลบทิ้ง — คืนเวลาที่มันปิด หรือ null รับเฉพาะป้ายที่เขียนในชื่อเครื่องนี้ (ถ้ามีใครเอา volume มา
+ * ทับ `/tmp` ร่วมกันหลาย container ป้ายของตัวอื่นต้องไม่นับเป็นของตัวนี้) ไม่ throw
+ */
+function takeCleanExitMarker(): Date | null {
+  let at: Date | null = null;
+  try {
+    const marker = JSON.parse(readFileSync(cleanExitMarkerPath(), "utf8")) as { at?: unknown; containerId?: unknown };
+    if (marker.containerId === HOST.containerId && typeof marker.at === "string") {
+      const parsed = new Date(marker.at);
+      if (!Number.isNaN(parsed.getTime())) at = parsed;
+    }
+  } catch {
+    // ไม่มีป้าย หรืออ่านไม่ออก = ไม่รู้ว่าก่อนหน้าปิดตามปกติ
+  }
+  removeCleanExitMarker();
+  return at;
 }
 
 // --------------------------------------------------------------------------------------------- การเก็บ
