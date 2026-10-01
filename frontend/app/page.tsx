@@ -74,13 +74,9 @@ export default function HomePage() {
     /* "ยังไม่เคยมีหน่วยงาน" กับ "เคยมีแล้วถูกถอดออก" มาถึงตรงนี้เหมือนกันทุกประการ
        — organizationId เป็น null ทั้งคู่ — แต่ต้องบอกคนละเรื่องกัน */
     return user.removedFromOrganization ? (
-      <RemovedFromOrganizationNotice
-        removal={user.removedFromOrganization}
-        loading={starting}
-        onCreate={start}
-      />
+      <RemovedFromOrganizationNotice removal={user.removedFromOrganization} />
     ) : (
-      <CreateOrganizationPrompt loading={starting} onCreate={start} />
+      <NoOrganizationNotice />
     );
   }
 
@@ -741,33 +737,25 @@ function StatTiles({ summary }: { summary: ListSummary }) {
  * ผู้ใช้ที่ถูกถอดออกจากหน่วยงานเพราะมีคนมารับหน้าที่แทน
  *
  * หน้านี้เคยพูดกับทุกคนที่ `organizationId` เป็น null ด้วยประโยคเดียวกันว่า
- * "ยังไม่มีหน่วยงานในระบบ" ซึ่งกับคนที่เพิ่งถูกถอดออกนั้นผิดสองชั้น: หน่วยงานของเขามีอยู่
- * (บางรายอนุมัติไปแล้วด้วย) และสิ่งที่เขาต้องทำไม่ใช่การสร้างใบใหม่ แต่คือทวงสิทธิ์คืน
- * ปุ่มสร้างหน่วยงานยังอยู่ เพราะบางคนย้ายไปรับผิดชอบหน่วยงานอื่นจริง ๆ แต่ต้องเขียนให้
- * ชัดว่ามันสร้าง **หน่วยงานใหม่คนละแห่ง** ไม่ได้พากลับเข้าของเดิม
+ * "ยังไม่มีหน่วยงานในระบบ" ซึ่งกับคนที่เพิ่งถูกถอดออกนั้นผิด: หน่วยงานของเขามีอยู่
+ * (บางรายอนุมัติไปแล้วด้วย) หน้านี้จึงบอกแค่ว่าเขาถูกถอดออกจากหน้าที่ไหน ของหน่วยงานไหน
+ *
+ * **ไม่มีปุ่มสร้างหน่วยงานใหม่** (ตัดสินใจ 2026-09-30) — คนที่ถูกถอดออกต้องรอให้ผู้ดูแลระบบ
+ * มอบหน่วยงานให้ก่อน `POST /api/organizations` ปฏิเสธเขาด้วย 403 `no_organization`
+ * เคยมีปุ่มพร้อมคำอธิบายว่ามันสร้างหน่วยงานคนละแห่ง และเคยบอกชื่อคนที่มาแทนกับบอกว่าข้อมูล
+ * เดิมยังอยู่ครบ — BDI ให้ตัดทั้งหมดออก เหลือแค่ข้อเท็จจริงว่าถูกถอดออก
  */
 function RemovedFromOrganizationNotice({
   removal,
-  loading,
-  onCreate,
 }: {
   removal: NonNullable<SessionUser["removedFromOrganization"]>;
-  loading: boolean;
-  onCreate: () => void;
 }) {
   const organizationName = removal.organizationName ?? "หน่วยงานเดิมของคุณ";
-  const successor = removal.replacedBy ?? "ผู้ใช้รายใหม่";
   /**
    * ประกอบประโยคเองทั้งชิ้น ไม่ปล่อยให้ JSX ขึ้นบรรทัดใหม่คั่นกลาง — ภาษาไทยไม่เว้นวรรค
    * ระหว่างคำ ช่องว่างที่ JSX แถมมาตอนจัดบรรทัดจึงไปโผล่กลางคำบนหน้าจอ
    */
   const removedAtText = removal.removedAt ? ` เมื่อ ${formatThaiDate(removal.removedAt)}` : "";
-  /**
-   * ผู้มีอำนาจกระทำการแทนไม่ใช่คนกรอกฟอร์มลงทะเบียนหน่วยงาน — เขาถูกเชิญเข้ามาเพื่อลงนาม
-   * เท่านั้น (HomeHeader ซ่อนปุ่มเดียวกันนี้จากเขาด้วยเหตุผลนี้) role ของเขาอ่านจาก
-   * `removal.role` ไม่ใช่ `user.roles` เพราะสิทธิ์ถูกเพิกถอนไปแล้ว roles จึงว่าง
-   */
-  const mayRegister = removal.role !== "ORGANIZATION_APPROVER";
 
   return (
     <div className="relative mx-auto flex min-h-[calc(100vh-8.5rem)] max-w-2xl items-center justify-center px-4 py-16">
@@ -796,52 +784,25 @@ function RemovedFromOrganizationNotice({
 
         <div className="mt-6 rounded-xl border-l-[3px] border-warning bg-warning-bg p-5 text-left">
           <p className="text-[15px] leading-relaxed text-ink">
-            {`ผู้ดูแลระบบได้มอบหน้าที่ \u201C${removal.roleLabel}\u201D ของ `}
+            {`บัญชีของคุณถูกถอดออกจากหน้าที่ \u201C${removal.roleLabel}\u201D ของ `}
             <span className="font-medium">{organizationName}</span>
-            {` ให้ ${successor} แทนคุณ${removedAtText} \u2014 บัญชีของคุณจึงไม่ได้สังกัดหน่วยงานใดในระบบขณะนี้`}
-          </p>
-          {/* บอกให้ครบว่าของเดิมไม่ได้หายไปไหน ไม่งั้นจะอ่านเหมือนงานที่ทำมาถูกลบทิ้ง
-              และบอกทางไปต่อ ไม่ใช่แค่บอกว่าเกิดอะไรขึ้น */}
-          <p className="mt-2 text-[15px] leading-relaxed text-ink">
-            {"ข้อมูลและคำขอทั้งหมดของ "}
-            <span className="font-medium">{organizationName}</span>
-            {" ยังอยู่ครบ เพียงแต่คุณเปิดดูไม่ได้จนกว่าจะได้รับสิทธิ์คืน หากคิดว่าไม่ถูกต้อง โปรดติดต่อผู้ดูแลระบบ BDI เพื่อขอสิทธิ์ในหน่วยงานเดิมคืน"}
+            {removedAtText}
           </p>
         </div>
-
-        {mayRegister ? (
-          <>
-            <p className="mx-auto mt-8 max-w-lg text-[15px] leading-relaxed text-ink-muted">
-              {"หากคุณย้ายไปรับผิดชอบหน่วยงานอื่น เริ่มลงทะเบียนหน่วยงานนั้นได้จากปุ่มด้านล่าง \u2014 ปุ่มนี้สร้าง"}
-              <span className="font-medium">หน่วยงานใหม่คนละแห่ง</span>
-              {" ไม่ได้พาคุณกลับเข้า "}
-              <span className="font-medium">{organizationName}</span>
-            </p>
-
-            <Button
-              size="lg"
-              variant="secondary"
-              className="mt-6"
-              loading={loading}
-              onClick={onCreate}
-            >
-              สร้างหน่วยงานใหม่
-            </Button>
-          </>
-        ) : null}
       </div>
     </div>
   );
 }
 
-function CreateOrganizationPrompt({
-  loading,
-  onCreate,
-}: {
-  loading: boolean;
-  onCreate: () => void;
-}) {
-  // สเปก: "ระบบจะแสดงปุ่มสร้างหน่วยงานตรงกลางหน้าจอ ซึ่งเป็นเมนูเดียวที่ผู้ใช้เห็นและทำได้"
+/**
+ * ผู้ใช้ที่ไม่มีหน่วยงานและไม่เคยถูกถอดออก — บอกให้ติดต่อผู้ดูแลระบบ ไม่มีปุ่มสร้างหน่วยงาน
+ *
+ * เดิมหน้านี้คือ "ยังไม่มีหน่วยงานในระบบ" พร้อมปุ่ม "สร้างหน่วยงาน" ตามสเปกแรกที่ให้ผู้ใช้
+ * เปิดหน่วยงานเอง ตั้งแต่ 2026-09-30 หน่วยงานเกิดจากผู้ดูแลระบบเท่านั้น และผู้ประสานงาน
+ * ทุกคนถูกเชิญมาพร้อมหน่วยงาน (`POST /api/organizations` ตอบ 403 `no_organization` กับคนที่
+ * ไม่มี) ใครมาถึงหน้านี้จึงเป็นบัญชีที่ตั้งค่าไม่ครบ ไม่ใช่คนที่ควรเริ่มลงทะเบียนเอง
+ */
+function NoOrganizationNotice() {
   return (
     <div className="relative mx-auto flex min-h-[calc(100vh-8.5rem)] max-w-2xl items-center justify-center px-4 py-16">
       <DotDecoration className="right-0 top-4 h-52 w-52 text-navy-500" />
@@ -864,16 +825,11 @@ function CreateOrganizationPrompt({
         </div>
 
         <h1 className="mt-7 text-[28px] font-semibold text-navy-800 sm:text-[30px]">
-          ยังไม่มีหน่วยงานในระบบ
+          บัญชีของคุณยังไม่ได้สังกัดหน่วยงาน
         </h1>
         <p className="mx-auto mt-3 max-w-md text-[15px] leading-relaxed text-ink-muted">
-          เริ่มต้นด้วยการสร้างหน่วยงานของคุณ เพื่อเข้าใช้งานแพลตฟอร์มข้อมูลภาครัฐ
-          ระบบจะพาคุณกรอกข้อมูลทีละขั้นและสร้างแบบฟอร์มให้อัตโนมัติ
+          กรุณาติดต่อผู้ดูแลระบบ BDI เพื่อมอบหมายหน่วยงานให้บัญชีของคุณ
         </p>
-
-        <Button size="lg" className="mt-8" loading={loading} onClick={onCreate}>
-          สร้างหน่วยงาน
-        </Button>
       </div>
     </div>
   );

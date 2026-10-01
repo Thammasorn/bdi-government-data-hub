@@ -44,16 +44,19 @@ import {
   CAPABILITIES,
   CONNECT_NOTE,
   CONNECT_STEPS,
+  CONTACT,
   HERO,
   HOW_IT_WORKS,
   LEGAL_ANNEXES,
   LEGAL_ANNEX_LABEL,
   LEGAL_PRIMARY,
-  LEGAL_REGULATION,
+  LEGAL_REGULATIONS,
+  MORE_INFO_EYEBROW,
   OBJECTIVES,
   OBJECTIVES_BANNER,
   OBJECTIVES_LEAD,
   SECTIONS,
+  type LegalItem,
   type Section,
 } from "./content";
 
@@ -76,6 +79,7 @@ export function LandingPage({ variant = "public" }: { variant?: LandingVariant }
       <Connect />
       <Legal />
       <MoreInfo />
+      <Contact />
     </>
   );
 
@@ -187,9 +191,6 @@ function useRevealOnScroll() {
 }
 
 // ───────────────────────────────────────────────────────────────────── nav
-
-/** คำกำกับกลุ่มของสามหัวข้อท้ายที่ยังไม่มีเนื้อหา — ใช้ทั้งบนแถบนำทางและบนหัวข้อจริง */
-const MORE_INFO_EYEBROW = "ข้อมูลเพิ่มเติม";
 
 /**
  * หัวข้อที่จัดกลุ่มแล้ว
@@ -934,6 +935,44 @@ function DocCode({ code, muted = false }: { code: string; muted?: boolean }) {
   );
 }
 
+/**
+ * ทรงเดียวกับปุ่ม "ดาวน์โหลด" / "ดูรายละเอียด" ในรายการคำขอ (home/DatasetSection)
+ *
+ * จอแคบเหลือแต่ไอคอน — ชื่อเอกสารยาวสองสามบรรทัดอยู่แล้ว ปุ่มที่มีคำด้วยบีบคอลัมน์ชื่อจน
+ * ผนวกแต่ละฉบับกลายเป็นห้าบรรทัด ชื่อปุ่มยังอยู่ใน `aria-label`
+ */
+const DOWNLOAD_PILL =
+  "inline-flex shrink-0 items-center gap-1.5 self-start rounded-full border border-line p-2 text-[13px] font-medium sm:self-center sm:px-3.5 sm:py-1.5";
+
+/**
+ * ปุ่มดาวน์โหลดท้ายแถวของกฎหมายหนึ่งฉบับ — แบบเดียวกับปุ่มท้ายแถวของเอกสาร A0–A4
+ * ในหน้าคำขอ ชื่อทางซ้ายจึงเป็นข้อความธรรมดา ไม่ต้องขีดเส้นใต้ทั้งบรรทัดให้เป็นลิงก์
+ *
+ * เปิดในแท็บใหม่ด้วย เพราะเบราว์เซอร์ส่วนใหญ่เปิด PDF ให้อ่านแทนการบันทึกอยู่ดี คนที่แค่
+ * อยากอ่านจะได้ไม่หลุดออกจากหน้าแรก ถ้าบันทึก ไฟล์ได้ชื่อภาษาไทยของรายการ ไม่ใช่ชื่อภาษาอังกฤษ
+ * ใน URL
+ */
+function DownloadButton({ item }: { item: LegalItem }) {
+  const icon = (
+    <svg className="h-4 w-4" {...iconProps}>
+      <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />
+    </svg>
+  );
+  return (
+    <a
+      href={item.file}
+      download={`${item.title}${item.file.slice(item.file.lastIndexOf("."))}`}
+      target="_blank"
+      rel="noopener"
+      aria-label={`ดาวน์โหลด ${item.title}`}
+      className={clsx(DOWNLOAD_PILL, "bg-white text-navy-700 transition-colors hover:bg-navy-50")}
+    >
+      {icon}
+      <span className="hidden sm:inline">ดาวน์โหลด</span>
+    </a>
+  );
+}
+
 function Legal() {
   return (
     <Section id="legal" tone="canvas">
@@ -942,9 +981,17 @@ function Legal() {
       <h3 className="reveal mt-12 font-heading text-[17px] font-semibold text-navy-800">
         กฎหมายที่เกี่ยวข้อง
       </h3>
-      <p className="reveal mt-3 rounded-2xl bg-white px-6 py-5 text-[16px] leading-[1.85] text-ink shadow-card">
-        {LEGAL_REGULATION}
-      </p>
+      <ul className="reveal mt-3 rounded-2xl bg-white px-6 py-1.5 shadow-card">
+        {LEGAL_REGULATIONS.map((item) => (
+          <li
+            key={item.title}
+            className="flex items-start justify-between gap-4 border-t border-line py-3.5 first:border-t-0 sm:items-center"
+          >
+            <span className="min-w-0 text-[16px] leading-[1.85] text-ink">{item.title}</span>
+            <DownloadButton item={item} />
+          </li>
+        ))}
+      </ul>
 
       <h3 className="reveal mt-10 font-heading text-[17px] font-semibold text-navy-800">
         เอกสารที่เกี่ยวข้อง
@@ -979,20 +1026,16 @@ function Legal() {
           ))}
         </ul>
       </div>
-
-      <p className="reveal mt-5 text-[14px] text-ink-subtle">
-        ลิงก์ดาวน์โหลดเอกสารแต่ละฉบับอยู่ระหว่างจัดเตรียม
-      </p>
     </Section>
   );
 }
 
 /**
- * FAQ · ข่าวสาร · ติดต่อเรา
+ * หัวข้อที่ยังไม่มีเนื้อหา (วันนี้: FAQ · ข่าวสาร)
  *
- * ทั้งสามหัวข้อมีในเมนูของสไลด์แต่ไม่มีเนื้อหาให้ รวมไว้เป็นแถบเดียวสามช่อง
- * แทนที่จะเป็นสามหัวข้อเต็มหน้าที่ว่างเปล่า — ยาวเปล่า ๆ ทำให้ทั้งหน้าดูยังไม่เสร็จ
- * แต่ละช่องยังมี id ของตัวเองเพื่อให้ลิงก์บนแถบนำทางกดแล้วมาถูกที่
+ * มีในเมนูของสไลด์แต่ไม่มีเนื้อหาให้ รวมไว้เป็นแถบเดียว แทนที่จะเป็นหัวข้อเต็มหน้าที่ว่างเปล่า
+ * — ยาวเปล่า ๆ ทำให้ทั้งหน้าดูยังไม่เสร็จ แต่ละช่องยังมี id ของตัวเองเพื่อให้ลิงก์บนแถบนำทาง
+ * กดแล้วมาถูกที่ หัวข้อที่ได้เนื้อหาแล้วออกจากแถบนี้ไปเป็นหัวข้อของตัวเอง (ติดต่อเรา 2026-09-30)
  */
 function MoreInfo() {
   const pending = SECTIONS.filter((s) => s.pending);
@@ -1007,7 +1050,7 @@ function MoreInfo() {
             กำลังจัดเตรียม
           </h2>
         </div>
-        <div className="mt-10 grid gap-4 sm:grid-cols-3">
+        <div className="mt-10 grid gap-4 sm:grid-cols-2">
           {pending.map((section) => (
             <div
               key={section.id}
@@ -1028,6 +1071,63 @@ function MoreInfo() {
   );
 }
 
+/**
+ * ติดต่อเรา — อีเมลและเบอร์โทร กดแล้วเปิดโปรแกรมอีเมล / โทรออกได้เลย
+ *
+ * พื้นเป็น canvas เพราะแถบ "กำลังจัดเตรียม" ข้างบนเป็นพื้นขาว สองหัวข้อติดกันสีเดียวกัน
+ * จะอ่านเป็นหัวข้อเดียว
+ */
+function Contact() {
+  return (
+    <Section id="contact" tone="canvas">
+      <Heading id="contact" />
+      <div className="mt-10 grid gap-4 sm:grid-cols-2">
+        <div className="reveal flex items-start gap-4 rounded-2xl bg-white p-7 shadow-card">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-navy-50 text-navy-700">
+            <svg className="h-5 w-5" {...iconProps}>
+              <rect x="3" y="5" width="18" height="14" rx="2" />
+              <path d="m3.5 6.5 8.5 6.5 8.5-6.5" />
+            </svg>
+          </span>
+          <div className="min-w-0">
+            <h3 className="font-heading text-[17px] font-semibold text-navy-800">อีเมล</h3>
+            <a
+              href={`mailto:${CONTACT.email}`}
+              className="mt-1.5 inline-block break-all text-[16px] text-navy-700 underline decoration-navy-200 underline-offset-4 transition-colors hover:text-coral-500 hover:decoration-coral-300"
+            >
+              {CONTACT.email}
+            </a>
+          </div>
+        </div>
+        <div className="reveal flex items-start gap-4 rounded-2xl bg-white p-7 shadow-card">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-navy-50 text-navy-700">
+            <svg className="h-5 w-5" {...iconProps}>
+              <path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2" />
+            </svg>
+          </span>
+          <div className="min-w-0">
+            <h3 className="font-heading text-[17px] font-semibold text-navy-800">โทรศัพท์</h3>
+            <p className="mt-1.5 text-[16px] text-ink">{CONTACT.phone}</p>
+            <ul className="mt-2 space-y-1.5">
+              {CONTACT.extensions.map((line) => (
+                <li key={line.ext} className="text-[15px] text-ink-muted">
+                  <a
+                    href={`tel:${line.tel}`}
+                    className="text-navy-700 underline decoration-navy-200 underline-offset-4 transition-colors hover:text-coral-500 hover:decoration-coral-300"
+                  >
+                    ต่อ {line.ext}
+                  </a>{" "}
+                  ({line.name})
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
 function SiteFooter() {
   return (
     <footer className="bg-navy-900 px-4 py-14 sm:px-6">
@@ -1045,7 +1145,8 @@ function SiteFooter() {
           </div>
 
           <nav aria-label="ลิงก์ท้ายหน้า" className="grid grid-cols-2 gap-x-10 gap-y-2">
-            {SECTIONS.slice(0, 8).map((section) => (
+            {/* หัวข้อที่มีเนื้อหาแล้วเท่านั้น — ลิงก์ท้ายหน้าที่พาไปกล่อง "อยู่ระหว่างจัดเตรียม" ไม่ช่วยใคร */}
+            {SECTIONS.filter((section) => !section.pending).map((section) => (
               <a
                 key={section.id}
                 href={`#${section.id}`}
