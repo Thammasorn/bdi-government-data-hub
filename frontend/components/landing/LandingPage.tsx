@@ -959,10 +959,15 @@ const DOWNLOAD_PILL =
  * ในหน้าคำขอ ชื่อทางซ้ายจึงเป็นข้อความธรรมดา ไม่ต้องขีดเส้นใต้ทั้งบรรทัดให้เป็นลิงก์
  *
  * เปิดในแท็บใหม่ด้วย เพราะเบราว์เซอร์ส่วนใหญ่เปิด PDF ให้อ่านแทนการบันทึกอยู่ดี คนที่แค่
- * อยากอ่านจะได้ไม่หลุดออกจากหน้าแรก ถ้าบันทึก ไฟล์ได้ชื่อภาษาไทยของรายการ ไม่ใช่ชื่อภาษาอังกฤษ
- * ใน URL
+ * อยากอ่านจะได้ไม่หลุดออกจากหน้าแรก ถ้าบันทึก ไฟล์ได้ **ชื่อเดิมตามที่ BDI ส่งมา** (ดู `LegalItem`)
+ *
+ * ชื่อไฟล์มีภาษาไทย ช่องว่าง และ `[ ]` ซึ่งใส่ใน URL ดิบ ๆ ไม่ได้ — `encodeURIComponent`
+ * เข้ารหัสทุกตัว (`encodeURI` ปล่อย `[ ]` ไว้) ส่วน `download` ใช้ชื่อดิบ
  */
 function DownloadButton({ item }: { item: LegalItem }) {
+  const slash = item.file.lastIndexOf("/");
+  const filename = item.file.slice(slash + 1);
+  const href = `${item.file.slice(0, slash + 1)}${encodeURIComponent(filename)}`;
   const icon = (
     <svg className="h-4 w-4" {...iconProps}>
       <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />
@@ -970,8 +975,8 @@ function DownloadButton({ item }: { item: LegalItem }) {
   );
   return (
     <a
-      href={item.file}
-      download={`${item.title}${item.file.slice(item.file.lastIndexOf("."))}`}
+      href={href}
+      download={filename}
       target="_blank"
       rel="noopener"
       aria-label={`ดาวน์โหลด ${item.title}`}
