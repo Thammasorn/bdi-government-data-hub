@@ -24,19 +24,13 @@ branch `develop-activity-log-on-mongo-db` · เขียนจากโค้�
 >   เส้นทางธุรกิจ — 6.1) ทาง “ผู้ใช้เปิดหน่วยงานใหม่” ถูกถอด แถว `ORGANIZATION_CREATED` `created_via: WEB_FORM` · `REQUEST_CREATED` ที่ตามมา ·
 >   `ROLE_ASSIGNED` `assigned_via: ORGANIZATION_CREATED` และ `ROLE_REVOKED` รูปแบบ A/B จากเส้นทางนี้จึงมีแค่ในแถวที่เขียนก่อนหน้า หัวข้อที่พูดถึง
 >   ติดป้าย **ถอดแล้วที่ `7259c09`** ไว้ และอ้างเลขบรรทัดของโค้ดที่ถอดไปด้วย `2cab0a7`
-> - **ตอน deploy** (แผน §10 — Deploy A ถึง D ทำทีละขั้นได้):
->   - ก่อน merge ขั้น 4 ขึ้นไปเข้า `main/` ตั้ง `MONGO_ROOT_PASSWORD` `MONGO_BACKEND_PASSWORD` `MONGO_WORKER_PASSWORD` และ `LOG_HASH_KEY` ใน `main/.env` ด้วย
->     `openssl rand -hex 32` — prod overlay ไม่ยอมเริ่ม mongo ด้วยรหัสผ่านตัวอย่าง (3.12) รหัสผ่านมีผลครั้งเดียวตอน volume ว่าง และ `LOG_HASH_KEY` ต้องมีก่อน relay
->     เติมครั้งแรก ไม่งั้นสำเนาทั้งชุดไม่มี key ค้นหาจนกว่าจะ rebuild (3.6, 3.8)
->   - `LOG_READ_TOKEN` และ `INGEST_SERVER_TOKEN` (production ไม่รับค่าตัวอย่างหรือที่สั้นกว่า 32 ตัว) · `ERROR_ALERT_EMAILS` — ตารางตัวแปรอยู่ที่ 3.13
->   - build เป็นขั้นแยกก่อน `up -d` ด้วย `TMPDIR=/hdd1tb/tmp GIT_SHA=$(git rev-parse --short HEAD)` — ไม่มี `GIT_SHA` ทุก event ได้ release `unknown` (5.10) และ `/`
->     ของเครื่องนี้เต็มง่าย (`CLAUDE.md` Traps)
->   - migration `20260930013712_audit_event_relay_cursor_index` วิ่งเองตอนบูต (`migrate deploy`) · relay เติม `activity` จากแถวแรกของ `audit_event` เอง
->   - **ห้าม `down -v` ที่ `main/`** — volume `mongo-data` คือ log ของ production และสำเนา `audit_fallback` / `http` สร้างใหม่จาก Postgres ไม่ได้
->   - จด commit และเวลา (UTC) ของ Deploy A ลงการ์ดและ 6.2 — เป็นเส้นแบ่งของแถวก่อนและหลังการ์ด
+> - **ตอน deploy** — ทั้ง branch ในครั้งเดียวตาม**หมวด 10** (คนในทีมรันบน `main/`: ค่าใหม่ใน `.env` และการหมุน admin token · push และ merge · mongo ก่อน
+>   build แยก · ตรวจสิบข้อ · สวิตช์ปิด `LOG_STORE_ENABLED=false` · การย้อน · เรื่องที่ยังรอ BDI พร้อมค่าที่ใช้อยู่) — การแบ่ง Deploy A ถึง D ของแผน §10
+>   ใช้ไม่ได้แล้ว · **ห้าม `down -v` ที่ `main/`** — volume `mongo-data` คือ log ของ production และสำเนา `audit_fallback` / `http` สร้างใหม่จาก Postgres ไม่ได้
 > - **ยังไม่ได้ยืนยันกับ image ของ production ของ backend** (ด่าน prod-build T ของแผน): `npm ci --omit=dev` ดึง `mongodb` มาด้วย · `RELEASE` กับ
->   `NODE_OPTIONS=--enable-source-maps` อยู่ใน image ของ runner · เฟรมของ stack ชี้ `/app/src/*.ts` จน `topFrame` และ fingerprint ตรงกับ dev (5.2, 5.4) · backend
->   ของ prod overlay ได้ SIGTERM ถึง `shutdown()` (5.10) — ฝั่ง frontend ลอง `next build` + `output: "standalone"` จริงแล้ว 2026-10-01 (5.12)
+>   `NODE_OPTIONS=--enable-source-maps` อยู่ใน image ของ runner (สองข้อนี้ 10.4 ตรวจใน image ก่อน `up`) · เฟรมของ stack ชี้ `/app/src/*.ts` จน `topFrame` และ
+>   fingerprint ตรงกับ dev (5.2, 5.4) · backend ของ prod overlay ได้ SIGTERM ถึง `shutdown()` (5.10) — ฝั่ง frontend ลอง `next build` + `output: "standalone"`
+>   จริงแล้ว 2026-10-01 (5.12)
 > - ป้าย: **[ต้องตัดสิน]** = ค่าที่สร้างไว้เป็นค่าตั้งต้น รอ BDI หรือ DPO ยืนยัน · **[ยังไม่ได้ลอง]** = อ่านจากโค้ด ยังไม่ได้ยืนยันกับของจริง · **ต่างจากแบบ:** = โค้ดต่าง
 >   จากแผน เอกสารตามโค้ด · คำถามถึง DPO รวมอยู่ใน 9.8
 
@@ -3721,10 +3715,10 @@ production ถูกต้องเท่าที่ Cloudflare ต่อท้
 เป็น `SYSTEM` · แถวอัปโหลดไฟล์ขนาดจริงเป็น `SYSTEM` + `request-service` + ไม่มี IP · มีหกแถว `admin-script` ที่ใส่ด้วยมือ · user agent ไม่ถูกปิดเลข
 
 **แยกแถวก่อนและหลัง deploy ของการ์ดนี้** — Postgres ไม่มี `schemaVersion` ถ้าไม่รู้วันที่ deploy จะใช้รายการข้างบนไม่ได้
-เมื่อ Deploy A ขึ้น production ให้จด commit และเวลา (UTC) ลงหัวข้อนี้และการ์ด แล้วใช้ `occurred_at` เป็นเส้นแบ่ง ระหว่างนี้
+เมื่อ branch นี้ deploy ขึ้น production (หมวด 10) ให้จด commit และเวลา (UTC) ลงหัวข้อนี้และการ์ด แล้วใช้ `occurred_at` เป็นเส้นแบ่ง ระหว่างนี้
 ใช้สัญญาณในแถวเอง: แถวหลัง deploy ตรวจได้จาก (1) รหัสที่เพิ่งมีในการ์ด — เจ็ดตัวที่ไม่มีใน `AuditAction` ของ `4eeb8d3`: `ADMIN_TOKEN_REJECTED`
 `IDENTITY_VERIFICATION_STARTED` `LEGAL_DOCUMENT_UPDATED` `LOGIN_OTP_ISSUED` `REQUEST_ASSIGNED` `REQUEST_DRAFT_SAVED` `REQUEST_FORM_GENERATED`
-(และ `LOG_TOKEN_REJECTED` `AUDIT_LOG_READ` `ERROR_ISSUE_STATUS_CHANGED` เมื่อ Deploy C) — แถวแรกของรหัสเหล่านี้บอกจุดเริ่มคร่าว ๆ (2) แถวของ
+(และ `LOG_TOKEN_REJECTED` `AUDIT_LOG_READ` `ERROR_ISSUE_STATUS_CHANGED` ของ API อ่าน log) — แถวแรกของรหัสเหล่านี้บอกจุดเริ่มคร่าว ๆ (2) แถวของ
 admin มี `admin_token_fp` และ `admin-portal` ส่วนแถวที่เป็นของเส้นทาง admin (`*_via: "ADMIN_API"`) แต่เป็น `web-portal` และไม่มี
 fingerprint คือแถวก่อนการ์ด (3) `LOGIN_FAILED` ที่เป็น `SYSTEM` คือก่อนการ์ด (4) user agent ที่มีกลุ่มเลข 9 หลักขึ้นไปไม่ถูกแทนด้วย `:n`
 คือก่อน `a0a0578`
@@ -3929,3 +3923,232 @@ user agent ของแถวก่อน `a0a0578` ผ่าน `storedUserAgen
 7. พ.ร.บ.คอมพิวเตอร์ ม.26 (9.4)
 8. การผ่าน Cloudflare และ region ของ Azure (9.6)
 9. ยอมรับความเสี่ยงที่เหลือ (9.7, Q13)
+
+---
+
+## 10. การ deploy ขึ้น `main/` — สำหรับคนในทีม
+
+คนในทีมรันบนเครื่องนี้เอง (agent ไม่ deploy) · production คือ `/hdd1tb/bdi-project/main` — branch `main`, compose + prod overlay, cloudflared เสิร์ฟ
+`bdi.thammasorn.org` / `bdi-api.thammasorn.org` จาก `:3000` / `:4000` · **deploy ทั้ง branch ในครั้งเดียว** (ขั้น 1–10 ของแผน — การแบ่ง Deploy A–D ของแผน §10
+ใช้กับ branch ที่มีครบทุกขั้นไม่ได้แล้ว) · วาล์วนิรภัยคือ `LOG_STORE_ENABLED=false` (10.6): ปิด log store ทั้งหมดโดยไม่ต้อง build เว็บและอีเมลทำงานต่อ
+
+สิ่งที่เปลี่ยน: service ใหม่ `mongo` (ไม่ผูกพอร์ตออกโฮสต์ · volume `bdi-main_mongo-data`) · ตัวแปรใหม่ใน `main/.env` · migration หนึ่งตัว (index บน `audit_event`
+วิ่งเองตอนบูต) · image ใหม่ของ backend worker frontend · ไม่มีใครถูก logout · ราว 30–45 นาที ส่วนใหญ่คือ build · **`ADMIN_API_TOKEN` ของ production ยังเป็น
+ค่าที่หลุดใน `0d0a0d4`** (เทียบ fingerprint 2026-10-01) จึงหมุนใน 10.2 ไปพร้อมกัน
+
+ทุกคำสั่งรันต่อกันใน shell เดียว bash หรือ zsh (บล็อก `.env` ของ 10.2 ซ้อมทั้งสอง shell กับไฟล์ทดลอง · คำสั่งตรวจของ 10.4–10.5 ซ้อมกับ dev checkout
+2026-10-01) เริ่มด้วย:
+
+```bash
+cd /hdd1tb/bdi-project/main
+dc() { docker compose -f docker-compose.yml -f docker-compose.prod.yml "$@"; }
+mkdir -p /hdd1tb/tmp ~/bdi-logs && export TMPDIR=/hdd1tb/tmp   # compose เขียนไฟล์ชั่วคราวของ build ที่ $TMPDIR และ / เต็มง่าย
+```
+
+### 10.1 ก่อนเริ่ม
+
+```bash
+git status --short     # ต้องว่าง — backend/ frontend/ gotenberg/ ติดไปกับ image และ mongo/ ถูก bind-mount เข้า container ตรง ๆ
+git log --oneline -1   # a715f9d (branch รวมไว้แล้ว) — ใหม่กว่านั้นคือมีงานอื่นติดไปด้วย จดลงการ์ด
+pgrep -af compose      # ต้องไม่มี up/build ของ main/ จากคนอื่น — มีให้รอจนจบ (logs -f ไม่เป็นไร)
+curl -s -o /dev/null -w '%{http_code}\n' https://bdi.thammasorn.org/   # 200 — อย่างอื่น = production ล่มอยู่ก่อนแล้ว
+df -h /                # Avail ≥ 4G — ไม่ถึงให้ docker builder prune -f แล้วดูใหม่ (image และ build cache อยู่บน /)
+docker image ls mongo:7.0   # มีอยู่แล้ว 1.18 GB — ไม่ต้อง pull
+for s in backend delivery-worker frontend; do docker logs -t bdi-main-$s-1 > ~/bdi-logs/$s-$(date +%F-%H%M).log 2>&1; done
+dc exec -T postgres pg_dump -U bdi -d bdi > /hdd1tb/bdi-project/backups/bdi-main-$(date +%Y%m%d-%H%M)-before-activity-log.sql
+ls -lt /hdd1tb/bdi-project/backups | head -3   # ไฟล์ใหม่ต้องไม่ใช่ 0 byte
+for s in backend frontend delivery-worker; do docker tag bdi-main-$s:latest bdi-main-$s:before-activity-log; done   # image เดิม ไว้ย้อน (10.6)
+```
+
+`2>&1` เพราะบรรทัด `[capture]` และ warning ออกทาง stderr · log ของ container หายทุกครั้งที่ deploy สร้าง container ใหม่
+
+### 10.2 ค่าใหม่ใน `main/.env`
+
+ค่าถูกสร้างลงไฟล์ตรง ไม่ขึ้นจอ ไม่อยู่ใน argv ของ process ไหน · ฐานสิบหกเพราะรหัสผ่านของ Mongo ถูกแทนลง URI โดยไม่ encode · **ต้องอยู่ในไฟล์ก่อน `up mongo`
+ครั้งแรก**: รหัสผ่าน Mongo มีผลครั้งเดียวตอน volume ว่าง (3.12) และ `LOG_HASH_KEY` ต้องมีก่อน relay เติมสำเนาครั้งแรก — เปลี่ยนทีหลังต้อง rebuild สำเนา (3.8) ·
+อย่าทิ้ง `.env.bak` ไว้ข้างไฟล์ (ไม่อยู่ใน `.gitignore`)
+
+```bash
+grep -cE '^(LOG_STORE_ENABLED|MONGO_|LOG_HASH_KEY|LOG_READ_TOKEN|INGEST_SERVER_TOKEN|ERROR_ALERT_EMAILS|ADMIN_TOKEN_WATCH_FPS)=' .env  # 0 — ไม่ใช่ 0 ให้แก้บรรทัดเดิม อย่าเพิ่มซ้ำ
+
+# fingerprint = 12 ตัวแรกของ SHA-256 เหมือน tokenFingerprint() — ไม่ใช่ความลับ (ลงทุกแถวของ admin API อยู่แล้ว)
+fp() { tr -d '\r\n' | sed -e "s/^[\"']//" -e "s/[\"']\$//" | sha256sum | cut -c1-12; }
+LEAKED_FP=$(git show 0d0a0d4:docs/bdi-public.postman_environment.json | python3 -c 'import json,sys;print(next(v["value"] for v in json.load(sys.stdin)["values"] if v["key"]=="adminToken"),end="")' | fp)
+
+# หมุน ADMIN_API_TOKEN เฉพาะเมื่อยังเป็นตัวที่หลุด — เขียนทับบรรทัดเดิมในไฟล์เดิม (สิทธิ์และ ACL ของไฟล์คงเดิม)
+if [ "$LEAKED_FP" = "$(grep '^ADMIN_API_TOKEN=' .env | cut -d= -f2- | fp)" ]; then
+  python3 -c 'import re,secrets;p=".env";s=open(p).read();open(p,"w").write(re.sub(r"(?m)^ADMIN_API_TOKEN=.*$",lambda m:"ADMIN_API_TOKEN="+secrets.token_hex(32),s,count=1))' && echo "หมุน ADMIN_API_TOKEN แล้ว"
+else echo "ADMIN_API_TOKEN ไม่ใช่ตัวที่หลุดแล้ว — ไม่แตะ"; fi
+
+ALERTS=''   # ผู้รับอีเมลสรุป error คั่นด้วย comma (แผน Q7: ทีมพัฒนา + ผู้ดูแลระบบของ BDI) · ว่าง = ไม่ส่ง แต่ issue ยังถูกเก็บ
+{
+  echo
+  echo "# ---- activity log / log store — docs/21 หมวด 10 ($(date +%F)) ----"
+  echo "LOG_STORE_ENABLED=true"
+  echo "MONGO_ROOT_USER=bdi"
+  echo "MONGO_ROOT_PASSWORD=$(openssl rand -hex 32)"
+  echo "MONGO_BACKEND_PASSWORD=$(openssl rand -hex 32)"
+  echo "MONGO_WORKER_PASSWORD=$(openssl rand -hex 32)"
+  echo "LOG_HASH_KEY=$(openssl rand -hex 32)"
+  echo "LOG_READ_TOKEN=$(openssl rand -hex 32)"
+  echo "INGEST_SERVER_TOKEN=$(openssl rand -hex 32)"
+  echo "ERROR_ALERT_EMAILS=$ALERTS"
+  echo "ADMIN_TOKEN_WATCH_FPS=$LEAKED_FP"
+} >> .env
+
+# ตรวจโดยไม่เห็นค่า: ชื่อ · ความยาว · เป็นฐานสิบหกไหม — แล้วไม่มีชื่อซ้ำ
+awk -F= '/^(ADMIN_API_TOKEN|ADMIN_TOKEN_WATCH_FPS|LOG_STORE_ENABLED|MONGO_ROOT_USER|MONGO_ROOT_PASSWORD|MONGO_BACKEND_PASSWORD|MONGO_WORKER_PASSWORD|LOG_HASH_KEY|LOG_READ_TOKEN|INGEST_SERVER_TOKEN|ERROR_ALERT_EMAILS)=/ {v=$0; sub(/^[^=]*=/, "", v); printf "%-24s %3d %s\n", $1, length(v), (v ~ /^[0-9a-f]+$/ ? "hex" : "")}' .env
+grep -E '^[A-Za-z_]+=' .env | cut -d= -f1 | sort | uniq -d   # ต้องว่าง
+```
+
+ผลที่ถูก: `ADMIN_API_TOKEN` `MONGO_ROOT_PASSWORD` `MONGO_BACKEND_PASSWORD` `MONGO_WORKER_PASSWORD` `LOG_HASH_KEY` `LOG_READ_TOKEN` `INGEST_SERVER_TOKEN`
+ได้ `64 hex` · `ADMIN_TOKEN_WATCH_FPS` `12 hex` · `LOG_STORE_ENABLED` `4` · `MONGO_ROOT_USER` `3` · `ERROR_ALERT_EMAILS` ความยาวของรายชื่อ (0 = ปิดการแจ้งเตือน)
+
+ค่าใหม่ถึงคน: `ADMIN_API_TOKEN` ถึงผู้ใช้ admin API (Postman `bdi-admin-portal`) · `LOG_READ_TOKEN` ถึงผู้อ่าน log (Q5 ใน 10.7) — ให้อ่านจาก `main/.env` บนเครื่องนี้
+ห้ามส่งทาง chat อีเมล หรือ git (รัน `docs/tools/check-postman-secrets.py` ก่อน commit ไฟล์ Postman) · token เก่าหมดผลตอนสร้าง backend ใหม่ใน 10.4 และทุกการใช้
+หลังจากนั้นได้แถว `ADMIN_TOKEN_REJECTED` ของตัวเอง (`watched_token` · Postman G8 ด้วย `tokenFp` = `$LEAKED_FP`)
+
+### 10.3 push แล้ว merge
+
+`0d0a0d4` อยู่บน `origin` (GitHub สาธารณะ) แล้วตั้งแต่ 27 ก.ย. — push นี้ไม่เปิดเผยอะไรเพิ่ม ระบบกันของ agent ปฏิเสธเพราะเห็น token ในประวัติ คนจึงต้อง push เอง
+(checkout เป็นของ `cat-commander` — user อื่นใส่ `-c safe.directory=/hdd1tb/bdi-project/dev/dev_20260927_develop-activity-log-on-mongo-db` หลังคำว่า `git`
+ของคำสั่งที่อ้าง path ของ checkout):
+
+```bash
+git -C /hdd1tb/bdi-project/dev/dev_20260927_develop-activity-log-on-mongo-db push -u origin develop-activity-log-on-mongo-db
+git fetch origin
+git merge --no-ff origin/develop-activity-log-on-mongo-db -m "Merge the activity log on MongoDB into main"
+```
+
+push ไม่ได้ (เช่นไม่มี credential) — merge จาก checkout ตรง:
+
+```bash
+git fetch /hdd1tb/bdi-project/dev/dev_20260927_develop-activity-log-on-mongo-db develop-activity-log-on-mongo-db
+git merge --no-ff FETCH_HEAD -m "Merge the activity log on MongoDB into main"
+```
+
+conflict แปลว่า `main/` ขยับไปหลัง `a715f9d`: `git merge --abort` แล้วตามคนทำการ์ด — production ยังไม่เปลี่ยน (`.env` มีผลเมื่อสร้าง container ใหม่เท่านั้น) ·
+push `main` ขึ้น `origin` เป็นเรื่องที่ทีมตัดสินแยก (`git rev-list --left-right --count origin/main...main` บอกว่าค้างกี่ commit)
+
+### 10.4 deploy — mongo ก่อน · build แยก · แล้วค่อยขึ้น
+
+```bash
+export GIT_SHA=$(git rev-parse --short HEAD)   # ไม่ตั้ง = ทุก event ได้ release "unknown"
+dc config -q && echo compose-ok
+
+# 1. mongo อย่างเดียว — ล้มก็ไม่แตะเว็บ (ไม่มี service ไหน depends_on มัน)
+dc up -d --no-deps mongo
+for i in {1..24}; do [ "$(docker inspect -f '{{.State.Health.Status}}' bdi-main-mongo-1)" = healthy ] && break; sleep 5; done
+docker inspect -f '{{.State.Health.Status}}' bdi-main-mongo-1   # healthy
+dc logs mongo | grep '\[mongo\]'   # สร้าง role 2 บรรทัด + สร้าง user bdi_logs.bdi_backend / bdi_worker — "ไม่เริ่ม MongoDB" = รหัสผ่านใน .env ผิดรูป (3.12)
+dc exec -T mongo sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin "$MONGODB_DB" --eval "db.getUsers().users.map(u => u.user).join(\" \")"'   # bdi_backend bdi_worker
+
+# 2. build แยกจาก up — build ล้มก็ไม่มีอะไรที่รันอยู่ถูกแตะ
+dc build
+docker run --rm --entrypoint sh bdi-main-backend:latest -c 'ls /app/dist/index.js /app/node_modules/mongodb/package.json && echo "RELEASE=$RELEASE NODE_OPTIONS=$NODE_OPTIONS"'   # RELEASE = $GIT_SHA
+docker run --rm --entrypoint sh bdi-main-delivery-worker:latest -c 'ls /app/dist/workers/delivery.js /app/node_modules/mongodb/package.json'
+docker run --rm --entrypoint sh bdi-main-frontend:latest -c 'ls /app/server.js /app/.next/BUILD_ID'
+df -h /
+
+# 3. ขึ้น — backend รัน prisma migrate deploy เองตอนบูต (20260930013712_audit_event_relay_cursor_index)
+dc up -d
+dc ps   # backend frontend delivery-worker Up · mongo healthy — service ที่หายไปแย่กว่าตัวที่กำลัง restart
+for i in {1..30}; do curl -fsS localhost:4000/health/ready && break; sleep 5; done; echo
+dc logs backend | grep -i migration   # Applying migration `20260930013712_…` แล้ว All migrations have been successfully applied
+dc logs backend delivery-worker | grep -E '\[log-store\]|คำเตือน|\[env\]'   # "เชื่อมต่อ MongoDB ได้" ทั้งสอง service · ไม่มีบรรทัดคำเตือนหรือ [env]
+```
+
+relay เติม `activity` จากแถวแรกของ `audit_event` เองในไม่กี่วินาที (21,695 แถวใช้ 17 วินาทีบน dev)
+
+### 10.5 ตรวจหลัง deploy
+
+ผ่าน Cloudflare — cookie ของ production เป็น `Secure` ล็อกอินผ่าน `http://localhost` ไม่ได้ · ข้อ 6 ยิงที่ `localhost:4000` เพราะไม่ต้องใช้ cookie และไม่รู้ว่า
+Cloudflare ปล่อย path `%zz` ผ่านไหม · token ส่งเข้า curl ทาง stdin (`-H @-`) จึงไม่อยู่ใน argv:
+
+```bash
+API=https://bdi-api.thammasorn.org
+ME=you@example.com   # อีเมลของคุณ → x-log-reader
+envv() { grep "^$1=" .env | tail -1 | cut -d= -f2-; }
+logapi() { { printf 'x-log-token: %s\n' "$(envv LOG_READ_TOKEN)"; printf 'x-log-reader: %s\nx-log-reason: %s\n' "$ME" 'post-deploy%20check%20of%20the%20activity%20log'; } | curl -sS -H @- "$API/api/admin/logs/$1"; echo; }
+
+# 1. log store ขึ้น — "logStore":{"status":"up"}
+curl -s $API/health/ready; echo
+# 2. hashKey "set" · release = $GIT_SHA · alerts.enabled true ถ้าใส่ ALERTS (worker เขียนภายในหนึ่งนาที)
+logapi status
+# 3. ใน browser: https://bdi.thammasorn.org ล็อกอินด้วยบัญชีที่คุณรับ OTP ได้ · บัญชีฝั่งหน่วยงานที่มีร่าง: แก้หนึ่งช่องแล้วกด "บันทึกแบบร่าง"
+# 4. สำเนาใน Mongo — เห็นแถวของข้อ 3 (relay ตามหลังไม่กี่วินาที) และคำตอบมี readId
+logapi 'activity?action=LOGIN_SUCCEEDED,REQUEST_DRAFT_SAVED&pageSize=5'
+# 5. Postgres — LOGIN_OTP_ISSUED · LOGIN_SUCCEEDED · REQUEST_DRAFT_SAVED · AUDIT_LOG_READ (log-api) ของข้อ 4
+dc exec -T postgres psql -U bdi -d bdi -c "select occurred_at, action, source_component, ip_address from audit.audit_event where occurred_at > now() - interval '15 minutes' order by occurred_at desc limit 12;"
+# 6. รหัสอ้างอิง — ได้ 500 "เกิดข้อผิดพลาดภายในระบบ (รหัสอ้างอิง …)" (%zz ถอดไม่ได้: 500 ที่มีอยู่ก่อนการ์ด ลองได้โดยไม่แตะข้อมูล)
+#    แล้ว trace ของรหัสนั้นต้องมี errors หนึ่งตัว (level error) และ activity ADMIN_API_REQUEST
+REF=$(printf 'x-admin-token: %s\n' "$(envv ADMIN_API_TOKEN)" | curl -sS -H @- localhost:4000/api/admin/users/%zz | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d["message"],file=sys.stderr);print(d["reference"])')
+sleep 5; logapi "trace/$REF"
+# 7. proxy ของหน้าเว็บไม่เปิด API อ่าน log — 404
+curl -s -o /dev/null -w '%{http_code}\n' https://bdi.thammasorn.org/api/admin/logs/status
+# 8. mongo ไม่มีพอร์ตบนโฮสต์ — ไม่มีบรรทัด
+ss -ltn | grep 27017
+# 9. RAM ของ mongo < 1 GiB (ว่าง ๆ ราว 100 MiB)
+docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' bdi-main-mongo-1
+# 10. relay ครบ — สองตัวเลขเท่ากัน (ต่างได้แค่แถวไม่กี่วินาทีล่าสุด)
+dc exec -T postgres psql -U bdi -d bdi -tAc "select count(*) from audit.audit_event"
+dc exec -T mongo sh -c 'mongosh --quiet -u bdi_worker -p "$MONGO_WORKER_PASSWORD" --authenticationDatabase "$MONGODB_DB" "$MONGODB_DB" --eval "db.activity.countDocuments({source: \"audit_event\"})"'
+```
+
+- ข้อ 5: เทียบ `ip_address` ของแถว login ของคุณกับบรรทัด `ip=` ของ `https://cloudflare.com/cdn-cgi/trace` ที่เปิดจาก browser เดียวกัน — ตรงกัน = Cloudflare
+  ต่อท้ายที่อยู่จริงให้ ปิดคำถาม IP ใน 10.7 ได้ · ไม่ตรง = จดลงการ์ด
+- ข้อ 6: ถ้าใส่ `ALERTS` ผู้รับได้อีเมลสรุปที่มี issue นี้ภายในราวสองนาที (ตรวจการส่งไปในตัว) — ปิด issue ด้วย Postman E4 (`resolved`)
+- จดลงการ์ด: `$GIT_SHA` และเวลาที่ `up -d` จบ (`date -u`) — เส้นแบ่งแถวก่อนและหลังการ์ด (6.2) · ผลสิบข้อ · อะไรติดไปด้วย · push แล้วหรือยัง ·
+  หมุน admin token แล้ว
+- ลบ image เดิมเมื่อมั่นใจแล้ว (ราวหนึ่งสัปดาห์ — ถือพื้นที่บน `/`): `docker image rm bdi-main-{backend,frontend,delivery-worker}:before-activity-log`
+
+### 10.6 สวิตช์ปิด และการย้อน
+
+**สวิตช์ปิด log store** — ไม่ build ไม่แตะ frontend · audit ใน Postgres เขียนต่อตามปกติ · API อ่าน log ตอบ 503 `log_store_disabled` · error เหลือแค่บรรทัด
+`[capture]` ใน log ของ container · driver ของ Mongo ไม่ถูกโหลด (3.13):
+
+```bash
+for s in backend delivery-worker; do docker logs -t bdi-main-$s-1 > ~/bdi-logs/$s-$(date +%F-%H%M).log 2>&1; done
+sed -i 's/^LOG_STORE_ENABLED=.*/LOG_STORE_ENABLED=false/' .env
+dc up -d --no-build --no-deps backend delivery-worker
+curl -s localhost:4000/health/ready; echo   # "logStore":{"status":"disabled"}
+```
+
+เปิดคืน: ตั้ง `true` แล้วคำสั่งเดียวกัน relay ตามต่อจาก cursor · หนักกว่านั้น `dc stop mongo` — เว็บและอีเมลทำงานต่อ (ลองแล้วในขั้น 4 และ 6) · **อย่าปิดด้วยการ
+เว้น URI ให้ว่าง** (3.13)
+
+**ย้อนโค้ดทั้งหมด** — ใช้ image เดิมจาก 10.1 ไม่ต้อง build:
+
+```bash
+git revert -m 1 --no-edit "$(git log --merges -1 --format=%H --grep='Merge the activity log on MongoDB into main')"
+for s in backend frontend delivery-worker; do docker tag bdi-main-$s:before-activity-log bdi-main-$s:latest; done
+dc up -d --no-build   # compose เตือนเรื่อง container mongo ที่ไม่อยู่ในไฟล์แล้ว — ปกติ
+docker stop bdi-main-mongo-1   # หยุดเฉย ๆ — volume bdi-main_mongo-data คือ log ที่เก็บมาแล้ว
+```
+
+- migration ไม่ต้องย้อน: index ไม่กระทบโค้ดเก่า และ `migrate deploy` ของ image เดิมไม่ปฏิเสธ migration ที่มันไม่รู้จัก (ลองบน dev 2026-10-01 ได้
+  `No pending migrations to apply`)
+- บรรทัดใหม่ใน `.env` ปล่อยไว้ได้ โค้ดเก่าไม่อ่าน — **ห้ามคืน `ADMIN_API_TOKEN` ตัวที่หลุด**
+- ไม่มี tag `before-activity-log` แล้ว: `export GIT_SHA=$(git rev-parse --short HEAD) && dc build && dc up -d` จาก tree ที่ revert แล้ว
+
+**ห้าม `docker compose down -v` ที่ `main/` ทุกกรณี** — ลบ `postgres-data` และ `mongo-data` ของ production (สำเนา `audit_fallback` / `http` สร้างใหม่จาก Postgres
+ไม่ได้) · และอย่ารัน `seed:demo:prod` เป็นส่วนของ deploy: มันล้าง `audit.audit_event` ของ production (Q12)
+
+### 10.7 เรื่องที่ BDI ยังไม่ตัดสิน — ค่าที่มีผลหลัง deploy นี้
+
+รวมจากป้าย **[ต้องตัดสิน]** ในเอกสารนี้และคำถามบนการ์ด (Qn = คำถามในแผน §12) — deploy ได้โดยไม่ต้องรอคำตอบ ค่าข้างล่างคือสิ่งที่ production ทำจนกว่าจะตัดสิน:
+
+| เรื่อง | ค่าที่ใช้อยู่ | เปลี่ยนที่ |
+|---|---|---|
+| ที่เก็บบันทึกตัวจริง (Q1) | Postgres `audit_event` เป็นตัวจริง · Mongo เป็นสำเนาค้นได้และที่เก็บ error | ออกแบบใหม่ |
+| retention และเพดาน (Q3 · 3.9 · 7.3) | กิจกรรมทางธุรกิจไม่ลบ (ตัด IP/UA ที่ 365 วัน) · auth session admin-access 400 วัน · การเรียก admin ที่ token ไม่ผ่าน 90 วัน · error 90 วัน (เบราว์เซอร์ 30) · เพดาน 5,120 MB · Postgres ไม่มี retention | ตัวเลข `lib/log-retention.ts` + deploy · เพดาน `LOG_STORE_MAX_MB` ใน `.env` + สร้าง backend และ worker ใหม่ |
+| หมวดของ action (3.5) | วงจรคีย์เปิดใช้งานทั้งหมดเป็น `invitation` · `REQUEST_ASSIGNED` เป็น `review` · token ที่ถูกปฏิเสธเป็น `admin-access` | `CATEGORY_BY_ACTION` + deploy + rebuild สำเนา (3.8) |
+| เลขบัตรในแถว Postgres เดิม (Q4) · อีเมลที่พิมพ์ตอน login ล้ม (Q11) | ไม่ปิดใน Postgres — ปิดในสำเนา Mongo · diff ใหม่ของการ์ดนี้ปิดตั้งแต่เขียน | งานแยก (สคริปต์ + backup ก่อน) |
+| ใครอ่าน log (Q5) · เหตุผลบังคับ (Q6) | ผู้ถือ `LOG_READ_TOKEN` ที่ได้รับใน 10.2 · เหตุผลบังคับที่ `activity` `timeline` `trace` | token: `.env` + สร้าง backend ใหม่ · เหตุผล: โค้ด |
+| ผู้รับอีเมลสรุป (Q7) · error ของเบราว์เซอร์ลงอีเมลไหม (5.14) | ตาม `ERROR_ALERT_EMAILS` (ว่าง = ไม่ส่ง) · issue ของเบราว์เซอร์ลงได้ไม่เกิน 5 ต่อ 6 ชั่วโมง ไม่มีข้อความของมัน | `.env` + สร้าง delivery-worker ใหม่ · เบราว์เซอร์: โค้ด |
+| พฤติกรรมของ process (Q8) · เก็บ error ของเบราว์เซอร์ (Q9) · บันทึก GET ของ admin (Q10) | `unhandledRejection` เก็บแล้วรันต่อ (`uncaughtException` ยังปิด process) · เปิดทั้งสองอย่าง | โค้ด |
+| `seed:demo:prod` บน production (Q12) | ยังรันได้ และล้าง `audit_event` ใน Postgres ทุกครั้ง — สำเนาใน Mongo เหลืออยู่ | การ์ดแยก |
+| IP ใน audit (2.6 · 5.12) | เชื่อ `X-Forwarded-For` ตัวท้าย (`trust proxy 1`) — ข้อ 5 ของ 10.5 บอกว่า Cloudflare ต่อท้ายที่อยู่จริงไหม | โค้ด (`cf-connecting-ip` หลัง flag) |
+| จำกัด `/api/admin/*` ทางเครือข่าย (Q17) | ยังไม่ทำ — API อ่าน log เรียกจากอินเทอร์เน็ตผ่าน `bdi-api` ได้ด้วย token ใบเดียว | infra: Cloudflare Access หรือ bind `127.0.0.1:4000` |
+| ความเสี่ยงที่เหลือของเครื่องนี้ (Q13) · ชุด PDPA (หมวด 9) | ยอมรับไว้ก่อนสำหรับช่วง SIT · รอ DPO ตอบ 9.8 | DPO |
+| incident `0d0a0d4` | admin token หมุนใน 10.2 · อีเมล 16 รายการและเลขบัตร 2,000 เลขในประวัติเป็นสาธารณะแล้ว — การประเมินตาม ม.37(4) ยังเปิด | DPO |
