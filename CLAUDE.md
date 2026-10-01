@@ -1459,11 +1459,15 @@ reports `onRequestError` plus the process's unhandled rejections (through
 `ApiError` — the backend already captured every 5xx — except the proxy's own 502
 `backend_unreachable`, which the backend never saw: that one is queued in
 `sessionStorage` (`bdi.pendingErrorReports`, five at most) and sent after the next API call
-that succeeds, so the reference in the toast is findable (Postman G6). A full queue drops a
-reference from a call made with `{ background: true }` (the 15-second `/state` poller, the bell,
-`/api/auth/me`, logout) before any reference a user was shown; until 2026-10-01 it dropped the
-oldest, so a backend outage of a minute or so under an open detail page pushed the toast's
-reference out. A new call that swallows its own error should pass that flag. **A dev checkout
+that succeeds, so the reference in the toast is findable (Postman G6). A full queue drops the
+references nobody saw first, and it judges that from the page, not from the caller: for five
+seconds after a 502 a `MutationObserver` watches for the reference to appear anywhere in the DOM
+(a toast, the login page's inline error), and the newest reference that did is dropped last.
+Until 2026-10-01 it dropped the oldest, so five failed 15-second `/state` polls under an open
+detail page pushed the toast's reference out; the first fix counted every call not flagged
+`{ background: true }` as seen, and the list, summary and detail loads of one detail↔list round
+trip, whose toasts have fixed text, did the same. Flagging callers is what failed twice, so the
+flag now only spares the watch; a new silent call does not need it. **A dev checkout
 does not take this path by default**: `new-dev.sh` writes `NEXT_PUBLIC_API_URL=http://localhost:41N0`,
 so the browser calls the backend directly and a stopped backend gives a status-0
 "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้" with no reference, and nothing is queued (status 0 is deliberately not

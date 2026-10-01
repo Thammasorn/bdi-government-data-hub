@@ -6,7 +6,7 @@
  *   - **ไม่รายงาน `ApiError`** ยกเว้น `backend_unreachable` — 4xx เป็นเรื่องของคำขอ 5xx backend เก็บไว้เองแล้วพร้อมรหัสอ้างอิง
  *     ส่วน 502 ของ proxy คือคำขอที่ backend ไม่เคยเห็น จึงต้องมาจากที่นี่ แต่ส่งตอนนั้นไม่ได้ (backend ล่มอยู่) — เก็บไว้ใน
  *     `sessionStorage` (`bdi.pendingErrorReports` ไม่เกิน 5 รายการ ไม่เขียนอะไรอื่นลงไป) แล้วส่งหลังคำขอ API ถัดไปที่สำเร็จ
- *     เต็มแล้วตัดรหัสของคำขอเบื้องหลัง (`background` ใน lib/api.ts — ตัว poll ทุก 15 วินาที กระดิ่ง ฯลฯ) ก่อนรหัสที่ผู้ใช้เห็น
+ *     เต็มแล้วตัดรหัสที่ไม่เคย**ขึ้นจอ**ก่อน — ดูจากหน้าเว็บจริง ไม่ใช่จากว่าใครเรียก (`queueProxyFailure`)
  *   - ส่งแค่ `location.pathname` ไม่เคยส่ง query hash หรือค่าใด ๆ จาก `sessionStorage` ของหน้า (`?token=` ของหน้า activate,
  *     `?code&state` ของ ThaID) path ของคำขอ API ห้าตัวล่าสุดก็ตัด query ทิ้ง (`noteApiCall`) และ URL ที่โผล่ในข้อความหรือ stack
  *     ของ error เองก็เหลือแค่ path (`withoutUrlQueries`)
@@ -35,6 +35,11 @@ const MAX_PER_PAGE = 10;
 const MAX_REFERENCED_PER_PAGE = 10;
 const PENDING_KEY = "bdi.pendingErrorReports";
 const PENDING_MAX = 5;
+/**
+ * รหัสที่เพิ่งเข้าคิวถูกเฝ้าดูว่าขึ้นจอไหมนานเท่านี้ (`watchForShown`) และระหว่างนี้ยังไม่นับว่า "ไม่มีใครเห็น" — toast หรือข้อความ
+ * ในหน้าเรนเดอร์ภายในเฟรมสองเฟรมหลังคำขอล้ม ห้าวินาทีเผื่อเครื่องช้า
+ */
+const SHOW_WINDOW_MS = 5_000;
 const LAST_API_MAX = 5;
 
 export type ReportMechanism = "window" | "unhandledrejection" | "global-error" | "proxy";
@@ -50,8 +55,10 @@ interface PendingReport {
   reference: string;
   pathname: string;
   at: string;
-  /** มาจากคำขอเบื้องหลังที่ไม่แสดง error (`background` ใน lib/api.ts) — ไม่มีใครเห็นรหัสนี้ คิวเต็มแล้วตัวนี้ออกก่อน */
+  /** มาจากคำขอที่บอกเองว่าไม่แสดง error ของตัวเอง (`background` ใน lib/api.ts) — ไม่ต้องรอดูว่าจะขึ้นจอไหม */
   background?: boolean;
+  /** รหัสนี้ขึ้นจอแล้ว (toast ข้อความในหน้า — ที่ไหนก็ได้ในหน้าเว็บ, `watchForShown`) ผู้ใช้อาจอ่านให้เจ้าหน้าที่ฟัง */
+  shown?: boolean;
 }
 
 let sent = 0;
@@ -159,10 +166,18 @@ export function reportError(
  * 502 ของ proxy (`backend_unreachable`) — เก็บไว้ส่งทีหลัง ตอนนี้ backend ล่มอยู่ ส่งไปก็ไม่ถึง ไม่เกิน 5 รายการ
  * รหัสอ้างอิงเดียวกับที่ผู้ใช้เห็นใน toast ทำให้เจ้าหน้าที่ค้นเจอได้ (Postman G6 — trace แสดงเป็น `reports`)
  *
- * **เต็มแล้วตัดรหัสของคำขอเบื้องหลังที่เก่าที่สุดก่อน** (`background` — ไม่มีใครเห็นรหัสนั้น) ไม่มีเหลือค่อยตัดตัวเก่าที่สุด
- * เดิมตัดตัวเก่าที่สุดเสมอ หน้ารายละเอียดคำขอ poll `/state` ทุก 15 วินาที (lib/use-request-watch.ts) และทุกครั้งที่ล้มก็ได้รหัส
- * ใหม่ backend ล่มนานกว่าราวหนึ่งนาทีหลังผู้ใช้กดแล้วเห็น toast รหัสของ poll ห้าตัวก็ดันรหัสที่ผู้ใช้อ่านให้เจ้าหน้าที่ฟังออกไป
- * เหลือแค่ในบรรทัด `[frontend-proxy]` ของ stdout ของ Next — G6 ค้นไม่เจอ
+ * **คิวเต็มแล้วตัดตามว่ารหัสขึ้นจอหรือเปล่า** (`evictionRank`) ไม่ใช่ตามว่าใครเรียก: รหัสที่เข้าคิวถูกเฝ้าดูห้าวินาที
+ * (`watchForShown`) ถ้าโผล่ที่ไหนในหน้าเว็บ — toast ข้อความใต้ฟอร์ม หน้า login — ก็ถูกจดว่าขึ้นจอ ลำดับการตัด:
+ *   1. รหัสที่ไม่ขึ้นจอ เก่าสุดก่อน (คำขอ `background` หรือเข้าคิวเกินห้าวินาทีแล้วไม่มีใครเห็น)
+ *   2. รหัสที่ขึ้นจอแล้ว เก่าสุดก่อน — ยกเว้นตัวล่าสุดที่ขึ้นจอ
+ *   3. รหัสที่เพิ่งเข้าคิวไม่ถึงห้าวินาที (ยังอาจกำลังจะขึ้นจอ)
+ *   4. รหัสล่าสุดที่ขึ้นจอ — ตัวที่ผู้ใช้น่าจะอ่านให้เจ้าหน้าที่ฟังที่สุด ออกเป็นตัวสุดท้าย
+ *
+ * เดิม (f8da457) ตัดคำขอที่ติด `{ background: true }` ก่อน แล้วถือว่าคำขออื่นทุกตัวผู้ใช้เห็น แต่การโหลดรายการ สรุป รายละเอียด และ
+ * รายชื่อผู้เชี่ยวชาญของหน้าที่ผู้ใช้เปิดผ่านล้มด้วย toast ข้อความตายตัว ("โหลดข้อมูลไม่สำเร็จ") หรือเงียบ ๆ — ไม่เคยแสดงรหัส แต่
+ * นับว่าเห็น เข้าหน้ารายละเอียดแล้วกลับหน้ารายการหนึ่งรอบระหว่าง backend ล่มก็ดันรหัสใน toast ออกจากคิว G6 ตอบว่าไม่พบ (ตรวจ
+ * ขั้น 9 แบบค้าน 2026-10-01) ก่อนหน้านั้นตัดตัวเก่าสุดเสมอ ตัว poll `/state` ทุก 15 วินาทีห้าครั้งก็พอ การติดป้ายทีละที่เรียกคือ
+ * จุดที่พลาดทั้งสองครั้ง จึงดูจากหน้าเว็บแทน `background` ยังมีไว้บอกว่าไม่ต้องรอดู
  */
 export function queueProxyFailure(reference: string | undefined, options: { background?: boolean } = {}): void {
   try {
@@ -176,13 +191,82 @@ export function queueProxyFailure(reference: string | undefined, options: { back
       ...(options.background ? { background: true } : {}),
     });
     while (pending.length > PENDING_MAX) {
-      const unseen = pending.findIndex((item) => item.background === true);
-      pending.splice(unseen >= 0 ? unseen : 0, 1);
+      const now = Date.now();
+      const newestShown = pending.map((item) => item.shown === true).lastIndexOf(true);
+      let victim = 0;
+      for (let index = 1; index < pending.length; index += 1) {
+        if (evictionRank(pending[index]!, index, newestShown, now) < evictionRank(pending[victim]!, victim, newestShown, now)) {
+          victim = index;
+        }
+      }
+      pending.splice(victim, 1);
     }
     writePending(pending);
+    // คำขอที่ไม่บอกว่าเงียบ — ดูว่ารหัสนี้จะขึ้นจอไหม (เริ่มก่อน `throw` ใน lib/api.ts ตัวจับ error ของหน้ายังไม่ได้วาดอะไร)
+    if (!options.background) watchForShown();
   } catch {
     // sessionStorage ใช้ไม่ได้ (โหมดส่วนตัว เต็ม) — รายงานนั้นหายไป
   }
+}
+
+/** ลำดับการตัดเมื่อคิวเต็ม (เลขน้อยออกก่อน เท่ากันตัวเก่าออกก่อน) — ข้อ 1–4 ของ `queueProxyFailure` */
+function evictionRank(item: PendingReport, index: number, newestShown: number, now: number): number {
+  if (item.shown === true) return index === newestShown ? 3 : 1;
+  const fresh = item.background !== true && now - Date.parse(item.at) < SHOW_WINDOW_MS;
+  return fresh ? 2 : 0;
+}
+
+let shownObserver: MutationObserver | null = null;
+let shownTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * เฝ้าหน้าเว็บ `SHOW_WINDOW_MS` นับจาก 502 ล่าสุด — ข้อความที่เพิ่มหรือเปลี่ยนในหน้า (toast, ข้อความใต้ฟอร์ม) ที่มีรหัสในคิวซึ่งยังไม่
+ * ขึ้นจอ ทำให้รหัสนั้นถูกจดว่า `shown` ดูที่ DOM ไม่ใช่ที่ตัวเรียก: หน้าไหนแสดง `ApiError.message` ด้วยวิธีไหนก็ตามก็นับ และหน้าที่
+ * แสดงข้อความตายตัวก็ไม่นับ โดยไม่ต้องแก้หน้าใดเลย นอกช่วงนี้ไม่มีตัวเฝ้า (ไม่มีค่าใช้จ่ายตอนระบบปกติ)
+ */
+function watchForShown(): void {
+  try {
+    if (typeof MutationObserver === "undefined" || typeof document === "undefined" || !document.body) return;
+    if (!shownObserver) {
+      shownObserver = new MutationObserver((records) => {
+        try {
+          const unshown = readPending().filter((item) => item.shown !== true);
+          if (unshown.length === 0) return;
+          const texts: string[] = [];
+          for (const record of records) {
+            if (record.type === "characterData") texts.push(record.target.textContent ?? "");
+            else record.addedNodes.forEach((node) => texts.push(node.textContent ?? ""));
+          }
+          const text = texts.join("\n").toLowerCase();
+          const found = unshown.filter((item) => text.includes(item.reference.toLowerCase())).map((item) => item.reference);
+          if (found.length > 0) markShown(found);
+        } catch {
+          // ไม่มีอะไรต้องทำ
+        }
+      });
+      shownObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+    }
+    if (shownTimer) clearTimeout(shownTimer);
+    shownTimer = setTimeout(() => {
+      shownObserver?.disconnect();
+      shownObserver = null;
+      shownTimer = null;
+    }, SHOW_WINDOW_MS);
+  } catch {
+    // ไม่มีตัวเฝ้า = รหัสนั้นนับว่าไม่ขึ้นจอหลังห้าวินาที (ข้อ 1 ของ `queueProxyFailure`)
+  }
+}
+
+function markShown(references: string[]): void {
+  const pending = readPending();
+  let changed = false;
+  for (const item of pending) {
+    if (item.shown !== true && references.includes(item.reference)) {
+      item.shown = true;
+      changed = true;
+    }
+  }
+  if (changed) writePending(pending);
 }
 
 /** ส่งรายงาน 502 ที่ค้างไว้ — lib/api.ts เรียกหลังคำขอที่สำเร็จ (backend กลับมาแล้ว) ล้างคิวก่อนส่ง จึงไม่ส่งซ้ำ */
@@ -219,12 +303,14 @@ function readPending(): PendingReport[] {
             (item): item is PendingReport =>
               !!item && typeof item.reference === "string" && typeof item.pathname === "string" && typeof item.at === "string",
           )
-          // เก็บแค่ช่องที่รู้จัก — ค่าที่หน้าอื่นหรือรุ่นก่อนเขียนไว้ไม่ติดกลับลงไป · รายการของรุ่นก่อนไม่มี `background` = ผู้ใช้เห็น
+          // เก็บแค่ช่องที่รู้จัก — ค่าที่หน้าอื่นหรือรุ่นก่อนเขียนไว้ไม่ติดกลับลงไป · รายการของรุ่นก่อนไม่มี `shown` = ไม่รู้ว่าขึ้นจอ
+          // ไหม เข้าคิวไปนานแล้วจึงนับเป็นข้อ 1 ของ `queueProxyFailure`
           .map((item) => ({
             reference: item.reference,
             pathname: item.pathname,
             at: item.at,
             ...(item.background === true ? { background: true } : {}),
+            ...(item.shown === true ? { shown: true } : {}),
           }))
       : [];
   } catch {
