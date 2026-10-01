@@ -367,8 +367,9 @@ export const env = {
      *
      * worker เทียบค่านี้ทุกชั่วโมงและตอนบูต (workers/log-upkeep.ts) เกินแล้วตั้งธง `overQuota` ใน relay_state ซึ่ง
      * backend กับ worker อ่านเป็นสถานะ `over_quota` (lib/log-store.ts) และระหว่างนั้นเก็บแค่ตัวนับของ issue (สำเนา audit กับ
-     * บันทึกการเรียก admin API ที่ token ผ่านยังเก็บต่อ) ธงลงเมื่อขนาดต่ำกว่า 90% ของเพดาน · สิ่งที่ใครก็ส่งได้ (รายงานเบราว์เซอร์
-     * การเรียก admin API ที่ token ไม่ผ่าน) กินได้ไม่เกิน 20% ของค่านี้ต่อ process (lib/untrusted-budget.ts) จึงพาธงขึ้นเองไม่ได้
+     * บันทึกการเรียก admin API ที่ token ผ่านยังเก็บต่อ ไม่เกินส่วนยกเว้น 5% ต่อ process) ธงลงเมื่อขนาดต่ำกว่า 90% ของเพดาน · สิ่งที่ใครก็
+     * ส่งได้ (รายงานเบราว์เซอร์ การเรียก admin API ที่ token ไม่ผ่าน error ของคำขอที่ไม่มีตัวตน) กินได้ไม่เกิน 25% ของค่านี้ต่อ
+     * process (lib/untrusted-budget.ts) จึงพาธงขึ้นเองไม่ได้
      */
     maxMb: positiveNumber("LOG_STORE_MAX_MB", NODE_ENV === "production" ? 5120 : 512),
     /**

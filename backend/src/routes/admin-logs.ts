@@ -61,7 +61,7 @@ import { AuditAction, AuditSubject, logAudit, recordLogRead } from "../lib/audit
 import { captureError, errorCaptureStats } from "../lib/error-capture.js";
 import { MONGO_COMMAND_MAX_MS, logDb, logStoreStatus } from "../lib/log-store.js";
 import { maskCidText, scrubClipped } from "../lib/redact.js";
-import { untrustedBudgetStats } from "../lib/untrusted-budget.js";
+import { adminTokenAllowanceStats, untrustedBudgetStats } from "../lib/untrusted-budget.js";
 import { requireLogReader, requireReadReason } from "../middleware/auth.js";
 
 export const adminLogRouter = Router();
@@ -1061,6 +1061,8 @@ adminLogRouter.get("/status", async (req, res) => {
     // รายงานเบราว์เซอร์ที่ตัวเต็มไม่ได้เก็บเพราะงบไบต์หมด · งบของสิ่งที่ใครก็ส่งได้ต่อชนิด (lib/untrusted-budget.ts) — ของ process นี้
     browserOverBudget: stats.browserOverBudget,
     untrustedBudget: untrustedBudgetStats(),
+    // ส่วนที่บันทึกการเรียกด้วย admin token ที่ผ่านเขียนเกินเพดานขนาดได้ (ถัง `admin-token` — หักเฉพาะตอน over_quota) — ของ process นี้
+    adminTokenOverQuotaAllowance: adminTokenAllowanceStats(),
     writing: stats.writing,
     hashKey: env.logStore.hashKey ? "set" : "missing",
     relayLagSeconds: null,

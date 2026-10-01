@@ -1798,16 +1798,29 @@ there. Unknown server actions, undecodable URLs and bad `Next-Url` headers never
 - **Anything a caller without credentials can make the backend store needs a byte budget, not
   only a per-minute cap.** A rate cap times a retention of 30 to 400 days has no practical bound,
   and reaching `LOG_STORE_MAX_MB` switches off what matters more: every server error event, and
-  with it the sustained-5xx alert, which counts events. Browser reports and `/api/admin*` calls
-  whose token was rejected or never checked (`via: "ANONYMOUS"`) draw from
-  `lib/untrusted-budget.ts`, 20% of the ceiling between them per backend process. Anonymous admin
-  access records live 90 days, not their category's 400 (`ANONYMOUS_ADMIN_ACCESS_DAYS`), and their
-  summary never closes to open another; it truncates its keys instead. Admin access records whose
-  token was **accepted** are written even over the ceiling, like audit fallbacks, because they are
-  the trail step 8 exists for. Until 2026-10-01, token-less calls carrying random `?cid=` /
-  `?q=` / `?email=` values, or random tokens, opened a new summary every 20 to 67 calls with no
-  limit. So filling the store was the first step to reading every CID with a leaked token without
-  leaving a record.
+  with it the sustained-5xx alert, which counts events. Three things draw from
+  `lib/untrusted-budget.ts`, 25% of the ceiling between them per backend process: browser reports,
+  `/api/admin*` calls whose token was rejected or never checked (`via: "ANONYMOUS"`), and error
+  events of requests with no credential (`isAnonymousRequest()` in `lib/context.ts`: no session
+  actor, no accepted admin or log token). The last one covers any route that answers 5xx to
+  anyone, such as `POST /api/auth/thaid/start` → 501 wherever ThaID is not configured. Until
+  2026-10-01 its reference stubs (`keepReference()`) were charged to nothing and limited only to
+  120 a minute, about 170,000 a day that live 90 days. Full events stop at the reserve and stubs
+  spend it; past that only the issue counter moves, and a route only anonymous callers reach then
+  stores no events, so its sustained-5xx alert goes quiet too. Anonymous stubs also get at most 60
+  of the 120 a minute, so signed-in users keep the other half. "Anonymous" is decided at capture
+  time: a route that never reads the session (`/api/auth/*`) is anonymous even with a cookie, and
+  so is a failure inside `requireAuth` itself. Anonymous admin access records live 90 days, not
+  their category's 400 (`ANONYMOUS_ADMIN_ACCESS_DAYS`), and their summary never closes to open
+  another; it truncates its keys instead. Admin access records whose token was **accepted** are
+  written even over the ceiling, like audit fallbacks, because they are the trail step 8 exists
+  for. That exemption has its own bucket, though (`admin-token`, 5% of the ceiling over 400 days,
+  charged only while `over_quota`). When it runs out, singles fold into summaries that wait for
+  it, and summaries still waiting at shutdown are written anyway; `/status` shows it as
+  `adminTokenOverQuotaAllowance`. Before that, a leaked token's summaries closed and reopened
+  without limit (`SUMMARY_CLOSED_MS` 0), so the store grew past the ceiling with no bound. Until 2026-10-01, token-less calls carrying random `?cid=` / `?q=` / `?email=`
+  values, or random tokens, opened a new summary every 20 to 67 calls with no limit. So filling
+  the store was the first step to reading every CID with a leaked token without leaving a record.
 
 
 ## Notion

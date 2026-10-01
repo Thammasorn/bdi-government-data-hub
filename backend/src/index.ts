@@ -94,6 +94,9 @@ function parseJsonBody(req: Request, res: Response, next: NextFunction) {
  * error ที่ถูกเก็บแต่ติดเพดานการสุ่มเก็บ (50 ตัวต่อชั่วโมงของ issue — คนที่ห้าสิบเอ็ดที่เจอ `no_reviewer` ในชั่วโมงนั้น)
  * ไม่มีเอกสารของตัวเอง `keepReference()` เก็บตัวย่อของมันแทน รหัสจึงยังค้นเจอ ยกเว้นตอน log store เกินเพดานขนาด
  * คิวเต็ม หรือตัวย่อเกิน 120 ตัวต่อนาที ซึ่งเหลือแค่ตัวนับของ issue กับบรรทัด `[capture] … ref=` ใน stdout
+ *
+ * คำขอที่ไม่มีตัวตน (501 ของ `/api/auth/thaid/start` ตอบใครก็ได้) ตัวเต็มและตัวย่อหักงบไบต์ `anonymous-request`
+ * (lib/untrusted-budget.ts) งบหมดแล้วเหลือแค่ตัวนับ — route ที่ตอบ 5xx ให้คนที่ไม่มีอะไรเลยต้องไม่เป็นทางเติม error_events ถึงเพดาน
  */
 class RouteServerError extends Error {
   constructor(status: number, code: string, message: string | null) {

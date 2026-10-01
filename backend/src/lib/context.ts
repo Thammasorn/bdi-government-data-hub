@@ -215,6 +215,20 @@ export function setSourceComponent(component: string) {
   if (store) store.sourceComponent = component;
 }
 
+/**
+ * คำขอ HTTP ที่ยังไม่มีตัวตนที่ระบบตรวจแล้ว ณ ตอนที่ถาม — ไม่มีผู้ใช้จาก session (`requireAuth` → `setActor`) ไม่มี admin token ที่ผ่าน
+ * (`adminTokenFp`) และไม่มี log token ที่ผ่าน (`requireLogReader` ตั้ง `log-api` หลังตรวจแล้วเท่านั้น) · งานนอกคำขอ (worker, สคริปต์ —
+ * `runWithContext` ไม่มี `method`) และไม่มีบริบทเลย ไม่ใช่คำขอ จึงเป็น false
+ *
+ * lib/error-capture.ts ใช้ตัดสินว่า error event หักงบไบต์ของคำขอที่ไม่มีตัวตน (lib/untrusted-budget.ts) ไหม — ถามตอนเก็บ ไม่ใช่ตอน
+ * คำขอเข้า: route ที่ไม่อ่าน session (`/api/auth/*`) เป็นคำขอที่ไม่มีตัวตนแม้ผู้เรียกถือ cookie อยู่ และ error ที่เกิดก่อน
+ * `requireAuth` ตัดสินเสร็จ (ฐานข้อมูลล่มตอนอ่าน session) ก็เป็นของคำขอที่ไม่มีตัวตน
+ */
+export function isAnonymousRequest(ctx: RequestContext | undefined): boolean {
+  if (!ctx || ctx.method === null) return false;
+  return ctx.actorId === null && ctx.adminTokenFp === null && ctx.sourceComponent !== "log-api";
+}
+
 /** requireAdminToken เรียกเมื่อ token ผ่าน — ดู `RequestContext.adminTokenFp` */
 export function setAdminTokenFp(fingerprint: string) {
   const store = storage.getStore();

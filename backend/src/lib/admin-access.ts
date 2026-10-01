@@ -50,6 +50,10 @@
  * (lib/error-capture.ts `enqueueAccessRecord`) งบหมดแล้วตัวเดี่ยวพับลงใบสรุป ใบสรุปรองบ (นับต่อ ไม่ทิ้ง) ใบที่ยังรองบตอนปิด
  * process หายไปพร้อม process — แถวใน Postgres ยังนับไว้
  *
+ * **token ที่ผ่านเก็บเกินเพดานได้แค่ส่วนยกเว้นของมัน** (ถัง `admin-token` ของ lib/untrusted-budget.ts — 5% ของเพดานต่ออายุ 400 วัน
+ * หักเฉพาะตอนเกินเพดาน) หมดแล้วเหมือนกัน: ตัวเดี่ยวพับลงใบสรุป ใบสรุปรองบ ต่างกันที่ใบที่รองบตอนปิด process ถูกเขียนโดยไม่หักงบ
+ * (`flushAdminAccessSummaries`) ร่องรอยของ token ที่ผ่านไม่มีที่อื่นให้นับ — Postgres มีแค่การเปลี่ยนแปลง ไม่มีการอ่าน
+ *
  * **ที่เกินเพดาน หรือที่คิวเต็มรับไม่ได้ ไม่หายเงียบ — พับลงบันทึกสรุป** (`metadata.summary: true`, หนึ่งใบต่อชนิด token ต่อ
  * ราวหนึ่งนาที `SUMMARY_AFTER_MS`) ซึ่งเก็บ key ค้นหาของทุกตัวที่พับ (`hashKeys` `relatedUserIds` `tokenFps` รวมกัน มีเพดาน)
  * subject ที่มี id, route กับจำนวน, status กับจำนวน และ IP เดิมทิ้งทั้งใบเหลือแค่ตัวเลข `suppressed_before` บนบันทึกถัดไป:
@@ -58,7 +62,7 @@
  * ทาง (ตรวจขั้น 8, 2026-10-01) สรุปอยู่ชั้นเดียวกับคำเตือนในคิว (lib/error-capture.ts) คิวยังเต็มก็ถือไว้แล้วลองใหม่
  * ปิด process ก็เขียนก่อน (`flushAdminAccessSummaries` ใน shutdown ของ index.ts) สิ่งที่สรุปเสีย: เวลาทีละคำขอ (เหลือช่วง
  * `first_at`–`last_at`) correlation id และ user agent · เกินเพดานขนาด (`over_quota`) token ที่ไม่ผ่านไม่เก็บเลยทั้งตัวเดี่ยวและสรุป
- * (plan §3) token ที่ผ่านเก็บต่อ
+ * (plan §3) token ที่ผ่านเก็บต่อภายในส่วนยกเว้นของมัน
  *
  * **ตัวที่เข้าคิวแล้วถูกเบียดออกก็พับด้วย** (`onAccessRecordEvicted` ของ lib/error-capture.ts — `evicted` ใน `/status`): ของที่ชั้นสูง
  * กว่ามาทีหลัง ซึ่งรวมบันทึกสรุปเอง ไล่ตัวเดี่ยวชั้น 1 ออกจากคิวที่เต็ม เดิมตัวนั้นหายไปเหลือแค่ตัวเลข — ตรวจขั้น 8 รอบสามเห็น
@@ -143,7 +147,8 @@ let window = { start: 0, accepted: 0, rejected: 0 };
  *   overCap    — เกินเพดานต่อนาที จึงพับลงบันทึกสรุป
  *   queueFull  — คิวเต็ม จึงพับลงบันทึกสรุป
  *   evicted    — เข้าคิวเป็นบันทึกเดี่ยวแล้ว (นับใน `recorded`) แต่ถูกของชั้นสูงกว่าเบียดออก จึงพับลงบันทึกสรุป
- *   overBudget — token ไม่ผ่าน และงบไบต์ของการเรียกแบบนั้นหมด (lib/untrusted-budget.ts) จึงพับลงบันทึกสรุป
+ *   overBudget — งบไบต์หมด จึงพับลงบันทึกสรุป (lib/untrusted-budget.ts): token ไม่ผ่าน (`anonymous-admin`) หรือ token ผ่านตอนเกิน
+ *                เพดานขนาด (`admin-token`)
  *   summaries  — บันทึกสรุปที่เข้าคิวแล้ว (ใบที่ถูกเบียดออกแล้วกลับมารอ นับใหม่ตอนเข้าคิวอีกครั้ง)
  *   pendingInSummary — การเรียกที่รออยู่ในสรุปที่ยังไม่เข้าคิว (รวมสรุปของ token ไม่ผ่านที่รองบอยู่)
  *   notStored  — ไม่ได้เก็บที่ไหนเลย: log store เกินเพดานขนาดและ token ไม่ผ่าน (ทั้งตัวเดี่ยวและที่อยู่ในสรุป)
@@ -344,7 +349,10 @@ function subjectOf(route: string | null, routeId: string | null): { type: string
 const SUMMARY_AFTER_MS = 60_000;
 /**
  * มีใบที่เต็มแล้วปิด — เข้าคิวในรอบถัดไปของ event loop ไม่รอครบนาที ใบที่รอจึงสะสมได้ก็ต่อเมื่อคิวรับไม่ได้ (Mongo ล่ม คิวเต็ม)
- * ไม่ใช่เพราะยิงเร็วกว่าตัวจับเวลา (0 ไม่ใช่ทันที: ถูกเรียกจากกลางลูปไล่ของในคิวได้ — `onEvicted`)
+ * หรืองบไบต์ไม่พอ ไม่ใช่เพราะยิงเร็วกว่าตัวจับเวลา (0 ไม่ใช่ทันที: ถูกเรียกจากกลางลูปไล่ของในคิวได้ — `onEvicted`)
+ *
+ * ปิดแล้วเปิดใบใหม่ได้ไม่จำกัดเฉพาะใต้เพดานขนาด ซึ่งทุกใบนับเข้าเพดานเหมือนข้อมูลอื่น เกินเพดานแล้วทุกใบหักส่วนยกเว้น `admin-token`
+ * (lib/error-capture.ts `enqueueAccessRecord`) หมดแล้วใบที่ปิดรองบ ไม่เกิน `SUMMARIES_PENDING_MAX` ใบ
  */
 const SUMMARY_CLOSED_MS = 0;
 /** คิวยังเต็ม (Mongo ล่มนาน คิวเต็มไปด้วย error) — ลองใหม่ถี่กว่านั้น ระหว่างนี้การเรียกใหม่พับเข้าใบเดิม */
@@ -569,10 +577,11 @@ function scheduleSummaries(ms: number): void {
  * เข้าคิวทุกใบที่รออยู่ รวมใบที่กำลังพับ — คิวเต็มก็กลับไปรอแล้วลองใหม่ log store ปิด หรือเกินเพดานขนาดกับใบของ token ที่ไม่ผ่าน
  * ก็ทิ้ง (นับใน `notStored`)
  * หยิบทั้งหมดออกก่อนแล้วค่อยเข้าคิว: ใบสรุปที่เข้าคิวเบียดตัวเดี่ยวออกได้ ตัวนั้นพับลงใบใหม่ (`onEvicted`) ไม่ใช่ใบที่กำลังส่ง
- * ซึ่งเอกสารของมันสร้างเสร็จไปแล้ว ใบของ token ที่ไม่ผ่านที่งบไบต์ไม่พอก็กลับไปรอ — รับการเรียกต่อ (ตัวนับเดิน key ถูกตัด) แล้วลองใหม่
- * รอบหน้า ไม่ทิ้งตัวนับ ระหว่างนั้นทั้งช่วงจึงเป็นใบเดียวที่ `first_at`–`last_at` กว้างขึ้น
+ * ซึ่งเอกสารของมันสร้างเสร็จไปแล้ว ใบที่งบไบต์ไม่พอก็กลับไปรอ — รับการเรียกต่อ (ตัวนับเดิน key ถูกตัด) แล้วลองใหม่รอบหน้า ไม่ทิ้ง
+ * ตัวนับ ระหว่างนั้นทั้งช่วงจึงเป็นใบเดียวที่ `first_at`–`last_at` กว้างขึ้น (ของ token ที่ไม่ผ่านเสมอ ของ token ที่ผ่านเฉพาะตอนเกิน
+ * เพดานขนาด — รอได้ไม่เกินยี่สิบใบต่อชนิด token) · `final` = ตอนปิด process (`flushAdminAccessSummaries`)
  */
-function emitSummaries(): void {
+function emitSummaries(final = false): void {
   const work = [...summaries];
   summaries.clear();
   // คิวเต็มลองใหม่ถี่ (Mongo กลับมาเมื่อไรก็ได้) งบไบต์เติมช้า — ลองใหม่ตามรอบปกติ มีทั้งสองแบบก็เอาตัวที่เร็วกว่า
@@ -584,7 +593,7 @@ function emitSummaries(): void {
       try {
         doc = summaryRecord(kind === "accepted", summary);
         fitDocument(doc);
-        outcome = enqueueAccessRecord(doc, true);
+        outcome = enqueueAccessRecord(doc, true, final);
       } catch {
         // สร้างไม่ได้ก็สร้างไม่ได้ทุกรอบ — ทิ้ง ไม่วนลองตลอดไป
       }
@@ -661,7 +670,8 @@ function summaryRecord(accepted: boolean, summary: Summary): ActivityDoc {
 
 /**
  * เข้าคิวสรุปที่ค้างอยู่ทันที — shutdown ใน index.ts เรียกก่อนเขียนคิวครั้งสุดท้าย ตัวจับเวลาของสรุปถูก `unref` ไว้ ถ้าไม่เรียก
- * การเรียกที่พับไว้ในนาทีสุดท้ายก่อน deploy หายไปกับ process
+ * การเรียกที่พับไว้ในนาทีสุดท้ายก่อน deploy หายไปกับ process · ใบของ token ที่ผ่านที่รอส่วนยกเว้นตอนเกินเพดานเข้าคิวโดยไม่หักงบ
+ * (`final` ของ `enqueueAccessRecord` — ไม่เกินยี่สิบใบ) ใบของ token ที่ไม่ผ่านที่รองบยังหายไปพร้อม process เหมือนเดิม
  */
 export function flushAdminAccessSummaries(): void {
   if (summaryTimer) {
@@ -670,7 +680,7 @@ export function flushAdminAccessSummaries(): void {
   }
   try {
     // ใบสรุปที่เข้าคิวเบียดตัวเดี่ยวออกได้ ตัวนั้นพับลงใบใหม่ — ส่งซ้ำอีกไม่กี่รอบให้ใบใหม่นั้นเข้าคิวด้วย
-    for (let round = 0; round < 3 && summaries.size > 0; round++) emitSummaries();
+    for (let round = 0; round < 3 && summaries.size > 0; round++) emitSummaries(true);
   } catch {
     // ตอนปิด process — ไม่มีอะไรให้ทำต่อ
   }

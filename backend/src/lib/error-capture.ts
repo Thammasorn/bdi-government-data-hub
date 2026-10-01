@@ -15,14 +15,16 @@
  *     แล้วพอเขียนได้อีกครั้งจะมี event สรุปหนึ่งตัวว่า "ทิ้งไป N รายการระหว่าง X ถึง Y"
  *   - เก็บ event ทีละตัวได้ไม่เกิน 50 ต่อ fingerprint ต่อชั่วโมง และไม่เกิน 600 ต่อ process ต่อนาที — เกินนั้นเดินแค่ตัวนับ
  *     ของ issue (error ที่วนซ้ำหมื่นครั้งยังเห็นว่าหมื่น แต่เก็บตัวอย่างแค่ 50) fatal ไม่ติดเพดานสองตัวนี้
- *     คำขอที่ติดเพดานแล้วตอบ 5xx พร้อมรหัสอ้างอิงได้**ตัวย่อ**หนึ่งตัวแทน ให้รหัสนั้นค้นเจอ (`keepReference`, ≤120/นาที)
+ *     คำขอที่ติดเพดานแล้วตอบ 5xx พร้อมรหัสอ้างอิงได้**ตัวย่อ**หนึ่งตัวแทน ให้รหัสนั้นค้นเจอ (`keepReference`, ≤120/นาที ในนั้นของ
+ *     คำขอที่ไม่มีตัวตนไม่เกิน 60)
  *   - log store เกินเพดานขนาด (สถานะ `over_quota` ที่ worker ตั้ง) — เดินแค่ตัวนับ ไม่เก็บ event รายงานจากเบราว์เซอร์ไม่สร้าง
  *     issue ใหม่ด้วย (นับเข้าได้แค่ issue ที่มีอยู่แล้ว) สิ่งที่ยังเก็บต่อ: สำเนา audit บันทึกของ process และบันทึกการเรียก admin API
- *     ที่ token ผ่าน (`enqueueAccessRecord`)
+ *     ที่ token ผ่าน (`enqueueAccessRecord` — ไม่เกินส่วนยกเว้น `admin-token` ของ lib/untrusted-budget.ts)
  *   - รายงานจากเบราว์เซอร์สร้าง issue ใหม่ได้ไม่เกิน 100 fingerprint ต่อ process ต่อชั่วโมง (`BROWSER_FINGERPRINTS_PER_HOUR` —
  *     ยกเว้นสองตัวที่ตั้งชื่อเอง) รายงานที่มีรหัสอ้างอิงยังเก็บตัว event ได้แม้ issue ไม่ถูกสร้าง ให้รหัสนั้นค้นเจอ (`captureReport`)
- *   - รายงานจากเบราว์เซอร์และบันทึกการเรียก admin API ที่ token ไม่ผ่าน กินที่ได้ไม่เกินงบไบต์ของตัวเอง (lib/untrusted-budget.ts)
- *     — สิ่งที่ใครก็ส่งได้ต้องพาเพดานขนาดไปถึงเองไม่ได้ ไม่งั้นมันปิด error ของ server ไปด้วย
+ *   - สิ่งที่ใครก็ส่งได้กินที่ได้ไม่เกินงบไบต์ของตัวเอง (lib/untrusted-budget.ts): รายงานจากเบราว์เซอร์ บันทึกการเรียก admin API ที่
+ *     token ไม่ผ่าน และ error event ของคำขอที่ไม่มีตัวตน (`keep` / `keepReference` — ตัวเต็มและตัวย่อ) — ต้องพาเพดานขนาดไปถึงเอง
+ *     ไม่ได้ ไม่งั้นมันปิด error ของ server ไปด้วย งบหมดแล้วเดินแค่ตัวนับของ issue
  *   - issue ที่รอเขียนไม่เกิน 1,000 fingerprint ในนั้นเป็นของเบราว์เซอร์ได้ไม่เกิน 200 และ fatal ได้ที่เสมอ (`roomForIssue`)
  *   - เอกสารหนึ่งตัวไม่เกิน 64 KB
  *
@@ -41,10 +43,10 @@ import type { AnyBulkWriteOperation, Db } from "mongodb";
 
 import { env } from "../env.js";
 import { bsonSize } from "./bson-size.js";
-import { currentContext, referenceOf, type Breadcrumb, type RequestContext } from "./context.js";
+import { currentContext, isAnonymousRequest, referenceOf, type Breadcrumb, type RequestContext } from "./context.js";
 import { logDb, logStoreStatus } from "./log-store.js";
 import { bodyShape, headlineOf, requestTarget, scrubClipped, scrubError, type ScrubbedError } from "./redact.js";
-import { indexCost, refundUntrustedBytes, takeUntrustedBytes } from "./untrusted-budget.js";
+import { indexCost, refundUntrustedBytes, takeUntrustedBytes, type BudgetKind } from "./untrusted-budget.js";
 
 export type ErrorLevel = "fatal" | "error" | "warning";
 /** error มาถึงทางไหน — `captured` คือโค้ดของเราเรียกเองที่จุดที่กลืน error ไว้ */
@@ -200,7 +202,8 @@ interface IssueDelta {
 
 /**
  * `activity` = สำเนาของแถว audit ที่ Postgres ไม่รับ (สำเนาเดียวที่เหลือ) · `access` = บันทึกการเรียก admin API
- * (lib/admin-access.ts) — ลง collection เดียวกัน แต่ `access` ถูกทิ้งก่อนเกือบทุกอย่างเมื่อคิวเต็ม และไม่เขียนตอนเกินเพดานขนาด
+ * (lib/admin-access.ts) — ลง collection เดียวกัน แต่ `access` ถูกทิ้งก่อนเกือบทุกอย่างเมื่อคิวเต็ม และตอนเกินเพดานขนาดเขียนเฉพาะ
+ * ของ token ที่ผ่าน (`enqueueAccessRecord`)
  */
 type RingItem =
   | { kind: "event"; doc: ErrorEventDoc; bytes: number; priority: number }
@@ -458,32 +461,45 @@ export function enqueueActivity(doc: ActivityDoc): boolean {
  * บันทึกการเรียก admin API (lib/admin-access.ts, `source: "http"`) — ไม่ throw คืนผลสี่แบบ:
  *   - `queued`      เข้าคิวแล้ว
  *   - `full`        คิวเต็ม (ไม่มีตัวที่ชั้นต่ำกว่าให้ไล่) — ผู้เรียกพับลงบันทึกสรุปแล้วส่งใหม่ทีหลัง
- *   - `over_budget` token ไม่ผ่าน และงบไบต์ของการเรียกแบบนั้นหมด (lib/untrusted-budget.ts) — ผู้เรียกพับตัวเดี่ยวลงสรุป
- *                   สรุปรอแล้วลองใหม่
+ *   - `over_budget` งบไบต์ของบันทึกนี้หมด (lib/untrusted-budget.ts — `anonymous-admin` ของ token ที่ไม่ผ่าน หรือ `admin-token`
+ *                   ของ token ที่ผ่านตอนเกินเพดานขนาด) — ผู้เรียกพับตัวเดี่ยวลงสรุป สรุปรอแล้วลองใหม่
  *   - `off`         log store ปิด หรือเกินเพดานขนาดและ token ไม่ผ่าน — ไม่เก็บเลย
  *
  * **token ที่ผ่าน (`via: "ADMIN_TOKEN"`) เก็บแม้เกินเพดานขนาด** เหมือนสำเนา audit: มันคือร่องรอยที่ step 8 มีไว้ (ใครเปิดดูเลขบัตร
  * ของใครด้วย token ใบไหน) จำนวนของมันขึ้นกับการถือ token ไม่ใช่กับใครก็ได้ เดิม (plan §3 "Size ceiling") เกินเพดานแล้วไม่เก็บทั้งหมด
  * — คนไม่มี token ยิง `/api/admin/*` ไม่หยุดจนถึงเพดาน แล้วคนถือ token ที่หลุดอ่านเลขบัตรของทุกบัญชีได้โดยไม่เหลือบันทึก (ตรวจขั้น
- * 8-10 แบบค้าน 2026-10-01) ตอนนี้การเรียกที่ไม่มี token พาเพดานไปถึงเองไม่ได้แล้ว (งบไบต์) แต่ error ของ server หรือ relay ยังพาไปได้
+ * 8-10 แบบค้าน 2026-10-01) ตอนนี้สิ่งที่ใครก็ส่งได้พาเพดานไปถึงเองไม่ได้แล้ว (งบไบต์) แต่ error ของ server หรือ relay ยังพาไปได้
+ *
+ * **การยกเว้นนั้นมีขอบ:** ตอนเกินเพดาน บันทึกของ token ที่ผ่านหักถัง `admin-token` (5% ของเพดานต่ออายุ 400 วันของมัน ตัวเดี่ยวหยุดที่
+ * ส่วนที่เหลือไว้ ใบสรุปใช้ได้ถึงก้นถัง) งบหมดแล้วตัวเดี่ยวพับลงใบสรุปที่รองบ (นับทุกการเรียก ไม่ทิ้ง) ใต้เพดานไม่หักอะไร เดิมยกเว้นแบบ
+ * ไม่มีขอบ: ใบสรุปของ token ที่ผ่านปิดแล้วเปิดใบใหม่ทุกสองร้อย key (`SUMMARY_CLOSED_MS` 0 ใน lib/admin-access.ts) คนถือ token ที่หลุด
+ * ยิง `?cid=` สุ่มจึงเติมคลังเลยเพดานไปได้เรื่อย ๆ (ตรวจแบบค้านรอบสุดท้าย 2026-10-01) · `final` = ใบสรุปที่เข้าคิวตอนปิด process
+ * (`flushAdminAccessSummaries`) ไม่หักถังนั้น — ไม่งั้นใบที่รองบอยู่หายไปพร้อม process ซึ่งก่อนมีถังไม่เคยหาย (ไม่เกินยี่สิบใบต่อการปิด
+ * หนึ่งครั้ง) ใบของ token ที่ไม่ผ่านยังหักงบของมันเหมือนเดิม
  *
  * ต่างจากสำเนา audit อีกข้อ: อยู่ชั้นที่ 1 ของคิว ถูกทิ้งหลังรายงานจากเบราว์เซอร์แต่ก่อนทุกอย่างของ server เอง ยกเว้นบันทึกสรุป
  * (`summary: true`) ซึ่งอยู่ชั้นเดียวกับคำเตือน — ตัวเดียวแทนการเรียกเป็นร้อย และมีขึ้นเพราะคิวหรือเพดานต่อนาทีรับตัวเดี่ยวไม่ไหวแล้ว
  * ถ้าอยู่ชั้นเดียวกับตัวเดี่ยวก็ถูกทิ้งด้วยเหตุเดียวกัน แต่สรุปไม่เบียดตัวเดี่ยวออกจากคิว (`enqueue`) เอกสารต้องผ่าน `fitDocument()`
  * มาแล้ว
  */
-export function enqueueAccessRecord(doc: ActivityDoc, summary = false): "queued" | "full" | "over_budget" | "off" {
+export function enqueueAccessRecord(
+  doc: ActivityDoc,
+  summary = false,
+  final = false,
+): "queued" | "full" | "over_budget" | "off" {
   try {
     if (!env.logStore.enabled) return "off";
     const trusted = doc.via === "ADMIN_TOKEN";
-    if (!trusted && logStoreStatus().status === "over_quota") return "off";
+    const overQuota = logStoreStatus().status === "over_quota";
+    if (!trusted && overQuota) return "off";
+    const budget: BudgetKind | null = !trusted ? "anonymous-admin" : overQuota && !final ? "admin-token" : null;
     const bytes = sizeOf(doc);
-    const cost = trusted ? 0 : bytes + indexCost(activityIndexEntries(doc));
+    const cost = budget ? bytes + indexCost(activityIndexEntries(doc)) : 0;
     // สรุปใช้ส่วนที่เหลือไว้ได้ — ใบเดียวนับทุกการเรียกในช่วงนั้น ตัวเดี่ยวหยุดก่อน
-    if (!trusted && !takeUntrustedBytes("anonymous-admin", cost, { useReserve: summary })) return "over_budget";
+    if (budget && !takeUntrustedBytes(budget, cost, { useReserve: summary })) return "over_budget";
     const priority = summary ? PRIORITY.accessSummary : PRIORITY.access;
     if (enqueue({ kind: "access", doc, bytes, priority })) return "queued";
-    if (!trusted) refundUntrustedBytes("anonymous-admin", cost);
+    if (budget) refundUntrustedBytes(budget, cost);
     return "full";
   } catch {
     return "off";
@@ -734,8 +750,10 @@ function capture(err: unknown, options: CaptureOptions): string | null {
     ingest: null,
   };
 
-  const outcome = keep(doc, fingerprint, scrubbed, where ?? tag);
-  if (ctx && (outcome === "capped_issue" || outcome === "capped_process")) unstored.set(ctx, { doc, outcome });
+  const outcome = keep(doc, fingerprint, scrubbed, where ?? tag, isAnonymousRequest(ctx));
+  if (ctx && (outcome === "capped_issue" || outcome === "capped_process" || outcome === "anonymous_budget")) {
+    unstored.set(ctx, { doc, outcome });
+  }
   if (options.print !== false) printLine(doc, scrubbed, where ?? tag, outcome);
   return outcome === "queued" ? id : null;
 }
@@ -912,13 +930,22 @@ function keepBrowserReference(
 
 /** เก็บรหัสอ้างอิงที่ไม่มีตัวอย่างเต็มได้ไม่เกินนี้ต่อ process ต่อนาที — แยกจากเพดาน 600 ตัวของ event เต็ม */
 const REFERENCE_STUBS_PER_MINUTE = 120;
-let stubWindow = { start: 0, stored: 0 };
+/**
+ * ในจำนวนนั้น เป็นของคำขอที่ไม่มีตัวตนได้ไม่เกินนี้ — อีกครึ่งเป็นของผู้ใช้ที่เข้าสู่ระบบแล้วเสมอ เดิมใช้ร่วมกันไม่มีลำดับ คนที่ยิง route
+ * ที่ตอบ 5xx ให้ใครก็ได้นาทีละ 120 ครั้งได้ที่ทั้งหมด รหัสของ 503 `no_reviewer` ที่หน่วยงานเห็นในนาทีนั้นค้นไม่เจอ
+ */
+const ANONYMOUS_REFERENCE_STUBS_PER_MINUTE = 60;
+let stubWindow = { start: 0, stored: 0, anonymous: 0 };
 
 /**
- * error ของคำขอที่ติดเพดานการสุ่มเก็บ (ครบ 50 ตัวต่อชั่วโมงของ issue หรือ 600 ตัวต่อนาทีของ process) — ตัวล่าสุด
- * ของแต่ละคำขอ รอดูว่าคำขอนั้นจะตอบ 5xx พร้อมรหัสอ้างอิงหรือเปล่า (`keepReference`) หายไปเองพร้อมบริบทของคำขอ
+ * error ของคำขอที่ติดเพดานการสุ่มเก็บ (ครบ 50 ตัวต่อชั่วโมงของ issue หรือ 600 ตัวต่อนาทีของ process) หรือที่ตัวเต็มเกินงบไบต์ของ
+ * คำขอที่ไม่มีตัวตน — ตัวล่าสุดของแต่ละคำขอ รอดูว่าคำขอนั้นจะตอบ 5xx พร้อมรหัสอ้างอิงหรือเปล่า (`keepReference`) หายไปเองพร้อม
+ * บริบทของคำขอ
  */
-const unstored = new WeakMap<RequestContext, { doc: ErrorEventDoc; outcome: "capped_issue" | "capped_process" }>();
+const unstored = new WeakMap<
+  RequestContext,
+  { doc: ErrorEventDoc; outcome: "capped_issue" | "capped_process" | "anonymous_budget" }
+>();
 
 /**
  * ให้รหัสอ้างอิงที่กำลังจะไปถึงตาผู้ใช้ค้นเจอใน error_events — เรียกจาก `referenceOnServerErrors` (index.ts) ทุกครั้ง
@@ -929,8 +956,14 @@ const unstored = new WeakMap<RequestContext, { doc: ErrorEventDoc; outcome: "cap
  * แทน: fingerprint (โยงกับ issue), ชื่อกับข้อความ, route, status, ผู้ใช้, เวลา ไม่มี stack, cause, breadcrumb, รูปร่าง
  * ของ body — `extra.referenceOnly: true` บอกว่าเป็นตัวย่อ
  *
- * ยังค้นไม่เจอเมื่อ: log store เกินเพดานขนาด (เก็บแค่ตัวนับ), คิวเต็ม, หรือเกิน 120 ตัวย่อต่อนาที — เหลือแค่ตัวนับของ
- * issue กับบรรทัด `[capture] … ref=` ใน stdout
+ * **คำขอที่ไม่มีตัวตน** (`isAnonymousRequest` — route ของ `/api/auth/*`, error ก่อน `requireAuth` ตัดสินเสร็จ) ได้ตัวย่อไม่เกิน 60
+ * ตัวในหนึ่งร้อยยี่สิบนั้น และหักงบไบต์ `anonymous-request` (lib/untrusted-budget.ts) ได้ถึงก้นถัง — ส่วนที่ตัวเต็มเหลือไว้ให้ รหัสจึง
+ * ค้นเจอได้นานกว่าตัวเต็ม งบหมดแล้วนับอย่างเดียว (ตัวนับของ issue เดินไปแล้วตอน capture) เดิมไม่หักงบไหนเลย คนที่ไม่มีอะไรนอกจาก URL
+ * ยิง route ที่ตอบ 5xx ให้ใครก็ได้นาทีละ 120 ครั้ง เติม error_events ได้ราวแสนเจ็ดหมื่นตัวต่อวันจนถึงเพดานขนาด (ตรวจแบบค้านรอบสุดท้าย
+ * 2026-10-01)
+ *
+ * ยังค้นไม่เจอเมื่อ: log store เกินเพดานขนาด (เก็บแค่ตัวนับ), คิวเต็ม, เกิน 120 ตัวย่อต่อนาที หรือ (คำขอที่ไม่มีตัวตน) เกิน 60 ตัวต่อนาที
+ * หรืองบไบต์หมด — เหลือแค่ตัวนับของ issue กับบรรทัด `[capture] … ref=` ใน stdout
  */
 export function keepReference(status: number): void {
   try {
@@ -941,9 +974,11 @@ export function keepReference(status: number): void {
     unstored.delete(ctx);
     if (logStoreStatus().status === "over_quota") return;
 
+    const anonymous = isAnonymousRequest(ctx);
     const now = Date.now();
-    if (now - stubWindow.start >= 60_000) stubWindow = { start: now, stored: 0 };
+    if (now - stubWindow.start >= 60_000) stubWindow = { start: now, stored: 0, anonymous: 0 };
     if (stubWindow.stored >= REFERENCE_STUBS_PER_MINUTE) return;
+    if (anonymous && stubWindow.anonymous >= ANONYMOUS_REFERENCE_STUBS_PER_MINUTE) return;
 
     const { doc, outcome } = pending;
     const stub: ErrorEventDoc = {
@@ -953,8 +988,17 @@ export function keepReference(status: number): void {
       breadcrumbs: [],
       extra: { referenceOnly: true, capped: outcome },
     };
+    const bytes = sizeOf(stub);
+    const budget: BudgetKind | null = anonymous ? "anonymous-request" : null;
+    const cost = budget ? bytes + indexCost(ERROR_EVENT_INDEX_ENTRIES) : 0;
+    if (budget && !takeUntrustedBytes(budget, cost, { useReserve: true })) return;
     // ชั้นเดียวกับคำเตือน — คิวเต็มแล้วตัวย่อถูกทิ้งก่อนตัวอย่างเต็มทุกตัว
-    if (enqueue({ kind: "event", doc: stub, bytes: sizeOf(stub), priority: PRIORITY.warning })) stubWindow.stored += 1;
+    if (!enqueue({ kind: "event", doc: stub, bytes, priority: PRIORITY.warning })) {
+      if (budget) refundUntrustedBytes(budget, cost);
+      return;
+    }
+    stubWindow.stored += 1;
+    if (anonymous) stubWindow.anonymous += 1;
   } catch {
     // รหัสอ้างอิงที่ค้นไม่เจอดีกว่าคำตอบที่ส่งไม่ออก
   }
@@ -962,12 +1006,35 @@ export function keepReference(status: number): void {
 
 /**
  * `capped_issue` = ครบ 50 ตัวต่อชั่วโมงของ fingerprint นี้ · `capped_process` = ครบ 600 ตัวต่อนาทีของทั้ง process ·
+ * `anonymous_budget` = คำขอที่ไม่มีตัวตน และตัวเต็มเกินงบไบต์ของมัน (lib/untrusted-budget.ts — ตัวย่อยังลองได้) ·
  * `issue_backlog` = issue ที่รอเขียนครบแล้ว ไม่ได้นับด้วยซ้ำ · `dropped` = คิวเต็ม
  */
-type Outcome = "queued" | "disabled" | "over_quota" | "capped_issue" | "capped_process" | "issue_backlog" | "dropped";
+type Outcome =
+  | "queued"
+  | "disabled"
+  | "over_quota"
+  | "capped_issue"
+  | "capped_process"
+  | "anonymous_budget"
+  | "issue_backlog"
+  | "dropped";
 
-/** นับเข้า issue แล้วตัดสินว่าจะเก็บตัว event ไหม */
-function keep(doc: ErrorEventDoc, fingerprint: string, scrubbed: ScrubbedError, where: string | null): Outcome {
+/**
+ * นับเข้า issue แล้วตัดสินว่าจะเก็บตัว event ไหม
+ *
+ * `anonymous` = error ของคำขอ HTTP ที่ไม่มีตัวตนที่ตรวจแล้ว (`isAnonymousRequest`) — ตัวเต็มหักงบไบต์ `anonymous-request`
+ * (lib/untrusted-budget.ts) และหยุดที่ส่วนที่เหลือไว้ให้ตัวย่อ เพดานต่อชั่วโมงกับต่อนาทีคุมแค่ความถี่: route ที่ตอบ 5xx ให้ใครก็ได้
+ * (`POST /api/auth/thaid/start` 501 ตอน ThaID ยังไม่ได้ตั้งค่า) ได้ตัวเต็มห้าสิบตัวต่อชั่วโมงกับตัวย่อนาทีละ 120 ตัวที่อยู่ 90 วัน
+ * ไม่มีอะไรหยุดก่อนเพดานขนาด แล้วเกินเพดานก็ปิด error event ของ server ทุกตัว (ตรวจแบบค้านรอบสุดท้าย 2026-10-01) — คำขอที่มีตัวตน
+ * กับ error นอกคำขอเดินทางเดิม fatal ไม่หัก (ออกตามมาทันที ท่วมอะไรไม่ได้)
+ */
+function keep(
+  doc: ErrorEventDoc,
+  fingerprint: string,
+  scrubbed: ScrubbedError,
+  where: string | null,
+  anonymous: boolean,
+): Outcome {
   if (!env.logStore.enabled) return "disabled";
 
   const delta = countIssue(doc, fingerprint, scrubbed, where);
@@ -987,8 +1054,14 @@ function keep(doc: ErrorEventDoc, fingerprint: string, scrubbed: ScrubbedError, 
   }
 
   const bytes = fitDocument(doc);
+  const budget = anonymous && doc.level !== "fatal";
+  const cost = budget ? bytes + indexCost(ERROR_EVENT_INDEX_ENTRIES) : 0;
+  if (budget && !takeUntrustedBytes("anonymous-request", cost, { useReserve: false })) return "anonymous_budget";
   const priority = doc.level === "fatal" ? PRIORITY.fatal : doc.level === "error" ? PRIORITY.error : PRIORITY.warning;
-  if (!enqueue({ kind: "event", doc, bytes, priority })) return "dropped";
+  if (!enqueue({ kind: "event", doc, bytes, priority })) {
+    if (budget) refundUntrustedBytes("anonymous-request", cost);
+    return "dropped";
+  }
   delta.lastEventId = doc._id;
   return "queued";
 }
@@ -1160,7 +1233,9 @@ function printLine(doc: ErrorEventDoc, scrubbed: ScrubbedError, where: string | 
             ? `event=- (เก็บตัวอย่างของ issue นี้ครบ ${PER_FINGERPRINT_PER_HOUR} ตัวในชั่วโมงนี้แล้ว: นับอย่างเดียว)`
             : outcome === "capped_process"
               ? `event=- (เกินเพดาน ${PER_PROCESS_PER_MINUTE} ต่อนาทีของ process: นับอย่างเดียว)`
-              : outcome === "issue_backlog"
+              : outcome === "anonymous_budget"
+                ? "event=- (งบไบต์ของคำขอที่ไม่มีตัวตนไม่พอสำหรับตัวเต็ม: นับอย่างเดียว)"
+                : outcome === "issue_backlog"
                 ? `event=- (issue ที่รอเขียนครบ ${PENDING_ISSUES_MAX} fingerprint: ไม่ได้นับ)`
                 : "event=- (คิวเต็ม: ทิ้ง)";
   const issue = /^[0-9a-f]{40}$/.test(doc.fingerprint) ? doc.fingerprint.slice(0, 12) : doc.fingerprint;
