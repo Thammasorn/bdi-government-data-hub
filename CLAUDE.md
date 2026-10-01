@@ -60,6 +60,10 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   สองทางที่ตั้งค่าได้และทางไหนใช้เมื่อไร, Azurite ที่แทน MinIO ในเครื่อง dev, สิ่งที่หายไป
   (หน้าคอนโซล, บริการ init), พอร์ตกับ `new-dev.sh` ที่ยังต้องแก้ตอน merge, และไฟล์เก่าที่
   **ยังไม่ได้ย้าย**
+- `docs/21-activity-log.md` — **the activity log and error store**: every audit event and the shape
+  of its row, the MongoDB copy (`activity`) and how it is masked and searched, the relay, retention,
+  error capture, the log read API, the alert digest, the admin's runbook, and the PDPA pack for
+  BDI's DPO. Read it before adding an `AuditAction` code or anything that writes to the log store
 - `docs/bdi-admin-portal.postman_collection.json` — Journey A as a runnable collection,
   plus `/api/admin/users` (**U1–U15**), the legal documents (**L1–L4**: L1 writes `shortname` /
   `legalNotice` / `isRequired`, L2 clears the first two, L3 lists everything plus the variable
@@ -499,6 +503,32 @@ the callback (`ensureApproverAccount()` returns what it made for that reason; th
 `ROLE_REVOKED` of `revokeRoleAssignments()` is QA A4's and is left alone). `requireAdminToken`
 stamps the request `admin-portal` and `logAudit` adds `metadata.admin_token_fp`, since the actor
 on that path is always "system".
+
+**MongoDB is a searchable copy, never the record.** The `mongo` service (database `bdi_logs`,
+`lib/log-store.ts`) holds a copy of every `audit_event` row (`activity`), the error store and the
+process start/stop records. `logAudit()` does not know Mongo exists: the delivery-worker's relay
+(`workers/log-relay.ts`) copies committed rows every 5 s through `projectAuditRow()`
+(`lib/activity-shape.ts`), which masks national IDs, adds HMAC search keys keyed by `LOG_HASH_KEY`
+and gives each row a category. Retention follows the category (`lib/log-retention.ts`, pruned daily
+by the worker; Postgres keeps everything), so a new `AuditAction` code fails typecheck until it has a
+row in `CATEGORY_BY_ACTION`. Nothing on a request path waits for Mongo, no service `depends_on` it,
+and `/health/ready` reports it without letting it decide `healthy`. A row `logAudit` cannot write is
+no longer lost silently: it becomes an `audit.write-failed` error plus an `audit_fallback` copy in
+`activity`. Every `/api/admin*` call, reads included, is recorded as `ADMIN_API_REQUEST` in Mongo
+only (`lib/admin-access.ts`), because the admin API returns unmasked CIDs.
+
+**Errors go through `captureError()`** (`lib/error-capture.ts`, see Traps): scrubbed by
+`lib/redact.ts`, grouped into issues by fingerprint, queued in memory and written every 2 s. A 5xx
+answered with `{error}` carries a reference (the first 8 hex of its correlation id) in its message,
+and that reference finds the request's activity and errors. Browser and Next-server errors arrive at
+`POST /api/client-errors`, and the worker mails a digest of new and recurring issues (**Email**).
+
+**People read the log only through `/api/admin/logs/*`** (`routes/admin-logs.ts`, Postman
+`bdi-activity-log`), with its own `LOG_READ_TOKEN`, a declared reader and a reason in headers. Every
+read is written to `audit_event` as `AUDIT_LOG_READ` before any data comes back, by
+`recordLogRead()`, the one writer besides `logAudit()`, and unlike it the one that does not swallow
+its errors. The site's proxy answers 404 for that path. **Audit is still never shown on screen**:
+this is an operator's API, not a page. `docs/21-activity-log.md` has all of it.
 
 **Email is no longer sent from request handlers.** `notifyUsers()` writes a `notification` row
 plus a `notification_delivery` row (the outbox), and `src/workers/delivery.ts` sends it — a
@@ -1821,6 +1851,34 @@ there. Unknown server actions, undecodable URLs and bad `Next-Url` headers never
   without limit (`SUMMARY_CLOSED_MS` 0), so the store grew past the ceiling with no bound. Until 2026-10-01, token-less calls carrying random `?cid=` / `?q=` / `?email=`
   values, or random tokens, opened a new summary every 20 to 67 calls with no limit. So filling
   the store was the first step to reading every CID with a leaked token without leaving a record.
+- **The MongoDB passwords take effect only on an empty volume.** `MONGO_ROOT_PASSWORD`,
+  `MONGO_BACKEND_PASSWORD` and `MONGO_WORKER_PASSWORD` are read by the image's init and by
+  `mongo/init/01-users.js` the first time `mongo-data` is empty. Changing `.env` afterwards changes
+  nothing inside the volume, and backend and worker then fail to log in (`logStore: down`,
+  `Authentication failed`). To change one: edit `.env`, recreate `mongo` (`up -d --no-deps mongo`)
+  so the container sees it, rerun `01-users.js` as root with the command at the top of that file,
+  then recreate backend and delivery-worker, whose URI was built when they were created. Skip the
+  `mongo` recreate and the script writes the old password back while printing that it updated the
+  user. Root's own password changes only with `db.changeUserPassword`. Passwords go into the URI
+  unencoded, so use hex. The prod overlay refuses to start `mongo` with the `dev-…-change-me`
+  samples. On `main/` the volume is production's log: **never `down -v` there**. `docs/21` §3.12.
+- **The log store's kill switch is `LOG_STORE_ENABLED=false`, not an empty URI.** Compose never reads
+  `MONGODB_URI` from `.env`. It builds the URI from the passwords, or takes `MONGODB_BACKEND_URI` /
+  `MONGODB_WORKER_URI`, and `${…:-…}` treats an empty override as unset and puts the default URI
+  back. So a blank URI leaves the log store on. Set the flag to `false` in `.env` and recreate
+  backend and delivery-worker (`up -d --no-deps backend delivery-worker`, no build). The driver is
+  then never loaded, and `/health/ready` shows `disabled`. `docs/21` §5.11.
+- **The dev delivery-worker runs `tsx` without watch** (`npm run worker:delivery`), unlike the
+  backend's `tsx watch`. An edit to code the worker runs (the relay, prune, the alert loop, email
+  rendering, anything under `lib/` it imports) does nothing until
+  `docker compose restart delivery-worker`.
+- **On the shared dev machine `/` fills up, and Docker's images and build cache live there.** The
+  daemon uses the containerd snapshotter, so images and BuildKit cache sit in `/var/lib/containerd`
+  on `/` (about 2 GB free), even though `docker info` shows the root dir `/hdd1tb/docker`, where only
+  volumes go. Compose also writes build metadata to `$TMPDIR`. Build as a separate step,
+  `TMPDIR=/hdd1tb/tmp docker compose … build`, before `up -d`, so a build that fails for space
+  touches nothing that is running. `docker builder prune -f` frees cache when `/` is tight. A full
+  `/` makes every shell command fail.
 
 
 ## Notion
