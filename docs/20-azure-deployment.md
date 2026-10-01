@@ -187,7 +187,10 @@ including every report from a browser, is stored as an unverified `browser` repo
 backend is reachable without the frontend and a header on its own proves nothing. Empty, the
 `dev-…-change-me` sample or anything under 32 characters in production (the backend then treats
 it as empty), or a mismatch between the two apps: Next server errors are still stored, only as
-unverified browser reports. Nothing refuses to boot over it.
+unverified browser reports. Nothing refuses to boot over it. That is more than a label, though: the
+report's route is discarded, so the same message on every page becomes one issue, and the browser's
+limits apply — 30 a minute from the frontend's IP, the `browser` byte budget, and alert mails capped
+at five per six hours without the message text (`docs/21` §5.12).
 
 `LOG_HASH_KEY` is not generated here. It belongs to the log store, which stays off on Azure for now
 (§3.5), and it is generated on the day the log store is turned on.
@@ -204,7 +207,8 @@ driver never loads. Nothing else depends on it:
 - `/health/ready` reports `logStore: disabled` and does not count it towards `healthy`.
 - Container stdout already reaches Log Analytics, and every captured error still prints one
   `[capture]` line there with its reference and issue.
-- The log read API (`/api/admin/logs/*`) answers 503 `log_store_disabled`, `POST /api/client-errors`
+- The log read API (`/api/admin/logs/*`) answers 503 `log_store_disabled` (except `GET /status`,
+  which answers 200 with `logStore.status: "disabled"`), `POST /api/client-errors`
   answers 204 and stores nothing, and the error digest (§4.4) sends nothing.
 
 When it is turned on, the service must be one of:
@@ -380,7 +384,8 @@ frontend's hostname, which does not exist yet. §4.5 fills them in.
 it. On its own it opens nothing yet: the log read API also needs the log store, which stays off on
 Azure until BDI chooses a managed MongoDB service (`LOG_STORE_ENABLED=false` here and in
 `deploy/azure/backend.env`, which also lists `MONGODB_URI` and `LOG_HASH_KEY` for that day — §3.5),
-so the API answers 503 `log_store_disabled` until then. Setting the token now means turning the log
+so the API answers 503 `log_store_disabled` until then (only `GET /status` answers 200, reporting
+`disabled`). Setting the token now means turning the log
 store on later needs no second secret. `INGEST_SERVER_TOKEN` is set now for the same reason: with
 the log store off, `POST /api/client-errors` still answers 204 and stores nothing, and the frontend
 (§4.5) must carry the same value.

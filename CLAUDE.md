@@ -75,8 +75,9 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   timeline, failed logins of an e-mail, admin-token work, trace by reference, who read the log,
   a rotated token's use; **E1–E4** error issues, one event, resolve/ignore; **S1** status. Kept
   apart from the admin collection on purpose, with its own `x-log-token` (`LOG_READ_TOKEN`), so
-  holding the admin token does not hand out the log. Every read is written to `audit_event` as
-  `AUDIT_LOG_READ` before any data comes back; the reason goes in the `readReason` collection
+  holding the admin token does not hand out the log. Every read that returns data is written to
+  `audit_event` as `AUDIT_LOG_READ` before any data comes back (S1 `/status` holds no personal data
+  and is recorded nowhere); the reason goes in the `readReason` collection
   variable (sent as a percent-encoded header, never in the URL). So does the person being looked
   up: an e-mail, national ID or account uuid travels as `x-log-email` / `x-log-cid` /
   `x-log-person`, and `?person=` / `?cid=` / `?email=` answer 400. Only `/activity` takes all three
@@ -515,7 +516,9 @@ row in `CATEGORY_BY_ACTION`. Nothing on a request path waits for Mongo, no servi
 and `/health/ready` reports it without letting it decide `healthy`. A row `logAudit` cannot write is
 no longer lost silently: it becomes an `audit.write-failed` error plus an `audit_fallback` copy in
 `activity`. Every `/api/admin*` call, reads included, is recorded as `ADMIN_API_REQUEST` in Mongo
-only (`lib/admin-access.ts`), because the admin API returns unmasked CIDs.
+only (`lib/admin-access.ts`), because the admin API returns unmasked CIDs. The two exceptions: a
+request that reaches the log router (it records itself as `AUDIT_LOG_READ`), and a CORS preflight,
+which `cors()` answers first.
 
 **Errors go through `captureError()`** (`lib/error-capture.ts`, see Traps): scrubbed by
 `lib/redact.ts`, grouped into issues by fingerprint, queued in memory and written every 2 s. A 5xx
@@ -525,7 +528,7 @@ and that reference finds the request's activity and errors. Browser and Next-ser
 
 **People read the log only through `/api/admin/logs/*`** (`routes/admin-logs.ts`, Postman
 `bdi-activity-log`), with its own `LOG_READ_TOKEN`, a declared reader and a reason in headers. Every
-read is written to `audit_event` as `AUDIT_LOG_READ` before any data comes back, by
+read that returns data (all but `/status`) is written to `audit_event` as `AUDIT_LOG_READ` before any data comes back, by
 `recordLogRead()`, the one writer besides `logAudit()`, and unlike it the one that does not swallow
 its errors. The site's proxy answers 404 for that path. **Audit is still never shown on screen**:
 this is an operator's API, not a page. `docs/21-activity-log.md` has all of it.

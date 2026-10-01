@@ -119,7 +119,7 @@ BDI ในแผนนั้น
 | คอลัมน์ | ชนิด | ใครเติม | หมายเหตุ |
 |---|---|---|---|
 | `id` | UUID PK | Prisma `uuid()` ฝั่ง client | DDL ไม่มี default |
-| `occurred_at` | TIMESTAMPTZ(6) | Prisma `@default(now())` — engine ของ Prisma สร้างค่าเองจากนาฬิกาของ process (backend หรือ worker) ตอน `create()` แล้วส่งเป็นพารามิเตอร์ DDL `DEFAULT CURRENT_TIMESTAMP` มีผลเฉพาะ INSERT ที่ไม่ผ่าน Prisma (เช่นแถว `admin-script`) | เวลาที่ `logAudit` สร้าง INSERT แถวนี้ ไม่ใช่เวลาของธุรกรรมที่ถูกบันทึก (2.8) · เก็บเป็น UTC (ดูข้างล่าง) · ยังไม่ได้ยืนยันด้วย query log ว่า Prisma 6 ส่งคอลัมน์นี้เอง |
+| `occurred_at` | TIMESTAMPTZ(6) | Prisma `@default(now())` — engine ของ Prisma สร้างค่าเองจากนาฬิกาของ process (backend หรือ worker) ตอน `create()` แล้วส่งเป็นพารามิเตอร์ DDL `DEFAULT CURRENT_TIMESTAMP` มีผลเฉพาะ INSERT ที่ไม่ผ่าน Prisma (เช่นแถว `admin-script`) | เวลาที่ `logAudit` สร้าง INSERT แถวนี้ ไม่ใช่เวลาของธุรกรรมที่ถูกบันทึก (2.8) · เก็บเป็น UTC (ดูข้างล่าง) · ยืนยันด้วย query log แล้ว (2026-10-01 ในธุรกรรมที่ rollback): INSERT ส่ง `occurred_at` เป็น `$2` เอง แถวที่ Prisma เขียนจึงละเอียดแค่มิลลิวินาที (หลักไมโครวินาทีเป็น `000` เสมอ) — cursor ระดับไมโครวินาทีของ relay (3.8) มีผลจริงกับแถวที่ได้ค่า DEFAULT ของ DDL เท่านั้น |
 | `actor_type` | enum `USER` `SYSTEM` `EXTERNAL` `ANONYMOUS` | `input.actorType` หรือคำนวณ | ดู 2.2 · `EXTERNAL` ไม่เคยถูกเขียน |
 | `actor_id` | UUID null | `input.actorId` → actor ใน context → null | ไม่มี FK |
 | `action` | VARCHAR(128) | `input.action` | รหัสจาก `AuditAction` (หมวด 4) |
@@ -227,7 +227,7 @@ metadata = {
   (`index.ts:145`) หน้าเว็บที่เรียกข้าม origin จึงอ่านได้ · 8 ตัวแรกของมันคือรหัสอ้างอิงที่ผู้ใช้เห็นบนคำตอบ 5xx (5.8)
 - ทุกแถวของคำขอ HTTP เดียวกันจึงมี id เดียวกัน และ**แต่ละคำขอได้ id ของตัวเอง** — การกระทำที่กินหลายคำขอ (ล็อกอินสองขั้น
   · ThaID start/callback/activate · admin ออกลิงก์แล้วเจ้าของบัญชีกดทีหลัง · ปุ่มสร้างเอกสารที่ PATCH ก่อนเรียก generate)
-  จึงมีหลาย correlation id โค้ดหน้าเว็บไม่ตั้ง `x-correlation-id` เองเลย (ไม่มีใน `frontend/`) ไม่มีอะไรผูกคำขอของคลิกเดียวกันไว้
+  จึงมีหลาย correlation id โค้ดฝั่งเบราว์เซอร์ไม่ส่ง `x-correlation-id` เลย (proxy ตั้งค่าใหม่ให้ทุกคำขอ — ข้างล่าง · `lib/api.ts` แค่อ่านจากคำตอบ) ไม่มีอะไรผูกคำขอของคลิกเดียวกันไว้
 - `correlationId()` นอก context (`context.ts:85`) ได้ UUID ใหม่ทุกครั้งที่เรียก แต่ไม่มีทางเขียน audit ที่รู้จักทางไหนไปถึงตรงนั้น
   แถวสรุปของ `ADMIN_TOKEN_REJECTED` เขียนใน `runWithContext({...origin, correlationId: undefined})` ซึ่งสร้าง UUID ใหม่
   หนึ่งค่าต่อแถวสรุป (`context.ts:107`, `lib/token-rejection.ts:264` `:271`) ผลเหมือนกัน: id ที่ไม่ตรงกับคำขอใดเลย
@@ -288,9 +288,10 @@ metadata = {
   (ชื่อ action) ไว้ในบริบทของคำขอ (5.2) · `catch` (`audit.ts:718-725`) ทิ้ง breadcrumb `"<action> — เขียนไม่สำเร็จ"` แล้วส่งให้
   `reportAuditWriteFailure()` (`lib/audit-fallback.ts`) ซึ่ง (1) `captureError()` tag `audit.write-failed` พร้อม input ของแถวที่ปิดเลขบัตรแล้วใน
   `extra.audit` — พิมพ์บรรทัด `[capture]` ที่กวาดแล้วหนึ่งบรรทัดลง stderr **เสมอ** แต่ตัว event เข้าคิวเฉพาะเมื่อผ่านเพดาน (50 ตัวต่อชั่วโมงของ
-  fingerprint · 600 ตัวต่อนาทีของ process · ไม่เกินเพดานขนาด · คิวรับ — 5.7) ตอน Postgres ล่มนาน event ส่วนใหญ่จึงเหลือแค่ตัวนับของ issue และ
+  fingerprint · 600 ตัวต่อนาทีของ process · ไม่เกินเพดานขนาด · งบไบต์ `anonymous-request` ยังพอเมื่อคำขอไม่มีตัวตน ซึ่งรวมทุก route ของ `/api/auth/*`
+  และแถวทันทีของ `ADMIN_TOKEN_REJECTED` / `LOG_TOKEN_REJECTED` — 5.13 · คิวรับ — 5.7) ตอน Postgres ล่มนาน event ส่วนใหญ่จึงเหลือแค่ตัวนับของ issue และ
   `extra` ที่เกิน 16 KB (`note` ยาว diff ของแบบฟอร์มใหญ่) เหลือ `{truncated, bytes, keys}` ไม่มี input ของแถว (3.14) และ (2) วางเอกสาร `activity`
-  `source: "audit_fallback"` ลงคิวเดียวกัน ซึ่งไม่ติดเพดานการสุ่มเก็บหรือเพดานขนาด (ยังหายได้ถ้าคิวเต็มด้วยรายการชั้นเดียวกัน ใหญ่เกินหลังตัด หรือ process ตายก่อน flush) —
+  `source: "audit_fallback"` ลงคิวเดียวกัน ซึ่งไม่ติดเพดานการสุ่มเก็บหรือเพดานขนาด (ยังหายได้ถ้าคิวเต็มด้วยรายการชั้นเดียวกัน หรือ process ตายก่อน flush — ใหญ่เกินไม่ได้: ขั้นสุดท้ายของ `fitDocument()` คุมไว้ราว 40 KB) —
   เนื้อของแถวจึงเหลืออยู่ที่เอกสารนี้ (≤ 64 KB, 3.14) ·
   **ไม่พิมพ์ `err` ดิบอีกแล้ว** — `PrismaClientValidationError` ยก argument ของ INSERT
   (before/after/metadata พร้อมอีเมลและเลขบัตร) มาทั้งก้อน · ไม่มีทางไหนเขียนแถวนั้นกลับลง Postgres คำขอของผู้ใช้ยังสำเร็จตามเดิม ·
@@ -310,12 +311,13 @@ metadata = {
   ยกเว้นสองฟังก์ชันที่เขียนระหว่าง transaction ยังเปิดอยู่ (`revokeRoleAssignments()` และ
   `revokeSessionsFor()` ที่ถูกเรียกด้วย `tx`) — แถวของมัน `occurred_at` มาก่อนการ commit และ**รอดแม้
   transaction ถูก rollback** (6.2)
-- จุดเรียกส่วนใหญ่ `await` ยกเว้น `ADMIN_TOKEN_REJECTED` ที่ยิงแล้วไม่รอ (`void write(...)`) คำตอบ 401 จึงไม่รอฐานข้อมูล
+- จุดเรียกส่วนใหญ่ `await` ยกเว้น `ADMIN_TOKEN_REJECTED` และ `LOG_TOKEN_REJECTED` (ตัวบันทึกเดียวกัน `lib/token-rejection.ts`) ที่ยิงแล้วไม่รอ (`void write(...)`)
+  คำตอบ 401 จึงไม่รอฐานข้อมูล
 - สิ่งที่ทำให้แถวหายได้: INSERT ล้ม (Postgres ล่ม · ค่าไม่ใช่ UUID ในคอลัมน์ UUID · `BigInt` ใน JSON ที่
   `JSON.stringify` แปลงไม่ได้) · process ตายก่อน `await` จบ · สำหรับแถวที่ยิงแล้วไม่รอ process ถูก kill ·
   **ตอน shutdown** `shutdown()` (`index.ts:444-458`) เรียก `server.close()` บันทึก `shutdown` ลงคิว แล้วรอ `flushTokenRejections()` ไม่เกิน
   2 วินาที เข้าคิวใบสรุปของการเรียก admin API เขียนคิวของ log store ไม่เกิน 2 วินาที ปิด client ของ Mongo ไม่เกิน 1.5 วินาที จากนั้น `prisma.$disconnect()` และ `process.exit(0)`
-  (5.10) โดยไม่รอคำขอที่กำลังวิ่ง — `logAudit` ที่ยังไม่จบของคำขอเหล่านั้นหายได้ และสำเนา `audit_fallback` ที่ยังค้างคิวหลัง 2 วินาทีก็หาย · ตัวนับของ `ADMIN_TOKEN_REJECTED` ที่ยังไม่ถึงรอบสรุปอยู่ในหน่วยความจำอย่างเดียว process ตายหรือ
+  (5.10) โดยไม่รอคำขอที่กำลังวิ่ง — `logAudit` ที่ยังไม่จบของคำขอเหล่านั้นหายได้ และสำเนา `audit_fallback` ที่ยังค้างคิวหลัง 2 วินาทีก็หาย · ตัวนับของ `ADMIN_TOKEN_REJECTED` และ `LOG_TOKEN_REJECTED` ที่ยังไม่ถึงรอบสรุปอยู่ในหน่วยความจำอย่างเดียว process ตายหรือ
   restart แบบไม่ graceful = ครั้งที่นับไว้หายทั้งหมด และ flush ตอน shutdown ที่เกิน 2 วินาทีก็ถูกตัด
 
 ### 2.9 ตัวอย่างแถวเต็ม (ข้อมูลสมมติ)
@@ -397,7 +399,7 @@ SET TIME ZONE 'Asia/Bangkok';              -- ให้ occurred_at แสดง
 | `after.userAccountId` | `ROLE_ASSIGNED` ที่ subject เป็น assignment (activate · review · เปิดหน่วยงานในแถวก่อน `7259c09`) · `ACTIVATION_KEY_ISSUED` ของ invitation และ review |
 | `before.userAccountId` | `ROLE_REVOKED` รูปแบบ A และ C |
 | `before` / `after.assignedSpecialistId` | `REQUEST_ASSIGNED` |
-| `metadata.filters.person` · `cidAccountId` · `emailAccountId` | `AUDIT_LOG_READ` — มีคนอ่านประวัติของเขา (4.12) |
+| `metadata.filters.person` · `cidAccountId` · `emailAccountId` · `actorId` · `subjectId` (เมื่อ `subjectType = USER_ACCOUNT`) | `AUDIT_LOG_READ` — มีคนอ่านประวัติของเขา (4.12) |
 | อีเมล: `metadata.email` · `before`/`after.email` | `LOGIN_FAILED` (ที่พิมพ์) · `PASSWORD_RESET_REQUESTED` · `USER_ACCOUNT_CREATED` · `ACTIVATION_KEY_ISSUED` ทุกแบบ (resend มี**แค่**อีเมล) · `INVITATION_DELETED` · `APPROVER_INVITATION_RECALLED` · `USER_ACCOUNT_DEACTIVATED` · `USER_IDENTITY_RELEASED` · `USER_ACCOUNT_UPDATED` แบบอีเมล/เลขบัตร |
 
 ```sql
@@ -416,6 +418,10 @@ WHERE actor_id = :'uid'
    OR before_summary_json->>'assignedSpecialistId'  = :'uid'
    OR after_summary_json->>'assignedSpecialistId'   = :'uid'
    OR metadata_json->'filters'->>'person'           = :'uid'
+   OR metadata_json->'filters'->>'cidAccountId'     = :'uid'   -- อ่านด้วยเลขบัตร / อีเมลของเขา
+   OR metadata_json->'filters'->>'emailAccountId'   = :'uid'
+   OR metadata_json->'filters'->>'actorId'          = :'uid'
+   OR (metadata_json->'filters'->>'subjectType' = 'USER_ACCOUNT' AND metadata_json->'filters'->>'subjectId' = :'uid')
    OR lower(metadata_json->>'email')       = lower(:'email')
    OR lower(before_summary_json->>'email') = lower(:'email')
    OR lower(after_summary_json->>'email')  = lower(:'email')
@@ -494,6 +500,8 @@ FROM integration.integration_operation WHERE correlation_id = :'cid'::uuid;
 | `DATASET_CHOICE` | `administration.dataset_choice` | |
 | `INTEGRATION_JOB` | `integration.integration_operation` | `state_not_found` มี `subject_id` null |
 | `ADMIN_API` | — | `subject_id` null เสมอ |
+| `AUDIT_LOG` | — | `AUDIT_LOG_READ` `LOG_TOKEN_REJECTED` · `subject_id` null เสมอ — สิ่งที่ถูกอ่านอยู่ใน `metadata.endpoint` กับ `filters` (4.12) |
+| `ERROR_ISSUE` | — (`error_issues` ใน Mongo) | `ERROR_ISSUE_STATUS_CHANGED` · `subject_id` null เสมอ — fingerprint อยู่ใน `metadata.fingerprint` |
 
 **session และอุปกรณ์** — การสร้าง session **ไม่ถูกบันทึก** `LOGIN_SUCCEEDED` ไม่มี id ของ session และ `/activate` เปิด session ให้โดยไม่มี
 `LOGIN_SUCCEEDED` เลย (จำนวนการเข้าสู่ระบบ = `LOGIN_SUCCEEDED` + `USER_ACCOUNT_ACTIVATED`) แถวเดียวที่มี id ของ session คือ
@@ -574,7 +582,7 @@ drop อะไรได้**:
 | `actor.roles` | string[] | ยกจาก `metadata.actor_roles` (`[]` ถ้าไม่มี) |
 | `actor.organizationId` | string \| null | ยกจาก `metadata.actor_organization_id` |
 | `via` | `SESSION` `ADMIN_TOKEN` `LOG_TOKEN` `WORKER` `SCRIPT` `ANONYMOUS` `SYSTEM` | 3.4 |
-| `tokenFps` | string[] | fingerprint 12 ตัวของ token ที่แถวนี้เกี่ยว: `metadata.admin_token_fp` (งานผ่าน admin token) · `token_fp` (แถวปฏิเสธทันที และ `AUDIT_LOG_READ`) · `token_fps` (แถวสรุปของการปฏิเสธ) · `http`: token ที่ส่งมา ผ่านหรือไม่ผ่าน — `tokenFp=` ของ API (G8) ค้นด้วยฟิลด์นี้ |
+| `tokenFps` | string[] | fingerprint 12 ตัวของ token ที่แถวนี้เกี่ยว: `metadata.admin_token_fp` (งานผ่าน admin token) · `token_fp` (แถวปฏิเสธทันที `AUDIT_LOG_READ` และ `ERROR_ISSUE_STATUS_CHANGED` — `tokenFp=<fp ของ log token>` จึงได้การเปลี่ยนสถานะ issue มาด้วย) · `token_fps` (แถวสรุปของการปฏิเสธ) · `http`: token ที่ส่งมา ผ่านหรือไม่ผ่าน — `tokenFp=` ของ API (G8) ค้นด้วยฟิลด์นี้ |
 | `subject.type` · `subject.id` | string · string \| null | `subject_type` · `subject_id` · `http`: ตาม route (4.11) |
 | `organizationId` | string \| null | `organization_id` · `http`: หน่วยงานของ `/organizations/:id` หรือ `?organizationId=` |
 | `requestNumber` | string \| null | relay: เลขที่ของคำขอที่เป็น subject หรือที่ไฟล์แนบที่เป็น subject เป็นของ คำขอที่ถูกลบแล้วเอาจากแถว `REQUEST_DELETED` ของมัน (`metadata.request_number` สำรองด้วย `before.requestNumber`) ไม่ได้ทั้งหมดใช้ `metadata.request_number` · `audit_fallback` ใช้ `metadata.request_number` อย่างเดียว (ไม่ถาม Postgres ซ้ำ) · `http` null |
@@ -584,7 +592,7 @@ drop อะไรได้**:
 | `reason` | string \| null | `metadata.reason` ถ้าเป็นสตริง ผ่านกฎเลขบัตร ไม่เกิน 1,000 ตัว (ตัวเต็มที่ปิดแล้วอยู่ใน `metadata`) — **ปนรหัสกับข้อความที่คนพิมพ์** (ตาราง “ความหมายของ reason” ใน 4.0) ข้อความที่อยู่คีย์อื่น (`admin_reason` `note` `after.reason`) ไม่ถูกยกมา |
 | `metadata` | object \| null | `metadata_json` ปิดแล้ว ตัด `actor_*` ออก (`ip_unparsed` กับ `admin_token_fp` ยังอยู่) · `http`: 4.11 |
 | `request.correlationId` · `request.reference` | string | `correlation_id` · 8 ตัวแรกของมัน — “รหัสอ้างอิง” ที่ผู้ใช้เห็นบน 5xx |
-| `request.ip` · `request.userAgent` | string \| null | `ip_address` ผ่านกฎเลขบัตร · `user_agent` ผ่าน `storedUserAgent()` ซ้ำแล้วผ่านกฎเลขบัตร · ถูก `$unset` หรือลบทั้งเอกสารตามอายุ (3.9) |
+| `request.ip` · `request.userAgent` | string \| null | `ip_address` ผ่านกฎเลขบัตร · `user_agent` ผ่าน `storedUserAgent()` ซ้ำแล้วผ่านกฎเลขบัตร · `http`: IP ของบริบทตามที่เป็น (ผ่าน `isIP()` แล้ว ไม่ผ่านกฎเลขบัตร — `admin-access.ts:321`) user agent กฎเดียวกัน · ถูก `$unset` หรือลบทั้งเอกสารตามอายุ (3.9) |
 | `request.method` `route` `status` `durationMs` | string / string / int / int \| null | relay: null ทั้งสี่ (`audit_event` ไม่มีคอลัมน์เหล่านี้) · `audit_fallback`: `method` `route` จากบริบท · `http`: ครบ — `route` เป็นแม่แบบที่ Express จับได้ ส่วน mount เป็นตัวเล็ก (`/api/admin/users/:id`) หรือ null เมื่อไม่ถึง route (401 ที่ guard, 404) |
 | `sourceComponent` | string | `source_component` |
 | `relatedUserIds` | string[] | คนที่แถวนี้เกี่ยวข้อง (index ของ `x-log-person`) อ่านจากค่าดิบ: `actor.id` · `subject.id` เมื่อ subject เป็น `USER_ACCOUNT` · `metadata.user_account_id` `revoked_user_account_id` `transferred_user_account_id` · `before`/`after.userAccountId` · `before`/`after.assignedSpecialistId` · ของ `AUDIT_LOG_READ`: บัญชีที่การอ่านครั้งนั้นเปิดประวัติ (4.12) — แถวที่มีแค่อีเมลของบัญชีที่ถูกลบไปแล้ว (resend ของคำเชิญ `INVITATION_DELETED` `APPROVER_INVITATION_RECALLED`) ไม่มี id ให้ใส่ หาเจอด้วย `email#` แทน (3.6) |
@@ -821,8 +829,10 @@ db.relay_state.updateOne({ _id: "audit_event" }, { $set: { rebuildRequestedAt: n
 
 ภายในราว 5 วินาที worker ลบเอกสาร `source:"audit_event"` ทีละก้อน (5,000 ไม่เกิน 40 ก้อนต่อรอบ — เหลือก็ลบต่อรอบถัดไป) แล้วใน `updateOne` เดียว `$unset`
 `cursor` `hashKeyFp` `schemaVersion` `caughtUpAt` กับ `rebuildRequestedAt` และจด `lastRebuild` รอบถัดไปเติมใหม่ตั้งแต่แถวแรก ไม่ต้องเริ่ม worker ใหม่ ·
-ระหว่างลบ relay ไม่คัดลอกและ reconcile ไม่วิ่ง · สั่งซ้ำระหว่างลบได้อีกรอบ ไม่ถูกล้างทิ้ง · บรรทัดที่พิมพ์: `[log-relay] rebuild: …` แล้ว
-`กำลังเติมของค้าง — ถึง <exact> แล้ว` ทุกรอบจน `เติมของค้างครบแล้ว — ตามทันถึง <exact>`
+ระหว่างลบ relay ไม่คัดลอกและ reconcile ไม่วิ่ง · สั่งซ้ำระหว่างลบได้อีกรอบ ไม่ถูกล้างทิ้ง · บรรทัดที่พิมพ์: `[log-relay] rebuild: …` · บรรทัดเติมของค้าง
+(`กำลังเติมของค้าง — ถึง <exact> แล้ว` ทุกรอบจน `เติมของค้างครบแล้ว — ตามทันถึง <exact>`) พิมพ์**เฉพาะเมื่อ forward pass รอบแรกอ่านครบ 20 หน้า** คือมีแถวค้าง
+เกิน 10,000 แถว — store ที่เล็กกว่านั้น (production ราว 110 แถวต่อวัน) เติมจบในรอบเดียวโดยไม่พิมพ์ทั้งสองบรรทัด · **สัญญาณที่มีเสมอว่าเติมครบ** คือ
+`relay_state.caughtUpAt` ที่ rebuild ล้างไปกลับมามีค่าใหม่กว่า `lastRebuild.completedAt` (`markCaughtUp()`) — S1 เห็นเป็น `relayLagSeconds` ที่เล็กและไม่เป็น null
 
 - **อย่าลบเอกสาร `relay_state` ทั้งใบ** — ใบเดียวกันถือตัวเลขเพดานขนาดและ `lastPruneAt` (ลบแล้ว log-upkeep ตรวจเพดานใหม่ในนาทีถัดไป ธงเกินเพดานหายไประหว่างนั้น
   และ prune วิ่งทันที)
@@ -831,7 +841,8 @@ db.relay_state.updateOne({ _id: "audit_event" }, { $set: { rebuildRequestedAt: n
 - rebuild **สร้างคืนไม่ได้**: แถวที่ `seed:demo` ลบจาก Postgres ไปแล้ว (หายจากสำเนาถาวร) · เอกสาร `audit_fallback` และ `http` (ไม่มีใน Postgres และ rebuild
   ไม่ลบ — ค้าง key ของกุญแจเก่า 3.6)
 - เอกสารที่ prune ลบไปแล้ว (และ IP/UA ที่ตัดไปแล้ว) กลับมาจนกว่า prune รอบถัดไป ซึ่งคือรอบแรกหลัง 03:00 น. ครั้งถัดไป (ช้าสุดราว 24 ชั่วโมง) — ตัดสินแล้วว่าไม่แก้
-  ต้องการให้ลบทันที รอบรรทัด `เติมของค้างครบแล้ว` ก่อน แล้ว `$unset` `lastPruneAt` (prune วิ่งในรอบงานดูแลถัดไป)
+  ต้องการให้ลบทันที รอจน `caughtUpAt` ใหม่กว่า `lastRebuild.completedAt` ก่อน (`db.relay_state.findOne({_id: "audit_event"}, {caughtUpAt: 1, lastRebuild: 1})`
+  — บรรทัด `เติมของค้างครบแล้ว` ไม่มีเสมอ ข้างบน) แล้ว `$unset` `lastPruneAt` (prune วิ่งในรอบงานดูแลถัดไป)
 - ช่องที่เหลือ: rebuild สองครั้งห่างกันไม่กี่วินาที ระหว่างหน้าแรกของรอบที่เริ่มจาก “ไม่มี cursor” ทำให้แถวไม่เกิน 500 แถวไม่ถูกเติม — สั่งซ้ำอีกครั้งถ้าเผลอสั่งสองครั้ง
 
 **เอกสาร `relay_state` `_id:"audit_event"`** — worker เป็นผู้เขียนคนเดียว ทุกส่วนเขียนด้วย `$set` ของตัวเอง ไม่มี index รอง ไม่ถูก prune:
@@ -869,7 +880,8 @@ db.relay_state.updateOne({ _id: "audit_event" }, { $set: { rebuildRequestedAt: n
 
 **บรรทัด `[log-relay]` ใน log ของ delivery-worker**: `คัดลอกไม่สำเร็จ (<ชื่อ error>) — ลองใหม่ทุก 5 วินาที` ครั้งเดียวตอนเริ่มล้ม และ `คัดลอก audit_event ลง log store
 ได้อีกครั้ง — อ่านต่อจาก cursor ที่บันทึกไว้ (<exact>)` (หรือ `ไม่มี cursor ที่ใช้ได้ … เริ่มจากแถวแรก`) ครั้งเดียวตอนกลับมา · `กำลังเติมของค้าง …` ทุกรอบที่ forward pass
-ยังไม่ถึงปลาย และ `เติมของค้างครบแล้ว …` ครั้งเดียว · `prune ตามอายุ: …` เมื่อ prune ทำอะไรได้ · error ของรอบที่ล้มเก็บไม่ถี่กว่าสิบนาทีต่อ tag
+อ่านครบ 20 หน้าแล้วยังไม่ถึงปลาย และ `เติมของค้างครบแล้ว …` ครั้งเดียวหลังรอบแบบนั้น — ของค้างไม่เกิน 10,000 แถวไม่มีทั้งคู่ (ดู `caughtUpAt` แทน) · `prune ตามอายุ: …`
+เมื่อ prune ทำอะไรได้ · error ของรอบที่ล้มเก็บไม่ถี่กว่าสิบนาทีต่อ tag
 
 **เพดานขนาดไม่คุม `activity`** — relay ไม่อ่าน `overQuota` คัดลอกทุกแถวไม่ว่า log store จะใหญ่แค่ไหน (activity เล็ก ราว 40 MB ต่อปีที่อัตราของ production และ
 เป็นบันทึกที่ค้นได้) ผลที่ต้องรู้: แถวของคำขอที่ไม่ต้องล็อกอินและไม่มี throttle (`LOGIN_FAILED` `OTP_NOT_PENDING` · `IDENTITY_VERIFICATION_FAILED` `state_not_found` ·
@@ -912,15 +924,15 @@ db.relay_state.updateOne({ _id: "audit_event" }, { $set: { rebuildRequestedAt: n
 
 | สถานการณ์ | ผล |
 |---|---|
-| Mongo ล่ม | คำขอของผู้ใช้และลูปอีเมลไม่กระทบ · error `runtime_events` สำเนา `audit_fallback` และบันทึกการเรียก admin API ค้างในคิว (≤ 500 รายการ / 2 MB ต่อ process) ถอยห่างเป็นเท่าตัวจนถึง 60 วินาที บรรทัด `[capture]` ยังพิมพ์ (5.8) · คิวล้นแล้วทิ้งตามชั้น หลังฟื้นมี event สรุป “ทิ้งไป N รายการ” (5.7) · `/health/ready` แสดง `logStore:{status:"down"}` ภายในรอบตรวจ 30 วินาที แต่ยังตอบ 200 · relay หยุดแล้วตามต่อจาก cursor โดยไม่หาย · API อ่าน log ตอบ 503 `log_store_unavailable` ภายในราว 2 วินาที ทั้ง Mongo ที่หยุดและที่ค้าง (`STORE_CHECK_MS`) ก่อนบันทึกการอ่าน |
-| Mongo ช้า หรือหยุดตอบชั่วครู่ | driver ตั้ง `serverSelectionTimeoutMS` 2000 · `connectTimeoutMS` 2000 · `socketTimeoutMS` 5000 · `maxPoolSize` 5 (backend) / 3 (worker) · คำสั่งของ API อ่าน log relay prune log-upkeep และ loop แจ้งเตือนมี `maxTimeMS` 4000 (`MONGO_COMMAND_MAX_MS` — `createIndex` กับการเขียนคิวของ error ไม่มี) ให้ server ที่ยังตอบได้แต่ช้ายกเลิกเอง · **แต่ Mongo ที่หยุดตอบคร่อม heartbeat นานกว่าราว 2 วินาที ทำให้ monitor ของ driver ล้าง pool และตัดทุกคำสั่งที่ค้าง** (`PoolClearedOnNetworkError`) ไม่ว่า `maxTimeMS` จะเป็นเท่าไร — อ่านลองซ้ำหนึ่งครั้ง เขียนไม่ลองซ้ำ (mongod ตัวเดียว ไม่ใช่ replica set) งานที่มีหลายคำสั่ง (prune rebuild) จึงหยุดกลางทางได้และนับส่วนที่ทำไปแล้วไว้ · health อ่านสถานะที่จำไว้ probe ไม่รอ Mongo · ก้อน flush ไม่มี timeout ครอบ เกิน 15 วินาทีได้บรรทัดเตือนและก้อนใหม่ไม่เริ่มซ้อน (ตัวนับของ issue อาจนับซ้ำทั้งก้อน — 5.7) · งานดูแลของ log-upkeep เลิกรอหลัง 45 วินาที · tick ของ relay ที่ล้มลองใหม่รอบหน้า อีเมลยังเดิน · API อ่าน log: Mongo ที่ค้างหลัง ping ผ่านแล้วทำให้คำขอนั้นรอได้ถึง 5 วินาทีแล้วได้ 503 เดียวกัน |
+| Mongo ล่ม | คำขอของผู้ใช้และลูปอีเมลไม่กระทบ · error `runtime_events` สำเนา `audit_fallback` และบันทึกการเรียก admin API ค้างในคิว (≤ 500 รายการ / 2 MB ต่อ process) ถอยห่างเป็นเท่าตัวจนถึง 60 วินาที บรรทัด `[capture]` ยังพิมพ์ (5.8) · คิวล้นแล้วทิ้งตามชั้น หลังฟื้นมี event สรุป “ทิ้งไป N รายการ” (5.7) · `/health/ready` แสดง `logStore:{status:"down"}` ภายในรอบตรวจ 30 วินาที แต่ยังตอบ 200 · relay หยุดแล้วตามต่อจาก cursor โดยไม่หาย · API อ่าน log ตอบ 503 `log_store_unavailable` ภายในราว 2 วินาที ทั้ง Mongo ที่หยุดและที่ค้าง (`STORE_CHECK_MS`) ก่อนบันทึกการอ่าน — **ยกเว้น `GET /status`** ซึ่งไม่ผ่าน `store()`: ตอบ 200 เสมอ `logStore.status` มาจากรอบตรวจ 30 วินาที ตัวเลขของ relay และเพดานเป็น null (การอ่าน `relay_state` ที่ล้มถูกกลืน) และ Mongo ที่ค้างทำให้รอได้ถึง 5 วินาที (`socketTimeoutMS`) |
+| Mongo ช้า หรือหยุดตอบชั่วครู่ | driver ตั้ง `serverSelectionTimeoutMS` 2000 · `connectTimeoutMS` 2000 · `socketTimeoutMS` 5000 · `maxPoolSize` 5 (backend) / 3 (worker) · คำสั่งของ API อ่าน log relay prune log-upkeep และ loop แจ้งเตือนมี `maxTimeMS` 4000 (`MONGO_COMMAND_MAX_MS` — ที่ไม่มี: `createIndex` `dbStats` ทั้งสามจุด และ `updateOne` ที่จดตัวเลขเพดานขนาดของ log-upkeep · การเขียนคิวของ error · `ping` ของ `store()` และ `insertOne` ของ `recordLogReadFallback()` ซึ่งมีเส้นตาย 2 วินาทีของตัวเองแทน — เลิกรอ ไม่ได้ยกเลิก) ให้ server ที่ยังตอบได้แต่ช้ายกเลิกเอง · **แต่ Mongo ที่หยุดตอบคร่อม heartbeat นานกว่าราว 2 วินาที ทำให้ monitor ของ driver ล้าง pool และตัดทุกคำสั่งที่ค้าง** (`PoolClearedOnNetworkError`) ไม่ว่า `maxTimeMS` จะเป็นเท่าไร — อ่านลองซ้ำหนึ่งครั้ง เขียนไม่ลองซ้ำ (mongod ตัวเดียว ไม่ใช่ replica set) งานที่มีหลายคำสั่ง (prune rebuild) จึงหยุดกลางทางได้และนับส่วนที่ทำไปแล้วไว้ · health อ่านสถานะที่จำไว้ probe ไม่รอ Mongo · ก้อน flush ไม่มี timeout ครอบ เกิน 15 วินาทีได้บรรทัดเตือนและก้อนใหม่ไม่เริ่มซ้อน (ตัวนับของ issue อาจนับซ้ำทั้งก้อน — 5.7) · งานดูแลของ log-upkeep เลิกรอหลัง 45 วินาที · tick ของ relay ที่ล้มลองใหม่รอบหน้า อีเมลยังเดิน · API อ่าน log: Mongo ที่ค้างหลัง ping ผ่านแล้วทำให้คำขอนั้นรอได้ถึง 5 วินาทีแล้วได้ 503 เดียวกัน |
 | container `mongo` เริ่มไม่ขึ้น (รวมด่านปฏิเสธรหัสผ่านบน production — 3.12) | ไม่มีอะไรพึ่งมัน backend worker และ frontend เริ่มตามปกติ · backend บูตช้าลงไม่เกินราว 3 วินาที (รอผลตรวจแรก) · สถานะ `down` |
 | โหลดแพ็กเกจ `mongodb` ไม่ได้ | โหลดด้วย `import()` เฉพาะเมื่อเปิดใช้ ความล้มเป็นสถานะ `down` กับบรรทัด `[log-store]` · ลูปอีเมลกับ backend ทำงานต่อ |
 | เกินเพดานขนาด | 5.9 — error เดินแค่ตัวนับของ issue · `runtime_events` สำเนา `audit_fallback` และบันทึกการเรียกที่ token ผ่าน (ภายในส่วนยกเว้น) ยังเขียน · relay ยังเขียน `activity` · `/ready` แสดง `over_quota` |
 | ไม่ตั้ง `LOG_HASH_KEY` | ทุก process เตือนตอนบูต · `hashKeys` ว่าง · `/status` แสดง `hashKey:"missing"` · การค้นด้วยเลขบัตรหรืออีเมลที่ไม่มีบัญชีตอบ 503 `hash_search_unavailable` (3.6) · เอกสารที่เขียนระหว่างนี้ค้นด้วยเลขบัตรไม่เจอไปตลอดจนกว่าจะ rebuild |
-| Postgres ล่ม | `logAudit` ที่ล้มได้ error `audit.write-failed` + สำเนา `audit_fallback` (3.14) · error P1001 ของคำขอเก็บเป็น error `prisma:P1001:<METHOD route>` ตอบ 503 พร้อมรหัสอ้างอิง · `/health/ready` ตอบ 503 เพราะ database · relay ล้มทุกรอบ (`lastError`) แล้วตามต่อเมื่อกลับมา · API อ่าน log: บันทึกการอ่านลง Mongo แทน (ภายใน 2 + 2 วินาที) แล้วอ่านตามปกติ · ตัวระบุที่ต้องแปลงผ่าน Postgres (อีเมล เลขที่คำขอ รหัสหน่วยงาน) ตอบ 503 `database_unavailable` · `trace` ตอบส่วนของ Mongo พร้อม `postgres:"unavailable"` |
+| Postgres ล่ม | `logAudit` ที่ล้มได้ error `audit.write-failed` + สำเนา `audit_fallback` (3.14) · error P1001 ของคำขอเก็บเป็น error `prisma:P1001:<METHOD route>` ตอบ 503 พร้อมรหัสอ้างอิง · `/health/ready` ตอบ 503 เพราะ database · relay ล้มทุกรอบ (`lastError`) แล้วตามต่อเมื่อกลับมา · API อ่าน log: บันทึกการอ่านลง Mongo แทน (ภายใน 2 + 2 วินาที) แล้วอ่านตามปกติ · ตัวระบุที่ต้องแปลงผ่าน Postgres (อีเมล · คำขอทั้งเลขที่และ uuid — uuid ถามสองตารางคำขอก่อนไปหา `REQUEST_DELETED` ใน Mongo · รหัสหน่วยงาน) ตอบ 503 `database_unavailable` — uuid ของหน่วยงานไม่ถาม Postgres · `trace` ตอบส่วนของ Mongo พร้อม `postgres:"unavailable"` |
 | ทั้ง Mongo และ Postgres ล่ม | API อ่าน log ตอบ 503 `log_store_unavailable` ก่อนบันทึกอะไร (ไม่มีอะไรให้ส่ง จึงไม่มีการอ่าน) — `log_read_unrecorded` เกิดเฉพาะเมื่อ Postgres ไม่รับ**และ** Mongo ล้มหลังจาก ping ผ่านแล้ว |
-| `LOG_STORE_ENABLED=false` | ไม่โหลด driver เลย · `/ready` แสดง `disabled` · `captureError` ยังพิมพ์บรรทัด `[capture] … event=- (log store ปิดอยู่)` · ไม่มีคิว ไม่มี `runtime_events` ไม่มี `audit_fallback` ไม่มีบันทึกการเรียก admin API — แถวที่ Postgres ไม่รับเหลือแค่บรรทัดนั้น ซึ่ง**ไม่มี action subject หรือผู้กระทำของแถว** (2.8) · worker ไม่เริ่ม relay งานดูแล log-upkeep และ loop แจ้งเตือน · API อ่าน log ตอบ 503 `log_store_disabled` · `POST /api/client-errors` ยังตอบ 204 แต่ไม่เก็บอะไร |
+| `LOG_STORE_ENABLED=false` | ไม่โหลด driver เลย · `/ready` แสดง `disabled` · `captureError` ยังพิมพ์บรรทัด `[capture] … event=- (log store ปิดอยู่)` · ไม่มีคิว ไม่มี `runtime_events` ไม่มี `audit_fallback` ไม่มีบันทึกการเรียก admin API — แถวที่ Postgres ไม่รับเหลือแค่บรรทัดนั้น ซึ่ง**ไม่มี action subject หรือผู้กระทำของแถว** (2.8) · worker ไม่เริ่ม relay งานดูแล log-upkeep และ loop แจ้งเตือน · API อ่าน log ตอบ 503 `log_store_disabled` ยกเว้น `GET /status` ที่ตอบ 200 พร้อม `logStore.status: "disabled"` · `POST /api/client-errors` ยังตอบ 204 แต่ไม่เก็บอะไร |
 | worker ล่ม | ไม่มีใครสร้าง index ตรวจเพดาน คัดลอก prune หรือแจ้งเตือน · ธง `overQuota` ค้างค่าเดิม · สำเนาล่าช้า (`relayLagSeconds` โต) · อีเมลในคิวหยุด · คำขอไม่กระทบ · `/status` แสดง `alerts.checkedAt` เก่ากว่าสามนาที |
 | ปิด process (deploy) | backend `shutdown()` (`index.ts:444-458`): `server.close()` → บันทึก `shutdown` (+ ป้าย “ปิดตามปกติ” ในไฟล์ของ container — 5.5) → แถวสรุปของ token ≤ 2 วินาที → เข้าคิวใบสรุปของการเรียก admin API → คิว ≤ 2 วินาที → ปิด Mongo ≤ 1.5 วินาที → `prisma.$disconnect()` → exit · worker `stop()`: หยุดลูปอีเมล log-upkeep และ loop แจ้งเตือน → รอรอบของ relay ≤ 1.5 วินาที → บันทึก `shutdown` → คิว → ปิด → disconnect — ทั้งคู่อยู่ใน 10 วินาทีของ compose · handler ทำงานเฉพาะเมื่อ SIGTERM ถึง node (5.10) |
 
@@ -957,11 +969,12 @@ db.relay_state.updateOne({ _id: "audit_event" }, { $set: { rebuildRequestedAt: n
 **เลขที่คำขอถูกใช้ซ้ำได้** หลังคำขอที่เลขสูงสุดถูกลบ (`lib/request-number.ts`) สาขาเลขที่ของตัวกรองคำขอจึงจำกัดอยู่ในช่วงชีวิตของคำขอนั้น — ตั้งแต่วันที่สร้างถึงแถว
 `REQUEST_DELETED` ของมัน (ไม่มีปลายถ้ายังอยู่ · แถวลบรุ่นเก่าที่ไม่มี `before.createdAt` เริ่มที่การลบครั้งก่อนของเลขเดียวกัน) ส่วนสาขา subject ไม่จำกัด: id ไม่ถูกใช้ซ้ำ
 
-**ลำดับในทุก route**: ตรวจพารามิเตอร์ → log store ตอบได้ไหม (`store()` — ping ≤ 2 วินาที) → แปลงตัวระบุ → **บันทึกการอ่าน** (`recordLogRead()`) → อ่าน
+**ลำดับในทุก route ยกเว้น `/status`** (ไม่ผ่าน `store()` และไม่บันทึก — ข้างล่าง): ตรวจพารามิเตอร์ → log store ตอบได้ไหม (`store()` — ping ≤ 2 วินาที) → แปลงตัวระบุ → **บันทึกการอ่าน** (`recordLogRead()`) → อ่าน
 คำขอที่ผิดรูปหรืออ่านไม่ได้อยู่แล้วจึงไม่เกิดบันทึกเปล่า ๆ · บันทึก: INSERT `AUDIT_LOG_READ` ลง Postgres ภายใน 2 วินาที (0.3 เมื่อเพิ่งติดต่อไม่ได้) ไม่ได้ (ล้ม หมดเวลา
 หรือถูกปฏิเสธ) → เก็บ error `audit.log-read-failed` แล้วเขียนสำเนา `audit_fallback` ลง Mongo ตรงและรอไม่เกิน 2 วินาที (`fallback.errorEventId` ชี้ event นั้น) ไม่ได้อีก
 → 503 `log_read_unrecorded` โดยไม่ส่งข้อมูล · กรณีเลวร้ายราว 4 วินาทีก่อนได้ 503 · INSERT ที่เลิกรอแล้วยัง commit ทีหลังได้ การอ่านครั้งนั้นจึงอาจมี**สองบันทึก**
-(แถวกับสำเนา — คนละ `_id` โดยตั้งใจ) · ทุกคำตอบที่บันทึกแล้วมี `readId` (= id ของแถว หรือ `_id` ของสำเนา) · `GET /status` **ไม่ถูกบันทึก** (ไม่มีข้อมูลบุคคล)
+(แถวกับสำเนา — คนละ `_id` โดยตั้งใจ) · กลับกัน `insertOne` ของสำเนาที่เลิกรอที่ 2 วินาทีก็ไม่ถูกยกเลิก คำขอที่ได้ 503 `log_read_unrecorded` (ไม่มีข้อมูลออกไป)
+จึงอาจมีสำเนา `AUDIT_LOG_READ` ที่เขียนเสร็จทีหลัง — บันทึกของการอ่านที่ไม่ได้เกิด ซึ่งผู้เรียกถูกบอกว่าไม่ได้บันทึก · ทุกคำตอบที่บันทึกแล้วมี `readId` (= id ของแถว หรือ `_id` ของสำเนา) · `GET /status` **ไม่ถูกบันทึก** (ไม่มีข้อมูลบุคคล)
 
 **ข้อตกลงร่วม**: zod แบบ strict — พารามิเตอร์ที่ไม่รู้จักหรือผิด = 400 `{error:"validation", message, fields:{<ชื่อ>: <ข้อความ>}}` (ข้อผิดของตัวระบุชี้ชื่อ header) ·
 `page` เริ่ม 1 · `pageSize` 50 สูงสุด 200 · เรียง `occurredAt desc, _id desc` · `total` จาก `countDocuments` ตัดที่ 10,000 พร้อม `totalIsLowerBound` และเปิดหน้าที่เริ่มเลย
@@ -970,10 +983,10 @@ db.relay_state.updateOne({ _id: "audit_event" }, { $set: { rebuildRequestedAt: n
 
 | endpoint | พารามิเตอร์ | คืน |
 |---|---|---|
-| `GET /activity` | query: `action` (CSV ≤ 20) `category` `result` `via` `actorId` `subjectType`+`subjectId` (ต้องคู่กัน) `request` `organization` `tokenFp` `correlationId` (เต็ม หรือฐานสิบหก 8 ตัวขึ้นไป ขีดหรือไม่ก็ได้) `source` `from` `to` `before` `page` `pageSize` · header: `x-log-person` `x-log-cid` `x-log-email` | `{events, total, totalIsLowerBound, page, pageSize, window:{from,to}, nextBefore, readId}` — ทุกตัวกรอง AND กัน · ไม่ระบุช่วงและไม่มีตัวกรองที่แคบลง (คน คำขอ หน่วยงาน actor subject cid email tokenFp correlationId) = 30 วันล่าสุด มีตัวกรองที่แคบลง = ทั้งประวัติ · ระบุ `from` อย่างเดียว = ถึงตอนนี้ |
+| `GET /activity` | query: `action` (CSV ≤ 20) `category` `result` `via` `actorId` `subjectType` `subjectId` (`subjectId` ต้องมี `subjectType` คู่ — `subjectType` เดี่ยว ๆ กรองได้แต่ไม่นับเป็นตัวกรองที่แคบลง) `request` `organization` `tokenFp` `correlationId` (เต็ม หรือฐานสิบหก 8 ตัวขึ้นไป ขีดหรือไม่ก็ได้) `source` `from` `to` `before` `page` `pageSize` · header: `x-log-person` `x-log-cid` `x-log-email` | `{events, total, totalIsLowerBound, page, pageSize, window:{from,to}, nextBefore, readId}` — ทุกตัวกรอง AND กัน · ไม่ระบุช่วงและไม่มีตัวกรองที่แคบลง (คน คำขอ หน่วยงาน actor subject cid email tokenFp correlationId) = 30 วันล่าสุด มีตัวกรองที่แคบลง = ทั้งประวัติ · ระบุ `from` อย่างเดียว = ถึงตอนนี้ · ระบุ `to` อย่างเดียว = ย้อน 30 วันจาก `to` (มีตัวกรองที่แคบลง = ไม่มีขอบล่าง) |
 | `GET /activity/:id` | — | `{event, readId}` · 404 `not_found` |
-| `GET /timeline` | `x-log-person` **หรือ** query `request` **หรือ** `organization` อย่างใดอย่างหนึ่ง · `from` `to` (ตั้งต้น: คำขอ = ทั้งชีวิต · คน/หน่วยงาน = 7 วัน) | `{items:[{type:"activity", …} \| {type:"error", …}], truncated, readId}` เรียงเก่าไปใหม่ ≤ 500 — error ที่เข้า: correlation id เดียวกับกิจกรรมที่พบ และเมื่อมีขอบล่างของช่วง: error ของผู้ใช้คนนั้น (`actor.id`) · ของคนในหน่วยงานนั้น · ที่ path มี uuid ของคำขอ · error ย่อ (ตัวเต็มที่ `/errors/events/:id`) · ถูกตัดแล้วตัดรายการหลังรายการสุดท้ายของแหล่งที่ถูกตัดทิ้ง |
-| `GET /trace/:ref` | uuid หรือฐานสิบหก 8–32 ตัว | `{correlationId, reference, actors:[{id, via, count}], mixedActors, activity[≤200], activityTruncated, errors[≤50], errorsTruncated, reports, serverErrors, deliveries, integrations, postgres, readId}` — `deliveries`/`integrations` อ่านจาก Postgres ด้วย id ตรงตัว (ไม่มีที่อยู่ปลายทาง ข้อความ error กวาดแล้ว) `postgres: "ok" \| "unavailable" \| "not_applicable"` · prefix ที่ตรงหลาย id = `{ambiguous:true, candidates[≤10], candidatesTruncated, reports, serverErrors, readId}` · `reports` = รายงานจากเบราว์เซอร์ที่**อ้าง**รหัสนี้ (`browser.reference` — ผู้ส่งเขียนเอง อ่านเป็นคำบอกเล่า) มีแต่ `reports` ได้ 200 ที่ `correlationId: null` · `serverErrors` = error ของ Next server ที่ `extra.digest` ตรงกับ `digest` ของรายงานภายใน ±1 ชั่วโมง ≤ 20 (digest เป็น hash ของข้อความ ไม่ใช่ id ของคำขอ — ตรงกับของคนอื่นได้) · `mixedActors:true` = แถวของ id นี้มาจากหลายผู้กระทำหรือหลายช่องทาง (2.5) · prefix ที่ไม่ตรงอะไรเลยและไม่มีรายงาน = 404 (id เต็มที่ไม่เจอได้ 200 ที่รายการว่าง) |
+| `GET /timeline` | `x-log-person` **หรือ** query `request` **หรือ** `organization` อย่างใดอย่างหนึ่ง · `from` `to` (ตั้งต้น: คำขอ = ทั้งชีวิต · คน/หน่วยงาน = 7 วัน · `to` อย่างเดียว: คน/หน่วยงานย้อน 7 วันจาก `to` คำขอไม่มีขอบล่าง) | `{items:[{type:"activity", …} \| {type:"error", …}], truncated, readId}` เรียงเก่าไปใหม่ ≤ 500 — error ที่เข้า: correlation id เดียวกับกิจกรรมที่พบ และเมื่อมีขอบล่างของช่วง: error ของผู้ใช้คนนั้น (`actor.id`) · ของคนในหน่วยงานนั้น · ที่ path มี uuid ของคำขอ · error ย่อ (ตัวเต็มที่ `/errors/events/:id`) · ถูกตัดแล้วตัดรายการหลังรายการสุดท้ายของแหล่งที่ถูกตัดทิ้ง |
+| `GET /trace/:ref` | uuid หรือฐานสิบหก 8–32 ตัว | `{correlationId, reference, actors:[{id, via, count}], mixedActors, activity[≤200], activityTruncated, errors[≤50], errorsTruncated, reports, serverErrors, deliveries, integrations, postgres, readId}` — `deliveries`/`integrations` อ่านจาก Postgres ด้วย id ตรงตัว (ไม่มีที่อยู่ปลายทาง ข้อความ error กวาดแล้ว) `postgres: "ok" \| "unavailable" \| "not_applicable"` · prefix ที่ตรงหลาย id = `{ambiguous:true, candidates[≤10], candidatesTruncated, reports, serverErrors, readId}` · `reports` = รายงานจากเบราว์เซอร์ที่**อ้าง**รหัสนี้ (`browser.reference` — ผู้ส่งเขียนเอง อ่านเป็นคำบอกเล่า) ใหม่ไปเก่า ≤ 50 ไม่มีธงบอกว่าถูกตัด มีแต่ `reports` ได้ 200 ที่ `correlationId: null` · `serverErrors` = error ของ Next server ที่ `extra.digest` ตรงกับ `digest` ของรายงานภายใน ±1 ชั่วโมง ≤ 20 (digest เป็น hash ของข้อความ ไม่ใช่ id ของคำขอ — ตรงกับของคนอื่นได้) · `mixedActors:true` = แถวของ id นี้มาจากหลายผู้กระทำหรือหลายช่องทาง (2.5) · prefix ที่ไม่ตรงอะไรเลยและไม่มีรายงาน = 404 (id เต็มที่ไม่เจอได้ 200 ที่รายการว่าง) |
 | `GET /errors/issues` | `status` (`open` ตั้งต้น · `resolved` `ignored` `all`) `service` `level` `release` (ตรง `firstRelease` หรือ `lastRelease`) `since` (`lastSeen ≥`) `sort` (`lastSeen` `count` `firstSeen` ใหม่ไปเก่า) `page` `pageSize` | `{issues, total, totalIsLowerBound, page, pageSize, readId}` — issue มี `fingerprint` แทน `_id` และ `lastSeenBangkok` |
 | `GET /errors/issues/:fingerprint` | `events` (20 ตั้งต้น 0–100) · fingerprint ที่มี `/` หรือช่องว่างต้อง percent-encode ใน path | `{issue, recentEvents, readId}` · 404 |
 | `GET /errors/events/:id` | — | `{event, readId}` · 404 (อาจถูกลบตามอายุแล้ว) |
@@ -986,7 +999,8 @@ db.relay_state.updateOne({ _id: "audit_event" }, { $set: { rebuildRequestedAt: n
 แถวที่เกิดก่อน `to` แต่ยังไม่ถูกคัดลอกเข้ามาในช่วงทีหลัง (ลองแล้ว หน้า 2–3 ซ้ำ 1–2 แถว) `page` นิ่งเฉพาะช่วงที่ `to` ผ่านไปเกินสองนาที
 
 **ผลข้างเคียงที่ตั้งใจ**: การอ่านประวัติของ X เป็นแถวหนึ่งในผลของการค้นด้วย `x-log-person` / `x-log-cid` ของ X ครั้งถัดไป — การเปิดประวัติของเขาเป็นสิ่งที่เกิดกับข้อมูล
-ของเขา (4.12) · “ใครเคยค้นประวัติของ X” = `action=AUDIT_LOG_READ` คู่กับตัวระบุตัวไหนก็ได้ของ X (G7)
+ของเขา (4.12) · “ใครเคยค้นประวัติของ X” = `action=AUDIT_LOG_READ` คู่กับตัวระบุของ X (G7) — ครบเฉพาะการอ่านที่ระบุตัว X ทาง header การอ่านด้วย
+`actorId`/`subjectId` เจอแค่ทาง `x-log-person` และการอ่านผ่าน trace timeline ของคำขอหรือหน่วยงาน หรือเปิดเอกสารเดียวด้วย id ไม่ผูกกับ X เลย (4.12)
 
 **`GET /status`** — ตัวเลขของ backend process ที่ตอบเท่านั้น (คิวของ worker และของ replica อื่นแยกกัน):
 
@@ -1168,7 +1182,7 @@ encode ใหม่ ไม่สนตัวพิมพ์) ตัดที่ 
 | `requestNumber` | `metadata.request_number` เท่านั้น — ทางนี้วิ่งบนเส้นทางของคำขอหลัง Postgres เพิ่งปฏิเสธ จึงไม่ถามตารางคำขออีก แถวที่ไม่ได้ใส่คีย์นั้น (อัปโหลด ดาวน์โหลด …) ได้ null ขณะที่สำเนาของ relay มี |
 | `request.method` · `request.route` | จากบริบทของคำขอ (relay ได้ null เพราะ `audit_event` ไม่มีสองคอลัมน์นี้) |
 | `sourceComponent` | บริบท หรือ `request-service` |
-| `fallback.errorEventId` | id ของ event ข้อ 1 ถ้ามันได้เข้าคิว — **null** เมื่อไม่ได้เข้า: เกินเพดานขนาด · ติดเพดาน 50/ชั่วโมงหรือ 600/นาที · คิวเต็ม · issue ที่รอเขียนครบ (`issue_backlog`) · ตัว `captureError` เองล้ม · **id ที่ไม่ null ก็อาจชี้ event ที่ไม่เคยถูกเขียน**: id ถูกจดตอนเข้าคิว แล้ว event (ชั้น 3) ยังถูกไล่ออกทีหลังด้วยรายการชั้น 4 เมื่อคิวเต็ม ถูกข้ามตอนเขียนถ้าธงเกินเพดานตั้งก่อน flush หรือ Mongo ไม่รับ — ขณะที่เอกสารนี้ (ชั้น 4 เขียนแม้เกินเพดาน) ถูกเขียน |
+| `fallback.errorEventId` | id ของ event ข้อ 1 ถ้ามันได้เข้าคิว — **null** เมื่อไม่ได้เข้า: เกินเพดานขนาด · ติดเพดาน 50/ชั่วโมงหรือ 600/นาที · งบไบต์ `anonymous-request` หมด (คำขอที่ไม่มีตัวตน เช่น `/api/auth/*` — `anonymous_budget`, 5.13) · คิวเต็ม · issue ที่รอเขียนครบ (`issue_backlog`) · ตัว `captureError` เองล้ม · **id ที่ไม่ null ก็อาจชี้ event ที่ไม่เคยถูกเขียน**: id ถูกจดตอนเข้าคิว แล้ว event (ชั้น 3) ยังถูกไล่ออกทีหลังด้วยรายการชั้น 4 เมื่อคิวเต็ม ถูกข้ามตอนเขียนถ้าธงเกินเพดานตั้งก่อน flush หรือ Mongo ไม่รับ — ขณะที่เอกสารนี้ (ชั้น 4 เขียนแม้เกินเพดาน) ถูกเขียน |
 
 **ในคิว** สำเนาเหล่านี้อยู่ชั้นเดียวกับ fatal — ถูกทิ้ง**ท้ายสุด**เมื่อคิวเต็ม และ**ยังเขียนแม้เกินเพดานขนาด** (5.7, 5.9) ถ้าหายนับใน `auditCopies` ของ event สรุป
 “ทิ้งไป N” · process ตายก่อน flush = หาย · Postgres **ไม่ได้แถวคืน** และ rebuild สร้างเอกสารนี้ใหม่ไม่ได้ · มีแค่ใน backend (worker ไม่เขียน audit) ·
@@ -1177,7 +1191,7 @@ encode ใหม่ ไม่สนตัวพิมพ์) ตัดที่ 
 **บันทึกการอ่าน log ที่ Postgres ไม่รับ** (`recordLogReadFallback()`, `lib/audit-fallback.ts:167`) ใช้รูปเดียวกันแต่**เขียนตรงและรอผลไม่เกิน 2 วินาที ไม่ผ่านคิว** — คำขอ
 อ่านต้องรู้ว่าการอ่านถูกบันทึกแล้วก่อนส่งข้อมูล (3.11) · error event ของมันคือ `audit.log-read-failed` ไม่มี `extra.audit` (ผู้อ่าน เหตุผล และตัวกรองอยู่ในสำเนาแล้ว) ·
 `_id` ใหม่ ไม่ใช่ id ที่ Postgres จะได้: INSERT ที่หมดเวลารอแล้วยัง commit ทีหลัง relay คัดลอกมาเป็นอีกใบ — การอ่านครั้งนั้นมีสองบันทึก ซึ่งดีกว่าไม่มีเลย และ
-reconcile ไม่นับเพี้ยน
+reconcile ไม่นับเพี้ยน · เส้นตาย 2 วินาทีแค่เลิกรอ `insertOne` ที่ช้าเขียนเสร็จทีหลังได้ คำขอที่ตอบ 503 `log_read_unrecorded` ไปแล้วจึงอาจมีสำเนานี้ (3.11)
 
 ค้น: `GET /api/admin/logs/activity?source=audit_fallback` (G1) · ตามรหัสอ้างอิงด้วย G6 · หรือ `db.activity.find({ source: "audit_fallback" })` (5.11)
 
@@ -1221,8 +1235,8 @@ reconcile ไม่นับเพี้ยน
 
 ## 4. แคตตาล็อกเหตุการณ์
 
-รหัส `AuditAction` มี **54 ตัว** (`lib/audit.ts:27-477` — หัวไฟล์ยังเขียนว่า “~25” ซึ่งล้าสมัย) ถูกเขียนจริง **53 ตัว** จาก 88 จุดเรียกของ
-`logAudit()` กับ `recordLogRead()` — `DATA_EXPORTED` ประกาศไว้แต่ไม่มีใครเขียน (4.13) ทุกแถวในหมวดนี้ลง Postgres และ relay คัดลอกลง `activity`
+รหัส `AuditAction` มี **54 ตัว** (`lib/audit.ts:27-477` — หัวไฟล์ยังเขียนว่า “~25” ซึ่งล้าสมัย) ถูกเขียนจริง **53 ตัว** จาก 89 จุดเรียก (88 ของ
+`logAudit()` + 1 ของ `recordLogRead()`) — `DATA_EXPORTED` ประกาศไว้แต่ไม่มีใครเขียน (4.13) ทุกแถวในหมวดนี้ลง Postgres และ relay คัดลอกลง `activity`
 (ปิดข้อมูลตาม 3.6 category ตาม 3.5) · แถวที่ `logAudit` เขียนลง Postgres ไม่สำเร็จได้สำเนา `audit_fallback` (3.14) · รหัสที่ห้าสิบห้า `ADMIN_API_REQUEST`
 อยู่ใน Mongo อย่างเดียว (4.11)
 
@@ -1287,7 +1301,7 @@ reconcile ไม่นับเพี้ยน
 
 | ที่อยู่ | เป็นรหัส | เป็นข้อความที่คนพิมพ์ |
 |---|---|---|
-| `metadata.reason` | `SESSION_REVOKED` (`SessionRevokeReason`) · `ROLE_REVOKED` รูปแบบ B (`REPLACED_BY_NEW_HOLDER`) · `ACTIVATION_KEY_ISSUED` (`INVITATION` `RESEND` `APPROVER_INVITATION`) | admin: `USER_ACCOUNT_SUSPENDED` `REACTIVATED` `DEACTIVATED` `UPDATED` (อีเมล/เลขบัตร) · `USER_IDENTITY_RELEASED` · `ROLE_ASSIGNED` ของ admin · `ROLE_REVOKED` A และ C (A ของการแทนที่ที่นั่งเป็นข้อความคงที่ `"มีผู้รับผิดชอบคนใหม่แทน"`) · `ACTIVATION_KEY_REVOKED` (ข้อความของ admin, `note` ของ recall หรือข้อความคงที่ภาษาไทยของโค้ด) · `REQUEST_UPDATED` `RESET_TO_DRAFT` `CANCELLED` (admin) `DELETED` · `APPROVER_INVITATION_RECALLED` (admin reset) |
+| `metadata.reason` | `SESSION_REVOKED` (`SessionRevokeReason`) · `ROLE_REVOKED` รูปแบบ B (`REPLACED_BY_NEW_HOLDER`) · `ACTIVATION_KEY_ISSUED` (`INVITATION` `RESEND` `APPROVER_INVITATION`) | admin: `USER_ACCOUNT_SUSPENDED` `REACTIVATED` `DEACTIVATED` `UPDATED` (อีเมล/เลขบัตร) · `USER_IDENTITY_RELEASED` · `ROLE_ASSIGNED` ของ admin · `ROLE_REVOKED` A และ C (A ของการแทนที่ที่นั่งเป็นข้อความคงที่ `"มีผู้รับผิดชอบคนใหม่แทน"`) · `ACTIVATION_KEY_REVOKED` (ข้อความของ admin, `note` ของ recall หรือข้อความคงที่ภาษาไทยของโค้ด) · `REQUEST_UPDATED` `RESET_TO_DRAFT` `CANCELLED` (admin) `DELETED` · `APPROVER_INVITATION_RECALLED` (admin reset) · ผู้อ่าน log: `AUDIT_LOG_READ` (จาก `x-log-reason`) · `ERROR_ISSUE_STATUS_CHANGED` (จาก body — ซ้ำใน `after.statusReason`) — ในสำเนาทั้งสองก็ถูกยกขึ้น `reason` ชั้นบนเหมือนแถวอื่น |
 | `metadata.admin_reason` | — | `SESSION_REVOKED` ของ `DELETE /api/admin/users/:id/sessions` (ที่นั่น `reason` = `LOGOUT_ALL`) |
 | `metadata.note` | — | `APPROVER_INVITATION_RECALLED` ขา recall |
 | `after.note` | — | ผลการตรวจทุกรหัส (4.9) · `SPECIALIST_COMMENT_RECORDED` |
@@ -1533,8 +1547,10 @@ error ท้าย `index.ts` (แยกตามที่มาตั้งแ�
 
 #### `IDENTITY_VERIFICATION_FAILED` — ความล้มเหลวของ callback ThaID
 
-ครอบ**ทุก**ความล้มเหลวของ callback ทั้งสองขา (ยกเว้น body ที่ไม่ผ่าน zod — 400 `validation` ไม่มีแถว `auth.ts:319-322` — และขา login
-ที่ไม่พบบัญชี ซึ่งเขียนเป็น `LOGIN_FAILED` `THAID_NO_MATCHING_ACCOUNT` แทน) เขียนจาก
+ครอบความล้มเหลวของ callback ทั้งสองขา**ที่ผ่าน `failThaidOperation()`** (ยกเว้น body ที่ไม่ผ่าน zod — 400 `validation` ไม่มีแถว `auth.ts:319-322` — และขา login
+ที่ไม่พบบัญชี ซึ่งเขียนเป็น `LOGIN_FAILED` `THAID_NO_MATCHING_ACCOUNT` แทน) · **ไม่ครอบ** error ที่ throw ออกจาก callback หลัง `claimThaidState()` โดยไม่ผ่าน
+hook นั้น — P2002 ของ `external_subject` ใน `userAccount.update` ของขา login (`auth.ts:617`) · Postgres ล้มใน `usableActivationKeyById()` หรือ `revokeActivationKey()`
+— ตอบ 409/500 ผ่าน `index.ts` operation ค้าง `PROCESSING` และไม่มีทั้งแถวนี้และ `LOGIN_FAILED` (มีแค่ error event) · เขียนจาก
 `logThaidFailure()` ผ่าน `failThaidOperation()` `failure_reason` จึงเป็นรหัสเดียวกับ `integration_operation.last_error_code` —
 **ยกเว้น** แถว `CID_MISMATCH` ที่เขียนเอง และแถว `state_*` ที่ callback เขียนเอง (doc comment ของรหัสนับเป็นข้อยกเว้นเหมือนกัน
 `audit.ts:328-330`): `state_not_found` ไม่มี operation เลย · `state_already_used` ชี้ operation ที่ `SUCCEEDED` แล้ว (`last_error_code` null)
@@ -1786,7 +1802,8 @@ operation คงรหัสเดิมไว้ ข้อความอิส
 
 #### `ROLE_ASSIGNED` — มอบบทบาท
 
-subject **ไม่สม่ำเสมอ**: สามจุดชี้แถว assignment (URA) อีกสองจุดของ admin ชี้**บัญชี** (UA) และไม่บันทึก id ของ assignment
+subject **ไม่สม่ำเสมอ**: สองจุดที่ยังเขียนอยู่ (activate · review) ชี้แถว assignment (URA) เช่นเดียวกับแถวเก่าของทางเปิดหน่วยงานที่ถอดแล้ว อีกสองจุดของ
+admin ชี้**บัญชี** (UA) และไม่บันทึก id ของ assignment
 
 | จุด | เกิดเมื่อ | actor | subject | before / after | metadata |
 |---|---|---|---|---|---|
@@ -1897,9 +1914,14 @@ subject **ไม่สม่ำเสมอ**: สามจุดชี้แถ
   เก็บแบบเดิมจนกว่า BDI จะตัดสิน — `CLAUDE.md`) ส่วนแถว review ปิดแล้ว
 - ขา resend: `before.status` อาจเป็น `ISSUED` ทั้งที่คำขอเดียวกันเพิ่งเพิกถอนคีย์นั้น การพลิกจริงอยู่ในแถว `ACTIVATION_KEY_REVOKED`
   ที่มาก่อน · วันหมดอายุของคีย์ไม่ถูกบันทึก · ขา admin เขียนก่อนอีเมล inline
+- **ขา review ส่งอีเมลก่อนมีแถว**: `ensureApproverAccount()` ส่งคำเชิญแบบไม่รอจาก**ใน** transaction ของ review (`organizations.ts:3168` — ต้องใช้ raw key) แถวนี้เขียน
+  หลัง commit ถ้า transaction rollback ทีหลัง (เช่น `openTask` ที่ `:2615` ได้ 409 `task_closed`) อีเมลอาจออกไปแล้วโดยไม่มี `ACTIVATION_KEY_ISSUED` และคีย์ในอีเมลไม่มีในฐานข้อมูล
+  (บัญชีและคีย์ rollback ไปด้วย ลิงก์ได้ `key_not_found`) — ไม่มีร่องรอยใน `audit_event` และ 409 ไม่เกิด error event ให้ breadcrumb `smtp` ติดไป
 - **ขา resend ไม่มี id ของบัญชี** (`after` มีแค่ `{email, role}`) และ `INVITATION_DELETED` `APPROVER_INVITATION_RECALLED` ก็ไม่มี —
-  ชีวิตของบัญชี PENDING ที่จบด้วยการถูกลบจึงตามด้วย id ไม่ได้ ต้องจับด้วยอีเมล (หรือเลขบัตรเต็มในแถวที่ยังเก็บเต็ม) ส่วนในสำเนา Mongo
-  เลขบัตรถูกปิดและอีเมลบัญชีไม่ถูก hash แถวเหล่านี้จึงเข้า `person=` ไม่ได้ (3.2 `relatedUserIds`)
+  ใน Postgres ชีวิตของบัญชี PENDING ที่จบด้วยการถูกลบจึงตามด้วย id ไม่ได้ ต้องจับด้วยอีเมล (หรือเลขบัตรเต็มในแถวที่ยังเก็บเต็ม) · **ในสำเนา Mongo
+  หาเจอ**: อีเมลใต้คีย์ `email` ของ before/after/metadata ได้ `email#` (3.6) และเลขบัตรเต็มใน `before.cid` ถูกปิดแต่ได้ `cid#` — `x-log-person` ที่เป็นอีเมล
+  หรือ uuid ของบัญชีที่ยังอยู่ (`resolvePerson()` เติม `email#` ของบัญชีให้ ตั้งใจไว้สำหรับแถวพวกนี้) `x-log-email` และ `x-log-cid` เจอแถวเหล่านี้
+  เหลือแค่ `x-log-person` ที่เป็น uuid ของบัญชีที่ถูกลบไปแล้วที่ไม่เจอ (3.2 `relatedUserIds`)
 - **ตัวอย่าง (review)** `{"after": {"email": "approver@agency.go.th", "cid": {"masked": "xxxxxxxxx4821", "changed": true}, "role": "ORGANIZATION_APPROVER", "name": "นาย ผู้มีอำนาจ ตัวอย่าง", "userAccountId": "5c3e…"}, "metadata": {"issued_via": "REVIEW_API", "reason": "APPROVER_INVITATION", "request_number": "ORG-REG-2026-0004"}}`
 - **โค้ด** `routes/admin.ts:867` · `:1062` · `routes/organizations.ts:2767`
 
@@ -2158,7 +2180,8 @@ BDI อนุมัติขั้นสุดท้าย ค่าในคำ
 
 **เกิดเมื่อ**
 - `PATCH /api/organizations/:id` — ผู้แก้อยู่หน่วยงานเดียวกันและถือ `ORGANIZATION_USER` คำขอ `DRAFT`/`RETURNED` และ diff ของคำขอหรือของชื่อหน่วยงานไม่ว่าง
-- `PATCH /api/dataset-requests/:id` — `mayEdit` (ผู้ใช้หรือผู้มีอำนาจฯ ของหน่วยงาน) คำขอ `DRAFT`/`RETURNED` และ diff ไม่ว่าง
+- `PATCH /api/dataset-requests/:id` — `mayEdit` (`dataset-requests.ts:254`: session ที่ไม่ใช่เจ้าหน้าที่ BDI ซึ่ง `organizationId` ตรงหน่วยงานของคำขอ ไม่ว่าถือ role ใด
+  **หรือ**ผู้สร้างคำขอเอง แม้ย้ายออกจากหน่วยงานไปแล้ว) คำขอ `DRAFT`/`RETURNED` และ diff ไม่ว่าง
 
 | ช่อง | ค่า |
 |---|---|
@@ -2187,7 +2210,7 @@ BDI อนุมัติขั้นสุดท้าย ค่าในคำ
 | `fields_changed` | **หน่วยงาน**: คีย์ที่เปลี่ยนเพราะผู้กรอก — ไม่รวมคีย์ที่ route เขียนจากบัญชี และคีย์ที่เปลี่ยนแค่รูปเพราะ route แปลงค่าเดิม (อาจเป็น `[]`) · **ชุดข้อมูล**: `Object.keys(after)` ทุกคีย์ที่เปลี่ยน รวมค่าที่กฎในชีท conditions ล้างหรือบังคับให้เองซึ่งผู้กรอกไม่ได้ส่ง ไม่เคยเป็น `[]` เพราะแถวเขียนเฉพาะเมื่อมี diff (`dataset-requests.ts:856-867`) | `["title", "maintainerEmail"]` |
 | `synced_from_account` | *หน่วยงาน เมื่อไม่ว่าง* — คีย์ที่ route เขียนจาก**บัญชี**ทับเสมอ (ผู้ประสานงาน และอีเมล/เลขบัตรของผู้มีอำนาจฯ ที่เปิดบัญชีแล้ว) | `["userFirstnameTh", "userPhoneNumber"]` |
 | `normalised_by_route` | *หน่วยงาน เมื่อไม่ว่าง* (ตั้งแต่ `d3c1ee0`) — คีย์ที่เปลี่ยนแค่รูปเพราะ route แปลงค่าเดิมที่ฟอร์มแสดงแล้วส่งกลับมา: อีเมลเป็นตัวพิมพ์เล็ก (ร่างก่อน 2026-09-18) เบอร์เป็นตัวเลขล้วน (ก่อน 2026-08-29) ตัดช่องว่างหัวท้าย — ตัดสินโดย `changedOnlyInForm()` (`lib/organization-form.ts`): ค่าเดิมผ่านตัวแปลงของฟอร์ม (`draftEmailSchema` · `draftPhone()`) แล้วเท่ากับค่าที่เขียนลงหรือไม่ · ผู้กรอกที่พิมพ์ค่าเดิมใหม่ต่างแค่ตัวพิมพ์หรือขีดก็นับกลุ่มนี้ (ความหมายไม่เปลี่ยน) | `["organizationEmail", "approverPhoneNumber"]` |
-| `organization_master_changed` | *หน่วยงาน เมื่อชื่อบนแถว organization เปลี่ยนตาม* — `{before, after}` ของ `nameTh` `nameEn` `organizationType` | `{"before": {"nameTh": "หน่วยงานใหม่"}, "after": {"nameTh": "กรมตัวอย่าง"}}` |
+| `organization_master_changed` | *หน่วยงาน เมื่อชื่อบนแถว organization เปลี่ยนตาม* — `{before, after}` ของ `nameTh` `nameEn` `organizationType` · เปลี่ยนตามเฉพาะเมื่อ `nameOwnedByForm()` (`organizations.ts:483`): หน่วยงานที่ผู้สร้างคำขอเปิดเอง ตั้งแต่ `7259c09` คือหน่วยงานเก่าที่เปิดผ่านทาง WEB_FORM ที่ถอดแล้วเท่านั้น — หน่วยงานที่ admin สร้าง (`createdBy` = บัญชีระบบ) ไม่มีวันได้คีย์นี้ | `{"before": {"nameTh": "หน่วยงานใหม่"}, "after": {"nameTh": "กรมตัวอย่าง"}}` |
 
 - **ฝั่งหน่วยงานเท่านั้น**: `fields_changed` + `synced_from_account` + `normalised_by_route` = คีย์ของ before/after พอดี (before/after ยังเก็บค่าดิบที่
   เปลี่ยนจริงในตาราง) snapshot ที่ไม่ตรงกับบัญชี หรือเก็บไว้ก่อนมีการแปลงรูป จึงได้แถวตอนบันทึกครั้งแรกแม้ไม่ได้พิมพ์อะไร โดย `fields_changed: []`
@@ -2208,7 +2231,7 @@ BDI อนุมัติขั้นสุดท้าย ค่าในคำ
 - `POST /api/organizations/:id/generate-form` — `canEdit` (หน่วยงานเดียวกัน + `ORGANIZATION_USER` ไม่ผ่าน = 404) ข้อมูลผ่าน `submitSchema`
   ที่อยู่ถูกต้องตามฐานข้อมูล (`isValidAddress`, `organizations.ts:1721`) อีเมล/เลขบัตรของผู้มีอำนาจฯ ไม่ชนใคร (`approverConflict`, `:1740`)
   มีคำสั่งแต่งตั้งที่ ACTIVE และ render ได้อย่างน้อยหนึ่งฉบับ — ข้อใดไม่ผ่านได้ 4xx ไม่มีแถว
-- `POST /api/dataset-requests/:id/generate-form` — `mayEdit` (ไม่ผ่าน = 404) ข้อมูลผ่าน `datasetSubmitSchema` มี `DATA_DICTIONARY` ที่ ACTIVE และ render ได้อย่างน้อยหนึ่งฉบับ
+- `POST /api/dataset-requests/:id/generate-form` — `mayEdit` (กติกาเดียวกับ `REQUEST_DRAFT_SAVED` ข้างบน · ไม่ผ่าน = 404) ข้อมูลผ่าน `datasetSubmitSchema` มี `DATA_DICTIONARY` ที่ ACTIVE และ render ได้อย่างน้อยหนึ่งฉบับ
 
 ทั้งสองทางไม่ตรวจสถานะของคำขอ render ไม่ได้เลย = 503 ไม่มีแถว render ล้มกลางทาง = ไม่มีแถว (ฉบับที่ render ไปแล้วยังอยู่)
 
@@ -2633,7 +2656,7 @@ token นี้เปิดทุกอย่างใต้ `/api/admin` ไม
 **เกิดเมื่อ**
 - คำขอใดก็ได้ใต้ `/api/admin/*` `/api/admin/users/*` `/api/admin/registrations/*` (รวม path ที่ไม่มีจริง) ที่ `x-admin-token` ผิดหรือไม่มี —
   `requireAdminToken` เรียก `adminTokenRejections.record()` แล้วตอบ 401 ทันที — **ไม่เกิด**กับคำขอที่ตัวอ่าน body ปฏิเสธก่อนถึง router (ได้แค่
-  `ADMIN_API_REQUEST` แบบ `token_checked: false`) การตัดสินว่าได้แถวไหมอยู่ในตารางนี้:
+  `ADMIN_API_REQUEST` แบบ `token_checked: false`) และกับ CORS preflight (`OPTIONS` — `cors()` ตอบก่อน ไม่มีบันทึกใดเลย) การตัดสินว่าได้แถวไหมอยู่ในตารางนี้:
 
 | ชนิดแถว | เมื่อไร | `correlation_id` | IP / UA | metadata |
 |---|---|---|---|---|
@@ -2700,7 +2723,10 @@ admin API ตอบเลขบัตรและอีเมลแบบไม�
 
 - **ยกเว้นคำขอที่ถึง router ของ log** — API อ่าน log บันทึกตัวเองเป็น `AUDIT_LOG_READ` อยู่แล้ว ตัดสินจากสิ่งที่ Express ทำจริง (`markLogApiRequest` ติดที่ mount
   เดียวกับ router ของ log — `index.ts:189`) ไม่ใช่จากข้อความของ URL: `/API/Admin/LOGS/x` ถึง router ของ log (Express ไม่สนตัวพิมพ์) จึงไม่ถูกบันทึกที่นี่ ·
-  `/api/admin/%6Cogs/x` ไม่ถึง จึงเป็นการเรียก admin · คำขอของ log API ที่ตัวอ่าน body ปฏิเสธไม่ถึง router ของ log จึงถูกบันทึกที่นี่และไม่มี `AUDIT_LOG_READ`
+  `/api/admin/%6Cogs/x` ไม่ถึง จึงเป็นการเรียก admin · คำขอของ log API ที่ตัวอ่าน body ปฏิเสธไม่ถึง router ของ log จึงถูกบันทึกที่นี่และไม่มี `AUDIT_LOG_READ` ·
+  กลับกัน คำขอที่ถึง router ของ log แล้วถูกปฏิเสธก่อนขั้นอ่าน (400 404 503 — 4.12) ไม่มีทั้งสองบันทึก
+- **ยกเว้น CORS preflight** — `OPTIONS` ทุกตัวใต้ `/api/admin*` ถูก `cors()` (`index.ts:145`) ตอบ 204 ก่อนถึง `recordAdminAccess` และก่อนการตรวจ token
+  จึงไม่มีทั้ง `ADMIN_API_REQUEST` และ `ADMIN_TOKEN_REJECTED` (ไม่มีข้อมูลออกไป)
 - คำขอที่ตัวอ่าน body ปฏิเสธ (400 `validation` / 413 / 415 — `parseJsonBody`) ไม่ถึง router ของ admin ได้บันทึกพร้อม `token_checked: false` —
   `requireAdminToken` ไม่ได้ตรวจ token ของมัน (`token_accepted: false` จึงไม่ได้แปลว่า token ผิด) และไม่มี `ADMIN_TOKEN_REJECTED`
 - log store ปิดอยู่ = ไม่บันทึก
@@ -2708,9 +2734,10 @@ admin API ตอบเลขบัตรและอีเมลแบบไม�
 | ช่อง | ค่า |
 |---|---|
 | `source` · `category` · `action` | `"http"` · `"admin-access"` · `"ADMIN_API_REQUEST"` |
+| `occurredAt` | เวลาที่คำขอ**เข้ามา** (`ctx.startedAt`) ไม่ใช่เวลาที่จบ — จบเมื่อ `occurredAt + durationMs` |
 | `actor` · `via` | token ผ่าน: `SYSTEM` · `ADMIN_TOKEN` · ไม่ผ่าน ไม่มี หรือไม่ได้ตรวจ: `ANONYMOUS` · `ANONYMOUS` — id ชื่อ และ role ว่างเสมอ (admin token ไม่ผูกกับคน) |
 | `tokenFps` | fingerprint ของ token ที่ส่งมา ผ่านหรือไม่ผ่าน (`[]` เมื่อไม่ได้ส่ง) |
-| `subject` | จากแม่แบบของ route (`SUBJECT_BY_ROUTE`, `lib/admin-access.ts:105`): `/users/:id` → `USER_ACCOUNT` · `/organizations/:id` → `ORGANIZATION` · `/invitations/:id` → `USER_ACTIVATION_KEY` · `/registrations/organizations/:id` · `/registrations/datasets/:id` → คำขอ · `/legal-documents…` → `LEGAL_DOCUMENT` · `/dataset-choices…` → `DATASET_CHOICE` · id = `:id` ที่ Express จับและถอด `%xx` แล้ว (`RequestContext.routeId`) เฉพาะที่เป็น UUID เก็บตัวพิมพ์เล็ก · นอกนั้น (รายการ, 401 ที่ไม่ถึง route) `ADMIN_API` / null |
+| `subject` | จากแม่แบบของ route (`SUBJECT_BY_ROUTE`, `lib/admin-access.ts:105`): `/users/:id` → `USER_ACCOUNT` · `/organizations/:id` → `ORGANIZATION` · `/invitations/:id` → `USER_ACTIVATION_KEY` · `/registrations/organizations/:id` · `/registrations/datasets/:id` → คำขอ · `/legal-documents…` → `LEGAL_DOCUMENT` · `/dataset-choices…` → `DATASET_CHOICE` · id = `:id` ที่ Express จับและถอด `%xx` แล้ว (`RequestContext.routeId`) เฉพาะที่เป็น UUID เก็บตัวพิมพ์เล็ก · นอกนั้น (รายการ, 401 ที่ไม่ถึง route) `ADMIN_API` / null · **`/registrations/*` ที่เรียกด้วยเลขที่คำขอ** (ทางปกติของผู้ดูแล) ได้ subject ของคำขอแต่ id null และ `requestNumber` ของเอกสาร `http` เป็น null เสมอ — timeline ของคำขอและการค้นด้วย subject จึงไม่เจอการอ่านหรือแก้คำขอด้วยเลขที่ เลขที่เหลืออยู่แค่ใน `metadata.path` (`pathPattern()` ไม่แตะรูปเลขที่คำขอ) |
 | `organizationId` | หน่วยงานของ `/organizations/:id` หรือ `?organizationId=` ที่เป็น UUID |
 | `relatedUserIds` | บัญชีของ `/users/:id` — `x-log-person` ของคนนั้นจึงเจอว่าใครเปิดดูเขาผ่าน admin API |
 | `hashKeys` | `cid#` ของ `?cid=` และของ `?q=` ที่เป็นเลขบัตร 13 หลัก · `email#` ของ `?email=` / `?q=` ที่เป็นอีเมลเต็ม — ค่าจริงไม่ถูกเก็บ ค้นบางส่วนไม่ได้ key |
@@ -2737,6 +2764,7 @@ token (ผ่าน / ไม่ผ่าน) ต่อราวหนึ่ง�
 | `metadata.count` · `over_cap` · `queue_full` · [`evicted`] · [`over_budget`] | จำนวนการเรียกที่พับ และแยกตามเหตุ |
 | `metadata.first_at` · `last_at` | ช่วงของการเรียกที่พับ — `occurredAt` ของใบ = `first_at` |
 | `metadata.token_accepted` | ชนิดของใบ |
+| `result` · `sourceComponent` | `SUCCESS` เมื่อการเรียกที่พับ**อย่างน้อยหนึ่งครั้ง**สำเร็จ ไม่งั้น `FAILURE` (ผลรายตัวอยู่ใน `statuses`) · `admin-portal` / `web-portal` ตามชนิดของใบ |
 | `metadata.routes` · `statuses` | `[{route, count}]` (`"METHOD route"` หรือ path pattern) · `[{status, count}]` (`aborted` = ตัดสาย) ชนิดละไม่เกิน 50 ที่เกินรวมเป็น `[other]` |
 | `metadata.subjects` · `ips` | subject ที่มี id ไม่เกิน 50 · IP ไม่เกิน 20 |
 | `metadata.truncated_lists` | รายการที่เต็มแล้วมีค่าใหม่ตกไป (ค่าที่ตกไปค้นด้วย `x-log-*` / `tokenFp=` ไม่เจอ) |
@@ -2755,7 +2783,9 @@ token (ผ่าน / ไม่ผ่าน) ต่อราวหนึ่ง�
 - **เกินเพดานขนาด** (`over_quota`): token ที่ไม่ผ่านไม่เก็บเลย ทั้งตัวเดี่ยวและสรุป (นับใน `notStored`) · token ที่ผ่าน**ยังเก็บ**เหมือนสำเนา audit แต่หักส่วนยกเว้น
   `admin-token` (5% ของเพดานต่ออายุ 400 วัน — 5.13) หมดแล้วตัวเดี่ยวพับลงใบสรุปที่รองบ — **ต่างจากแบบ:** แผน §3 ไม่เก็บอะไรเลยตอนเกินเพดาน ซึ่งเปิดช่องให้คน
   ไม่มี token ยิงจนถึงเพดาน แล้วคนถือ token ที่หลุดอ่านเลขบัตรของทุกบัญชีได้โดยไม่เหลือบันทึก
-- การเรียกที่พับลงสรุปเพราะคิวเต็มยังนับใน event `ErrorCaptureDropped` (`reasons.queue_full`) แม้ใบสรุปจะเก็บ key ของมันไว้ · ที่ถูกเบียดออกแล้วพับไม่นับ
+- การเรียกที่พับลงสรุปเพราะคิวเต็ม (ตัวเดี่ยวที่เข้าคิวไม่ได้ และใบสรุปที่เข้าไม่ได้แล้วรอ) และที่ถูกเบียดออกแล้วพับ **ไม่นับ**ใน event `ErrorCaptureDropped` —
+  ตัวนับเดียวคือ `adminAccess.queueFull` / `evicted` ของ `/status` (`enqueue()` คืน false ก่อน `noteDropped` ตั้งแต่ `1e0f081`) · นับเป็น `queue_full` เฉพาะตัวที่
+  ส่งต่อให้ `lib/admin-access.ts` พับไม่ได้ (`handOverAccessRecord()` ไม่มีผู้รับหรือผู้รับล้ม) ซึ่งหายจริง
 - `GET /api/admin/logs/status` → `adminAccess {recorded, overCap, queueFull, evicted, overBudget, summaries, pendingInSummary, notStored}` ของ backend process นั้น
 - retention: token ผ่าน 400 วัน · token ไม่ผ่านหรือไม่ได้ตรวจ 90 วัน (3.9)
 - **ข้อมูลส่วนบุคคล** id ของบัญชีที่ถูกเปิดดู · IP และ user agent ของผู้เรียก · key ค้นหา (ไม่ใช่ค่าจริง)
@@ -2774,7 +2804,10 @@ token (ผ่าน / ไม่ผ่าน) ต่อราวหนึ่ง�
 #### `AUDIT_LOG_READ` — มีคนอ่าน log
 
 **เกิดเมื่อ** ทุกคำขอที่ผ่านด่านของ `/api/admin/logs/*` แล้วถึงขั้นอ่าน — **หนึ่งแถวต่อคำขอ เขียนก่อนส่งข้อมูลกลับ** (`recordLogRead()`, `lib/audit.ts:762`) ยกเว้น
-`GET /status` (ไม่มีข้อมูลบุคคล) และ `PATCH` ของ issue (เขียน `ERROR_ISSUE_STATUS_CHANGED` แทน) · คำขอที่ผิดรูป (400) หรือ log store ไม่พร้อม (503) ไม่มีแถว ·
+`GET /status` (ไม่มีข้อมูลบุคคล) และ `PATCH` ของ issue (เขียน `ERROR_ISSUE_STATUS_CHANGED` แทน) · **ไม่มีแถว** เมื่อถูกปฏิเสธก่อนขั้นอ่าน — ทุกกรณีไม่มีข้อมูล
+ออกไป: 400 (พารามิเตอร์ผิด `?reason=` `x-log-reader` ผิด ตัวระบุบุคคลใน query) · 404 ของรหัสหน่วยงานที่ไม่มี · 503 `log_access_disabled` (ก่อนดู token) `log_store_*`
+`hash_search_unavailable` และ `database_unavailable` ตอนแปลงตัวระบุ — และเพราะคำขอพวกนี้ถึง router ของ log แล้ว จึงไม่มี `ADMIN_API_REQUEST` ด้วย (4.11)
+**ไม่เหลือบันทึกที่ไหนเลย** · token ผิดได้ `LOG_TOKEN_REJECTED` (4.11) ·
 **ไม่กลืน error**: Postgres ไม่รับ → สำเนา `audit_fallback` ใน Mongo ตรงและรอผล (3.14) ไม่ได้ทั้งคู่ → 503 `log_read_unrecorded` ไม่ส่งข้อมูล
 
 | ช่อง | ค่า |
@@ -2795,9 +2828,17 @@ token (ผ่าน / ไม่ผ่าน) ต่อราวหนึ่ง�
 
 - **key ไม่ต้องตั้งก็ตอบได้ว่าอ่านของใคร**: `person` เป็น uuid เสมอเมื่อรู้ว่าเป็นบัญชีไหน · key (`*Key`) มีเฉพาะเมื่อตั้ง `LOG_HASH_KEY`
 - **ในสำเนา** key ทุกตัวใน `filters` ถูกยกเข้า `hashKeys` (ไม่ผ่านการปิด) และบัญชีที่ประวัติถูกเปิด (`person` `actorId` `subjectId` ของ `USER_ACCOUNT` `cidAccountId`
-  `emailAccountId`) เข้า `relatedUserIds` (`logReadTargets()`, `lib/activity-shape.ts:375`) — `?action=AUDIT_LOG_READ` คู่กับตัวระบุตัวไหนก็ได้ของคนคนหนึ่ง (uuid
-  อีเมล หรือเลขบัตร) จึงตอบได้ว่าใครค้นประวัติของเขา ไม่ว่าการค้นครั้งนั้นจะพิมพ์อะไรมา (G7) · ผลข้างเคียง: การอ่านประวัติของ X ปรากฏในผลของการค้น X ครั้งถัดไป
-- **คนหนึ่งคนในตาราง “คนอยู่ตรงไหน” (2.10)** — `metadata.filters.person` · `cidAccountId` · `emailAccountId` ของแถวนี้คือบัญชีที่ถูกอ่านประวัติ
+  `emailAccountId`) เข้า `relatedUserIds` (`logReadTargets()`, `lib/activity-shape.ts:375`) — `?action=AUDIT_LOG_READ` คู่กับตัวระบุของคนคนหนึ่งจึงตอบได้ว่าใคร
+  ค้นประวัติของเขา (G7) **ครบแค่บางทาง**:
+  - อ่านด้วย `x-log-person` `x-log-cid` `x-log-email` — บันทึกทั้ง id และ key ของบัญชี (`personEmailKey` `personCidKey` `cidAccountEmailKey` `emailAccountCidKey`)
+    เจอด้วยตัวระบุตัวไหนก็ได้ของเขา (uuid อีเมล หรือเลขบัตร) ไม่ว่าการค้นครั้งนั้นจะพิมพ์อะไรมา
+  - อ่านด้วย `?actorId=<uuid>` หรือ `?subjectType=USER_ACCOUNT&subjectId=<uuid>` — บันทึกแค่ uuid ดิบ ไม่หาบัญชีและไม่มี key: เจอด้วย `x-log-person` (uuid หรือ
+    อีเมลของบัญชีที่ยังอยู่ — ค้นผ่าน `relatedUserIds`) แต่**ไม่เจอ**ด้วย `x-log-cid` / `x-log-email` ซึ่งค้นด้วย `hashKeys` อย่างเดียว
+  - อ่านโดยไม่ระบุคน — `/activity/:id` `/trace/:ref` `/timeline?request=` `?organization=` และ `/activity` ที่กรองด้วยอย่างอื่น — **ไม่บันทึกว่าเป็นประวัติของใคร**
+    แม้คำตอบจะมีแถวของเขา เหลือแค่ `endpoint` กับ `filters` (id ref เลขที่คำขอ หน่วยงาน) ให้ไล่เองว่าผลมีใคร
+  · ผลข้างเคียง: การอ่านประวัติของ X ปรากฏในผลของการค้น X ครั้งถัดไป
+- **คนหนึ่งคนในตาราง “คนอยู่ตรงไหน” (2.10)** — `metadata.filters.person` · `cidAccountId` · `emailAccountId` · `actorId` · `subjectId` (ของ `USER_ACCOUNT`)
+  ของแถวนี้คือบัญชีที่ถูกอ่านประวัติ
 - **สองบันทึกต่อการอ่านหนึ่งครั้งได้**: INSERT ที่เลิกรอที่ 2 วินาทีแล้ว commit ทีหลัง + สำเนา `audit_fallback` (คนละ `_id`)
 - **ข้อมูลส่วนบุคคล** อีเมลของผู้อ่าน (ที่ประกาศ) · เหตุผลที่พิมพ์ (อาจมีชื่อคนที่ถูกสอบสวน — ไม่ปิดใน Postgres สำเนาปิดเลข 13 หลัก) · id ของบัญชีที่ถูกอ่าน ·
   IP และ user agent ของผู้อ่าน
@@ -2925,10 +2966,10 @@ token (ผ่าน / ไม่ผ่าน) ต่อราวหนึ่ง�
 | `occurredAt` | Date | เวลาที่ `captureError` ถูกเรียก |
 | `fingerprint` | string | 5.4 |
 | `level` | `fatal` \| `error` \| `warning` | จุดเก็บกำหนด ค่าตั้งต้น `error` · `warning` ไม่มีวันแจ้งเตือน (ขั้น 10) |
-| `handled` | bool | `false` เฉพาะ `unhandledRejection` และ `uncaughtException` · `true` นอกนั้น รวม error middleware และ fatal ของ `startup` |
-| `tag` | string \| null | 5.1 · null สำหรับ 500 ทั่วไปและ process handler |
+| `handled` | bool | `false` สำหรับ `unhandledRejection` `uncaughtException` และ**ทุกรายงานที่รับเข้ามา** (`captureReport()` — เบราว์เซอร์และ Next server ทุกกลไก รวม `window` `global-error` `proxy` `onRequestError`) · `true` นอกนั้น รวม error middleware และ fatal ของ `startup` |
+| `tag` | string \| null | 5.1 · null สำหรับ 500 ทั่วไปและ process handler ของ backend/worker · รายงานที่รับเข้ามา = `ingest.<mechanism>` (`ingest.window` `ingest.proxy` `ingest.onRequestError` … — `client-errors.ts:217`) |
 | `service` | `backend` \| `delivery-worker` \| `frontend-server` \| `browser` | สองตัวหลังมาจาก `POST /api/client-errors` (5.12) |
-| `environment` · `release` | string | `DEPLOY_ENV` · `RELEASE` (5.10) |
+| `environment` · `release` | string | `DEPLOY_ENV` · `RELEASE` (5.10) — รายงานที่รับเข้ามาได้ `release` ของรายงานเอง (`NEXT_PUBLIC_RELEASE` ของบันเดิลหรือ Next server, 5.12) |
 | `host` | `{containerId, startedAt}` | `os.hostname()` ซึ่งใน container คือ id สั้นของ container · เวลาที่ process เริ่ม |
 | `mechanism` | `express` \| `captured` \| `unhandledRejection` \| `uncaughtException` · รายงาน: `window` `unhandledrejection` `global-error` `proxy` (เบราว์เซอร์) `onRequestError` `unhandledRejection` `uncaughtException` (Next server) | `express` เมื่อจุดเก็บส่ง `req` มา · `captured` เมื่อไม่ส่ง |
 | `error.name` | string | `name` ของ error หรือชื่อ constructor เมื่อ `name` เป็น `"Error"` (`DocumentRenderError` `ThaidError` …) ≤ 100 ตัว · ค่าที่ไม่ใช่ Error แต่เป็น object ที่มี `name` เป็นสตริงไม่ว่าง ได้ชื่อนั้น (กวาดแล้ว ≤ 100) · นอกนั้น (สตริง ตัวเลข object ไม่มีชื่อ) ได้ `NonError` |
@@ -2955,7 +2996,7 @@ token (ผ่าน / ไม่ผ่าน) ต่อราวหนึ่ง�
 | `outbox` | `notifyUsers()` ลงตาราง notification | `"<ชนิดการแจ้งเตือน> → 3 คน + คิวอีเมล"` · ต่อท้าย `— เขียนไม่สำเร็จ` เมื่อล้ม |
 | `smtp` | ส่งอีเมล (`lib/mail.ts`) | `"ส่งอีเมลสำเร็จ"` · `"ส่งอีเมลไม่สำเร็จ (535)"` · `"ไม่ได้ตั้ง SMTP — พิมพ์อีเมลลง log แทน (dry-run)"` |
 | `render` | แปลง .docx เป็น PDF ที่ gotenberg | `"แปลง .docx → PDF สำเร็จ (840 ms)"` · `"… — HTTP 503 (…)"` · `"… — ติดต่อตัวแปลงไม่ได้ (…)"` |
-| `storage` | เขียนหรืออ่าน blob | `"เขียนไฟล์ 182344 ไบต์"` · `"เปิดไฟล์เพื่ออ่านแบบสตรีม"` · `"อ่านไฟล์ทั้งก้อน"` · ต่อท้าย `— ไม่สำเร็จ` เมื่อล้ม |
+| `storage` | เขียนหรืออ่าน blob | `"เขียนไฟล์ 182344 ไบต์"` · `"เปิดไฟล์เพื่ออ่านแบบสตรีม"` · `"อ่านไฟล์ทั้งก้อน"` · ต่อท้าย `— ไม่สำเร็จ` เมื่อล้ม · `"สตรีมไฟล์ขาดกลางทาง"` (`ok: false`) เมื่อสตรีมดาวน์โหลดล้มกลางทาง (`lib/attachment.ts:345`) |
 | `thaid` | แลก code เป็น token | `"แลก code เป็น token — HTTP 200"` · `"… — ติดต่อ ThaID ไม่ได้"` |
 
 ตัวอย่าง (ข้อมูลสมมติ) — ผู้ประสานงาน BDI กดผ่านคำขอหน่วยงาน ตัวแปลงเอกสารล่มระหว่างสร้างเอกสารก่อน commit (breadcrumb ไม่มี `audit` = ยังไม่มีแถวใดถูกเขียน):
@@ -3014,7 +3055,7 @@ index (worker สร้างตอนบูตทีละตัว — 5.9): `
 | `level` · `tag` | `$set` | `level` ของการเกิดล่าสุดในก้อน · `tag` ของการเกิดครั้งแรกในก้อน |
 | `count` | `$inc` | จำนวนในก้อน รวมตัวที่ติดเพดานการสุ่มเก็บและตอนเกินเพดานขนาด — **ค่าประมาณ** นับซ้ำได้ทั้งก้อนหลัง Mongo ค้าง (5.7) |
 | `firstSeen` / `lastSeen` | `$min` / `$max` | |
-| `lastRelease` | `$set` | `RELEASE` ของ process ที่ flush |
+| `lastRelease` | `$set` | `RELEASE` ของ process ที่ flush — issue ของรายงานที่รับเข้ามาได้รุ่นของรายงาน (`NEXT_PUBLIC_RELEASE` ของบันเดิลหรือ Next server) ไม่ใช่ของ backend |
 | `lastEventId` | `$set` เฉพาะเมื่อก้อนนั้นมี event ที่เข้าคิว | ตอนสร้าง null · อาจเก่ากว่า `lastSeen` เมื่อติดเพดาน · ไม่เคยชี้ตัวย่อ (5.8) · **อาจชี้เอกสารที่ไม่มีอยู่**: id ถูกจดตอน event เข้าคิว แล้ว event นั้นยังถูกไล่ออกเมื่อคิวเต็ม (`queue_full`) ถูกข้ามตอนเขียนเพราะธงเกินเพดานตั้งก่อน flush หรือ Mongo ไม่รับ (`rejected`) ได้ |
 | `status` | `$setOnInsert` / regression / PATCH | `open` ตอนสร้าง · กลับเป็น `open` เองเมื่อ issue ที่ `resolved` เกิดซ้ำ (5.4) · `open` `resolved` `ignored` ด้วย PATCH (E4, 3.11) |
 | `statusChangedAt` · `statusReason` | `$setOnInsert` / regression / PATCH | ตอนสร้าง = `firstSeen` · null · regression ตั้งเป็น `lastSeen` ของก้อน · `"เกิดซ้ำหลังปิด (regression)"` · PATCH ตั้งเป็นเวลาที่เปลี่ยน · เหตุผลที่ส่งมาผ่านกฎเลขบัตร (`maskCidText`) |
@@ -3124,7 +3165,7 @@ retention ของ `error_events` `error_issues` อยู่ที่ 3.9 · �
 4.11) · `failThaidOperation()` ใช้ `scrubClipped` กับข้อความที่ลง Postgres (ข้อ 7) · ฝั่ง **log ของ container** ที่ผ่านไฟล์นี้คือบรรทัด `[capture]` และ `prisma:error` ของ Prisma ตัวหลัก (`databaseLogLine`, `db.ts`)
 แต่**ไม่ใช่ทุกทาง**: บรรทัด `[log-store]` ใช้กฎของ `describe()` ใน `lib/log-store.ts` เอง (3.13) · dry-run ของ `lib/mail.ts` (เฉพาะเมื่อไม่ได้ตั้ง SMTP)
 พิมพ์ผู้รับ หัวเรื่อง ลิงก์ และรหัส OTP ลง stdout โดยตั้งใจ · `PrismaClient` ของ worker (`workers/delivery.ts:34`) สร้างโดยไม่มี `log` option จึงไม่ผ่าน
-`databaseLogLine()` แบบ `db.ts`
+`databaseLogLine()` แบบ `db.ts` · `DocumentRenderError` 4xx ของ error middleware พิมพ์ `[backend] <code>: <message>` ด้วยข้อความดิบ ไม่ผ่าน capture และไม่ถูกกวาด (`index.ts:330`, 5.1)
 
 หลักการเป็น allowlist ทุกที่ที่ทำได้ ตารางกวาดข้อความอิสระเป็นชั้นเดียวที่เป็น blocklist จึงเป็น**ชั้นสำรอง**
 
@@ -3165,7 +3206,8 @@ retention ของ `error_events` `error_issues` อยู่ที่ 3.9 · �
      แบบปั่นใช้ 5–6 ms) ข้อจำกัดเดียวที่เหลือ: ของที่ต้องมองไกลกว่า 256 ตัวถึงจะจำได้
    - **stack** (`scrubError`) อ่านแค่ส่วนที่อยู่**ใต้**บรรทัดหัว (`name: message`) ไม่เกิน 64 KB ตัดก้อน DETAIL ทิ้งก่อน เก็บไม่เกิน 50 เฟรม บรรทัดละไม่เกิน 1,024 ตัว
      (ตัดหลังกวาด) รวมไม่เกิน 16 KB · หัวกับแต่ละเฟรมกวาดแยกกัน · ตัวแยกเฟรม (`frameParts`) หาตำแหน่งตรง ๆ ไม่ใช้ regex ที่ย้อนรอยได้ — บรรทัดในข้อความที่หน้าตา
-     เป็นเฟรมไม่ถูกหยิบเป็นเฟรมอีก (stack ที่หัวไม่ตรงกับข้อความถูกอ่านทั้งก้อนแต่ตัด DETAIL ก่อน จึงไม่เหลือเฟรมและ `topFrame`)
+     เป็นเฟรมไม่ถูกหยิบเป็นเฟรมอีก · stack ที่หัวไม่ตรงกับข้อความถูกอ่านทั้งก้อน (ตัด DETAIL ก่อน): เฟรมที่อยู่ใต้ก้อน `DETAIL`/`HINT`/`CONTEXT`/`WHERE` หายไปพร้อม
+     ก้อนนั้น ส่วน stack ที่ไม่มีก้อนแบบนั้นยังได้เฟรมและ `topFrame` (และบรรทัดในข้อความที่หน้าตาเป็นเฟรมถูกหยิบได้ เพราะหาจุดสิ้นสุดของข้อความไม่เจอ)
    - อักขระ U+E000 / U+E001 ที่มากับข้อความถูกแทนด้วย U+FFFD ก่อนกัน UUID (`neutraliseHolds`) — ตัวคั่นที่ผู้เรียกเขียนเองเคยถูกลบตอนใส่ UUID คืน แล้วสองท่อน
      ที่มันแยกไว้ต่อกันเป็นเลขบัตร อีเมล หรือ `password=` ดิบ
    - ตั้งใจกวาดเกิน: `code: 'EAUTH'` ในข้อความของ `util.inspect` · ทุกอย่างหลัง `pass=` ในบรรทัดเดียวกัน · URL ที่มี `@` ใน query หลัง host · วันเวลาหรือเลขอื่น
@@ -3235,7 +3277,7 @@ retention ของ `error_events` `error_issues` อยู่ที่ 3.9 · �
 
 | `reasons.*` | แปลว่า |
 |---|---|
-| `queue_full` | คิวเต็ม (500 รายการ / 2 MB) — Mongo เขียนไม่ได้นาน **หรือ** error มาเร็วกว่าที่เขียนทันแม้ Mongo ปกติ (พายุ error) อย่าอ่านว่า Mongo ล่มเสมอ · นับการเรียก admin API ที่พับลงใบสรุปเพราะคิวเต็มด้วย แม้ใบสรุปจะเก็บ key ของมันไว้ |
+| `queue_full` | คิวเต็ม (500 รายการ / 2 MB) — Mongo เขียนไม่ได้นาน **หรือ** error มาเร็วกว่าที่เขียนทันแม้ Mongo ปกติ (พายุ error) อย่าอ่านว่า Mongo ล่มเสมอ · **ไม่นับ**การเรียก admin API ที่พับลงใบสรุปเพราะคิวเต็มหรือถูกเบียด (ไม่ได้หาย — `adminAccess.queueFull` `evicted` ของ S1, 4.11) |
 | `too_large` | เอกสารตัวเดียวเกิน 64 KB หลังตัดแล้ว |
 | `rejected` | Mongo ปฏิเสธตัวเอกสาร ลองซ้ำก็ไม่ผ่าน |
 | `issue_backlog` | issue ที่รอเขียนครบ 1,000 fingerprint — ครั้งนั้นไม่ได้เข้าตัวนับด้วย · บรรทัดใน stdout คือ `issue ที่รอเขียนครบ 1000 fingerprint: ไม่ได้นับ` |
@@ -3251,7 +3293,8 @@ retention ของ `error_events` `error_issues` อยู่ที่ 3.9 · �
 
 ### 5.8 รหัสอ้างอิงบน 5xx และบรรทัดใน log ของ container
 
-**รหัสอ้างอิง** = 8 ตัวแรกของ correlation id ของคำขอ (`referenceOf()`, ตัวพิมพ์ตามที่ผู้เรียกส่งมา) `referenceOnServerErrors` (`index.ts:110-137`)
+**รหัสอ้างอิง** = 8 ตัวแรกของ correlation id ของคำขอ (`referenceOf()` — ตัวพิมพ์เล็กเสมอ: ตั้งแต่ `74f751f` middleware เก็บ id ที่ผู้เรียกส่งมาเป็นตัวเล็ก
+`context.ts:172` · id ที่เก็บก่อนนั้นอาจเป็นตัวใหญ่ 5.11) `referenceOnServerErrors` (`index.ts:110-137`)
 ห่อ `res.json` ของทุกคำขอ เมื่อ status ≥ 500 และ body เป็น object ที่มี `error` เป็นสตริง:
 
 1. ถ้ายังไม่มีอะไรในคำขอนี้ถูก `captureError` (`RequestContext.errorCaptured`) เก็บ `RouteServerError` เป็น warning tag `http.route-5xx` fingerprint
@@ -3268,9 +3311,10 @@ retention ของ `error_events` `error_issues` อยู่ที่ 3.9 · �
 `reference` และ capture `http.route-5xx` (ถ้าไม่มีใครเก็บไว้ก่อน ก็ไม่มีร่องรอยใน Mongo) · error ที่เกิดหลังส่งหัวคำตอบไปแล้วจบด้วย `res.destroy()` ไม่มี
 body (มี event `http.after-headers-sent` ที่ถือ correlation id แต่ผู้ใช้ไม่ได้รหัสไปอ่านให้ฟัง)
 
-**ตัวย่อ (`extra.referenceOnly: true`)** — event ที่ติดเพดาน 50/ชั่วโมงหรือ 600/นาทีไม่มีเอกสารของตัวเอง ถ้าคำขอนั้นจบด้วย 5xx ที่มีรหัสอ้างอิง ตอนตอบ
+**ตัวย่อ (`extra.referenceOnly: true`)** — event ที่ติดเพดาน 50/ชั่วโมงหรือ 600/นาที หรืองบไบต์ `anonymous-request` ไม่พอสำหรับตัวเต็ม ไม่มีเอกสารของตัวเอง ถ้าคำขอนั้นจบด้วย 5xx ที่มีรหัสอ้างอิง ตอนตอบ
 จะเก็บตัวย่อหนึ่งตัว: `_id` `fingerprint` `level` `tag` `actor` เวลา และ `request` เดิม (`status` = status ที่ตอบ, `bodyShape` null) · `error` เหลือ
-`{name, message, props}` (`stack` null, `causes` `[]`) · `breadcrumbs` `[]` · `extra {referenceOnly: true, capped: "capped_issue" | "capped_process"}`
+`{name, message, props}` (`stack` null, `causes` `[]`) · `breadcrumbs` `[]` · `extra {referenceOnly: true, capped: "capped_issue" | "capped_process" | "anonymous_budget"}`
+(ตัวย่อของรายงานเบราว์เซอร์: `capped` เป็น `capped_issue` `capped_process` หรือ `browser_budget` บวก `issueCapped: "browser_fingerprints"` ได้ — 5.12)
 ตัวอย่างเต็มของ issue นั้นหาได้จาก fingerprint เดียวกัน · อยู่ชั้น warning ในคิว · ≤ 120 ตัวต่อนาทีต่อ process — คำขอที่ไม่มีตัวตน (`isAnonymousRequest`) ไม่เกิน 60
 และหักงบ `anonymous-request` (5.13) · ไม่เก็บตอนเกินเพดานขนาด · คำขอที่จบด้วย
 status < 500 ไม่ได้ตัวย่อ · คำขอหนึ่งจำเฉพาะ capture ที่ติดเพดาน**ตัวล่าสุด** และไม่ลบมันเมื่อ capture ตัวหลังของคำขอเดียวกันถูกเก็บเต็ม — คำขอที่มีทั้งตัวที่ติดเพดาน
@@ -3300,7 +3344,9 @@ capture ตกเป็น `issue_backlog` เอกสารใหญ่เก�
 | `event=- (log store เกินเพดานขนาด: นับอย่างเดียว)` | 5.9 |
 | `event=- (เก็บตัวอย่างของ issue นี้ครบ 50 ตัวในชั่วโมงนี้แล้ว: นับอย่างเดียว)` | `capped_issue` |
 | `event=- (เกินเพดาน 600 ต่อนาทีของ process: นับอย่างเดียว)` | `capped_process` |
-| `event=- (คิวเต็ม: ทิ้ง)` | ถูกทิ้งตอนเข้าคิวด้วยเหตุใดก็ได้ — คิวเต็มจริง (`queue_full`) · issue ที่รอเขียนครบ 1,000 (`issue_backlog`) · เอกสารเกิน 64 KB หลังตัด (`too_large`) — ข้อความเดียวกันทั้งสามเหตุ สาเหตุจริงอยู่ใน `reasons` ของ event สรุป (5.7) |
+| `event=- (งบไบต์ของคำขอที่ไม่มีตัวตนไม่พอสำหรับตัวเต็ม: นับอย่างเดียว)` | `anonymous_budget` — คำขอที่ไม่มีตัวตน งบ `anonymous-request` หมด (5.13) |
+| `event=- (issue ที่รอเขียนครบ 1000 fingerprint: ไม่ได้นับ)` | `issue_backlog` — ไม่เข้าแม้ตัวนับ (5.7) |
+| `event=- (คิวเต็ม: ทิ้ง)` | ถูกทิ้งตอนเข้าคิว — คิวเต็มจริง (`queue_full`) **หรือ** เอกสารเกิน 64 KB หลังตัด (`too_large`) ข้อความเดียวกันทั้งสองเหตุ สาเหตุจริงอยู่ใน `reasons` ของ event สรุป (5.7) |
 
 `ref=` มีเมื่อมี correlation id (คำขอ HTTP และแถวของ worker) · `issue=` เป็น 12 ตัวแรกของ fingerprint ตั้งต้น หรือ fingerprint ตายตัวทั้งตัว · `@ topFrame`
 มีเมื่อหาเฟรมในโค้ดเราได้ ตัวอย่าง (ข้อมูลสมมติ):
@@ -3379,7 +3425,7 @@ capture ตกเป็น `issue_backlog` เอกสารใหญ่เก�
 | งาน | Postman | หมายเหตุ |
 |---|---|---|
 | หา error ของรหัสอ้างอิงที่ผู้ใช้อ่านให้ฟัง | G6 `trace/<8 ตัว>` | ได้ทั้งกิจกรรม error อีเมลในคิว งานกับระบบภายนอก และรายงานจากเบราว์เซอร์ที่อ้างรหัสนั้น · เอกสารที่ `extra.referenceOnly: true` คือตัวย่อ (5.8) ตัวอย่างเต็มของ issue เดียวกันดูที่ E2 · correlation id ที่เก็บก่อน `74f751f` อาจเป็นตัวพิมพ์ใหญ่ — prefix ในรูปตัวเล็กหาไม่เจอ ใช้ mongosh `/^1A2B3C4D/i` |
-| ดู issue ที่เปิดอยู่ · ตัวอย่างล่าสุด · เหตุการณ์เดียว | E1 · E2 · E3 | `count` เป็นค่าประมาณ (5.7) และรวมครั้งที่ติดเพดาน · `level=error` ข้าม warning |
+| ดู issue ที่เปิดอยู่ · ตัวอย่างล่าสุด · เหตุการณ์เดียว | E1 · E2 · E3 | `count` เป็นค่าประมาณ (5.7) และรวมครั้งที่ติดเพดาน · `level=` เทียบตรงตัว: `level=error` ซ่อน warning **และ fatal** ด้วย — ดู fatal ด้วย `level=fatal` อีกครั้ง |
 | ปิด ละเว้น หรือเปิดกลับ issue | E4 | ตั้ง `statusChangedAt` ให้เอง และเขียน `ERROR_ISSUE_STATUS_CHANGED` — **อย่าแก้สถานะด้วย mongosh อีก** (ไม่มีร่องรอยในแอป และต้องตั้ง `statusChangedAt` เองให้ถูก 5.4) |
 | สุขภาพของ log store relay คิว งบไบต์ และ loop แจ้งเตือน | S1 | ตัวเลขของ backend process ที่ตอบ |
 | “คนนี้ทำอะไร” · เส้นเวลาของคำขอ · ใครอ่านประวัติของเขา | G2 · G3 · G7 | 2.10 สำหรับคำถามที่ต้องการคอลัมน์ดิบของ Postgres |
@@ -3415,7 +3461,8 @@ docker compose exec mongo sh -c 'mongosh -u bdi_worker -p "$MONGO_WORKER_PASSWOR
 5. ระหว่างที่ down: เว็บและอีเมลทำงานตามปกติ · capture ค้างคิว ≤ 500 รายการ / 2 MB ต่อ process แล้วทิ้งตามชั้น (5.7) · restart backend หรือ worker ระหว่างนี้ = คิวหาย ·
    หลังฟื้นดู issue `error-capture:dropped:<service>` (E2)
 
-**2. `logStore` เป็น `over_quota`** — S1 ดู `storageMb` `allocatedMb` `sizeBasis` `maxMb` · ทางออก: ขึ้น `LOG_STORE_MAX_MB` แล้วสร้าง worker ใหม่ (worker ตรวจตอนบูต)
+**2. `logStore` เป็น `over_quota`** — S1 ดู `storageMb` `allocatedMb` `maxMb` · **S1 ไม่คืน `sizeBasis`** (ตัวตัดสินว่าลบเอกสารแล้วธงลงได้ หรือต้อง `compact`) อ่านด้วย
+mongosh: `db.relay_state.findOne({ _id: "audit_event" }, { sizeBasis: 1, storageMb: 1, allocatedMb: 1 })` — บน `allocated` `storageMb` เท่ากับ `allocatedMb` เสมอ · ทางออก: ขึ้น `LOG_STORE_MAX_MB` แล้วสร้าง worker ใหม่ (worker ตรวจตอนบูต)
 หรือลด `error_events` ที่ไม่ต้องการแล้วด้วย `bdi_worker` (`db.error_events.deleteMany({ occurredAt: { $lt: ISODate("…") } })`) — **ห้ามลบ `activity`** (`audit_fallback`
 และ `http` เป็นสำเนาเดียว) ธงลงเมื่อรอบตรวจถัดไปเห็นต่ำกว่า 90% (restart worker ให้ตรวจทันที) · บน `sizeBasis: "allocated"` ธงลงได้ทางเดียวคือ `compact` ด้วย root (5.9) ·
 ดู `untrustedBudget` ว่าของที่ใครก็ส่งได้กำลังถูกปฏิเสธไหม (5.13)
@@ -3444,8 +3491,12 @@ compose ไม่อ่าน `MONGODB_URI` จาก `.env` และเติ�
   หน้าเหลือรูปที่จัดกลุ่มได้ (`pagePattern`: ไม่มี query UUID → `:id` เลขตั้งแต่ 4 หลัก → `:n`) · `release` ที่ไม่ใช่รูป SHA หรือชื่อสั้นเป็น `unknown` · เวลาที่ผู้ส่งบอก
   (`at`) เชื่อเฉพาะเมื่อไม่อยู่ในอนาคตและไม่เก่ากว่าหนึ่งวัน
 - **`service: "frontend-server"` เฉพาะเมื่อ `x-report-token` ตรง `INGEST_SERVER_TOKEN`** (`secretMatches`) และ `x-report-source: frontend-server` — backend เรียกได้ตรง
-  header อย่างเดียวจึงพิสูจน์อะไรไม่ได้ นอกนั้นเป็น `browser` พร้อม `ingest {verified: false, claimedService}` · proxy ของหน้าเว็บลบ `x-report-*` ของเบราว์เซอร์ทิ้งอยู่แล้ว
-- **เพดานต่อ backend process**: รายงานจากเบราว์เซอร์ 30 ต่อนาทีต่อ IP (IP คือค่าท้ายของ `X-Forwarded-For` ที่ผู้เรียกเขียนเองได้) และ 300 ต่อนาทีรวม · Next server ที่ยืนยันแล้ว
+  header อย่างเดียวจึงพิสูจน์อะไรไม่ได้ นอกนั้นเป็น `browser` พร้อม `ingest {verified: false, claimedService}` · proxy ของหน้าเว็บลบ `x-report-*` ของเบราว์เซอร์ทิ้งอยู่แล้ว ·
+  **รายงานของ Next server ที่ยืนยันไม่ได้** (token ไม่ได้ตั้งหรือไม่ตรงสองฝั่ง) เป็น `browser` เต็มตัว: route ถูกทิ้ง (`where` มาจาก `pathname` ซึ่ง Next server ไม่ส่ง
+  fingerprint จึงตกไปใช้ mechanism — error ข้อความเดียวกันของทุก route รวมเป็น issue เดียว) และติดกติกาของเบราว์เซอร์ทั้งหมด: 30 ต่อนาทีของ IP ของ container
+  frontend · งบไบต์ `browser` · `isChunkLoadReport` · โควตาแจ้งเตือน 5 ต่อหกชั่วโมงที่ส่งโดยไม่มีข้อความ (5.14)
+- **เพดานต่อ backend process**: รายงานจากเบราว์เซอร์ 30 ต่อนาทีต่อ IP (IP คือค่าท้ายของ `X-Forwarded-For` ที่ผู้เรียกเขียนเองได้ — นับแยกได้ไม่เกิน 5,000 IP ต่อนาที
+  เกินนั้นและทุกรายงานที่ไม่มี IP ที่ใช้ได้ เช่น `X-Forwarded-For` ที่ไม่ใช่รูป IP ใช้ถัง `(อื่น ๆ)` ถังเดียว 30 ต่อนาที ใครก็ใช้ถังนี้หมดได้) และ 300 ต่อนาทีรวม · Next server ที่ยืนยันแล้ว
   120 ต่อนาที · เกินแล้วไม่เก็บแม้ตัวนับ · จากนั้น `captureReport()` (`lib/error-capture.ts:811`) ใช้กติกาของ `captureError` (นับเข้า issue ก่อน แล้วจึงตัดสินว่าจะเก็บตัว
   event) บวกกติกาของรายงานเบราว์เซอร์:
   - เก็บตัว event ได้ไม่เกิน 60 ต่อนาที (ในจำนวน 600 ของ process) อยู่ชั้นล่างสุดของคิว (ทิ้งก่อนทุกอย่าง) และทุกตัวหักงบไบต์ `browser` (5.13)
@@ -3488,7 +3539,8 @@ compose ไม่อ่าน `MONGODB_URI` จาก `.env` และเติ�
 
 **Next server** (`frontend/instrumentation.ts`, `lib/server-error-report.ts` — โหลดเฉพาะ runtime ของ Node): `onRequestError` (มี `digest`) ตัวฟัง `unhandledRejection` และ
 `uncaughtExceptionMonitor` พิมพ์บรรทัด `[frontend-error] {…}` ที่กวาดแล้ว (มี `level`) และ POST แบบยิงแล้วไม่รอ (timeout 1 วินาที) พร้อม `x-report-token` — คำตอบ error ของ Next
-ไม่รอรายงาน · ส่งชื่อคีย์ของ query (`request.queryKeys`) ไม่ส่งค่า · `digest` ของ Next ลง `extra.digest` — หน้า global-error ของ production ได้จาก server แค่ digest
+ไม่รอรายงาน · ฝั่ง Next จำกัดเองไม่เกิน 60 รายงานต่อนาทีต่อ process และ mechanism + ชื่อ + ข้อความ + route เดียวกันรายงานครั้งเดียวต่อนาที (`admit()` ใน
+`lib/server-error-report.ts`) เกินแล้วไม่มีทั้งบรรทัด `[frontend-error]` และการ POST · ส่งชื่อคีย์ของ query (`request.queryKeys`) ไม่ส่งค่า · `digest` ของ Next ลง `extra.digest` — หน้า global-error ของ production ได้จาก server แค่ digest
 ไม่มีข้อความ G6 จึงโยงรายงานของเบราว์เซอร์ไปหา error จริงด้วย `serverErrors` (3.11) · **คำขอที่ผิดรูปเป็น warning ไม่ใช่ error** (`malformedRequest()`): RSC request ที่มี
 `Next-Router-State-Tree` แปลก (รหัส `E10` `E142` `E418` ของ Next 16.2.12 หรือถ้อยคำของมัน) ใครก็ส่งได้ ยังเก็บและนับ แต่ไม่แจ้งเตือน · ลองแล้วใต้ `output: "standalone"`
 ของ `next build` จริง (2026-10-01): ทั้งสามทางรายงานถึง และ server ทำงานต่อหลัง uncaught exception · `INGEST_SERVER_TOKEN` อ่านตอนรัน **ห้ามเป็น `NEXT_PUBLIC_`**
@@ -3530,7 +3582,8 @@ dev = `dev` · prod overlay ส่ง `GIT_SHA: ${GIT_SHA:-unknown}` ให้�
 ลูปของตัวเองใน delivery-worker ทุก 60 วินาที (รอบแรก 30 วินาทีหลังบูต) แยกจาก `tick()` ของ outbox · **ปิดอยู่จนกว่าจะตั้ง `ERROR_ALERT_EMAILS`** (worker เท่านั้น
 คั่นด้วย comma) และไม่ทำอะไรขณะปิด log store · อีเมลนี้ไม่ผ่าน outbox เพราะผู้รับไม่ใช่บัญชีในระบบ (`notification_delivery.recipient_user_id` เป็น NOT NULL)
 
-**อะไรทำให้แจ้ง** (อ่านจาก log store ทุกนาที):
+**อะไรทำให้แจ้ง** (รอบทุกนาทีอ่านแค่สถานะของการแจ้งเตือนกับธงเกินเพดาน — issue (`collect()`) และ `runtime_events` (`crashLoopsOf()`) อ่านเฉพาะรอบที่ถึงเวลาฉบับใหม่
+คือครบ 15 นาทีจาก `lastDigestAt`):
 
 1. issue ใหม่ระดับ error ขึ้นไปที่ยังไม่เคยแจ้ง (`new`)
 2. issue ที่ปิดแล้วเกิดซ้ำหลังการแจ้งครั้งล่าสุด (`regressed`) ข้ามช่วงพักหกชั่วโมง — **เฉพาะ issue ที่ข้ออื่นจะแจ้งอยู่แล้ว** (ระดับ error ขึ้นไป หรือ 5xx ต่อเนื่องตามข้อ 4)
@@ -3806,11 +3859,13 @@ user agent ของแถวก่อน `a0a0578` ผ่าน `storedUserAgen
 > **การบันทึกการใช้งานระบบ** สถาบันบันทึกการใช้งานระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล ได้แก่ การเข้าสู่ระบบและความพยายามเข้าสู่ระบบ (รวมอีเมลที่กรอก)
 > การดำเนินการต่อคำขอ ชุดข้อมูล เอกสาร และบัญชีผู้ใช้ พร้อมข้อมูลก่อนและหลังการแก้ไข วันและเวลา หมายเลข IP และข้อมูลของอุปกรณ์และเบราว์เซอร์ที่ใช้ (user agent)
 > รวมถึงข้อผิดพลาดของระบบที่เกิดระหว่างการใช้งานและหน้าเว็บที่เกิด เพื่อการตรวจสอบย้อนหลัง การรักษาความมั่นคงปลอดภัยของระบบ และการแก้ไขข้อขัดข้อง
-> เลขประจำตัวประชาชนในสำเนาบันทึกที่ใช้ค้นหาถูกปิดบัง บันทึกการดำเนินการเก็บไว้ตลอดอายุของระบบเพื่อเป็นหลักฐาน ส่วนหมายเลข IP และข้อมูลอุปกรณ์ถูกลบเมื่อครบหนึ่งปี
-> บันทึกการเข้าสู่ระบบเก็บไม่เกิน 400 วัน และบันทึกข้อผิดพลาดเก็บไม่เกิน 90 วัน การเข้าถึงบันทึกจำกัดเฉพาะผู้ที่ได้รับอนุญาตและทุกการเข้าถึงถูกบันทึก ท่านขอสำเนา
-> บันทึกที่เกี่ยวกับท่านได้ที่ [ช่องทางของ DPO]
+> เลขประจำตัวประชาชนในสำเนาบันทึกที่ใช้ค้นหาถูกปิดบัง บันทึกการดำเนินการและการเข้าสู่ระบบ รวมหมายเลข IP และข้อมูลอุปกรณ์ เก็บไว้ในฐานข้อมูลหลัก
+> ตลอดอายุของระบบเพื่อเป็นหลักฐาน (สำเนาที่ใช้ค้นหาตัดหมายเลข IP และข้อมูลอุปกรณ์ออกเมื่อครบหนึ่งปี และลบบันทึกการเข้าสู่ระบบเมื่อครบ 400 วัน) บันทึกข้อผิดพลาด
+> ของระบบเก็บไม่เกิน 90 วัน การเข้าถึงบันทึกจำกัดเฉพาะผู้ที่ได้รับอนุญาตและทุกการเข้าถึงถูกบันทึก ท่านขอสำเนาบันทึกที่เกี่ยวกับท่านได้ที่ [ช่องทางของ DPO]
 
-ตัวเลขในร่างต้องตรงกับที่ BDI ยืนยันใน 7.3 · ถ้าเปิดใช้บน Azure ต้องเพิ่มข้อความเรื่องที่เก็บ (9.6)
+ตัวเลขในร่างต้องตรงกับที่ BDI ยืนยันใน 7.3 · **ระยะ 365/400 วันเป็นของสำเนาใน Mongo เท่านั้น**: `audit.audit_event` ใน Postgres ซึ่งเป็นระเบียนหลักไม่มี retention และเก็บ
+`ip_address` `user_agent` ทุกแถวการเข้าสู่ระบบ (รวม `LOGIN_FAILED` กับอีเมลที่พิมพ์มาดิบ) และ `SESSION_REVOKED` ไว้ตลอด (3.9 · 7.3 · 9.1) — ร่างจึงไม่สัญญาการลบที่ระบบ
+ไม่ได้ทำ ถ้า BDI ต้องการประกาศว่าลบ IP หรือบันทึกการเข้าสู่ระบบ ต้องมีงาน retention ของ Postgres (และของ backup) ก่อน · ถ้าเปิดใช้บน Azure ต้องเพิ่มข้อความเรื่องที่เก็บ (9.6)
 
 ### 9.3 คำขอให้ลบ (ม.33) — ข้อยกเว้นที่ต้องเขียนไว้
 
@@ -3831,7 +3886,8 @@ user agent ของแถวก่อน `a0a0578` ผ่าน `storedUserAgen
 ### 9.5 การขอเข้าถึงข้อมูลของเจ้าของข้อมูล (ม.30)
 
 - ผู้ดูแลเรียก **G2** (`x-log-person` = อีเมลหรือ uuid ของบัญชี) หรือ `GET /timeline` ด้วย `x-log-person` — ได้ทุกแถวที่คนนั้นเป็นผู้กระทำ ผู้ถูกกระทำ หรือถูกระบุ
-  (`relatedUserIds` และ `email#` ของอีเมลบัญชี — 3.2) รวมบันทึกว่าใครเคยอ่านประวัติของเขา (4.12) · เหตุผลที่ใส่ใน `x-log-reason` ควรอ้างเลขที่คำขอใช้สิทธิ การอ่าน
+  (`relatedUserIds` และ `email#` ของอีเมลบัญชี — 3.2) รวมบันทึกว่าใครเคยอ่านประวัติของเขา**โดยระบุตัวเขา** — การอ่านผ่าน trace timeline ของคำขอหรือหน่วยงาน
+  หรือเปิดเอกสารเดียวด้วย id ไม่ถูกผูกกับเขา (4.12) · เหตุผลที่ใส่ใน `x-log-reason` ควรอ้างเลขที่คำขอใช้สิทธิ การอ่าน
   ครั้งนั้นถูกบันทึกเอง
 - ผลลัพธ์มีข้อมูลของ**คนอื่น**ปน (ชื่อเจ้าหน้าที่ที่ตรวจคำขอ IP ของผู้ดูแล อีเมลของผู้อ่านบันทึก ความเห็นภายในของ BDI) — **DPO ตัดสินว่าตัดอะไรออกก่อนส่งให้เจ้าของข้อมูล**
 - ข้อจำกัด: แถวที่ `seed:demo` ลบจาก Postgres ไปแล้วอยู่ในสำเนาเท่านั้น · เลขบัตรในสำเนาถูกปิด (ค้นด้วยเลขบัตรได้ผ่าน `x-log-cid` เมื่อมี `LOG_HASH_KEY`) · error ของ
@@ -3854,6 +3910,8 @@ user agent ของแถวก่อน `a0a0578` ผ่าน `storedUserAgen
 - API อ่าน log เรียกได้จากอินเทอร์เน็ตผ่าน `bdi-api.thammasorn.org` ด้วย token ใบเดียว (ป้องกันด้วยผู้อ่านที่ประกาศ เหตุผล และการบันทึก แต่ผู้อ่านไม่ได้ถูกพิสูจน์ตัวตน) — การจำกัดทาง
   เครือข่ายคือ Q17
 - IP ในบันทึกเป็นค่าที่ผู้เรียกเขียนเองได้ทุกที่ที่ไม่ผ่าน Cloudflare (2.6)
+- ทุกการอ่าน log ถูกบันทึก แต่**ผูกกับเจ้าของประวัติเฉพาะการอ่านที่ระบุตัวเขา** — การอ่านผ่าน trace หรือ timeline ของคำขอหรือหน่วยงาน หรือเปิดเอกสารเดียวด้วย id
+  ตอบคำถาม “ใครเคยอ่านประวัติของ X” ไม่ได้ ต้องไล่จาก `endpoint` กับ `filters` เอง (4.12)
 - แถว Postgres ก่อนการ์ดและบางรหัสยังเก็บเลขบัตรเต็ม (Q4) และอีเมลที่พิมพ์ตอนล็อกอินดิบ (Q11) — ตารางนี้ไม่มี retention
 - `seed:demo:prod` ล้างบันทึกใน Postgres ของ production ทุกครั้งที่รัน (Q12)
 - ข้อความที่ผู้ใช้พิมพ์ (เหตุผล บันทึก ความเห็น) อาจมีข้อมูลบุคคลที่การปิดอัตโนมัติไม่รู้จัก
@@ -3863,7 +3921,7 @@ user agent ของแถวก่อน `a0a0578` ผ่าน `storedUserAgen
 ### 9.8 คำถามที่ DPO ต้องตอบ
 
 1. ฐานทางกฎหมาย ม.24(4) / ม.24(5) ของแต่ละวัตถุประสงค์ใน 9.1
-2. ตัวเลข retention ทุกตัวใน 7.3 (Q3) และการตัด IP/UA ที่ 365 วัน
+2. ตัวเลข retention ทุกตัวใน 7.3 (Q3) และการตัด IP/UA ที่ 365 วัน · ต้องมี retention ของ `audit_event` ใน Postgres ด้วยหรือไม่ (วันนี้ไม่มี — ตัดสินถ้อยคำของ 9.2)
 3. ปิดเลขบัตรในแถว Postgres เดิมและรหัสเดิมด้วยหรือไม่ (Q4) · อีเมลที่พิมพ์ตอนล็อกอินใน Postgres (Q11)
 4. กฎเลขบัตรของสำเนา (3.6) ปิดเกินไว้ก่อน — เลขอื่นที่มี 13 หลักคั่นด้วยจุดหรือขีดล่างก็กลายเป็น `[cid]` ในสำเนา ยอมรับหรือให้แคบลง
 5. ถ้อยคำของประกาศความเป็นส่วนตัว (9.2) และข้อยกเว้นการลบ (9.3)
