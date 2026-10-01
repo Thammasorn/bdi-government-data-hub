@@ -4,7 +4,7 @@
 > ที่มีตารางอยู่ฝั่ง server เพิกถอนได้ทีละใบ (ข้อ 1.4) refresh token มีไว้แก้ปัญหาของ
 > access token อายุสั้นที่เพิกถอนไม่ได้ ซึ่งเป็นปัญหาที่ระบบนี้ไม่มีแล้ว
 
-ระบบมีของที่เป็น "โทเคน" อยู่ 7 อย่าง แต่ละอย่างตอบคำถามคนละข้อ
+ระบบมีของที่เป็น "โทเคน" อยู่ 9 อย่าง แต่ละอย่างตอบคำถามคนละข้อ
 
 | # | โทเคน | ตอบว่า | อายุ | เก็บที่ฝั่ง server |
 |---|---|---|---|---|
@@ -15,10 +15,13 @@
 | 5 | โทเคนจาก ThaID | "กรมการปกครองยืนยันตัวตนให้แล้ว" | ใช้ครั้งเดียวแล้วทิ้ง | **ไม่เก็บ** |
 | 6 | OAuth `state` | "callback นี้มาจากคำขอที่เราเป็นคนเริ่ม" | 15 นาที | `integration_operation` |
 | 7 | OIDC `nonce` | "id_token ใบนี้ออกให้คำขอของเราจริง" | 15 นาที | `integration_operation` |
+| 8 | `x-log-token` | "ผู้เรียกมีสิทธิ์อ่าน activity log และ error" | ไม่หมดอายุ | ค่าคงที่ใน env (`LOG_READ_TOKEN`) |
+| 9 | `x-report-token` | "รายงาน error นี้มาจาก Next server ของเราเอง" | ไม่หมดอายุ | ค่าคงที่ใน env ของ backend และ frontend (`INGEST_SERVER_TOKEN`) |
 
 โค้ดที่เกี่ยวข้องอยู่ใน `backend/src/lib/auth.ts` (สร้าง/แฮช/ตรวจ),
 `backend/src/lib/session.ts` (วงจรชีวิตของ session), `backend/src/middleware/auth.ts`
-(บังคับใช้) และ `backend/src/routes/auth.ts` (เส้นทางทั้งหมด)
+(บังคับใช้) และ `backend/src/routes/auth.ts` (เส้นทางทั้งหมด) · ทุกขั้นของการพิสูจน์ตัวตน รวมความล้มเหลว ลง `audit_event`
+(ข้อ 4.2 และ `docs/21-activity-log.md` หมวด 4)
 
 ---
 
@@ -220,13 +223,24 @@ OTP แบบ `REGISTRATION` อีกแล้ว
 
 ## 4. `x-admin-token` — shared secret ไม่ใช่ session
 
-`POST /api/admin/*` ทั้งหมดป้องกันด้วย header `x-admin-token` เทียบกับ `ADMIN_API_TOKEN`
+`/api/admin/*` ทั้งหมด (ยกเว้น `/api/admin/logs/*` ที่ใช้ token ของตัวเอง — 4.3) ป้องกันด้วย header `x-admin-token` เทียบกับ `ADMIN_API_TOKEN`
 ตรง ๆ เพราะสเปกระบุว่าขั้นตอนเชิญผู้ใช้ "ไม่มี UI แต่ต้องมี api" ผู้เรียกจึงเป็นสคริปต์
 ไม่ใช่เบราว์เซอร์ที่มี session
 
 ข้อจำกัดที่ควรรู้ (ยอมรับไว้ ไม่ใช่มองข้าม): ไม่หมดอายุ ไม่หมุน ไม่ผูกกับตัวบุคคล —
 `audit_event` ของงานที่ทำผ่านเส้นทางนี้จึงบอกได้แค่ว่า "ระบบทำ" ไม่ได้บอกว่าเจ้าหน้าที่คนไหน
 ถ้าวันหนึ่งต้องรู้ตัวบุคคล ต้องเปลี่ยนไปใช้บัญชีจริงที่มี role `SYSTEM_ADMINISTRATOR`
+
+**สิ่งที่บอกได้คือ token ใบไหน** — `requireAdminToken` ที่ token ผ่านประทับคำขอเป็น `source_component = admin-portal`
+และ `logAudit` เติม `metadata.admin_token_fp` (12 ตัวแรกของ SHA-256 ของ token — `tokenFingerprint()` ใน `lib/auth.ts`)
+ลงทุกแถวของคำขอนั้น รวมแถวที่ helper ลงชื่อบัญชีเป้าหมายเป็น actor (`docs/21-activity-log.md` §2.3 §3.4) หมุน token แล้ว
+แถวใหม่จึงแยกจากแถวเก่าได้ และการใช้ token เก่าเห็นได้ (4.1) · **ทุกการเรียก `/api/admin*` ไม่ว่าอ่านหรือเขียน token ผ่านหรือไม่**
+ถูกบันทึกเป็น `ADMIN_API_REQUEST` ใน log store ด้วย (`docs/21` §4.11) — `GET /api/admin/users?cid=…` ตอบเลขบัตรและอีเมลแบบไม่ปิด
+บันทึกนี้จึงตอบได้ว่า token ใบไหนค้นเลขบัตรของใคร (เก็บเป็น key HMAC ไม่ใช่เลขจริง)
+
+**token ต้องยาวอย่างน้อย 128 บิต** — ใช้ `openssl rand -hex 32` (256 บิต) fingerprint ข้างบนไม่มีกุญแจ ใครอ่าน log ได้จึงทดสอบ
+คำเดาแบบ offline ได้ถ้า token สั้นหรือเดาได้ backend ที่รันแบบ production พร้อม token ที่สั้นกว่า 32 ตัวหรือขึ้นต้นด้วย `dev-`
+พิมพ์คำเตือนตอนบูต (4.1)
 
 การเทียบใช้ `timingSafeEqual` แล้วตั้งแต่ 2026-08-16 (เดิมเป็น `!==` ธรรมดา)
 โดย hash ทั้งสองฝั่งก่อนเทียบ — `timingSafeEqual` โยนเมื่อความยาวไม่เท่ากัน ซึ่งเท่ากับ
@@ -316,7 +330,8 @@ X-Forwarded-For ของเบราว์เซอร์ต่อไปทั�
 (เอกสารของ Cloudflare บอกว่าต่อท้าย ยังไม่ได้ยืนยันกับ tunnel ของเรา) ส่วนใครที่เข้าถึงพอร์ต 3000 หรือ
 4000 ของเครื่องได้ตรง ๆ ตั้งค่าเองได้ทั้งหมด
 
-`metadata.path` เป็นรูปแบบ ไม่ใช่ข้อความที่ผู้ยิงพิมพ์ — ถอด `%xx` ก่อน แล้ว UUID → `:id`
+`metadata.path` เป็นรูปแบบ ไม่ใช่ข้อความที่ผู้ยิงพิมพ์ — ถอด `%xx` ซ้ำจนไม่เปลี่ยน (ไม่เกินสี่รอบ แต่ละรอบผ่าน NFKC
+`＠` `﹫` และเลขเต็มความกว้างจึงเป็นตัวจริง) แล้วอีเมล → `:email` ท่อนที่ยังมี `@` → `:email` ทั้งท่อน UUID → `:id`
 ตัวอักษรนอก `A-Z a-z 0-9 / _ . : -` → `_` กลุ่มเลขที่ชี้ตัวคนได้ → `:n` และยาวไม่เกิน 120 ตัว
 "กลุ่มเลข" คือเลขที่ติดกันหรือคั่นด้วย `-` `.` `_` `:` ไม่เกินสามตัวติดกัน (ช่องว่างกลายเป็น `_`
 ไปก่อนแล้ว) และนับเป็นเลขชี้ตัวคนเมื่อมีเลขติดกัน 6 หลัก หรือรวมทั้งกลุ่ม 9 หลักขึ้นไป —
@@ -382,6 +397,49 @@ token เก่าถูกใช้จากที่มามากกว่�
 
 ค่าที่ไม่ใช่ฐานสิบหก 12 ตัวถูกข้ามพร้อมคำเตือนตอนบูต (`[env] ADMIN_TOKEN_WATCH_FPS: ข้าม …`)
 โดยไม่พิมพ์ค่านั้นออกมา เผื่อเป็น token จริงที่วางผิดช่อง
+
+### 4.2 การพิสูจน์ตัวตนที่ถูกบันทึก
+
+ทุกขั้นของทุกโทเคนในเอกสารนี้ลง `audit_event` **รวมความล้มเหลว** (การ์ด activity log ขั้น 1) ยกเว้นคำขอที่ zod ปฏิเสธรูป (400
+`validation`) และ body ที่อ่านไม่ออก รายละเอียดของแต่ละแถวอยู่ใน `docs/21-activity-log.md` หมวด 4:
+
+| โทเคน | แถว |
+|---|---|
+| รหัสผ่าน + OTP | `LOGIN_OTP_ISSUED` (ออก OTP ไม่เก็บรหัส) · `LOGIN_SUCCEEDED` · `LOGIN_FAILED` แยกด้วย `failure_reason`: `INVALID_CREDENTIAL` · `ACCOUNT_PENDING` / `ACCOUNT_SUSPENDED` / `ACCOUNT_DEACTIVATED` · `OTP_NOT_PENDING` · `OTP_EXPIRED` · `OTP_LOCKED` · `OTP_INVALID` · `ACCOUNT_INACTIVE` — อีเมลที่**พิมพ์มา**เก็บดิบใน Postgres (สำเนาใน log store ปิดไว้) |
+| Session id | `SESSION_REVOKED` ทุกการเพิกถอน พร้อม `reason` (ข้อ 1.4) — การสร้าง session ไม่มีแถวของตัวเอง |
+| Activation key | `ACTIVATION_KEY_ISSUED` · `USED` · `REVOKED` · `EXPIRED` (เขียนตอนมีคนเปิดลิงก์เก่า) · `INVITATION_DELETED` |
+| ลิงก์ตั้งรหัสผ่าน | `PASSWORD_RESET_REQUESTED` · `PASSWORD_RESET_COMPLETED` (`SUCCESS` หรือ `FAILURE` ข้อ 3.1) |
+| ThaID · `state` · `nonce` | `IDENTITY_VERIFICATION_STARTED` · `IDENTITY_VERIFIED` · `IDENTITY_VERIFICATION_FAILED` (รวม `state_not_found` `state_expired` `CID_MISMATCH` `nonce_mismatch`) · `LOGIN_SUCCEEDED` `method: THAID` · `LOGIN_FAILED` `THAID_NO_MATCHING_ACCOUNT` — `metadata.thaid_subject` คือ `sub` ของ DOPA ซึ่งเป็นเลขบัตร 13 หลักเต็มไม่ว่า `THAID_USE_PID` จะเป็นอะไร |
+| `x-admin-token` | งานที่ token ผ่าน: `admin-portal` + `admin_token_fp` บนแถวของงานนั้น · ไม่ผ่าน: `ADMIN_TOKEN_REJECTED` (4.1) · ทุกการเรียก: `ADMIN_API_REQUEST` ใน log store |
+| `x-log-token` | ทุกการอ่าน: `AUDIT_LOG_READ` ก่อนส่งข้อมูล · ไม่ผ่าน: `LOG_TOKEN_REJECTED` (4.3) |
+
+แถวเหล่านี้ใครก็สร้างได้บางส่วนโดยไม่ต้องมีอะไรในมือ — ตารางกับข้อจำกัดอยู่ใน 4.1
+
+### 4.3 `x-log-token` — token ของ API อ่าน log
+
+`/api/admin/logs/*` (`backend/src/routes/admin-logs.ts`) อ่าน activity log ทุกการกระทำของทุกคน และ error ของระบบ — ป้องกันด้วย
+`x-log-token` เทียบกับ `LOG_READ_TOKEN` **แยกจาก `ADMIN_API_TOKEN` โดยตั้งใจ**: admin token เคยหลุดมาแล้ว และคนถือ admin token ไม่ควร
+ได้สิทธิ์อ่าน log ไปด้วย Postman ของมันก็แยก (`docs/bdi-activity-log.postman_collection.json`) และ proxy ของหน้าเว็บตอบ 404 ให้ path นี้
+
+- เทียบด้วย `secretMatches()` (hash ทั้งสองฝั่งก่อน `timingSafeEqual` แบบเดียวกับ admin token) ไม่ผ่าน → 401 และ `LOG_TOKEN_REJECTED`
+  ด้วยตัวบันทึกเดียวกับ `ADMIN_TOKEN_REJECTED` (หน้าต่างและงบแยกกัน ไม่มีรายการเฝ้า)
+- ไม่ใช่ตัวตน: ทุกคำขอต้องมี `x-log-reader` (อีเมลที่**ประกาศ** ไม่ได้พิสูจน์) endpoint ที่เปิดประวัติของคนบังคับ `x-log-reason` ด้วย
+  (เหตุผล 10–500 ตัว percent-encode — ใน URL ไม่รับ) ทั้งคู่ลงแถว
+  `AUDIT_LOG_READ` พร้อม `token_fp` ของ token ที่ใช้ — ตัวที่ผูกกับ token จริงคือ fingerprint
+- **production ไม่รับค่าตัวอย่าง** (`dev-…`, `…change-me`) และค่าที่สั้นกว่า 32 ตัว — ถือว่าไม่ได้ตั้ง API ตอบ 503 `log_access_disabled`
+  พร้อมคำเตือนตอนบูต (เข้มกว่าของ admin token ที่แค่เตือน: token นี้ใหม่ ไม่มีอะไรพังถ้าปฏิเสธ) dev มีค่า `dev-log-token-change-me`
+- ไม่หมดอายุ ไม่หมุนเอง — หมุนด้วยการเปลี่ยน `.env` แล้วสร้าง backend ใหม่ ใช้ `tokenFp=<fp เก่า>` ของ Postman G8 ดูการใช้ค่าเก่า
+
+### 4.4 `x-report-token` — Next server รายงาน error ของตัวเอง
+
+`POST /api/client-errors` ไม่ต้องล็อกอิน (error เกิดได้ตั้งแต่หน้า login) รายงานจากเบราว์เซอร์จึงเชื่อไม่ได้ทั้งก้อน รายงานที่มี `x-report-token`
+ตรงกับ `INGEST_SERVER_TOKEN` (และ `x-report-source: frontend-server`) ถูกเก็บเป็น `service: "frontend-server"` นอกนั้นทุกตัวเป็น `browser`
+ที่ `ingest.verified: false` — backend เรียกได้ตรงไม่ผ่านหน้าเว็บ header อย่างเดียวจึงพิสูจน์อะไรไม่ได้ (`docs/21` §5.12)
+
+- **ค่าเดียวกันทั้ง backend และ frontend** Next server อ่านตอนรัน — ห้ามเป็น `NEXT_PUBLIC_` ไม่งั้นค่าลงบันเดิลของเบราว์เซอร์
+- proxy ของหน้าเว็บลบ `x-report-*` ที่เบราว์เซอร์ส่งมาทิ้ง
+- production ไม่รับค่าตัวอย่างหรือที่สั้นกว่า 32 ตัว (ถือว่าไม่ได้ตั้ง) · ไม่ได้ตั้งหรือไม่ตรงกันระหว่างสองฝั่ง: รายงานของ Next server ยังถูกเก็บ
+  แค่เป็น browser ที่ยืนยันไม่ได้ ไม่มีอะไรบูตไม่ขึ้น
 
 ## 5. โทเคนจาก ThaID — รับมาแล้วทิ้งทันที
 
@@ -470,6 +528,9 @@ ACTIVATION_KEY_SECRET=         # HMAC ของ activation key — บังค�
 PASSWORD_RESET_TTL_MINUTES=60  # ลิงก์ตั้งรหัสผ่านใหม่ (ข้อ 3.1) hash ด้วย secret ตัวเดียวกัน
 ADMIN_API_TOKEN=               # ค่าใน header x-admin-token
 ADMIN_TOKEN_WATCH_FPS=         # fingerprint ของ token ที่ปลดแล้ว คั่นด้วย comma (ข้อ 4.1)
+LOG_READ_TOKEN=                # ค่าใน header x-log-token (ข้อ 4.3) — openssl rand -hex 32
+INGEST_SERVER_TOKEN=           # ค่าใน header x-report-token ค่าเดียวกันใน frontend (ข้อ 4.4)
+LOG_HASH_KEY=                  # กุญแจ HMAC ของ key ค้นหาเลขบัตร/อีเมลใน log store (ไม่ใช่โทเคน แต่เป็นความลับ)
 THAID_STATE_TTL_MINUTES=15
 THAID_VERIFICATION_TTL_MINUTES=30
 THAID_REQUIRE_NONCE=false      # ดูข้อ 7
@@ -478,7 +539,7 @@ THAID_REQUIRE_NONCE=false      # ดูข้อ 7
 **ไม่มี `JWT_SECRET` แล้ว** ตั้งแต่ 2026-08-16 — session ไม่ใช่ JWT อีกต่อไป ถ้ายังมีค่านี้
 ค้างอยู่ใน `.env` ก็ไม่มีอะไรอ่านมัน ลบทิ้งได้
 
-`ACTIVATION_KEY_SECRET` และ `ADMIN_API_TOKEN` อยู่ใน `.env` ซึ่ง git ไม่ติดตาม
+`ACTIVATION_KEY_SECRET` `ADMIN_API_TOKEN` `LOG_READ_TOKEN` `INGEST_SERVER_TOKEN` และ `LOG_HASH_KEY` อยู่ใน `.env` ซึ่ง git ไม่ติดตาม
 **ห้ามย้ายไปไฟล์ที่ track ไว้**
 
 ## 9. สรุปสั้น ๆ สำหรับคนที่มาจากระบบที่มี refresh token
@@ -491,7 +552,7 @@ THAID_REQUIRE_NONCE=false      # ดูข้อ 7
 | บังคับให้ผู้ใช้คนหนึ่งออกจากระบบทันที | `POST /api/auth/logout-all` หรือตั้ง `user_account.status` เป็น `SUSPENDED`/`DEACTIVATED` |
 | ให้ session ใบเดียวตาย | `POST /api/auth/logout` — หรือ `UPDATE iam.session SET revoked_at = now()` |
 | บังคับให้ทุกคนออกจากระบบ | `UPDATE iam.session SET revoked_at = now() WHERE revoked_at IS NULL` (ไม่ต้องรีสตาร์ต ไม่ต้องหมุนความลับ) |
-| เรียก API ด้วย Bearer token ได้ไหม | ไม่ได้ ยกเว้น `/api/admin/*` ที่ใช้ `x-admin-token` |
+| เรียก API ด้วย Bearer token ได้ไหม | ไม่ได้ ยกเว้น `/api/admin/*` ที่ใช้ `x-admin-token` และ `/api/admin/logs/*` ที่ใช้ `x-log-token` |
 
 ## Session กับการจัดการบัญชีของแอดมิน
 
