@@ -388,10 +388,18 @@ export function captureError(err: unknown, options: CaptureOptions = {}): string
  * วินาที ถ้า Mongo กำลังหยุดหรือล่มอยู่ตอนนั้น บันทึกนี้หายไปพร้อม process ป้ายในไฟล์ไม่ต้องพึ่ง Mongo จึงบอกได้แทนว่าการเริ่มครั้งนี้
  * ตามหลังการปิดตามปกติ เดิมไม่มีป้าย: `docker compose restart mongo backend delivery-worker` สามรอบในชั่วโมงเดียว (ปิดตามปกติ
  * ทุกรอบ) ได้ `start` สามตัวโดยไม่มี `shutdown` นำหน้า แล้วสรุปแจ้ง "delivery-worker วนรีสตาร์ต" (ตรวจขั้น 10 แบบค้าน 2026-10-01)
+ *
+ * **`shutdown` ระหว่างที่ fatal กำลังออก (`exiting`) ไม่บันทึกอะไรเลย** ทั้งป้ายและบันทึกในคิว: process นี้ออกเพราะ fatal
+ * (`exitAfterFatal` ลบป้ายและบันทึก `fatal-exit` ไปแล้ว แล้วรอเขียนคิวไม่เกินสองวินาที) SIGTERM ที่มาในช่วงนั้นไม่ได้ทำให้การออก
+ * กลายเป็นการปิดตามปกติ เดิมมันเขียนป้ายที่ fatal เพิ่งลบกลับคืน `start` ถัดไปจึงได้ `cleanExit: true` และไม่ถูกนับเป็นการเริ่มที่
+ * ไม่มีคำอธิบาย (ลองจริงใน container: process ที่ throw แล้วได้ SIGTERM 300 มิลลิวินาทีหลังจากนั้น ออกด้วยรหัส 1 โดยที่ป้ายยังอยู่ —
+ * ตรวจขั้น 10 แบบค้าน 2026-10-01) บันทึก `shutdown` ในคิวก็ข้ามด้วยเหตุเดียวกัน ถ้าถึง Mongo มันจะเป็นบันทึกก่อนหน้าของ `start`
+ * ถัดไปแทน `fatal-exit` (`crashLoopsOf` ใน workers/error-alerts.ts) บรรทัด "SIGTERM received" ใน stdout ยังบอกว่าสัญญาณมาถึง
  */
 export function recordRuntimeEvent(kind: RuntimeKind, detail: Record<string, unknown> | null = null): void {
   try {
     if (!env.logStore.enabled) return;
+    if (kind === "shutdown" && exiting) return;
     // ป้ายก่อนคิว — การปิดที่ถูก SIGKILL ระหว่าง flush ยังเป็นการปิดที่มีคนสั่ง ไม่ใช่การตาย
     if (kind === "shutdown") writeCleanExitMarker();
     if (kind === "fatal-exit") removeCleanExitMarker();
