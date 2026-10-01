@@ -17,9 +17,12 @@
  *     ของ issue (error ที่วนซ้ำหมื่นครั้งยังเห็นว่าหมื่น แต่เก็บตัวอย่างแค่ 50) fatal ไม่ติดเพดานสองตัวนี้
  *     คำขอที่ติดเพดานแล้วตอบ 5xx พร้อมรหัสอ้างอิงได้**ตัวย่อ**หนึ่งตัวแทน ให้รหัสนั้นค้นเจอ (`keepReference`, ≤120/นาที)
  *   - log store เกินเพดานขนาด (สถานะ `over_quota` ที่ worker ตั้ง) — เดินแค่ตัวนับ ไม่เก็บ event รายงานจากเบราว์เซอร์ไม่สร้าง
- *     issue ใหม่ด้วย (นับเข้าได้แค่ issue ที่มีอยู่แล้ว)
+ *     issue ใหม่ด้วย (นับเข้าได้แค่ issue ที่มีอยู่แล้ว) สิ่งที่ยังเก็บต่อ: สำเนา audit บันทึกของ process และบันทึกการเรียก admin API
+ *     ที่ token ผ่าน (`enqueueAccessRecord`)
  *   - รายงานจากเบราว์เซอร์สร้าง issue ใหม่ได้ไม่เกิน 100 fingerprint ต่อ process ต่อชั่วโมง (`BROWSER_FINGERPRINTS_PER_HOUR` —
  *     ยกเว้นสองตัวที่ตั้งชื่อเอง) รายงานที่มีรหัสอ้างอิงยังเก็บตัว event ได้แม้ issue ไม่ถูกสร้าง ให้รหัสนั้นค้นเจอ (`captureReport`)
+ *   - รายงานจากเบราว์เซอร์และบันทึกการเรียก admin API ที่ token ไม่ผ่าน กินที่ได้ไม่เกินงบไบต์ของตัวเอง (lib/untrusted-budget.ts)
+ *     — สิ่งที่ใครก็ส่งได้ต้องพาเพดานขนาดไปถึงเองไม่ได้ ไม่งั้นมันปิด error ของ server ไปด้วย
  *   - issue ที่รอเขียนไม่เกิน 1,000 fingerprint ในนั้นเป็นของเบราว์เซอร์ได้ไม่เกิน 200 และ fatal ได้ที่เสมอ (`roomForIssue`)
  *   - เอกสารหนึ่งตัวไม่เกิน 64 KB
  *
@@ -41,6 +44,7 @@ import { bsonSize } from "./bson-size.js";
 import { currentContext, referenceOf, type Breadcrumb, type RequestContext } from "./context.js";
 import { logDb, logStoreStatus } from "./log-store.js";
 import { bodyShape, headlineOf, requestTarget, scrubClipped, scrubError, type ScrubbedError } from "./redact.js";
+import { indexCost, refundUntrustedBytes, takeUntrustedBytes } from "./untrusted-budget.js";
 
 export type ErrorLevel = "fatal" | "error" | "warning";
 /** error มาถึงทางไหน — `captured` คือโค้ดของเราเรียกเองที่จุดที่กลืน error ไว้ */
@@ -228,6 +232,8 @@ const PENDING_ISSUES_MAX = 1_000;
  * issue ไม่ได้ด้วยซ้ำ) คิวทิ้งรายงานเบราว์เซอร์ก่อนทุกอย่างอยู่แล้ว ที่ของตัวนับต้องเป็นแบบเดียวกัน
  */
 const BROWSER_PENDING_ISSUES_MAX = 200;
+/** index ของ error_events รวม `_id` (workers/log-upkeep.ts) — ราคาของ index ในงบไบต์ของรายงานเบราว์เซอร์ */
+const ERROR_EVENT_INDEX_ENTRIES = 5;
 const DOC_MAX_BYTES = 64 * 1024;
 const EXTRA_MAX_BYTES = 16 * 1024;
 const PER_FINGERPRINT_PER_HOUR = 50;
@@ -297,6 +303,8 @@ let browserFingerprints = { start: 0, seen: new Set<string>() };
 let browserNotCreated = 0;
 /** รายงานเบราว์เซอร์ที่มีรหัสอ้างอิงซึ่งไม่ได้เก็บทั้งตัวเต็มและตัวย่อ ตั้งแต่ process เริ่ม — `/status` แสดง (G6 จะตอบว่าไม่พบ) */
 let browserReferencesLost = 0;
+/** รายงานเบราว์เซอร์ที่ตัวเต็มไม่ได้เก็บเพราะงบไบต์หมด (lib/untrusted-budget.ts) ตั้งแต่ process เริ่ม — ที่มีรหัสอ้างอิงยังลองตัวย่อ */
+let browserOverBudget = 0;
 
 /**
  * ทำไมถึงทิ้ง — event สรุปต้องบอกสาเหตุให้ถูก เดิมมันโทษ "log store เขียนไม่ได้นาน" ทุกครั้ง แม้ที่ทิ้งจริงคือเอกสารที่
@@ -447,24 +455,48 @@ export function enqueueActivity(doc: ActivityDoc): boolean {
 }
 
 /**
- * บันทึกการเรียก admin API (lib/admin-access.ts, `source: "http"`) — ไม่ throw คืนผลสามแบบ:
- *   - `queued` เข้าคิวแล้ว
- *   - `full`   คิวเต็ม (ไม่มีตัวที่ชั้นต่ำกว่าให้ไล่) — ผู้เรียกพับลงบันทึกสรุปแล้วส่งใหม่ทีหลัง
- *   - `off`    log store ปิดหรือเกินเพดานขนาด — ไม่เก็บเลย ทั้งตัวเดี่ยวและสรุป (plan §3 "Size ceiling")
+ * บันทึกการเรียก admin API (lib/admin-access.ts, `source: "http"`) — ไม่ throw คืนผลสี่แบบ:
+ *   - `queued`      เข้าคิวแล้ว
+ *   - `full`        คิวเต็ม (ไม่มีตัวที่ชั้นต่ำกว่าให้ไล่) — ผู้เรียกพับลงบันทึกสรุปแล้วส่งใหม่ทีหลัง
+ *   - `over_budget` token ไม่ผ่าน และงบไบต์ของการเรียกแบบนั้นหมด (lib/untrusted-budget.ts) — ผู้เรียกพับตัวเดี่ยวลงสรุป
+ *                   สรุปรอแล้วลองใหม่
+ *   - `off`         log store ปิด หรือเกินเพดานขนาดและ token ไม่ผ่าน — ไม่เก็บเลย
  *
- * ต่างจากสำเนา audit ข้างบนสองข้อ: เกินเพดานขนาดแล้วไม่เก็บ และอยู่ชั้นที่ 1 ของคิว ถูกทิ้งหลังรายงานจากเบราว์เซอร์แต่ก่อน
- * ทุกอย่างของ server เอง ยกเว้นบันทึกสรุป (`summary: true`) ซึ่งอยู่ชั้นเดียวกับคำเตือน — ตัวเดียวแทนการเรียกเป็นร้อย และมีขึ้น
- * เพราะคิวหรือเพดานต่อนาทีรับตัวเดี่ยวไม่ไหวแล้ว ถ้าอยู่ชั้นเดียวกับตัวเดี่ยวก็ถูกทิ้งด้วยเหตุเดียวกัน แต่สรุปไม่เบียดตัวเดี่ยว
- * ออกจากคิว (`enqueue`) เอกสารต้องผ่าน `fitDocument()` มาแล้ว
+ * **token ที่ผ่าน (`via: "ADMIN_TOKEN"`) เก็บแม้เกินเพดานขนาด** เหมือนสำเนา audit: มันคือร่องรอยที่ step 8 มีไว้ (ใครเปิดดูเลขบัตร
+ * ของใครด้วย token ใบไหน) จำนวนของมันขึ้นกับการถือ token ไม่ใช่กับใครก็ได้ เดิม (plan §3 "Size ceiling") เกินเพดานแล้วไม่เก็บทั้งหมด
+ * — คนไม่มี token ยิง `/api/admin/*` ไม่หยุดจนถึงเพดาน แล้วคนถือ token ที่หลุดอ่านเลขบัตรของทุกบัญชีได้โดยไม่เหลือบันทึก (ตรวจขั้น
+ * 8-10 แบบค้าน 2026-10-01) ตอนนี้การเรียกที่ไม่มี token พาเพดานไปถึงเองไม่ได้แล้ว (งบไบต์) แต่ error ของ server หรือ relay ยังพาไปได้
+ *
+ * ต่างจากสำเนา audit อีกข้อ: อยู่ชั้นที่ 1 ของคิว ถูกทิ้งหลังรายงานจากเบราว์เซอร์แต่ก่อนทุกอย่างของ server เอง ยกเว้นบันทึกสรุป
+ * (`summary: true`) ซึ่งอยู่ชั้นเดียวกับคำเตือน — ตัวเดียวแทนการเรียกเป็นร้อย และมีขึ้นเพราะคิวหรือเพดานต่อนาทีรับตัวเดี่ยวไม่ไหวแล้ว
+ * ถ้าอยู่ชั้นเดียวกับตัวเดี่ยวก็ถูกทิ้งด้วยเหตุเดียวกัน แต่สรุปไม่เบียดตัวเดี่ยวออกจากคิว (`enqueue`) เอกสารต้องผ่าน `fitDocument()`
+ * มาแล้ว
  */
-export function enqueueAccessRecord(doc: ActivityDoc, summary = false): "queued" | "full" | "off" {
+export function enqueueAccessRecord(doc: ActivityDoc, summary = false): "queued" | "full" | "over_budget" | "off" {
   try {
-    if (!env.logStore.enabled || logStoreStatus().status === "over_quota") return "off";
+    if (!env.logStore.enabled) return "off";
+    const trusted = doc.via === "ADMIN_TOKEN";
+    if (!trusted && logStoreStatus().status === "over_quota") return "off";
+    const bytes = sizeOf(doc);
+    const cost = trusted ? 0 : bytes + indexCost(activityIndexEntries(doc));
+    // สรุปใช้ส่วนที่เหลือไว้ได้ — ใบเดียวนับทุกการเรียกในช่วงนั้น ตัวเดี่ยวหยุดก่อน
+    if (!trusted && !takeUntrustedBytes("anonymous-admin", cost, { useReserve: summary })) return "over_budget";
     const priority = summary ? PRIORITY.accessSummary : PRIORITY.access;
-    return enqueue({ kind: "access", doc, bytes: sizeOf(doc), priority }) ? "queued" : "full";
+    if (enqueue({ kind: "access", doc, bytes, priority })) return "queued";
+    if (!trusted) refundUntrustedBytes("anonymous-admin", cost);
+    return "full";
   } catch {
     return "off";
   }
+}
+
+/**
+ * รายการ index ที่เอกสารหนึ่งตัวของ `activity` กิน — สิบสอง index (รวม `_id`, workers/log-upkeep.ts) สามตัวเป็น array ที่ได้หนึ่ง
+ * รายการต่อค่า (`relatedUserIds` `hashKeys` `tokenFps`) array ว่างยังได้หนึ่งรายการ
+ */
+function activityIndexEntries(doc: ActivityDoc): number {
+  const entries = (value: unknown) => (Array.isArray(value) ? Math.max(1, value.length) : 1);
+  return 9 + entries(doc.relatedUserIds) + entries(doc.hashKeys) + entries(doc.tokenFps);
 }
 
 /**
@@ -500,7 +532,9 @@ function handOverAccessRecord(doc: ActivityDoc): boolean {
  *   pendingIssues  — issue ที่ตัวนับยังไม่ได้เขียน
  *   dropped        — ทิ้งไปทั้งหมดตั้งแต่ process เริ่ม (คิวเต็ม ใหญ่เกิน Mongo ไม่รับ issue ค้างเกิน)
  *   droppedUnreported — ในนั้นที่ยังไม่มี event สรุป "ทิ้งไป N รายการ" (เข้าคิวเมื่อเขียนได้อีกครั้ง)
- *   browserReferencesLost — รายงานเบราว์เซอร์ที่มีรหัสอ้างอิงซึ่งไม่ได้เก็บเลย (เกินเพดานขนาด, ตัวย่อเกิน 240 ต่อนาที, คิวเต็ม)
+ *   browserReferencesLost — รายงานเบราว์เซอร์ที่มีรหัสอ้างอิงซึ่งไม่ได้เก็บเลย (เกินเพดานขนาด, ตัวย่อเกิน 240 ต่อนาที, คิวเต็ม,
+ *                    งบไบต์หมด)
+ *   browserOverBudget — รายงานเบราว์เซอร์ที่ตัวเต็มไม่ได้เก็บเพราะงบไบต์หมด (lib/untrusted-budget.ts)
  *   writing        — `failing` ระหว่างที่เขียน log store ไม่ได้และกำลังถอยห่าง
  * เป็นของ process ที่ตอบเท่านั้น: คิวของ delivery-worker และของ backend replica อื่นแยกกัน
  */
@@ -512,6 +546,7 @@ export function errorCaptureStats(): {
   droppedUnreported: number;
   browserReportsNotCreatingIssues: number;
   browserReferencesLost: number;
+  browserOverBudget: number;
   writing: "ok" | "failing";
 } {
   return {
@@ -522,6 +557,7 @@ export function errorCaptureStats(): {
     droppedUnreported: dropped.count,
     browserReportsNotCreatingIssues: browserNotCreated,
     browserReferencesLost,
+    browserOverBudget,
     writing: failing ? "failing" : "ok",
   };
 }
@@ -747,8 +783,12 @@ export interface IngestedReport {
  *     เขียนเองได้ เพดานต่อ IP จึงไม่ช่วย) ทำให้รหัสบนหน้า global-error ที่มาหลังจากนั้นค้นไม่เจอทั้งชั่วโมง (ตรวจขั้น 9, 2026-10-01)
  *   - รายงานที่มีรหัสอ้างอิงซึ่ง**เกินเพดานต่อนาที** (60 ของเบราว์เซอร์ หรือ 600 ของ process) เก็บเป็น**ตัวย่อ**แทน
  *     (`keepBrowserReference`) — เดิมทิ้งไปเลย ใครก็ยิงรายงานขยะนาทีละหกสิบตัว (หนึ่งตัวต่อวินาที) ทำให้รหัสทุกตัวที่ผู้ใช้เห็นใน
- *     นาทีนั้นค้นไม่เจอ (ตรวจขั้น 9 แบบค้าน 2026-10-01) ตอนนี้ต้องยิงเกินเพดานรวมของ routes/client-errors.ts (300 ต่อนาที) ซึ่งที่
- *     นั่นรายงานถูกทิ้งก่อนถึงตรงนี้อยู่แล้ว — endpoint ที่ไม่ต้อง login ป้องกันได้แค่นั้น
+ *     นาทีนั้นค้นไม่เจอ (ตรวจขั้น 9 แบบค้าน 2026-10-01)
+ *   - **ทุกตัวที่เก็บของเบราว์เซอร์หักงบไบต์** (lib/untrusted-budget.ts — ตัวเต็มหยุดที่ส่วนที่เหลือไว้ ตัวย่อของรหัสอ้างอิงใช้ส่วนนั้น
+ *     ได้) เพดานต่อนาทีข้างบนคุมความถี่ ไม่ได้คุมปริมาณสะสม: ยิงนาทีละ 300 ตัวที่มีรหัสอ้างอิงได้ 60 ตัวเต็มกับ 240 ตัวย่อ ราว 1.5 GB
+ *     ต่อวัน ถึงเพดานขนาดของ production ในราวสามวัน แล้วธง over_quota ปิด error ของ server ทุกตัวไปจนกว่าขยะจะหมดอายุ 30 วัน
+ *     (ตรวจขั้น 8-10 แบบค้าน 2026-10-01) ราคาที่จ่าย: คนที่ยิงขยะไม่หยุดในอัตราที่เท่ากับการเติมของงบ ทำให้รหัสอ้างอิงของผู้ใช้จริง
+ *     ไม่ถูกเก็บ — เดิมต้องยิงเกินเพดานรวม 300 ต่อนาทีของ routes/client-errors.ts
  */
 export function captureReport(report: IngestedReport): string | null {
   try {
@@ -801,8 +841,14 @@ export function captureReport(report: IngestedReport): string | null {
     const cap = admit(report.fingerprint, now, browser, referenced);
     if (cap !== null) return referenced ? keepBrowserReference(doc, cap, delta.create, now) : null;
     const bytes = fitDocument(doc);
+    const cost = browser ? bytes + indexCost(ERROR_EVENT_INDEX_ENTRIES) : 0;
+    if (browser && !takeUntrustedBytes("browser", cost, { useReserve: false })) {
+      browserOverBudget += 1;
+      return referenced ? keepBrowserReference(doc, "browser_budget", delta.create, now) : null;
+    }
     const priority = browser ? PRIORITY.browser : report.level === "warning" ? PRIORITY.warning : PRIORITY.error;
     if (!enqueue({ kind: "event", doc, bytes, priority })) {
+      if (browser) refundUntrustedBytes("browser", cost);
       if (referenced) browserReferencesLost += 1;
       return null;
     }
@@ -822,18 +868,21 @@ const BROWSER_REFERENCE_STUBS_PER_MINUTE = 240;
 let browserStubWindow = { start: 0, stored: 0 };
 
 /**
- * เก็บรายงานเบราว์เซอร์ที่มีรหัสอ้างอิงซึ่งติดเพดานต่อนาที (`cap`) เป็นตัวย่อ: รหัส หน้า รุ่น ชื่อกับข้อความสั้น ๆ ของ error
- * ไม่มี stack และคำขอ API ห้าตัวล่าสุด (`extra.referenceOnly: true`) — G6 ค้นจาก `browser.reference` เหมือนตัวเต็ม คืน id หรือ null
- * อยู่ชั้นล่างสุดของคิวเหมือนรายงานเบราว์เซอร์อื่น
+ * เก็บรายงานเบราว์เซอร์ที่มีรหัสอ้างอิงซึ่งติดเพดานต่อนาที หรือที่ตัวเต็มเกินงบไบต์ (`cap`) เป็นตัวย่อ: รหัส หน้า รุ่น ชื่อกับข้อความ
+ * สั้น ๆ ของ error ไม่มี stack และคำขอ API ห้าตัวล่าสุด (`extra.referenceOnly: true`) — G6 ค้นจาก `browser.reference` เหมือนตัวเต็ม
+ * คืน id หรือ null อยู่ชั้นล่างสุดของคิวเหมือนรายงานเบราว์เซอร์อื่น หักงบไบต์ของเบราว์เซอร์ได้ถึงก้นถัง (ส่วนที่ตัวเต็มเหลือไว้ให้)
  */
 function keepBrowserReference(
   doc: ErrorEventDoc,
-  cap: "capped_issue" | "capped_process",
+  cap: "capped_issue" | "capped_process" | "browser_budget",
   issueCreated: boolean,
   now: number,
 ): string | null {
+  // ตัวย่อแทนตัวเต็มที่เกินงบไบต์ไม่นับในหน้าต่างนี้ — มันผ่านเพดานตัวเต็ม 60 ต่อนาทีมาแล้ว (`admit`) ถ้านับ มันกินที่ของตัวที่ติด
+  // เพดานต่อนาทีที่มาทีหลังในนาทีนั้น รหัสอ้างอิงที่ค้นเจอได้ต่อนาทีจะเหลือ 240 แทน 300 (ลองจริง 2026-10-01: หาย 77 ใน 3 นาที)
+  const counted = cap !== "browser_budget";
   if (now - browserStubWindow.start >= 60_000) browserStubWindow = { start: now, stored: 0 };
-  if (browserStubWindow.stored >= BROWSER_REFERENCE_STUBS_PER_MINUTE) {
+  if (counted && browserStubWindow.stored >= BROWSER_REFERENCE_STUBS_PER_MINUTE) {
     browserReferencesLost += 1;
     return null;
   }
@@ -844,11 +893,18 @@ function keepBrowserReference(
     // `capped` ของตัวย่อคือเพดานต่อนาทีที่ติด (แบบเดียวกับตัวย่อของ server) · issue ที่ไม่ถูกสร้างบอกแยกใน `issueCapped`
     extra: { referenceOnly: true, capped: cap, ...(issueCreated ? {} : { issueCapped: "browser_fingerprints" }) },
   };
-  if (!enqueue({ kind: "event", doc: stub, bytes: sizeOf(stub), priority: PRIORITY.browser })) {
+  const bytes = sizeOf(stub);
+  const cost = bytes + indexCost(ERROR_EVENT_INDEX_ENTRIES);
+  if (!takeUntrustedBytes("browser", cost, { useReserve: true })) {
     browserReferencesLost += 1;
     return null;
   }
-  browserStubWindow.stored += 1;
+  if (!enqueue({ kind: "event", doc: stub, bytes, priority: PRIORITY.browser })) {
+    refundUntrustedBytes("browser", cost);
+    browserReferencesLost += 1;
+    return null;
+  }
+  if (counted) browserStubWindow.stored += 1;
   return stub._id;
 }
 
@@ -1278,8 +1334,8 @@ async function writeBatch(
   issueOps: AnyBulkWriteOperation<IssueDoc>[],
   done: { items: boolean; issues: boolean },
 ): Promise<void> {
-  // เกินเพดานขนาดระหว่างที่ event รออยู่ในคิว — ทิ้งตัว event (ตัวนับของ issue ยังเดิน) บันทึกของ process กับสำเนา
-  // audit ยังเขียนตามปกติ
+  // เกินเพดานขนาดระหว่างที่ event รออยู่ในคิว — ทิ้งตัว event (ตัวนับของ issue ยังเดิน) และบันทึกการเรียก admin API ที่ token
+  // ไม่ผ่าน บันทึกของ process สำเนา audit และบันทึกการเรียกที่ token ผ่านยังเขียนตามปกติ (`enqueueAccessRecord`)
   const overQuota = logStoreStatus().status === "over_quota";
   const events: ErrorEventDoc[] = [];
   const runtime: RuntimeEventDoc[] = [];
@@ -1290,7 +1346,7 @@ async function writeBatch(
       if (!overQuota) events.push(item.doc);
     } else if (item.kind === "runtime") runtime.push(item.doc);
     else if (item.kind === "access") {
-      if (!overQuota) access.push(item.doc);
+      if (!overQuota || item.doc.via === "ADMIN_TOKEN") access.push(item.doc);
     } else activity.push(item.doc);
   }
   if (events.length > 0) await insertAll(db, "error_events", events);

@@ -366,8 +366,9 @@ export const env = {
      * · 5 GB บน production 512 MB ที่อื่น · บน managed Mongo โควตาของบริการเป็นตัวคุมอีกชั้น
      *
      * worker เทียบค่านี้ทุกชั่วโมงและตอนบูต (workers/log-upkeep.ts) เกินแล้วตั้งธง `overQuota` ใน relay_state ซึ่ง
-     * backend กับ worker อ่านเป็นสถานะ `over_quota` (lib/log-store.ts) และระหว่างนั้นเก็บแค่ตัวนับของ issue
-     * ธงลงเมื่อขนาดต่ำกว่า 90% ของเพดาน
+     * backend กับ worker อ่านเป็นสถานะ `over_quota` (lib/log-store.ts) และระหว่างนั้นเก็บแค่ตัวนับของ issue (สำเนา audit กับ
+     * บันทึกการเรียก admin API ที่ token ผ่านยังเก็บต่อ) ธงลงเมื่อขนาดต่ำกว่า 90% ของเพดาน · สิ่งที่ใครก็ส่งได้ (รายงานเบราว์เซอร์
+     * การเรียก admin API ที่ token ไม่ผ่าน) กินได้ไม่เกิน 20% ของค่านี้ต่อ process (lib/untrusted-budget.ts) จึงพาธงขึ้นเองไม่ได้
      */
     maxMb: positiveNumber("LOG_STORE_MAX_MB", NODE_ENV === "production" ? 5120 : 512),
     /**

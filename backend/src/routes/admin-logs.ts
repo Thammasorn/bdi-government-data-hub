@@ -61,6 +61,7 @@ import { AuditAction, AuditSubject, logAudit, recordLogRead } from "../lib/audit
 import { captureError, errorCaptureStats } from "../lib/error-capture.js";
 import { MONGO_COMMAND_MAX_MS, logDb, logStoreStatus } from "../lib/log-store.js";
 import { maskCidText, scrubClipped } from "../lib/redact.js";
+import { untrustedBudgetStats } from "../lib/untrusted-budget.js";
 import { requireLogReader, requireReadReason } from "../middleware/auth.js";
 
 export const adminLogRouter = Router();
@@ -1057,6 +1058,9 @@ adminLogRouter.get("/status", async (req, res) => {
     browserReportsNotCreatingIssues: stats.browserReportsNotCreatingIssues,
     // รายงานเบราว์เซอร์ที่มีรหัสอ้างอิงซึ่งไม่ได้เก็บทั้งตัวเต็มและตัวย่อ — รหัสเหล่านั้น G6 ตอบว่าไม่พบ (lib/error-capture.ts)
     browserReferencesLost: stats.browserReferencesLost,
+    // รายงานเบราว์เซอร์ที่ตัวเต็มไม่ได้เก็บเพราะงบไบต์หมด · งบของสิ่งที่ใครก็ส่งได้ต่อชนิด (lib/untrusted-budget.ts) — ของ process นี้
+    browserOverBudget: stats.browserOverBudget,
+    untrustedBudget: untrustedBudgetStats(),
     writing: stats.writing,
     hashKey: env.logStore.hashKey ? "set" : "missing",
     relayLagSeconds: null,
@@ -1117,9 +1121,9 @@ adminLogRouter.get("/status", async (req, res) => {
       // Mongo ตอบไม่ทัน — ตัวเลขของ relay และเพดานเป็น null ส่วน status มาจากรอบตรวจของ log-store.ts อยู่แล้ว
     }
   }
-  // บันทึกการเรียก admin API ของ backend process นี้ (lib/admin-access.ts `adminAccessStats`) — `overCap` / `queueFull` =
-  // เก็บเป็นตัวเดี่ยวไม่ได้จึงพับลงบันทึกสรุป · `evicted` = เข้าคิวแล้วถูกเบียดออก จึงพับลงสรุป · `notStored` = ไม่ได้เก็บที่ไหน
-  // เลย (เกินเพดานขนาด)
+  // บันทึกการเรียก admin API ของ backend process นี้ (lib/admin-access.ts `adminAccessStats`) — `overCap` / `queueFull` /
+  // `overBudget` = เก็บเป็นตัวเดี่ยวไม่ได้จึงพับลงบันทึกสรุป · `evicted` = เข้าคิวแล้วถูกเบียดออก จึงพับลงสรุป · `notStored` =
+  // ไม่ได้เก็บที่ไหนเลย (เกินเพดานขนาด และ token ไม่ผ่าน)
   res.json({ logStore, adminAccess: adminAccessStats(), alerts, release: env.release });
 });
 

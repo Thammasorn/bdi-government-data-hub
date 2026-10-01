@@ -79,6 +79,7 @@ import { referenceOf } from "../lib/context.js";
 import { DOCUMENT_REJECTED, captureError, perDocumentErrors } from "../lib/error-capture.js";
 import {
   ACTIVITY_RETENTION,
+  ANONYMOUS_ADMIN_ACCESS_DAYS,
   BROWSER_EVENT_DAYS,
   CLOSED_ISSUE_DAYS,
   ERROR_EVENT_DAYS,
@@ -1043,6 +1044,21 @@ export async function pruneLogStore(db: Db, now: Date, summary: PruneSummary = e
       ),
     );
   }
+  // บันทึกการเรียก admin API ที่ token ไม่ผ่าน — อายุสั้นกว่าหมวดของมัน (lib/log-retention.ts ANONYMOUS_ADMIN_ACCESS_DAYS)
+  // `source: "http"` ต้องอยู่ด้วย: แถว `ADMIN_TOKEN_REJECTED` ที่ relay คัดลอกจาก Postgres ก็หมวด `admin-access` และ `ANONYMOUS`
+  // แต่ถือ 400 วันตามหมวด · `category` นำหน้าให้ใช้ index `{category, result, occurredAt}`
+  done(
+    await deleteInChunks(
+      activity,
+      {
+        category: "admin-access",
+        source: "http",
+        via: "ANONYMOUS",
+        occurredAt: { $lt: daysBefore(now, ANONYMOUS_ADMIN_ACCESS_DAYS) },
+      },
+      (n) => (summary.activityDeleted += n),
+    ),
+  );
 
   const errors = db.collection("error_events") as unknown as ActivityCollection;
   const errorEvents = (n: number) => (summary.errorEventsDeleted += n);

@@ -1505,10 +1505,20 @@ page load left the global-error page showing a reference that was never sent. Un
 hundred junk messages to the unauthenticated endpoint, which a spoofed `X-Forwarded-For` gets
 past the per-IP limit, left every reference sent after them unfindable for the rest of the hour.
 The same goes for the 60-a-minute cap on stored browser events: a referenced report past it is
-kept as a reference-only stub (`extra.referenceOnly`, 240 a minute), so hiding a user's reference
-takes more than the ingest's own 300 reports a minute, at which point the route drops everything
-anyway; one junk report a second used to be enough. `/status` counts references that were still
-lost (`browserReferencesLost`).
+kept as a reference-only stub (`extra.referenceOnly`, 240 a minute); one junk report a second used
+to be enough to hide every reference. **What browser reports may store in total is a byte budget,
+not those caps** (`lib/untrusted-budget.ts`): 15% of `LOG_STORE_MAX_MB` spread over their 30-day
+life, refilled continuously, per backend process. The caps bound only the rate: 300 referenced
+reports a minute stored about 1.5 GB a day and reached production's 5 GB ceiling in about three
+days, and `over_quota` then stopped every server error event too (review of steps 8–10,
+2026-10-01). Full events stop when a quarter of the budget is left and reference stubs may spend
+that quarter, so references outlast the junk for a while. Past that point, someone who keeps
+sending junk at the refill rate (about one full-size report a minute on production) keeps real
+reports, references included, out of the store. Before the budget, hiding a reference took more
+than the ingest's 300 reports a minute, and filled the disk while doing it. `/status` shows
+`untrustedBudget`, `browserOverBudget` and the references that were still lost
+(`browserReferencesLost`). The ingest scrubs at most 200 stack lines: the scrub runs line by line
+on the event loop, and a 16 KB body of 5,300 one-character lines held it for 20–75 ms per report.
 **A chunk that fails to load (a deploy under an open page) is a warning filed as
 `browser:chunk-load`, which never alerts, and there are two wordings for it.** `next dev --webpack`
 throws webpack's "Loading chunk 123 failed.". Production's `next build` is **Turbopack** (Next 16's
@@ -1785,6 +1795,19 @@ there. Unknown server actions, undecodable URLs and bad `Next-Url` headers never
   every stack runs, so treat any multi-command Mongo job as one that can stop halfway. Count its
   progress as it goes, the way prune does (`runPrune` in `workers/log-relay.ts`, reproduced
   2026-10-01).
+- **Anything a caller without credentials can make the backend store needs a byte budget, not
+  only a per-minute cap.** A rate cap times a retention of 30 to 400 days has no practical bound,
+  and reaching `LOG_STORE_MAX_MB` switches off what matters more: every server error event, and
+  with it the sustained-5xx alert, which counts events. Browser reports and `/api/admin*` calls
+  whose token was rejected or never checked (`via: "ANONYMOUS"`) draw from
+  `lib/untrusted-budget.ts`, 20% of the ceiling between them per backend process. Anonymous admin
+  access records live 90 days, not their category's 400 (`ANONYMOUS_ADMIN_ACCESS_DAYS`), and their
+  summary never closes to open another; it truncates its keys instead. Admin access records whose
+  token was **accepted** are written even over the ceiling, like audit fallbacks, because they are
+  the trail step 8 exists for. Until 2026-10-01, token-less calls carrying random `?cid=` /
+  `?q=` / `?email=` values, or random tokens, opened a new summary every 20 to 67 calls with no
+  limit. So filling the store was the first step to reading every CID with a leaked token without
+  leaving a record.
 
 
 ## Notion

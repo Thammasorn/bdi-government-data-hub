@@ -46,6 +46,18 @@ export const ACTIVITY_RETENTION: Record<ActivityCategory, ActivityRetention> = {
   other: AUTH_LIKE,
 };
 
+/**
+ * บันทึกการเรียก admin API ที่ token ไม่ผ่านหรือไม่ได้ตรวจ (`ADMIN_API_REQUEST` ที่ `via: "ANONYMOUS"`, `source: "http"` —
+ * lib/admin-access.ts) — สั้นกว่าหมวด `admin-access` ที่มันอยู่ (400 วัน) ตัดสินในรอบแก้ขั้น 8-10, 2026-10-01
+ *
+ * ทำไม: ใครก็สร้างบันทึกชนิดนี้ได้โดยไม่ต้องมีอะไรเลย ถ้าเก็บ 400 วัน งบไบต์ของมัน (lib/untrusted-budget.ts ซึ่งเติมวันละ
+ * ส่วนแบ่งของเพดาน ÷ อายุ) เหลือวันละราวสามร้อยตัวเดี่ยวบน production — น้อยจนการลองเดา token ช่วงสั้น ๆ ก็ใช้หมด ไม่มีข้อมูลออกไป
+ * กับคำขอพวกนี้ และประวัติการเดา token ย้อนหลังหนึ่งปียังอยู่ที่แถว `ADMIN_TOKEN_REJECTED` ใน Postgres (ไม่ถูกลบ) กับสำเนาใน
+ * `activity` (400 วัน) 90 วันเท่ากับขั้นต่ำของ พ.ร.บ.คอมพิวเตอร์ ม.26 ที่ plan อ้าง · บันทึกที่ token ผ่านยังเป็น 400 วันตามหมวด
+ * ยังเป็นค่าตั้งต้นให้ BDI ตัดสิน (Q3) เหมือนทุกตัวในไฟล์นี้
+ */
+export const ANONYMOUS_ADMIN_ACCESS_DAYS = 90;
+
 /** error ทีละครั้ง — ตัวอย่างสำหรับไล่ปัญหา ตัวนับอยู่ใน error_issues */
 export const ERROR_EVENT_DAYS = 90;
 /** รายงานจากเบราว์เซอร์ (step 9) — มากและบอกได้น้อยกว่า */

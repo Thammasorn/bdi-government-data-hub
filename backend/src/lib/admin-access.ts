@@ -41,8 +41,14 @@
  * ไม่ถอด `%xx` ก่อนเทียบ mount path) จึงเป็นการเรียก admin · คำขอของ log API ที่ตัวอ่าน body ปฏิเสธก็ไม่ถึง router ของ log
  * จึงถูกบันทึกที่นี่แบบ `token_checked: false` — การอ่านไม่เกิดและไม่มี `AUDIT_LOG_READ` นี่คือร่องรอยเดียวของมัน
  *
- * เพดานต่อ process (`admit`): token ที่ผ่าน ไม่เกิน 600 ต่อนาที · ไม่ผ่านหรือไม่มี token ไม่เกิน 60 ต่อนาที — คนยิง 401 รัว ๆ
- * ต้องไม่เติมดิสก์ แถว `ADMIN_TOKEN_REJECTED` ใน Postgres (throttle ของ lib/token-rejection.ts) ยังนับทุกครั้ง
+ * เพดานต่อ process (`admit`): token ที่ผ่าน ไม่เกิน 600 ต่อนาที · ไม่ผ่านหรือไม่มี token ไม่เกิน 60 ต่อนาที แถว
+ * `ADMIN_TOKEN_REJECTED` ใน Postgres (throttle ของ lib/token-rejection.ts) ยังนับทุกครั้ง
+ *
+ * **การเรียกที่ token ไม่ผ่านกินที่ได้ไม่เกินงบไบต์ของมัน** (lib/untrusted-budget.ts — 5% ของ LOG_STORE_MAX_MB ต่ออายุ 90 วัน
+ * ของมัน, lib/log-retention.ts) เพดานต่อนาทีคุมแค่ความถี่: หกสิบตัวต่อนาทีที่อยู่ได้ 400 วันคือหลายสิบ GB และใบสรุปเดิมเปิดใบใหม่
+ * ไม่จำกัด (ดู `fold`) ถึงเพดานขนาดแล้วธง over_quota เคยปิดบันทึกของ token ที่ผ่านด้วย — ตอนนี้ token ที่ผ่านเก็บแม้เกินเพดาน
+ * (lib/error-capture.ts `enqueueAccessRecord`) งบหมดแล้วตัวเดี่ยวพับลงใบสรุป ใบสรุปรองบ (นับต่อ ไม่ทิ้ง) ใบที่ยังรองบตอนปิด
+ * process หายไปพร้อม process — แถวใน Postgres ยังนับไว้
  *
  * **ที่เกินเพดาน หรือที่คิวเต็มรับไม่ได้ ไม่หายเงียบ — พับลงบันทึกสรุป** (`metadata.summary: true`, หนึ่งใบต่อชนิด token ต่อ
  * ราวหนึ่งนาที `SUMMARY_AFTER_MS`) ซึ่งเก็บ key ค้นหาของทุกตัวที่พับ (`hashKeys` `relatedUserIds` `tokenFps` รวมกัน มีเพดาน)
@@ -51,7 +57,8 @@
  * หรือ `x-log-person` ค้นเจอ ยิงเร็วพอให้คิวเต็ม (ห้าร้อยใบใน 2 วินาที) ก็ได้ผลเดียวกันโดยไม่ต้องถึงเพดาน — ทดลองจริงทั้งสอง
  * ทาง (ตรวจขั้น 8, 2026-10-01) สรุปอยู่ชั้นเดียวกับคำเตือนในคิว (lib/error-capture.ts) คิวยังเต็มก็ถือไว้แล้วลองใหม่
  * ปิด process ก็เขียนก่อน (`flushAdminAccessSummaries` ใน shutdown ของ index.ts) สิ่งที่สรุปเสีย: เวลาทีละคำขอ (เหลือช่วง
- * `first_at`–`last_at`) correlation id และ user agent · เกินเพดานขนาด (`over_quota`) ไม่เก็บเลยทั้งตัวเดี่ยวและสรุป (plan §3)
+ * `first_at`–`last_at`) correlation id และ user agent · เกินเพดานขนาด (`over_quota`) token ที่ไม่ผ่านไม่เก็บเลยทั้งตัวเดี่ยวและสรุป
+ * (plan §3) token ที่ผ่านเก็บต่อ
  *
  * **ตัวที่เข้าคิวแล้วถูกเบียดออกก็พับด้วย** (`onAccessRecordEvicted` ของ lib/error-capture.ts — `evicted` ใน `/status`): ของที่ชั้นสูง
  * กว่ามาทีหลัง ซึ่งรวมบันทึกสรุปเอง ไล่ตัวเดี่ยวชั้น 1 ออกจากคิวที่เต็ม เดิมตัวนั้นหายไปเหลือแค่ตัวเลข — ตรวจขั้น 8 รอบสามเห็น
@@ -62,7 +69,8 @@
  * ที่เกินหายไป เหลือ `truncated_lists`: คนถือ token ยิงให้ครบเพดาน แล้ว `?cid=` ขยะสองร้อยตัวก่อนตัวจริง ตัวจริงก็ค้นไม่เจอ (ตรวจขั้น
  * 8 รอบสาม ราว 810 คำขอในสองวินาที) ใบที่ปิดเข้าคิวในรอบถัดไปของ event loop ใบที่รอจึงสะสมเฉพาะตอนคิวรับไม่ได้ มีได้ไม่เกิน
  * 20 ใบต่อชนิด token เกินนั้นใบที่มีอยู่รับต่อแบบตัด key และบอกใน `truncated_lists` — เหลือเป็นความเสี่ยงที่ยอมรับ: ต้องยิง
- * การเรียกที่ key ไม่ซ้ำเกินสี่พันตัวระหว่างที่คิวเต็ม (Mongo ล่ม)
+ * การเรียกที่ key ไม่ซ้ำเกินสี่พันตัวระหว่างที่คิวเต็ม (Mongo ล่ม) **เฉพาะ token ที่ผ่าน** — ใบของ token ที่ไม่ผ่านไม่ปิดเพราะเต็ม
+ * (`fold`)
  */
 import { randomUUID } from "node:crypto";
 
@@ -135,17 +143,19 @@ let window = { start: 0, accepted: 0, rejected: 0 };
  *   overCap    — เกินเพดานต่อนาที จึงพับลงบันทึกสรุป
  *   queueFull  — คิวเต็ม จึงพับลงบันทึกสรุป
  *   evicted    — เข้าคิวเป็นบันทึกเดี่ยวแล้ว (นับใน `recorded`) แต่ถูกของชั้นสูงกว่าเบียดออก จึงพับลงบันทึกสรุป
+ *   overBudget — token ไม่ผ่าน และงบไบต์ของการเรียกแบบนั้นหมด (lib/untrusted-budget.ts) จึงพับลงบันทึกสรุป
  *   summaries  — บันทึกสรุปที่เข้าคิวแล้ว (ใบที่ถูกเบียดออกแล้วกลับมารอ นับใหม่ตอนเข้าคิวอีกครั้ง)
- *   pendingInSummary — การเรียกที่รออยู่ในสรุปที่ยังไม่เข้าคิว
- *   notStored  — ไม่ได้เก็บที่ไหนเลย: log store เกินเพดานขนาด (ทั้งตัวเดี่ยวและที่อยู่ในสรุป)
+ *   pendingInSummary — การเรียกที่รออยู่ในสรุปที่ยังไม่เข้าคิว (รวมสรุปของ token ไม่ผ่านที่รองบอยู่)
+ *   notStored  — ไม่ได้เก็บที่ไหนเลย: log store เกินเพดานขนาดและ token ไม่ผ่าน (ทั้งตัวเดี่ยวและที่อยู่ในสรุป)
  */
-const stats = { recorded: 0, overCap: 0, queueFull: 0, evicted: 0, summaries: 0, notStored: 0 };
+const stats = { recorded: 0, overCap: 0, queueFull: 0, evicted: 0, overBudget: 0, summaries: 0, notStored: 0 };
 
 export function adminAccessStats(): {
   recorded: number;
   overCap: number;
   queueFull: number;
   evicted: number;
+  overBudget: number;
   summaries: number;
   pendingInSummary: number;
   notStored: number;
@@ -222,6 +232,9 @@ function write(req: Request, res: Response, ctx: RequestContext, provided: strin
   else if (outcome === "full") {
     stats.queueFull += 1;
     fold(doc, accepted, "queue_full");
+  } else if (outcome === "over_budget") {
+    stats.overBudget += 1;
+    fold(doc, accepted, "over_budget");
   } else stats.notStored += 1;
 }
 
@@ -359,6 +372,7 @@ interface Summary {
   overCap: number;
   queueFull: number;
   evicted: number;
+  overBudget: number;
   /** มีสักคำขอที่ได้ 2xx/3xx — ข้อมูลออกไปแล้ว */
   succeeded: boolean;
   tokenFps: Set<string>;
@@ -390,6 +404,7 @@ function emptySummary(at: Date): Summary {
     overCap: 0,
     queueFull: 0,
     evicted: 0,
+    overBudget: 0,
     succeeded: false,
     tokenFps: new Set(),
     hashKeys: new Set(),
@@ -419,7 +434,17 @@ function fits(summary: Summary, doc: ActivityDoc): boolean {
   );
 }
 
-function fold(doc: ActivityDoc, accepted: boolean, reason: "over_cap" | "queue_full" | "evicted"): void {
+/**
+ * พับการเรียกหนึ่งครั้งลงใบสรุปของชนิด token ของมัน
+ *
+ * **ใบของ token ที่ไม่ผ่านไม่ปิดเพราะเต็ม** — มีใบเดียวที่รับต่อแบบตัด key (`truncated_lists`) เข้าคิวราวนาทีละใบ ใบที่เต็มแล้ว
+ * ปิด-เปิดใหม่มีไว้ให้คนถือ token ที่ผ่านซ่อนการค้นจริงไว้หลังขยะไม่ได้ (หัวไฟล์ "ใบสรุปเต็มแล้วปิด") ซึ่งไม่มีความหมายกับการเรียก
+ * ที่ถูกปฏิเสธ: ไม่มีข้อมูลออกไป เดิมใช้กติกาเดียวกัน คนที่ไม่มี token ยิง `?cid=` `?q=` `?email=` สุ่ม (สาม key ต่อคำขอ) หรือ
+ * `x-admin-token` สุ่ม (ยี่สิบ fingerprint ต่อใบ) ได้ใบใหม่ทุกหกสิบกว่าคำขอ ใบละราว 7 KB บวก index สองร้อยรายการ ไม่มีอะไรคุมนอก
+ * จากความเร็วที่ยิง (ตรวจขั้น 8-10 แบบค้าน 2026-10-01: สามพันคำขอได้แปดสิบใบ) ใบนั้นยังหักงบไบต์ของการเรียกที่ไม่มี token ด้วย
+ * (`emitSummaries`, lib/untrusted-budget.ts)
+ */
+function fold(doc: ActivityDoc, accepted: boolean, reason: "over_cap" | "queue_full" | "evicted" | "over_budget"): void {
   const kind: SummaryKind = accepted ? "accepted" : "rejected";
   let list = summaries.get(kind);
   if (!list) {
@@ -428,7 +453,7 @@ function fold(doc: ActivityDoc, accepted: boolean, reason: "over_cap" | "queue_f
   }
   let summary = list[list.length - 1];
   let closed = false;
-  if (!summary || (!fits(summary, doc) && list.length < SUMMARIES_PENDING_MAX)) {
+  if (!summary || (accepted && !fits(summary, doc) && list.length < SUMMARIES_PENDING_MAX)) {
     closed = summary !== undefined;
     summary = emptySummary(doc.occurredAt);
     list.push(summary);
@@ -436,6 +461,7 @@ function fold(doc: ActivityDoc, accepted: boolean, reason: "over_cap" | "queue_f
   summary.count += 1;
   if (reason === "over_cap") summary.overCap += 1;
   else if (reason === "queue_full") summary.queueFull += 1;
+  else if (reason === "over_budget") summary.overBudget += 1;
   else summary.evicted += 1;
   if (doc.occurredAt < summary.firstAt) summary.firstAt = doc.occurredAt;
   if (doc.occurredAt > summary.lastAt) summary.lastAt = doc.occurredAt;
@@ -489,6 +515,7 @@ function putBack(kind: SummaryKind, summary: Summary): void {
   oldest.overCap += summary.overCap;
   oldest.queueFull += summary.queueFull;
   oldest.evicted += summary.evicted;
+  oldest.overBudget += summary.overBudget;
   if (summary.firstAt < oldest.firstAt) oldest.firstAt = summary.firstAt;
   if (summary.lastAt > oldest.lastAt) oldest.lastAt = summary.lastAt;
   oldest.succeeded ||= summary.succeeded;
@@ -539,16 +566,20 @@ function scheduleSummaries(ms: number): void {
 }
 
 /**
- * เข้าคิวทุกใบที่รออยู่ รวมใบที่กำลังพับ — คิวเต็มก็กลับไปรอแล้วลองใหม่ log store ปิดหรือเกินเพดานขนาดก็ทิ้ง (นับใน `notStored`)
+ * เข้าคิวทุกใบที่รออยู่ รวมใบที่กำลังพับ — คิวเต็มก็กลับไปรอแล้วลองใหม่ log store ปิด หรือเกินเพดานขนาดกับใบของ token ที่ไม่ผ่าน
+ * ก็ทิ้ง (นับใน `notStored`)
  * หยิบทั้งหมดออกก่อนแล้วค่อยเข้าคิว: ใบสรุปที่เข้าคิวเบียดตัวเดี่ยวออกได้ ตัวนั้นพับลงใบใหม่ (`onEvicted`) ไม่ใช่ใบที่กำลังส่ง
- * ซึ่งเอกสารของมันสร้างเสร็จไปแล้ว
+ * ซึ่งเอกสารของมันสร้างเสร็จไปแล้ว ใบของ token ที่ไม่ผ่านที่งบไบต์ไม่พอก็กลับไปรอ — รับการเรียกต่อ (ตัวนับเดิน key ถูกตัด) แล้วลองใหม่
+ * รอบหน้า ไม่ทิ้งตัวนับ ระหว่างนั้นทั้งช่วงจึงเป็นใบเดียวที่ `first_at`–`last_at` กว้างขึ้น
  */
 function emitSummaries(): void {
   const work = [...summaries];
   summaries.clear();
+  // คิวเต็มลองใหม่ถี่ (Mongo กลับมาเมื่อไรก็ได้) งบไบต์เติมช้า — ลองใหม่ตามรอบปกติ มีทั้งสองแบบก็เอาตัวที่เร็วกว่า
+  let retryMs = SUMMARY_AFTER_MS;
   for (const [kind, list] of work) {
     for (const summary of list) {
-      let outcome: "queued" | "full" | "off" = "off";
+      let outcome: "queued" | "full" | "over_budget" | "off" = "off";
       let doc: ActivityDoc | null = null;
       try {
         doc = summaryRecord(kind === "accepted", summary);
@@ -557,8 +588,9 @@ function emitSummaries(): void {
       } catch {
         // สร้างไม่ได้ก็สร้างไม่ได้ทุกรอบ — ทิ้ง ไม่วนลองตลอดไป
       }
-      if (outcome === "full") {
+      if (outcome === "full" || outcome === "over_budget") {
         putBack(kind, summary);
+        if (outcome === "full") retryMs = SUMMARY_RETRY_MS;
         continue;
       }
       if (outcome === "queued" && doc) {
@@ -567,7 +599,7 @@ function emitSummaries(): void {
       } else stats.notStored += summary.count;
     }
   }
-  if (summaries.size > 0) scheduleSummaries(SUMMARY_RETRY_MS);
+  if (summaries.size > 0) scheduleSummaries(retryMs);
 }
 
 function summaryRecord(accepted: boolean, summary: Summary): ActivityDoc {
@@ -599,6 +631,7 @@ function summaryRecord(accepted: boolean, summary: Summary): ActivityDoc {
       over_cap: summary.overCap,
       queue_full: summary.queueFull,
       ...(summary.evicted > 0 ? { evicted: summary.evicted } : {}),
+      ...(summary.overBudget > 0 ? { over_budget: summary.overBudget } : {}),
       first_at: summary.firstAt,
       last_at: summary.lastAt,
       token_accepted: accepted,

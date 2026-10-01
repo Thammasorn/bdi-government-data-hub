@@ -375,7 +375,7 @@ async function checkQuota(db: Db): Promise<void> {
     const message =
       `log store ใช้พื้นที่ ${storageMb} MB (จองไว้ ${allocatedMb} MB) เกินเพดาน LOG_STORE_MAX_MB ${maxMb} MB — ` +
       "ต่อจากนี้เก็บแค่ตัวนับของ issue ไม่เก็บ error event ทีละตัว จนกว่าจะต่ำกว่า " +
-      `${Math.round(maxMb * CLEAR_BELOW * 10) / 10} MB (สำเนา audit ยังเก็บต่อ)`;
+      `${Math.round(maxMb * CLEAR_BELOW * 10) / 10} MB (สำเนา audit กับบันทึกการเรียก admin API ที่ token ผ่านยังเก็บต่อ)`;
     console.warn(`[log-store] delivery-worker: ${message}`);
     captureError(new Error(message), {
       level: "warning",

@@ -242,8 +242,8 @@ function decodeRun(run: string): string {
  *
  * ข้อ 3 กับ 4 มาจากตรวจขั้น 8 แบบค้านรอบสอง (2026-10-01): อีเมลที่คัดลอกจากข้อความแบบ rich text มักพา zero-width space หรือ
  * NBSP มาติด `@` (`some.one%E2%80%8B%40example.go.th`) หลังถอดแล้วกฎอีเมลไม่ตรง และกฎอักษรนอกชุดของ `pathPattern()` เปลี่ยน
- * มันเป็น `_` — `ADMIN_API_REQUEST.metadata.path` (400 วัน) กับ `ADMIN_TOKEN_REJECTED.metadata.path` ใน Postgres (ไม่มี
- * retention) เก็บ `some.one__example.go.th` ส่วนชื่อของ query ไม่ได้ผ่านขั้นไหนเลย (`requestTarget` กวาดชื่อที่
+ * มันเป็น `_` — `ADMIN_API_REQUEST.metadata.path` (400 วัน ที่ token ไม่ผ่าน 90) กับ `ADMIN_TOKEN_REJECTED.metadata.path`
+ * ใน Postgres (ไม่มี retention) เก็บ `some.one__example.go.th` ส่วนชื่อของ query ไม่ได้ผ่านขั้นไหนเลย (`requestTarget` กวาดชื่อที่
  * `URLSearchParams` ถอดชั้นเดียว) `?v8.key%EF%BC%A0example.go.th=1` จึงเก็บ `v8.key＠example.go.th` ตรง ๆ
  *
  * ที่ยังรอดได้: อีเมลที่สะกดด้วยตัวอักษรอื่นที่ NFKC ไม่แปลงเป็น `@` — ผู้เรียกจึงปิดทั้งท่อนที่ยังมี `@` ซ้ำอีกชั้น
