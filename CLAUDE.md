@@ -1467,7 +1467,11 @@ Until 2026-10-01 it dropped the oldest, so five failed 15-second `/state` polls 
 detail page pushed the toast's reference out; the first fix counted every call not flagged
 `{ background: true }` as seen, and the list, summary and detail loads of one detail↔list round
 trip, whose toasts have fixed text, did the same. Flagging callers is what failed twice, so the
-flag now only spares the watch; a new silent call does not need it. **A dev checkout
+flag now only spares the watch; a new silent call does not need it. An entry leaves the queue
+only once the backend has answered its report with a 2xx, so the flush uses `fetch`, not a beacon,
+whose result cannot be read; until the same day the queue was emptied before the beacons went
+out, and a page restored from bfcache, whose old requests finish with 200, flushed it through the
+proxy into 502s while the backend was still down. **A dev checkout
 does not take this path by default**: `new-dev.sh` writes `NEXT_PUBLIC_API_URL=http://localhost:41N0`,
 so the browser calls the backend directly and a stopped backend gives a status-0
 "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้" with no reference, and nothing is queued (status 0 is deliberately not

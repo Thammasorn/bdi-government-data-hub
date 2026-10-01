@@ -13,7 +13,8 @@
  *   - ซ้ำกัน (ข้อความ + เฟรมแรก) ส่งครั้งเดียวต่อการเปิดหน้า และไม่เกิน 10 รายงานต่อการเปิดหน้า — รายงานที่มีรหัสอ้างอิง
  *     (หน้า global-error) ไม่ถูกตัดเป็นตัวซ้ำ และมีโควตา 10 ของตัวเอง error อื่นใช้โควตาของมันหมดไม่ได้
  *   - `navigator.sendBeacon` เป็น `text/plain` (ไม่มี preflight ข้าม origin ในเครื่อง dev และส่งได้แม้หน้ากำลังปิด) ไม่ได้ก็ `fetch`
- *     แบบ keepalive ไม่แนบ cookie — endpoint ไม่ต้อง login และไม่ควรรู้ว่าใครส่ง
+ *     แบบ keepalive ไม่แนบ cookie — endpoint ไม่ต้อง login และไม่ควรรู้ว่าใครส่ง · 502 ที่ค้างในคิวส่งด้วย `fetch` เสมอ ต้องรู้ว่าถึง
+ *     backend แล้วจึงลบออกจากคิว (`flushPendingReports`)
  *   - กลืนทุกความล้มเหลว: การรายงาน error ต้องไม่เป็นต้นเหตุของ error
  *   - chunk ที่โหลดไม่ขึ้น (`isChunkLoadError`) เป็นคำเตือน ไม่ว่ามาทางไหน (ตัวดักของ `window` หรือหน้า global-error)
  *   - body ไม่เกินเพดานของ backend เป็นไบต์ (lib/report-body.ts) — เกินแล้ว backend ทิ้งทั้งก้อนเงียบ ๆ
@@ -59,6 +60,8 @@ interface PendingReport {
   background?: boolean;
   /** รหัสนี้ขึ้นจอแล้ว (toast ข้อความในหน้า — ที่ไหนก็ได้ในหน้าเว็บ, `watchForShown`) ผู้ใช้อาจอ่านให้เจ้าหน้าที่ฟัง */
   shown?: boolean;
+  /** ส่งแล้วไม่ถึง backend กี่ครั้ง (`flushPendingReports`) */
+  tries?: number;
 }
 
 let sent = 0;
@@ -269,14 +272,51 @@ function markShown(references: string[]): void {
   if (changed) writePending(pending);
 }
 
-/** ส่งรายงาน 502 ที่ค้างไว้ — lib/api.ts เรียกหลังคำขอที่สำเร็จ (backend กลับมาแล้ว) ล้างคิวก่อนส่ง จึงไม่ส่งซ้ำ */
+/** ส่งไม่ถึงกี่ครั้งแล้วเลิก — ต่อ backend ได้แต่อ่านคำตอบไม่ได้ (CORS ตั้งผิด) จะได้ไม่ส่งตัวเดิมซ้ำทุกคำขอไปเรื่อย ๆ */
+const FLUSH_TRIES_MAX = 5;
+let flushing = false;
+
+/**
+ * ส่งรายงาน 502 ที่ค้างไว้ — lib/api.ts เรียกหลังคำขอที่สำเร็จ (backend น่าจะกลับมาแล้ว) **ลบออกจากคิวเฉพาะตัวที่ backend รับแล้ว**
+ * (คำตอบ 2xx — endpoint ตอบ 204 เสมอเมื่อถึงมือ backend) ตัวที่ได้ 502 หรือส่งไม่ออกค้างไว้รอบหน้า ส่งด้วย `fetch` (keepalive ไม่แนบ
+ * cookie) ไม่ใช่ `sendBeacon` เพราะ beacon ไม่บอกว่าถึงไหม ไม่ซ้อนกัน: รอบที่ยังส่งอยู่ทำให้รอบใหม่ข้ามไป
+ *
+ * เดิมล้างคิวก่อนส่งด้วย beacon แล้วถือว่าคำตอบ 2xx ใดก็ตามแปลว่า backend กลับมาแล้ว หน้าที่กลับมาจาก bfcache (กดย้อนกลับ) ได้คำตอบ
+ * 200 ของคำขอเก่าที่ค้างอยู่ จึงส่งทั้งคิวผ่าน proxy ตอนที่ backend ยังล่ม — ห้าตัวได้ 502 หายหมด รหัสใน toast G6 ค้นไม่เจอ
+ * (ตรวจขั้น 9 แบบค้าน 2026-10-01)
+ */
 export function flushPendingReports(): void {
   try {
+    if (flushing) return;
     const pending = readPending();
     if (pending.length === 0) return;
-    writePending([]);
-    for (const item of pending) {
-      send({
+    flushing = true;
+    void Promise.all(pending.map((item) => deliverPending(item)))
+      .then((results) => {
+        const delivered = new Set(pending.filter((_, index) => results[index]).map((item) => item.reference));
+        const failed = new Set(pending.filter((_, index) => !results[index]).map((item) => item.reference));
+        // อ่านคิวใหม่ — ระหว่างส่ง 502 ตัวใหม่อาจเข้าคิวมาแล้ว
+        const after = readPending()
+          .filter((item) => !delivered.has(item.reference))
+          .map((item) => (failed.has(item.reference) ? { ...item, tries: (item.tries ?? 0) + 1 } : item))
+          .filter((item) => (item.tries ?? 0) < FLUSH_TRIES_MAX);
+        writePending(after);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        flushing = false;
+      });
+  } catch {
+    flushing = false;
+  }
+}
+
+/** ส่งรายงานที่ค้างหนึ่งตัว — true เมื่อ backend รับแล้ว (2xx) ไม่ throw */
+async function deliverPending(item: PendingReport): Promise<boolean> {
+  try {
+    const res = await fetch(ENDPOINT, {
+      method: "POST",
+      body: reportBody({
         mechanism: "proxy",
         level: "error",
         name: "BackendUnreachable",
@@ -286,10 +326,14 @@ export function flushPendingReports(): void {
         at: item.at,
         release: RELEASE,
         lastApi: [],
-      });
-    }
+      }),
+      keepalive: true,
+      credentials: "omit",
+      headers: { "content-type": "text/plain" },
+    });
+    return res.ok;
   } catch {
-    // ไม่มีอะไรต้องทำ
+    return false;
   }
 }
 
@@ -311,6 +355,7 @@ function readPending(): PendingReport[] {
             at: item.at,
             ...(item.background === true ? { background: true } : {}),
             ...(item.shown === true ? { shown: true } : {}),
+            ...(typeof item.tries === "number" && item.tries > 0 ? { tries: Math.floor(item.tries) } : {}),
           }))
       : [];
   } catch {
