@@ -20,6 +20,7 @@
  *     issue ใหม่ด้วย (นับเข้าได้แค่ issue ที่มีอยู่แล้ว)
  *   - รายงานจากเบราว์เซอร์สร้าง issue ใหม่ได้ไม่เกิน 100 fingerprint ต่อ process ต่อชั่วโมง (`BROWSER_FINGERPRINTS_PER_HOUR` —
  *     ยกเว้นสองตัวที่ตั้งชื่อเอง) รายงานที่มีรหัสอ้างอิงยังเก็บตัว event ได้แม้ issue ไม่ถูกสร้าง ให้รหัสนั้นค้นเจอ (`captureReport`)
+ *   - issue ที่รอเขียนไม่เกิน 1,000 fingerprint ในนั้นเป็นของเบราว์เซอร์ได้ไม่เกิน 200 และ fatal ได้ที่เสมอ (`roomForIssue`)
  *   - เอกสารหนึ่งตัวไม่เกิน 64 KB
  *
  * ปิด log store (`LOG_STORE_ENABLED=false`) แล้วยังพิมพ์บรรทัดลง stdout เหมือนเดิม แค่ไม่มีคิวและไม่มีตัวจับเวลา
@@ -218,6 +219,15 @@ const RING_MAX_DOCS = 500;
 const RING_MAX_BYTES = 2 * 1024 * 1024;
 /** issue ที่รอเขียนพร้อมกันได้ไม่เกินนี้ — error ร้อยแบบไม่ซ้ำกันระหว่างที่ Mongo ล่มต้องไม่กินหน่วยความจำไม่จบ */
 const PENDING_ISSUES_MAX = 1_000;
+/**
+ * ในนั้นเป็นของรายงานเบราว์เซอร์ได้ไม่เกินนี้ — ที่เหลืออย่างน้อย 800 เป็นของ backend และ worker เอง (`roomForIssue`)
+ *
+ * เดิมใช้ที่ร่วมกันไม่มีลำดับ: ระหว่างที่ Mongo ล่ม ตัวนับของ issue ค้างอยู่ทั้งหมด รายงานขยะที่ข้อความไม่ซ้ำกัน (ใครก็ส่งได้
+ * `X-Forwarded-For` เขียนเองหลบเพดานต่อ IP ได้) เต็มพันที่ในราวสามนาทีครึ่ง แล้ว error ของ server ทุกตัวรวมทั้ง fatal ถูกทิ้งทั้ง
+ * event และตัวนับ fatal จึงไม่เป็น issue และไม่มีอีเมลแจ้ง (ตรวจขั้น 8-10 แบบค้าน 2026-10-01: พันที่ เก้าร้อยเป็นของรายงานที่สร้าง
+ * issue ไม่ได้ด้วยซ้ำ) คิวทิ้งรายงานเบราว์เซอร์ก่อนทุกอย่างอยู่แล้ว ที่ของตัวนับต้องเป็นแบบเดียวกัน
+ */
+const BROWSER_PENDING_ISSUES_MAX = 200;
 const DOC_MAX_BYTES = 64 * 1024;
 const EXTRA_MAX_BYTES = 16 * 1024;
 const PER_FINGERPRINT_PER_HOUR = 50;
@@ -295,15 +305,16 @@ let browserReferencesLost = 0;
  *   - too_large: เอกสารตัวเดียวเกิน 64 KB หลังตัดแล้ว
  *   - rejected: Mongo ปฏิเสธตัวเอกสาร (DOCUMENT_REJECTED) ลองซ้ำก็ไม่ผ่าน
  *   - issue_backlog: issue ที่รอเขียนครบ 1,000 fingerprint — การเกิดครั้งนั้นไม่ได้เข้าตัวนับด้วยซ้ำ
+ *   - browser_backlog: รายงานเบราว์เซอร์ที่ issue ของเบราว์เซอร์ที่รอเขียนครบ 200 fingerprint (`BROWSER_PENDING_ISSUES_MAX`)
  */
-type DropReason = "queue_full" | "too_large" | "rejected" | "issue_backlog";
+type DropReason = "queue_full" | "too_large" | "rejected" | "issue_backlog" | "browser_backlog";
 
 /** ทิ้งไปเท่าไรตั้งแต่เขียนสำเร็จครั้งล่าสุด — ได้ event สรุปหนึ่งตัวเมื่อกลับมาเขียนได้ */
 const dropped = {
   count: 0,
   first: null as Date | null,
   last: null as Date | null,
-  reasons: { queue_full: 0, too_large: 0, rejected: 0, issue_backlog: 0 } as Record<DropReason, number>,
+  reasons: { queue_full: 0, too_large: 0, rejected: 0, issue_backlog: 0, browser_backlog: 0 } as Record<DropReason, number>,
   /** ในนั้นเป็นสำเนา audit ที่ Postgres ไม่รับกี่ตัว — สำเนาเดียวที่เหลือของแถวนั้น หายแล้วหายเลย */
   auditCopies: 0,
 };
@@ -775,7 +786,8 @@ export function captureReport(report: IngestedReport): string | null {
     };
     const delta = countIssue(doc, report.fingerprint, report.error, report.where, create);
     if (!delta) {
-      noteDropped(doc.occurredAt, 1, "issue_backlog");
+      noteDropped(doc.occurredAt, 1, browser ? "browser_backlog" : "issue_backlog");
+      if (referenced) browserReferencesLost += 1;
       return null;
     }
     delta.release = report.release;
@@ -892,8 +904,11 @@ export function keepReference(status: number): void {
   }
 }
 
-/** `capped_issue` = ครบ 50 ตัวต่อชั่วโมงของ fingerprint นี้ · `capped_process` = ครบ 600 ตัวต่อนาทีของทั้ง process */
-type Outcome = "queued" | "disabled" | "over_quota" | "capped_issue" | "capped_process" | "dropped";
+/**
+ * `capped_issue` = ครบ 50 ตัวต่อชั่วโมงของ fingerprint นี้ · `capped_process` = ครบ 600 ตัวต่อนาทีของทั้ง process ·
+ * `issue_backlog` = issue ที่รอเขียนครบแล้ว ไม่ได้นับด้วยซ้ำ · `dropped` = คิวเต็ม
+ */
+type Outcome = "queued" | "disabled" | "over_quota" | "capped_issue" | "capped_process" | "issue_backlog" | "dropped";
 
 /** นับเข้า issue แล้วตัดสินว่าจะเก็บตัว event ไหม */
 function keep(doc: ErrorEventDoc, fingerprint: string, scrubbed: ScrubbedError, where: string | null): Outcome {
@@ -902,7 +917,7 @@ function keep(doc: ErrorEventDoc, fingerprint: string, scrubbed: ScrubbedError, 
   const delta = countIssue(doc, fingerprint, scrubbed, where);
   if (!delta) {
     noteDropped(doc.occurredAt, 1, "issue_backlog");
-    return "dropped";
+    return "issue_backlog";
   }
   if (logStoreStatus().status === "over_quota") return "over_quota";
   /**
@@ -938,7 +953,7 @@ function countIssue(
     if (create) existing.create = true;
     return existing;
   }
-  if (pendingIssues.size >= PENDING_ISSUES_MAX) return null;
+  if (!roomForIssue(doc.service, doc.level)) return null;
   const delta: IssueDelta = {
     fingerprint,
     service: doc.service,
@@ -954,6 +969,20 @@ function countIssue(
   };
   pendingIssues.set(fingerprint, delta);
   return delta;
+}
+
+/**
+ * issue ใหม่ (ยังไม่มีตัวนับที่รอเขียน) ได้ที่ไหม — fatal ได้เสมอ (เกิดได้ครั้งเดียวต่อ process แล้ว exit ตามมา และเป็นตัวที่บอกว่า
+ * ทำไม process ตาย) นอกนั้นไม่เกิน PENDING_ISSUES_MAX และของเบราว์เซอร์ไม่เกิน BROWSER_PENDING_ISSUES_MAX ที่เหลือจึงเป็นของ server
+ * อย่างน้อย 800 เสมอ นับของเบราว์เซอร์ด้วยการไล่ทั้ง Map (ไม่เกินพันตัว) เฉพาะตอนจะเปิดที่ใหม่ของเบราว์เซอร์ — ไม่มีตัวนับให้หลุด
+ */
+function roomForIssue(owner: EventService, level: ErrorLevel): boolean {
+  if (level === "fatal") return true;
+  if (pendingIssues.size >= PENDING_ISSUES_MAX) return false;
+  if (owner !== "browser") return true;
+  let browser = 0;
+  for (const delta of pendingIssues.values()) if (delta.service === "browser") browser += 1;
+  return browser < BROWSER_PENDING_ISSUES_MAX;
 }
 
 /**
@@ -1075,7 +1104,9 @@ function printLine(doc: ErrorEventDoc, scrubbed: ScrubbedError, where: string | 
             ? `event=- (เก็บตัวอย่างของ issue นี้ครบ ${PER_FINGERPRINT_PER_HOUR} ตัวในชั่วโมงนี้แล้ว: นับอย่างเดียว)`
             : outcome === "capped_process"
               ? `event=- (เกินเพดาน ${PER_PROCESS_PER_MINUTE} ต่อนาทีของ process: นับอย่างเดียว)`
-              : "event=- (คิวเต็ม: ทิ้ง)";
+              : outcome === "issue_backlog"
+                ? `event=- (issue ที่รอเขียนครบ ${PENDING_ISSUES_MAX} fingerprint: ไม่ได้นับ)`
+                : "event=- (คิวเต็ม: ทิ้ง)";
   const issue = /^[0-9a-f]{40}$/.test(doc.fingerprint) ? doc.fingerprint.slice(0, 12) : doc.fingerprint;
   const ref = doc.request?.reference ? ` ref=${doc.request.reference}` : "";
   const firstLine = headlineOf(scrubbed.name, scrubbed.message).slice(0, 300);
@@ -1387,10 +1418,10 @@ function requeue(items: RingItem[], issues: IssueDelta[]) {
       if (d.firstSeen < current.firstSeen) current.firstSeen = d.firstSeen;
       current.lastEventId ??= d.lastEventId;
       if (d.create) current.create = true;
-    } else if (pendingIssues.size < PENDING_ISSUES_MAX) {
+    } else if (roomForIssue(d.service, d.level)) {
       pendingIssues.set(d.fingerprint, d);
     } else {
-      noteDropped(d.lastSeen, d.count, "issue_backlog");
+      noteDropped(d.lastSeen, d.count, d.service === "browser" ? "browser_backlog" : "issue_backlog");
     }
   }
 }
@@ -1408,7 +1439,7 @@ function enqueueDroppedSummary() {
   dropped.count = 0;
   dropped.first = null;
   dropped.last = null;
-  dropped.reasons = { queue_full: 0, too_large: 0, rejected: 0, issue_backlog: 0 };
+  dropped.reasons = { queue_full: 0, too_large: 0, rejected: 0, issue_backlog: 0, browser_backlog: 0 };
   dropped.auditCopies = 0;
 
   const REASON_TEXT: Record<DropReason, (n: number) => string> = {
@@ -1418,6 +1449,8 @@ function enqueueDroppedSummary() {
     too_large: (n) => `เอกสารใหญ่เกิน ${DOC_MAX_BYTES / 1024} KB ${n} รายการ`,
     rejected: (n) => `Mongo ไม่รับตัวเอกสาร ${n} รายการ`,
     issue_backlog: (n) => `issue ที่รอเขียนครบ ${PENDING_ISSUES_MAX} fingerprint ${n} ครั้ง (ไม่ได้เข้าตัวนับด้วย)`,
+    browser_backlog: (n) =>
+      `รายงานเบราว์เซอร์ ${n} ตัวที่ issue ของเบราว์เซอร์ที่รอเขียนครบ ${BROWSER_PENDING_ISSUES_MAX} fingerprint (ไม่ได้เข้าตัวนับด้วย)`,
   };
   const breakdown = (Object.keys(REASON_TEXT) as DropReason[])
     .filter((reason) => reasons[reason] > 0)
