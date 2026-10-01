@@ -189,6 +189,79 @@ backend is reachable without the frontend and a header on its own proves nothing
 it as empty), or a mismatch between the two apps: Next server errors are still stored, only as
 unverified browser reports. Nothing refuses to boot over it.
 
+`LOG_HASH_KEY` is not generated here. It belongs to the log store, which stays off on Azure for now
+(§3.5), and it is generated on the day the log store is turned on.
+
+### 3.5 MongoDB — the log store, off for now
+
+The backend and the delivery-worker can keep a searchable copy of the audit trail and of the
+system's errors in MongoDB (`docs/21-activity-log.md`). **On Azure it stays off until BDI chooses a
+managed MongoDB service**: both apps get `LOG_STORE_ENABLED=false` (§4.3, §4.4), so the MongoDB
+driver never loads. Nothing else depends on it:
+
+- Postgres `audit.audit_event` is the system of record and stays complete. MongoDB only ever holds
+  a copy of it.
+- `/health/ready` reports `logStore: disabled` and does not count it towards `healthy`.
+- Container stdout already reaches Log Analytics, and every captured error still prints one
+  `[capture]` line there with its reference and issue.
+- The log read API (`/api/admin/logs/*`) answers 503 `log_store_disabled`, `POST /api/client-errors`
+  answers 204 and stores nothing, and the error digest (§4.4) sends nothing.
+
+When it is turned on, the service must be one of:
+
+- **Azure Cosmos DB for MongoDB (vCore)**, if it has to be Azure-native or use Entra, or
+- **MongoDB Atlas** in an Azure region, for exact parity with the `mongo:7.0` that compose runs.
+
+**Not Cosmos DB for MongoDB RU**: TTL only on `_ts`, 2 MB documents, `retryWrites=false` and
+throttling (error 16500) all differ from what was built and tested. **And not `mongo` as a
+container app**: Container Apps storage is Azure Files, which mongod does not support for its data
+files.
+
+What turning it on involves:
+
+1. **Two users, not one.** `bdi_backend` (find everywhere, insert into four collections, update
+   only `error_issues`, no remove) for the backend, which faces the internet and so must not be able
+   to delete or rewrite the copy; `bdi_worker` (adds update, remove, createIndex and the stats
+   commands) for the delivery-worker, which runs the relay and the daily prune. The roles are in
+   `mongo/init/01-users.js`. That script uses `createRole`, which compose's `mongo` allows. **On a
+   managed service, check first that custom roles can be created**. Atlas manages database users
+   and custom roles in its own console and Admin API rather than through mongosh. If no custom role
+   is possible, the split falls back to built-in roles, and the guarantee that the backend cannot
+   delete has to be re-established some other way. That is a decision for BDI, not a setting.
+2. **Secrets.** Each app gets its own URI secret, `mongodb-backend-uri` and `mongodb-worker-uri`,
+   plus one shared `log-hash-key`:
+
+   ```bash
+   export LOG_HASH_KEY=$(openssl rand -hex 32)   # keep it: changing it later needs a rebuild of the copy
+
+   az containerapp secret set -n ca-backend-dev -g $RG --secrets \
+       mongodb-backend-uri="<uri of bdi_backend>" log-hash-key="$LOG_HASH_KEY"
+   az containerapp update -n ca-backend-dev -g $RG --set-env-vars \
+       LOG_STORE_ENABLED=true MONGODB_URI=secretref:mongodb-backend-uri MONGODB_DB=bdi_logs \
+       LOG_HASH_KEY=secretref:log-hash-key
+
+   az containerapp secret set -n ca-delivery-worker-dev -g $RG --secrets \
+       mongodb-worker-uri="<uri of bdi_worker>" log-hash-key="$LOG_HASH_KEY"
+   az containerapp update -n ca-delivery-worker-dev -g $RG --set-env-vars \
+       LOG_STORE_ENABLED=true MONGODB_URI=secretref:mongodb-worker-uri MONGODB_DB=bdi_logs \
+       LOG_HASH_KEY=secretref:log-hash-key
+   ```
+
+   `LOG_HASH_KEY` must be **the same value in both apps**. It keys the `cid#` and `email#` search
+   keys, so a copy written under one key cannot be searched with another. Changing it means
+   rebuilding the copy (`docs/21` §3.8).
+3. **Size ceiling.** Without `LOG_STORE_MAX_MB` the apps assume 5120 MB, counted as data plus
+   indexes. If the chosen tier holds less, set `LOG_STORE_MAX_MB` on both apps to below its quota.
+4. **Connections.** Each backend replica opens up to 5 connections and the worker up to 3, so 18 at
+   `--max-replicas 3`.
+5. **Verify.** `/health/ready` should show `logStore: up` within 30 seconds. The worker's relay
+   then backfills all of `audit_event`, at most 10,000 rows every 5 seconds (`docs/21` §3.8).
+   `S1` in `docs/bdi-activity-log.postman_collection.json` shows how far behind the copy is
+   (`relayLagSeconds`).
+
+Q2 on the card (which MongoDB service on Azure) is still open. Until it is answered, none of this
+applies.
+
 ---
 
 ## 4. Deploy the container apps
@@ -276,6 +349,7 @@ az containerapp create \
       ACTIVATION_KEY_SECRET=secretref:activation-key-secret \
       LOG_READ_TOKEN=secretref:log-read-token \
       INGEST_SERVER_TOKEN=secretref:ingest-server-token \
+      LOG_STORE_ENABLED=false DEPLOY_ENV=azure \
       AZURE_STORAGE_ACCOUNT_URL="https://${SANAME}.blob.core.windows.net" \
       AZURE_STORAGE_CONTAINER=bdi-uploads \
       GOTENBERG_URL="https://${GOTENBERG_FQDN}" \
@@ -304,12 +378,17 @@ frontend's hostname, which does not exist yet. §4.5 fills them in.
 
 `LOG_READ_TOKEN` goes to the **backend only** — the delivery-worker and the frontend never read
 it. On its own it opens nothing yet: the log read API also needs the log store, which stays off on
-Azure until BDI chooses a managed MongoDB service (`LOG_STORE_ENABLED=false` in
-`deploy/azure/backend.env`, which also lists `MONGODB_URI` and `LOG_HASH_KEY` for that day), so
-the API answers 503 `log_store_disabled` until then. Setting the token now means turning the log
+Azure until BDI chooses a managed MongoDB service (`LOG_STORE_ENABLED=false` here and in
+`deploy/azure/backend.env`, which also lists `MONGODB_URI` and `LOG_HASH_KEY` for that day — §3.5),
+so the API answers 503 `log_store_disabled` until then. Setting the token now means turning the log
 store on later needs no second secret. `INGEST_SERVER_TOKEN` is set now for the same reason: with
 the log store off, `POST /api/client-errors` still answers 204 and stores nothing, and the frontend
 (§4.5) must carry the same value.
+
+`DEPLOY_ENV=azure` is the deployment name stored as `environment` on every error event, issue and
+runtime event, and shown in the subject of the error digest. Without it the name falls back to
+`NODE_ENV`, which is `production`. Compose deployments set their project name (`bdi-main`), so
+`azure` keeps the two apart. The release comes from the image (§9), not from a variable.
 
 Now grant the backend's identity access to blob data:
 
@@ -375,6 +454,7 @@ az containerapp create \
       ADMIN_API_TOKEN=secretref:admin-api-token \
       ACTIVATION_KEY_SECRET=secretref:activation-key-secret \
       AZURE_STORAGE_ACCOUNT_URL="https://${SANAME}.blob.core.windows.net" \
+      LOG_STORE_ENABLED=false DEPLOY_ENV=azure \
       ERROR_ALERT_EMAILS="<team-list-comma-separated>"
 ```
 
@@ -386,6 +466,10 @@ secret, and it belongs to the **delivery-worker only**. Empty switches alerting 
 nothing while the log store is off (`LOG_STORE_ENABLED=false` in `deploy/azure/delivery-worker.env`), since the digest is built
 from the issues stored there. The digest goes through the same `SMTP_*` settings as every other
 mail, one message at a time.
+
+The worker is also the log store's relay. Once the log store is on (§3.5), it copies every
+`audit_event` row into MongoDB and prunes old documents daily. With the log store off it does
+neither, and the email queue is unaffected either way. `DEPLOY_ENV=azure` works as on the backend.
 
 Four details decide whether this app works at all:
 
@@ -643,7 +727,9 @@ az containerapp list -g $RG --query "[].{name:name,running:properties.runningSta
 
 # 2. the backend can reach Postgres AND Blob Storage
 curl -s "https://${BACKEND_FQDN}/health/ready" | jq
-# {"status":"ok","checks":{"database":{"status":"up"},"storage":{"status":"up"}}}
+# {"status":"ok","checks":{"database":{"status":"up"},"storage":{"status":"up"},
+#   "datasetChoices":{"source":"database","count":…},"logStore":{"status":"disabled"}}}
+# only database and storage decide "ok"; datasetChoices "defaults" means seed:masters has not run (§5.2)
 
 # 3. the frontend proxy reaches the backend — this is the one that used to fail
 curl -s -o /dev/null -w '%{http_code}\n' "https://${FRONTEND_FQDN}/api/address/provinces"   # 200
@@ -702,6 +788,8 @@ everything through. `docs/07-thaid-integration.md` §4 has the detail.
 | `500` on the first upload, tables exist | `prisma migrate deploy` ran but `seed:masters:prod` did not | Run it; A0–A4 templates live in the database, not the repo |
 | Everyone is logged out after a deploy | Session cookie format changed in a release | Expected and unavoidable; do not deploy that release on a demo day without warning |
 | Internal calls fail between two apps that both look healthy | They are in different Container Apps environments | Internal ingress only resolves within one environment |
+| `logStore` stays `disabled` after setting `MONGODB_URI` | `LOG_STORE_ENABLED=false` is still set. The log store is on only when that variable is `true` or unset **and** the URI is non-empty | `--set-env-vars LOG_STORE_ENABLED=true` on both apps (§3.5) |
+| Every error from Azure reports release `unknown` | The image was built without `--build-arg GIT_SHA` | Rebuild with the argument (§9); setting `RELEASE` on the app is not the fix |
 
 ---
 
@@ -773,6 +861,12 @@ rather than overriding it.
 | `ACTIVATION_KEY_SECRET` | **in production** | dev value | HMAC key for activation keys |
 | `LOG_READ_TOKEN` | | empty (dev value outside production) | `x-log-token` of `/api/admin/logs/*`, backend only; `openssl rand -hex 32`. Empty, `dev-…` or under 32 characters = 503 `log_access_disabled`. Useless until the log store is on (§4.3) |
 | `INGEST_SERVER_TOKEN` | | empty (dev value outside production) | `x-report-token` of the Next server's error reports; `openssl rand -hex 32`, **same value in the frontend**. Empty, `dev-…`, under 32 characters or mismatched = those reports are stored as unverified browser reports (§3.4) |
+| `DEPLOY_ENV` | | `NODE_ENV` | deployment name stored on every error event and in the digest's subject; `azure` (§4.3) |
+| `LOG_STORE_ENABLED` | | `true` | **`false` on Azure** until a managed MongoDB service is chosen (§3.5). Any value other than `true` turns the log store off, and so does an empty `MONGODB_URI` |
+| `MONGODB_URI` | | empty = log store off | secret `mongodb-backend-uri`: the `bdi_backend` user, which cannot remove or rewrite (§3.5). Holds a password, so never print it |
+| `MONGODB_DB` | | `bdi_logs` | |
+| `LOG_STORE_MAX_MB` | | `5120` in production, `512` elsewhere | ceiling on data plus indexes; set below the managed service's quota if that is smaller. Same value on the worker |
+| `LOG_HASH_KEY` | | empty in production (dev value elsewhere) | secret `log-hash-key`, **same value on the worker**, `openssl rand -hex 32`. Empty = no `cid#`/`email#` search keys, and searches by ID number or email answer 503 `hash_search_unavailable`. Changing it needs a rebuild of the copy (§3.5) |
 | `AZURE_STORAGE_ACCOUNT_URL` | one of the two | — | managed identity; the production answer |
 | `AZURE_STORAGE_CONNECTION_STRING` | one of the two | — | account key; dev only. Wins if both are set |
 | `AZURE_STORAGE_CONTAINER` | | `bdi-uploads` | must match the container that exists |
@@ -799,7 +893,10 @@ rather than overriding it.
 `DELIVERY_POLL_INTERVAL_MS` (default `15000`), `DELIVERY_MAX_ATTEMPTS` (default `5`), plus
 `ADMIN_API_TOKEN`, `ACTIVATION_KEY_SECRET` and one Azure Storage variable that exist only to get
 `env.ts` past its boot checks. `ERROR_ALERT_EMAILS` (default empty = no error digest; comma-separated,
-worker only, inert while the log store is off — §4.4).
+worker only, inert while the log store is off — §4.4). `DEPLOY_ENV`, `LOG_STORE_ENABLED`,
+`MONGODB_DB`, `LOG_STORE_MAX_MB` and `LOG_HASH_KEY` behave as on the backend. `MONGODB_URI` is the
+worker's own secret, `mongodb-worker-uri`, for the `bdi_worker` user, which may delete for the
+daily prune (§3.5).
 
 ### frontend
 
@@ -827,5 +924,7 @@ None. Configuration is command-line flags — `--api-timeout=60s` is the one tha
 - `docs/07-thaid-integration.md` — the ThaiD flow, what DOPA has and has not granted
 - `docs/09-auth-tokens.md` — every token in the system: where it lives, how it is hashed, when it
   expires
+- `docs/21-activity-log.md` — the activity log and error store: what MongoDB holds, the relay, the
+  log read API, and the PDPA pack
 - `docs/03-demo-walkthrough.md` — running the same journeys against a compose deployment
 - `docs/06-db-migration-plan.md` §7 — the migration baseline and what it means for existing data
