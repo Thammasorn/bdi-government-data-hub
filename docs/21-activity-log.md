@@ -32,7 +32,7 @@ Postgres ไม่รับ (runbook 5.11) · และ API ตัวเดี�
 >   (`REQUEST_CREATED` + `prefilled_from`) ผู้เรียกอื่นที่ไม่ใช่บัญชี BDI ได้ 403 `no_organization` และ**ไม่มีแถว** (เหมือนการปฏิเสธ 4xx อื่นของ
 >   เส้นทางธุรกิจ — 6.1) ทาง “ผู้ใช้เปิดหน่วยงานใหม่” ถูกถอด แถว `ORGANIZATION_CREATED` `created_via: WEB_FORM` · `REQUEST_CREATED` ที่ตามมา ·
 >   `ROLE_ASSIGNED` `assigned_via: ORGANIZATION_CREATED` และ `ROLE_REVOKED` รูปแบบ A/B จากเส้นทางนี้จึงมีแค่ในแถวที่เขียนก่อนหน้า หัวข้อที่พูดถึง
->   ติดป้าย **ถอดแล้วที่ `7259c09`** ไว้ ส่วนเลขบรรทัดยังอ้าง `2cab0a7` ตามเดิม
+>   ติดป้าย **ถอดแล้วที่ `7259c09`** ไว้ และอ้างเลขบรรทัดของโค้ดที่ถอดไปด้วย `2cab0a7`
 > - หัวข้อที่สร้างแล้วอธิบายสิ่งที่โค้ดทำจริง เมื่อโค้ดต่างจากแบบ เอกสารตามโค้ดและบอกความต่างในบรรทัดที่ขึ้นต้นด้วย **ต่างจากแบบ:**
 > - สิ่งที่แผนไม่ได้เขียนไว้และเอกสารนี้เสนอเองติดป้าย **[ข้อเสนอ]** ส่วนที่ต้องมีคนตัดสินก่อนสร้าง ติดป้าย **[ต้องตัดสิน]**
 > - ก่อน merge ขั้น 4 เข้า `main/` ต้องตั้ง `MONGO_ROOT_PASSWORD` `MONGO_BACKEND_PASSWORD` `MONGO_WORKER_PASSWORD` ใน `main/.env` ด้วย
@@ -42,7 +42,7 @@ Postgres ไม่รับ (runbook 5.11) · และ API ตัวเดี�
 >   `npm ci --omit=dev` ดึง `mongodb` 6.21 มาด้วย · `RELEASE` กับ `NODE_OPTIONS=--enable-source-maps` อยู่ใน image ของ runner · เฟรมของ stack ชี้
 >   `/app/src/*.ts` จน `topFrame` และ fingerprint ตรงกับ dev (5.2, 5.4) · backend ของ prod overlay ได้ SIGTERM ถึง `shutdown()` (3.10)
 
-เลขบรรทัดทุกตัวในเอกสารนี้อ้างถึง `2cab0a7` path ที่ขึ้นต้นด้วย `routes/` `lib/` `middleware/` `scripts/`
+เลขบรรทัดทุกตัวในเอกสารนี้อ้างถึง `7cf9020` (ยกเว้นที่เขียนกำกับว่า “ของ `2cab0a7`” — โค้ดที่ merge ถอดไปแล้ว) path ที่ขึ้นต้นด้วย `routes/` `lib/` `middleware/` `scripts/`
 `workers/` อยู่ใต้ `backend/src/` คำว่า “แผน” หมายถึงแผนของการ์ดนี้ (ฉบับ final หลัง review 2026-09-25) ซึ่ง**แนบอยู่ในการ์ด
 Notion เป็นไฟล์ `activity-log-plan-2026-09-25.md`** ไม่ได้อยู่ใน repo และ §N / “ขั้น N” / Qn อ้างหัวข้อ ขั้นงาน และคำถามถึง
 BDI ในแผนนั้น
@@ -156,13 +156,13 @@ actorId   = input.actorId ?? currentContext()?.actorId ?? null
 actorType = input.actorType ?? (actorId ? "USER" : "SYSTEM")
 ```
 
-actor ใน context มาจาก `setActor(user.id)` ซึ่งมีผู้เรียกคนเดียวคือ `requireAuth` (`middleware/auth.ts:112`)
+actor ใน context มาจาก `setActor(user.id)` ซึ่งมีผู้เรียกคนเดียวคือ `requireAuth` (`middleware/auth.ts:123`)
 หลังตรวจ session ผ่าน ผลที่ตามมา:
 
 | ที่มาของคำขอ | actor ที่ได้ |
 |---|---|
 | route ที่อยู่หลัง `requireAuth` (`/api/organizations/*`, `/api/dataset-requests/*`, `/api/notifications/*`, `/api/auth/logout-all` `/sessions` `/me`) | `USER` = ผู้ที่ล็อกอิน พร้อม snapshot |
-| `SESSION_REVOKED` ที่ `requireAuth` เขียนเอง**ก่อน** `setActor()` — `EXPIRED` ผ่าน `resolveSession()` และ `ACCOUNT_SUSPENDED` (`middleware/auth.ts:82`) รวมถึง `EXPIRED` จาก `resolveSession()` บน `/logout` `/password-reset` และ `issueSession()` | `USER` = **เจ้าของ session หรือบัญชี** (helper ส่ง `actorId` เอง) ไม่ใช่ผู้ที่ล็อกอิน — คำขอที่ `requireAuth` ปฏิเสธจบด้วย 401 |
+| `SESSION_REVOKED` ที่ `requireAuth` เขียนเอง**ก่อน** `setActor()` — `EXPIRED` ผ่าน `resolveSession()` และ `ACCOUNT_SUSPENDED` (`middleware/auth.ts:93`) รวมถึง `EXPIRED` จาก `resolveSession()` บน `/logout` `/password-reset` และ `issueSession()` | `USER` = **เจ้าของ session หรือบัญชี** (helper ส่ง `actorId` เอง) ไม่ใช่ผู้ที่ล็อกอิน — คำขอที่ `requireAuth` ปฏิเสธจบด้วย 401 |
 | `/api/admin/*` (หลัง `requireAdminToken`) | `SYSTEM` · `actor_id` null — token ไม่ผูกกับตัวคน (docs/09 §4) |
 | `/api/auth/*` ขาที่ยังไม่ล็อกอิน — แถวที่ route เขียนเอง | ส่ง `actorType: "ANONYMOUS"` เอง หรือส่ง `actorId` ของบัญชีที่เพิ่งพิสูจน์ตัวตนได้ → `USER` (`LOGIN_SUCCEEDED` · `USER_ACCOUNT_ACTIVATED` `ACTIVATION_KEY_USED` `ROLE_ASSIGNED` ของ `/activate` · `PASSWORD_RESET_COMPLETED` ที่สำเร็จ) |
 | `/api/auth/*` ขาที่ยังไม่ล็อกอิน — แถวที่ helper ใน `lib/` เขียน | **ไม่ส่ง actor เลย จึงได้ `SYSTEM` + null**: `ACTIVATION_KEY_EXPIRED` (`GET /invitation` `/thaid/start` `/thaid/callback` `/activate`) · `SESSION_REVOKED` `LOGOUT` (`/logout`) และ `ROTATED` (`issueSession()` ของ verify-otp `/activate` และ ThaID login) · `ROLE_REVOKED` รูปแบบ B บน `/activate` ยกเว้น `SESSION_REVOKED` `EXPIRED` ที่เป็น `USER` ตามแถวที่สองของตารางนี้ |
@@ -194,7 +194,7 @@ metadata = {
 | `ip_unparsed` | `req.ip` มีค่าแต่ไม่ใช่ IP | บอกว่ามีค่ามาแต่ไม่เก็บ | `true` |
 | `admin_token_fp` | คำขอผ่าน `requireAdminToken` | 12 ตัวแรกของ SHA-256 ของ `x-admin-token` ที่ผ่าน (`tokenFingerprint()`, `lib/auth.ts:57`) | `"3f9a0c1b7d2e"` |
 
-รายละเอียดของ snapshot (`audit.ts:567-591`) ที่คนอ่านต้องรู้:
+รายละเอียดของ snapshot (`audit.ts:687-711`) ที่คนอ่านต้องรู้:
 
 - อ่านด้วย prisma ตัวหลัก **ตอนเขียนแถว** ซึ่งส่วนใหญ่คือหลังการกระทำ การยุติบัญชีหรือการถอน role ตัวเอง
   จึงเห็น role หลังเปลี่ยน ส่วนแถวที่เขียนระหว่าง transaction ยังเปิดอยู่เห็นสถานะ**ก่อน**เปลี่ยน (6.2)
@@ -205,18 +205,18 @@ metadata = {
 - snapshot ถูกเก็บลง metadata เพราะ Excel ตัดคอลัมน์ `actor_name` / `actor_roles` ออก ไม่เก็บไว้ แถวเก่าจะ
   เปลี่ยนความหมายเมื่อผู้ใช้เปลี่ยนชื่อ (หัวไฟล์ `audit.ts`)
 - **ลำดับการรวมมีผล**: `input.metadata` ถูกกระจาย**หลัง** snapshot คีย์ของจุดเรียกที่ชื่อ `actor_name` `actor_roles` หรือ
-  `actor_organization_id` จึงทับ snapshot ได้เงียบ ๆ (`audit.ts:593-600`) มีแค่ `ip_unparsed` กับ `admin_token_fp` ที่มาหลังสุดและ
+  `actor_organization_id` จึงทับ snapshot ได้เงียบ ๆ (`audit.ts:629-636`) มีแค่ `ip_unparsed` กับ `admin_token_fp` ที่มาหลังสุดและ
   ทับไม่ได้ วันนี้ไม่มีจุดเรียกไหนใช้ชื่อเหล่านั้น — ข้อควรระวังเมื่อเพิ่ม event ใหม่ (หมวด 8)
 
 ### 2.4 `source_component`
 
 | ค่า | ใครตั้ง | อยู่ใน `audit_event` ที่ `2cab0a7` ไหม |
 |---|---|---|
-| `web-portal` | `correlationMiddleware` ตั้งให้ทุกคำขอ HTTP (`lib/context.ts:175`) | ใช่ — ทุกแถวของหน้าเว็บและของคนที่ยังไม่ล็อกอิน **รวมทั้ง `ADMIN_TOKEN_REJECTED`** เพราะ token ไม่ผ่านจึงไม่ถูกเปลี่ยน แถวสรุปที่ตัวกวาดเขียนภายหลังนอกคำขอก็ยังเป็น `web-portal` เพราะ recorder จำ `sourceComponent` ของคำขอแรกไว้ใน origin แล้วส่งต่อเข้า `runWithContext()` (`lib/token-rejection.ts:372` `:414`) ไม่ตกไปเป็น `request-service` |
-| `admin-portal` | `requireAdminToken` เมื่อ token ผ่าน (`middleware/auth.ts:178`) | ใช่ — ทุกแถวของ `/api/admin/*` ที่ token ผ่าน (รวมแถวของ helper ที่ actor เป็น `USER`) · แถวก่อนการ์ดของ admin เป็น `web-portal` ทั้งหมด (6.2) |
-| `request-service` | ค่าตั้งต้นเมื่อไม่มี context (`context.ts:94`) และของ `runWithContext()` | ไม่มีทางเขียนที่รู้จักในโค้ด commit นี้ แต่แถวเก่าบน production มีได้: ก่อน `261bd98` (commit ใน branch นี้) คำขออัปโหลดไฟล์ขนาดจริงหลุด context ใน multer แถวจึงได้ `SYSTEM` · `request-service` · ไม่มี IP · correlation id ใหม่ (Traps ใน `CLAUDE.md`) |
+| `web-portal` | `correlationMiddleware` ตั้งให้ทุกคำขอ HTTP (`lib/context.ts:186`) | ใช่ — ทุกแถวของหน้าเว็บและของคนที่ยังไม่ล็อกอิน **รวมทั้ง `ADMIN_TOKEN_REJECTED`** เพราะ token ไม่ผ่านจึงไม่ถูกเปลี่ยน แถวสรุปที่ตัวกวาดเขียนภายหลังนอกคำขอก็ยังเป็น `web-portal` เพราะ recorder จำ `sourceComponent` ของคำขอแรกไว้ใน origin แล้วส่งต่อเข้า `runWithContext()` (`lib/token-rejection.ts:368` `:410`) ไม่ตกไปเป็น `request-service` |
+| `admin-portal` | `requireAdminToken` เมื่อ token ผ่าน (`middleware/auth.ts:189`) | ใช่ — ทุกแถวของ `/api/admin/*` ที่ token ผ่าน (รวมแถวของ helper ที่ actor เป็น `USER`) · แถวก่อนการ์ดของ admin เป็น `web-portal` ทั้งหมด (6.2) |
+| `request-service` | ค่าตั้งต้นเมื่อไม่มี context (`context.ts:100`) และของ `runWithContext()` | ไม่มีทางเขียนที่รู้จักในโค้ด commit นี้ แต่แถวเก่าบน production มีได้: ก่อน `261bd98` (commit ใน branch นี้) คำขออัปโหลดไฟล์ขนาดจริงหลุด context ใน multer แถวจึงได้ `SYSTEM` · `request-service` · ไม่มี IP · correlation id ใหม่ (Traps ใน `CLAUDE.md`) |
 | `seed-demo` | `scripts/seed-demo.ts:1005` | เฉพาะเมื่อ `assignRole` ไปแทนที่ผู้ถือ role ระหว่าง seed (ปกติไม่มี และ seed ลบตารางก่อนอยู่แล้ว) |
-| `notification-worker` | `workers/delivery.ts:179-180` ต่อแถว delivery | **ไม่** — worker ไม่เขียน audit เลย (error ต่อแถว `delivery.send-failed` `delivery.dead-letter` เกิดในบริบทนี้ ส่วน `delivery.tick` `delivery.main` และงานดูแล log store ไม่มีบริบท — 5.1) |
+| `notification-worker` | `workers/delivery.ts:181-182` ต่อแถว delivery | **ไม่** — worker ไม่เขียน audit เลย (error ต่อแถว `delivery.send-failed` `delivery.dead-letter` เกิดในบริบทนี้ ส่วน `delivery.tick` `delivery.main` และงานดูแล log store ไม่มีบริบท — 5.1) |
 | `admin-script` | ไม่มีโค้ดไหนตั้ง | พบหกแถวบน production ที่ดูเหมือนถูก INSERT ด้วยมือ (แผน §13 ข้อ 22) |
 
 ค่าอื่นใน Excel (`iam-service` `organization-service` `approval-service` `jira-integration`
@@ -224,20 +224,20 @@ metadata = {
 
 ### 2.5 `correlation_id`
 
-- `correlationMiddleware` (`context.ts:157-186`) รับ header `x-correlation-id` **เฉพาะเมื่อเป็นรูป UUID**
+- `correlationMiddleware` (`context.ts:168-198`) รับ header `x-correlation-id` **เฉพาะเมื่อเป็นรูป UUID**
   (`/^[0-9a-f]{8}-…-[0-9a-f]{12}$/i` — version ไหนก็ได้ รวม nil และ**คงตัวพิมพ์เดิม**) ไม่งั้นสร้าง
   `randomUUID()` ใหม่ และตอบกลับใน header `x-correlation-id` เสมอ · backend ประกาศ header นี้ใน `exposedHeaders` ของ CORS
-  (`index.ts:139`) หน้าเว็บที่เรียกข้าม origin จึงอ่านได้ · 8 ตัวแรกของมันคือรหัสอ้างอิงที่ผู้ใช้เห็นบนคำตอบ 5xx (5.8)
+  (`index.ts:145`) หน้าเว็บที่เรียกข้าม origin จึงอ่านได้ · 8 ตัวแรกของมันคือรหัสอ้างอิงที่ผู้ใช้เห็นบนคำตอบ 5xx (5.8)
 - ทุกแถวของคำขอ HTTP เดียวกันจึงมี id เดียวกัน และ**แต่ละคำขอได้ id ของตัวเอง** — การกระทำที่กินหลายคำขอ (ล็อกอินสองขั้น
   · ThaID start/callback/activate · admin ออกลิงก์แล้วเจ้าของบัญชีกดทีหลัง · ปุ่มสร้างเอกสารที่ PATCH ก่อนเรียก generate)
   จึงมีหลาย correlation id โค้ดหน้าเว็บไม่ตั้ง `x-correlation-id` เองเลย (ไม่มีใน `frontend/`) ไม่มีอะไรผูกคำขอของคลิกเดียวกันไว้
-- `correlationId()` นอก context (`context.ts:79`) ได้ UUID ใหม่ทุกครั้งที่เรียก แต่ไม่มีทางเขียน audit ที่รู้จักทางไหนไปถึงตรงนั้น
+- `correlationId()` นอก context (`context.ts:85`) ได้ UUID ใหม่ทุกครั้งที่เรียก แต่ไม่มีทางเขียน audit ที่รู้จักทางไหนไปถึงตรงนั้น
   แถวสรุปของ `ADMIN_TOKEN_REJECTED` เขียนใน `runWithContext({...origin, correlationId: undefined})` ซึ่งสร้าง UUID ใหม่
-  หนึ่งค่าต่อแถวสรุป (`context.ts:101`, `lib/token-rejection.ts:268` `:275`) ผลเหมือนกัน: id ที่ไม่ตรงกับคำขอใดเลย
+  หนึ่งค่าต่อแถวสรุป (`context.ts:107`, `lib/token-rejection.ts:264` `:271`) ผลเหมือนกัน: id ที่ไม่ตรงกับคำขอใดเลย
 - proxy ของหน้าเว็บ (`frontend/app/api/[...path]/route.ts`) ส่ง header ของเบราว์เซอร์ต่อทั้งหมด
   **เบราว์เซอร์จึงเลือก id เองได้** รวมถึงใช้ซ้ำหรือชนกับของคนอื่น id เดียวกันจึงไม่ใช่หลักฐานว่าเป็นคลิกเดียวกัน
   (ขั้น 9 จะให้ proxy ตั้งค่าใหม่ทุกครั้ง)
-- delivery-worker ห่อแต่ละแถวที่ส่งด้วย `runWithContext({correlationId: row.correlation_id, …})` (`workers/delivery.ts:179-180`)
+- delivery-worker ห่อแต่ละแถวที่ส่งด้วย `runWithContext({correlationId: row.correlation_id, …})` (`workers/delivery.ts:181-182`)
   งานส่งอีเมลจึงถือ id ของคำขอที่สร้างการแจ้งเตือนนั้น — worker ไม่เขียน audit แต่ `error_events` ของมัน (`delivery.send-failed`
   `delivery.dead-letter`) ถือ id นี้ใน `request.correlationId` dead letter จึงค้นเจอด้วยรหัสอ้างอิงของคลิกต้นเรื่อง (5.1)
 - ตารางอื่นที่มี correlation id ให้ join: `notification.notification` · `notification.notification_delivery` ·
@@ -256,14 +256,14 @@ metadata = {
 
 ### 2.6 `ip_address` และ `user_agent`
 
-- `ip_address` = `parseClientIp(req.ip)` (`context.ts:139-143`): ไม่มีค่า → null · ไม่ใช่ IP ตาม `isIP()` →
+- `ip_address` = `parseClientIp(req.ip)` (`context.ts:146-150`): ไม่มีค่า → null · ไม่ใช่ IP ตาม `isIP()` →
   null + `metadata.ip_unparsed: true` (ค่าดิบไม่ถูกเก็บที่ไหนเลย) · เป็น IP → ตัด zone ของ IPv6 ออก
   คง `::ffff:` ไว้ ยาวไม่เกิน 45 ตัว
 - `trust proxy 1` ทำให้ `req.ip` เป็นค่าสุดท้ายของ `X-Forwarded-For` **ซึ่งผู้เรียกเขียนเองได้** ทั้งตอนยิง
   backend ตรงและตอนยิงผ่านหน้าเว็บ บน dev checkout ค่านี้คือสิ่งที่ผู้เรียกพิมพ์มา บน production ถูกเท่าที่
   Cloudflare ต่อท้ายที่อยู่จริงให้ ซึ่ง**ยังไม่ได้ยืนยันกับ tunnel ของเรา** (docs/09 §4.1) อ่านคอลัมน์นี้เป็น
   “ที่อยู่ที่อ้างมา” เสมอ
-- `user_agent` = `storedUserAgent(header)` (`audit.ts:549`): กลุ่มเลขที่คั่นด้วย `-` `_` `:` หรือช่องว่าง
+- `user_agent` = `storedUserAgent(header)` (`audit.ts:613`): กลุ่มเลขที่คั่นด้วย `-` `_` `:` หรือช่องว่าง
   ไม่เกินสามตัวติดกัน ซึ่งรวมกันได้ 9 หลักขึ้นไป → `:n` แล้วตัดที่ 512 ตัว `.` และ `/` ไม่นับเป็นตัวคั่น
   เลขเวอร์ชัน (`Edg/151.0.3405.80`, `Gecko/20100101`) จึงรอด เลขบัตรหรือเบอร์โทรที่คนพิมพ์ไม่รอด ใช้กับ
   **ทุกแถว** ส่วน `iam.session` และหลักฐานการลงนามเก็บ user agent ดิบ
@@ -273,22 +273,22 @@ metadata = {
 
 - `action` ตัดที่ 128 · `subject_type` `ip_address` `correlation_id` `source_component` ตัดที่ 64 (`fit()`)
   ค่าที่ยาวเกินจะทำให้ INSERT ล้มทั้งแถว จึงตัดทิ้งส่วนเกินก่อน
-- `before` / `after` / `metadata` ผ่าน `toJson()` (`audit.ts:494`): `JSON.stringify` แล้ว `JSON.parse`
+- `before` / `after` / `metadata` ผ่าน `toJson()` (`audit.ts:558`): `JSON.stringify` แล้ว `JSON.parse`
   — `Date` กลายเป็นสตริง ISO · คีย์ที่ค่าเป็น `undefined` หายไป · `null` หรือ `undefined` ทั้งก้อนเป็น SQL
   NULL · ทุก**ค่า**ที่เป็นสตริงผ่าน `storableText()` (ตัด U+0000 และแทน surrogate ครึ่งคู่ด้วย U+FFFD) ไม่งั้น jsonb ปฏิเสธทั้งแถว
-  — replacer ของ `JSON.stringify` แตะแค่ค่า **ชื่อคีย์ไม่ผ่าน** (`audit.ts:496-498`) วันนี้ไม่มีผลเพราะคีย์มาจากโค้ดหรือจาก shape ที่ zod ตรวจแล้ว
+  — replacer ของ `JSON.stringify` แตะแค่ค่า **ชื่อคีย์ไม่ผ่าน** (`audit.ts:560-562`) วันนี้ไม่มีผลเพราะคีย์มาจากโค้ดหรือจาก shape ที่ zod ตรวจแล้ว
 - `storableText()` **ไม่**ใช้กับคอลัมน์สเกลาร์ (`action`, `subject_type`, `user_agent` …)
 - คอลัมน์ UUID (`actor_id`, `subject_id`, `organization_id`) ไม่ถูกตรวจรูป ค่าที่ไม่ใช่ UUID ทำให้ INSERT ล้ม
   และแถวหาย — fingerprint หรือรหัสอื่นที่ไม่ใช่ UUID ต้องไปอยู่ใน `metadata`
 - `logAudit()` **ไม่ sanitize อะไรให้เลย** การปิดเลขบัตรทำที่จุดเรียก (`sanitizeDiff()` / `sanitizeState()`)
   และ `metadata` ไม่ผ่านขั้นไหนที่ปิดข้อมูลให้ทั้งก้อน — ข้อยกเว้นเดียวคือคีย์ `organization_master_changed` ของ
-  `REQUEST_DRAFT_SAVED` ที่จุดเรียกประกอบจาก `sanitizeDiff()` เอง (`routes/organizations.ts:1541-1548` `:1568`) (หมวด 7) · สำเนา
+  `REQUEST_DRAFT_SAVED` ที่จุดเรียกประกอบจาก `sanitizeDiff()` เอง (`routes/organizations.ts:1447-1454` `:1474`) (หมวด 7) · สำเนา
   `audit_fallback` ใน Mongo ปิดเลขบัตรเองอีกชั้นก่อนออกจาก process (3.14)
 
 ### 2.8 เวลาที่เขียน และสิ่งที่ `logAudit()` ไม่ทำ
 
 - **ไม่ throw ไม่ retry และ Postgres ไม่ได้แถวคืน** การอ่าน snapshot กับ INSERT อยู่ใน `try` · INSERT ที่สำเร็จทิ้ง breadcrumb `audit`
-  (ชื่อ action) ไว้ในบริบทของคำขอ (5.2) · `catch` (`audit.ts:621-628`) ทิ้ง breadcrumb `"<action> — เขียนไม่สำเร็จ"` แล้วส่งให้
+  (ชื่อ action) ไว้ในบริบทของคำขอ (5.2) · `catch` (`audit.ts:718-789`) ทิ้ง breadcrumb `"<action> — เขียนไม่สำเร็จ"` แล้วส่งให้
   `reportAuditWriteFailure()` (`lib/audit-fallback.ts`) ซึ่ง (1) `captureError()` tag `audit.write-failed` พร้อม input ของแถวที่ปิดเลขบัตรแล้วใน
   `extra.audit` — พิมพ์บรรทัด `[capture]` ที่กวาดแล้วหนึ่งบรรทัดลง stderr **เสมอ** แต่ตัว event เข้าคิวเฉพาะเมื่อผ่านเพดาน (50 ตัวต่อชั่วโมงของ
   fingerprint · 600 ตัวต่อนาทีของ process · ไม่เกินเพดานขนาด · คิวรับ — 5.7) ตอน Postgres ล่มนาน event ส่วนใหญ่จึงเหลือแค่ตัวนับของ issue และ
@@ -316,7 +316,7 @@ metadata = {
 - จุดเรียกส่วนใหญ่ `await` ยกเว้น `ADMIN_TOKEN_REJECTED` ที่ยิงแล้วไม่รอ (`void write(...)`) คำตอบ 401 จึงไม่รอฐานข้อมูล
 - สิ่งที่ทำให้แถวหายได้: INSERT ล้ม (Postgres ล่ม · ค่าไม่ใช่ UUID ในคอลัมน์ UUID · `BigInt` ใน JSON ที่
   `JSON.stringify` แปลงไม่ได้) · process ตายก่อน `await` จบ · สำหรับแถวที่ยิงแล้วไม่รอ process ถูก kill ·
-  **ตอน shutdown** `shutdown()` (`index.ts:414-425`) เรียก `server.close()` บันทึก `shutdown` ลงคิว แล้วรอ `flushTokenRejections()` ไม่เกิน
+  **ตอน shutdown** `shutdown()` (`index.ts:444-458`) เรียก `server.close()` บันทึก `shutdown` ลงคิว แล้วรอ `flushTokenRejections()` ไม่เกิน
   2 วินาที เขียนคิวของ log store ไม่เกิน 2 วินาที ปิด client ของ Mongo ไม่เกิน 1.5 วินาที จากนั้น `prisma.$disconnect()` และ `process.exit(0)`
   (5.10) โดยไม่รอคำขอที่กำลังวิ่ง — `logAudit` ที่ยังไม่จบของคำขอเหล่านั้นหายได้ และสำเนา `audit_fallback` ที่ยังค้างคิวหลัง 2 วินาทีก็หาย · ตัวนับของ `ADMIN_TOKEN_REJECTED` ที่ยังไม่ถึงรอบสรุปอยู่ในหน่วยความจำอย่างเดียว process ตายหรือ
   restart แบบไม่ graceful = ครั้งที่นับไว้หายทั้งหมด และ flush ตอน shutdown ที่เกิน 2 วินาทีก็ถูกตัด
@@ -788,7 +788,7 @@ drop อะไรได้**:
 ผ่าน · route template status และ `tokenFp` · 401 ได้เอกสารที่มี**รูปแบบของ path** (ยังไม่ถึง route จึงไม่มี template) ·
 **ค่าใน query string ไม่ถูกเก็บ** `?cid=` เหลือแค่ `cid#` ใน `hashKeys` ที่เหลือเป็น **[ข้อเสนอ]**: `actor.type SYSTEM` ·
 `subject {type:"ADMIN_API", id:null}` · การเก็บชื่อคีย์ของ query · `sourceComponent` ตาม context ซึ่งที่ `2cab0a7` เปลี่ยนเป็น
-`admin-portal` **เฉพาะหลัง token ผ่าน** (`middleware/auth.ts:171-179`) เอกสารของ 401 จึงเป็น `web-portal` · `via` ของ 401
+`admin-portal` **เฉพาะหลัง token ผ่าน** (`middleware/auth.ts:182-190`) เอกสารของ 401 จึงเป็น `web-portal` · `via` ของ 401
 **[ต้องตัดสิน]**: ถ้าใช้กฎ 3.4 ตรง ๆ จะตกข้อ 7 (`SYSTEM` ใต้ `web-portal`) ไม่ใช่ `ANONYMOUS` — ข้อเสนอ: ให้เอกสาร `http` ที่
 status 401 เป็น `actor.type ANONYMOUS` ข้อ 5 จึงให้ `ANONYMOUS`:
 
@@ -1152,7 +1152,7 @@ encode ใหม่ ไม่สนตัวพิมพ์) ตัดที่ 
 
 ## 4. แคตตาล็อกเหตุการณ์
 
-ที่ `2cab0a7` มีรหัส `AuditAction` **51 ตัว** (`lib/audit.ts:27-423` — หัวไฟล์ยังเขียนว่า “~25” ซึ่งล้าสมัย)
+ที่ `2cab0a7` มีรหัส `AuditAction` **51 ตัว** (`lib/audit.ts:27-477` — หัวไฟล์ยังเขียนว่า “~25” ซึ่งล้าสมัย)
 ถูกเขียนจริง **50 ตัว** จาก 90 จุดเรียก `DATA_EXPORTED` ประกาศไว้แต่ไม่มีใครเขียน (4.12) รหัสสี่ตัวที่ขั้น 7–8
 จะเพิ่มอยู่ที่ 4.13 ทุกแถวในหมวดนี้ลง Postgres วันนี้ และจะถูก relay คัดลอกลง `activity` ตั้งแต่ขั้น 6 [ออกแบบ]
 (ปิดข้อมูลตาม 3.6) · แถวที่ `logAudit` เขียนลง Postgres ไม่สำเร็จได้สำเนา `audit_fallback` ใน Mongo แล้ววันนี้ (3.14)
@@ -1180,7 +1180,7 @@ encode ใหม่ ไม่สนตัวพิมพ์) ตัดที่ 
 `integration_operation_id` หรือเวลา ไม่ใช่ด้วย correlation id
 
 `[EXPIRED]` ย่อจาก [`SESSION_REVOKED` EXPIRED] — เกิดได้ในคำขอที่เรียก `resolveSession()` กับ cookie ที่เบราว์เซอร์ถืออยู่แล้ว
-หมดอายุ (`issueSession()` `routes/auth.ts:1363-1366` และท้าย `POST /password-reset` `:972-974`) เป็นของ**เจ้าของ cookie** ซึ่งอาจเป็นคนอื่น
+หมดอายุ (`issueSession()` `routes/auth.ts:1349-1352` และท้าย `POST /password-reset` `:971-973`) เป็นของ**เจ้าของ cookie** ซึ่งอาจเป็นคนอื่น
 
 | การกระทำ | แถวตามลำดับ |
 |---|---|
@@ -1246,7 +1246,7 @@ encode ใหม่ ไม่สนตัวพิมพ์) ตัดที่ 
 #### `LOGIN_SUCCEEDED` — เข้าสู่ระบบสำเร็จ
 
 ผ่านขั้นสุดท้ายของการเข้าสู่ระบบแล้ว เขียน**ก่อน** `issueSession()` ซึ่งอาจเขียน `SESSION_REVOKED` ต่อ: `ROTATED` เมื่อเบราว์เซอร์ถือ
-cookie ที่ยังใช้ได้ หรือ `EXPIRED` (actor = เจ้าของ cookie นั้น) เมื่อ cookie ที่ถืออยู่หมดอายุแล้ว (`routes/auth.ts:1363-1367`)
+cookie ที่ยังใช้ได้ หรือ `EXPIRED` (actor = เจ้าของ cookie นั้น) เมื่อ cookie ที่ถืออยู่หมดอายุแล้ว (`routes/auth.ts:1349-1353`)
 `POST /api/auth/activate` ก็เปิด session ให้ด้วย `issueSession()` เหมือนกัน**โดยไม่มีแถวนี้** — นับการเข้าสู่ระบบต้องรวม `USER_ACCOUNT_ACTIVATED`
 
 **เกิดเมื่อ**
@@ -1272,25 +1272,25 @@ cookie ที่ยังใช้ได้ หรือ `EXPIRED` (actor = เ�
   (เท่ากับ `iam.user_account.external_subject` ถ้าบัญชีเคยผูกไว้) และ `completed_at` ใกล้ `occurred_at` ของแถวนี้
 - ไม่มี id ของ session ที่ออกให้ (2.10)
 - **ตัวอย่าง** `{"metadata": {"method": "PASSWORD_OTP"}}`
-- **โค้ด** `routes/auth.ts:1134` (OTP) · `:628` (ThaID) — การเขียน `external_subject` ครั้งแรกของขา ThaID ไม่มีแถว `USER_ACCOUNT_UPDATED`
+- **โค้ด** `routes/auth.ts:1133` (OTP) · `:627` (ThaID) — การเขียน `external_subject` ครั้งแรกของขา ThaID ไม่มีแถว `USER_ACCOUNT_UPDATED`
 
 #### `LOGIN_FAILED` — เข้าสู่ระบบไม่สำเร็จ
 
 ทุกความล้มเหลวของขั้นรหัสผ่าน ขั้น OTP และขา login ของ ThaID ที่หาบัญชีไม่เจอ แยกด้วย `failure_reason` — ยกเว้น body ที่ไม่ผ่าน
-zod (400 `validation` เช่นอีเมลผิดรูปหรือยาวเกิน 254 ตัว หรือรหัส OTP ไม่ครบ 6 หลัก) ของ `/login` และ `/login/verify-otp` ซึ่ง**ไม่มีแถว** (`auth.ts:993-995`
-`:1048-1051`) · body ที่อ่านไม่ออก ใหญ่เกิน 1 MB หรือเข้ารหัสแบบที่ไม่รองรับก็**ไม่มีแถว** — ไม่ถึง route เลย `RequestBodyError` ตอบ 400/413/415 จากตัวจัดการ
+zod (400 `validation` เช่นอีเมลผิดรูปหรือยาวเกิน 254 ตัว หรือรหัส OTP ไม่ครบ 6 หลัก) ของ `/login` และ `/login/verify-otp` ซึ่ง**ไม่มีแถว** (`auth.ts:992-994`
+`:1047-1050`) · body ที่อ่านไม่ออก ใหญ่เกิน 1 MB หรือเข้ารหัสแบบที่ไม่รองรับก็**ไม่มีแถว** — ไม่ถึง route เลย `RequestBodyError` ตอบ 400/413/415 จากตัวจัดการ
 error ท้าย `index.ts` (แยกตามที่มาตั้งแต่ `76245a3`) และเก็บเป็น warning ที่ไม่พิมพ์ fingerprint `http:request-body:<status>` ใน Mongo (5.1)
 
 | `failure_reason` | เกิดเมื่อ | `subject_id` | metadata อื่น | โค้ด |
 |---|---|---|---|---|
-| `INVALID_CREDENTIAL` | `POST /api/auth/login`: ไม่มีบัญชีของอีเมลนี้ · บัญชีไม่มีรหัสผ่าน · รหัสผ่านผิด | บัญชีของอีเมลนั้น หรือ null | `email` | `auth.ts:1001` |
-| `ACCOUNT_PENDING` · `ACCOUNT_SUSPENDED` · `ACCOUNT_DEACTIVATED` | `POST /login`: รหัสผ่านถูกแต่บัญชีไม่ `ACTIVE` — บัญชี PENDING ที่ถูกเชิญจริงยังไม่มี `password_hash` จนกว่าจะ `/activate` (`admin.ts:826` และ `organizations.ts:3208` สร้างโดยไม่มีรหัสผ่าน) จึงได้ `INVALID_CREDENTIAL` แทน `ACCOUNT_PENDING` เกิดได้แค่กับบัญชี PENDING ของ `seed:demo` ซึ่งตั้งรหัสผ่านให้ทุกสถานะ | บัญชีนั้น | — | `auth.ts:1020` |
-| `OTP_NOT_PENDING` | `POST /login/verify-otp`: ไม่มี OTP `LOGIN` ที่ยังไม่ถูกใช้ของอีเมลนี้ | ค้นจากอีเมล หรือ null | `email` | `auth.ts:1066` |
-| `OTP_EXPIRED` | OTP ล่าสุดหมดเวลา | เหมือนข้างบน | `email` `otp_code_id` `expires_at` | `auth.ts:1066` |
-| `OTP_LOCKED` | ผิดครบ `OTP_MAX_ATTEMPTS` แล้ว (รหัสถูกเผา) | เหมือนข้างบน | `email` `otp_code_id` `attempts` | `auth.ts:1066` |
-| `OTP_INVALID` | รหัสผิด | เหมือนข้างบน | `email` `otp_code_id` `attempts_left` | `auth.ts:1066` |
-| `ACCOUNT_INACTIVE` | OTP ถูก แต่บัญชีหายหรือถูกระงับระหว่างสองขั้น | บัญชีนั้น หรือ null | `account_status` `email` `otp_code_id` | `auth.ts:1112` |
-| `THAID_NO_MATCHING_ACCOUNT` | `/thaid/callback` ขา login: ไม่มีบัญชี `ACTIVE` ที่ `cid` ตรง | null | `thaid_subject` | `auth.ts:594` |
+| `INVALID_CREDENTIAL` | `POST /api/auth/login`: ไม่มีบัญชีของอีเมลนี้ · บัญชีไม่มีรหัสผ่าน · รหัสผ่านผิด | บัญชีของอีเมลนั้น หรือ null | `email` | `auth.ts:1000` |
+| `ACCOUNT_PENDING` · `ACCOUNT_SUSPENDED` · `ACCOUNT_DEACTIVATED` | `POST /login`: รหัสผ่านถูกแต่บัญชีไม่ `ACTIVE` — บัญชี PENDING ที่ถูกเชิญจริงยังไม่มี `password_hash` จนกว่าจะ `/activate` (`admin.ts:826` และ `organizations.ts:3114` สร้างโดยไม่มีรหัสผ่าน) จึงได้ `INVALID_CREDENTIAL` แทน `ACCOUNT_PENDING` เกิดได้แค่กับบัญชี PENDING ของ `seed:demo` ซึ่งตั้งรหัสผ่านให้ทุกสถานะ | บัญชีนั้น | — | `auth.ts:1019` |
+| `OTP_NOT_PENDING` | `POST /login/verify-otp`: ไม่มี OTP `LOGIN` ที่ยังไม่ถูกใช้ของอีเมลนี้ | ค้นจากอีเมล หรือ null | `email` | `auth.ts:1065` |
+| `OTP_EXPIRED` | OTP ล่าสุดหมดเวลา | เหมือนข้างบน | `email` `otp_code_id` `expires_at` | `auth.ts:1065` |
+| `OTP_LOCKED` | ผิดครบ `OTP_MAX_ATTEMPTS` แล้ว (รหัสถูกเผา) | เหมือนข้างบน | `email` `otp_code_id` `attempts` | `auth.ts:1065` |
+| `OTP_INVALID` | รหัสผิด | เหมือนข้างบน | `email` `otp_code_id` `attempts_left` | `auth.ts:1065` |
+| `ACCOUNT_INACTIVE` | OTP ถูก แต่บัญชีหายหรือถูกระงับระหว่างสองขั้น | บัญชีนั้น หรือ null | `account_status` `email` `otp_code_id` | `auth.ts:1111` |
+| `THAID_NO_MATCHING_ACCOUNT` | `/thaid/callback` ขา login: ไม่มีบัญชี `ACTIVE` ที่ `cid` ตรง | null | `thaid_subject` | `auth.ts:593` |
 
 | ช่อง | ค่า |
 |---|---|
@@ -1346,11 +1346,11 @@ error ท้าย `index.ts` (แยกตามที่มาตั้งแ�
 | `expires_at` | now + `OTP_TTL_MINUTES` (ISO) | `"2026-09-29T03:15:00.000Z"` |
 
 - **ข้อมูลส่วนบุคคล** ไม่มีอีเมล **ไม่มีตัวรหัสหรือ hash**
-- ก่อนออกรหัสใหม่ `issueOtp()` ตั้ง `consumed_at` ให้ OTP `LOGIN` ที่ยังไม่ถูกใช้**ทุกใบ**ของอีเมลนั้น (`auth.ts:98-101`) การยกเลิกนี้**ไม่มีแถว**
+- ก่อนออกรหัสใหม่ `issueOtp()` ตั้ง `consumed_at` ให้ OTP `LOGIN` ที่ยังไม่ถูกใช้**ทุกใบ**ของอีเมลนั้น (`auth.ts:97-100`) การยกเลิกนี้**ไม่มีแถว**
   ผู้ที่กรอกรหัสใบเก่าหลังจากนั้นจึงได้ `OTP_INVALID` (เทียบกับรหัสใบใหม่) หรือ `OTP_NOT_PENDING` โดยไม่มีอะไรบอกว่าใบเก่าถูกยกเลิก
   ให้ดู `LOGIN_OTP_ISSUED` ใบใหม่ของบัญชีเดียวกันที่มาก่อน
 - **ตัวอย่าง** `{"metadata": {"resend": false, "otp_code_id": "b1e0c7d2-4c1f-4a8e-9d2b-7f3e5a6c8d90", "expires_at": "2026-09-29T03:15:00.000Z"}}`
-- **โค้ด** `routes/auth.ts:110` (`issueOtp()`, ผู้เรียก `:1038` และ `:1169`)
+- **โค้ด** `routes/auth.ts:109` (`issueOtp()`, ผู้เรียก `:1037` และ `:1168`)
 
 #### `PASSWORD_RESET_REQUESTED` — admin สั่งออกลิงก์ตั้งรหัสผ่านใหม่
 
@@ -1406,9 +1406,9 @@ error ท้าย `index.ts` (แยกตามที่มาตั้งแ�
 - **ข้อมูลส่วนบุคคล** id เท่านั้น (+ `actor_name` ในแถวสำเร็จ) ไม่มีข้อมูลรหัสผ่าน
 - **ตัวอย่าง** `{"metadata": {"password_reset_token_id": "c4d2a9e1-…", "requested_via": "ADMIN_API", "sessions_revoked": 2}}`
 - แถว `SESSION_REVOKED` `PASSWORD_CHANGED` ถูกเขียน**ก่อน**แถวนี้ จากในธุรกรรม (4.2) — เฉพาะเมื่อมี session ที่ยังเปิดอยู่
-- หลังแถวนี้ route เรียก `resolveSession()` กับ cookie ที่เบราว์เซอร์ถือ (`auth.ts:972-974`) ถ้าเป็น cookie หมดอายุของ**บัญชีอื่น**
+- หลังแถวนี้ route เรียก `resolveSession()` กับ cookie ที่เบราว์เซอร์ถือ (`auth.ts:971-973`) ถ้าเป็น cookie หมดอายุของ**บัญชีอื่น**
   (ของเจ้าของลิงก์ถูก `PASSWORD_CHANGED` ปิดไปแล้ว) ได้ `SESSION_REVOKED` `EXPIRED` ของบัญชีนั้นตามมาในคำขอเดียวกัน
-- **โค้ด** `routes/auth.ts:955` (สำเร็จ) · `:906` (`resetFailed()`, ผู้เรียก `:917` `:922` `:950`)
+- **โค้ด** `routes/auth.ts:954` (สำเร็จ) · `:905` (`resetFailed()`, ผู้เรียก `:916` `:921` `:949`)
 
 #### `IDENTITY_VERIFICATION_STARTED` — พาผู้ใช้ออกไปยืนยันตัวตนที่ ThaID
 
@@ -1436,7 +1436,7 @@ error ท้าย `index.ts` (แยกตามที่มาตั้งแ�
 - **ข้อมูลส่วนบุคคล** id เท่านั้น
 - **ตัวอย่าง** `{"metadata": {"purpose": "activate", "activation_key_id": "9a1f…", "user_account_id": "5c3e…"}}`
 - ขา activate อาจมี `ACTIVATION_KEY_EXPIRED` ของคำขอเดียวกันแทน ถ้าคีย์เพิ่งหมดอายุ (4.5)
-- **โค้ด** `routes/auth.ts:290`
+- **โค้ด** `routes/auth.ts:289`
 
 #### `IDENTITY_VERIFIED` — ThaID ยืนยันตัวตนผ่าน และเลขบัตรตรง
 
@@ -1459,30 +1459,30 @@ error ท้าย `index.ts` (แยกตามที่มาตั้งแ�
 | `cid_source` | claim ที่ใช้เทียบเลขบัตร (`THAID_USE_PID`) | `"pid"` · `"sub"` |
 
 - **ข้อมูลส่วนบุคคล** **เลขบัตรเต็มใน `metadata` ไม่ถูกปิดใน Postgres** (`metadata` ไม่ผ่าน sanitize) — `sub` ของ DOPA
-  คือเลขบัตร (`CLAUDE.md` Traps) คอมเมนต์ที่ `auth.ts:468` (บนแถว `CID_MISMATCH`) ที่ว่าไม่บันทึกเลขบัตรจึงผิด สำเนา Mongo ปิดให้
-- **โค้ด** `routes/auth.ts:483` · ตามด้วย `USER_ACCOUNT_UPDATED` (`updated_via: THAID`) ถ้าชื่อบนบัตรต่างจากที่กรอกไว้
+  คือเลขบัตร (`CLAUDE.md` Traps) คอมเมนต์ที่ `auth.ts:467` (บนแถว `CID_MISMATCH`) ที่ว่าไม่บันทึกเลขบัตรจึงผิด สำเนา Mongo ปิดให้
+- **โค้ด** `routes/auth.ts:482` · ตามด้วย `USER_ACCOUNT_UPDATED` (`updated_via: THAID`) ถ้าชื่อบนบัตรต่างจากที่กรอกไว้
 
 #### `IDENTITY_VERIFICATION_FAILED` — ความล้มเหลวของ callback ThaID
 
-ครอบ**ทุก**ความล้มเหลวของ callback ทั้งสองขา (ยกเว้น body ที่ไม่ผ่าน zod — 400 `validation` ไม่มีแถว `auth.ts:320-323` — และขา login
+ครอบ**ทุก**ความล้มเหลวของ callback ทั้งสองขา (ยกเว้น body ที่ไม่ผ่าน zod — 400 `validation` ไม่มีแถว `auth.ts:319-322` — และขา login
 ที่ไม่พบบัญชี ซึ่งเขียนเป็น `LOGIN_FAILED` `THAID_NO_MATCHING_ACCOUNT` แทน) เขียนจาก
 `logThaidFailure()` ผ่าน `failThaidOperation()` `failure_reason` จึงเป็นรหัสเดียวกับ `integration_operation.last_error_code` —
 **ยกเว้น** แถว `CID_MISMATCH` ที่เขียนเอง และแถว `state_*` ที่ callback เขียนเอง (doc comment ของรหัสนับเป็นข้อยกเว้นเหมือนกัน
-`audit.ts:325-327`): `state_not_found` ไม่มี operation เลย · `state_already_used` ชี้ operation ที่ `SUCCEEDED` แล้ว (`last_error_code` null)
+`audit.ts:328-330`): `state_not_found` ไม่มี operation เลย · `state_already_used` ชี้ operation ที่ `SUCCEEDED` แล้ว (`last_error_code` null)
 `FAILED` แล้วด้วยรหัสอื่น หรือยัง `PROCESSING` · `state_expired` เขียน `last_error_code` ให้เฉพาะ operation ที่ยัง `PENDING` นอกนั้น
 operation คงรหัสเดิมไว้ ข้อความอิสระจาก ThaID (`error_description`) **ไม่ถูกเก็บ** ในแถวนี้ (แต่ลง `last_error_message` หลังผ่าน `scrubText()` —
 ถ้อยคำยังเป็นของผู้ยิง 5.6)
 
 | `failure_reason` | เกิดเมื่อ (`POST /api/auth/thaid/callback`) | โค้ด |
 |---|---|---|
-| `state_not_found` · `state_expired` · `state_already_used` | หา `state` ไม่เจอ · หมดเวลา · ถูกใช้ไปแล้ว — ที่เดียวที่เขียน `state_*` อายุถูกตรวจ**ก่อน**สถานะ (`thaid-flow.ts:108-129`): เกิน `THAID_STATE_TTL_MINUTES` (ค่าตั้งต้น 15) แล้วได้ `state_expired` แม้ operation นั้นสำเร็จไปแล้ว · ก่อนนั้น `state_already_used` = operation ไม่ `PENDING` แล้ว ซึ่งอาจตามหลังความสำเร็จ ความล้มเหลว (`IDENTITY_VERIFICATION_FAILED` หรือ `LOGIN_FAILED`) ของความพยายามเดียวกัน หรือ callback อีกใบที่ยัง `PROCESSING` อยู่ | `auth.ts:330` |
-| รหัสที่ส่งมาในช่อง `error` หลัง `trim()` + ตัวพิมพ์เล็ก ถ้าตรง `^[a-z][a-z_]{0,39}$` เก็บตามนั้น ไม่งั้น `thaid_error_unrecognised` | callback มี `error` — **ค่านี้ไม่ได้มาจาก ThaID โดยตรง** หน้า callback ของเบราว์เซอร์อ่านจาก query string แล้วส่งต่อ ใครที่มี `state` ของตัวเอง (เรียก `/thaid/start` ได้) ยิงค่าอะไรก็ได้ รหัสตัวพิมพ์เล็กยาวไม่เกิน 40 ตัวจึงถูกเก็บตามที่ส่ง (`thaid-flow.ts:158-176`) | `auth.ts:346` |
-| `missing_code` | ไม่มีทั้ง `error` และ `code` | `auth.ts:357` |
-| `network_error` · `http_<status>` · รหัส error ของ token endpoint · `no_id_token` · `jwks_unavailable` · `unknown_kid` · `invalid_id_token` · `nonce_missing` · `nonce_mismatch` · `unexpected` | แลก token หรือตรวจ id_token ไม่ผ่าน — `nonce_missing` เกิดเฉพาะเมื่อ `THAID_REQUIRE_NONCE=true` (ค่าตั้งต้น `false` ไม่งั้นแค่เตือนใน log แล้วไปต่อ `thaid.ts:308-316`) · `jwks_unavailable` เฉพาะเมื่อ JWKS ตอบ HTTP ไม่ ok ส่วนเครือข่ายล้มหรือ JSON เสียตอนดึง JWKS ออกมาเป็น `unexpected` (`fetch` ใน `fetchJwks()` ไม่ถูกห่อ `thaid.ts:220-223`) | `auth.ts:383` |
-| `cid_unavailable` | ไม่มีเลขบัตรที่ผ่าน checksum ใน claim ที่เลือก | `auth.ts:416` |
-| `key_not_found` · `key_used` · `key_revoked` · `key_expired` | ขา activate: คีย์ใช้ไม่ได้แล้ว — `key_expired` ที่คีย์เพิ่งเลยกำหนดมี `ACTIVATION_KEY_EXPIRED` นำหน้าในคำขอเดียวกัน (`usableActivationKeyById()` → `evaluateActivationKey()` `iam.ts:551-600`, เรียกที่ `auth.ts:441`) | `auth.ts:443` |
-| `ambiguous_account` | ขา login: มีบัญชี `ACTIVE` หลายบัญชีที่ `cid` เดียวกัน | `auth.ts:609` |
-| **`CID_MISMATCH`** (ตัวพิมพ์ใหญ่) | ขา activate: เลขบัตรไม่ตรงบัญชี — คีย์ถูกเพิกถอนโดย**ไม่มี** `ACTIVATION_KEY_REVOKED` แถวนี้คือหลักฐาน | `auth.ts:457` |
+| `state_not_found` · `state_expired` · `state_already_used` | หา `state` ไม่เจอ · หมดเวลา · ถูกใช้ไปแล้ว — ที่เดียวที่เขียน `state_*` อายุถูกตรวจ**ก่อน**สถานะ (`thaid-flow.ts:108-129`): เกิน `THAID_STATE_TTL_MINUTES` (ค่าตั้งต้น 15) แล้วได้ `state_expired` แม้ operation นั้นสำเร็จไปแล้ว · ก่อนนั้น `state_already_used` = operation ไม่ `PENDING` แล้ว ซึ่งอาจตามหลังความสำเร็จ ความล้มเหลว (`IDENTITY_VERIFICATION_FAILED` หรือ `LOGIN_FAILED`) ของความพยายามเดียวกัน หรือ callback อีกใบที่ยัง `PROCESSING` อยู่ | `auth.ts:329` |
+| รหัสที่ส่งมาในช่อง `error` หลัง `trim()` + ตัวพิมพ์เล็ก ถ้าตรง `^[a-z][a-z_]{0,39}$` เก็บตามนั้น ไม่งั้น `thaid_error_unrecognised` | callback มี `error` — **ค่านี้ไม่ได้มาจาก ThaID โดยตรง** หน้า callback ของเบราว์เซอร์อ่านจาก query string แล้วส่งต่อ ใครที่มี `state` ของตัวเอง (เรียก `/thaid/start` ได้) ยิงค่าอะไรก็ได้ รหัสตัวพิมพ์เล็กยาวไม่เกิน 40 ตัวจึงถูกเก็บตามที่ส่ง (`thaid-flow.ts:158-176`) | `auth.ts:345` |
+| `missing_code` | ไม่มีทั้ง `error` และ `code` | `auth.ts:356` |
+| `network_error` · `http_<status>` · รหัส error ของ token endpoint · `no_id_token` · `jwks_unavailable` · `unknown_kid` · `invalid_id_token` · `nonce_missing` · `nonce_mismatch` · `unexpected` | แลก token หรือตรวจ id_token ไม่ผ่าน — `nonce_missing` เกิดเฉพาะเมื่อ `THAID_REQUIRE_NONCE=true` (ค่าตั้งต้น `false` ไม่งั้นแค่เตือนใน log แล้วไปต่อ `thaid.ts:308-316`) · `jwks_unavailable` เฉพาะเมื่อ JWKS ตอบ HTTP ไม่ ok ส่วนเครือข่ายล้มหรือ JSON เสียตอนดึง JWKS ออกมาเป็น `unexpected` (`fetch` ใน `fetchJwks()` ไม่ถูกห่อ `thaid.ts:220-223`) | `auth.ts:382` |
+| `cid_unavailable` | ไม่มีเลขบัตรที่ผ่าน checksum ใน claim ที่เลือก | `auth.ts:415` |
+| `key_not_found` · `key_used` · `key_revoked` · `key_expired` | ขา activate: คีย์ใช้ไม่ได้แล้ว — `key_expired` ที่คีย์เพิ่งเลยกำหนดมี `ACTIVATION_KEY_EXPIRED` นำหน้าในคำขอเดียวกัน (`usableActivationKeyById()` → `evaluateActivationKey()` `iam.ts:551-600`, เรียกที่ `auth.ts:440`) | `auth.ts:442` |
+| `ambiguous_account` | ขา login: มีบัญชี `ACTIVE` หลายบัญชีที่ `cid` เดียวกัน | `auth.ts:608` |
+| **`CID_MISMATCH`** (ตัวพิมพ์ใหญ่) | ขา activate: เลขบัตรไม่ตรงบัญชี — คีย์ถูกเพิกถอนโดย**ไม่มี** `ACTIVATION_KEY_REVOKED` แถวนี้คือหลักฐาน | `auth.ts:456` |
 
 | ช่อง | ค่า |
 |---|---|
@@ -1505,8 +1505,8 @@ operation คงรหัสเดิมไว้ ข้อความอิส
 - `state_already_used` ตามหลังผลใดก็ได้ของความพยายามเดียวกัน (`IDENTITY_VERIFIED` `LOGIN_SUCCEEDED` `IDENTITY_VERIFICATION_FAILED`
   `LOGIN_FAILED`) ถ้าผู้ใช้กด refresh ภายในอายุของ state หลังจากนั้นเป็น `state_expired` · callback สองใบที่มาพร้อมกันได้ใบหนึ่งทำงาน
   อีกใบ `state_already_used` ขณะที่ใบแรกยัง `PROCESSING`
-- **โค้ด** `lib/thaid-flow.ts:246` (`logThaidFailure()`) · `routes/auth.ts:457` (CID_MISMATCH) — จุดที่ส่ง `audit: false`
-  และไม่เขียนแถวจาก hook: `thaid-flow.ts:113` (`state_expired` ใน `claimThaidState()`), `auth.ts:454`, `auth.ts:591`
+- **โค้ด** `lib/thaid-flow.ts:246` (`logThaidFailure()`) · `routes/auth.ts:456` (CID_MISMATCH) — จุดที่ส่ง `audit: false`
+  และไม่เขียนแถวจาก hook: `thaid-flow.ts:113` (`state_expired` ใน `claimThaidState()`), `auth.ts:453`, `auth.ts:590`
 - แลก code / ตรวจ id_token ไม่ผ่านได้ error event `thaid.resolve-identity` ด้วย (warning สำหรับ `nonce_mismatch` `nonce_missing` นอกนั้น error) และ
   `cid_unavailable` ได้ `thaid:cid-unavailable:<claim>` — บรรทัด `[thaid] <code>` ใน log ของ container ไม่มีข้อความของ error แล้ว ดูบรรทัด `[capture]`
   ถัดไป (5.1)
@@ -1524,11 +1524,11 @@ operation คงรหัสเดิมไว้ ข้อความอิส
 | `reason` | เกิดเมื่อ | subject | actor | โค้ด |
 |---|---|---|---|---|
 | `EXPIRED` | มีคนยื่น cookie ของ session ที่เลย `expires_at` (ABSOLUTE) หรือว่างเกิน `SESSION_IDLE_HOURS` (IDLE) — ผ่าน `requireAuth` ทุก route, `/logout`, `/password-reset`, `issueSession()` | `SESSION` · id ของแถว session | `USER` = เจ้าของ session | `session.ts:115` |
-| `LOGOUT` | `POST /api/auth/logout` กับ session ที่ยังใช้ได้ | `SESSION` | `SYSTEM` (null) | `session.ts:147` ← `auth.ts:1189` |
-| `ROTATED` | ออก session ใหม่ขณะเบราว์เซอร์ถือ cookie ที่ยังใช้ได้ (verify-otp, `/activate`, ThaID login) | `SESSION` · **ใบเก่า** | `SYSTEM` (null) | `session.ts:147` ← `auth.ts:1366` |
-| `LOGOUT_ALL` | `POST /api/auth/logout-all` | UA | `USER` = เจ้าของบัญชี | `session.ts:182` ← `auth.ts:1197` |
-| `PASSWORD_CHANGED` | `POST /api/auth/password-reset` สำเร็จ — **ในธุรกรรม** | UA | `USER` = เจ้าของบัญชี (ทั้งที่ผู้ยิงถือแค่ลิงก์) | `session.ts:182` ← `auth.ts:943` |
-| `ACCOUNT_SUSPENDED` | `requireAuth` พบบัญชีหายหรือไม่ `ACTIVE` | UA | `USER` = บัญชีนั้น | `session.ts:182` ← `middleware/auth.ts:82` |
+| `LOGOUT` | `POST /api/auth/logout` กับ session ที่ยังใช้ได้ | `SESSION` | `SYSTEM` (null) | `session.ts:147` ← `auth.ts:1188` |
+| `ROTATED` | ออก session ใหม่ขณะเบราว์เซอร์ถือ cookie ที่ยังใช้ได้ (verify-otp, `/activate`, ThaID login) | `SESSION` · **ใบเก่า** | `SYSTEM` (null) | `session.ts:147` ← `auth.ts:1352` |
+| `LOGOUT_ALL` | `POST /api/auth/logout-all` | UA | `USER` = เจ้าของบัญชี | `session.ts:182` ← `auth.ts:1196` |
+| `PASSWORD_CHANGED` | `POST /api/auth/password-reset` สำเร็จ — **ในธุรกรรม** | UA | `USER` = เจ้าของบัญชี (ทั้งที่ผู้ยิงถือแค่ลิงก์) | `session.ts:182` ← `auth.ts:942` |
+| `ACCOUNT_SUSPENDED` | `requireAuth` พบบัญชีหายหรือไม่ `ACTIVE` | UA | `USER` = บัญชีนั้น | `session.ts:182` ← `middleware/auth.ts:93` |
 | `ACCOUNT_SUSPENDED` | admin `suspend` · `deactivate` · reset คำขอหน่วยงานที่ถอดผู้มีอำนาจฯ — **ในธุรกรรม** | UA | `USER` = **บัญชีเป้าหมาย** + `admin_token_fp` | `session.ts:182` ← `admin-users.ts:747` `:855` · `admin-registrations.ts:475` |
 | `ROTATED` | admin `identity` เมื่อ `diffFields()` ไม่ว่าง — ซึ่ง**รวมการส่งมาช่องเดียวแม้ค่าเท่าเดิม** (ช่องที่ไม่ได้ส่งถูกเทียบเป็น null กับค่าในบัญชี ดูข้อบกพร่องใน 4.3) ไม่เข้าทางนี้แค่เมื่อส่งมาครบทั้งสองช่องและไม่เปลี่ยน (หรือส่งแค่อีเมลเท่าเดิมให้บัญชีที่ไม่มีเลขบัตร) · `transfer` — **ในธุรกรรม** | UA | `USER` = บัญชีเป้าหมาย + `admin_token_fp` | `session.ts:182` ← `admin-users.ts:622` `:1422` |
 | `LOGOUT_ALL` | admin `DELETE /api/admin/users/:id/sessions` (แถวของ helper) | UA | `USER` = บัญชีเป้าหมาย + `admin_token_fp` | `session.ts:182` ← `admin-users.ts:988` |
@@ -1591,7 +1591,7 @@ operation คงรหัสเดิมไว้ ข้อความอิส
 - ถ้าบัญชีนี้ถูกลบภายหลัง (`INVITATION_DELETED`, `APPROVER_INVITATION_RECALLED` ที่ `accountDeleted: true`) แถวลบเหล่านั้นไม่มี id ของบัญชี
   ต่อเรื่องได้ด้วยอีเมลหรือเลขบัตรเท่านั้น — แถวของรหัสนี้เก็บเลขบัตรแบบปิดแล้วทั้งสองจุด จับกับ `before.cid` เต็มของแถวลบได้แค่ 4 ตัวท้าย
   (`ACTIVATION_KEY_ISSUED` ขา admin ยังเก็บเต็ม ใช้แทนได้ — 4.5)
-- **โค้ด** `routes/admin.ts:848` · `routes/organizations.ts:2842`
+- **โค้ด** `routes/admin.ts:848` · `routes/organizations.ts:2748`
 
 #### `USER_ACCOUNT_ACTIVATED` — เปิดใช้งานบัญชี
 
@@ -1612,12 +1612,12 @@ operation คงรหัสเดิมไว้ ข้อความอิส
 | `activation_key_id` | คีย์ที่ใช้ | `"9a1f…"` |
 
 - **ข้อมูลส่วนบุคคล** `actor_name` · โปรไฟล์ที่เขียนในธุรกรรม (ชื่อ เบอร์โทร รหัสผ่าน `external_subject`) **ไม่ถูกบันทึก**
-- **ไม่ได้แปลว่า PENDING → ACTIVE เสมอ** — `/activate` ปฏิเสธแค่บัญชีที่ `ACTIVE` อยู่แล้ว (`auth.ts:686`) และ
+- **ไม่ได้แปลว่า PENDING → ACTIVE เสมอ** — `/activate` ปฏิเสธแค่บัญชีที่ `ACTIVE` อยู่แล้ว (`auth.ts:685`) และ
   `POST /api/admin/invitations/:id/resend` ก็ปฏิเสธแค่ `ACTIVE` (`admin.ts:992`) บัญชีที่ `SUSPENDED` หรือ `DEACTIVATED` จึงได้คีย์ใหม่
   ด้วย resend ผ่าน ThaID แล้ว `completeActivation()` ตั้งเป็น `ACTIVE` (`iam.ts:687-695`) ได้แถวนี้ที่ before/after เป็น null ไม่ใช่
   `USER_ACCOUNT_REINSTATED` หรือ `REACTIVATED` — แถวไม่บอกสถานะก่อนหน้า ต้องดูแถวสถานะล่าสุดของบัญชีเดียวกัน (ในกรณีนั้น `before.status`
   ของ `ACTIVATION_KEY_ISSUED` ขา resend อาจเป็น `"USED"`)
-- **โค้ด** `routes/auth.ts:787`
+- **โค้ด** `routes/auth.ts:786`
 
 #### `USER_ACCOUNT_UPDATED` — แก้ข้อมูลบัญชี
 
@@ -1640,7 +1640,7 @@ operation คงรหัสเดิมไว้ ข้อความอิส
   จึงนับว่า “เปลี่ยน” ถ้าบัญชีมีค่า: ส่งแค่อีเมลได้ `before: {email: เก่า, cid: เลขบัตรปัจจุบัน}` `after: {email: ใหม่}`
   และส่งค่าเดิมมาช่องเดียวได้ `after: {}` ขณะที่ route ยังเพิกถอน session ทุกใบ
 - **ตัวอย่าง** `{"before": {"firstnameTh": "สมชาย"}, "after": {"firstnameTh": "สมชัย"}, "metadata": {"updated_via": "THAID", "integration_operation_id": "e7d4…"}}`
-- **โค้ด** `routes/admin-users.ts:533` (โปรไฟล์) · `:629` (อีเมล/เลขบัตร ตามหลัง [`SESSION_REVOKED` ROTATED ในธุรกรรม] ถ้าบัญชีมี session เปิดอยู่) · `routes/auth.ts:537` (ชื่อจากบัตร)
+- **โค้ด** `routes/admin-users.ts:533` (โปรไฟล์) · `:629` (อีเมล/เลขบัตร ตามหลัง [`SESSION_REVOKED` ROTATED ในธุรกรรม] ถ้าบัญชีมี session เปิดอยู่) · `routes/auth.ts:536` (ชื่อจากบัตร)
 
 #### `USER_IDENTITY_RELEASED` — ปล่อยอีเมลของบัญชีให้ใช้ใหม่
 
@@ -1723,7 +1723,7 @@ subject **ไม่สม่ำเสมอ**: สามจุดชี้แถ
 |---|---|---|---|---|---|
 | activate | `POST /api/auth/activate` — `assignRole` สร้าง assignment ใหม่จริง (มีอยู่แล้ว = ไม่มีแถว) | `USER` = บัญชีที่เปิด | URA | null / `{userAccountId, role, organizationId}` | `assigned_via: "ACTIVATION"` · `activation_key_id` · `replaced` |
 | เปิดหน่วยงาน | **ถอดแล้วที่ `7259c09`** — แถวเก่าเท่านั้น: `POST /api/organizations` ทางหน่วยงานใหม่ | **แถว session** (ผู้ใช้ = ผู้รับ role) | URA | null / เหมือนข้างบน (`ORGANIZATION_USER`) | `assigned_via: "ORGANIZATION_CREATED"` · `request_number` · `replaced` |
-| review | `POST /api/organizations/:id/review` ผ่านด่าน `BDI_OFFICER_REVIEW` และผู้มีอำนาจฯ มีบัญชี `ACTIVE` แล้ว และ `assignRole` สร้าง assignment ใหม่จริง — ผู้มีอำนาจฯ ที่ถือ `ORGANIZATION_APPROVER` ของหน่วยงานนี้อยู่แล้ว (เช่นผ่านด่านแรกรอบที่สองหลังคำขอถูกส่งกลับ) = `created: false` ไม่มีแถว (`organizations.ts:3244` `:2881`) | **แถว session** = ผู้ประสานงาน BDI | URA | null / เหมือนข้างบน (`ORGANIZATION_APPROVER`) | `assigned_via: "REVIEW_API"` · `request_number` · `replaced` |
+| review | `POST /api/organizations/:id/review` ผ่านด่าน `BDI_OFFICER_REVIEW` และผู้มีอำนาจฯ มีบัญชี `ACTIVE` แล้ว และ `assignRole` สร้าง assignment ใหม่จริง — ผู้มีอำนาจฯ ที่ถือ `ORGANIZATION_APPROVER` ของหน่วยงานนี้อยู่แล้ว (เช่นผ่านด่านแรกรอบที่สองหลังคำขอถูกส่งกลับ) = `created: false` ไม่มีแถว (`organizations.ts:3150` `:2787`) | **แถว session** = ผู้ประสานงาน BDI | URA | null / เหมือนข้างบน (`ORGANIZATION_APPROVER`) | `assigned_via: "REVIEW_API"` · `request_number` · `replaced` |
 | admin มอบ | `POST /api/admin/users/:id/roles` `{role, organizationId?, reason}` | **แถว admin** | **UA** | null / `{role, organizationId}` | `reason` · `assigned_via: "ADMIN_API"` · `replaced` |
 | admin ย้าย | `POST /api/admin/users/:id/transfer` `{organizationId, role, reason}` | **แถว admin** | **UA** | `{organizationIds: [...]}` / `{organizationId, role}` | `reason` · `transferred_via: "ADMIN_API"` · `requests_reverted_to_draft` · `replaced` |
 
@@ -1749,7 +1749,7 @@ subject **ไม่สม่ำเสมอ**: สามจุดชี้แถ
   ยังเขียนแถวนี้ (และแจ้งเตือน)
 - **ข้อมูลส่วนบุคคล** id เท่านั้น + `reason` ของ admin
 - **ตัวอย่าง** `{"after": {"userAccountId": "5c3e…", "role": "ORGANIZATION_APPROVER", "organizationId": "2c8e…"}, "metadata": {"assigned_via": "REVIEW_API", "request_number": "ORG-REG-2026-0004", "replaced": 0}}`
-- **โค้ด** `routes/auth.ts:809` · `routes/organizations.ts:1175` · `:2882` · `routes/admin-users.ts:1223` · `:1430`
+- **โค้ด** `routes/auth.ts:808` · `routes/organizations.ts:2788` · `routes/admin-users.ts:1223` · `:1430` · ทาง WEB_FORM ที่ถอดแล้วอยู่ที่ `organizations.ts:1175` ของ `2cab0a7`
 
 #### `ROLE_REVOKED` — เพิกถอนบทบาท
 
@@ -1768,10 +1768,10 @@ subject **ไม่สม่ำเสมอ**: สามจุดชี้แถ
 
 รูปแบบ A แทนที่ที่นั่ง (ผ่าน `assignRole()` `iam.ts:227` · `reason` = `"มีผู้รับผิดชอบคนใหม่แทน"` · เฉพาะเมื่อผู้ถือเดิมบัญชีไม่ `ACTIVE`):
 - `POST /api/auth/activate` (actor = บัญชีที่กำลังเปิด) — ตามด้วยรูปแบบ B
-- `POST /api/organizations/:id/review` ผ่านด่านแรกกับผู้มีอำนาจฯ ที่บัญชี **`ACTIVE`** แล้ว (`organizations.ts:3234-3244`, actor = `SYSTEM_USER_ID`)
-  — ตามด้วยรูปแบบ B · บัญชีที่มีอยู่แต่ `PENDING` `SUSPENDED` หรือ `DEACTIVATED` ไปทาง `issueActivationKey()` (`:3245-3253`) ซึ่งไม่เรียก
+- `POST /api/organizations/:id/review` ผ่านด่านแรกกับผู้มีอำนาจฯ ที่บัญชี **`ACTIVE`** แล้ว (`organizations.ts:3140-3150`, actor = `SYSTEM_USER_ID`)
+  — ตามด้วยรูปแบบ B · บัญชีที่มีอยู่แต่ `PENDING` `SUSPENDED` หรือ `DEACTIVATED` ไปทาง `issueActivationKey()` (`:3151-3159`) ซึ่งไม่เรียก
   `assignRole` จึงไม่มีทั้งรูปแบบ A และ B
-- **ถอดแล้วที่ `7259c09`** `POST /api/organizations` (`:1133`, actor = ผู้ใช้) — ตามด้วยรูปแบบ B (`:1146` เขียนก่อน `ORGANIZATION_CREATED`) หน่วยงานเพิ่งสร้าง
+- **ถอดแล้วที่ `7259c09`** `POST /api/organizations` (`:1133` ของ `2cab0a7`, actor = ผู้ใช้) — ตามด้วยรูปแบบ B (`:1146` เขียนก่อน `ORGANIZATION_CREATED`) หน่วยงานเพิ่งสร้าง
   ในทางปฏิบัติไม่เกิด
 - `POST /api/admin/users/:id/roles` (`admin-users.ts:1215`) และ `/transfer` (`:1414`) — actor = `SYSTEM_USER_ID` **ไม่มี**รูปแบบ B และผู้ถูกแทนไม่ได้รับแจ้ง
 - `seed:demo` (`scripts/seed-demo.ts:103`)
@@ -1832,7 +1832,7 @@ subject **ไม่สม่ำเสมอ**: สามจุดชี้แถ
   ชีวิตของบัญชี PENDING ที่จบด้วยการถูกลบจึงตามด้วย id ไม่ได้ ต้องจับด้วยอีเมล (หรือเลขบัตรเต็มในแถวที่ยังเก็บเต็ม) ส่วนในสำเนา Mongo
   เลขบัตรถูกปิดและอีเมลบัญชีไม่ถูก hash แถวเหล่านี้จึงเข้า `person=` ไม่ได้ (3.2 `relatedUserIds`)
 - **ตัวอย่าง (review)** `{"after": {"email": "approver@agency.go.th", "cid": {"masked": "xxxxxxxxx4821", "changed": true}, "role": "ORGANIZATION_APPROVER", "name": "นาย ผู้มีอำนาจ ตัวอย่าง", "userAccountId": "5c3e…"}, "metadata": {"issued_via": "REVIEW_API", "reason": "APPROVER_INVITATION", "request_number": "ORG-REG-2026-0004"}}`
-- **โค้ด** `routes/admin.ts:867` · `:1062` · `routes/organizations.ts:2861`
+- **โค้ด** `routes/admin.ts:867` · `:1062` · `routes/organizations.ts:2767`
 
 #### `ACTIVATION_KEY_USED` — คีย์ถูกใช้เปิดบัญชี
 
@@ -1855,7 +1855,7 @@ subject **ไม่สม่ำเสมอ**: สามจุดชี้แถ
 | `user_account_id` | บัญชีของคีย์ | `"5c3e…"` |
 | `role` | role ของคีย์ | `"ORGANIZATION_USER"` |
 
-- **ข้อมูลส่วนบุคคล** `actor_name` · **โค้ด** `routes/auth.ts:798`
+- **ข้อมูลส่วนบุคคล** `actor_name` · **โค้ด** `routes/auth.ts:797`
 
 #### `ACTIVATION_KEY_REVOKED` — คีย์ที่ยังใช้ได้ถูกเพิกถอน
 
@@ -1868,8 +1868,8 @@ subject **ไม่สม่ำเสมอ**: สามจุดชี้แถ
 | `POST /api/admin/invitations/:id/revoke` — คีย์ `:id` ยัง ISSUED (ไม่ใช่ = 404) **ไม่ดู `expires_at`**: คีย์ที่เลยกำหนดแต่ยังไม่มีใครเปิดจึงถูกพลิกเป็น `REVOKED` ได้แถวนี้ ไม่เคยได้ `ACTIVATION_KEY_EXPIRED` | **แถว admin** | ที่ admin พิมพ์ หรือ `"ยกเลิกโดยผู้ดูแลระบบ"` | `ADMIN_API` | — | `admin.ts:1297` |
 | `POST /api/admin/users/:id/deactivate` — คีย์ ISSUED ของบัญชี | **แถว admin** | `"บัญชียุติการใช้งาน"` | `ADMIN_API` | — | `admin-users.ts:883` |
 | `POST /api/admin/registrations/organizations/:id/reset` — คีย์ของผู้มีอำนาจฯ ที่ถูกถอด หรือของบัญชี PENDING ที่ลบไม่ได้ | **แถว admin** | ที่ admin พิมพ์ | `ADMIN_RESET_API` | — | `admin-registrations.ts:582` |
-| `POST /api/organizations/:id/review` ผ่านด่านแรกและเคยมีคำเชิญผู้มีอำนาจฯ ค้างอยู่ | **แถว session** = ผู้ประสานงาน BDI | `"ออกคีย์ใหม่แทน"` | `REVIEW_API` | มี | `organizations.ts:2857` |
-| `POST /api/organizations/:id/review` `action: "recall"` และบัญชี PENDING ถูกเก็บไว้ | **แถว session** = ผู้ประสานงาน BDI | บันทึกของผู้ประสานงาน (note) | `REVIEW_API` | — | `organizations.ts:2918` |
+| `POST /api/organizations/:id/review` ผ่านด่านแรกและเคยมีคำเชิญผู้มีอำนาจฯ ค้างอยู่ | **แถว session** = ผู้ประสานงาน BDI | `"ออกคีย์ใหม่แทน"` | `REVIEW_API` | มี | `organizations.ts:2763` |
+| `POST /api/organizations/:id/review` `action: "recall"` และบัญชี PENDING ถูกเก็บไว้ | **แถว session** = ผู้ประสานงาน BDI | บันทึกของผู้ประสานงาน (note) | `REVIEW_API` | — | `organizations.ts:2824` |
 
 | ช่อง | ค่า |
 |---|---|
@@ -1898,10 +1898,10 @@ subject **ไม่สม่ำเสมอ**: สามจุดชี้แถ
 (`updateMany` มีเงื่อนไขสถานะเดิม เปิดพร้อมกันกี่คนก็ได้แถวเดียว) คีย์ที่ไม่มีใครเปิดค้าง `ISSUED` ต่อไปโดยไม่มีแถว
 
 **เกิดเมื่อ** (คีย์มีอยู่ ไม่ใช่ USED/REVOKED และ `expires_at` ผ่านไปแล้ว)
-- `GET /api/auth/invitation?token=` (`auth.ts:160`)
-- `POST /api/auth/thaid/start` ขา activate (`auth.ts:265`)
-- `POST /api/auth/thaid/callback` ขา activate (`auth.ts:441`) — ตามด้วย `IDENTITY_VERIFICATION_FAILED` `key_expired`
-- `POST /api/auth/activate` (`auth.ts:681`)
+- `GET /api/auth/invitation?token=` (`auth.ts:159`)
+- `POST /api/auth/thaid/start` ขา activate (`auth.ts:264`)
+- `POST /api/auth/thaid/callback` ขา activate (`auth.ts:440`) — ตามด้วย `IDENTITY_VERIFICATION_FAILED` `key_expired`
+- `POST /api/auth/activate` (`auth.ts:680`)
 
 | ช่อง | ค่า |
 |---|---|
@@ -1973,7 +1973,7 @@ subject **ไม่สม่ำเสมอ**: สามจุดชี้แถ
   ไม่มีอะไรตาม · ถ้าบัญชีถูกลบ คีย์หายตามไปโดยไม่มีแถว
 - **ไม่มี id ของบัญชี** — `before` มีแค่ `{email, cid, displayName, status}` บัญชีที่ `accountDeleted: true` จึงตามต่อได้ด้วยอีเมลหรือเลขบัตรเท่านั้น (4.5 ข้างบน)
 - **ข้อมูลส่วนบุคคล สูง** อีเมล ชื่อ และ**เลขบัตรเต็ม** ไม่ปิดใน Postgres + ข้อความอิสระ
-- **โค้ด** `routes/organizations.ts:2908` · `routes/admin-registrations.ts:553`
+- **โค้ด** `routes/organizations.ts:2814` · `routes/admin-registrations.ts:553`
 
 ---
 
@@ -2003,7 +2003,7 @@ subject เป็นแถว `organization` เสมอ **แถวทาง W
 
 - `status` เป็น `"PENDING_REGISTRATION"` · ที่อยู่เป็น**รหัส**ที่แปลงแล้ว ไม่ใช่ชื่อที่ส่งมา · ชื่อหน่วยงานของ WEB_FORM อาจเป็น `"หน่วยงานใหม่"`
 - **ข้อมูลส่วนบุคคล** อีเมลและเบอร์โทรของหน่วยงาน (ขา admin) ซึ่งอาจเป็นของคน
-- **โค้ด** `routes/admin.ts:247` · `routes/organizations.ts:1153`
+- **โค้ด** `routes/admin.ts:247` · ทาง WEB_FORM ที่ถอดแล้วอยู่ที่ `routes/organizations.ts:1153` ของ `2cab0a7`
 
 #### `ORGANIZATION_UPDATED` — admin แก้ทะเบียนหน่วยงาน
 
@@ -2030,7 +2030,7 @@ subject เป็นแถว `organization` เสมอ **แถวทาง W
 #### `ORGANIZATION_ACTIVATED` — หน่วยงานเปิดใช้งาน
 
 BDI อนุมัติขั้นสุดท้าย ค่าในคำขอ 14 คีย์ (ตามตารางข้างล่าง) ถูกเขียนทับทะเบียนหน่วยงาน ซึ่ง `REQUEST_APPROVED` ไม่ได้บอก — ไม่ใช่ทั้งชุด:
-`organizationType` ในคำขอ**ไม่ถูกคัดลอก** และ `parentOrganizationId` ก็ไม่ (`organizations.ts:2744-2759`)
+`organizationType` ในคำขอ**ไม่ถูกคัดลอก** และ `parentOrganizationId` ก็ไม่ (`organizations.ts:2650-2665`)
 
 **เกิดเมื่อ**
 - `POST /api/organizations/:id/review` อนุมัติที่ด่าน `BDI_FINAL_APPROVAL` — ตามหลัง `REQUEST_APPROVED` ก่อน `DOCUMENT_SIGNED`
@@ -2050,7 +2050,7 @@ BDI อนุมัติขั้นสุดท้าย ค่าในคำ
 
 - **ข้อมูลส่วนบุคคล** `email` และ `phone` ของหน่วยงานใน before/after ซึ่งอาจเป็นของคน ไม่ปิด
 - **ตัวอย่าง** `{"before": {"status": "PENDING_REGISTRATION", "phone": null}, "after": {"status": "ACTIVE", "phone": "021112222"}, "metadata": {"activated_via": "REVIEW_API", "request_number": "ORG-REG-2026-0004", "fields_changed": ["status", "phone"]}}`
-- **โค้ด** `routes/organizations.ts:2806`
+- **โค้ด** `routes/organizations.ts:2712`
 
 ---
 
@@ -2063,7 +2063,7 @@ BDI อนุมัติขั้นสุดท้าย ค่าในคำ
 - `POST /api/organizations` ทางหน่วยงานที่มีอยู่แล้ว — ผู้ใช้มีหน่วยงานใน session (`session.organizationId`) **และถือ `ORGANIZATION_USER`**
   (เงื่อนไขหลังมาจาก `7259c09` — ผู้มีอำนาจฯ และผู้ไม่มีหน่วยงานได้ 403 `no_organization` ไม่มีแถว) หน่วยงานนั้นยังไม่ `ACTIVE` และไม่มีคำขอเปิดค้าง
   (`prefilled_from`) ซึ่งรวมทั้งผู้ถูกเชิญเข้าหน่วยงานที่ admin สร้างไว้ **และ**ผู้ใช้ที่ยื่นใหม่หลังคำขอของหน่วยงานที่ตัวเองเปิดทาง WEB_FORM ถูก
-  `REJECTED` (การปฏิเสธตั้งแค่ `rejected_at` ไม่ถอน `ORGANIZATION_USER` — `organizations.ts:2773-2777`)
+  `REJECTED` (การปฏิเสธตั้งแค่ `rejected_at` ไม่ถอน `ORGANIZATION_USER` — `organizations.ts:2679-2683`)
 - **ถอดแล้วที่ `7259c09`** `POST /api/organizations` ทางหน่วยงานใหม่ — ตามหลัง `ORGANIZATION_CREATED` (แถวเก่าเท่านั้น)
 
 | ช่อง | ค่า |
@@ -2076,11 +2076,11 @@ BDI อนุมัติขั้นสุดท้าย ค่าในคำ
 
 | metadata | ความหมาย | ตัวอย่าง |
 |---|---|---|
-| `prefilled_from` | *ทางหน่วยงานที่มีอยู่แล้ว* — ค่าตั้งต้นคัดลอกจากทะเบียน ค่า**คงที่ในโค้ด** (`organizations.ts:1075`) จึงไม่ได้พิสูจน์ว่า admin เป็นผู้สร้างหน่วยงาน ดู `ORGANIZATION_CREATED` ของหน่วยงานนั้น (`created_via`) | `"ADMIN_ORGANIZATION"` |
+| `prefilled_from` | *ทางหน่วยงานที่มีอยู่แล้ว* — ค่าตั้งต้นคัดลอกจากทะเบียน ค่า**คงที่ในโค้ด** (`organizations.ts:1094`) จึงไม่ได้พิสูจน์ว่า admin เป็นผู้สร้างหน่วยงาน ดู `ORGANIZATION_CREATED` ของหน่วยงานนั้น (`created_via`) | `"ADMIN_ORGANIZATION"` |
 | `organization_code` | *เหมือนข้างบน* | `"ORG-2026-0003"` |
 
 - เนื้อหาของร่าง**ไม่ถูกบันทึก**ในแถวนี้ · แถวก่อนการ์ดของสองทางฝั่งหน่วยงานเป็น `ORGANIZATION_UPDATED` และ `ORGANIZATION_CREATED` ตามลำดับ
-- **โค้ด** `routes/dataset-requests.ts:609` · `routes/organizations.ts:1068` · `:1167`
+- **โค้ด** `routes/dataset-requests.ts:609` · `routes/organizations.ts:1087` · ทางหน่วยงานใหม่ที่ถอดแล้วอยู่ที่ `:1167` ของ `2cab0a7`
 
 #### `REQUEST_DRAFT_SAVED` — ฝั่งหน่วยงานบันทึกร่าง
 
@@ -2128,7 +2128,7 @@ BDI อนุมัติขั้นสุดท้าย ค่าในคำ
 - **ข้อมูลส่วนบุคคล สูง** ชื่อ ตำแหน่ง อีเมล เบอร์โทรของผู้มีอำนาจฯ และผู้ประสานงาน ไม่ปิด · เลขบัตรเหลือ 4 ตัวท้าย ·
   ฝั่งชุดข้อมูลมี `maintainer` `maintainerEmail` และข้อความอิสระหลายช่อง
 - **ตัวอย่าง** ดู 2.9
-- **โค้ด** `routes/organizations.ts:1551` (แยกสามกลุ่มที่ `:1526-1540` · `changedOnlyInForm()` ใน `lib/organization-form.ts:127`) · `routes/dataset-requests.ts:857`
+- **โค้ด** `routes/organizations.ts:1457` (แยกสามกลุ่มที่ `:1432-1446` · `changedOnlyInForm()` ใน `lib/organization-form.ts:127`) · `routes/dataset-requests.ts:857`
 
 #### `REQUEST_FORM_GENERATED` — สร้างเอกสารจาก template ให้ตรวจก่อนนำส่ง
 
@@ -2137,7 +2137,7 @@ BDI อนุมัติขั้นสุดท้าย ค่าในคำ
 
 **เกิดเมื่อ**
 - `POST /api/organizations/:id/generate-form` — `canEdit` (หน่วยงานเดียวกัน + `ORGANIZATION_USER` ไม่ผ่าน = 404) ข้อมูลผ่าน `submitSchema`
-  ที่อยู่ถูกต้องตามฐานข้อมูล (`isValidAddress`, `organizations.ts:1815`) อีเมล/เลขบัตรของผู้มีอำนาจฯ ไม่ชนใคร (`approverConflict`, `:1834`)
+  ที่อยู่ถูกต้องตามฐานข้อมูล (`isValidAddress`, `organizations.ts:1721`) อีเมล/เลขบัตรของผู้มีอำนาจฯ ไม่ชนใคร (`approverConflict`, `:1740`)
   มีคำสั่งแต่งตั้งที่ ACTIVE และ render ได้อย่างน้อยหนึ่งฉบับ — ข้อใดไม่ผ่านได้ 4xx ไม่มีแถว
 - `POST /api/dataset-requests/:id/generate-form` — `mayEdit` (ไม่ผ่าน = 404) ข้อมูลผ่าน `datasetSubmitSchema` มี `DATA_DICTIONARY` ที่ ACTIVE และ render ได้อย่างน้อยหนึ่งฉบับ
 
@@ -2156,13 +2156,13 @@ BDI อนุมัติขั้นสุดท้าย ค่าในคำ
 | `documents` | ทุกฉบับที่ render: `[{code, version_id, attachment_id}]` | `[{"code": "A0", "version_id": "9b0e…", "attachment_id": "c41a…"}]` |
 
 - **ข้อมูลส่วนบุคคล** id เท่านั้น · ไฟล์ที่ render ไม่มีแถว `ATTACHMENT_*` ของตัวเอง แถวนี้คือบันทึกเดียวของมัน
-- **โค้ด** `routes/organizations.ts:1883` · `routes/dataset-requests.ts:1291`
+- **โค้ด** `routes/organizations.ts:1789` · `routes/dataset-requests.ts:1291`
 
 #### `REQUEST_SUBMITTED` — นำส่งคำขอ (และด่านของหน่วยงานที่ผ่านแต่ยังไม่จบ)
 
 **เกิดเมื่อ**
-- `POST /api/organizations/:id/submit` — คำขอ `DRAFT`/`RETURNED` ผ่าน `submitSchema` รหัสหน่วยงานไม่เป็นของหน่วยงานอื่น (`organizations.ts:2219`)
-  ผู้มีอำนาจฯ ไม่ชนใคร (`approverConflict`, `:2237`) มีเอกสารที่สร้างแล้ว มีผู้ประสานงาน BDI อย่างน้อยหนึ่งคน — ข้อใดไม่ผ่านได้ 4xx ไม่มีแถว
+- `POST /api/organizations/:id/submit` — คำขอ `DRAFT`/`RETURNED` ผ่าน `submitSchema` รหัสหน่วยงานไม่เป็นของหน่วยงานอื่น (`organizations.ts:2125`)
+  ผู้มีอำนาจฯ ไม่ชนใคร (`approverConflict`, `:2143`) มีเอกสารที่สร้างแล้ว มีผู้ประสานงาน BDI อย่างน้อยหนึ่งคน — ข้อใดไม่ผ่านได้ 4xx ไม่มีแถว
 - `POST /api/dataset-requests/:id/submit` — คำขอ `DRAFT`/`RETURNED` ผ่าน `datasetSubmitSchema` มี `DATA_DICTIONARY` และ `GENERATED_FORM` ที่ ACTIVE มีผู้ประสานงาน BDI
 - **`POST /api/organizations/:id/review`** — ผลเป็น `PASSED` หรือ `APPROVED` แต่คำขอยังไม่ถึง `APPROVED` (ด่าน `BDI_OFFICER_REVIEW` และ `ORGANIZATION_APPROVAL`) รายละเอียดที่ 4.9
 
@@ -2179,7 +2179,7 @@ BDI อนุมัติขั้นสุดท้าย ค่าในคำ
 - นำส่งครั้งแรกกับนำส่งใหม่หลัง `RETURNED` แยกกันไม่ได้ในแถว ต้องดูว่ามี `REQUEST_RETURNED` มาก่อนหรือไม่ · การเปิดด่าน
   `BDI_OFFICER_REVIEW` ไม่มีแถวของตัวเอง
 - ฝั่งชุดข้อมูลเขียน**หลัง** `notifyUsers()` ถ้าการแจ้งเตือน throw การนำส่ง commit แล้วแต่ไม่มีแถว
-- **โค้ด** `routes/organizations.ts:2285` · `routes/dataset-requests.ts:1420` · `routes/organizations.ts:2783` (ด่านตรวจ)
+- **โค้ด** `routes/organizations.ts:2191` · `routes/dataset-requests.ts:1420` · `routes/organizations.ts:2689` (ด่านตรวจ)
 
 #### `REQUEST_UPDATED` — admin แก้ snapshot ของคำขอโดยตรง
 
@@ -2329,7 +2329,7 @@ BDI อนุมัติขั้นสุดท้าย ค่าในคำ
   `attachment.owner_id` / `replaced_attachment_id` · สำเนา Mongo หา `requestNumber` ของแถวนี้จาก subject ไม่ได้
 - **ข้อมูลส่วนบุคคล** `filename` เป็นข้อความที่ผู้ใช้ตั้งเอง อาจมีชื่อคนหรือเลขบัตร ไม่ปิด
 - **ตัวอย่าง** `{"after": {"attachmentType": "DATA_DICTIONARY", "filename": "พจนานุกรมข้อมูล_OPD.xlsx"}}`
-- **โค้ด** `routes/organizations.ts:1644` · `routes/dataset-requests.ts:1081`
+- **โค้ด** `routes/organizations.ts:1550` · `routes/dataset-requests.ts:1081`
 
 #### `ATTACHMENT_DELETED` — ลบไฟล์แนบออกจากฟอร์ม
 
@@ -2346,7 +2346,7 @@ BDI อนุมัติขั้นสุดท้าย ค่าในคำ
 | before / after | `{attachmentType, filename}` / null |
 | metadata | ไม่มี — เหตุผล `"ผู้กรอกลบไฟล์ออกจากฟอร์ม"` อยู่บนแถวไฟล์ ไม่อยู่ในแถวนี้ |
 
-- **โค้ด** `routes/organizations.ts:1777` · `routes/dataset-requests.ts:1211`
+- **โค้ด** `routes/organizations.ts:1683` · `routes/dataset-requests.ts:1211`
 
 #### `DOCUMENT_DOWNLOADED` — เปิดหรือดาวน์โหลดไฟล์
 
@@ -2371,8 +2371,8 @@ BDI อนุมัติขั้นสุดท้าย ค่าในคำ
 
 - แยกพรีวิวออกจากดาวน์โหลดจริงไม่ได้ · แถวไม่มี id ของคำขอ ทางไฟล์กลางต้องใช้ `organization_id` กับเวลาหรือ correlation id
 - `:id` ของ `GET /api/organizations/:id/legal-documents/:versionId/file` เป็นได้ทั้ง id ของคำขอ**และ id ของหน่วยงาน**
-  (`findRequestByRequestOrOrganizationId()`, `organizations.ts:2088`) — แถวไม่บันทึกว่าเรียกด้วยแบบไหน
-- **โค้ด** `routes/organizations.ts:1679` · `:2144` · `:2180` · `routes/dataset-requests.ts:1115` · `:1710` · `:1744`
+  (`findRequestByRequestOrOrganizationId()`, `organizations.ts:1994`) — แถวไม่บันทึกว่าเรียกด้วยแบบไหน
+- **โค้ด** `routes/organizations.ts:1585` · `:2050` · `:2086` · `routes/dataset-requests.ts:1115` · `:1710` · `:1744`
 
 #### `DOCUMENT_SIGNED` — ลงนามอิเล็กทรอนิกส์
 
@@ -2394,11 +2394,11 @@ BDI อนุมัติขั้นสุดท้าย ค่าในคำ
   (ฝั่งหน่วยงานไม่รวมฉบับที่ข้ามว่าไม่เกี่ยวข้อง) · id ของ `signature_confirmation` ไม่ถูกบันทึก · การ render ฉบับลงนามซ้ำไม่มีแถว
 - **render ฉบับลงนามหลัง commit ล้ม** (ตัวแปลงล่มหลังบันทึกการลงนาม) — คำขอยังตอบ **200** พร้อม `agreementRendered: false` (หน่วยงาน) หรือ
   `documentRendered: false` (ชุดข้อมูล) แถวผลการตรวจและ `DOCUMENT_SIGNED` มีครบ ฉบับลงนามที่ขาดไปเห็นได้จาก error event
-  `render.agreement-after-commit` / `render.dataset-document-after-commit` (`organizations.ts:2955` · `dataset-requests.ts:2176`, 5.1) เท่านั้น ·
+  `render.agreement-after-commit` / `render.dataset-document-after-commit` (`organizations.ts:2861` · `dataset-requests.ts:2176`, 5.1) เท่านั้น ·
   ถ้าล้ม**ก่อน** commit ไม่มีแถวใดถูกเขียน และ 5xx นั้นถูกเก็บเป็น `render:<code>` ที่ตัวจัดการท้าย `index.ts` — route ตรวจของหน่วยงานส่ง
   `DocumentRenderError` ต่อด้วย `next(err)` ตั้งแต่ขั้น 5 (ตัวอย่างใน 5.2)
 - **ตัวอย่าง** `{"after": {"confirmationType": "ORGANIZATION_APPROVAL", "documentVersionIds": ["9b0e…"]}}`
-- **โค้ด** `routes/organizations.ts:2822` · `routes/dataset-requests.ts:2136`
+- **โค้ด** `routes/organizations.ts:2728` · `routes/dataset-requests.ts:2136`
 
 ---
 
@@ -2423,7 +2423,7 @@ BDI อนุมัติขั้นสุดท้าย ค่าในคำ
 
 ใช้ `after.taskType` (ในสำเนาคือ `gate`) บอกว่าด่านไหน อย่าใช้รหัสอย่างเดียว คอลัมน์ `result` ของแถวเป็น `SUCCESS` เสมอ
 ผลของการตรวจอยู่ใน `after.result` · recall กับ `request_revision` ที่ `ORGANIZATION_APPROVAL` หน้าตาเหมือนกัน (ทั้งสองต้องมี note ≥ 10 ตัว
-เหมือนทุก action ที่ไม่ใช่ `approve` `organizations.ts:2390`) — ตัวแยกที่เชื่อได้คือ **`actor_roles` ที่มี `BDI_OFFICER`** (ผู้มีอำนาจฯ ไม่มี role นั้น)
+เหมือนทุก action ที่ไม่ใช่ `approve` `organizations.ts:2296`) — ตัวแยกที่เชื่อได้คือ **`actor_roles` ที่มี `BDI_OFFICER`** (ผู้มีอำนาจฯ ไม่มี role นั้น)
 แถว `APPROVER_INVITATION_RECALLED` ที่ correlation id เดียวกันมี**เฉพาะ**เมื่อ `releaseApproverSeat()` คืนที่นั่ง — ไม่มีเมื่อคำขอไม่มี
 `approverEmail` หรือหาบัญชีของอีเมลนั้นไม่เจอ (`lib/approver-seat.ts:63-66`) การไม่มีแถวนั้นจึงไม่ได้แปลว่าไม่ใช่ recall
 
@@ -2434,7 +2434,7 @@ BDI อนุมัติขั้นสุดท้าย ค่าในคำ
 
 | ช่อง | ค่า |
 |---|---|
-| actor | **แถว session** = ผู้ถือ role ของด่าน (`BDI_OFFICER` · `ORGANIZATION_APPROVER` · `BDI_FINAL_APPROVER`) — **ยกเว้น recall**: `REQUEST_RETURNED` ที่ `after.taskType ORGANIZATION_APPROVAL` เขียนโดย `BDI_OFFICER` ซึ่งไม่ได้ถือ role ของด่านนั้น (ทาง recall ข้ามการตรวจ role ไปใช้ `recallRefusal()` แทน `organizations.ts:2443-2448`) |
+| actor | **แถว session** = ผู้ถือ role ของด่าน (`BDI_OFFICER` · `ORGANIZATION_APPROVER` · `BDI_FINAL_APPROVER`) — **ยกเว้น recall**: `REQUEST_RETURNED` ที่ `after.taskType ORGANIZATION_APPROVAL` เขียนโดย `BDI_OFFICER` ซึ่งไม่ได้ถือ role ของด่านนั้น (ทาง recall ข้ามการตรวจ role ไปใช้ `recallRefusal()` แทน `organizations.ts:2349-2354`) |
 | subject / organization_id | ORR หรือ DRR · คำขอ / หน่วยงานของคำขอ |
 | result | `SUCCESS` |
 | before / after | null / `{taskType, result, note?}` |
@@ -2445,11 +2445,11 @@ BDI อนุมัติขั้นสุดท้าย ค่าในคำ
 | `integration_operation_id` | *เหมือนข้างบน* — งาน DII `PUBLISH_DATASET_REFERENCE` ที่รอส่ง (correlation id เดียวกับแถวนี้) | `"51fd…"` |
 
 - **ข้อมูลส่วนบุคคล** `note` เป็นข้อความอิสระของผู้ตรวจ (ส่งกลับและปฏิเสธต้องมี) ไม่ปิดใน Postgres สำเนา Mongo ปิดเลข 13 หลักในนั้น
-- `note` ไม่มีเพดานใน zod ยาวได้เท่าเพดาน body 1 MB (`index.ts:51`) ขณะที่เอกสาร `activity` หนึ่งตัวต้องไม่เกิน 64 KB (แผน §3) —
+- `note` ไม่มีเพดานใน zod ยาวได้เท่าเพดาน body 1 MB (`index.ts:54`) ขณะที่เอกสาร `activity` หนึ่งตัวต้องไม่เกิน 64 KB (แผน §3) —
   **[ต้องตัดสิน]** relay ทำอย่างไรกับแถวที่ใหญ่เกิน (ตัด ข้าม หรือล้ม) แผนและเอกสารนี้ยังไม่ได้กำหนด ใช้กับ `SPECIALIST_COMMENT_RECORDED` ด้วย ·
   ทาง `audit_fallback` ที่สร้างแล้วแทน `before`/`after` ด้วย `{truncated: true}` (3.14)
 - **ตัวอย่าง** `{"after": {"taskType": "BDI_FINAL_APPROVAL", "result": "APPROVED", "note": "ข้อมูลครบถ้วน อนุมัติ"}, "metadata": {"dataset_id": "e1f2…", "integration_operation_id": "0a1b…"}}`
-- **โค้ด** `routes/organizations.ts:2783` · `routes/dataset-requests.ts:2115`
+- **โค้ด** `routes/organizations.ts:2689` · `routes/dataset-requests.ts:2115`
 
 #### `REQUEST_ASSIGNED` — ผู้ประสานงาน BDI ขอความเห็นผู้เชี่ยวชาญด้านข้อมูล หรือถอน
 
@@ -2565,7 +2565,7 @@ token นี้เปิดทุกอย่างใต้ `/api/admin` ไม
 
 | ชนิดแถว | เมื่อไร | `correlation_id` | IP / UA | metadata |
 |---|---|---|---|---|
-| **ทันที** | ครั้งแรกของที่มา (IP) ในหน้าต่าง 10 นาที และงบแถวทันทีรวมทุก IP (20 แถวในช่วง 10 นาทีใด ๆ แบบหน้าต่างเลื่อน) ยังเหลือ | ของคำขอ | มี — ยกเว้นที่มาที่ไม่ใช่ IP: `req.ip` ที่ไม่ใช่รูป IP ทุกค่าใช้หน้าต่างเดียวกัน (`UNPARSED_KEY`) แถวได้ IP null + `ip_unparsed: true` · คำขอที่ไม่มี `req.ip` เลยใช้อีกถัง (`NO_ADDRESS_KEY`) IP null ไม่มีธง (`token-rejection.ts:82-83` `:365-373`) | `method` `path` `token_present` `token_fp` [+ `watched_over_budget`] |
+| **ทันที** | ครั้งแรกของที่มา (IP) ในหน้าต่าง 10 นาที และงบแถวทันทีรวมทุก IP (20 แถวในช่วง 10 นาทีใด ๆ แบบหน้าต่างเลื่อน) ยังเหลือ | ของคำขอ | มี — ยกเว้นที่มาที่ไม่ใช่ IP: `req.ip` ที่ไม่ใช่รูป IP ทุกค่าใช้หน้าต่างเดียวกัน (`UNPARSED_KEY`) แถวได้ IP null + `ip_unparsed: true` · คำขอที่ไม่มี `req.ip` เลยใช้อีกถัง (`NO_ADDRESS_KEY`) IP null ไม่มีธง (`token-rejection.ts:83-84` `:361-369`) | `method` `path` `token_present` `token_fp` [+ `watched_over_budget`] |
 | **ทันที · ถังรวม** | งบ 20 แถวหมด และถังรวมยังไม่เปิด — ที่มาใหม่หลังจากนั้นถูกนับรวมในถังเดียว | ของคำขอ | **ไม่มีทั้งคู่** | เหมือนข้างบน + `throttle_overflow: true` |
 | **token ที่เฝ้า** | fingerprint อยู่ใน `ADMIN_TOKEN_WATCH_FPS` ที่มานี้ยังไม่ได้แถวในนาทีนี้ และงบ 60 แถว/10 นาทียังเหลือ — นอกงบ 20 | ของคำขอ | มี | `method` `path` `token_present` `token_fp` `watched_token: true` |
 | **สรุป** | หน้าต่างปิด (ตัวกวาดทุก 60 วินาที · คำขอถัดไปของที่มาเดิมเจอหน้าต่างหมดอายุ · `flushTokenRejections()` ตอน shutdown ภายใน 2 วินาที) และมีครั้งที่ถูกนับ > 0 | **UUID ใหม่** ไม่ตรงคำขอใด | ของคำขอแรกในหน้าต่าง (ถังรวม: ไม่มี) | `suppressed_count` `window_start` `window_end` `last_rejected_at` `token_fps` `paths` [+ `token_fps_truncated` `paths_truncated` `watched_suppressed_count` `throttle_overflow`] |
@@ -2581,7 +2581,7 @@ token นี้เปิดทุกอย่างใต้ `/api/admin` ไม
 | metadata | ความหมาย | ตัวอย่าง |
 |---|---|---|
 | `method` | HTTP method | `"POST"` |
-| `path` | **รูปแบบ** ของ path ไม่ใช่ข้อความดิบ: ตัด query ถอด `%xx` UUID → `:id` ตัวอักษรนอก `A-Za-z0-9/_.:-` → `_` กลุ่มเลขที่ชี้ตัวคน → `:n` แล้ว**ชั้นที่สอง**: ถ้าเลขที่เหลือทั้ง path ยังรวมได้ 9 หลักขึ้นไป เลขทุกช่วงกลายเป็น `:n` (จับเลขบัตรที่แยกด้วย `/` หรือ encode ซ้อน `token-rejection.ts:188-189`) ยาวไม่เกิน 120 | `"/api/admin/users/:id/suspend"` |
+| `path` | **รูปแบบ** ของ path ไม่ใช่ข้อความดิบ: ตัด query ถอด `%xx` UUID → `:id` ตัวอักษรนอก `A-Za-z0-9/_.:-` → `_` กลุ่มเลขที่ชี้ตัวคน → `:n` แล้ว**ชั้นที่สอง**: ถ้าเลขที่เหลือทั้ง path ยังรวมได้ 9 หลักขึ้นไป เลขทุกช่วงกลายเป็น `:n` (จับเลขบัตรที่แยกด้วย `/` หรือ encode ซ้อน `token-rejection.ts:184-185`) ยาวไม่เกิน 120 | `"/api/admin/users/:id/suspend"` |
 | `token_present` | ส่ง header มาหรือไม่ | `true` |
 | `token_fp` | 12 ตัวแรกของ SHA-256 ของค่าที่ส่งมา หรือ null | `"a1b2c3d4e5f6"` |
 | `watched_token` | แถวจากงบของ token ที่เฝ้า | `true` |
@@ -2597,9 +2597,9 @@ token นี้เปิดทุกอย่างใต้ `/api/admin` ไม
 - ตัวนับอยู่ในหน่วยความจำต่อ process — restart ล้าง, หลาย replica นับแยก · kill แบบไม่ graceful = แถวสรุปที่ค้างหายไป
 - **ตัวอย่าง (ทันที)** `{"metadata": {"method": "POST", "path": "/api/admin/invitations/:id/resend", "token_present": true, "token_fp": "a1b2c3d4e5f6"}}`
 - **ตัวอย่าง (สรุป)** `{"metadata": {"suppressed_count": 37, "window_start": "2026-09-29T03:10:00.000Z", "window_end": "2026-09-29T03:20:00.000Z", "last_rejected_at": "2026-09-29T03:19:42.000Z", "token_fps": ["a1b2c3d4e5f6"], "paths": ["POST /api/admin/invitations"]}}`
-- **โค้ด** `lib/token-rejection.ts:269` (`write()` จุดเดียว · แถวทันที `:417` · token ที่เฝ้า `:384` · สรุป `:275` · flush `:353`) · recorder สร้างที่ `middleware/auth.ts:145-149`
+- **โค้ด** `lib/token-rejection.ts:265` (`write()` จุดเดียว · แถวทันที `:413` · token ที่เฝ้า `:380` · สรุป `:271` · flush `:349`) · recorder สร้างที่ `middleware/auth.ts:156-160`
   · แถวที่เขียนไม่สำเร็จ (ทันที สรุปของตัวกวาด หรือ flush ตอน shutdown) ล้มใน `logAudit` จึงได้ `audit.write-failed` กับสำเนา `audit_fallback` เหมือนแถวอื่น (3.14)
-  — `write()` ถูกยิงด้วย `void` และ `logAudit` ไม่ reject · error `audit.token-rejection` (`:426`) คือ catch รอบตัว `record()` ที่เป็น synchronous: ความล้มเหลวของ
+  — `write()` ถูกยิงด้วย `void` และ `logAudit` ไม่ reject · error `audit.token-rejection` (`:422`) คือ catch รอบตัว `record()` ที่เป็น synchronous: ความล้มเหลวของ
   การทำบัญชีของตัวบันทึกเอง (`tokenFingerprint` `pathPattern` `parseClientIp` หน้าต่างและงบ) ไม่ใช่การเขียนแถวที่ล้ม (5.1)
 
 ---
@@ -2640,7 +2640,7 @@ token นี้เปิดทุกอย่างใต้ `/api/admin` ไม
 
 ### 5.1 เก็บจากที่ไหน · สร้างแล้ว (ยกเว้นแถวที่ติดป้าย)
 
-`captureError(err, options)` (`lib/error-capture.ts:260`) ทำงานแบบ synchronous และไม่ throw: กวาด error (5.6) นับเข้า issue พิมพ์**บรรทัดเดียว**
+`captureError(err, options)` (`lib/error-capture.ts:389`) ทำงานแบบ synchronous และไม่ throw: กวาด error (5.6) นับเข้า issue พิมพ์**บรรทัดเดียว**
 ลง log ของ container (5.8 — เว้นแต่จุดเก็บส่ง `print: false`) แล้ววางลงคิวในหน่วยความจำ (5.7) — ไม่มีอะไรบนเส้นทางของคำขอรอ Mongo คืน id ของ event หรือ null ถ้าไม่ได้เข้าคิว
 ไฟล์นี้ไม่เรียก `logAudit()` ทางใดเลย ความล้มเหลวของ audit จึงวนกลับมาไม่ได้
 
@@ -2648,24 +2648,24 @@ token นี้เปิดทุกอย่างใต้ `/api/admin` ไม
 
 | จุดเก็บ | level | tag | fingerprint | โค้ด |
 |---|---|---|---|---|
-| 500 ทั่วไปของ error middleware ตัวสุดท้าย | error | — | ตั้งต้น | `index.ts:352` |
-| Prisma known code ที่แปลงเป็น 4xx (`P2002` `P2003` `P2000` `P2025` `P2023`) — สัญญาณว่า route ยังไม่ดักเคสของตัวเอง | warning | `prisma.<code>` | `prisma:<code>:<METHOD route>` | `index.ts:326` |
-| Prisma ที่แปลงเป็น 503 (`P1001` `P1002` `P1008` `P1017` `P2024` — ฐานข้อมูลติดต่อไม่ได้ หรือ pool เต็ม) | **error** | `prisma.<code>` | `prisma:<code>:<METHOD route>` | `index.ts:326` |
-| `PrismaClientInitializationError` ที่ไม่มีรหัสในตาราง | error | `prisma.init` | ตั้งต้น | `index.ts:340` |
-| `DocumentRenderError` ≥ 500 (4xx ยังพิมพ์บรรทัด `[backend] <code>:` แบบเดิม ไม่เก็บ) | error | `render.<code>` | `render:<code>` | `index.ts:298` |
-| error หลังส่งหัวคำตอบไปแล้ว — ปิด socket เอง **ไม่ส่งต่อ `next(err)`** เพราะ finalhandler ของ Express พิมพ์ `err.stack` ดิบ | error | `http.after-headers-sent` | ตั้งต้น | `index.ts:230` |
-| body ที่อ่านไม่ออก ใหญ่เกิน หรือเข้ารหัสแบบที่ไม่รองรับ (`RequestBodyError` 400/413/415) — **ไม่พิมพ์** ผู้เรียกยิงถี่ได้เท่าที่ต้องการ | warning | `http.request-body` | `http:request-body:<status>` | `index.ts:250` |
-| 5xx ที่ route ตอบเองด้วย `res.json({error: "<สตริง>", …})` โดยยังไม่มีอะไรในคำขอนั้นถูกเก็บ (503 `no_reviewer` `no_legal_documents` · 501 ThaID ยังไม่ตั้งค่า · 502 ของ ThaID ที่ไม่ได้ถูกเก็บ) — 5xx ที่ส่งทาง `res.send` `res.end` `sendStatus` หรือ body ที่ไม่มี `error` เป็นสตริงไม่ถูกเก็บ | warning | `http.route-5xx` | `http:5xx:<METHOD route>:<error ≤ 64 ตัว>` | `index.ts:115` (5.8) |
+| 500 ทั่วไปของ error middleware ตัวสุดท้าย | error | — | ตั้งต้น | `index.ts:382` |
+| Prisma known code ที่แปลงเป็น 4xx (`P2002` `P2003` `P2000` `P2025` `P2023`) — สัญญาณว่า route ยังไม่ดักเคสของตัวเอง | warning | `prisma.<code>` | `prisma:<code>:<METHOD route>` | `index.ts:356` |
+| Prisma ที่แปลงเป็น 503 (`P1001` `P1002` `P1008` `P1017` `P2024` — ฐานข้อมูลติดต่อไม่ได้ หรือ pool เต็ม) | **error** | `prisma.<code>` | `prisma:<code>:<METHOD route>` | `index.ts:356` |
+| `PrismaClientInitializationError` ที่ไม่มีรหัสในตาราง | error | `prisma.init` | ตั้งต้น | `index.ts:370` |
+| `DocumentRenderError` ≥ 500 (4xx ยังพิมพ์บรรทัด `[backend] <code>:` แบบเดิม ไม่เก็บ) | error | `render.<code>` | `render:<code>` | `index.ts:328` |
+| error หลังส่งหัวคำตอบไปแล้ว — ปิด socket เอง **ไม่ส่งต่อ `next(err)`** เพราะ finalhandler ของ Express พิมพ์ `err.stack` ดิบ | error | `http.after-headers-sent` | ตั้งต้น | `index.ts:260` |
+| body ที่อ่านไม่ออก ใหญ่เกิน หรือเข้ารหัสแบบที่ไม่รองรับ (`RequestBodyError` 400/413/415) — **ไม่พิมพ์** ผู้เรียกยิงถี่ได้เท่าที่ต้องการ | warning | `http.request-body` | `http:request-body:<status>` | `index.ts:280` |
+| 5xx ที่ route ตอบเองด้วย `res.json({error: "<สตริง>", …})` โดยยังไม่มีอะไรในคำขอนั้นถูกเก็บ (503 `no_reviewer` `no_legal_documents` · 501 ThaID ยังไม่ตั้งค่า · 502 ของ ThaID ที่ไม่ได้ถูกเก็บ) — 5xx ที่ส่งทาง `res.send` `res.end` `sendStatus` หรือ body ที่ไม่มี `error` เป็นสตริงไม่ถูกเก็บ | warning | `http.route-5xx` | `http:5xx:<METHOD route>:<error ≤ 64 ตัว>` | `index.ts:121` (5.8) |
 | `logAudit` ล้ม — อ่าน snapshot ของผู้กระทำหรือ INSERT | error | `audit.write-failed` | ตั้งต้น | `lib/audit-fallback.ts:116` (3.14) |
-| ตัวบันทึกของ `ADMIN_TOKEN_REJECTED` ล้มในงานของตัวเอง (catch รอบ `record()`: fingerprint แม่แบบ path แยก IP หน้าต่างและงบ) — แถวที่เขียนไม่สำเร็จไม่มาที่นี่ มันล้มใน `logAudit` จึงเป็น `audit.write-failed` | error | `audit.token-rejection` | ตั้งต้น | `lib/token-rejection.ts:426` |
-| render เอกสารฉบับลงนามหลัง commit ไม่สำเร็จ (คำขอยังตอบ 200) | error | `render.agreement-after-commit` · `render.dataset-document-after-commit` | ตั้งต้น | `routes/organizations.ts:2955` · `routes/dataset-requests.ts:2176` |
-| อีเมลเชิญผู้มีอำนาจฯ ที่ส่งแบบไม่รอ ส่งไม่สำเร็จ | error | `mail.approver-invitation` | ตั้งต้น | `routes/organizations.ts:3271` |
-| แลก code หรือตรวจ id_token ของ ThaID ไม่ผ่าน | warning (`nonce_mismatch` `nonce_missing`) · error (อื่น) | `thaid.resolve-identity` | ตั้งต้น | `routes/auth.ts:378` |
-| ThaID ไม่ส่งเลขบัตรใน claim ที่เลือก — ตั้งค่าผิดฝั่งเรา ทุกคนติดเหมือนกัน | error | `thaid.cid-unavailable` | `thaid:cid-unavailable:<claim>` | `routes/auth.ts:423` |
+| ตัวบันทึกของ `ADMIN_TOKEN_REJECTED` ล้มในงานของตัวเอง (catch รอบ `record()`: fingerprint แม่แบบ path แยก IP หน้าต่างและงบ) — แถวที่เขียนไม่สำเร็จไม่มาที่นี่ มันล้มใน `logAudit` จึงเป็น `audit.write-failed` | error | `audit.token-rejection` | ตั้งต้น | `lib/token-rejection.ts:422` |
+| render เอกสารฉบับลงนามหลัง commit ไม่สำเร็จ (คำขอยังตอบ 200) | error | `render.agreement-after-commit` · `render.dataset-document-after-commit` | ตั้งต้น | `routes/organizations.ts:2861` · `routes/dataset-requests.ts:2176` |
+| อีเมลเชิญผู้มีอำนาจฯ ที่ส่งแบบไม่รอ ส่งไม่สำเร็จ | error | `mail.approver-invitation` | ตั้งต้น | `routes/organizations.ts:3177` |
+| แลก code หรือตรวจ id_token ของ ThaID ไม่ผ่าน | warning (`nonce_mismatch` `nonce_missing`) · error (อื่น) | `thaid.resolve-identity` | ตั้งต้น | `routes/auth.ts:377` |
+| ThaID ไม่ส่งเลขบัตรใน claim ที่เลือก — ตั้งค่าผิดฝั่งเรา ทุกคนติดเหมือนกัน | error | `thaid.cid-unavailable` | `thaid:cid-unavailable:<claim>` | `routes/auth.ts:422` |
 | revoke token ของ ThaID ไม่สำเร็จ (ข้ามไป ไม่กระทบผู้ใช้) | warning | `thaid.revoke` | ตั้งต้น | `lib/thaid.ts:181` |
 | อ่านตาราง `administration.dataset_choice` ไม่ได้ · บูตแล้วยังใช้ค่าตั้งต้นในโค้ด | warning | `dataset-choices.read-failed` · `dataset-choices.defaults` | ตั้งต้น · `dataset-choices:defaults` | `lib/dataset-choices.ts:157` `:181` |
-| `ensureContainer()` ตอนบูตไม่สำเร็จ | warning | `storage.ensure-container` | ตั้งต้น | `index.ts:380` |
-| `main()` ล้มตอนบูต | fatal แล้ว exit 1 | `startup` | ตั้งต้น | `index.ts:434` |
+| `ensureContainer()` ตอนบูตไม่สำเร็จ | warning | `storage.ensure-container` | ตั้งต้น | `index.ts:410` |
+| `main()` ล้มตอนบูต | fatal แล้ว exit 1 | `startup` | ตั้งต้น | `index.ts:467` |
 | `unhandledRejection` | error · `handled: false` | — | ตั้งต้น | process ทำงานต่อ (5.10) |
 | `uncaughtException` | fatal · `handled: false` | — | ตั้งต้น | exit 1 (5.10) |
 
@@ -2683,9 +2683,9 @@ token นี้เปิดทุกอย่างใต้ `/api/admin` ไม
 | `unhandledRejection` · `uncaughtException` | เหมือน backend | — | ตั้งต้น |
 
 ทั้งสอง process ยังเขียน event สรุป `error-capture.dropped` (fingerprint `error-capture:dropped:<service>`) หลังช่วงที่ทิ้งของ (5.7)
-`delivery.send-failed` และ `delivery.dead-letter` เกิดใน `runWithContext` ของแถว (`workers/delivery.ts:179-180`) จึงถือ correlation id ของคำขอที่สร้างการแจ้งเตือน
+`delivery.send-failed` และ `delivery.dead-letter` เกิดใน `runWithContext` ของแถว (`workers/delivery.ts:181-182`) จึงถือ correlation id ของคำขอที่สร้างการแจ้งเตือน
 นั้น — dead letter ค้นเจอด้วยรหัสอ้างอิงเดียวกับคลิกต้นเรื่อง · **ที่เหลือของ worker ไม่มีบริบท**: `delivery.tick` (`claimBatch()` ล้ม หรือ error ที่หลุดจาก catch
-ของ `deliver()` เอง เช่นเขียนสถานะ `FAILED` ไม่ได้ — `:215-222`) `delivery.main` และทุก capture ของงานดูแล log store ได้ `request: null` และบรรทัด `[capture]`
+ของ `deliver()` เอง เช่นเขียนสถานะ `FAILED` ไม่ได้ — `:228-235`) `delivery.main` และทุก capture ของงานดูแล log store ได้ `request: null` และบรรทัด `[capture]`
 ไม่มี `ref=`
 
 จุดที่เคยพิมพ์ error ดิบยังพิมพ์บรรทัดบอกที่เกิดเป็นภาษาไทย แต่จบด้วย `— ดูบรรทัด [capture] ถัดไป` แทนข้อความของ error
@@ -2889,7 +2889,7 @@ retention [ออกแบบ]: `error_events` 90 วัน (เบราว์�
 | `_id` · `at` | UUID · เวลา |
 | `service` | `backend` \| `delivery-worker` |
 | `host` · `release` | เหมือน `error_events` — `host.containerId` คงเดิมเมื่อ Docker restart container เดิม เปลี่ยนเมื่อสร้าง container ใหม่ |
-| `kind` | `start` — backend ตอน `listen` · worker ทันทีหลังสั่ง `startLogStore()` (ไม่รอให้ต่อได้ — เอกสารรอในคิว, `workers/delivery.ts:196-198`) · `shutdown` — ใน `shutdown()` / `stop()` ของ SIGTERM หรือ SIGINT ก่อน flush · `fatal-exit` — ใน `exitAfterFatal()` หลังเก็บ fatal ก่อน flush และ `exit(1)` |
+| `kind` | `start` — backend ตอน `listen` · worker ทันทีหลังสั่ง `startLogStore()` (ไม่รอให้ต่อได้ — เอกสารรอในคิว, `workers/delivery.ts:201-207`) · `shutdown` — ใน `shutdown()` / `stop()` ของ SIGTERM หรือ SIGINT ก่อน flush · `fatal-exit` — ใน `exitAfterFatal()` หลังเก็บ fatal ก่อน flush และ `exit(1)` |
 | `detail` | `start` `{node: "v22.…"}` · `shutdown` `{signal}` · `fatal-exit` `{mechanism, tag}` |
 
 ```json
@@ -2907,7 +2907,7 @@ index `{at:-1}` · retention 90 วัน [ออกแบบ]
 `audit_fallback` (`maskForLogStore` — 3.14) — relay ingest และเอกสาร `http` [ออกแบบ] จะใช้ไฟล์เดียวกัน · `failThaidOperation()` ใช้ `scrubText` กับข้อความ
 ที่ลง Postgres (ข้อ 7) · ฝั่ง **log ของ container** ที่ผ่านไฟล์นี้คือบรรทัด `[capture]` และ `prisma:error` ของ Prisma ตัวหลัก (`databaseLogLine`, `db.ts`)
 แต่**ไม่ใช่ทุกทาง**: บรรทัด `[log-store]` ใช้กฎของ `describe()` ใน `lib/log-store.ts` เอง (3.13) · dry-run ของ `lib/mail.ts` (เฉพาะเมื่อไม่ได้ตั้ง SMTP)
-พิมพ์ผู้รับ หัวเรื่อง ลิงก์ และรหัส OTP ลง stdout โดยตั้งใจ · `PrismaClient` ของ worker (`workers/delivery.ts:32`) สร้างโดยไม่มี `log` option จึงไม่ผ่าน
+พิมพ์ผู้รับ หัวเรื่อง ลิงก์ และรหัส OTP ลง stdout โดยตั้งใจ · `PrismaClient` ของ worker (`workers/delivery.ts:34`) สร้างโดยไม่มี `log` option จึงไม่ผ่าน
 `databaseLogLine()` แบบ `db.ts`
 
 หลักการเป็น allowlist ทุกที่ที่ทำได้ ตารางกวาดข้อความอิสระเป็นชั้นเดียวที่เป็น blocklist จึงเป็น**ชั้นสำรอง**
@@ -2945,7 +2945,7 @@ index `{at:-1}` · retention 90 วัน [ออกแบบ]
      ค่าใน props) ผ่าน `scrubClipped(text, max)` ซึ่งตัดเหลือ `max + 256` ตัว**ก่อน**กวาดแล้วค่อยตัดเหลือ `max` — ของที่คร่อมจุดตัดยังถูกกวาดครบ
      และ regex ไม่วิ่งบนข้อความขนาดเมกะไบต์บนเส้นทางของคำขอ · regex ของตารางกวาดเป็นเส้นตรง (กฎ DETAIL เดิมใช้ 8.8 วินาทีต่อคำขอที่มีห้าสิบคีย์ — แก้แล้ว)
      **แต่ตัวแยกเฟรมของ `scrubError()` ไม่เป็น**: `topFrameOf()` รัน regex ที่ไม่ยึดหัวบรรทัด (`redact.ts:312`) บนทุกบรรทัดที่ `framesOf()` หยิบจาก `err.stack`
-     ดิบซึ่งไม่ถูกจำกัดความยาว (`:299-303`) — เวลาโตเป็นกำลังสองกับความยาวบรรทัด (วัดแล้ว 2026-09-30: บรรทัด `at x (` ซ้ำ 18 KB ≈ 40 ms · 36 KB ≈ 150 ms ·
+     ดิบซึ่งไม่ถูกจำกัดความยาว (`:554-610`) — เวลาโตเป็นกำลังสองกับความยาวบรรทัด (วัดแล้ว 2026-09-30: บรรทัด `at x (` ซ้ำ 18 KB ≈ 40 ms · 36 KB ≈ 150 ms ·
      72 KB ≈ 600 ms) บรรทัดแบบนี้มาจาก message ที่มีบรรทัดขึ้นต้นด้วยช่องว่างตามด้วย `at ` (ข้อ “ยังหลุด” ข้างล่าง)
    - ตั้งใจกวาดเกิน: `code: 'EAUTH'` ในข้อความของ `util.inspect` · ทุกอย่างหลัง `pass=` ในบรรทัดเดียวกัน · URL ที่มี `@` ใน query หลัง host
    - **ยังหลุด** (รู้แล้ว): คีย์ camelCase ที่ลงท้าย `Pass` / `Pw` (`newPass=` `oldPw=`) · `nonce=` · เลขบัตรที่คั่นด้วยจุด · ค่าในเครื่องหมาย backtick ที่มี
@@ -2957,7 +2957,7 @@ index `{at:-1}` · retention 90 วัน [ออกแบบ]
 7. **`integration_operation.last_error_message`** `failThaidOperation()` เขียน `storableText(scrubText(message ≤ 2,000 ตัว) ≤ 500 ตัว)` —
    เลขบัตร อีเมล เบอร์ ความลับที่ฝังใน `error_description` ไม่ลงคอลัมน์นี้แล้ว แต่ถ้อยคำที่เหลือยังเป็นของผู้ยิง อย่าอ่านเป็นคำของ ThaID
    (แผนขั้น 5 · §13 ข้อ 39) · **ยังไม่ถูกกวาด**: `notification.notification_delivery.last_error_message` ที่ worker เขียนข้อความดิบของ SMTP 500 ตัว
-   (`workers/delivery.ts:132`) ซึ่งยกที่อยู่ผู้รับที่ถูกปฏิเสธมาได้
+   (`workers/delivery.ts:134`) ซึ่งยกที่อยู่ผู้รับที่ถูกปฏิเสธมาได้
 8. **[ออกแบบ · ยังไม่สร้าง] ingest `POST /api/client-errors`** body ≤ 16 KB ตรวจด้วย zod แบบ strict · scrub ซ้ำที่เซิร์ฟเวอร์ · จำกัด 30/นาทีต่อ IP และ
    300/นาทีรวม · ตอบ 204 เสมอ · ไม่ต้องล็อกอินและไม่เขียน audit · เก็บเป็นสตริง JSON ไม่เคย render เป็น HTML
 
@@ -3027,7 +3027,7 @@ index `{at:-1}` · retention 90 วัน [ออกแบบ]
 
 ### 5.8 รหัสอ้างอิงบน 5xx และบรรทัดใน log ของ container · สร้างแล้ว
 
-**รหัสอ้างอิง** = 8 ตัวแรกของ correlation id ของคำขอ (`referenceOf()`, ตัวพิมพ์ตามที่ผู้เรียกส่งมา) `referenceOnServerErrors` (`index.ts:104-131`)
+**รหัสอ้างอิง** = 8 ตัวแรกของ correlation id ของคำขอ (`referenceOf()`, ตัวพิมพ์ตามที่ผู้เรียกส่งมา) `referenceOnServerErrors` (`index.ts:110-137`)
 ห่อ `res.json` ของทุกคำขอ เมื่อ status ≥ 500 และ body เป็น object ที่มี `error` เป็นสตริง:
 
 1. ถ้ายังไม่มีอะไรในคำขอนี้ถูก `captureError` (`RequestContext.errorCaptured`) เก็บ `RouteServerError` เป็น warning tag `http.route-5xx` fingerprint
@@ -3037,7 +3037,7 @@ index `{at:-1}` · retention 90 วัน [ออกแบบ]
 3. ต่อ ` (รหัสอ้างอิง xxxxxxxx)` ท้าย `message` (ถ้ายังไม่มีคำนี้) และเพิ่มฟิลด์ `reference` — toast ของหน้าเว็บแสดง `message` จึงถึงตาผู้ใช้โดยไม่ต้องแก้หน้าไหน
 
 500 ทั่วไปตอบ `{"error": "internal", "message": "เกิดข้อผิดพลาดภายในระบบ (รหัสอ้างอิง 1a2b3c4d)", "reference": "1a2b3c4d"}` · 501 ก็ได้ ·
-503 ของ `/health/ready` ไม่มีคีย์ `error` จึงไม่ถูกแตะ (ตั้งใจ) · header `x-correlation-id` อยู่ใน `exposedHeaders` ของ CORS (`index.ts:139`)
+503 ของ `/health/ready` ไม่มีคีย์ `error` จึงไม่ถูกแตะ (ตั้งใจ) · header `x-correlation-id` อยู่ใน `exposedHeaders` ของ CORS (`index.ts:145`)
 **ต่างจากแบบ:** แผนให้แก้ข้อความเฉพาะ 500 ทั่วไป ที่สร้างเติมให้ทุก 5xx ที่มี `error` (decision 18 ของแผน) toast ของ 502/503 ของ route จึงมีรหัสด้วย
 
 **5xx ที่ไม่ได้รหัสอ้างอิง** — ตัวห่อแตะแค่ `res.json`: 5xx ที่ส่งทาง `res.send` `res.end` หรือ `sendStatus` และ body JSON ที่ไม่มี `error` เป็นสตริง ไม่ได้ทั้ง
@@ -3112,7 +3112,7 @@ capture ตกเป็น `issue_backlog` เอกสารใหญ่เก�
 ### 5.10 process handler การปิด process `RELEASE` และ `DEPLOY_ENV` · สร้างแล้ว
 
 - `initErrorCapture()` เป็นบรรทัดแรกของ `main()` ทั้ง backend และ worker: ติดตั้งตัวดัก แล้วเริ่มตัวจับเวลาเขียนคิว (เมื่อเปิด log store) — error ระหว่างบูตรอในคิว
-  จน log store ต่อได้ · ก่อน `startLogStore()` ถูกเรียก `logDb()` คืน null (`log-store.ts:127`) — ใน backend นั่นคือหลัง `loadChoices()` และ `ensureContainer()`
+  จน log store ต่อได้ · ก่อน `startLogStore()` ถูกเรียก `logDb()` คืน null (`log-store.ts:156`) — ใน backend นั่นคือหลัง `loadChoices()` และ `ensureContainer()`
   ถ้าสองขั้นนั้นกินเวลาเกิน 2 วินาทีและมีอะไรในคิวแล้ว (เช่น `dataset-choices.read-failed` ตอน Postgres ช้า) รอบเขียนรอบแรกล้ม บูตจึงพิมพ์
   `[capture] backend: ยังเขียน log store ไม่ได้ (log store down) …` ตามด้วย `เขียน log store ได้อีกครั้ง` ทั้งที่ Mongo ปกติ — ไม่ใช่สัญญาณว่า Mongo มีปัญหา
 - **`unhandledRejection`** เก็บเป็น error (`handled: false`) แล้ว**ทำงานต่อ** — Node 22 ที่ไม่มีตัวดักจะออกทั้ง process พร้อมคำขออื่นที่ค้างอยู่ (decision 14)
@@ -3124,7 +3124,7 @@ capture ตกเป็น `issue_backlog` เอกสารใหญ่เก�
   backend รันใต้ `tsx watch` ซึ่งไม่ restart ตัวลูกที่ออกเอง API จึงล่มค้างจนกว่าจะมีไฟล์ source เปลี่ยน** และ Docker ไม่เห็นว่าล่มเพราะ tsx ยังอยู่
 - ข้อที่รู้: `streamAttachment()` `pipe()` stream ของ blob โดยไม่มีตัวฟัง `'error'` storage ที่ล้มกลางการดาวน์โหลดจึงเป็น `uncaughtException` — วันนี้กลายเป็น
   fatal + process ออก พาคำขอที่ค้างอยู่ทั้งหมดไปด้วย (มีมาก่อนขั้น 5 แค่ตอนนี้เห็นเป็น fatal)
-- **การปิด** (SIGTERM / SIGINT) backend (`index.ts:414-425`): `server.close()` → บันทึก `shutdown` → แถวสรุปของ token ที่ถูกปฏิเสธ ≤ 2 วินาที → คิวของ
+- **การปิด** (SIGTERM / SIGINT) backend (`index.ts:444-458`): `server.close()` → บันทึก `shutdown` → แถวสรุปของ token ที่ถูกปฏิเสธ ≤ 2 วินาที → คิวของ
   log store ≤ 2 วินาที (ไม่เกินสามก้อน) → ปิด client ของ Mongo ≤ 1.5 วินาที → `prisma.$disconnect()` → `exit(0)` · worker: หยุด loop → หยุด log-upkeep →
   บันทึก `shutdown` → คิว ≤ 2 วินาที → ปิด client ≤ 1.5 วินาที → disconnect → `exit(0)` — อยู่ใน 10 วินาทีของ compose · ยังไม่รอคำขอที่กำลังวิ่ง (2.8) ·
   ทั้งหมดนี้เกิดเฉพาะเมื่อ SIGTERM ถึง node: worker ของ prod overlay (`command: ["node", "dist/workers/delivery.js"]`) node เป็น PID 1 ส่วน backend ของ prod overlay
@@ -3235,7 +3235,7 @@ compose ไม่อ่าน `MONGODB_URI` จาก `.env` และเติ�
 
 | อะไร | ทำไม |
 |---|---|
-| การเรียก HTTP ทั่วไป · การอ่านที่ไม่ใช่ admin · poller (`/state`, `/api/auth/me`, `/api/notifications`) · ไม่มี `REQUEST_VIEWED` | การ์ดหมายถึงการเปลี่ยนสถานะ ไม่ใช่ access log การเรียกทุกครั้งของ `/api/admin*` จะถูกบันทึกในขั้น 8 เพราะการอ่านของ admin ได้เลขบัตรเต็ม · **ข้อยกเว้นที่มีอยู่แล้ววันนี้**: การอ่านไฟล์เขียน `DOCUMENT_DOWNLOADED` (GET หกเส้นทางที่ต้องล็อกอิน 4.8) · `GET /api/auth/invitation` เขียน `ACTIVATION_KEY_EXPIRED` ได้ · และ 401 ของ `requireAuth` **เขียนแถวได้** เมื่อ cookie ที่ยื่นมาหมดอายุ (`SESSION_REVOKED` `EXPIRED` ผ่าน `resolveSession()` `middleware/auth.ts:53`) หรือบัญชีไม่ `ACTIVE` แล้ว (`ACCOUNT_SUSPENDED` `:81-85`) — poller ที่ถือ cookie เก่าจึงสร้างแถวเหล่านี้ (แผน §13 ข้อ 26) |
+| การเรียก HTTP ทั่วไป · การอ่านที่ไม่ใช่ admin · poller (`/state`, `/api/auth/me`, `/api/notifications`) · ไม่มี `REQUEST_VIEWED` | การ์ดหมายถึงการเปลี่ยนสถานะ ไม่ใช่ access log การเรียกทุกครั้งของ `/api/admin*` จะถูกบันทึกในขั้น 8 เพราะการอ่านของ admin ได้เลขบัตรเต็ม · **ข้อยกเว้นที่มีอยู่แล้ววันนี้**: การอ่านไฟล์เขียน `DOCUMENT_DOWNLOADED` (GET หกเส้นทางที่ต้องล็อกอิน 4.8) · `GET /api/auth/invitation` เขียน `ACTIVATION_KEY_EXPIRED` ได้ · และ 401 ของ `requireAuth` **เขียนแถวได้** เมื่อ cookie ที่ยื่นมาหมดอายุ (`SESSION_REVOKED` `EXPIRED` ผ่าน `resolveSession()` `middleware/auth.ts:64`) หรือบัญชีไม่ `ACTIVE` แล้ว (`ACCOUNT_SUSPENDED` `:92-96`) — poller ที่ถือ cookie เก่าจึงสร้างแถวเหล่านี้ (แผน §13 ข้อ 26) |
 | การพิมพ์ทีละตัว การเปิดหน้า autosave | ไม่มี autosave บันทึกเฉพาะการกดบันทึกที่เปลี่ยนค่าจริง |
 | `POST /api/notifications/:id/read` · `/read-all` | งานเก็บบ้านของ UI เป็นเสียงรบกวน |
 | `POST /api/admin/dataset-choices/refresh` | แตะแค่แคชในหน่วยความจำ |
@@ -3260,9 +3260,9 @@ compose ไม่อ่าน `MONGODB_URI` จาก `.env` และเติ�
 - snapshot `actor_*` อ่านสถานะที่ commit แล้ว จึงเห็น role และหน่วยงาน**ก่อน**เปลี่ยน (แถวของการย้ายหน่วยงานแสดงหน่วยงานเก่า)
 - relay [ออกแบบ] จะคัดลอกแถวเหล่านี้ตามจริง รวมแถวผี
 
-จุดที่เป็นแบบนี้: `admin-registrations.ts:465` `:475` · `admin-users.ts:622` `:747` `:844` `:855` `:1408` `:1422` · `auth.ts:943` ·
+จุดที่เป็นแบบนี้: `admin-registrations.ts:465` `:475` · `admin-users.ts:622` `:747` `:844` `:855` `:1408` `:1422` · `auth.ts:942` ·
 และทุกทางที่ `assignRole(tx)` ไปแทนที่ผู้ถือที่นั่ง (4.4) คอมเมนต์ของ `revokeRoleAssignments()` (`iam.ts:329-331`) ที่ว่าไม่เขียน audit
-ในธุรกรรมขัดกับโค้ดของมันเอง และคอมเมนต์เหนือ `removedFromOrganization()` (`routes/auth.ts:1276`) ที่ว่า `revokeRoleAssignments()`
+ในธุรกรรมขัดกับโค้ดของมันเอง และคอมเมนต์เหนือ `removedFromOrganization()` (`routes/auth.ts:1275`) ที่ว่า `revokeRoleAssignments()`
 “ยังไม่เขียน audit_event” ก็ล้าสมัยเหมือนกัน (แผน §13 ข้อ 12)
 
 **`ROLE_REVOKED` สองแถวต่อการแทนที่หนึ่งครั้ง** — บน `/api/auth/activate`, `POST /api/organizations` และการตรวจคำขอหน่วยงาน การแทนที่ผู้ถือ
@@ -3272,8 +3272,8 @@ compose ไม่อ่าน `MONGODB_URI` จาก `.env` และเติ�
 | เส้นทาง | actor ของ A | actor ของ B |
 |---|---|---|
 | `POST /api/auth/activate` | `USER` = บัญชีที่กำลังเปิด (`iam.ts:697-702`) | `SYSTEM` + null (ไม่มี actor ใน context — `notify.ts:194`) |
-| `POST /api/organizations` (**ถอดแล้วที่ `7259c09`** — แถวเก่าเท่านั้น) | `USER` = ผู้สร้างหน่วยงาน (`session.sub`, `organizations.ts:1133-1138`) | `USER` = คนเดียวกัน (จาก context ของ session `:1146`) |
-| `POST /api/organizations/:id/review` | `USER` = `SYSTEM_USER_ID` (`:3237-3242`) snapshot เป็นอีเมลของบัญชีระบบ | `USER` = ผู้ประสานงาน BDI ที่กดตรวจ (`:2921`) |
+| `POST /api/organizations` (**ถอดแล้วที่ `7259c09`** — แถวเก่าเท่านั้น) | `USER` = ผู้สร้างหน่วยงาน (`session.sub`, `organizations.ts:1133-1138` ของ `2cab0a7`) | `USER` = คนเดียวกัน (จาก context ของ session `:1146` ของ `2cab0a7`) |
+| `POST /api/organizations/:id/review` | `USER` = `SYSTEM_USER_ID` (`:3143-3148`) snapshot เป็นอีเมลของบัญชีระบบ | `USER` = ผู้ประสานงาน BDI ที่กดตรวจ (`:2827`) |
 
 นับการเพิกถอนด้วย `DISTINCT subject_id` ต่อ correlation id อย่านับแถว ส่วน `POST /api/admin/users/:id/roles` และ `/transfer` ได้แค่รูปแบบ A
 และผู้ถูกแทนไม่ได้รับแจ้ง
@@ -3353,14 +3353,14 @@ fingerprint คือแถวก่อนการ์ด (3) `LOGIN_FAILED` ท
 
 **Postgres — ปิดที่จุดเขียน ไม่ใช่ใน `logAudit`:**
 
-- `sanitizeDiff()` / `sanitizeState()` (`audit.ts:727`, `:741`) แทนค่าของคีย์ที่ชื่อตรง `CID_KEY = /cid$|nationalid|^pid$|^thaid_subject$/i`
+- `sanitizeDiff()` / `sanitizeState()` (`audit.ts:888`, `:902`) แทนค่าของคีย์ที่ชื่อตรง `CID_KEY = /cid$|nationalid|^pid$|^thaid_subject$/i`
   (ทุกระดับความลึกของ object ธรรมดาและ array) ด้วย `{masked: "x…" + 4 ตัวท้าย, changed: true}` — ตัดสินจาก**ชื่อคีย์** ไม่ใช่รูปของค่า
   ค่าที่ยาวไม่เกิน 4 ตัวถูกปิดทั้งหมด และ `changed: true` เป็นค่าคงที่ (มีทั้งสองฝั่งและในแถวสร้าง) — **ยกเว้นค่า null** ซึ่ง `maskCid()`
-  คืนตามเดิม (`audit.ts:696-701`): ฝั่งที่เลขบัตรว่าง (กรอกครั้งแรก หรือล้างค่า) เป็น `null` ธรรมดา ไม่ใช่ object `{masked, changed}`
+  คืนตามเดิม (`audit.ts:857-862`): ฝั่งที่เลขบัตรว่าง (กรอกครั้งแรก หรือล้างค่า) เป็น `null` ธรรมดา ไม่ใช่ object `{masked, changed}`
 - ใช้ที่: `REQUEST_DRAFT_SAVED` ทั้งสองเส้นทาง · `REQUEST_ASSIGNED` · `ORGANIZATION_UPDATED` ·
   `ORGANIZATION_ACTIVATED` · `USER_ACCOUNT_UPDATED` ขา ThaID · `USER_ACCOUNT_CREATED` ทั้งสองจุด · `ACTIVATION_KEY_ISSUED` ของ review
 - **`logAudit` และไม่มีขั้นกลางใด sanitize `metadata`** — คีย์เดียวที่ผ่าน `sanitizeDiff()` คือ `organization_master_changed` ของ
-  `REQUEST_DRAFT_SAVED` ซึ่งจุดเรียกประกอบเอง (`organizations.ts:1541-1548` `:1568`) และจุดเขียนที่มีมาก่อนการ์ด**ยังเก็บเลขบัตรเต็ม**
+  `REQUEST_DRAFT_SAVED` ซึ่งจุดเรียกประกอบเอง (`organizations.ts:1447-1454` `:1474`) และจุดเขียนที่มีมาก่อนการ์ด**ยังเก็บเลขบัตรเต็ม**
   จนกว่า BDI จะตัดสิน (แผน Q4 · `CLAUDE.md`):
 
 | จุด | ฟิลด์ |
@@ -3369,9 +3369,9 @@ fingerprint คือแถวก่อนการ์ด (3) `LOGIN_FAILED` ท
 | `INVITATION_DELETED` (`admin.ts:1219`) | `before.cid` |
 | `USER_ACCOUNT_UPDATED` แบบอีเมล/เลขบัตร (`admin-users.ts:629`) | `before.cid` · `after.cid` |
 | `USER_ACCOUNT_DEACTIVATED` (`admin-users.ts:871`) | `before.cid` |
-| `APPROVER_INVITATION_RECALLED` (`admin-registrations.ts:553`, `organizations.ts:2908`) | `before.cid` |
+| `APPROVER_INVITATION_RECALLED` (`admin-registrations.ts:553`, `organizations.ts:2814`) | `before.cid` |
 | `REQUEST_UPDATED` (`admin-registrations.ts:293`, `:754`) | `approverCid` `userCid` ใน diff |
-| `IDENTITY_VERIFIED` · `IDENTITY_VERIFICATION_FAILED` CID_MISMATCH · `LOGIN_FAILED` THAID_NO_MATCHING_ACCOUNT (`auth.ts:483` `:457` `:594`) | `metadata.thaid_subject` |
+| `IDENTITY_VERIFIED` · `IDENTITY_VERIFICATION_FAILED` CID_MISMATCH · `LOGIN_FAILED` THAID_NO_MATCHING_ACCOUNT (`auth.ts:482` `:456` `:593`) | `metadata.thaid_subject` |
 
 - ปิดอย่างอื่นกับทุกแถว: `storedUserAgent()` · `ADMIN_TOKEN_REJECTED` เก็บ `token_fp` ไม่ใช่ token และ `path` เป็นรูปแบบ ·
   `LOGIN_OTP_ISSUED` ไม่เก็บรหัส · `IDENTITY_VERIFICATION_FAILED` ไม่เก็บข้อความจาก ThaID
