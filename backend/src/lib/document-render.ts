@@ -479,6 +479,45 @@ function describeTemplateError(err: unknown): string {
 }
 
 /**
+ * ค่าจัดชิดขอบที่ LibreOffice ไม่รู้จัก แล้วตกไปเป็น**ชิดซ้าย**
+ *
+ * `thaiDistribute` คือปุ่ม "กระจายแบบไทย" ที่ฝ่ายกฎหมายกดจัดเต็มบรรทัดใน Word — ทุกย่อหน้า
+ * เนื้อหาของ A0–A4 ถือค่านี้มา ค่า kashida เป็นของที่ Word ทิ้งไว้เมื่อกดจัดเต็มบรรทัดซ้ำ ๆ
+ * ใน Word เห็นเต็มบรรทัดทั้งหมด แต่ PDF ที่ออกจากระบบขอบขวาขรุขระ (BDI แจ้ง 2026-09-20 และ
+ * อีกครั้ง 2026-10-01 หลังอัปโหลดชุด version_01_25691005 ตรงจาก Word)
+ *
+ * `both` คือจัดเต็มบรรทัดธรรมดา บรรทัดสุดท้ายของย่อหน้าชิดซ้าย — ตรงกับที่ Word แสดง
+ * ไม่ใช้ `distribute` เพราะตัวนั้นยืดบรรทัดสุดท้ายของทุกย่อหน้าออกจนเต็มด้วย
+ */
+const UNSUPPORTED_JC = /<w:jc w:val="(?:thaiDistribute|lowKashida|mediumKashida|highKashida)"\/>/g;
+
+/**
+ * แปลงค่าจัดชิดขอบข้างบนเป็น `both` ก่อนส่งให้ LibreOffice
+ *
+ * เดิมงานนี้อยู่ที่ docs/tools/normalise-template.py ซึ่งต้องจำไปรันก่อนอัปโหลดทุกครั้ง —
+ * ชุด 2026-10-01 ขึ้นระบบโดยไม่ได้ผ่านสคริปต์ และเอกสารที่ระบบสร้างก็กลับไปชิดซ้ายทันที
+ * ทำตรงนี้แทนเพราะเป็นทางเดียวที่ทุกเอกสารผ่านก่อนเป็น PDF: template ที่อัปโหลดดิบจาก Word
+ * ก็ได้ผลเดียวกัน และเวอร์ชันที่อยู่ในฐานข้อมูลแล้วไม่ต้องอัปโหลดใหม่ ไฟล์ต้นฉบับที่เก็บไว้
+ * ไม่ถูกแก้ ฝ่ายกฎหมายดาวน์โหลดไปแก้ต่อใน Word ได้ตามเดิม
+ */
+export function justifyForLibreOffice(docx: Buffer): Buffer {
+  const zip = openDocx(docx);
+  let changed = false;
+  for (const name of Object.keys(zip.files)) {
+    // document / header / footer / styles — ค่านี้อยู่ได้ทั้งในย่อหน้าและใน paragraph style
+    if (!/^word\/[^/]+\.xml$/.test(name)) continue;
+    const xml = zip.file(name)?.asText() ?? "";
+    const fixed = xml.replace(UNSUPPORTED_JC, '<w:jc w:val="both"/>');
+    if (fixed !== xml) {
+      zip.file(name, fixed);
+      changed = true;
+    }
+  }
+  if (!changed) return docx;
+  return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+}
+
+/**
  * .docx -> PDF ผ่าน gotenberg
  *
  * ฟอนต์ TH SarabunPSK ถูกฝังไว้ใน image ของ gotenberg ไม่ใช่ในไฟล์ .docx —
@@ -486,6 +525,7 @@ function describeTemplateError(err: unknown): string {
  * มันจะแทนด้วยฟอนต์อื่นแล้วเลย์เอาต์เลื่อนทั้งฉบับ (ดู gotenberg/Dockerfile)
  */
 export async function docxToPdf(docx: Buffer, filename: string): Promise<Buffer> {
+  docx = justifyForLibreOffice(docx);
   const form = new FormData();
   form.append(
     "files",
