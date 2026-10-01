@@ -64,14 +64,22 @@
  * ยังไม่ถูกนับ และไม่มีอะไรถูกเก็บ ฉบับหน้าประกอบใหม่ทั้งชุดหลัง 15 นาที ไม่ใช่ทุกนาที — `lastError` (`alertError`) บอกทั้งสองกรณี
  * และบอกผู้รับที่ SMTP ปฏิเสธถาวร ผู้รับที่ช้า และผู้รับที่ไม่ได้ลองเพราะงบหมด
  *
+ * **`lastError` ประกอบใหม่ทุกรอบ ไม่ใช่แค่รอบที่ส่ง** จากข้อเท็จจริงของรอบส่งล่าสุดที่เก็บแยกไว้ (`lastRound` — `RoundFacts`) กับ
+ * สิ่งที่ยังค้าง (`pending`, `slow`) คำว่า "ประกอบใหม่ในรอบหน้า" จริงจนกว่ารอบที่ถึงเวลาจะประกอบอีกครั้ง: ถ้ารอบนั้นไม่มีอะไรเข้า
+ * เงื่อนไขแล้ว (ปัญหาถูกปิด หรือเห็นล่าสุดก่อน `enabledAt`) หรือการแจ้งเตือนเพิ่งเปิดกลับมา คำนั้นหายไป ปิดการแจ้งเตือนล้าง
+ * `lastError` ทั้งหมด (`recordDisabled`) เดิม `lastError` เปลี่ยนเฉพาะรอบที่ส่งจริง: สรุปที่ส่งไม่ถึงใครเลย แล้วปิดและเปิดการแจ้งเตือน
+ * ใหม่ ทำให้ `/status` ยังบอกว่าจะประกอบใหม่ในรอบหน้าไปเรื่อย ๆ ทั้งที่ `enabledAt` เลยปัญหาเหล่านั้นไปแล้วและไม่มีวันส่ง
+ * (ตรวจขั้น 10 แบบค้าน 2026-10-01)
+ *
  * **ไม่มีข้อมูลบุคคลในอีเมล:** หัวเรื่องของ issue ของ server (ข้อความ error ที่ผ่าน lib/redact.ts แล้วตัด id กับตัวเลขทิ้ง), service,
  * ที่เกิด (แม่แบบของ route), จำนวน, เวลา, รุ่น, id ของ event และ fingerprint ที่เปิดดูใน Postman — ไม่มีผู้ใช้ IP อีเมล
  *
  * สถานะของลูปอยู่ในเอกสาร `relay_state` `_id: "error_alerts"` (`enabled`, `recipients`, `checkedAt`, `enabledAt`,
- * `lastDigestAt`, `crashLoopAlertedAt`, `overQuotaAlertedAt`, `lastError`, `pending`, `slow`, `triedAt`) — worker เริ่มใหม่ก็ไม่ส่งซ้ำ
- * และ issue ที่มีอยู่ก่อนเปิดการแจ้งเตือน (เห็นล่าสุดก่อน `enabledAt`) ไม่ถูกแจ้งย้อนหลังทั้งกอง `enabled` กับ `checkedAt` คือคำของ
- * worker เองว่าตอนนี้เปิดอยู่ไหม (`GET /api/admin/logs/status` แสดง) — เปิดอยู่เขียนทุกนาทีและก่อนทุกฉบับระหว่างรอบ (`heartbeatOf`)
- * ปิดอยู่เขียนครั้งเดียวตอนเริ่มพร้อมล้าง `enabledAt` เปิดกลับมาจึงนับใหม่จากตอนนั้น ไม่ใช่แจ้งทุกอย่างที่เกิดระหว่างที่ปิด
+ * `lastDigestAt`, `crashLoopAlertedAt`, `overQuotaAlertedAt`, `lastError`, `lastRound`, `pending`, `slow`, `triedAt`) — worker เริ่ม
+ * ใหม่ก็ไม่ส่งซ้ำ และ issue ที่มีอยู่ก่อนเปิดการแจ้งเตือน (เห็นล่าสุดก่อน `enabledAt`) ไม่ถูกแจ้งย้อนหลังทั้งกอง `enabled` กับ
+ * `checkedAt` คือคำของ worker เองว่าตอนนี้เปิดอยู่ไหม (`GET /api/admin/logs/status` แสดง) — เปิดอยู่เขียนทุกนาทีและก่อนทุกฉบับ
+ * ระหว่างรอบ (`heartbeatOf`) ปิดอยู่เขียนครั้งเดียวตอนเริ่มพร้อมล้าง `enabledAt` `lastError` และ `lastRound` เปิดกลับมาจึงนับใหม่จาก
+ * ตอนนั้น ไม่ใช่แจ้งทุกอย่างที่เกิดระหว่างที่ปิด
  */
 import { createHmac, randomBytes } from "node:crypto";
 
@@ -168,6 +176,8 @@ interface AlertState {
   crashLoopAlertedAt?: Record<string, Date>;
   overQuotaAlertedAt?: Date | null;
   lastError?: string | null;
+  /** ข้อเท็จจริงของรอบส่งล่าสุดที่ `lastError` เล่า — อ่านผ่าน `roundFacts` เท่านั้น (ค่าจาก Mongo ไม่เชื่อรูป) */
+  lastRound?: unknown;
   lastDigest?: Record<string, unknown>;
   /** ฉบับที่ยังไม่ถึงผู้รับบางคน — อ่านผ่าน `pendingList` เท่านั้น (ค่าจาก Mongo ไม่เชื่อรูป) */
   pending?: unknown;
@@ -217,6 +227,19 @@ interface RoundResult {
   late: number;
 }
 
+/**
+ * สิ่งที่ `lastError` เล่าเกี่ยวกับรอบส่งล่าสุด เก็บเป็น `lastRound` (หัวไฟล์ "`lastError` ประกอบใหม่ทุกรอบ") — รอบที่ไม่ได้ส่งอะไร
+ * จึงประกอบ `lastError` ใหม่ได้ (ฉบับที่ค้างหมดอายุ ไม่มีอะไรให้ประกอบใหม่แล้ว) โดยไม่ต้องเดาจากข้อความเดิม
+ */
+interface RoundFacts {
+  /** สรุปฉบับใหม่ของรอบนั้นไม่ถึงใครเลย และรอบที่ถึงเวลาถัดไปยังไม่ได้ประกอบใหม่ */
+  unreached: boolean;
+  /** ผู้รับที่ SMTP ปฏิเสธถาวรในรอบนั้น (`RoundResult.rejected`) */
+  rejected: number;
+  /** ผู้รับที่ไม่ได้ลองในรอบนั้นเพราะงบหมด (`RoundResult.skipped`) */
+  skipped: number;
+}
+
 interface Candidate {
   issue: IssueDoc;
   trigger: Trigger;
@@ -260,6 +283,10 @@ export function startErrorAlerts(): void {
 /**
  * จดว่าปิดอยู่ — ครั้งเดียวต่อการเริ่ม worker และล้าง `enabledAt`: ตอนเปิดกลับมา issue ที่เกิดระหว่างที่ปิดนับเป็น "มีอยู่ก่อน
  * เปิด" ไม่ถูกแจ้งทั้งกอง Mongo ยังต่อไม่ได้ก็ข้ามไป (สถานะที่ /status แสดงค้างเป็นของเดิมจนกว่า worker จะเริ่มใหม่)
+ *
+ * ล้าง `lastError` กับ `lastRound` ด้วย: ปิดอยู่ไม่มีรอบหน้า คำว่า "ประกอบใหม่ในรอบหน้า" ของรอบสุดท้ายก่อนปิดจึงไม่จริงแล้ว และ
+ * เปิดกลับมาแล้ว `enabledAt` ใหม่ทำให้ปัญหาในฉบับนั้นไม่ถูกแจ้งอีก `pending` ไม่ถูกล้าง — ถ้าเปิดกลับมาภายในหกชั่วโมง ผู้รับที่ค้าง
+ * ยังได้ฉบับนั้น และรอบแรกหลังเปิดประกอบ `lastError` ของสิ่งที่ค้างให้ใหม่ (`tick`)
  */
 async function recordDisabled(): Promise<void> {
   try {
@@ -269,7 +296,10 @@ async function recordDisabled(): Promise<void> {
       .collection<AlertState>("relay_state")
       .updateOne(
         { _id: STATE_ID },
-        { $set: { enabled: false, recipients: 0, checkedAt: new Date() }, $unset: { enabledAt: "" } },
+        {
+          $set: { enabled: false, recipients: 0, checkedAt: new Date(), lastError: null },
+          $unset: { enabledAt: "", lastRound: "" },
+        },
         { upsert: true, maxTimeMS: MONGO_COMMAND_MAX_MS },
       );
   } catch (err) {
@@ -308,10 +338,12 @@ async function tick(): Promise<void> {
     let state = await states.findOne({ _id: STATE_ID }, { maxTimeMS: MONGO_COMMAND_MAX_MS });
     // บอกทุกรอบว่ายังเปิดอยู่ (`/api/admin/logs/status`) — `enabledAt` เฉพาะครั้งแรกหลังเปิด
     const heartbeat: Partial<AlertState> = { enabled: true, recipients: env.logStore.alertEmails.length, checkedAt: now };
-    if (!state?.enabledAt) heartbeat.enabledAt = now;
+    const enabledNow = !state?.enabledAt;
+    if (enabledNow) heartbeat.enabledAt = now;
     await states.updateOne({ _id: STATE_ID }, { $set: heartbeat }, { upsert: true, maxTimeMS: MONGO_COMMAND_MAX_MS });
     state = { ...(state ?? { _id: STATE_ID }), ...heartbeat };
     const quota = await overQuotaChange(db, states, state);
+    const before = roundFacts(state.lastRound);
 
     const configured = new Map(env.logStore.alertEmails.map((address) => [recipientKey(address), address]));
     const carried = carriedPending(state.pending, configured, now);
@@ -334,13 +366,24 @@ async function tick(): Promise<void> {
           ? compose(chosen, candidates.length - chosen.length, crashLoops, quota)
           : null;
     }
+    // สรุปที่ไม่ถึงใครเลยรอบก่อน "ประกอบใหม่ในรอบหน้า" — จริงจนกว่ารอบที่ถึงเวลาจะประกอบอีกครั้ง ถึงเวลาแล้วไม่มีอะไรเข้าเงื่อนไข
+    // (`fresh` null) ก็จบเรื่อง และการแจ้งเตือนที่เพิ่งเปิดกลับมา (`enabledAt` ใหม่) ไม่แจ้งปัญหาที่เห็นก่อนนั้นอีก (หัวไฟล์)
+    const unreachedBefore = before.unreached && !digestDue && !enabledNow;
     // ไม่มีฉบับใหม่: ส่งเฉพาะคนที่ค้างและถึงจังหวะส่งซ้ำของเขา · มีฉบับใหม่: ทุกคน (คนที่ค้างได้ฉบับเก่าต่อท้าย)
     const lateKeys = fresh ? null : lateDue(carried.pending, tried, now);
     if (lateKeys !== null && lateKeys.size === 0) {
-      // ไม่มีอะไรต้องส่งตอนนี้ — ฉบับที่ค้างหมดอายุหรือผู้รับถูกถอดออก จดสิ่งที่เหลือ
+      // ไม่มีอะไรต้องส่งตอนนี้ — จดสิ่งที่เปลี่ยน: ฉบับที่ค้างหมดอายุหรือผู้รับถูกถอดออก และ `lastError` ที่ประกอบจากสิ่งที่เหลือ
+      // (เดิมเปลี่ยนแค่ตอนฉบับที่ค้างหมด คำว่า "ประกอบใหม่ในรอบหน้า" จึงค้างไปเรื่อย ๆ หลังรอบนั้นไม่มีอะไรให้ประกอบ)
+      const facts: RoundFacts = { ...before, unreached: unreachedBefore };
+      const lastError = alertError(carried.pending, facts, slowBefore);
+      const set: Document = {};
       if (carried.changed) {
-        const set: Document = { pending: carried.pending, triedAt: triedFor(carried.pending, tried) };
-        if (carried.pending.length === 0) set.lastError = null;
+        set.pending = carried.pending;
+        set.triedAt = triedFor(carried.pending, tried);
+      }
+      if (facts.unreached !== before.unreached) set.lastRound = facts;
+      if (lastError !== (state.lastError ?? null)) set.lastError = lastError;
+      if (Object.keys(set).length > 0) {
         await states.updateOne({ _id: STATE_ID }, { $set: set }, { upsert: true, maxTimeMS: MONGO_COMMAND_MAX_MS });
       }
       return;
@@ -384,8 +427,15 @@ async function tick(): Promise<void> {
 
     // ส่งถึงอย่างน้อยหนึ่งคน = แจ้งแล้ว (คนที่ยังไม่ได้อยู่ใน `pending`) ไม่ถึงใครเลย = ยังไม่ได้แจ้ง ฉบับหน้า (15 นาที) ลองใหม่ทั้งชุด
     // `lastDigestAt` ขยับเฉพาะรอบที่มีฉบับใหม่ (ถึงหรือไม่ถึงใครก็ตาม — SMTP ล่มต้องไม่ได้การลองทั้งรายชื่อทุกนาที)
+    // รอบที่ส่งซ้ำอย่างเดียวไม่ได้ประกอบอะไรใหม่ "ไม่ถึงใครเลย" ของฉบับก่อนจึงยังจริงเท่าเดิม (`unreachedBefore`)
+    const facts: RoundFacts = {
+      unreached: fresh ? delivered === 0 : unreachedBefore,
+      rejected: round.rejected.size,
+      skipped: round.skipped,
+    };
     const update: Document = {
-      lastError: alertError(pending, fresh !== null && delivered === 0, round, slow),
+      lastError: alertError(pending, facts, slow),
+      lastRound: facts,
       pending,
       slow: [...slow],
       triedAt: triedFor(pending, triedAfter),
@@ -1076,31 +1126,37 @@ function pendingList(value: unknown): PendingDigest[] {
 }
 
 /**
- * `lastError` ของรอบล่าสุด (`GET /api/admin/logs/status` แสดง) — ฉบับใหม่ที่ไม่ถึงใครเลย (issue ในนั้นยังไม่ถูกนับว่าแจ้ง)
- * ผู้รับที่ SMTP ปฏิเสธถาวร ผู้รับที่ยังค้าง ผู้รับที่ช้า (`slow` — รวมคนที่ช้าในรอบก่อนแต่รอบนี้ไม่ได้ส่งถึง) และผู้รับที่ไม่ได้ลอง
- * เพราะงบหมด ไม่มีอะไรผิดปกติ = null
+ * `lastError` (`GET /api/admin/logs/status` แสดง) — ประกอบจากข้อเท็จจริงของรอบส่งล่าสุด (`facts`: ฉบับใหม่ที่ไม่ถึงใครเลยและยัง
+ * ไม่ได้ประกอบใหม่ — issue ในนั้นยังไม่ถูกนับว่าแจ้ง, ผู้รับที่ SMTP ปฏิเสธถาวร, ผู้รับที่ไม่ได้ลองเพราะงบหมด) กับสิ่งที่ยังค้างตอนนี้
+ * (ผู้รับที่ยังค้างฉบับเก่า และผู้รับที่ช้า `slow` — รวมคนที่ช้าในรอบก่อนแต่รอบนี้ไม่ได้ส่งถึง) ไม่มีอะไรผิดปกติ = null
+ * ทุกรอบเรียก ไม่ใช่แค่รอบที่ส่ง (หัวไฟล์ "`lastError` ประกอบใหม่ทุกรอบ")
  */
-function alertError(
-  pending: PendingDigest[],
-  freshReachedNobody: boolean,
-  round: RoundResult,
-  slow: Set<string>,
-): string | null {
+function alertError(pending: PendingDigest[], facts: RoundFacts, slow: Set<string>): string | null {
   const parts: string[] = [];
-  if (freshReachedNobody) {
+  if (facts.unreached) {
     parts.push("สรุปฉบับล่าสุดส่งไม่ถึงผู้รับคนไหนเลย — ปัญหาในฉบับนั้นยังไม่ถูกนับว่าแจ้งแล้ว ประกอบใหม่ในรอบหน้า");
   }
-  if (round.rejected.size > 0) {
+  if (facts.rejected > 0) {
     parts.push(
-      `SMTP ปฏิเสธผู้รับ ${round.rejected.size} คนถาวรในรอบล่าสุด (ไม่มีผู้รับนี้ หรือไม่รับเนื้อความ) — ไม่ลองซ้ำ` +
+      `SMTP ปฏิเสธผู้รับ ${facts.rejected} คนถาวรในรอบล่าสุด (ไม่มีผู้รับนี้ หรือไม่รับเนื้อความ) — ไม่ลองซ้ำ` +
         " สรุปของรอบนั้นและที่เขาค้างไม่ถึงเขา (ดู docker compose logs delivery-worker)",
     );
   }
   const owed = new Set(pending.flatMap((item) => item.recipients)).size;
   if (owed > 0) parts.push(`ผู้รับ ${owed} คนยังไม่ได้สรุป ${pending.length} ฉบับ — ส่งซ้ำไม่เกินทุก 15 นาทีหรือรวมกับฉบับใหม่`);
   if (slow.size > 0) parts.push(`ผู้รับ ${slow.size} คนส่งเกิน ${SEND_TIMEOUT_MS / 1000} วินาที (อยู่ท้ายคิว)`);
-  if (round.skipped > 0) parts.push(`ผู้รับ ${round.skipped} คนไม่ได้ลองในรอบล่าสุด (ครบงบ ${ROUND_BUDGET_MS / 1000} วินาที)`);
+  if (facts.skipped > 0) parts.push(`ผู้รับ ${facts.skipped} คนไม่ได้ลองในรอบล่าสุด (ครบงบ ${ROUND_BUDGET_MS / 1000} วินาที)`);
   return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/**
+ * `lastRound` ที่อ่านจาก Mongo ในรูปที่ใช้ได้ — ไม่มี (สถานะจาก worker รุ่นก่อน หรือเพิ่งปิดแล้วเปิด) หรือผิดรูป = ไม่มีอะไรค้างจาก
+ * รอบก่อน `lastError` ที่ worker รุ่นก่อนเขียนไว้จึงถูกประกอบใหม่จากสิ่งที่ยังค้างจริงในรอบแรก
+ */
+function roundFacts(value: unknown): RoundFacts {
+  const facts = (value !== null && typeof value === "object" && !Array.isArray(value) ? value : {}) as Record<string, unknown>;
+  const count = (n: unknown) => (typeof n === "number" && Number.isInteger(n) && n > 0 ? n : 0);
+  return { unreached: facts.unreached === true, rejected: count(facts.rejected), skipped: count(facts.skipped) };
 }
 
 /** ผู้รับในฉบับที่ค้างซึ่งไม่อยู่ในรายชื่อแล้ว — ถูกถอดออก หรือ key ใช้ไม่ได้แล้ว (`recipientKey`: `LOG_HASH_KEY` เปลี่ยน หรือไม่ได้ตั้งแล้ว worker เริ่มใหม่) */

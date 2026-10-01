@@ -1047,7 +1047,11 @@ digests it drops are logged, and `lastError` says so. Every other failure is ret
 are our configuration, not the recipient; until the same fix every 5xx dropped the owed digests
 silently. A digest's issues count as alerted once it reaches one recipient; if it reaches nobody they
 do not, the next digest is composed afresh, and `lastError` on `/status` says so, as it says who is
-owed mail or slow. The SMTP server is Office 365, which takes about three connections. At most one
+owed mail or slow. `lastError` is recomposed on every tick from the last round's facts (`lastRound`) and
+what is still owed, not only when something is sent: a due round that finds nothing left to compose,
+re-enabling, and switching alerting off all clear the "composed afresh" claim. Until 2026-10-01 it
+changed only on a send, so after a round that reached nobody, then off and on again, `/status` kept
+promising a recomposition that `enabledAt` had already ruled out. The SMTP server is Office 365, which takes about three connections. At most one
 digest per 15 minutes and one alert per issue per 6 hours unless it regressed. A regression alerts
 only an issue that would alert anyway (level error or fatal, or a sustained route-answered 5xx);
 `browser:chunk-load` and `…:log_access_disabled` never alert. Browser issues, which anyone can
