@@ -1487,9 +1487,11 @@ the worker deletes open browser issues not seen for 30 days. Two exceptions keep
 findable: `browser:chunk-load` and `proxy:backend_unreachable` never use up that budget, and a
 report that carries a `reference` (the global-error page, the proxy's 502) is stored as an event
 even when its issue is refused (`extra.capped: "browser_fingerprints"`) and past the 50-per-hour
-sample cap. Until 2026-10-01 a hundred junk messages to the unauthenticated endpoint, which a
-spoofed `X-Forwarded-For` gets past the per-IP limit, left every reference sent after them
-unfindable for the rest of the hour.
+sample cap. In the browser such a report also skips the dedupe and has its own budget of ten per
+page load, apart from the ten every other report shares; before that, ten earlier reports in one
+page load left the global-error page showing a reference that was never sent. Until 2026-10-01 a
+hundred junk messages to the unauthenticated endpoint, which a spoofed `X-Forwarded-For` gets
+past the per-IP limit, left every reference sent after them unfindable for the rest of the hour.
 **A chunk that fails to load (a deploy under an open page) is a warning filed as
 `browser:chunk-load`, which never alerts, and there are two wordings for it.** `next dev --webpack`
 throws webpack's "Loading chunk 123 failed.". Production's `next build` is **Turbopack** (Next 16's

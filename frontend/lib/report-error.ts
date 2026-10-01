@@ -10,7 +10,8 @@
  *   - ส่งแค่ `location.pathname` ไม่เคยส่ง query hash หรือค่าใด ๆ จาก `sessionStorage` ของหน้า (`?token=` ของหน้า activate,
  *     `?code&state` ของ ThaID) path ของคำขอ API ห้าตัวล่าสุดก็ตัด query ทิ้ง (`noteApiCall`) และ URL ที่โผล่ในข้อความหรือ stack
  *     ของ error เองก็เหลือแค่ path (`withoutUrlQueries`)
- *   - ซ้ำกัน (ข้อความ + เฟรมแรก) ส่งครั้งเดียวต่อการเปิดหน้า และไม่เกิน 10 รายงานต่อการเปิดหน้า
+ *   - ซ้ำกัน (ข้อความ + เฟรมแรก) ส่งครั้งเดียวต่อการเปิดหน้า และไม่เกิน 10 รายงานต่อการเปิดหน้า — รายงานที่มีรหัสอ้างอิง
+ *     (หน้า global-error) ไม่ถูกตัดเป็นตัวซ้ำ และมีโควตา 10 ของตัวเอง error อื่นใช้โควตาของมันหมดไม่ได้
  *   - `navigator.sendBeacon` เป็น `text/plain` (ไม่มี preflight ข้าม origin ในเครื่อง dev และส่งได้แม้หน้ากำลังปิด) ไม่ได้ก็ `fetch`
  *     แบบ keepalive ไม่แนบ cookie — endpoint ไม่ต้อง login และไม่ควรรู้ว่าใครส่ง
  *   - กลืนทุกความล้มเหลว: การรายงาน error ต้องไม่เป็นต้นเหตุของ error
@@ -26,6 +27,12 @@ const RELEASE = process.env.NEXT_PUBLIC_RELEASE || "dev";
 const ENDPOINT = `${BASE}/api/client-errors`;
 
 const MAX_PER_PAGE = 10;
+/**
+ * รายงานที่มีรหัสอ้างอิงนับแยกจาก `MAX_PER_PAGE` — รหัสนั้นอยู่บนจอแล้ว ผู้ใช้ถูกบอกให้แจ้งรหัสนี้ ถ้าคำเตือน chunk หรือ error
+ * ของสคริปต์ภายนอกสิบตัวก่อนหน้าใช้โควตาหมด หน้า global-error ยังแสดงรหัส แต่ไม่มีอะไรส่งไป G6 ตอบว่าไม่พบ ยังต้องมีเพดาน
+ * เพราะ `sent` นับทั้งการเปิดหน้า (ข้ามการเปลี่ยนหน้าแบบ SPA) — backend จำกัดอีกชั้น (60 รายงานของเบราว์เซอร์ต่อนาที)
+ */
+const MAX_REFERENCED_PER_PAGE = 10;
 const PENDING_KEY = "bdi.pendingErrorReports";
 const PENDING_MAX = 5;
 const LAST_API_MAX = 5;
@@ -48,6 +55,7 @@ interface PendingReport {
 }
 
 let sent = 0;
+let sentReferenced = 0;
 const seen = new Set<string>();
 const lastApi: ApiCall[] = [];
 
@@ -118,7 +126,7 @@ export function reportError(
   try {
     const api = apiErrorOf(error);
     if (api) return; // 4xx: เรื่องของคำขอ · 5xx: backend เก็บแล้ว · backend_unreachable: lib/api.ts เข้าคิวเอง
-    if (sent >= MAX_PER_PAGE) return;
+    if (options.reference ? sentReferenced >= MAX_REFERENCED_PER_PAGE : sent >= MAX_PER_PAGE) return;
     const { name, message: rawMessage, stack: rawStack } = describe(error);
     const message = withoutUrlQueries(rawMessage);
     const stack = rawStack === undefined ? undefined : withoutUrlQueries(rawStack);
@@ -128,7 +136,8 @@ export function reportError(
     // global-error รายงานตัวเดียวกันพร้อมรหัสที่ผู้ใช้เห็น — ถ้าตัดตัวหลัง รหัสบนจอจะค้นไม่เจอ
     if (seen.has(key) && !options.reference) return;
     seen.add(key);
-    sent += 1;
+    if (options.reference) sentReferenced += 1;
+    else sent += 1;
     send({
       mechanism: options.mechanism,
       level: options.level ?? (isChunkLoadError(error) ? "warning" : "error"),
