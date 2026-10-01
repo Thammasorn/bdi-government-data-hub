@@ -125,10 +125,19 @@ through the admin API need neither — they refresh the cache themselves.
 Production build (also what a public deployment must use):
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# build as its own step, so a failed build touches nothing that is running
+TMPDIR=/hdd1tb/tmp GIT_SHA=$(git rev-parse --short HEAD) \
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 docker compose exec backend npm run seed:masters:prod  # must run first
 docker compose exec backend npm run seed:demo:prod     # seed:demo needs tsx, a devDependency
 ```
+
+`GIT_SHA` becomes `RELEASE` in the backend and worker images and `NEXT_PUBLIC_RELEASE` in the
+frontend bundle. Leave it out and every error event and issue in the log store reports release
+`unknown`. `TMPDIR` keeps compose's build metadata off `/`, which fills up on this machine. The
+full deploy of the log store, including the new `main/.env` lines, is
+`docs/21-activity-log.md` §10.
 
 `ACTIVATION_KEY_SECRET` must be set in `.env` before starting production — the backend throws
 at boot without it rather than falling back to the development value.
