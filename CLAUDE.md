@@ -1509,7 +1509,14 @@ Both reporters fit their body into 15,000 **bytes** (`lib/report-body.ts`, trimm
 frames first), because the ingest's 16 KB limit is in UTF-8 bytes and an oversized body is dropped
 whole, still with a 204. A long stack plus a Thai message used to overflow it.
 The Next server's report keeps the query's key names, never its values (`request.queryKeys`); its
-stdout line keeps the pathname only.
+stdout line keeps the pathname only. **A malformed request is a warning, not an error**: anyone can
+send an RSC request with a garbage `Next-Router-State-Tree` header (`curl -H 'RSC: 1' -H
+'Next-Router-State-Tree: %7Bx' …/login`), and Next answers 500 through `onRequestError`. Until
+2026-10-01 that was a verified error-level `frontend-server` issue per page template, so the alert
+digest mailed it as new, and as regressed every time someone resolved it and the caller fired again.
+`malformedRequest()` in `lib/server-error-report.ts` matches Next's error code (`E10`/`E142`/`E418`,
+checked on 16.2.12) or its wording; a new caller-caused error that reaches `onRequestError` belongs
+there. Unknown server actions, undecodable URLs and bad `Next-Url` headers never reach it.
 
 ## Conventions
 

@@ -61,6 +61,32 @@ function isPostpone(value: unknown): boolean {
   return !!value && typeof value === "object" && (value as { $$typeof?: unknown }).$$typeof === Symbol.for("react.postpone");
 }
 
+/**
+ * error ที่ Next throw เพราะ**คำขอผิดรูป** ไม่ใช่เพราะโค้ดเราเสีย — ทั้งหมดตอนนี้คือ header `Next-Router-State-Tree` ของคำขอ RSC
+ * (`parseAndValidateFlightRouterState` ใน next/dist/server/app-render): อ่านไม่ออก (E10) ยาวเกิน (E142) มาหลายตัว (E418)
+ *
+ * ใครก็ส่ง header นี้มาได้โดยไม่ต้อง login (`curl -H 'RSC: 1' -H 'Next-Router-State-Tree: %7Bx' …/login`) Next ตอบ 500 และส่ง
+ * error เข้า `onRequestError` เดิมรายงานเป็นระดับ error ของ Next server ที่ยืนยันแล้ว: หนึ่ง issue ใหม่ต่อแม่แบบของหน้า ซึ่ง
+ * อีเมลแจ้งเตือน (backend/src/workers/error-alerts.ts) ส่งเป็น "ปัญหาใหม่" และส่งอีกเป็น "เกิดซ้ำหลังปิด" ทุกครั้งที่มีคนปิดแล้ว
+ * ใครก็ยิงซ้ำ (ตรวจขั้น 9 แบบค้าน 2026-10-01) ตอนนี้เป็น `warning` — ยังเก็บและนับ ไม่แจ้ง
+ *
+ * ดูรหัสของ Next (`__NEXT_ERROR_CODE`) ก่อน แล้วถ้อยคำเป็นตัวสำรอง (รหัสหรือถ้อยคำเปลี่ยนได้เมื่อ Next ขึ้นรุ่น — รุ่นที่ตรวจคือ
+ * 16.2.12) คำขอผิดรูปแบบอื่นที่ลองแล้วไม่เข้า `onRequestError` เลย: Server Action ที่ไม่มีจริง (Next พิมพ์เองแล้วตอบ 404),
+ * URL ที่ถอดรหัส `%` ไม่ได้ (400), `Next-Url` / `Next-Router-Segment-Prefetch` ที่ผิดรูป (200)
+ */
+const MALFORMED_REQUEST_CODES = new Set(["E10", "E142", "E418"]);
+const MALFORMED_REQUEST_MESSAGES = [
+  /^The router state header was sent but could not be parsed\.?$/,
+  /^The router state header was too large\.?$/,
+  /^Multiple router state headers were sent\b/,
+];
+
+function malformedRequest(error: unknown, message: string): boolean {
+  const code = (error as { __NEXT_ERROR_CODE?: unknown } | null)?.__NEXT_ERROR_CODE;
+  if (typeof code === "string" && MALFORMED_REQUEST_CODES.has(code)) return true;
+  return MALFORMED_REQUEST_MESSAGES.some((pattern) => pattern.test(message));
+}
+
 /** รายงานหนึ่งตัว — ไม่ throw และจบภายในราว 1 วินาทีเสมอ */
 export async function reportServerError(
   error: unknown,
@@ -70,6 +96,7 @@ export async function reportServerError(
     const { name, message, stack, digest } = describe(error);
     const now = Date.now();
     if (!admit(`${options.mechanism}|${name}|${message}|${options.route?.path ?? ""}`, now)) return;
+    const level = options.mechanism === "onRequestError" && malformedRequest(error, message) ? "warning" : "error";
 
     const rawPath = options.route?.requestPath ?? null;
     const pathname = rawPath ? rawPath.split(/[?#]/)[0]!.slice(0, 500) : null;
@@ -86,6 +113,7 @@ export async function reportServerError(
       `[frontend-error] ${JSON.stringify({
         at: new Date(now).toISOString(),
         mechanism: options.mechanism,
+        level,
         name,
         message: scrub(message).slice(0, 300),
         route: route?.path ?? null,
@@ -106,7 +134,7 @@ export async function reportServerError(
       },
       body: reportBody({
         mechanism: options.mechanism,
-        level: "error",
+        level,
         name: name.slice(0, 200),
         message: message.slice(0, 2_000),
         ...(stack ? { stack: stack.slice(0, 16_000) } : {}),
