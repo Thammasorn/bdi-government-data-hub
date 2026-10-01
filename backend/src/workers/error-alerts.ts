@@ -726,7 +726,7 @@ function compose(
     lines.push(
       "",
       `และอีก ${leftOver} รายการที่ยังไม่ได้แจ้งในฉบับนี้ (เกิน ${ISSUES_PER_DIGEST} รายการต่อฉบับ หรือเกินโควตารายงานจาก` +
-        ` เบราว์เซอร์ ${BROWSER_ALERTS_PER_WINDOW} รายการต่อ 6 ชั่วโมง) — เปิดดูทั้งหมดด้วย Postman E1`,
+        `เบราว์เซอร์ ${BROWSER_ALERTS_PER_WINDOW} รายการต่อ 6 ชั่วโมง) — เปิดดูทั้งหมดด้วย Postman E1`,
     );
   }
   if (crashLoops.length > 0) {
@@ -742,7 +742,7 @@ function compose(
     lines.push(
       "",
       `log store เกินเพดานขนาด: ใช้อยู่ ${quota.storageMb ?? "?"} MB จากเพดาน ${quota.maxMb ?? "?"} MB — ระหว่างนี้เก็บแค่ตัวนับ` +
-        " ของ issue ไม่เก็บ error ทีละตัว (ดู Postman S1 และ docs/21 เรื่องเพดานขนาด)",
+        "ของ issue ไม่เก็บ error ทีละตัว (ดู Postman S1 และ docs/21 เรื่องเพดานขนาด)",
     );
   }
   lines.push(
