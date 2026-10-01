@@ -47,7 +47,16 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+/**
+ * `background` — คำขอเบื้องหลังที่ผู้ใช้ไม่ได้สั่งและกลืน error เอง (poll ของหน้ารายละเอียด กระดิ่ง `/api/auth/me`) ข้อความของมัน
+ * ไม่เคยขึ้นจอ รหัสอ้างอิงของ 502 จึงไม่มีใครเห็น ยังเข้าคิวรายงาน แต่คิวเต็มแล้วถูกตัดก่อนรหัสที่ผู้ใช้เห็นใน toast
+ * (`queueProxyFailure` ใน lib/report-error.ts) คำขอใหม่ที่ไม่แสดง error ของตัวเองควรใส่ด้วย
+ */
+export interface CallOptions {
+  background?: boolean;
+}
+
+async function request<T>(path: string, init: RequestInit = {}, options: CallOptions = {}): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase();
   let res: Response;
   try {
@@ -77,7 +86,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const error = new ApiError(res.status, body, correlationId);
     // proxy ต่อ backend ไม่ได้ (app/api/[...path]/route.ts) — backend ไม่เคยเห็นคำขอนี้ จึงต้องรายงานจากเบราว์เซอร์ แต่ส่งตอนนี้
     // ไม่ถึง (backend ล่มอยู่) เก็บไว้ส่งหลังคำขอถัดไปที่สำเร็จ ให้รหัสใน toast ค้นเจอได้ (lib/report-error.ts)
-    if (res.status === 502 && error.code === "backend_unreachable") queueProxyFailure(error.reference);
+    if (res.status === 502 && error.code === "backend_unreachable") {
+      queueProxyFailure(error.reference, { background: options.background === true });
+    }
     throw error;
   }
   flushPendingReports();
@@ -85,9 +96,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) }),
+  get: <T>(path: string, options?: CallOptions) => request<T>(path, {}, options),
+  post: <T>(path: string, body?: unknown, options?: CallOptions) =>
+    request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) }, options),
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
   upload: <T>(path: string, form: FormData) => request<T>(path, { method: "POST", body: form }),

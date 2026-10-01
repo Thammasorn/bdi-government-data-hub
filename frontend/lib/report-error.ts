@@ -6,6 +6,7 @@
  *   - **ไม่รายงาน `ApiError`** ยกเว้น `backend_unreachable` — 4xx เป็นเรื่องของคำขอ 5xx backend เก็บไว้เองแล้วพร้อมรหัสอ้างอิง
  *     ส่วน 502 ของ proxy คือคำขอที่ backend ไม่เคยเห็น จึงต้องมาจากที่นี่ แต่ส่งตอนนั้นไม่ได้ (backend ล่มอยู่) — เก็บไว้ใน
  *     `sessionStorage` (`bdi.pendingErrorReports` ไม่เกิน 5 รายการ ไม่เขียนอะไรอื่นลงไป) แล้วส่งหลังคำขอ API ถัดไปที่สำเร็จ
+ *     เต็มแล้วตัดรหัสของคำขอเบื้องหลัง (`background` ใน lib/api.ts — ตัว poll ทุก 15 วินาที กระดิ่ง ฯลฯ) ก่อนรหัสที่ผู้ใช้เห็น
  *   - ส่งแค่ `location.pathname` ไม่เคยส่ง query hash หรือค่าใด ๆ จาก `sessionStorage` ของหน้า (`?token=` ของหน้า activate,
  *     `?code&state` ของ ThaID) path ของคำขอ API ห้าตัวล่าสุดก็ตัด query ทิ้ง (`noteApiCall`) และ URL ที่โผล่ในข้อความหรือ stack
  *     ของ error เองก็เหลือแค่ path (`withoutUrlQueries`)
@@ -42,6 +43,8 @@ interface PendingReport {
   reference: string;
   pathname: string;
   at: string;
+  /** มาจากคำขอเบื้องหลังที่ไม่แสดง error (`background` ใน lib/api.ts) — ไม่มีใครเห็นรหัสนี้ คิวเต็มแล้วตัวนี้ออกก่อน */
+  background?: boolean;
 }
 
 let sent = 0;
@@ -144,16 +147,30 @@ export function reportError(
 }
 
 /**
- * 502 ของ proxy (`backend_unreachable`) — เก็บไว้ส่งทีหลัง ตอนนี้ backend ล่มอยู่ ส่งไปก็ไม่ถึง ไม่เกิน 5 รายการ (ตัวเก่าหลุดก่อน)
+ * 502 ของ proxy (`backend_unreachable`) — เก็บไว้ส่งทีหลัง ตอนนี้ backend ล่มอยู่ ส่งไปก็ไม่ถึง ไม่เกิน 5 รายการ
  * รหัสอ้างอิงเดียวกับที่ผู้ใช้เห็นใน toast ทำให้เจ้าหน้าที่ค้นเจอได้ (Postman G6 — trace แสดงเป็น `reports`)
+ *
+ * **เต็มแล้วตัดรหัสของคำขอเบื้องหลังที่เก่าที่สุดก่อน** (`background` — ไม่มีใครเห็นรหัสนั้น) ไม่มีเหลือค่อยตัดตัวเก่าที่สุด
+ * เดิมตัดตัวเก่าที่สุดเสมอ หน้ารายละเอียดคำขอ poll `/state` ทุก 15 วินาที (lib/use-request-watch.ts) และทุกครั้งที่ล้มก็ได้รหัส
+ * ใหม่ backend ล่มนานกว่าราวหนึ่งนาทีหลังผู้ใช้กดแล้วเห็น toast รหัสของ poll ห้าตัวก็ดันรหัสที่ผู้ใช้อ่านให้เจ้าหน้าที่ฟังออกไป
+ * เหลือแค่ในบรรทัด `[frontend-proxy]` ของ stdout ของ Next — G6 ค้นไม่เจอ
  */
-export function queueProxyFailure(reference: string | undefined): void {
+export function queueProxyFailure(reference: string | undefined, options: { background?: boolean } = {}): void {
   try {
     if (!reference || !/^[0-9a-f]{8}$/i.test(reference)) return;
     const pending = readPending();
     if (pending.some((item) => item.reference === reference)) return;
-    pending.push({ reference, pathname: currentPathname(), at: new Date().toISOString() });
-    writePending(pending.slice(-PENDING_MAX));
+    pending.push({
+      reference,
+      pathname: currentPathname(),
+      at: new Date().toISOString(),
+      ...(options.background ? { background: true } : {}),
+    });
+    while (pending.length > PENDING_MAX) {
+      const unseen = pending.findIndex((item) => item.background === true);
+      pending.splice(unseen >= 0 ? unseen : 0, 1);
+    }
+    writePending(pending);
   } catch {
     // sessionStorage ใช้ไม่ได้ (โหมดส่วนตัว เต็ม) — รายงานนั้นหายไป
   }
@@ -188,10 +205,18 @@ function readPending(): PendingReport[] {
     const raw = window.sessionStorage.getItem(PENDING_KEY);
     const parsed: unknown = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed)
-      ? parsed.filter(
-          (item): item is PendingReport =>
-            !!item && typeof item.reference === "string" && typeof item.pathname === "string" && typeof item.at === "string",
-        )
+      ? parsed
+          .filter(
+            (item): item is PendingReport =>
+              !!item && typeof item.reference === "string" && typeof item.pathname === "string" && typeof item.at === "string",
+          )
+          // เก็บแค่ช่องที่รู้จัก — ค่าที่หน้าอื่นหรือรุ่นก่อนเขียนไว้ไม่ติดกลับลงไป · รายการของรุ่นก่อนไม่มี `background` = ผู้ใช้เห็น
+          .map((item) => ({
+            reference: item.reference,
+            pathname: item.pathname,
+            at: item.at,
+            ...(item.background === true ? { background: true } : {}),
+          }))
       : [];
   } catch {
     return [];

@@ -1459,7 +1459,17 @@ reports `onRequestError` plus the process's unhandled rejections (through
 `ApiError` — the backend already captured every 5xx — except the proxy's own 502
 `backend_unreachable`, which the backend never saw: that one is queued in
 `sessionStorage` (`bdi.pendingErrorReports`, five at most) and sent after the next API call
-that succeeds, so the reference in the toast is findable (Postman G6). Only `location.pathname`
+that succeeds, so the reference in the toast is findable (Postman G6). A full queue drops a
+reference from a call made with `{ background: true }` (the 15-second `/state` poller, the bell,
+`/api/auth/me`, logout) before any reference a user was shown; until 2026-10-01 it dropped the
+oldest, so a backend outage of a minute or so under an open detail page pushed the toast's
+reference out. A new call that swallows its own error should pass that flag. **A dev checkout
+does not take this path by default**: `new-dev.sh` writes `NEXT_PUBLIC_API_URL=http://localhost:41N0`,
+so the browser calls the backend directly and a stopped backend gives a status-0
+"เชื่อมต่อเซิร์ฟเวอร์ไม่ได้" with no reference, and nothing is queued (status 0 is deliberately not
+reported). To exercise the proxy's 502 and the queue, recreate the frontend with the value empty —
+`NEXT_PUBLIC_API_URL= docker compose up -d --no-build --no-deps frontend` — and run the same
+command without the override afterwards. Only `location.pathname`
 ever leaves the browser, and a URL inside an error's message or stack loses its query and fragment
 on the way out — in the browser, in the Next server's stdout line, and again in the backend —
 because a frame of an inline script quotes `/activate?token=…` and React's error links quote

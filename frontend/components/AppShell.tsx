@@ -376,7 +376,7 @@ function UserMenu() {
    * จะไม่ได้ทำงานแล้ว
    */
   const logout = async () => {
-    await api.post("/api/auth/logout").catch(() => undefined);
+    await api.post("/api/auth/logout", undefined, { background: true }).catch(() => undefined);
     announceSignOut();
     window.location.replace("/login");
   };
