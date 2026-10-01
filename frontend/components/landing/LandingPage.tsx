@@ -31,7 +31,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
-import { D2Mark, LogoImage } from "@/components/brand/Logo";
+import { BDI_WEBSITE_URL, D2Mark, LogoImage } from "@/components/brand/Logo";
 
 import diagram from "./d2-how-it-works.webp";
 import {
@@ -278,10 +278,20 @@ function TopNav({ active }: { active: string }) {
       className="sticky top-0 z-30 border-b border-line/70 bg-white/80 frost-12"
     >
       <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3 sm:px-6">
-        <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="หน้าแรก D2">
-          <LogoImage className="h-14" />
-          <D2Mark className="h-9" />
-        </Link>
+        {/* โลโก้ BDI พาไปเว็บไซต์สถาบัน ส่วน D2 ไม่ใช่ลิงก์ — เราอยู่หน้าแรกอยู่แล้ว
+            ลิงก์กลับมาหน้าเดิมทำให้ขึ้นรูปมือทั้งที่กดแล้วไม่ไปไหน (การ์ด "Logo Link") */}
+        <div className="flex shrink-0 items-center gap-2.5">
+          <a
+            href={BDI_WEBSITE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex"
+            aria-label="เว็บไซต์สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) — เปิดในแท็บใหม่"
+          >
+            <LogoImage className="h-14" />
+          </a>
+          <D2Mark className="h-9 cursor-default" />
+        </div>
 
         <nav aria-label="หัวข้อในหน้านี้" className="hidden min-w-0 flex-1 xl:block">
           <ul
