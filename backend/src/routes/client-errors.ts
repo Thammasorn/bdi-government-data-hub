@@ -66,6 +66,15 @@ const LATE_REPORT_MAX_MS = 24 * 60 * 60_000;
 const MESSAGE_MAX = 2_048;
 const STACK_MAX = 16_384;
 const FRAME_MAX = 1_024;
+/**
+ * บรรทัดของ stack ที่กวาดได้ไม่เกินนี้ — ตัดก่อนกวาด กวาดทีละบรรทัด (`scrubbedError`) ราคาจึงตามจำนวนบรรทัด ไม่ใช่ตามขนาด
+ *
+ * เดิมหยุดที่ความยาวรวม 16 KB อย่างเดียว body 16 KB ที่เป็น `a\n` ห้าพันสามร้อยบรรทัดจึงกวาดห้าพันสามร้อยรอบบน event loop ราว 20 ถึง
+ * 75 มิลลิวินาทีต่อรายงาน (เทียบกับ 3 ของ body ขนาดเท่ากันที่มีร้อยกว่าบรรทัด) สามร้อยรายงานต่อนาทีที่ endpoint นี้รับได้โดยไม่ต้อง
+ * login ทำให้ `/health/live` ช้าจาก 3 เป็นราว 110 มิลลิวินาที (ตรวจขั้น 8-10 แบบค้าน 2026-10-01) V8 เก็บ stack สิบเฟรมเป็นค่าตั้งต้น
+ * (`Error.stackTraceLimit`) สองร้อยจึงเหลือที่ให้หน้าที่ตั้งค่านั้นสูงกว่าปกติมาก
+ */
+const STACK_LINES_MAX = 200;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const UUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
@@ -258,7 +267,10 @@ function withoutUrlQueries(text: string): string {
   });
 }
 
-/** ข้อความของรายงานในรูปเดียวกับ error ของ server (`scrubError`) — กวาดซ้ำทุกช่อง เฟรมละไม่เกิน 1 KB รวมไม่เกิน 16 KB */
+/**
+ * ข้อความของรายงานในรูปเดียวกับ error ของ server (`scrubError`) — กวาดซ้ำทุกช่อง เฟรมละไม่เกิน 1 KB ไม่เกิน 200 บรรทัด
+ * รวมไม่เกิน 16 KB
+ */
 function scrubbedError(report: Report): ScrubbedError {
   const name = scrubClipped(report.name?.trim() || "Error", 100);
   const message = scrubClipped(withoutUrlQueries(report.message ?? ""), MESSAGE_MAX);
@@ -266,7 +278,7 @@ function scrubbedError(report: Report): ScrubbedError {
   if (report.stack) {
     const lines: string[] = [];
     let length = 0;
-    for (const line of report.stack.split("\n")) {
+    for (const line of report.stack.split("\n", STACK_LINES_MAX)) {
       if (length > STACK_MAX) break;
       const clean = scrubClipped(withoutUrlQueries(line), FRAME_MAX);
       lines.push(clean);
