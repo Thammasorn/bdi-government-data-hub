@@ -224,10 +224,14 @@ export const CONTACT = {
 // ── กฎหมายและเอกสารที่เกี่ยวข้อง ────────────────────────────────────────
 
 /**
- * กฎหมายหนึ่งฉบับบนหน้าแรก — `file` คือ path ใต้ `frontend/public` ที่ให้คนอ่านดาวน์โหลด
+ * กฎหมายหรือเอกสารหนึ่งฉบับบนหน้าแรก — `file` คือ path ใต้ `frontend/public` ที่ให้คนอ่านดาวน์โหลด
  *
- * **ดาวน์โหลดได้เฉพาะกฎหมาย** เอกสาร A0–A3 ข้างล่างเป็นรายการชื่อเฉย ๆ ไม่มีปุ่ม (BDI แจ้ง
- * 2026-09-30) — ฉบับที่หน่วยงานใช้จริงถูก render แยกให้แต่ละหน่วยงานในขั้นลงนาม
+ * ทุกรายการในหัวข้อนี้ดาวน์โหลดได้: กฎหมายเป็น PDF ส่วน A0–A3 เป็น .docx ตามที่ NJ ส่งมา
+ * (`assets/info_page/doc`, ชุด version_01_25691005, 2026-10-01) — เป็นฉบับเปล่าสำหรับอ่าน
+ * ไม่มีช่อง `{{...}}` ของ template ที่ระบบ render ให้แต่ละหน่วยงานในขั้นลงนาม และไม่ได้ผูกกับ
+ * เวอร์ชันในฐานข้อมูล BDI ออกฉบับใหม่เมื่อไรต้องเปลี่ยนไฟล์ที่นี่ด้วย
+ *
+ * (2026-09-30 เคยเอาปุ่มของ A0–A3 ออก แล้ว BDI แจ้งกลับวันรุ่งขึ้นว่าต้องมี)
  *
  * ตั้งชื่อไฟล์ใน `public/documents/` เป็นภาษาอังกฤษ เพื่อให้ URL ไม่ต้อง percent-encode
  * ชื่อที่ผู้ใช้ได้ตอนบันทึกคือชื่อภาษาไทยของรายการ (ดู `DownloadButton`)
@@ -268,15 +272,28 @@ export const LEGAL_REGULATIONS: LegalItem[] = [
  * จริง ๆ ส่วนรหัส A1–A3 เป็นรหัสภายในที่หน้าอื่นเลิกแสดงไปแล้ว (ดู lib/legal-document.ts)
  * หน้าแรกยังคงป้ายรหัสไว้ เพราะที่นี่เป็นสารบัญของชุดเอกสาร ไม่ใช่เอกสารที่ยื่นให้ลงนาม
  */
-export const LEGAL_PRIMARY = {
+export const LEGAL_PRIMARY: LegalItem & { code: string } = {
   code: "A0",
   title: "ข้อตกลงหลักในการบริหารจัดการและแบ่งปันข้อมูล",
+  file: "/documents/a0-main-agreement-v01.docx",
 };
 
 export const LEGAL_ANNEX_LABEL = "เอกสารภาคผนวก";
 
-export const LEGAL_ANNEXES = [
-  { code: "A1", title: "ผนวก 1 ข้อตกลงรักษาความลับ (Non-Disclosure Agreement)" },
-  { code: "A2", title: "ผนวก 2 ข้อตกลงในการประมวลผลข้อมูล (Data Processing Agreement)" },
-  { code: "A3", title: "ผนวก 3 ข้อตกลงประมวลผลข้อมูลส่วนบุคคล (Personal Data Processing Agreement)" },
+export const LEGAL_ANNEXES: (LegalItem & { code: string })[] = [
+  {
+    code: "A1",
+    title: "ผนวก 1 ข้อตกลงรักษาความลับ (Non-Disclosure Agreement)",
+    file: "/documents/a1-nda-v01.docx",
+  },
+  {
+    code: "A2",
+    title: "ผนวก 2 ข้อตกลงในการประมวลผลข้อมูล (Data Processing Agreement)",
+    file: "/documents/a2-dpa-v01.docx",
+  },
+  {
+    code: "A3",
+    title: "ผนวก 3 ข้อตกลงประมวลผลข้อมูลส่วนบุคคล (Personal Data Processing Agreement)",
+    file: "/documents/a3-pdpa-v01.docx",
+  },
 ];

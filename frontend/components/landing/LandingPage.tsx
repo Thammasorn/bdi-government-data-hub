@@ -955,7 +955,7 @@ const DOWNLOAD_PILL =
   "inline-flex shrink-0 items-center gap-1.5 self-start rounded-full border border-line p-2 text-[13px] font-medium sm:self-center sm:px-3.5 sm:py-1.5";
 
 /**
- * ปุ่มดาวน์โหลดท้ายแถวของกฎหมายหนึ่งฉบับ — แบบเดียวกับปุ่มท้ายแถวของเอกสาร A0–A4
+ * ปุ่มดาวน์โหลดท้ายแถวของกฎหมายหรือเอกสารหนึ่งฉบับ — แบบเดียวกับปุ่มท้ายแถวของเอกสาร A0–A4
  * ในหน้าคำขอ ชื่อทางซ้ายจึงเป็นข้อความธรรมดา ไม่ต้องขีดเส้นใต้ทั้งบรรทัดให้เป็นลิงก์
  *
  * เปิดในแท็บใหม่ด้วย เพราะเบราว์เซอร์ส่วนใหญ่เปิด PDF ให้อ่านแทนการบันทึกอยู่ดี คนที่แค่
@@ -1011,7 +1011,8 @@ function Legal() {
       {/* ข้อความตัดบรรทัดเฉพาะจอแคบ ป้ายรหัสจึงชิดบนที่นั่น ส่วนจอกว้างเป็นบรรทัดเดียว จัดกึ่งกลางถูกกว่า */}
       <div className="reveal mt-3 flex items-start gap-4 rounded-2xl bg-white px-6 py-4 shadow-card sm:items-center">
         <DocCode code={LEGAL_PRIMARY.code} />
-        <span className="text-[16px] leading-[1.7] text-ink">{LEGAL_PRIMARY.title}</span>
+        <span className="min-w-0 flex-1 text-[16px] leading-[1.7] text-ink">{LEGAL_PRIMARY.title}</span>
+        <DownloadButton item={LEGAL_PRIMARY} />
       </div>
 
       {/*
@@ -1031,7 +1032,8 @@ function Legal() {
               className="flex items-start gap-4 border-t border-line py-3.5 first:border-t-0 first:pt-0 last:pb-0 sm:items-center"
             >
               <DocCode code={doc.code} muted />
-              <span className="text-[15px] leading-[1.7] text-ink">{doc.title}</span>
+              <span className="min-w-0 flex-1 text-[15px] leading-[1.7] text-ink">{doc.title}</span>
+              <DownloadButton item={doc} />
             </li>
           ))}
         </ul>
