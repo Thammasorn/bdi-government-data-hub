@@ -113,11 +113,13 @@ export const AuditAction = {
   ROLE_REVOKED: "ROLE_REVOKED",
 
   /**
-   * หน่วยงานใหม่ในทะเบียน — ผู้ดูแลระบบสร้างล่วงหน้า (`created_via: ADMIN_API`) หรือผู้ใช้เปิดคำขอ
-   * จดทะเบียนพร้อมหน่วยงานใหม่ (`WEB_FORM`, มี `REQUEST_CREATED` ของคำขอคู่กัน) subject คือแถว
-   * `organization` เสมอ `after` เก็บค่าที่เขียนลงทะเบียนตอนสร้าง ทุกช่องเป็นของหน่วยงาน ไม่มีข้อมูลบุคคล
+   * หน่วยงานใหม่ในทะเบียน — ผู้ดูแลระบบสร้าง (`created_via: ADMIN_API`) ซึ่งเป็นทางเดียวตั้งแต่กฎ BDI
+   * 2026-09-30 subject คือแถว `organization` เสมอ `after` เก็บค่าที่เขียนลงทะเบียนตอนสร้าง ทุกช่องเป็นของ
+   * หน่วยงาน ไม่มีข้อมูลบุคคล
    *
-   * แถวทาง WEB_FORM ที่เขียนก่อนการ์ด activity log มี subject เป็น **คำขอ** และไม่มี `REQUEST_CREATED` คู่
+   * แถว `created_via: WEB_FORM` (ผู้ใช้เปิดคำขอพร้อมหน่วยงานใหม่ใน `POST /api/organizations`) มีแต่แถวเก่า:
+   * ทางนั้นถูกถอดพร้อมกฎข้างบน แถวที่เขียนบน branch นี้มี `REQUEST_CREATED` คู่ ส่วนแถวที่เขียนก่อนการ์ด
+   * activity log มี subject เป็น **คำขอ** และไม่มี `REQUEST_CREATED` คู่
    */
   ORGANIZATION_CREATED: "ORGANIZATION_CREATED",
   /**
@@ -141,10 +143,11 @@ export const AuditAction = {
   /**
    * เปิดคำขอใบใหม่ — ทั้งคำขอลงทะเบียนชุดข้อมูลและคำขอจดทะเบียนหน่วยงาน (`POST /api/organizations`)
    *
-   * ฝั่งหน่วยงานมีสองแบบ: เปิดให้หน่วยงานที่ผู้ดูแลระบบสร้างไว้ (`metadata.prefilled_from` บอกว่าค่า
-   * ตั้งต้นคัดลอกมาจากทะเบียน) หรือเปิดพร้อมหน่วยงานใหม่ ซึ่งมี `ORGANIZATION_CREATED` และ
-   * `ROLE_ASSIGNED` ของผู้เปิดในคำขอเดียวกัน แถวก่อนการ์ด activity log ของสองกรณีนี้เป็น
-   * `ORGANIZATION_UPDATED` และ `ORGANIZATION_CREATED` ตามลำดับ
+   * ฝั่งหน่วยงานเหลือแบบเดียวตั้งแต่กฎ BDI 2026-09-30: ผู้ประสานงานของหน่วยงาน (`ORGANIZATION_USER`)
+   * เปิดคำขอให้หน่วยงานที่ผู้ดูแลระบบสร้างไว้ (`metadata.prefilled_from` บอกว่าค่าตั้งต้นคัดลอกมาจาก
+   * ทะเบียน) ผู้เรียกอื่นได้ 403 `no_organization` โดยไม่มีแถว แถวเก่ามีอีกแบบคือเปิดพร้อมหน่วยงานใหม่
+   * ซึ่งมี `ORGANIZATION_CREATED` และ `ROLE_ASSIGNED` ของผู้เปิดในคำขอเดียวกัน แถวก่อนการ์ด activity log
+   * ของสองกรณีนี้เป็น `ORGANIZATION_UPDATED` และ `ORGANIZATION_CREATED` ตามลำดับ
    */
   REQUEST_CREATED: "REQUEST_CREATED",
 

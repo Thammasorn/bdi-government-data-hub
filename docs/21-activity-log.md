@@ -27,6 +27,12 @@ Postgres ไม่รับ (runbook 5.11) · และ API ตัวเดี�
 >   พร้อม `hashKeys` index ของ `activity` และ retention/prune ทั้งหมด (ขั้น 6) · API อ่าน `/api/admin/logs/*` รวม `AUDIT_LOG_READ` `LOG_TOKEN_REJECTED`
 >   `ERROR_ISSUE_STATUS_CHANGED` (ขั้น 7) · บันทึกการเรียก `/api/admin*` (`ADMIN_API_REQUEST` ขั้น 8) · error จากเบราว์เซอร์และ Next server (ขั้น 9) ·
 >   อีเมลแจ้งเตือน error (ขั้น 10)
+> - **merge main ที่ `7259c09`** (2026-10-01) — กฎ BDI 2026-09-30 ว่าหน่วยงานเกิดจากผู้ดูแลระบบเท่านั้น (`POST /api/admin/organizations`):
+>   `POST /api/organizations` เหลือทางเดียว คือผู้ประสานงานของหน่วยงาน (`ORGANIZATION_USER`) ที่มีหน่วยงานแล้วเปิดคำขอให้หน่วยงานของตัวเอง
+>   (`REQUEST_CREATED` + `prefilled_from`) ผู้เรียกอื่นที่ไม่ใช่บัญชี BDI ได้ 403 `no_organization` และ**ไม่มีแถว** (เหมือนการปฏิเสธ 4xx อื่นของ
+>   เส้นทางธุรกิจ — 6.1) ทาง “ผู้ใช้เปิดหน่วยงานใหม่” ถูกถอด แถว `ORGANIZATION_CREATED` `created_via: WEB_FORM` · `REQUEST_CREATED` ที่ตามมา ·
+>   `ROLE_ASSIGNED` `assigned_via: ORGANIZATION_CREATED` และ `ROLE_REVOKED` รูปแบบ A/B จากเส้นทางนี้จึงมีแค่ในแถวที่เขียนก่อนหน้า หัวข้อที่พูดถึง
+>   ติดป้าย **ถอดแล้วที่ `7259c09`** ไว้ ส่วนเลขบรรทัดยังอ้าง `2cab0a7` ตามเดิม
 > - หัวข้อที่สร้างแล้วอธิบายสิ่งที่โค้ดทำจริง เมื่อโค้ดต่างจากแบบ เอกสารตามโค้ดและบอกความต่างในบรรทัดที่ขึ้นต้นด้วย **ต่างจากแบบ:**
 > - สิ่งที่แผนไม่ได้เขียนไว้และเอกสารนี้เสนอเองติดป้าย **[ข้อเสนอ]** ส่วนที่ต้องมีคนตัดสินก่อนสร้าง ติดป้าย **[ต้องตัดสิน]**
 > - ก่อน merge ขั้น 4 เข้า `main/` ต้องตั้ง `MONGO_ROOT_PASSWORD` `MONGO_BACKEND_PASSWORD` `MONGO_WORKER_PASSWORD` ใน `main/.env` ด้วย
@@ -389,7 +395,7 @@ SET TIME ZONE 'Asia/Bangkok';              -- ให้ occurred_at แสดง
 | `metadata.user_account_id` | `SESSION_REVOKED` `LOGOUT`/`ROTATED` · `ACTIVATION_KEY_USED` `REVOKED` `EXPIRED` · `IDENTITY_VERIFICATION_STARTED` `IDENTITY_VERIFIED` `IDENTITY_VERIFICATION_FAILED` ขา activate |
 | `metadata.revoked_user_account_id` | `ROLE_REVOKED` รูปแบบ B |
 | `metadata.transferred_user_account_id` | `REQUEST_RESET_TO_DRAFT` ทาง `ADMIN_TRANSFER` |
-| `after.userAccountId` | `ROLE_ASSIGNED` ที่ subject เป็น assignment (activate · เปิดหน่วยงาน · review) · `ACTIVATION_KEY_ISSUED` ของ invitation และ review |
+| `after.userAccountId` | `ROLE_ASSIGNED` ที่ subject เป็น assignment (activate · review · เปิดหน่วยงานในแถวก่อน `7259c09`) · `ACTIVATION_KEY_ISSUED` ของ invitation และ review |
 | `before.userAccountId` | `ROLE_REVOKED` รูปแบบ A และ C |
 | `before` / `after.assignedSpecialistId` | `REQUEST_ASSIGNED` |
 | อีเมล: `metadata.email` · `before`/`after.email` | `LOGIN_FAILED` (ที่พิมพ์) · `PASSWORD_RESET_REQUESTED` · `USER_ACCOUNT_CREATED` · `ACTIVATION_KEY_ISSUED` ทุกแบบ (resend มี**แค่**อีเมล) · `INVITATION_DELETED` · `APPROVER_INVITATION_RECALLED` · `USER_ACCOUNT_DEACTIVATED` · `USER_IDENTITY_RELEASED` · `USER_ACCOUNT_UPDATED` แบบอีเมล/เลขบัตร |
@@ -1192,7 +1198,7 @@ encode ใหม่ ไม่สนตัวพิมพ์) ตัดที่ 
 | admin ยุติบัญชี | [`ROLE_REVOKED` ×n ในธุรกรรม] → [`SESSION_REVOKED` ในธุรกรรม] → `USER_ACCOUNT_DEACTIVATED` → [`ACTIVATION_KEY_REVOKED` ×n] |
 | admin ย้ายหน่วยงาน | [`ROLE_REVOKED` ×n] → [`ROLE_REVOKED` ของผู้ถือที่นั่งเดิม] → [`SESSION_REVOKED` ROTATED] (ทั้งหมดในธุรกรรม) → `ROLE_ASSIGNED` → [`REQUEST_RESET_TO_DRAFT` ×n] |
 | admin สั่งคำขอหน่วยงานกลับเป็นร่าง | [`ROLE_REVOKED` + `SESSION_REVOKED` ในธุรกรรม] → `REQUEST_RESET_TO_DRAFT` → [`APPROVER_INVITATION_RECALLED`] → [`USER_ACCOUNT_DEACTIVATED`] → [`ACTIVATION_KEY_REVOKED` ×n] |
-| ผู้ใช้เปิดหน่วยงานใหม่ | [`ROLE_REVOKED` A ในธุรกรรม] → [`ROLE_REVOKED` B] → `ORGANIZATION_CREATED` → `REQUEST_CREATED` → `ROLE_ASSIGNED` (สองแถวแรกในทางปฏิบัติไม่เกิด — หน่วยงานเพิ่งสร้าง) |
+| ผู้ใช้เปิดหน่วยงานใหม่ (**ถอดแล้วที่ `7259c09`** — แถวเก่าเท่านั้น) | [`ROLE_REVOKED` A ในธุรกรรม] → [`ROLE_REVOKED` B] → `ORGANIZATION_CREATED` → `REQUEST_CREATED` → `ROLE_ASSIGNED` (สองแถวแรกในทางปฏิบัติไม่เกิด — หน่วยงานเพิ่งสร้าง) |
 | กด “ตรวจสอบข้อมูล” / “ตรวจสอบคำขอ” | PATCH: [`REQUEST_DRAFT_SAVED`] · generate: `REQUEST_FORM_GENERATED` |
 | นำส่งคำขอ | `REQUEST_SUBMITTED` (`after = {requestNumber}`) — ฝั่งชุดข้อมูลเขียนหลังการแจ้งเตือน (4.7) |
 | ผู้ประสานงาน BDI ตรวจคำขอหน่วยงานผ่าน | [`ROLE_REVOKED` ในธุรกรรม] → `REQUEST_SUBMITTED` (`after.taskType BDI_OFFICER_REVIEW`) → [`USER_ACCOUNT_CREATED`] → [`ACTIVATION_KEY_REVOKED`] → [`ACTIVATION_KEY_ISSUED`] หรือ [`ROLE_ASSIGNED`] → [`ROLE_REVOKED` จาก announce] |
@@ -1716,7 +1722,7 @@ subject **ไม่สม่ำเสมอ**: สามจุดชี้แถ
 | จุด | เกิดเมื่อ | actor | subject | before / after | metadata |
 |---|---|---|---|---|---|
 | activate | `POST /api/auth/activate` — `assignRole` สร้าง assignment ใหม่จริง (มีอยู่แล้ว = ไม่มีแถว) | `USER` = บัญชีที่เปิด | URA | null / `{userAccountId, role, organizationId}` | `assigned_via: "ACTIVATION"` · `activation_key_id` · `replaced` |
-| เปิดหน่วยงาน | `POST /api/organizations` ทางหน่วยงานใหม่ | **แถว session** (ผู้ใช้ = ผู้รับ role) | URA | null / เหมือนข้างบน (`ORGANIZATION_USER`) | `assigned_via: "ORGANIZATION_CREATED"` · `request_number` · `replaced` |
+| เปิดหน่วยงาน | **ถอดแล้วที่ `7259c09`** — แถวเก่าเท่านั้น: `POST /api/organizations` ทางหน่วยงานใหม่ | **แถว session** (ผู้ใช้ = ผู้รับ role) | URA | null / เหมือนข้างบน (`ORGANIZATION_USER`) | `assigned_via: "ORGANIZATION_CREATED"` · `request_number` · `replaced` |
 | review | `POST /api/organizations/:id/review` ผ่านด่าน `BDI_OFFICER_REVIEW` และผู้มีอำนาจฯ มีบัญชี `ACTIVE` แล้ว และ `assignRole` สร้าง assignment ใหม่จริง — ผู้มีอำนาจฯ ที่ถือ `ORGANIZATION_APPROVER` ของหน่วยงานนี้อยู่แล้ว (เช่นผ่านด่านแรกรอบที่สองหลังคำขอถูกส่งกลับ) = `created: false` ไม่มีแถว (`organizations.ts:3244` `:2881`) | **แถว session** = ผู้ประสานงาน BDI | URA | null / เหมือนข้างบน (`ORGANIZATION_APPROVER`) | `assigned_via: "REVIEW_API"` · `request_number` · `replaced` |
 | admin มอบ | `POST /api/admin/users/:id/roles` `{role, organizationId?, reason}` | **แถว admin** | **UA** | null / `{role, organizationId}` | `reason` · `assigned_via: "ADMIN_API"` · `replaced` |
 | admin ย้าย | `POST /api/admin/users/:id/transfer` `{organizationId, role, reason}` | **แถว admin** | **UA** | `{organizationIds: [...]}` / `{organizationId, role}` | `reason` · `transferred_via: "ADMIN_API"` · `requests_reverted_to_draft` · `replaced` |
@@ -1765,7 +1771,7 @@ subject **ไม่สม่ำเสมอ**: สามจุดชี้แถ
 - `POST /api/organizations/:id/review` ผ่านด่านแรกกับผู้มีอำนาจฯ ที่บัญชี **`ACTIVE`** แล้ว (`organizations.ts:3234-3244`, actor = `SYSTEM_USER_ID`)
   — ตามด้วยรูปแบบ B · บัญชีที่มีอยู่แต่ `PENDING` `SUSPENDED` หรือ `DEACTIVATED` ไปทาง `issueActivationKey()` (`:3245-3253`) ซึ่งไม่เรียก
   `assignRole` จึงไม่มีทั้งรูปแบบ A และ B
-- `POST /api/organizations` (`:1133`, actor = ผู้ใช้) — ตามด้วยรูปแบบ B (`:1146` เขียนก่อน `ORGANIZATION_CREATED`) หน่วยงานเพิ่งสร้าง
+- **ถอดแล้วที่ `7259c09`** `POST /api/organizations` (`:1133`, actor = ผู้ใช้) — ตามด้วยรูปแบบ B (`:1146` เขียนก่อน `ORGANIZATION_CREATED`) หน่วยงานเพิ่งสร้าง
   ในทางปฏิบัติไม่เกิด
 - `POST /api/admin/users/:id/roles` (`admin-users.ts:1215`) และ `/transfer` (`:1414`) — actor = `SYSTEM_USER_ID` **ไม่มี**รูปแบบ B และผู้ถูกแทนไม่ได้รับแจ้ง
 - `seed:demo` (`scripts/seed-demo.ts:103`)
@@ -1979,7 +1985,8 @@ subject เป็นแถว `organization` เสมอ **แถวทาง W
 
 **เกิดเมื่อ**
 - `POST /api/admin/organizations` — รหัสไม่ซ้ำ หน่วยงานแม่มีอยู่ ชื่อที่อยู่แปลงเป็นรหัสได้ (`created_via: ADMIN_API`)
-- `POST /api/organizations` ทางหน่วยงานใหม่ — ผู้ใช้ยังไม่มีหน่วยงาน (`created_via: WEB_FORM`) ตามด้วย `REQUEST_CREATED` และ `ROLE_ASSIGNED`
+- **ถอดแล้วที่ `7259c09`** `POST /api/organizations` ทางหน่วยงานใหม่ — ผู้ใช้ยังไม่มีหน่วยงาน (`created_via: WEB_FORM`) ตามด้วย `REQUEST_CREATED` และ `ROLE_ASSIGNED`
+  — ตั้งแต่ merge นั้นมีแต่แถวเก่า คอลัมน์ WEB_FORM ข้างล่างอธิบายแถวเหล่านั้น หน่วยงานใหม่ทุกแห่งมาจากขา admin
 
 | ช่อง | admin | WEB_FORM |
 |---|---|---|
@@ -2053,10 +2060,11 @@ BDI อนุมัติขั้นสุดท้าย ค่าในคำ
 
 **เกิดเมื่อ**
 - `POST /api/dataset-requests` — ผู้ใช้มี `ORGANIZATION_USER` หน่วยงาน `ACTIVE` มีผู้ใช้และผู้มีอำนาจฯ ครบ (กดทุกครั้งได้ร่างใหม่)
-- `POST /api/organizations` ทางหน่วยงานที่มีอยู่แล้ว — ผู้ใช้มีหน่วยงานใน session (`session.organizationId`) หน่วยงานนั้นยังไม่ `ACTIVE` และไม่มีคำขอเปิดค้าง
+- `POST /api/organizations` ทางหน่วยงานที่มีอยู่แล้ว — ผู้ใช้มีหน่วยงานใน session (`session.organizationId`) **และถือ `ORGANIZATION_USER`**
+  (เงื่อนไขหลังมาจาก `7259c09` — ผู้มีอำนาจฯ และผู้ไม่มีหน่วยงานได้ 403 `no_organization` ไม่มีแถว) หน่วยงานนั้นยังไม่ `ACTIVE` และไม่มีคำขอเปิดค้าง
   (`prefilled_from`) ซึ่งรวมทั้งผู้ถูกเชิญเข้าหน่วยงานที่ admin สร้างไว้ **และ**ผู้ใช้ที่ยื่นใหม่หลังคำขอของหน่วยงานที่ตัวเองเปิดทาง WEB_FORM ถูก
   `REJECTED` (การปฏิเสธตั้งแค่ `rejected_at` ไม่ถอน `ORGANIZATION_USER` — `organizations.ts:2773-2777`)
-- `POST /api/organizations` ทางหน่วยงานใหม่ — ตามหลัง `ORGANIZATION_CREATED`
+- **ถอดแล้วที่ `7259c09`** `POST /api/organizations` ทางหน่วยงานใหม่ — ตามหลัง `ORGANIZATION_CREATED` (แถวเก่าเท่านั้น)
 
 | ช่อง | ค่า |
 |---|---|
@@ -3234,7 +3242,7 @@ compose ไม่อ่าน `MONGODB_URI` จาก `.env` และเติ�
 | สคริปต์ `seed-masters` · `backfill-display-name` | รันด้วยมือและนาน ๆ ครั้ง เลื่อนไว้ก่อน |
 | การกดบันทึกร่างที่ไม่มีอะไรเปลี่ยน (`REQUEST_DRAFT_SAVED`) · `LEGAL_DOCUMENT_UPDATED` / `USER_ACCOUNT_UPDATED` แบบโปรไฟล์ที่ไม่เปลี่ยน · `REQUEST_ASSIGNED` คนเดิม | สิ่งที่ต้องตอบคือ “ใครแก้อะไร” ไม่ใช่ “ใครกดปุ่ม” · ข้อยกเว้น: ร่างหน่วยงานที่ snapshot ถูกซิงก์จากบัญชีหรือถูก route แปลงรูปยังได้แถว `fields_changed: []` + `synced_from_account` / `normalised_by_route` แม้ผู้กรอกไม่ได้พิมพ์อะไร (4.7) · ส่วนการแก้**ทะเบียนหน่วยงาน** (`ORGANIZATION_UPDATED`) `REQUEST_UPDATED` และ `DATASET_CHOICE_CHANGED` ของ admin **เขียนเสมอ**แม้ไม่มีอะไรเปลี่ยน — ไม่มีทางแก้ทะเบียนไหนที่ข้ามการบันทึกที่ไม่เปลี่ยน |
 | ตัวรหัส OTP · hash ของมัน · ค่า token · รหัสผ่าน · `error_description` ของ ThaID | ความลับหรือข้อความที่คุมไม่ได้ เก็บแค่ id, fingerprint หรือรหัส (`error_description` ยังลง `integration_operation.last_error_message` นอก audit หลังผ่าน `scrubText()` — 5.6) |
-| คำสั่งเปลี่ยนข้อมูลที่ถูกปฏิเสธด้วย 4xx บนเส้นทางธุรกิจ (เช่น 409 `role_occupied` `invitation_pending` · 400 `validation` · 404 ของสิทธิ์) | ไม่มีที่บันทึก — ข้อเสนอ `REQUEST_REFUSED` เป็นงานถัดไป (แผน §13 ข้อ 29) · ความล้มเหลวของการยืนยันตัวตน**ถูกบันทึก**แม้ตอบ 4xx: `LOGIN_FAILED` (401/403/400/429) · `PASSWORD_RESET_COMPLETED` `FAILURE` (410/409) · `IDENTITY_VERIFICATION_FAILED` (400/403/409/410/502) · `ADMIN_TOKEN_REJECTED` (401) — ยกเว้น 400 `validation` ของ body ที่ผิดรูป (4.1) |
+| คำสั่งเปลี่ยนข้อมูลที่ถูกปฏิเสธด้วย 4xx บนเส้นทางธุรกิจ (เช่น 409 `role_occupied` `invitation_pending` · 400 `validation` · 404 ของสิทธิ์ · 403 `no_organization` ของ `POST /api/organizations` รวมผู้ประสานงานที่ถูกแทนที่ซึ่งพยายามเปิดหน่วยงานเอง — `7259c09`) | ไม่มีที่บันทึก — ข้อเสนอ `REQUEST_REFUSED` เป็นงานถัดไป (แผน §13 ข้อ 29) · ความล้มเหลวของการยืนยันตัวตน**ถูกบันทึก**แม้ตอบ 4xx: `LOGIN_FAILED` (401/403/400/429) · `PASSWORD_RESET_COMPLETED` `FAILURE` (410/409) · `IDENTITY_VERIFICATION_FAILED` (400/403/409/410/502) · `ADMIN_TOKEN_REJECTED` (401) — ยกเว้น 400 `validation` ของ body ที่ผิดรูป (4.1) |
 | แถวใหม่ของ review task · การเปิดด่าน · การยกเลิกด่านด้วย `cancelActiveTask()` · แถว `legal_acceptance` · การ render ซ้ำหลังลงนาม · การ render ตอน GET | ถูกบันทึกผ่านแถวของเหตุการณ์ต้นเรื่องเท่านั้น (ผลการตรวจ `DOCUMENT_SIGNED` `REQUEST_FORM_GENERATED`) |
 | โทเคนตั้งรหัสผ่านเก่าที่ถูกเพิกถอนตอนออกใบใหม่ · การเขียน `external_subject` ครั้งแรก · โปรไฟล์ที่เขียนตอน `/activate` | ช่องว่างที่รู้แล้ว ไม่ใช่การตัดสินใจ |
 | การเข้าถึงฐานข้อมูลด้วย `docker exec` / `psql` / `mongosh` บนเครื่อง (รวมการปิด issue ด้วยมือ — 5.11) | อยู่นอกแอป ไม่มีร่องรอย (ความเสี่ยงที่ BDI ต้องยอมรับ แผน Q13) |
@@ -3264,7 +3272,7 @@ compose ไม่อ่าน `MONGODB_URI` จาก `.env` และเติ�
 | เส้นทาง | actor ของ A | actor ของ B |
 |---|---|---|
 | `POST /api/auth/activate` | `USER` = บัญชีที่กำลังเปิด (`iam.ts:697-702`) | `SYSTEM` + null (ไม่มี actor ใน context — `notify.ts:194`) |
-| `POST /api/organizations` | `USER` = ผู้สร้างหน่วยงาน (`session.sub`, `organizations.ts:1133-1138`) | `USER` = คนเดียวกัน (จาก context ของ session `:1146`) |
+| `POST /api/organizations` (**ถอดแล้วที่ `7259c09`** — แถวเก่าเท่านั้น) | `USER` = ผู้สร้างหน่วยงาน (`session.sub`, `organizations.ts:1133-1138`) | `USER` = คนเดียวกัน (จาก context ของ session `:1146`) |
 | `POST /api/organizations/:id/review` | `USER` = `SYSTEM_USER_ID` (`:3237-3242`) snapshot เป็นอีเมลของบัญชีระบบ | `USER` = ผู้ประสานงาน BDI ที่กดตรวจ (`:2921`) |
 
 นับการเพิกถอนด้วย `DISTINCT subject_id` ต่อ correlation id อย่านับแถว ส่วน `POST /api/admin/users/:id/roles` และ `/transfer` ได้แค่รูปแบบ A
