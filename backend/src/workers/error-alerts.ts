@@ -12,9 +12,9 @@
  *   3. fatal ที่เกิดอีกหลังแจ้งไปแล้ว (`fatal`) และอีเมลที่ส่งไม่สำเร็จครบทุกครั้ง (`delivery:dead-letter:*` — `dead_letter`)
  *   4. 5xx ที่ route ตอบเองต่อเนื่อง — issue ระดับ warning ที่ fingerprint ขึ้นต้น `http:5xx:` มี event ตั้งแต่ 5 ตัวใน 15 นาที
  *      (`sustained_5xx` — 503 `no_reviewer`, `no_legal_documents`, 501 ThaID ไม่ได้ตั้งค่า)
- *   5. วนรีสตาร์ต — ในชั่วโมงที่ผ่านมา service หนึ่งมี `fatal-exit` ตั้งแต่ 2 ครั้ง หรือ `start` ที่ไม่มี `shutdown` ของ service
- *      เดียวกันนำหน้าภายใน 60 วินาที ตั้งแต่ 3 ครั้ง (`crashLoops`) — restart ปกติและการสร้าง container ใหม่ตอน deploy มี
- *      shutdown นำหน้าเสมอ จึงไม่นับ (เทียบ service ไม่ใช่ container: deploy ได้ container ใหม่ ชื่อเครื่องใหม่)
+ *   5. วนรีสตาร์ต — ในชั่วโมงที่ผ่านมา service หนึ่งมี `fatal-exit` ตั้งแต่ 2 ครั้ง หรือ `start` ที่**บันทึกก่อนหน้าของ container
+ *      เดียวกัน**ไม่ใช่ `shutdown` ตั้งแต่ 3 ครั้ง (`crashLoopsOf`) — process ก่อนหน้าตายโดยไม่ได้ปิดตามปกติ (SIGKILL, OOM,
+ *      fatal) restart ปกติ หยุดแล้วเปิดใหม่ทีหลังนานเท่าไรก็ตาม และ container ใหม่ตอน deploy (ยังไม่มีบันทึกของตัวเอง) ไม่นับ
  *   6. log store เกินเพดานขนาด (`relay_state.overQuota`) — ครั้งเดียวต่อครั้งที่เกิน
  *   warning อื่นไม่แจ้งเลย issue ที่ `ignored` ไม่แจ้งไม่ว่าอะไร และสองตัวนี้**ไม่แจ้งด้วยข้อไหนทั้งสิ้น** (`NEVER_ALERT`):
  *   `browser:chunk-load` กับ `http:5xx:…:log_access_disabled` — ตัวหลังคือคนลองเรียก API อ่าน log ที่ปิดไว้ ไม่ใช่ระบบเสีย
@@ -75,6 +75,7 @@ import type { Collection, Db, Document, Filter } from "mongodb";
 
 import { env } from "../env.js";
 import { captureError } from "../lib/error-capture.js";
+import { RUNTIME_EVENT_DAYS } from "../lib/log-retention.js";
 import { MONGO_COMMAND_MAX_MS, logDb } from "../lib/log-store.js";
 import { SendDeadlineError, sendRaw } from "../lib/mail.js";
 
@@ -100,7 +101,10 @@ const SUSTAINED_MIN_EVENTS = 5;
 const CRASH_WINDOW_MS = 60 * 60_000;
 const CRASH_FATAL_EXITS = 2;
 const CRASH_UNEXPLAINED_STARTS = 3;
-const START_AFTER_SHUTDOWN_MS = 60_000;
+/** บันทึกของ process ในชั่วโมงที่อ่านมาพิจารณา — ตัวใหม่สุดก่อน วนรีสตาร์ตจริงไม่ถึงหลักพันต่อชั่วโมง (restart policy มี backoff) */
+const CRASH_EVENTS_MAX = 2_000;
+/** ย้อนหาบันทึกก่อนหน้าของ container ได้ไกลเท่าอายุของ `runtime_events` (lib/log-retention.ts) — เก่ากว่านั้นไม่เหลือให้หา */
+const CRASH_LOOKBACK_MS = RUNTIME_EVENT_DAYS * 24 * 60 * 60_000;
 /** issue ของ server ที่อ่านมาพิจารณาต่อรอบ — มากกว่านี้ในรอบเดียวคือพายุ ฉบับละ 20 อยู่แล้ว */
 const CANDIDATES_MAX = 200;
 /** issue เบราว์เซอร์ที่อ่านมาพิจารณาต่อรอบ — แจ้งได้ไม่เกินห้าต่อหกชั่วโมงอยู่แล้ว */
@@ -554,41 +558,100 @@ function choose(candidates: Candidate[], browserBudget: number): Candidate[] {
   return chosen;
 }
 
+interface RuntimeRecord {
+  at: Date;
+  service: string;
+  kind: string;
+  host?: { containerId?: unknown };
+}
+
 /**
  * service ที่วนรีสตาร์ตในชั่วโมงที่ผ่านมา (ข้อ 5 ของหัวไฟล์) และยังไม่ได้แจ้งภายในหกชั่วโมง — จาก `runtime_events`
  * ที่ backend กับ worker เขียนตอนเริ่ม ปิด และตาย (lib/error-capture.ts `recordRuntimeEvent`)
+ *
+ * **`start` ที่ไม่มีคำอธิบาย** = บันทึกก่อนหน้าของ container เดียวกัน (service + `host.containerId` ซึ่งคือชื่อเครื่องของ
+ * container — restart policy เริ่ม container เดิม ชื่อเดิม) ไม่ใช่ `shutdown`: เป็น `start` (process ก่อนตายโดยไม่ได้บันทึกอะไร —
+ * SIGKILL, OOM) หรือ `fatal-exit` บันทึกก่อนหน้าเป็น `shutdown` = ปิดตามปกติ ไม่ว่าจะเปิดใหม่หลังจากนั้นนานเท่าไร container ที่ยัง
+ * ไม่มีบันทึกก่อนหน้าเลย (deploy สร้างใหม่ ชื่อใหม่ — ตัวเก่าบันทึก shutdown ของมันเองไว้แล้ว) ก็ไม่นับ บันทึกก่อนหน้าของ start
+ * แรกในชั่วโมงอาจอยู่ก่อนชั่วโมงนั้น จึงหาแยกหนึ่งคำสั่ง (ย้อนได้เท่าอายุของ `runtime_events`)
+ *
+ * เดิมนับ start ที่ไม่มี `shutdown` ของ service เดียวกันภายใน 60 วินาทีก่อนหน้า ตามถ้อยคำของแผน: `docker compose stop backend`
+ * แล้ว `start` หลังจากนั้นเกินหนึ่งนาที สามรอบในชั่วโมงเดียว (ปิดตามปกติทุกรอบ — ทดสอบหน้า 502 ของ proxy) ได้อีเมล "วนรีสตาร์ต
+ * backend" จริงใน checkout นี้ (2026-10-01 01:04Z) deploy ที่ build ระหว่างหยุดกับเริ่มก็เข้าข่ายเดียวกัน และเทียบทั้ง service
+ * ทำให้ replica หลายตัว (Azure) ที่เริ่มพร้อมกันหลังปิดตัวเดียวนับเป็นการล่ม เดิมยังอ่านบันทึกเก่าสุดสองพันตัว ไม่ใช่ใหม่สุด
  */
 async function crashLoopsOf(db: Db, state: AlertState, now: Date): Promise<CrashLoop[]> {
-  const events = await db
-    .collection<{ at: Date; service: string; kind: string }>("runtime_events")
-    .find({ at: { $gte: new Date(now.getTime() - CRASH_WINDOW_MS - START_AFTER_SHUTDOWN_MS) } })
-    .sort({ at: 1 })
-    .limit(2_000)
+  const runtime = db.collection<RuntimeRecord>("runtime_events");
+  const windowStart = new Date(now.getTime() - CRASH_WINDOW_MS);
+  const recent = await runtime
+    .find({ at: { $gte: windowStart } }, { projection: { at: 1, service: 1, kind: 1, "host.containerId": 1 } })
+    .sort({ at: -1 })
+    .limit(CRASH_EVENTS_MAX)
     .maxTimeMS(MONGO_COMMAND_MAX_MS)
     .toArray();
-  const windowStart = now.getTime() - CRASH_WINDOW_MS;
-  const byService = new Map<string, Array<{ at: number; kind: string }>>();
-  for (const event of events) {
-    if (!(event.at instanceof Date) || typeof event.service !== "string") continue;
-    const list = byService.get(event.service) ?? [];
-    list.push({ at: event.at.getTime(), kind: event.kind });
-    byService.set(event.service, list);
+  // แยกตาม container (service + ชื่อเครื่อง) เรียงเก่าไปใหม่
+  const homes = new Map<string, { service: string; containerId: string | null; events: Array<{ at: number; kind: string }> }>();
+  for (const event of recent.reverse()) {
+    if (!(event.at instanceof Date) || typeof event.service !== "string" || typeof event.kind !== "string") continue;
+    const containerId = typeof event.host?.containerId === "string" ? event.host.containerId : null;
+    const key = homeKey(event.service, containerId);
+    const home = homes.get(key) ?? { service: event.service, containerId, events: [] };
+    home.events.push({ at: event.at.getTime(), kind: event.kind });
+    homes.set(key, home);
   }
+  if (homes.size === 0) return [];
+  const withStart = [...homes.values()].filter((home) => home.events.some((event) => event.kind === "start"));
+
+  // บันทึกสุดท้ายของแต่ละ container ก่อนชั่วโมงนี้ — บอกว่า start แรกในชั่วโมงตามหลังการปิดตามปกติหรือเปล่า
+  const before = new Map<string, string>();
+  if (withStart.length > 0) {
+    const rows = await runtime
+      .aggregate<{ _id: { service?: unknown; containerId?: unknown }; kind?: unknown }>(
+        [
+          {
+            $match: {
+              at: { $lt: windowStart, $gte: new Date(now.getTime() - CRASH_LOOKBACK_MS) },
+              service: { $in: [...new Set(withStart.map((home) => home.service))] },
+              "host.containerId": { $in: [...new Set(withStart.map((home) => home.containerId))] },
+            },
+          },
+          { $sort: { at: -1 } },
+          { $group: { _id: { service: "$service", containerId: "$host.containerId" }, kind: { $first: "$kind" } } },
+        ],
+        { maxTimeMS: MONGO_COMMAND_MAX_MS },
+      )
+      .toArray();
+    for (const row of rows) {
+      if (typeof row._id.service !== "string" || typeof row.kind !== "string") continue;
+      const containerId = typeof row._id.containerId === "string" ? row._id.containerId : null;
+      before.set(homeKey(row._id.service, containerId), row.kind);
+    }
+  }
+
+  const perService = new Map<string, { fatalExits: number; unexplainedStarts: number }>();
+  for (const [key, home] of homes) {
+    const counts = perService.get(home.service) ?? { fatalExits: 0, unexplainedStarts: 0 };
+    let previous = before.get(key) ?? null;
+    for (const event of home.events) {
+      if (event.kind === "fatal-exit") counts.fatalExits += 1;
+      if (event.kind === "start" && previous !== null && previous !== "shutdown") counts.unexplainedStarts += 1;
+      previous = event.kind;
+    }
+    perService.set(home.service, counts);
+  }
+
   const loops: CrashLoop[] = [];
-  for (const [service, list] of byService) {
-    const inWindow = list.filter((e) => e.at >= windowStart);
-    const fatalExits = inWindow.filter((e) => e.kind === "fatal-exit").length;
-    const unexplainedStarts = inWindow.filter(
-      (start) =>
-        start.kind === "start" &&
-        !list.some((e) => e.kind === "shutdown" && e.at <= start.at && start.at - e.at <= START_AFTER_SHUTDOWN_MS),
-    ).length;
+  for (const [service, { fatalExits, unexplainedStarts }] of perService) {
     if (fatalExits < CRASH_FATAL_EXITS && unexplainedStarts < CRASH_UNEXPLAINED_STARTS) continue;
     const alertedAt = state.crashLoopAlertedAt?.[service];
     if (alertedAt instanceof Date && now.getTime() - alertedAt.getTime() < ISSUE_COOLDOWN_MS) continue;
     loops.push({ service, fatalExits, unexplainedStarts });
   }
   return loops;
+}
+
+function homeKey(service: string, containerId: string | null): string {
+  return `${service}\0${containerId ?? ""}`;
 }
 
 /**
