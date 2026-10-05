@@ -1005,6 +1005,18 @@ organizationRouter.post("/", async (req, res) => {
     });
     return;
   }
+  /**
+   * หน่วยงานที่ผู้ดูแลระบบระงับหรือยุติไว้ (`POST /api/admin/organizations/:id/{suspend,deactivate}`) เปิดคำขอใหม่ไม่ได้
+   * — ไม่งั้นคำขอที่ผ่านด่านสุดท้ายจะตั้งหน่วยงานกลับเป็น ACTIVE เอง ซึ่งเท่ากับยกเลิกการระงับโดยไม่มีผู้ดูแลคนไหนสั่ง
+   */
+  if (organization.status !== OrganizationStatus.PENDING_REGISTRATION) {
+    res.status(409).json({
+      error: "organization_inactive",
+      message:
+        "หน่วยงานของคุณถูกระงับหรือยุติการใช้งาน จึงยื่นคำขอจดทะเบียนไม่ได้ — กรุณาติดต่อผู้ดูแลระบบ BDI",
+    });
+    return;
+  }
 
   /**
    * คำขอที่ยังไม่จบ นับทั้งของที่ตัวเองสร้างและของหน่วยงานที่ตัวเองสังกัด

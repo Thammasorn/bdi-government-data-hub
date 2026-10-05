@@ -613,6 +613,158 @@ adminRegistrationRouter.post("/organizations/:id/reset", async (req, res) => {
   });
 });
 
+/**
+ * ยกเลิกคำขอจดทะเบียนหน่วยงานแทนหน่วยงาน — แถวยังอยู่ สถานะเป็น `CANCELLED` (การ์ด Admin Console 2026-10-05)
+ *
+ * ครึ่งที่ Journey B ไม่เคยมี: ฝั่งชุดข้อมูลมี cancel มาตั้งแต่ 2026-09-25 ส่วนคำขอจดทะเบียนที่ไม่ควรเดินต่อ (ยื่นผิด
+ * หน่วยงาน หน่วยงานเลิกขอ) มีทางเดียวคือ reset ซึ่งคืนมันไปให้หน่วยงานแก้ ไม่ได้ปิดเรื่อง ทางกลับคือ reset เหมือนฝั่ง
+ * ชุดข้อมูล (`draftResetColumns()` ล้าง `cancelled_at`)
+ *
+ * ที่นั่งผู้มีอำนาจฯ ทำแบบเดียวกับ reset ค่าตั้งต้น: ยังไม่เปิดใช้งาน → `releaseApproverSeat()` ปล่อยคำเชิญและบัญชี PENDING
+ * ที่ยึดอีเมลกับเลขบัตรไว้ (คำขอที่ปิดแล้วไม่มีใครต้องลงนามอีก) เปิดใช้งานแล้ว → ไม่แตะ และคำตอบบอกไว้ใน `warnings`
+ * — ถอดคนที่เปิดใช้งานแล้วเป็นงานของ reset `isRemoveApprover` หรือ /api/admin/users ที่ผู้ดูแลต้องสั่งเองตั้งใจ
+ *
+ * `APPROVED` ปฏิเสธ: ค่าในคำขอถูกคัดลอกไปเป็นทะเบียนหน่วยงานแล้ว คำขอที่อ่านว่ายกเลิกกับหน่วยงานที่ยัง ACTIVE
+ * ขัดกันเอง ทางที่ตรงกว่าคือระงับหรือยุติหน่วยงาน (`POST /api/admin/organizations/:id/deactivate`)
+ * แจ้งผู้ประสานงานของหน่วยงานเหมือน reset — ต่างจากฝั่งชุดข้อมูลที่ไม่แจ้ง เพราะที่นี่คำขอคือทางเดียวที่หน่วยงาน
+ * จะได้ใช้ระบบ การปิดมันโดยไม่บอกเท่ากับทิ้งหน่วยงานไว้หน้าจอที่ไม่มีอะไรขยับ
+ */
+adminRegistrationRouter.post("/organizations/:id/cancel", async (req, res) => {
+  const parsed = z.object({ reason: reasonSchema }).safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+    return;
+  }
+  const { reason } = parsed.data;
+
+  const request = await prisma.organizationRegistrationRequest.findFirst({
+    where: byIdOrNumber(req.params.id),
+  });
+  if (!request) {
+    notFound(res, "ไม่พบคำขอลงทะเบียนหน่วยงานนี้");
+    return;
+  }
+  if (request.status === RequestStatus.CANCELLED) {
+    res.status(409).json({ error: "already_cancelled", message: "คำขอนี้ถูกยกเลิกไปแล้ว" });
+    return;
+  }
+  if (request.status === RequestStatus.APPROVED) {
+    res.status(409).json({
+      error: "already_approved",
+      message:
+        "คำขอนี้ได้รับอนุมัติแล้ว และหน่วยงานเปิดใช้งานจากคำขอนี้ — ยกเลิกคำขอไม่ได้ ถ้าต้องหยุดหน่วยงาน " +
+        "ให้ระงับหรือยุติการใช้งานหน่วยงานแทน",
+    });
+    return;
+  }
+
+  const approver = await activatedApprover(prisma, request);
+  const taskIds = (
+    await prisma.reviewTask.findMany({
+      where: { subjectType: ORG_SUBJECT, subjectId: request.id },
+      select: { id: true },
+    })
+  ).map((t) => t.id);
+
+  const outcome = await prisma.$transaction(async (tx) => {
+    const cancelled = await cancelActiveTask(tx, {
+      subjectType: ORG_SUBJECT,
+      subjectId: request.id,
+      actorId: adminActorId(),
+      reason,
+    });
+    const releasedSeat = approver
+      ? null
+      : await releaseApproverSeat(tx, {
+          email: request.approverEmail,
+          organizationId: request.organizationId,
+          taskIds,
+          actorId: adminActorId(),
+          reason,
+        });
+    await tx.organizationRegistrationRequest.update({
+      where: { id: request.id },
+      data: {
+        cancelledAt: new Date(),
+        cancelledBy: adminActorId(),
+        cancellationReason: reason,
+        updatedBy: adminActorId(),
+      },
+    });
+    const status = await deriveRequestStatus(tx, {
+      subjectType: ORG_SUBJECT,
+      subjectId: request.id,
+      hasSubmitted: Boolean(request.submittedAt),
+      cancelled: true,
+    });
+    const updated = await tx.organizationRegistrationRequest.update({
+      where: { id: request.id },
+      data: { status, updatedBy: adminActorId() },
+    });
+    return { updated, cancelled, releasedSeat };
+  });
+
+  const seat = outcome.releasedSeat;
+  await logAudit({
+    action: AuditAction.REQUEST_CANCELLED,
+    subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
+    subjectId: request.id,
+    organizationId: request.organizationId,
+    before: { status: request.status },
+    after: { status: outcome.updated.status },
+    metadata: {
+      reason,
+      cancelled_via: "ADMIN_API",
+      request_number: request.requestNumber,
+      cancelled_task_type: outcome.cancelled?.taskType ?? null,
+      approver_outcome: approverOutcomeCode(approver, false, seat),
+    },
+  });
+  if (seat) {
+    await logAudit({
+      action: AuditAction.APPROVER_INVITATION_RECALLED,
+      subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
+      subjectId: request.id,
+      organizationId: request.organizationId,
+      before: { email: seat.email, cid: seat.cid, displayName: seat.displayName, status: seat.status },
+      after: { accountDeleted: seat.accountDeleted, keptBecause: seat.keptBecause ?? undefined },
+      metadata: { reason, recalled_via: "ADMIN_CANCEL_API" },
+    });
+  }
+  await logKeysRevoked(seat?.revokedKeys ?? [], { revokedVia: "ADMIN_CANCEL_API" });
+
+  const members = await organizationMemberIds(request.organizationId);
+  await notifyUsers([...members.users, request.createdBy], {
+    type: NotificationType.REQUEST_CANCELLED,
+    title: "คำขอลงทะเบียนหน่วยงานถูกยกเลิก",
+    message: `ผู้ดูแลระบบยกเลิกคำขอ ${request.requestNumber} เหตุผล: ${reason}`,
+    subjectType: ORG_SUBJECT,
+    subjectId: request.id,
+    organizationId: request.organizationId,
+  });
+
+  res.json({
+    registration: organizationShape(outcome.updated),
+    progress: await progressOf(ORG_SUBJECT, outcome.updated),
+    cancelledTask: outcome.cancelled
+      ? { id: outcome.cancelled.id, taskType: outcome.cancelled.taskType }
+      : null,
+    approver: {
+      outcome: approverOutcomeCode(approver, false, seat),
+      email: approver?.email ?? seat?.email ?? request.approverEmail,
+      accountDeleted: seat?.accountDeleted ?? false,
+      keptBecause: seat?.keptBecause ?? null,
+    },
+    warnings: approver
+      ? [
+          `ผู้มีอำนาจอนุมัติ ${approver.email} เปิดใช้งานบัญชีแล้วและยังถือบทบาทของหน่วยงานนี้อยู่ — ` +
+            "ถ้าต้องถอดออก ให้ปิดบัญชีที่หน้าผู้ใช้ หรือปรับกลับเป็นร่างพร้อมถอดผู้มีอำนาจฯ",
+        ]
+      : [],
+    message: "ยกเลิกคำขอแล้ว — ถ้าสั่งผิด ให้ปรับกลับเป็นฉบับร่าง (reset) คำขอจะกลับไปอยู่ในมือหน่วยงาน",
+  });
+});
+
 type ApproverOutcome =
   | "NONE"
   | "INVITATION_REVOKED"

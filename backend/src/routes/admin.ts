@@ -4,6 +4,10 @@ import { z } from "zod";
 import {
   ActivationKeyStatus,
   AccountType,
+  AttachmentOwnerType,
+  AttachmentType,
+  DeliveryStatus,
+  LegalDocumentVersionStatus,
   OrganizationStatus,
   Prisma,
   RequestStatus,
@@ -13,9 +17,9 @@ import {
 import { prisma } from "../db.js";
 import { adminActorId } from "../lib/context.js";
 import { fullNameTh } from "../lib/person-name.js";
-import { uploadedFile } from "../lib/attachment.js";
+import { activeAttachment, readAttachment, streamAttachment, uploadedFile } from "../lib/attachment.js";
 import { TEMPLATE_VARIABLES, VARIABLE_GROUPS } from "../lib/document-render.js";
-import { publishVersion } from "../lib/legal.js";
+import { publishVersion, templateAttachment } from "../lib/legal.js";
 import { lookupZipcode, resolveAddressCodes, resolveAddressNames } from "../lib/address.js";
 import {
   CHOICE_FIELD_KEYS,
@@ -33,6 +37,7 @@ import {
   sentOnly,
 } from "../lib/audit.js";
 import {
+  activeAssignmentWhere,
   issueActivationKey,
   logKeysRevoked,
   pendingInvitationFor,
@@ -41,12 +46,13 @@ import {
   roleSeatTaken,
 } from "../lib/iam.js";
 import { sendInvitationEmail } from "../lib/mail.js";
-import { ROLE_LABELS } from "../lib/roles.js";
+import { ORGANIZATION_STATUS_LABELS, ROLE_LABELS } from "../lib/roles.js";
 import {
   BDI_ORGANIZATION_ID,
   ORGANIZATION_SCOPED_ROLES,
   PLACEHOLDER_ORGANIZATION_NAME,
   ROLE_CODES,
+  SYSTEM_USER_ID,
   type RoleCode,
 } from "../lib/system.js";
 import {
@@ -61,6 +67,61 @@ import { requireAdmin } from "../middleware/auth.js";
 export const adminRouter = Router();
 
 adminRouter.use(requireAdmin);
+
+// ---------------------------------------------------------------- ภาพรวม
+
+/** คำเชิญที่จะหมดอายุภายในช่วงนี้นับเป็น "ใกล้หมดอายุ" บนหน้าแรกของ /console */
+const EXPIRING_SOON_MS = 48 * 60 * 60 * 1000;
+
+/** แถวของ `groupBy` → `{ <status>: <count> }` ที่มีทุกสถานะ (สถานะที่ไม่มีแถวเป็น 0 ไม่หายไปจากคำตอบ) */
+function countsByStatus<S extends string>(all: readonly S[], rows: { status: S; _count: { _all: number } }[]) {
+  const out = Object.fromEntries(all.map((s) => [s, 0])) as Record<S, number>;
+  for (const row of rows) out[row.status] = row._count._all;
+  return out;
+}
+
+/**
+ * ตัวเลขของหน้าแรกของ /console — การ์ด Admin Console (2026-10-05)
+ *
+ * นับอย่างเดียว ไม่มีชื่อคนหรือเลขบัตร ทุกตัวเลขเป็นลิงก์ไปหน้ารายการที่กรองไว้แล้วบนหน้าจอ คำเชิญที่ยัง ISSUED แต่เลยเวลา
+ * แล้วนับเป็นหมดอายุ (`lapsed`) — คีย์เปลี่ยนเป็น EXPIRED ก็ต่อเมื่อมีคนกดลิงก์ (lib/iam.ts) ไม่มี job เก็บกวาด สถานะในตาราง
+ * จึงยัง ISSUED ได้อีกนาน ตัวเลขนี้คือคำเชิญที่ผู้ดูแลต้องส่งใหม่
+ */
+adminRouter.get("/summary", async (_req, res) => {
+  const now = new Date();
+  const soon = new Date(now.getTime() + EXPIRING_SOON_MS);
+  const [users, organizations, orgRequests, datasetRequests, usable, expiringSoon, lapsed, deadLetters] =
+    await Promise.all([
+      prisma.userAccount.groupBy({
+        by: ["status"],
+        where: { id: { not: SYSTEM_USER_ID } },
+        _count: { _all: true },
+      }),
+      prisma.organization.groupBy({
+        by: ["status"],
+        where: { id: { not: BDI_ORGANIZATION_ID } },
+        _count: { _all: true },
+      }),
+      prisma.organizationRegistrationRequest.groupBy({ by: ["status"], _count: { _all: true } }),
+      prisma.datasetRegistrationRequest.groupBy({ by: ["status"], _count: { _all: true } }),
+      prisma.activationKey.count({ where: { status: ActivationKeyStatus.ISSUED, expiresAt: { gt: now } } }),
+      prisma.activationKey.count({
+        where: { status: ActivationKeyStatus.ISSUED, expiresAt: { gt: now, lte: soon } },
+      }),
+      prisma.activationKey.count({ where: { status: ActivationKeyStatus.ISSUED, expiresAt: { lte: now } } }),
+      prisma.notificationDelivery.count({ where: { status: DeliveryStatus.DEAD_LETTER } }),
+    ]);
+
+  res.json({
+    users: countsByStatus(Object.values(UserAccountStatus), users),
+    organizations: countsByStatus(Object.values(OrganizationStatus), organizations),
+    organizationRequests: countsByStatus(Object.values(RequestStatus), orgRequests),
+    datasetRequests: countsByStatus(Object.values(RequestStatus), datasetRequests),
+    invitations: { usable, expiringSoon, lapsed },
+    deadLetters,
+    generatedAt: now,
+  });
+});
 
 // ---------------------------------------------------------------- หน่วยงานที่ admin สร้างล่วงหน้า
 
@@ -568,6 +629,158 @@ adminRouter.get("/organizations/:id", async (req, res) => {
     invitations,
   });
 });
+
+// ---------------------------------------------------------------- สถานะของหน่วยงาน
+
+/** เหตุผลของคำสั่งที่เปลี่ยนสถานะหน่วยงาน — ลง `audit_event` และ `suspension_reason` เหมือนเหตุผลของ /api/admin/users */
+const adminReasonSchema = z.object({
+  reason: z
+    .string({ error: "ต้องระบุ reason — เหตุผลนี้ถูกบันทึกลง audit" })
+    .trim()
+    .min(10, "กรุณาระบุเหตุผลอย่างน้อย 10 ตัวอักษร — เหตุผลนี้ถูกบันทึกไว้เป็นหลักฐาน")
+    .max(500),
+});
+
+type OrganizationStatusChange = "suspend" | "deactivate" | "reactivate";
+
+/** สถานะต้นทางที่แต่ละคำสั่งรับ — ที่เหลือตอบ 409 `invalid_state` */
+const STATUS_CHANGE_FROM: Record<OrganizationStatusChange, OrganizationStatus[]> = {
+  suspend: [OrganizationStatus.PENDING_REGISTRATION, OrganizationStatus.ACTIVE],
+  deactivate: [
+    OrganizationStatus.PENDING_REGISTRATION,
+    OrganizationStatus.ACTIVE,
+    OrganizationStatus.SUSPENDED,
+  ],
+  reactivate: [OrganizationStatus.SUSPENDED, OrganizationStatus.INACTIVE],
+};
+
+const STATUS_CHANGE_AUDIT = {
+  suspend: AuditAction.ORGANIZATION_SUSPENDED,
+  deactivate: AuditAction.ORGANIZATION_DEACTIVATED,
+  reactivate: AuditAction.ORGANIZATION_REACTIVATED,
+} as const;
+
+/**
+ * ระงับ / ยุติ / เปิดใช้หน่วยงานอีกครั้ง — การ์ด Admin Console (2026-10-05) เติมช่องที่ `docs/10` §9 เว้นไว้
+ * ("ถ้าต้องเลิกใช้หน่วยงานหนึ่ง ทางที่ตรงกว่าคือเพิ่มสถานะ INACTIVE ให้ตั้งได้") ซึ่งแทนการลบ: หน่วยงานที่มีคำเชิญ
+ * คำขอ หรือชุดข้อมูลผูกอยู่ลบทิ้งไม่ได้ และประวัติต้องอ่านย้อนได้
+ *
+ * **เปลี่ยนแค่สถานะของหน่วยงาน ไม่ลากอะไรไปด้วย** — บัญชีของสมาชิกยังเข้าระบบได้ คำขอที่ค้างอยู่ยังอยู่ที่ด่านเดิม
+ * สิ่งที่หยุดเองคือของที่ถามสถานะนี้อยู่แล้ว: ยื่นคำขอชุดข้อมูลใหม่ต้อง ACTIVE และยื่นคำขอจดทะเบียนต้อง
+ * PENDING_REGISTRATION คำตอบบอก `warnings` ว่ายังมีใครและอะไรค้างอยู่ ให้ผู้ดูแลตัดสินเองว่าจะระงับบัญชีหรือยกเลิก
+ * คำขอต่อหรือไม่ — ทำให้เองจะเปลี่ยนงานของคนในหน่วยงานโดยไม่มีใครเห็นว่าใครสั่ง
+ *
+ * เปิดใช้อีกครั้งได้ ACTIVE ถ้าหน่วยงานเคยผ่านการจดทะเบียน (มีคำขอที่ APPROVED) ไม่งั้นกลับไป PENDING_REGISTRATION
+ * — ตั้ง ACTIVE ให้หน่วยงานที่ไม่เคยผ่านด่านสุดท้ายเท่ากับข้ามทั้ง Journey B
+ */
+function organizationStatusRoute(change: OrganizationStatusChange) {
+  return async (req: import("express").Request, res: import("express").Response) => {
+    // `guid()` ไม่ใช่ `uuid()` — id ของหน่วยงาน BDI (`…0000b0`) ไม่มีเลขรุ่นของ RFC 9562 จึงไม่ผ่าน `uuid()` ของ zod 4
+    // และจะได้ 404 แทนคำตอบที่บอกว่าทำไมทำไม่ได้
+    const parsedId = z.guid().safeParse(req.params.id);
+    const organization = parsedId.success
+      ? await prisma.organization.findUnique({ where: { id: parsedId.data } })
+      : null;
+    if (!organization) {
+      res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานที่ระบุ" });
+      return;
+    }
+    const parsed = adminReasonSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+      return;
+    }
+    if (organization.id === BDI_ORGANIZATION_ID) {
+      res.status(409).json({
+        error: "bdi_organization",
+        message: "หน่วยงาน BDI เป็นหน่วยงานของระบบเอง เปลี่ยนสถานะไม่ได้",
+      });
+      return;
+    }
+    if (!STATUS_CHANGE_FROM[change].includes(organization.status)) {
+      res.status(409).json({
+        error: "invalid_state",
+        message: `หน่วยงานนี้อยู่สถานะ ${ORGANIZATION_STATUS_LABELS[organization.status]} จึงทำคำสั่งนี้ไม่ได้`,
+      });
+      return;
+    }
+
+    const now = new Date();
+    const actorId = adminActorId();
+    let data: Prisma.OrganizationUncheckedUpdateInput;
+    if (change === "suspend") {
+      data = {
+        status: OrganizationStatus.SUSPENDED,
+        suspendedAt: now,
+        suspendedBy: actorId,
+        suspensionReason: parsed.data.reason,
+      };
+    } else if (change === "deactivate") {
+      data = { status: OrganizationStatus.INACTIVE, deactivatedAt: now, deactivatedBy: actorId };
+    } else {
+      const approved = await prisma.organizationRegistrationRequest.count({
+        where: { organizationId: organization.id, status: RequestStatus.APPROVED },
+      });
+      data = {
+        status: approved > 0 ? OrganizationStatus.ACTIVE : OrganizationStatus.PENDING_REGISTRATION,
+        suspendedAt: null,
+        suspendedBy: null,
+        suspensionReason: null,
+        deactivatedAt: null,
+        deactivatedBy: null,
+      };
+    }
+    const updated = await prisma.organization.update({
+      where: { id: organization.id },
+      data: { ...data, updatedBy: actorId },
+    });
+
+    await logAudit({
+      action: STATUS_CHANGE_AUDIT[change],
+      subjectType: AuditSubject.ORGANIZATION,
+      subjectId: organization.id,
+      organizationId: organization.id,
+      before: { status: organization.status },
+      after: { status: updated.status },
+      metadata: { reason: parsed.data.reason, organization_code: organization.organizationCode },
+    });
+
+    res.json({
+      organization: await toAdminOrganizationShape(updated),
+      warnings: change === "reactivate" ? [] : await organizationLeftovers(organization.id),
+    });
+  };
+}
+
+/** สิ่งที่ยังทำงานอยู่ในหน่วยงานหลังเปลี่ยนสถานะ — ให้ผู้ดูแลตัดสินต่อเอง ดู `organizationStatusRoute()` */
+async function organizationLeftovers(organizationId: string): Promise<string[]> {
+  const open = {
+    notIn: [RequestStatus.DRAFT, RequestStatus.APPROVED, RequestStatus.REJECTED, RequestStatus.CANCELLED],
+  };
+  const [members, orgRequests, datasetRequests] = await Promise.all([
+    prisma.userAccount.count({
+      where: {
+        status: UserAccountStatus.ACTIVE,
+        roleAssignments: { some: { organizationId, ...activeAssignmentWhere() } },
+      },
+    }),
+    prisma.organizationRegistrationRequest.count({ where: { organizationId, status: open } }),
+    prisma.datasetRegistrationRequest.count({ where: { organizationId, status: open } }),
+  ]);
+  const warnings: string[] = [];
+  if (members > 0) {
+    warnings.push(
+      `ยังมีบัญชีที่ใช้งานอยู่ในหน่วยงานนี้ ${members} บัญชี — ระงับบัญชีแยกต่างหากถ้าไม่ต้องการให้เข้าระบบ`,
+    );
+  }
+  if (orgRequests > 0) warnings.push(`มีคำขอจดทะเบียนหน่วยงานที่อยู่ระหว่างพิจารณา ${orgRequests} ใบ`);
+  if (datasetRequests > 0) warnings.push(`มีคำขอลงทะเบียนชุดข้อมูลที่อยู่ระหว่างพิจารณา ${datasetRequests} ใบ`);
+  return warnings;
+}
+
+adminRouter.post("/organizations/:id/suspend", organizationStatusRoute("suspend"));
+adminRouter.post("/organizations/:id/deactivate", organizationStatusRoute("deactivate"));
+adminRouter.post("/organizations/:id/reactivate", organizationStatusRoute("reactivate"));
 
 // ---------------------------------------------------------------- คำเชิญผู้ใช้
 
@@ -1492,6 +1705,20 @@ adminRouter.get("/legal-documents", async (_req, res) => {
     orderBy: [{ applicationScope: "asc" }, { displayOrder: "asc" }],
     include: { versions: { orderBy: { versionNumber: "desc" } } },
   });
+  // ชื่อคนที่เผยแพร่แต่ละฉบับ — หน้า /console แสดงในประวัติเวอร์ชัน (ฉบับที่เผยแพร่ด้วย token เป็นบัญชี SYSTEM "ระบบ")
+  const publisherIds = [
+    ...new Set(
+      documents.flatMap((d) => d.versions.map((v) => v.publishedBy)).filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const publishers = new Map(
+    (
+      await prisma.userAccount.findMany({
+        where: { id: { in: publisherIds } },
+        select: { id: true, email: true, displayName: true, prefixTh: true, firstnameTh: true, lastnameTh: true },
+      })
+    ).map((u) => [u.id, fullNameTh(u) || u.displayName || u.email]),
+  );
 
   res.json({
     /** รายชื่อตัวแปรที่ template ใช้ได้ จัดกลุ่มไว้ให้ผู้เขียนเอกสารอ่าน */
@@ -1522,6 +1749,8 @@ adminRouter.get("/legal-documents", async (_req, res) => {
         status: v.status,
         contentHash: v.contentHash,
         publishedAt: v.publishedAt,
+        supersededAt: v.supersededAt,
+        publishedBy: v.publishedBy ? (publishers.get(v.publishedBy) ?? null) : null,
       })),
     })),
   });
@@ -1585,6 +1814,118 @@ adminRouter.post(
     });
   },
 );
+
+/** เวอร์ชันของเอกสารตามรหัส — null ถ้า id ไม่ใช่ uuid หรือไม่ใช่ของเอกสารนี้ */
+async function legalVersionOf(code: string, versionId: string) {
+  if (!z.string().uuid().safeParse(versionId).success) return null;
+  return prisma.legalDocumentVersion.findFirst({
+    where: { id: versionId, legalDocument: { documentCode: code } },
+    include: { legalDocument: { select: { id: true, documentCode: true, nameTh: true } } },
+  });
+}
+
+/**
+ * ไฟล์ของเวอร์ชันหนึ่ง — `kind=docx` ต้นแบบที่อัปโหลด (ค่าตั้งต้น) หรือ `kind=pdf` ฉบับเปล่าที่แปลงไว้ตอนเผยแพร่
+ *
+ * ก่อนมีหน้า /console ไม่มีทางเอา .docx ที่เผยแพร่ไปแล้วกลับออกมาเลยนอกจากเข้า storage ตรง ผู้เขียนเอกสารที่จะแก้ฉบับ
+ * ถัดไปต้องเริ่มจากไฟล์ใน repo ซึ่งไม่ใช่ฉบับที่ใช้อยู่จริง (CLAUDE.md "The template is a row … not a file in the repo")
+ */
+adminRouter.get("/legal-documents/:code/versions/:versionId/file", async (req, res) => {
+  const code = String(req.params.code ?? "").toUpperCase();
+  const version = await legalVersionOf(code, String(req.params.versionId));
+  if (!version) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบเวอร์ชันนี้ของเอกสาร" });
+    return;
+  }
+  const kind = req.query.kind === "pdf" ? "pdf" : "docx";
+  const file =
+    kind === "pdf"
+      ? await activeAttachment(
+          prisma,
+          AttachmentOwnerType.LEGAL_DOCUMENT_VERSION,
+          version.id,
+          AttachmentType.GENERATED_FORM,
+        )
+      : await templateAttachment(prisma, version.id);
+  if (!file) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบไฟล์ PDF ของเวอร์ชันนี้" });
+    return;
+  }
+  await logAudit({
+    action: AuditAction.DOCUMENT_DOWNLOADED,
+    subjectType: AuditSubject.ATTACHMENT,
+    subjectId: file.id,
+    after: { filename: file.originalFileName, legalDocumentVersionId: version.id, kind },
+  });
+  await streamAttachment(req, res, file, "attachment");
+});
+
+/**
+ * เผยแพร่เวอร์ชันเก่าอีกครั้ง — เป็นเวอร์ชันใหม่ N+1 ที่เนื้อไฟล์เหมือนฉบับที่เลือก ไม่ใช่พลิกสถานะของแถวเก่ากลับ
+ *
+ * แทนการย้อนด้วย SQL ที่ทำไปสองครั้ง (CLAUDE.md "Production carries exactly one version per document") — ทางนั้นลบ
+ * เวอร์ชันและย้าย `legal_acceptance` ไปชี้ฉบับอื่น ซึ่งทำได้ก่อนเปิดใช้งานจริงเท่านั้น ที่นี่ไม่มีอะไรถูกลบ: ทุกคนที่เห็นชอบ
+ * ฉบับใดไว้ยังชี้ฉบับนั้น และ "เวอร์ชันล่าสุด = ฉบับที่เผยแพร่" ยังจริงเสมอ
+ *
+ * ผ่าน `publishVersion()` ตัวเดียวกับการอัปโหลด ไฟล์เก่าจึงถูกตรวจ placeholder กับรายชื่อตัวแปรของ**วันนี้** — ฉบับที่ใช้ชื่อ
+ * ที่เลิกไปแล้วได้ 400 แทนที่จะกลับมาพิมพ์ช่องว่างบนเอกสารที่มีคนลงนาม
+ */
+adminRouter.post("/legal-documents/:code/versions/:versionId/restore", async (req, res) => {
+  const code = String(req.params.code ?? "").toUpperCase();
+  const version = await legalVersionOf(code, String(req.params.versionId));
+  if (!version) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบเวอร์ชันนี้ของเอกสาร" });
+    return;
+  }
+  const parsed = adminReasonSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+    return;
+  }
+  if (version.status === LegalDocumentVersionStatus.PUBLISHED) {
+    res.status(409).json({
+      error: "already_current",
+      message: `เวอร์ชัน ${version.versionNumber} เป็นฉบับที่เผยแพร่อยู่แล้ว`,
+    });
+    return;
+  }
+
+  const source = await templateAttachment(prisma, version.id);
+  const published = await publishVersion(prisma, {
+    documentCode: code,
+    docx: await readAttachment(source),
+    filename: source.originalFileName,
+    actorId: adminActorId(),
+  });
+
+  await logAudit({
+    action: AuditAction.LEGAL_DOCUMENT_PUBLISHED,
+    subjectType: AuditSubject.LEGAL_DOCUMENT,
+    subjectId: published.versionId,
+    after: {
+      documentCode: code,
+      versionNumber: published.versionNumber,
+      filename: source.originalFileName,
+      placeholders: published.placeholders,
+    },
+    metadata: {
+      legal_document_id: published.documentId,
+      restored_from_version_id: version.id,
+      restored_from_version_number: version.versionNumber,
+      reason: parsed.data.reason,
+    },
+  });
+
+  res.status(201).json({
+    documentCode: code,
+    versionId: published.versionId,
+    versionNumber: published.versionNumber,
+    restoredFrom: version.versionNumber,
+    placeholders: published.placeholders,
+    deprecatedPlaceholders: published.deprecatedPlaceholders,
+    message: `เผยแพร่เนื้อหาของเวอร์ชัน ${version.versionNumber} อีกครั้งเป็นเวอร์ชัน ${published.versionNumber} แล้ว`,
+  });
+});
 
 /**
  * ────────────────────────────────────────────────────────── ตัวเลือกในแบบฟอร์มชุดข้อมูล

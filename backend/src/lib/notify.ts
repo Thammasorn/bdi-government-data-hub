@@ -50,6 +50,12 @@ export const NotificationType = {
    */
   REQUEST_PROGRESSED: "REQUEST_PROGRESSED",
   REQUEST_REJECTED: "REQUEST_REJECTED",
+  /**
+   * ผู้ดูแลระบบยกเลิกคำขอแทนหน่วยงาน (`POST /api/admin/registrations/organizations/:id/cancel`, การ์ด Admin Console)
+   * — worker ไม่มี branch ของมัน จึงส่ง title/message ที่เก็บไว้ตรง ๆ ซึ่งคือสิ่งที่ต้องการ: แม่แบบ "ส่งกลับแก้ไข"
+   * ของ REQUEST_RETURNED จะบอกให้หน่วยงานแก้คำขอที่ปิดไปแล้ว
+   */
+  REQUEST_CANCELLED: "REQUEST_CANCELLED",
   SPECIALIST_ASSIGNED: "SPECIALIST_ASSIGNED",
   /**
    * ผู้เชี่ยวชาญบันทึกความเห็นกลับมาแล้ว

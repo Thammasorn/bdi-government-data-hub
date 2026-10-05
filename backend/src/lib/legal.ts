@@ -268,6 +268,15 @@ export async function requestDocuments(
 
 /** .docx ต้นแบบของเวอร์ชันหนึ่ง — สิ่งที่เอาไปเติมค่าแล้ว render */
 export async function templateDocx(db: Db, versionId: string): Promise<Buffer> {
+  const source = await templateAttachment(db, versionId);
+  return readAttachment(source);
+}
+
+/**
+ * แถว attachment ของ .docx ต้นแบบของเวอร์ชันหนึ่ง — หน้า /console ดาวน์โหลดไฟล์นี้ตรง ๆ
+ * (`GET /api/admin/legal-documents/:code/versions/:versionId/file`)
+ */
+export async function templateAttachment(db: Db, versionId: string) {
   const source = await activeAttachment(db, OWNER, versionId, AttachmentType.LEGAL_DOCUMENT);
   if (!source) {
     throw new DocumentRenderError(
@@ -276,7 +285,7 @@ export async function templateDocx(db: Db, versionId: string): Promise<Buffer> {
       503,
     );
   }
-  return readAttachment(source);
+  return source;
 }
 
 /**
@@ -341,13 +350,6 @@ export async function publishVersion(
   });
   const versionNumber = (latest?.versionNumber ?? 0) + 1;
 
-  // เวอร์ชันที่เผยแพร่อยู่กลายเป็น SUPERSEDED — ตาราง sheet บอกว่าสถานะนี้
-  // "ไม่รับ acceptance ใหม่ ประวัติเดิมยังตรวจสอบได้" ซึ่งตรงกับที่ต้องการ
-  await db.legalDocumentVersion.updateMany({
-    where: { legalDocumentId: document.id, status: LegalDocumentVersionStatus.PUBLISHED },
-    data: { status: LegalDocumentVersionStatus.SUPERSEDED, supersededAt: new Date() },
-  });
-
   // id ของเวอร์ชันถูกกำหนดล่วงหน้า เพราะ storage key ของไฟล์มี owner_id อยู่ใน path
   // ถ้าเก็บไฟล์ก่อนแล้วค่อยย้าย owner ทีหลัง แถวจะบอกว่าเป็นของเวอร์ชันนี้
   // แต่ path ใน object storage ยังชี้ owner เดิมอยู่ตลอดไป
@@ -393,6 +395,22 @@ export async function publishVersion(
       size: pdf.length,
     },
     uploadedBy: params.actorId,
+  });
+
+  /**
+   * เวอร์ชันที่เผยแพร่อยู่กลายเป็น SUPERSEDED — ตาราง sheet บอกว่าสถานะนี้ "ไม่รับ acceptance ใหม่ ประวัติเดิมยังตรวจสอบได้"
+   *
+   * ทำ**หลัง**เก็บไฟล์และสร้างแถวใหม่แล้ว (เดิมทำก่อน): ถ้า storage ล้มกลางทาง ฉบับเดิมยังเผยแพร่อยู่ แทนที่เอกสารจะไม่มีฉบับ
+   * ที่เผยแพร่เลยจนกว่าจะมีคนอัปโหลดซ้ำ ระหว่างนั้นมีสองแถวที่ PUBLISHED ได้ชั่วครู่ ซึ่งไม่มีใครเห็นต่าง —
+   * `publishedDocuments()` อ่านเลขเวอร์ชันสูงสุดตัวเดียว
+   */
+  await db.legalDocumentVersion.updateMany({
+    where: {
+      legalDocumentId: document.id,
+      status: LegalDocumentVersionStatus.PUBLISHED,
+      id: { not: versionId },
+    },
+    data: { status: LegalDocumentVersionStatus.SUPERSEDED, supersededAt: new Date() },
   });
 
   if (document.status !== LegalDocumentStatus.ACTIVE) {

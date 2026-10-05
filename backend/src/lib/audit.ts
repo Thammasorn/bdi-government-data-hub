@@ -139,6 +139,14 @@ export const AuditAction = {
    * ไว้ก่อน transaction กับค่าที่เขียนลง และ subject คือหน่วยงาน ไม่ใช่คำขอ
    */
   ORGANIZATION_ACTIVATED: "ORGANIZATION_ACTIVATED",
+  /**
+   * ผู้ดูแลระบบระงับ / ยุติ / เปิดใช้หน่วยงานอีกครั้ง (`POST /api/admin/organizations/:id/{suspend,deactivate,reactivate}`,
+   * การ์ด Admin Console 2026-10-05) — before/after คือ `status` เหตุผลอยู่ใน `metadata.reason` (ตาราง organization
+   * มีแค่ `suspension_reason` ไม่มีช่องของการยุติ) ไม่แตะบัญชี บทบาท หรือคำขอของหน่วยงานนั้นเลย
+   */
+  ORGANIZATION_SUSPENDED: "ORGANIZATION_SUSPENDED",
+  ORGANIZATION_DEACTIVATED: "ORGANIZATION_DEACTIVATED",
+  ORGANIZATION_REACTIVATED: "ORGANIZATION_REACTIVATED",
 
   /**
    * เปิดคำขอใบใหม่ — ทั้งคำขอลงทะเบียนชุดข้อมูลและคำขอจดทะเบียนหน่วยงาน (`POST /api/organizations`)

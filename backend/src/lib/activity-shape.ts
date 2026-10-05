@@ -97,6 +97,9 @@ const CATEGORY_BY_ACTION: Record<AuditActionCode, ActivityCategory> = {
   ORGANIZATION_CREATED: "organization",
   ORGANIZATION_UPDATED: "organization",
   ORGANIZATION_ACTIVATED: "organization",
+  ORGANIZATION_SUSPENDED: "organization",
+  ORGANIZATION_DEACTIVATED: "organization",
+  ORGANIZATION_REACTIVATED: "organization",
 
   REQUEST_CREATED: "request",
   REQUEST_DRAFT_SAVED: "request",
