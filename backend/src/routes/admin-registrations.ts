@@ -49,11 +49,12 @@ import {
   roleSeatTaken,
   type RevokedKey,
 } from "../lib/iam.js";
+import { adminActorId } from "../lib/context.js";
 import { buildJourneyProgress, summariseProgress } from "../lib/journey-steps.js";
 import { NotificationType, notifyUsers, organizationMemberIds } from "../lib/notify.js";
 import { organizationDraftSchema, toRequestData } from "../lib/organization-form.js";
 import { revokeSessionsFor } from "../lib/session.js";
-import { ROLE_CODES, SYSTEM_USER_ID } from "../lib/system.js";
+import { ROLE_CODES } from "../lib/system.js";
 import { formatZodError, isUuid } from "../lib/validation.js";
 import {
   ACTIVE_STATUSES,
@@ -61,10 +62,10 @@ import {
   deriveRequestStatus,
   taskHistory,
 } from "../lib/workflow.js";
-import { requireAdminToken } from "../middleware/auth.js";
+import { requireAdmin } from "../middleware/auth.js";
 
 export const adminRegistrationRouter = Router();
-adminRegistrationRouter.use(requireAdminToken);
+adminRegistrationRouter.use(requireAdmin);
 
 /**
  * เหตุผลบังคับทุกคำสั่ง — กติกาเดียวกับ `/api/admin/users`
@@ -146,15 +147,20 @@ function resetRefusal(
   return null;
 }
 
-/** ค่าที่ต้องล้างทุกครั้งที่คำขอกลับไปเป็นฉบับร่าง — ไม่งั้น status ที่ derive ได้ไม่ใช่ DRAFT */
-const DRAFT_RESET_COLUMNS = {
-  submittedAt: null,
-  rejectedAt: null,
-  cancelledAt: null,
-  cancelledBy: null,
-  cancellationReason: null,
-  updatedBy: SYSTEM_USER_ID,
-} as const;
+/**
+ * ค่าที่ต้องล้างทุกครั้งที่คำขอกลับไปเป็นฉบับร่าง — ไม่งั้น status ที่ derive ได้ไม่ใช่ DRAFT
+ * เป็นฟังก์ชันไม่ใช่ค่าคงที่ เพราะ `updatedBy` คือผู้กระทำของคำขอนี้ (`adminActorId()`) ซึ่งรู้ตอนเรียกเท่านั้น
+ */
+function draftResetColumns() {
+  return {
+    submittedAt: null,
+    rejectedAt: null,
+    cancelledAt: null,
+    cancelledBy: null,
+    cancellationReason: null,
+    updatedBy: adminActorId(),
+  } as const;
+}
 
 /** ความคืบหน้าที่ผู้เรียกใช้ตรวจว่าขั้นถูกรีเซ็ตจริง — อ่านจากแถวเดียวกับที่หน้าจอใช้ */
 async function progressOf(subjectType: SubjectType, request: { id: string; status: RequestStatus }) {
@@ -282,7 +288,7 @@ adminRegistrationRouter.put("/organizations/:id", async (req, res) => {
 
   const after = await prisma.organizationRegistrationRequest.update({
     where: { id: before.id },
-    data: { ...snapshot, updatedBy: SYSTEM_USER_ID },
+    data: { ...snapshot, updatedBy: adminActorId() },
   });
 
   const changed = diffFields(
@@ -457,20 +463,20 @@ adminRegistrationRouter.post("/organizations/:id/reset", async (req, res) => {
     const cancelled = await cancelActiveTask(tx, {
       subjectType: ORG_SUBJECT,
       subjectId: request.id,
-      actorId: SYSTEM_USER_ID,
+      actorId: adminActorId(),
       reason,
     });
 
     if (approver && isRemoveApprover) {
       const revoked = await revokeRoleAssignments(tx, {
         userAccountId: approver.id,
-        actorId: SYSTEM_USER_ID,
+        actorId: adminActorId(),
         reason,
       });
       revokedKeys = await revokeIssuedKeys(
         tx,
         { userAccountId: approver.id },
-        { actorId: SYSTEM_USER_ID, reason },
+        { actorId: adminActorId(), reason },
       );
       await revokeSessionsFor(tx, {
         userAccountId: approver.id,
@@ -483,14 +489,14 @@ adminRegistrationRouter.post("/organizations/:id/reset", async (req, res) => {
        */
       await tx.reviewTask.updateMany({
         where: { id: { in: taskIds }, assignedUserId: approver.id, status: ReviewTaskStatus.CANCELLED },
-        data: { assignedUserId: null, updatedBy: SYSTEM_USER_ID },
+        data: { assignedUserId: null, updatedBy: adminActorId() },
       });
       await tx.userAccount.update({
         where: { id: approver.id },
         data: {
           status: UserAccountStatus.DEACTIVATED,
           deactivatedAt: new Date(),
-          updatedBy: SYSTEM_USER_ID,
+          updatedBy: adminActorId(),
         },
       });
       deactivated = { id: approver.id, email: approver.email, rolesRevoked: revoked.length };
@@ -499,7 +505,7 @@ adminRegistrationRouter.post("/organizations/:id/reset", async (req, res) => {
         email: request.approverEmail,
         organizationId: request.organizationId,
         taskIds,
-        actorId: SYSTEM_USER_ID,
+        actorId: adminActorId(),
         reason,
       });
       revokedKeys = releasedSeat?.revokedKeys ?? [];
@@ -507,7 +513,7 @@ adminRegistrationRouter.post("/organizations/:id/reset", async (req, res) => {
 
     await tx.organizationRegistrationRequest.update({
       where: { id: request.id },
-      data: DRAFT_RESET_COLUMNS,
+      data: draftResetColumns(),
     });
 
     // สถานะคำนวณใหม่เสมอ ไม่ตั้งค่าด้วยมือ — กติกาของ lib/workflow.ts
@@ -519,7 +525,7 @@ adminRegistrationRouter.post("/organizations/:id/reset", async (req, res) => {
     });
     const updated = await tx.organizationRegistrationRequest.update({
       where: { id: request.id },
-      data: { status, updatedBy: SYSTEM_USER_ID },
+      data: { status, updatedBy: adminActorId() },
     });
     return { updated, cancelled, releasedSeat, deactivated, revokedKeys };
   });
@@ -726,22 +732,22 @@ adminRegistrationRouter.put("/datasets/:id", async (req, res) => {
       update: {
         ...columns,
         additionalMetadataJson: extra as Prisma.InputJsonValue,
-        updatedBy: SYSTEM_USER_ID,
+        updatedBy: adminActorId(),
       },
       create: {
         datasetRegistrationRequestId: before.id,
         ...columns,
         ownerOrgId: before.organizationId,
         additionalMetadataJson: extra as Prisma.InputJsonValue,
-        createdBy: SYSTEM_USER_ID,
-        updatedBy: SYSTEM_USER_ID,
+        createdBy: adminActorId(),
+        updatedBy: adminActorId(),
       },
     });
     return tx.datasetRegistrationRequest.update({
       where: { id: before.id },
       data: {
         proposedTitle: values.title ?? before.proposedTitle,
-        updatedBy: SYSTEM_USER_ID,
+        updatedBy: adminActorId(),
       },
     });
   });
@@ -821,12 +827,12 @@ adminRegistrationRouter.post("/datasets/:id/reset", async (req, res) => {
     const cancelled = await cancelActiveTask(tx, {
       subjectType: DATASET_SUBJECT,
       subjectId: request.id,
-      actorId: SYSTEM_USER_ID,
+      actorId: adminActorId(),
       reason,
     });
     await tx.datasetRegistrationRequest.update({
       where: { id: request.id },
-      data: DRAFT_RESET_COLUMNS,
+      data: draftResetColumns(),
     });
     const status = await deriveRequestStatus(tx, {
       subjectType: DATASET_SUBJECT,
@@ -836,7 +842,7 @@ adminRegistrationRouter.post("/datasets/:id/reset", async (req, res) => {
     });
     const updated = await tx.datasetRegistrationRequest.update({
       where: { id: request.id },
-      data: { status, updatedBy: SYSTEM_USER_ID },
+      data: { status, updatedBy: adminActorId() },
     });
     return { updated, cancelled };
   });
@@ -910,7 +916,7 @@ function cancelRefusal(status: RequestStatus): { error: string; message: string 
  *
  * ต่างจาก `POST /:id/reset` ที่ทิศทาง: reset พาคำขอกลับไปอยู่ในมือหน่วยงานเพื่อให้แก้แล้ว
  * นำส่งใหม่ ส่วนอันนี้ปิดเรื่อง ไม่มีใครต้องทำอะไรต่อ — และ reset เป็นทางกลับของมัน
- * (`DRAFT_RESET_COLUMNS` ล้าง `cancelled_at` ให้) คำสั่งที่ถอยกลับได้คือคำสั่งที่ปล่อยให้เรียกได้
+ * (`draftResetColumns()` ล้าง `cancelled_at` ให้) คำสั่งที่ถอยกลับได้คือคำสั่งที่ปล่อยให้เรียกได้
  *
  * ไม่มีด่านกัน race เหมือนฝั่งหน่วยงาน (ที่นั่นเงื่อนไขอยู่ใน WHERE ของ `updateMany`) ด้วย
  * เหตุผลเดียวกับ reset: ผู้เรียกคือสคริปต์ของผู้ดูแลระบบที่อ่านคำตอบแล้วตัดสินใจเอง ไม่ใช่
@@ -942,7 +948,7 @@ adminRegistrationRouter.post("/datasets/:id/cancel", async (req, res) => {
     const cancelled = await cancelActiveTask(tx, {
       subjectType: DATASET_SUBJECT,
       subjectId: request.id,
-      actorId: SYSTEM_USER_ID,
+      actorId: adminActorId(),
       reason,
     });
     await tx.datasetRegistrationRequest.update({
@@ -951,9 +957,9 @@ adminRegistrationRouter.post("/datasets/:id/cancel", async (req, res) => {
         cancelledAt: new Date(),
         // admin token ไม่ใช่ตัวบุคคล — `cancelled_by` จึงเป็น SYSTEM และเหตุผลที่พิมพ์มา
         // คือสิ่งเดียวที่ตอบได้ว่าใครสั่ง (กติกาเดียวกับทุก endpoint ในไฟล์นี้)
-        cancelledBy: SYSTEM_USER_ID,
+        cancelledBy: adminActorId(),
         cancellationReason: reason,
-        updatedBy: SYSTEM_USER_ID,
+        updatedBy: adminActorId(),
       },
     });
     // สถานะไม่ได้เขียนด้วยมือ — `cancelled: true` ทำให้ requestStatusFor() ตอบ CANCELLED
@@ -966,7 +972,7 @@ adminRegistrationRouter.post("/datasets/:id/cancel", async (req, res) => {
     });
     const updated = await tx.datasetRegistrationRequest.update({
       where: { id: request.id },
-      data: { status, updatedBy: SYSTEM_USER_ID },
+      data: { status, updatedBy: adminActorId() },
     });
     return { updated, cancelled };
   });
@@ -1137,7 +1143,7 @@ adminRegistrationRouter.delete("/datasets/:id", async (req, res) => {
     // 6 — attachment: ปิดแถว ไม่ลบ และไม่แตะ object ใน storage
     for (const file of attachments) {
       await softDeleteAttachment(tx, file.id, {
-        deletedBy: SYSTEM_USER_ID,
+        deletedBy: adminActorId(),
         reason: `ผู้ดูแลระบบลบคำขอ ${request.requestNumber} ออกจากระบบ: ${reason}`,
       });
     }

@@ -82,7 +82,7 @@ import { ActivationKeyStatus, OrganizationStatus, UserAccountStatus } from "@pri
 import type { NextFunction, Request, Response } from "express";
 
 import { env } from "../env.js";
-import { SCHEMA_VERSION, fitDocument, hashKeyOf, type ActivityDoc } from "./activity-shape.js";
+import { SCHEMA_VERSION, fitDocument, hashKeyOf, isTrustedAccess, type ActivityDoc } from "./activity-shape.js";
 import { storedUserAgent } from "./audit.js";
 import { tokenFingerprint } from "./auth.js";
 import { currentContext, referenceOf, type RequestContext } from "./context.js";
@@ -224,7 +224,9 @@ function admit(accepted: boolean, now: number): boolean {
 }
 
 function write(req: Request, res: Response, ctx: RequestContext, provided: string | undefined): void {
-  const accepted = ctx.adminTokenFp !== null;
+  // ผ่าน guard แล้วไม่ว่าทางไหน — token หรือ session ของผู้ดูแลระบบ (requireAdmin) ทั้งสองทางอ่านเลขบัตรได้เหมือนกัน
+  // จึงได้การยกเว้นเดียวกันตอนเกินเพดาน และนับเพดานต่อนาทีถังเดียวกัน
+  const accepted = ctx.adminTokenFp !== null || ctx.adminVia === "SESSION";
   const doc = buildRecord(req, res, ctx, provided, accepted);
   fitDocument(doc);
   if (!admit(accepted, doc.mirroredAt.getTime())) {
@@ -277,6 +279,7 @@ function buildRecord(
     if (emailKey) hashKeys.add(emailKey);
   }
 
+  const viaSession = accepted && ctx.adminVia === "SESSION";
   const subject = subjectOf(route, ctx.routeId);
   const tokenFp = ctx.adminTokenFp ?? (provided ? tokenFingerprint(provided) : null);
   const organizationId =
@@ -294,9 +297,12 @@ function buildRecord(
     action: ADMIN_API_REQUEST,
     category: "admin-access",
     result: status !== null && status < 400 ? "SUCCESS" : "FAILURE",
-    // admin token ไม่ผูกกับคน (CLAUDE.md, Auth) — ผู้กระทำคือ "ระบบ" แบบเดียวกับแถว audit ของเส้นทางนี้
-    actor: { type: accepted ? "SYSTEM" : "ANONYMOUS", id: null, name: null, roles: [], organizationId: null },
-    via: accepted ? "ADMIN_TOKEN" : "ANONYMOUS",
+    // admin token ไม่ผูกกับคน (CLAUDE.md, Auth) — ผู้กระทำคือ "ระบบ" แบบเดียวกับแถว audit ของเส้นทางนี้ ส่วนหน้า /console
+    // มาด้วย session ผู้กระทำจึงเป็นผู้ดูแลคนนั้น (ชื่อกับ role อยู่ในแถว audit ของคำขอเดียวกัน — ที่นี่ไม่อ่านฐานข้อมูล)
+    actor: viaSession
+      ? { type: "USER", id: ctx.actorId, name: null, roles: [], organizationId: null }
+      : { type: accepted ? "SYSTEM" : "ANONYMOUS", id: null, name: null, roles: [], organizationId: null },
+    via: viaSession ? "ADMIN_SESSION" : accepted ? "ADMIN_TOKEN" : "ANONYMOUS",
     tokenFps: tokenFp ? [tokenFp] : [],
     subject,
     organizationId,
@@ -311,7 +317,8 @@ function buildRecord(
       queryKeys: target.queryKeys,
       ...(Object.keys(query).length > 0 ? { query } : {}),
       token_present: Boolean(provided),
-      token_accepted: accepted,
+      token_accepted: accepted && !viaSession,
+      ...(viaSession ? { admin_via: "SESSION" } : {}),
       ...(checked ? {} : { token_checked: false }),
       ...(finished ? {} : { aborted: true }),
     },
@@ -552,7 +559,7 @@ function onEvicted(raw: { _id: string } & Record<string, unknown>): void {
   }
   const doc = raw as unknown as ActivityDoc;
   stats.evicted += 1;
-  fold(doc, doc.via === "ADMIN_TOKEN", "evicted");
+  fold(doc, isTrustedAccess(raw), "evicted");
 }
 
 onAccessRecordEvicted(onEvicted);

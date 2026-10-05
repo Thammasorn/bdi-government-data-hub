@@ -111,7 +111,7 @@ import {
 } from "../lib/organization-form.js";
 import { nextOrganizationRequestNumber } from "../lib/request-number.js";
 import { buildJourneyProgress, summariseMany } from "../lib/journey-steps.js";
-import { REVIEW_TASK_TYPE_LABELS, ROLE_LABELS, isBdiStaff } from "../lib/roles.js";
+import { REVIEW_TASK_TYPE_LABELS, ROLE_LABELS, isBdiStaff, seesAllRequests } from "../lib/roles.js";
 import {
   PLACEHOLDER_ORGANIZATION_NAME,
   BDI_ORGANIZATION_ID,
@@ -670,7 +670,7 @@ function canView(
   session: { sub: string; roles: RoleCode[]; organizationId: string | null; email: string },
   request: { createdBy: string; organizationId: string; approverEmail: string | null },
 ): boolean {
-  if (isBdiStaff(session.roles)) return true;
+  if (seesAllRequests(session.roles)) return true;
   if (session.organizationId === request.organizationId) return true;
   /**
    * ผู้มีอำนาจที่ยังไม่มี role — ถูกเชิญมาลงนามแต่ยังไม่ได้เปิดใช้งานบัญชี จึงยังไม่มี
@@ -711,7 +711,7 @@ function visibilityFilter(session: {
   organizationId: string | null;
   email: string;
 }): Prisma.OrganizationRegistrationRequestWhereInput {
-  if (isBdiStaff(session.roles)) return {};
+  if (seesAllRequests(session.roles)) return {};
   return {
     OR: [
       { createdBy: session.sub },

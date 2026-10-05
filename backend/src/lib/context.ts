@@ -15,6 +15,8 @@ import { randomUUID } from "node:crypto";
 import { isIP } from "node:net";
 import type { NextFunction, Request, Response } from "express";
 
+import { SYSTEM_USER_ID } from "./system.js";
+
 export interface RequestContext {
   correlationId: string;
   actorId: string | null;
@@ -30,6 +32,12 @@ export interface RequestContext {
    * ไม่ได้มาทาง admin API logAudit จดลง `metadata.admin_token_fp`
    */
   adminTokenFp: string | null;
+  /**
+   * ผ่าน guard ของ admin API มาทางไหน — `TOKEN` (`x-admin-token`, ผู้กระทำคือ "ระบบ") หรือ `SESSION` (ผู้ใช้ที่ถือ
+   * `SYSTEM_ADMINISTRATOR` ใช้หน้า /console ผู้กระทำคือคนนั้น) null ถ้าคำขอไม่ได้มาทาง admin API — `requireAdmin` ตั้งให้
+   * logAudit จด `SESSION` ลง `metadata.admin_via` เพื่อให้ `viaOf()` แยก ADMIN_SESSION ออกจาก SESSION ธรรมดาได้
+   */
+  adminVia: "TOKEN" | "SESSION" | null;
   /** เวลาที่งานนี้เริ่ม (ms) — lib/error-capture.ts คิด durationMs ของคำขอที่ล้มจากค่านี้ */
   startedAt: number;
   /** HTTP method ของคำขอ — null ใน worker และสคริปต์ */
@@ -111,6 +119,7 @@ export function runWithContext<T>(context: Partial<RequestContext>, fn: () => T)
       userAgent: context.userAgent ?? null,
       sourceComponent: context.sourceComponent ?? "request-service",
       adminTokenFp: context.adminTokenFp ?? null,
+      adminVia: context.adminVia ?? null,
       startedAt: Date.now(),
       method: null,
       route: null,
@@ -185,6 +194,7 @@ export function correlationMiddleware(req: Request, res: Response, next: NextFun
       // ค่าตั้งต้นของทุกคำขอ — requireAdminToken เปลี่ยนเป็น admin-portal เมื่อ token ผ่าน
       sourceComponent: "web-portal",
       adminTokenFp: null,
+      adminVia: null,
       startedAt: Date.now(),
       method: req.method,
       // ยังไม่รู้ว่าจะไปถึง route ไหน — wrap() เติมให้ตอนเข้า handler ของ route
@@ -233,6 +243,22 @@ export function isAnonymousRequest(ctx: RequestContext | undefined): boolean {
 export function setAdminTokenFp(fingerprint: string) {
   const store = storage.getStore();
   if (store) store.adminTokenFp = fingerprint;
+}
+
+/** requireAdmin เรียกเมื่อผ่าน guard ของ admin API แล้ว — ดู `RequestContext.adminVia` */
+export function setAdminVia(via: "TOKEN" | "SESSION") {
+  const store = storage.getStore();
+  if (store) store.adminVia = via;
+}
+
+/**
+ * ผู้กระทำของงานผู้ดูแลระบบ — ผู้ใช้จาก session เมื่อมาทางหน้า /console, บัญชี SYSTEM เมื่อมาทาง admin token
+ *
+ * route ของ admin เคยส่ง `SYSTEM_USER_ID` ตรง ๆ ลงคอลัมน์ `*_by` และ actor ของ helper เพราะ token ไม่ผูกกับคน ตอนนี้
+ * เส้นทางเดียวกันรับ session ด้วย คอลัมน์เหล่านั้นจึงต้องบอกชื่อคนที่กดเมื่อรู้ — เส้นทาง token ได้ค่าเดิมทุกตัว
+ */
+export function adminActorId(): string {
+  return storage.getStore()?.actorId ?? SYSTEM_USER_ID;
 }
 
 /**

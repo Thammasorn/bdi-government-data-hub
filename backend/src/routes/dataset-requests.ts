@@ -95,7 +95,7 @@ import { captureError } from "../lib/error-capture.js";
 import { LEGAL_SCOPES, publishedDocuments } from "../lib/legal.js";
 import { nextDatasetCode, nextDatasetRequestNumber } from "../lib/request-number.js";
 import { buildJourneyProgress, summariseMany } from "../lib/journey-steps.js";
-import { REVIEW_TASK_TYPE_LABELS, isBdiStaff, isSpecialistOnly } from "../lib/roles.js";
+import { REVIEW_TASK_TYPE_LABELS, isBdiStaff, isSpecialistOnly, seesAllRequests } from "../lib/roles.js";
 import {
   BDI_ORGANIZATION_ID,
   ROLE_CODES,
@@ -193,7 +193,7 @@ async function visibilityFilter(
   session: Session,
 ): Promise<Prisma.DatasetRegistrationRequestWhereInput> {
   if (isSpecialistOnly(session.roles)) return { assignedSpecialistId: session.sub };
-  if (isBdiStaff(session.roles)) return {};
+  if (seesAllRequests(session.roles)) return {};
   if (session.organizationId) return { organizationId: session.organizationId };
   return { createdBy: session.sub };
 }
@@ -359,7 +359,7 @@ datasetRequestRouter.get("/", async (req, res) => {
     sort?: string;
     q?: string;
   };
-  const isBdi = isBdiStaff(session.roles);
+  const isBdi = seesAllRequests(session.roles);
 
   const and = await baseFilters(session, q);
 
@@ -692,7 +692,7 @@ datasetRequestRouter.get("/:id", async (req, res) => {
   // ชื่อผู้ที่เปิดแต่ละด่าน — ของ BDI_OFFICER_REVIEW คือผู้ที่กดนำส่งคำขอในรอบนั้น
   const openers = await taskOpeners(prisma, tasks);
 
-  const isOrgSide = !isBdiStaff(session.roles);
+  const isOrgSide = !seesAllRequests(session.roles);
 
   /**
    * เหตุผลที่ผู้ตรวจส่งกลับ — หน้าฟอร์มมีกล่องแดง "สิ่งที่ต้องแก้ไขตามที่ผู้ตรวจสอบระบุ"

@@ -281,6 +281,16 @@ async function main() {
     accountType: AccountType.BDI,
     role: ROLE_CODES.BDI_LEGAL_OFFICER,
   });
+  // ผู้ดูแลระบบ — ใช้หน้า /console (การ์ด Admin Console) ไม่ถือด่านไหนของการอนุมัติ
+  const systemAdmin = await makeUser({
+    email: "admin@bdi.or.th",
+    prefix: "นาย",
+    firstName: "วิรัช",
+    lastName: "ดูแลระบบ",
+    phone: "0810000005",
+    accountType: AccountType.BDI,
+    role: ROLE_CODES.SYSTEM_ADMINISTRATOR,
+  });
 
   // ---------------------------------------------------------- หน่วยงาน
   console.log("สร้างหน่วยงานและคำขอลงทะเบียน…");
@@ -990,6 +1000,7 @@ async function main() {
   console.log(
     `บัญชี BDI: ${officer.email} · ${approver.email} · ${specialist.email} · ${legalOfficer.email}`,
   );
+  console.log(`ผู้ดูแลระบบ (หน้า /console): ${systemAdmin.email}`);
 }
 
 /** สถานะที่ derive จาก review_task — ใช้ตัวเดียวกับ runtime เพื่อให้ fixture ตรงกับของจริง */

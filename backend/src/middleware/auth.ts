@@ -7,9 +7,9 @@ import { prisma } from "../db.js";
 import { env } from "../env.js";
 import { AuditAction, AuditSubject } from "../lib/audit.js";
 import { SESSION_COOKIE, hashToken, tokenFingerprint, type SessionPayload } from "../lib/auth.js";
-import { setActor, setAdminTokenFp, setSourceComponent } from "../lib/context.js";
+import { setActor, setAdminTokenFp, setAdminVia, setSourceComponent } from "../lib/context.js";
 import { resolveSession, revokeSessionsFor } from "../lib/session.js";
-import { ORGANIZATION_SCOPED_ROLES, type RoleCode } from "../lib/system.js";
+import { ORGANIZATION_SCOPED_ROLES, ROLE_CODES, type RoleCode } from "../lib/system.js";
 import { createTokenRejectionRecorder } from "../lib/token-rejection.js";
 
 /** ผู้อ่าน log ที่ผ่าน `requireLogReader` — สิ่งที่ `recordLogRead()` ต้องใช้บันทึกการอ่าน */
@@ -165,9 +165,9 @@ const adminTokenRejections = createTokenRejectionRecorder(
  *
  * ข้อจำกัดที่ **ยอมรับไว้ ไม่ใช่มองข้าม** (ตัดสิน 2026-08-16): token นี้ไม่หมดอายุ
  * ไม่หมุน และไม่ผูกกับตัวบุคคล `audit_event` ของงานที่ทำผ่านเส้นทางนี้จึงบอกได้แค่
- * "ระบบทำ" การย้ายไปใช้บัญชีจริงที่มี role `SYSTEM_ADMINISTRATOR` เป็นงานของการ์ด
- * Admin Portal ซึ่งยังไม่มีหน้าจอ — ทำที่นี่จะพัง Postman collection และ notebook
- * ที่ใช้เส้นทางนี้อยู่ โดยที่ยังไม่มีอะไรมาแทน
+ * "ระบบทำ" ทางที่ผูกกับคนคือหน้า /console ด้วยบัญชีที่มี role `SYSTEM_ADMINISTRATOR`
+ * (`requireAdmin` ข้างล่าง การ์ด Admin Console 2026-10-05) — token ยังอยู่เพราะ Postman
+ * collection, notebook และการตั้งผู้ดูแลระบบคนแรกของ deployment ใหม่ยังใช้เส้นทางนี้
  *
  * การปฏิเสธทุกครั้งถูกนับ และลง `audit_event` เป็น `ADMIN_TOKEN_REJECTED` แบบ throttle
  * (lib/token-rejection.ts): หน้าต่าง 10 นาทีต่อ IP ภายใต้งบแถวทันที 20 แถวรวมทุก IP ส่วนที่มาหลัง
@@ -188,7 +188,74 @@ export function requireAdminToken(req: Request, res: Response, next: NextFunctio
   }
   setSourceComponent("admin-portal");
   setAdminTokenFp(tokenFingerprint(provided));
+  setAdminVia("TOKEN");
   next();
+}
+
+/**
+ * origin ที่ยอมให้ส่งคำสั่งเปลี่ยนข้อมูลของผู้ดูแลระบบด้วย cookie — ที่ CORS ยอมกับที่อยู่ของหน้าเว็บเอง (`APP_URL`)
+ * เทียบทั้ง scheme host และ port (`new URL().origin`) ไม่เทียบ prefix: `https://bdi.thammasorn.org.evil.example` ต้องไม่ผ่าน
+ */
+function trustedOrigin(origin: string): boolean {
+  let parsed: string;
+  try {
+    parsed = new URL(origin).origin;
+  } catch {
+    return false;
+  }
+  const allowed = [...env.corsOrigins, env.appUrl].map((o) => {
+    try {
+      return new URL(o).origin;
+    } catch {
+      return null;
+    }
+  });
+  return allowed.includes(parsed);
+}
+
+/**
+ * guard ของ `/api/admin/*` (ยกเว้น log ซึ่งมี token ของตัวเอง) — รับได้สองทาง
+ *
+ * 1. **`x-admin-token`** (หรือไม่มี cookie เลย) — ทางเดิมของ Postman, notebook และสคริปต์ ส่งต่อให้ `requireAdminToken` ทั้งดุ้น token ผิดได้ 401
+ *    ทันที ไม่ลองอ่าน cookie ต่อ: ผู้เรียกที่ตั้งใจใช้ token ต้องรู้ว่า token ของเขาผิด ไม่ใช่ได้ผลของ session ที่ติดมาโดยบังเอิญ
+ * 2. **session ของผู้ใช้ที่ถือ `SYSTEM_ADMINISTRATOR`** — หน้า /console (การ์ด Admin Console, 2026-10-05) ผู้กระทำในแถว audit
+ *    จึงเป็นคนจริงแทน "ระบบ" (`adminActorId()` ใน lib/context.ts) และ via เป็น `ADMIN_SESSION`
+ *
+ * ทาง session ต้องมี **`Origin` ที่เชื่อได้ในทุกคำขอที่ไม่ใช่ GET/HEAD** cookie เป็น `SameSite=lax` (lib/auth.ts) ซึ่งกันได้แค่
+ * ข้ามไซต์ ส่วน host อื่นใต้ `thammasorn.org` นับเป็นไซต์เดียวกัน และคำขอ multipart (อัปโหลด template) ไม่มี preflight ของ CORS
+ * มากั้น ฟอร์มธรรมดาบนหน้าใดก็ได้ในโดเมนนั้นจึงยิงคำสั่งของผู้ดูแลระบบด้วย cookie ของเขาได้ถ้าไม่ตรวจตรงนี้ เบราว์เซอร์ส่ง `Origin`
+ * กับ POST/PUT/PATCH/DELETE เสมอ และ proxy ของหน้าเว็บ (`app/api/[...path]`) ส่งต่อตามเดิม ผู้ใช้จริงจึงไม่เคยโดนข้อนี้
+ */
+export function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  // ไม่มีทั้ง token และ cookie — ให้ `requireAdminToken` ตอบ 401 แบบเดิมและนับเป็น `ADMIN_TOKEN_REJECTED` เหมือนก่อนมีหน้า
+  // /console สคริปต์ที่ลืมใส่ token ยังได้ข้อความเดิม และการยิงเดาจากที่ไม่มี session ยังถูกนับ
+  if (req.header("x-admin-token") !== undefined || !req.cookies?.[SESSION_COOKIE]) {
+    requireAdminToken(req, res, next);
+    return;
+  }
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    const origin = req.header("origin");
+    if (!origin || !trustedOrigin(origin)) {
+      res.status(403).json({
+        error: "csrf_origin",
+        message: "คำขอนี้ไม่ได้มาจากหน้าเว็บของระบบ — เปิดหน้าผู้ดูแลระบบจากที่อยู่ของระบบแล้วลองใหม่",
+      });
+      return;
+    }
+  }
+  void requireAuth(req, res, (err?: unknown) => {
+    if (err) {
+      next(err);
+      return;
+    }
+    if (!req.session?.roles.includes(ROLE_CODES.SYSTEM_ADMINISTRATOR)) {
+      res.status(403).json({ error: "forbidden", message: "เฉพาะผู้ดูแลระบบเท่านั้น" });
+      return;
+    }
+    setSourceComponent("admin-portal");
+    setAdminVia("SESSION");
+    next();
+  });
 }
 
 /** ตัวนับการปฏิเสธ `x-log-token` ของ process นี้ — แยกจากของ admin token (หน้าต่างและงบของใครของมัน) */

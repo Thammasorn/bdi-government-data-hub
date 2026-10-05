@@ -97,6 +97,17 @@ export const BDI_ROLES: RoleCode[] = [
 export const isBdiStaff = (roles: RoleCode[]) => roles.some((r) => BDI_ROLES.includes(r));
 
 /**
+ * เห็นคำขอของทุกหน่วยงานได้ — เจ้าหน้าที่ BDI กับผู้ดูแลระบบ (หน้า /console อ่านรายการและรายละเอียดผ่าน endpoint
+ * เดียวกับหน้าของเจ้าหน้าที่ ตั้งแต่การ์ด Admin Console 2026-10-05)
+ *
+ * ใช้ตัดสิน **การมองเห็นเท่านั้น** ไม่ใช่สิทธิ์ทำงาน: ปุ่มของแต่ละด่านยังตัดสินจาก role ผ่าน `TASK_TYPE_ROLES` ซึ่งไม่มี
+ * `SYSTEM_ADMINISTRATOR` อยู่ในนั้น ผู้ดูแลจึงอ่านได้ทุกใบแต่ปิดด่านไหนไม่ได้ และที่ที่ถาม "เป็นฝั่ง BDI ไหม" เพื่อห้ามแก้ฟอร์ม
+ * (`mayEdit`) หรือห้ามสร้างหน่วยงาน ยังใช้ `isBdiStaff` เหมือนเดิม
+ */
+export const seesAllRequests = (roles: RoleCode[]) =>
+  isBdiStaff(roles) || roles.includes(ROLE_CODES.SYSTEM_ADMINISTRATOR);
+
+/**
  * ผู้เชี่ยวชาญข้อมูลที่ไม่ได้ถือ role อื่นของ BDI ด้วย
  *
  * `docs/01-user-journey.md` §4.7 ให้ role นี้เห็น **เฉพาะคำขอที่ถูกมอบหมายให้ตนเอง**

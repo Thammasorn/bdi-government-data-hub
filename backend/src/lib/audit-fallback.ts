@@ -103,7 +103,7 @@ export function reportAuditWriteFailure(
 
 /**
  * เอกสาร `activity` ของแถวที่ Postgres ไม่รับ — ประกอบเป็นแถวแบบที่ logAudit จะเขียน (metadata = snapshot ของผู้กระทำ
- * + ของผู้เรียก + `ip_unparsed` + `admin_token_fp` ลำดับเดียวกับ `auditMetadata()` ใน lib/audit.ts) แล้วผ่าน
+ * + ของผู้เรียก + `ip_unparsed` + `admin_token_fp` + `admin_via` ลำดับเดียวกับ `auditMetadata()` ใน lib/audit.ts) แล้วผ่าน
  * `projectAuditRow()` ตัวเดียวกับ relay ส่วนที่ต่างจากสำเนาของ relay อธิบายไว้ที่ `reportAuditWriteFailure()`
  */
 function fallbackDocument(
@@ -119,6 +119,7 @@ function fallbackDocument(
     ...(callerMetadata && typeof callerMetadata === "object" ? (callerMetadata as Record<string, unknown>) : {}),
     ...(ctx?.ipUnparsed ? { ip_unparsed: true } : {}),
     ...(ctx?.adminTokenFp ? { admin_token_fp: ctx.adminTokenFp } : {}),
+    ...(ctx?.adminVia === "SESSION" ? { admin_via: "SESSION" } : {}),
   };
   const doc = projectAuditRow(
     {

@@ -51,7 +51,7 @@ export type ActivityCategory =
  * มาทางไหน — `SYSTEM` คือแถวที่ actor เป็นระบบแต่ไม่ได้มาจาก worker สคริปต์ หรือ admin token เช่น logout ที่ไม่มี actor
  * ใน context หรือคีย์ที่ถูกพลิกเป็น EXPIRED ตอนมีคนเปิดลิงก์ (docs/21 §3.4)
  */
-export type ActivityVia = "SESSION" | "ADMIN_TOKEN" | "LOG_TOKEN" | "WORKER" | "SCRIPT" | "ANONYMOUS" | "SYSTEM";
+export type ActivityVia = "SESSION" | "ADMIN_SESSION" | "ADMIN_TOKEN" | "LOG_TOKEN" | "WORKER" | "SCRIPT" | "ANONYMOUS" | "SYSTEM";
 
 export type ActivitySource = "audit_event" | "audit_fallback" | "http";
 
@@ -166,12 +166,14 @@ export function categoryOf(action: string, after: unknown): ActivityCategory {
  *   1. สคริปต์ (`seed-demo`, `admin-script`) → SCRIPT
  *   2. worker หรือ job (`notification-worker`, `activation-expiry-job`) → WORKER
  *   3. การอ่าน log (`AUDIT_LOG_READ`, `ERROR_ISSUE_STATUS_CHANGED`) → LOG_TOKEN
- *   4. `admin-portal` หรือมี fingerprint ของ admin token → ADMIN_TOKEN — มาก่อน actor โดยตั้งใจ: แถวที่ helper เขียน
+ *   4. `admin-portal` กับ `metadata.admin_via = SESSION` → ADMIN_SESSION — ผู้ดูแลระบบใช้หน้า /console (requireAdmin) actor
+ *      ของแถวคือผู้ดูแลคนนั้น จึงต้องมาก่อนข้อ 5 ไม่งั้นทุกแถวของหน้า /console เป็น ADMIN_TOKEN ทั้งที่ไม่มี token
+ *   5. `admin-portal` หรือมี fingerprint ของ admin token → ADMIN_TOKEN — มาก่อน actor โดยตั้งใจ: แถวที่ helper เขียน
  *      ระหว่างคำสั่งของ admin มี actor เป็น USER (บัญชีเป้าหมาย) ถ้าดู actor ก่อนจะได้ SESSION ทั้งที่มาทาง admin token
- *   5. actor ANONYMOUS → ANONYMOUS
- *   6. actor USER → SESSION
- *   7. ที่เหลือ (SYSTEM ที่ไม่ได้มาจากข้างบน, EXTERNAL) → SYSTEM
- * แถวที่เขียนก่อนการ์ดนี้ (admin ก่อนมี `admin-portal` และ fingerprint, `LOGIN_FAILED` ที่เป็น SYSTEM) ได้ SYSTEM จากข้อ 7
+ *   6. actor ANONYMOUS → ANONYMOUS
+ *   7. actor USER → SESSION
+ *   8. ที่เหลือ (SYSTEM ที่ไม่ได้มาจากข้างบน, EXTERNAL) → SYSTEM
+ * แถวที่เขียนก่อนการ์ดนี้ (admin ก่อนมี `admin-portal` และ fingerprint, `LOGIN_FAILED` ที่เป็น SYSTEM) ได้ SYSTEM จากข้อ 8
  * — อ่าน via ของแถวก่อน deploy ของการ์ดด้วยความระวัง (docs/21 §6.2)
  */
 export function viaOf(row: {
@@ -179,14 +181,24 @@ export function viaOf(row: {
   actorType: string;
   sourceComponent: string;
   adminTokenFp: string | null;
+  adminVia?: string | null;
 }): ActivityVia {
   if (row.sourceComponent === "seed-demo" || row.sourceComponent === "admin-script") return "SCRIPT";
   if (row.sourceComponent === "notification-worker" || row.sourceComponent === "activation-expiry-job") return "WORKER";
   if (LOG_TOKEN_ACTIONS.has(row.action)) return "LOG_TOKEN";
+  if (row.sourceComponent === "admin-portal" && row.adminVia === "SESSION" && !row.adminTokenFp) return "ADMIN_SESSION";
   if (row.sourceComponent === "admin-portal" || row.adminTokenFp) return "ADMIN_TOKEN";
   if (row.actorType === "ANONYMOUS") return "ANONYMOUS";
   if (row.actorType === "USER") return "SESSION";
   return "SYSTEM";
+}
+
+/**
+ * บันทึกการเรียก admin API ที่ผ่าน guard แล้ว (token หรือ session ของผู้ดูแลระบบ) — lib/error-capture.ts กับ lib/admin-access.ts
+ * ใช้ตัดสินว่าบันทึกนี้ได้การยกเว้นตอนเกินเพดานขนาดไหม ผู้เรียกที่ไม่ผ่านไม่ได้ (ดู `enqueueAccessRecord()`)
+ */
+export function isTrustedAccess(doc: Record<string, unknown>): boolean {
+  return doc.via === "ADMIN_TOKEN" || doc.via === "ADMIN_SESSION";
 }
 
 // --------------------------------------------------------------------------------------------- key ค้นหา
@@ -498,6 +510,7 @@ export function projectAuditRow(row: AuditRowLike, options: ProjectOptions): Act
   for (const key of read?.keys.values() ?? []) hashKeys.add(key);
 
   const adminTokenFp = rawMeta ? stringOrNull(rawMeta.admin_token_fp) : null;
+  const adminVia = rawMeta ? stringOrNull(rawMeta.admin_via) : null;
   const roles = rawMeta && Array.isArray(rawMeta.actor_roles) ? rawMeta.actor_roles.filter((r) => typeof r === "string") : [];
 
   const doc: ActivityDoc = {
@@ -515,7 +528,13 @@ export function projectAuditRow(row: AuditRowLike, options: ProjectOptions): Act
       roles: roles as string[],
       organizationId: rawMeta ? stringOrNull(rawMeta.actor_organization_id) : null,
     },
-    via: viaOf({ action: row.action, actorType: row.actorType, sourceComponent: row.sourceComponent, adminTokenFp }),
+    via: viaOf({
+      action: row.action,
+      actorType: row.actorType,
+      sourceComponent: row.sourceComponent,
+      adminTokenFp,
+      adminVia,
+    }),
     tokenFps: tokenFpsOf(rawMeta),
     subject: { type: row.subjectType, id: row.subjectId },
     organizationId: row.organizationId,

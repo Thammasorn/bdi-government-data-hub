@@ -42,6 +42,7 @@ import type { Request } from "express";
 import type { AnyBulkWriteOperation, Db } from "mongodb";
 
 import { env } from "../env.js";
+import { isTrustedAccess } from "./activity-shape.js";
 import { bsonSize } from "./bson-size.js";
 import { currentContext, isAnonymousRequest, referenceOf, type Breadcrumb, type RequestContext } from "./context.js";
 import { logDb, logStoreStatus } from "./log-store.js";
@@ -465,7 +466,7 @@ export function enqueueActivity(doc: ActivityDoc): boolean {
  *                   ของ token ที่ผ่านตอนเกินเพดานขนาด) — ผู้เรียกพับตัวเดี่ยวลงสรุป สรุปรอแล้วลองใหม่
  *   - `off`         log store ปิด หรือเกินเพดานขนาดและ token ไม่ผ่าน — ไม่เก็บเลย
  *
- * **token ที่ผ่าน (`via: "ADMIN_TOKEN"`) เก็บแม้เกินเพดานขนาด** เหมือนสำเนา audit: มันคือร่องรอยที่ step 8 มีไว้ (ใครเปิดดูเลขบัตร
+ * **token ที่ผ่าน (`via: "ADMIN_TOKEN"` หรือ session ของผู้ดูแลระบบ `ADMIN_SESSION` — `isTrustedAccess()`) เก็บแม้เกินเพดานขนาด** เหมือนสำเนา audit: มันคือร่องรอยที่ step 8 มีไว้ (ใครเปิดดูเลขบัตร
  * ของใครด้วย token ใบไหน) จำนวนของมันขึ้นกับการถือ token ไม่ใช่กับใครก็ได้ เดิม (plan §3 "Size ceiling") เกินเพดานแล้วไม่เก็บทั้งหมด
  * — คนไม่มี token ยิง `/api/admin/*` ไม่หยุดจนถึงเพดาน แล้วคนถือ token ที่หลุดอ่านเลขบัตรของทุกบัญชีได้โดยไม่เหลือบันทึก (ตรวจขั้น
  * 8-10 แบบค้าน 2026-10-01) ตอนนี้สิ่งที่ใครก็ส่งได้พาเพดานไปถึงเองไม่ได้แล้ว (งบไบต์) แต่ error ของ server หรือ relay ยังพาไปได้
@@ -489,7 +490,7 @@ export function enqueueAccessRecord(
 ): "queued" | "full" | "over_budget" | "off" {
   try {
     if (!env.logStore.enabled) return "off";
-    const trusted = doc.via === "ADMIN_TOKEN";
+    const trusted = isTrustedAccess(doc);
     const overQuota = logStoreStatus().status === "over_quota";
     if (!trusted && overQuota) return "off";
     const budget: BudgetKind | null = !trusted ? "anonymous-admin" : overQuota && !final ? "admin-token" : null;
@@ -1421,7 +1422,7 @@ async function writeBatch(
       if (!overQuota) events.push(item.doc);
     } else if (item.kind === "runtime") runtime.push(item.doc);
     else if (item.kind === "access") {
-      if (!overQuota || item.doc.via === "ADMIN_TOKEN") access.push(item.doc);
+      if (!overQuota || isTrustedAccess(item.doc)) access.push(item.doc);
     } else activity.push(item.doc);
   }
   if (events.length > 0) await insertAll(db, "error_events", events);

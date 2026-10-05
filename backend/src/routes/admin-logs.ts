@@ -131,6 +131,7 @@ const CATEGORIES = [
 ] as const satisfies readonly ActivityCategory[];
 const VIAS = [
   "SESSION",
+  "ADMIN_SESSION",
   "ADMIN_TOKEN",
   "LOG_TOKEN",
   "WORKER",

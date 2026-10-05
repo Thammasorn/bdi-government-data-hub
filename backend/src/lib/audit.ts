@@ -633,6 +633,8 @@ function auditMetadata(
     ...(ctx?.ipUnparsed ? { ip_unparsed: true } : {}),
     // มาทาง admin API — token ใบไหน (ดู requireAdminToken) มาหลัง input.metadata ให้ผู้เรียกทับไม่ได้
     ...(ctx?.adminTokenFp ? { admin_token_fp: ctx.adminTokenFp } : {}),
+    // มาทางหน้า /console ด้วย session ของผู้ดูแลระบบ — viaOf() อ่านคีย์นี้ (ดู requireAdmin)
+    ...(ctx?.adminVia === "SESSION" ? { admin_via: "SESSION" } : {}),
   };
 }
 

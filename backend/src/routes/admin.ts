@@ -11,6 +11,7 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "../db.js";
+import { adminActorId } from "../lib/context.js";
 import { fullNameTh } from "../lib/person-name.js";
 import { uploadedFile } from "../lib/attachment.js";
 import { TEMPLATE_VARIABLES, VARIABLE_GROUPS } from "../lib/document-render.js";
@@ -46,7 +47,6 @@ import {
   ORGANIZATION_SCOPED_ROLES,
   PLACEHOLDER_ORGANIZATION_NAME,
   ROLE_CODES,
-  SYSTEM_USER_ID,
   type RoleCode,
 } from "../lib/system.js";
 import {
@@ -56,11 +56,11 @@ import {
   phoneExtensionSchema,
   uuidSchema,
 } from "../lib/validation.js";
-import { requireAdminToken } from "../middleware/auth.js";
+import { requireAdmin } from "../middleware/auth.js";
 
 export const adminRouter = Router();
 
-adminRouter.use(requireAdminToken);
+adminRouter.use(requireAdmin);
 
 // ---------------------------------------------------------------- หน่วยงานที่ admin สร้างล่วงหน้า
 
@@ -239,8 +239,8 @@ adminRouter.post("/organizations", async (req, res) => {
       email: input.email ?? null,
       websiteUrl: input.websiteUrl ?? null,
       parentOrganizationId: input.parentOrganizationId ?? null,
-      createdBy: SYSTEM_USER_ID,
-      updatedBy: SYSTEM_USER_ID,
+      createdBy: adminActorId(),
+      updatedBy: adminActorId(),
     },
   });
 
@@ -477,7 +477,7 @@ adminRouter.patch("/organizations/:id", async (req, res) => {
 
   const organization = await prisma.organization.update({
     where: { id: before.id },
-    data: { ...written, updatedBy: SYSTEM_USER_ID },
+    data: { ...written, updatedBy: adminActorId() },
   });
 
   /**
@@ -824,8 +824,8 @@ adminRouter.post("/invitations", async (req, res) => {
         displayName: fullNameTh({ prefixTh, firstnameTh, lastnameTh }),
         accountType: isOrgScoped ? AccountType.ORGANIZATION : AccountType.BDI,
         status: UserAccountStatus.PENDING,
-        createdBy: SYSTEM_USER_ID,
-        updatedBy: SYSTEM_USER_ID,
+        createdBy: adminActorId(),
+        updatedBy: adminActorId(),
       },
     });
 
@@ -833,7 +833,7 @@ adminRouter.post("/invitations", async (req, res) => {
       userAccountId: account.id,
       organizationId,
       roleCode: role,
-      actorId: SYSTEM_USER_ID,
+      actorId: adminActorId(),
     });
 
     // บัญชีเพิ่งเกิดใน transaction นี้ จึงไม่มีคีย์ใบเก่าให้ `revokedKeys` — ไม่ต้องเขียน REVOKED
@@ -1052,7 +1052,7 @@ adminRouter.post("/invitations/:id/resend", async (req, res) => {
       userAccountId: key.userAccountId,
       organizationId: key.organizationId,
       roleCode,
-      actorId: SYSTEM_USER_ID,
+      actorId: adminActorId(),
     }),
   );
 
@@ -1288,7 +1288,7 @@ adminRouter.post("/invitations/:id/revoke", async (req, res) => {
   const revoked = await revokeIssuedKeys(
     prisma,
     { id: parsedId.data },
-    { actorId: SYSTEM_USER_ID, reason: parsed.data.reason ?? "ยกเลิกโดยผู้ดูแลระบบ" },
+    { actorId: adminActorId(), reason: parsed.data.reason ?? "ยกเลิกโดยผู้ดูแลระบบ" },
   );
   if (revoked.length === 0) {
     res.status(404).json({ error: "not_found", message: "ไม่พบคำเชิญที่ยังใช้งานได้" });
@@ -1546,7 +1546,7 @@ adminRouter.post(
       documentCode: code,
       docx: file.buffer,
       filename: file.originalname,
-      actorId: SYSTEM_USER_ID,
+      actorId: adminActorId(),
     });
 
     await logAudit({
@@ -1762,8 +1762,8 @@ adminRouter.post("/dataset-choices/:fieldKey", async (req, res) => {
       labelTh: parsed.data.labelTh,
       labelEn: parsed.data.labelEn ?? null,
       displayOrder: parsed.data.displayOrder ?? (last?.displayOrder ?? 0) + 1,
-      createdBy: SYSTEM_USER_ID,
-      updatedBy: SYSTEM_USER_ID,
+      createdBy: adminActorId(),
+      updatedBy: adminActorId(),
     },
     select: {
       id: true,
@@ -1842,7 +1842,7 @@ adminRouter.patch("/dataset-choices/:fieldKey/:code", async (req, res) => {
 
   const after = await prisma.datasetChoice.update({
     where: { id: before.id },
-    data: { ...parsed.data, updatedBy: SYSTEM_USER_ID },
+    data: { ...parsed.data, updatedBy: adminActorId() },
     select: {
       id: true,
       fieldKey: true,

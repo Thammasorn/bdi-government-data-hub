@@ -41,6 +41,7 @@ import {
 
 import { prisma } from "../db.js";
 import { env } from "../env.js";
+import { adminActorId, currentContext } from "../lib/context.js";
 import { NAME_FIELDS, fullNameTh } from "../lib/person-name.js";
 import { AuditAction, AuditSubject, diffFields, logAudit } from "../lib/audit.js";
 import {
@@ -65,7 +66,6 @@ import {
   BDI_ORGANIZATION_ID,
   ORGANIZATION_SCOPED_ROLES,
   ROLE_CODES,
-  SYSTEM_USER_ID,
   type RoleCode,
 } from "../lib/system.js";
 import {
@@ -75,10 +75,10 @@ import {
   phoneExtensionSchema,
   uuidSchema,
 } from "../lib/validation.js";
-import { requireAdminToken } from "../middleware/auth.js";
+import { requireAdmin } from "../middleware/auth.js";
 
 export const adminUserRouter = Router();
-adminUserRouter.use(requireAdminToken);
+adminUserRouter.use(requireAdmin);
 
 /**
  * เหตุผลบังคับทุกคำสั่งที่ตัดสิทธิ์คน
@@ -272,6 +272,43 @@ async function lastBdiHolder(db: Db, userAccountId: string) {
     if (others === 0) return assignment.role.code;
   }
   return null;
+}
+
+/**
+ * ผู้ดูแลระบบสั่งกับบัญชีของตัวเองผ่านหน้า /console — ตอบ 409 `self_action` แล้วคืน true
+ *
+ * ระงับ ยุติ ถอนบทบาท ย้าย เปลี่ยนอีเมล/เลขบัตร หรือปิด session ของตัวเอง ล้วนตัดสิทธิ์ที่ใช้สั่งอยู่ ณ ตอนนั้นทิ้ง
+ * กลางคำสั่ง และไม่มีทางย้อนจากหน้าเว็บ (คนที่จะเปิดคืนให้คือผู้ดูแลอีกคน) ทาง token ไม่มีตัวตนให้เทียบ จึงไม่ถูกกัน
+ */
+function refuseSelfAction(res: import("express").Response, accountId: string): boolean {
+  const ctx = currentContext();
+  if (ctx?.adminVia !== "SESSION" || ctx.actorId !== accountId) return false;
+  res.status(409).json({
+    error: "self_action",
+    message: "ทำกับบัญชีของตัวเองไม่ได้ — ให้ผู้ดูแลระบบอีกคนดำเนินการแทน",
+  });
+  return true;
+}
+
+/**
+ * ตอบ 409 `last_holder` ถ้าบัญชีนี้ถือบทบาทของ BDI ที่ไม่มีบัญชีอื่นที่ใช้งานอยู่ถือ แล้วคืน false — คืน true ถ้าทำต่อได้
+ * `verb` คือคำสั่งที่กำลังจะทำ ใส่ในข้อความให้ผู้ดูแลรู้ว่าอะไรถูกกัน
+ */
+async function refuseLastHolder(
+  res: import("express").Response,
+  accountId: string,
+  verb: string,
+): Promise<boolean> {
+  const stranded = await lastBdiHolder(prisma, accountId);
+  if (!stranded) return true;
+  res.status(409).json({
+    error: "last_holder",
+    message:
+      `บัญชีนี้เป็น${ROLE_LABELS[stranded as RoleCode] ?? stranded} คนสุดท้ายที่ใช้งานอยู่ — ` +
+      `${verb}แล้วจะไม่มีใครทำหน้าที่นี้ได้เลย กรุณาเชิญหรือเปิดใช้งานบัญชีอื่นในบทบาทนี้ก่อน`,
+    roleCode: stranded,
+  });
+  return false;
 }
 
 // ---------------------------------------------------------------- ค้นหาและดู
@@ -526,7 +563,7 @@ adminUserRouter.patch("/:id", async (req, res) => {
 
   const updated = await prisma.userAccount.update({
     where: { id: account.id },
-    data: { ...parsed.data, updatedBy: SYSTEM_USER_ID },
+    data: { ...parsed.data, updatedBy: adminActorId() },
     select: accountSelect,
   });
 
@@ -567,6 +604,7 @@ adminUserRouter.post("/:id/identity", async (req, res) => {
     notFound(res);
     return;
   }
+  if (refuseSelfAction(res, account.id)) return;
   const parsed = identitySchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
@@ -615,7 +653,7 @@ adminUserRouter.post("/:id/identity", async (req, res) => {
       data: {
         ...(email !== undefined ? { email } : {}),
         ...(cid !== undefined ? { cid } : {}),
-        updatedBy: SYSTEM_USER_ID,
+        updatedBy: adminActorId(),
       },
       select: accountSelect,
     });
@@ -653,6 +691,7 @@ adminUserRouter.post("/:id/release-identity", async (req, res) => {
     notFound(res);
     return;
   }
+  if (refuseSelfAction(res, account.id)) return;
   const parsed = z
     .object({ releaseEmail: z.literal(true), reason: reasonSchema })
     .safeParse(req.body ?? {});
@@ -678,7 +717,7 @@ adminUserRouter.post("/:id/release-identity", async (req, res) => {
   const released = `released+${account.id}@invalid.local`;
   const updated = await prisma.userAccount.update({
     where: { id: account.id },
-    data: { email: released, updatedBy: SYSTEM_USER_ID },
+    data: { email: released, updatedBy: adminActorId() },
     select: accountSelect,
   });
 
@@ -707,6 +746,7 @@ adminUserRouter.post("/:id/suspend", async (req, res) => {
     notFound(res);
     return;
   }
+  if (refuseSelfAction(res, account.id)) return;
   const parsed = z.object({ reason: reasonSchema }).safeParse(req.body ?? {});
   if (!parsed.success) {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
@@ -720,17 +760,7 @@ adminUserRouter.post("/:id/suspend", async (req, res) => {
     return;
   }
 
-  const stranded = await lastBdiHolder(prisma, account.id);
-  if (stranded) {
-    res.status(409).json({
-      error: "last_holder",
-      message:
-        `บัญชีนี้เป็น${ROLE_LABELS[stranded as RoleCode] ?? stranded} คนสุดท้ายที่ใช้งานอยู่ — ` +
-        `ระงับแล้วจะไม่มีใครปิดงานในด่านนั้นได้เลย กรุณาเปิดใช้งานบัญชีอื่นในบทบาทนี้ก่อน`,
-      roleCode: stranded,
-    });
-    return;
-  }
+  if (!(await refuseLastHolder(res, account.id, "ระงับ"))) return;
 
   const updated = await prisma.$transaction(async (tx) => {
     const row = await tx.userAccount.update({
@@ -738,9 +768,9 @@ adminUserRouter.post("/:id/suspend", async (req, res) => {
       data: {
         status: UserAccountStatus.SUSPENDED,
         suspendedAt: new Date(),
-        suspendedBy: SYSTEM_USER_ID,
+        suspendedBy: adminActorId(),
         suspensionReason: parsed.data.reason,
-        updatedBy: SYSTEM_USER_ID,
+        updatedBy: adminActorId(),
       },
       select: accountSelect,
     });
@@ -788,7 +818,7 @@ adminUserRouter.post("/:id/reinstate", async (req, res) => {
       suspendedAt: null,
       suspendedBy: null,
       suspensionReason: null,
-      updatedBy: SYSTEM_USER_ID,
+      updatedBy: adminActorId(),
     },
     select: accountSelect,
   });
@@ -818,6 +848,7 @@ adminUserRouter.post("/:id/deactivate", async (req, res) => {
     notFound(res);
     return;
   }
+  if (refuseSelfAction(res, account.id)) return;
   const parsed = z.object({ reason: reasonSchema }).safeParse(req.body ?? {});
   if (!parsed.success) {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
@@ -828,29 +859,19 @@ adminUserRouter.post("/:id/deactivate", async (req, res) => {
     return;
   }
 
-  const stranded = await lastBdiHolder(prisma, account.id);
-  if (stranded) {
-    res.status(409).json({
-      error: "last_holder",
-      message:
-        `บัญชีนี้เป็น${ROLE_LABELS[stranded as RoleCode] ?? stranded} คนสุดท้ายที่ใช้งานอยู่ — ` +
-        `ปิดแล้วจะไม่มีใครปิดงานในด่านนั้นได้เลย กรุณาเปิดใช้งานบัญชีอื่นในบทบาทนี้ก่อน`,
-      roleCode: stranded,
-    });
-    return;
-  }
+  if (!(await refuseLastHolder(res, account.id, "ยุติการใช้งาน"))) return;
 
   const result = await prisma.$transaction(async (tx) => {
     const revoked = await revokeRoleAssignments(tx, {
       userAccountId: account.id,
-      actorId: SYSTEM_USER_ID,
+      actorId: adminActorId(),
       reason: parsed.data.reason,
     });
     // คีย์ที่ถูกเพิกถอนออกมากับผลของ transaction — `ACTIVATION_KEY_REVOKED` เขียนได้หลัง commit เท่านั้น
     const revokedKeys = await revokeIssuedKeys(
       tx,
       { userAccountId: account.id },
-      { actorId: SYSTEM_USER_ID, reason: "บัญชียุติการใช้งาน" },
+      { actorId: adminActorId(), reason: "บัญชียุติการใช้งาน" },
     );
     await revokeSessionsFor(tx, {
       userAccountId: account.id,
@@ -861,7 +882,7 @@ adminUserRouter.post("/:id/deactivate", async (req, res) => {
       data: {
         status: UserAccountStatus.DEACTIVATED,
         deactivatedAt: new Date(),
-        updatedBy: SYSTEM_USER_ID,
+        updatedBy: adminActorId(),
       },
       select: accountSelect,
     });
@@ -930,7 +951,7 @@ adminUserRouter.post("/:id/reactivate", async (req, res) => {
     data: {
       status: UserAccountStatus.ACTIVE,
       deactivatedAt: null,
-      updatedBy: SYSTEM_USER_ID,
+      updatedBy: adminActorId(),
     },
     select: accountSelect,
   });
@@ -979,6 +1000,7 @@ adminUserRouter.delete("/:id/sessions", async (req, res) => {
     notFound(res);
     return;
   }
+  if (refuseSelfAction(res, account.id)) return;
   const parsed = z.object({ reason: reasonSchema }).safeParse(req.body ?? {});
   if (!parsed.success) {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
@@ -1083,7 +1105,7 @@ async function revertStrandedWork(
     const cancelled = await cancelActiveTask(tx, {
       subjectType: SubjectType.ORGANIZATION_REGISTRATION_REQUEST,
       subjectId: request.id,
-      actorId: SYSTEM_USER_ID,
+      actorId: adminActorId(),
       reason: params.reason,
     });
     if (!cancelled) continue;
@@ -1095,7 +1117,7 @@ async function revertStrandedWork(
         submittedAt: null,
         status: RequestStatus.DRAFT,
         ...(approverCleared ? { approverEmail: null } : {}),
-        updatedBy: SYSTEM_USER_ID,
+        updatedBy: adminActorId(),
       },
     });
     reverted.push({
@@ -1216,7 +1238,7 @@ adminUserRouter.post("/:id/roles", async (req, res) => {
       userAccountId: account.id,
       roleCode: role,
       organizationId: organization.id,
-      actorId: SYSTEM_USER_ID,
+      actorId: adminActorId(),
     }),
   );
 
@@ -1250,6 +1272,7 @@ adminUserRouter.delete("/:id/roles/:assignmentId", async (req, res) => {
     notFound(res);
     return;
   }
+  if (refuseSelfAction(res, account.id)) return;
   const parsed = z.object({ reason: reasonSchema }).safeParse(req.body ?? {});
   if (!parsed.success) {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
@@ -1264,15 +1287,19 @@ adminUserRouter.delete("/:id/roles/:assignmentId", async (req, res) => {
     res.status(404).json({ error: "not_found", message: "ไม่พบสิทธิ์ที่ใช้งานอยู่ตามที่ระบุ" });
     return;
   }
+  // ถอนบทบาทของ BDI จากคนสุดท้ายที่ถืออยู่ = ด่านนั้นไม่มีใครปิดได้ (หรือไม่เหลือผู้ดูแลระบบเลย) เหมือนระงับบัญชี
+  if (assignment.organizationId === BDI_ORGANIZATION_ID) {
+    if (!(await refuseLastHolder(res, account.id, "ถอนบทบาท"))) return;
+  }
 
   await prisma.userRoleAssignment.update({
     where: { id: assignment.id },
     data: {
       status: RoleAssignmentStatus.REVOKED,
       revokedAt: new Date(),
-      revokedBy: SYSTEM_USER_ID,
+      revokedBy: adminActorId(),
       revocationReason: parsed.data.reason,
-      updatedBy: SYSTEM_USER_ID,
+      updatedBy: adminActorId(),
     },
   });
 
@@ -1321,6 +1348,7 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
     notFound(res);
     return;
   }
+  if (refuseSelfAction(res, account.id)) return;
   const parsed = transferSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
@@ -1344,6 +1372,9 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
     });
     return;
   }
+
+  // ย้ายเจ้าหน้าที่ BDI ออกไปเป็นบทบาทของหน่วยงาน = ถอนบทบาท BDI ทั้งหมดของเขา — กฎเดียวกับระงับบัญชี
+  if (!(await refuseLastHolder(res, account.id, "ย้าย"))) return;
 
   const target = await prisma.organization.findUnique({
     where: { id: organizationId },
@@ -1407,7 +1438,7 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
      */
     await revokeRoleAssignments(tx, {
       userAccountId: account.id,
-      actorId: SYSTEM_USER_ID,
+      actorId: adminActorId(),
       reason,
     });
 
@@ -1415,7 +1446,7 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
       userAccountId: account.id,
       roleCode: role,
       organizationId: target.id,
-      actorId: SYSTEM_USER_ID,
+      actorId: adminActorId(),
     });
 
     // สิทธิ์เปลี่ยนระดับ — ออกใบใหม่ตามธรรมเนียมของ SessionRevokeReason.ROTATED
