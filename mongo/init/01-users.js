@@ -34,7 +34,11 @@ const DB_NAME = process.env.MONGODB_DB || "bdi_logs";
 function checkPasswords() {
   if (process.env.MONGO_REFUSE_DEV_PASSWORDS !== "true") return;
   const bad = [];
-  for (const name of ["MONGO_INITDB_ROOT_PASSWORD", "MONGO_BACKEND_PASSWORD", "MONGO_WORKER_PASSWORD"]) {
+  const names = ["MONGO_INITDB_ROOT_PASSWORD", "MONGO_BACKEND_PASSWORD", "MONGO_WORKER_PASSWORD"];
+  // user ของเครื่องมือค้น log ไม่บังคับ — ตรวจเฉพาะเมื่อมีคนตั้ง
+  // (compose ส่งค่าว่างมาเสมอเมื่อไม่ได้ตั้ง — ว่าง = ไม่ใช้ ไม่ใช่รหัสผ่านผิด)
+  if (process.env.MONGO_READER_PASSWORD) names.push("MONGO_READER_PASSWORD");
+  for (const name of names) {
     const value = process.env[name] || "";
     const devLike = value === "" || value.startsWith("dev-") || value.includes("change-me");
     // รหัสผ่านของ backend/worker ถูกแทนลงใน MONGODB_URI โดยไม่ encode
@@ -63,6 +67,8 @@ const only = (collection) => ({ db: DB_NAME, collection });
 
 /** collection ที่ backend insert — lib/error-capture.ts (`insertAll` กับ upsert ของ issue) ที่เดียว */
 const BACKEND_WRITES = ["activity", "error_events", "error_issues", "runtime_events"];
+/** collection ที่ผู้อ่านผ่านเครื่องมือ (bdi_reader) เห็น — ทุกตัวเป็นสำเนาที่ปิดเลขบัตรและ scrub แล้ว */
+const READER_COLLECTIONS = ["activity", "error_events", "error_issues", "runtime_events"];
 
 const ROLES = {
   bdiLogBackend: [
@@ -88,11 +94,23 @@ const ROLES = {
       ],
     },
   ],
+  /**
+   * เครื่องมือค้น log ที่ต่อฐานข้อมูลตรง (Metabase — docs/21 §11) อ่านได้เฉพาะสี่ collection ที่ปิดเลขบัตร
+   * และ scrub แล้ว ไม่เห็น relay_state ไม่เขียนอะไรเลย — การอ่านผ่านทางนี้ไม่ถูกบันทึกเป็น
+   * AUDIT_LOG_READ เหมือน API จึงต้องจำกัดคนที่เข้าเครื่องมือได้แทน
+   */
+  bdiLogReader: [
+    ...READER_COLLECTIONS.map((collection) => ({ resource: only(collection), actions: ["find", "collStats"] })),
+    // dbStats บอกแค่ขนาดฐานข้อมูล ไม่มีข้อมูล — Metabase ใช้ทดสอบการเชื่อมต่อ
+    { resource: everything, actions: ["listCollections", "listIndexes", "dbStats"] },
+  ],
 };
 
 const USERS = [
   { user: "bdi_backend", role: "bdiLogBackend", passwordVar: "MONGO_BACKEND_PASSWORD" },
   { user: "bdi_worker", role: "bdiLogWorker", passwordVar: "MONGO_WORKER_PASSWORD" },
+  // ไม่บังคับ — สร้างเฉพาะเมื่อมีรหัสผ่าน production จึงไม่มี user นี้จนกว่าจะเลือกเปิดเครื่องมือค้น log
+  { user: "bdi_reader", role: "bdiLogReader", passwordVar: "MONGO_READER_PASSWORD", optional: true },
 ];
 
 for (const [role, privileges] of Object.entries(ROLES)) {
@@ -105,7 +123,11 @@ for (const [role, privileges] of Object.entries(ROLES)) {
   }
 }
 
-for (const { user, role, passwordVar } of USERS) {
+for (const { user, role, passwordVar, optional } of USERS) {
+  if (optional && !process.env[passwordVar]) {
+    print(`[mongo] ข้าม user ${DB_NAME}.${user} — ไม่ได้ตั้ง ${passwordVar}`);
+    continue;
+  }
   const pwd = requirePassword(passwordVar);
   const roles = [{ role, db: DB_NAME }];
   if (logs.getUser(user)) {

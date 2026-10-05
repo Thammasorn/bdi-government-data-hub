@@ -4152,3 +4152,58 @@ docker stop bdi-main-mongo-1   # หยุดเฉย ๆ — volume bdi-main_m
 | จำกัด `/api/admin/*` ทางเครือข่าย (Q17) | ยังไม่ทำ — API อ่าน log เรียกจากอินเทอร์เน็ตผ่าน `bdi-api` ได้ด้วย token ใบเดียว | infra: Cloudflare Access หรือ bind `127.0.0.1:4000` |
 | ความเสี่ยงที่เหลือของเครื่องนี้ (Q13) · ชุด PDPA (หมวด 9) | ยอมรับไว้ก่อนสำหรับช่วง SIT · รอ DPO ตอบ 9.8 | DPO |
 | incident `0d0a0d4` | admin token หมุนใน 10.2 · อีเมล 16 รายการและเลขบัตร 2,000 เลขในประวัติเป็นสาธารณะแล้ว — การประเมินตาม ม.37(4) ยังเปิด | DPO |
+
+## 11. ค้น log ด้วย Metabase (เครื่องมือเสริม)
+
+Metabase เป็นหน้าเว็บสำหรับค้นและกรอง log ใน MongoDB แบบคลิกเลือก โดยไม่ต้องเขียน curl หรือใช้ Postman เหมาะกับนักพัฒนาและผู้ดูแลระบบ
+ส่วนการอ่าน log อย่างเป็นทางการที่**ถูกบันทึกทุกครั้ง** ยังเป็น API อ่าน log (หมวด 3.11)
+
+**ข้อแตกต่างที่ต้องรู้ก่อนเปิดใช้**
+- Metabase ต่อ MongoDB ตรงด้วย user `bdi_reader` (role `bdiLogReader` ใน `mongo/init/01-users.js`)
+- `bdi_reader` อ่านได้แค่ `activity` `error_events` `error_issues` `runtime_events` ซึ่งเป็นสำเนาที่ปิดเลขบัตรและ scrub แล้ว ไม่เห็น `relay_state` และเขียนอะไรไม่ได้เลย
+- **การอ่านผ่าน Metabase ไม่เป็นแถว `AUDIT_LOG_READ`** และไม่บังคับให้ระบุเหตุผล จึงต้องจำกัดคนที่มีบัญชี Metabase แทน และต้องระบุช่องทางนี้ไว้ในชุด PDPA (หมวด 9)
+- Metabase รุ่นฟรีไม่มี audit log ของผู้ใช้ตัวเอง
+
+**เปิดใช้ (dev checkout)**
+
+```bash
+# 1. ตั้งรหัสผ่านของ bdi_reader และพอร์ตใน .env
+echo "MONGO_READER_PASSWORD=$(openssl rand -hex 24)" >> .env
+echo "METABASE_PORT=31N4" >> .env     # พอร์ตว่างของ slot ตัวเอง
+
+# 2. ให้ mongo รู้รหัสผ่านใหม่ แล้วสร้าง user (volume ที่ init ไปแล้วไม่สร้างเอง)
+docker compose up -d --no-deps mongo
+docker compose exec mongo sh -c 'mongosh -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" \
+  --authenticationDatabase admin --quiet /docker-entrypoint-initdb.d/01-users.js'
+
+# 3. เปิด Metabase (profile tools — ไม่ขึ้นเองกับ stack) แล้วตั้งค่าอัตโนมัติ
+docker compose --profile tools up -d metabase
+python3 docs/tools/metabase-setup.py
+```
+
+ข้อ 3 สร้างบัญชีผู้ดูแล `admin@bdi.local` โดยเขียนรหัสผ่านลง `.env` (`METABASE_ADMIN_PASSWORD`) ไม่พิมพ์ออกจอ ลบ Sample Database ที่ Metabase ติดมา
+ต่อฐานข้อมูล "BDI log store" แล้วสร้างคอลเลกชัน **"BDI activity log"** ที่มีคำถามสำเร็จรูปดังนี้:
+
+| คำถาม | ใส่ค่าอะไร |
+|---|---|
+| 1 · เส้นเวลาของหน่วยงาน | รหัสหน่วยงาน (`ORG-…`) หรือ uuid |
+| 2 · admin สร้างหน่วยงานเมื่อไร และเชิญใครเข้าหน่วยงาน | รหัสหน่วยงาน — `ORGANIZATION_CREATED` คำเชิญ การเปิดใช้งาน และการลบ/เพิกถอนคำเชิญ |
+| 3 · ทุกอย่างของบุคคลนี้ | อีเมลของบัญชี — สิ่งที่คนนี้ทำ และสิ่งที่คนอื่นทำกับบัญชีนี้ |
+| 4 · เส้นเวลาของคำขอ | เลขคำขอ (`ORG-REG-…` / `DS-REG-…`) |
+| 5 · ค้นด้วยรหัสอ้างอิง | รหัส 8 ตัวจากข้อความ error ที่ผู้ใช้แจ้ง |
+| 6 · login ล้มเหลว 7 วันล่าสุด | — (นับตามวันและเหตุผล) |
+| 7 · error issue ที่ยังเปิดอยู่ | — (ปิด issue ทำผ่าน API อ่าน log, Postman E4) |
+| 8 · การใช้ admin token ทั้งหมด (7 วัน) | — |
+
+เวลาในทุกคำถามแสดงเป็นเวลาไทย คำถามใหม่สร้างเองในหน้าเว็บได้ (Native query ของ MongoDB หรือคลิกเลือกจาก collection) ถ้าแก้คำถามสำเร็จรูปใน
+`docs/tools/metabase-setup.py` ให้รัน `python3 docs/tools/metabase-setup.py --questions-only` ซึ่งจะเขียนทับคำถามชื่อเดิม
+
+**เข้าใช้งาน:** พอร์ต bind แค่ `127.0.0.1` เปิดจากเครื่องอื่นต้องทำ port forward (VS Code ทำให้เอง หรือ `ssh -L 3030:localhost:3030 …`)
+
+**ขนาด:** image ราว 780 MB อยู่บน `/` (containerd) · ใช้ RAM ราว 1.3 GB · ฐานข้อมูลของ Metabase เองเป็น H2 อยู่ใน volume `metabase-data`
+
+**บน production (`main/`)** ยังไม่เปิด และ deploy ของหมวด 10 ไม่แตะ ถ้าจะเปิดให้ทำดังนี้:
+1. ตั้ง `MONGO_READER_PASSWORD` ด้วย `openssl rand -hex 32` (ด่านเดียวกับรหัสผ่าน Mongo อื่นปฏิเสธค่าตัวอย่าง)
+2. ทำตามขั้นข้างบนด้วย `dc --profile tools`
+3. เปิดให้คนเข้าผ่าน **Cloudflare Access** หรือ SSH tunnel เท่านั้น อย่าเปิดพอร์ตออกสาธารณะ
+4. ตัดสินว่าใครมีบัญชี แล้วบันทึกไว้ในชุด PDPA

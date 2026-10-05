@@ -22,7 +22,10 @@ set -eu
 
 if [ "${MONGO_REFUSE_DEV_PASSWORDS:-}" = "true" ]; then
   bad=""
-  for name in MONGO_INITDB_ROOT_PASSWORD MONGO_BACKEND_PASSWORD MONGO_WORKER_PASSWORD; do
+  names="MONGO_INITDB_ROOT_PASSWORD MONGO_BACKEND_PASSWORD MONGO_WORKER_PASSWORD"
+  # user ของเครื่องมือค้น log (bdi_reader) ไม่บังคับ — ว่าง = ไม่เปิด ตรวจเฉพาะเมื่อมีคนตั้ง
+  if [ -n "${MONGO_READER_PASSWORD:-}" ]; then names="$names MONGO_READER_PASSWORD"; fi
+  for name in $names; do
     eval "value=\${$name:-}"
     case "$value" in
       "" | dev-* | *change-me*)
