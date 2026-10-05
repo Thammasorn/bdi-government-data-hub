@@ -10,7 +10,7 @@ import { NotificationBell } from "@/components/NotificationBell";
 import { SessionChangedDialog } from "@/components/SessionChangedDialog";
 import { announceSignOut, sessionUserName, useSession } from "@/components/SessionProvider";
 import { api } from "@/lib/api";
-import { ROLE_LABELS, isBdiStaff, isSpecialistOnly, type Role } from "@/lib/status";
+import { ROLE_LABELS, isBdiStaff, isSpecialistOnly, isSystemAdmin, type Role } from "@/lib/status";
 
 /** หน้าที่ไม่ต้องมี header/footer — เต็มจอเพื่อให้โฟกัสกับงานตรงหน้า */
 const BARE_ROUTES = ["/login", "/register"];
@@ -78,6 +78,13 @@ function roleNavItems(
   organizationStatus: string | null,
 ): NavItem[] {
   const hasOrganization = Boolean(organizationId);
+  /**
+   * ผู้ดูแลระบบมีงานอยู่ที่ /console ที่เดียว — เมนูของหน้านั้นอยู่ในหน้าเอง (ConsoleShell) แถบหัวจึงมีช่องเดียว
+   * ต้องเช็กก่อน `hasOrganization` ข้างล่าง เพราะบทบาทของเขาผูกกับแถวหน่วยงาน BDI และจะได้เมนูของผู้ใช้หน่วยงานไป
+   */
+  if (isSystemAdmin(roles)) {
+    return [{ href: "/console", label: "ระบบจัดการ" }];
+  }
   if (isBdiStaff(roles)) {
     // ผู้เชี่ยวชาญมีบทบาทเฉพาะเส้นทางชุดข้อมูล จึงไม่ต้องเห็นเมนูหน่วยงาน
     // ชื่อเมนูเดียวกับของคนอื่น — หน้าที่ปลายทางกรองให้เองว่าเห็นอะไรได้บ้าง
@@ -134,6 +141,12 @@ function roleNavItems(
         },
       ]
     : [];
+}
+
+/** เมนูนี้คือหน้าที่เปิดอยู่ไหม — "ระบบจัดการ" ครอบทุกหน้าใต้ /console ไม่ใช่แค่หน้าภาพรวม */
+function isActive(pathname: string, href: string): boolean {
+  const path = href.split("?")[0];
+  return pathname === path || (path === "/console" && pathname.startsWith("/console/"));
 }
 
 /**
@@ -220,7 +233,7 @@ function Header() {
 
           <nav aria-label="เมนูหลัก" className="hidden flex-1 items-center gap-1 md:flex">
             {items.map((item) => {
-              const active = pathname === item.href.split("?")[0];
+              const active = isActive(pathname, item.href);
               if (item.disabledReason) {
                 return (
                   <span
@@ -292,7 +305,7 @@ function Header() {
         >
           <ul className="mx-auto max-w-6xl px-4 py-2 sm:px-6">
             {items.map((item) => {
-              const active = pathname === item.href.split("?")[0];
+              const active = isActive(pathname, item.href);
               if (item.disabledReason) {
                 return (
                   <li key={item.href}>

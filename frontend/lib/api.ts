@@ -25,6 +25,11 @@ export class ApiError extends Error {
   reference?: string;
   /** `x-correlation-id` ของคำตอบ — ตัวเต็มของรหัสอ้างอิง (ไม่มีถ้าเชื่อมต่อไม่ได้เลย) */
   correlationId?: string;
+  /**
+   * body ทั้งก้อนของคำตอบที่ไม่สำเร็จ — 409 ของ /api/admin/* แนบ id ของสิ่งที่ชนมาด้วย (`holderUserAccountId`,
+   * `activationKeyId`, `userAccountId`) ซึ่งหน้า /console ใช้ทำลิงก์ "ไปที่บัญชีนั้น" (lib/admin-errors.ts)
+   */
+  details: Record<string, unknown>;
 
   constructor(
     status: number,
@@ -44,6 +49,7 @@ export class ApiError extends Error {
     this.requestId = body.requestId;
     this.reference = typeof body.reference === "string" ? body.reference : undefined;
     this.correlationId = correlationId;
+    this.details = body as Record<string, unknown>;
   }
 }
 
@@ -101,6 +107,13 @@ export const api = {
     request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) }, options),
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
+  put: <T>(path: string, body: unknown) => request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
+  /**
+   * DELETE ที่มี body และคำตอบ — endpoint ของผู้ดูแลระบบ (/api/admin/*) รับ `reason` ใน body และตอบสิ่งที่ถูกลบกลับมา
+   * ต่างจาก `del` ข้างล่างที่เป็นของหน้าฝั่งผู้ใช้ซึ่งไม่ส่งอะไรและไม่อ่านคำตอบ
+   */
+  remove: <T>(path: string, body?: unknown) =>
+    request<T>(path, { method: "DELETE", body: body === undefined ? undefined : JSON.stringify(body) }),
   upload: <T>(path: string, form: FormData) => request<T>(path, { method: "POST", body: form }),
   /** ตอบ 204 ไม่มี body — request() คืน undefined ให้เอง จึงประกาศเป็น void */
   del: (path: string) => request<void>(path, { method: "DELETE" }),

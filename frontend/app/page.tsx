@@ -2,6 +2,7 @@
 
 import clsx from "clsx";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { BdiHome } from "@/components/home/BdiHome";
@@ -19,6 +20,7 @@ import { useOrganizationRegistration } from "@/lib/use-organization-registration
 import {
   formatThaiDate,
   isBdiStaff,
+  isSystemAdmin,
   isOrganizationScopedRole,
   type OrganizationStatus,
 } from "@/lib/status";
@@ -65,6 +67,8 @@ export default function HomePage() {
    * และจะตกไปได้หน้าแรกของผู้ใช้หน่วยงานถ้าปล่อยผ่าน
    */
   if (isBdiStaff(user.roles)) return <BdiHome />;
+  // ผู้ดูแลระบบไม่มีด่านของการอนุมัติ หน้าแรกของเขาคือ /console — เช็กก่อน organizationId ด้วยเหตุผลเดียวกับข้างบน
+  if (isSystemAdmin(user.roles)) return <RedirectTo href="/console" />;
 
   // ผู้มีอำนาจกระทำการแทนที่ถูกเชิญเข้ามาทีหลังยังไม่ถูกผูก organizationId
   // แต่เห็นคำขอของหน่วยงานตัวเองผ่าน signatoryEmail จึงต้องได้หน้าแรกแบบเดียวกัน
@@ -835,3 +839,11 @@ function NoOrganizationNotice() {
   );
 }
 
+/** พาไปหน้าอื่นหลัง render — `router.replace` ใน render เองทำไม่ได้ (React เตือนว่าเปลี่ยน state ของ router ระหว่าง render) */
+function RedirectTo({ href }: { href: string }) {
+  const router = useRouter();
+  useEffect(() => {
+    router.replace(href);
+  }, [href, router]);
+  return <Spinner />;
+}

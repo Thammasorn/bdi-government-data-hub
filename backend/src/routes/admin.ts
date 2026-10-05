@@ -182,6 +182,9 @@ async function toAdminOrganizationShape(org: {
   websiteUrl: string | null;
   parentOrganizationId: string | null;
   activatedAt: Date | null;
+  suspendedAt: Date | null;
+  suspensionReason: string | null;
+  deactivatedAt: Date | null;
   createdAt: Date;
 }) {
   const names = await resolveAddressNames(prisma, {
@@ -208,6 +211,9 @@ async function toAdminOrganizationShape(org: {
     websiteUrl: org.websiteUrl,
     parentOrganizationId: org.parentOrganizationId,
     activatedAt: org.activatedAt,
+    suspendedAt: org.suspendedAt,
+    suspensionReason: org.suspensionReason,
+    deactivatedAt: org.deactivatedAt,
     createdAt: org.createdAt,
   };
 }
@@ -1115,6 +1121,11 @@ const invitationQuerySchema = z.object({
    */
   cid: nationalIdSchema.optional(),
   status: z.enum(Object.values(ActivationKeyStatus) as [string, ...string[]]).optional(),
+  /**
+   * คำเชิญที่ยัง ISSUED แต่ `lapsed` เลยเวลาแล้ว หรือ `soon` จะหมดภายใน 48 ชั่วโมง — ลิงก์จากหน้าภาพรวมของ /console
+   * (`GET /summary`) คีย์เปลี่ยนเป็น EXPIRED ก็ต่อเมื่อมีคนกดลิงก์ `status=EXPIRED` จึงไม่เจอใบที่ไม่มีใครกด
+   */
+  state: z.enum(["lapsed", "soon"]).optional(),
   organizationId: uuidSchema("organizationId ต้องเป็น UUID").optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(50),
@@ -1132,10 +1143,18 @@ adminRouter.get("/invitations", async (req, res) => {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;
   }
-  const { email, cid, status, organizationId, page, pageSize } = parsed.data;
+  const { email, cid, status, state, organizationId, page, pageSize } = parsed.data;
 
+  const now = new Date();
   const where: Prisma.ActivationKeyWhereInput = {
     ...(status ? { status: status as ActivationKeyStatus } : {}),
+    ...(state === "lapsed" ? { status: ActivationKeyStatus.ISSUED, expiresAt: { lte: now } } : {}),
+    ...(state === "soon"
+      ? {
+          status: ActivationKeyStatus.ISSUED,
+          expiresAt: { gt: now, lte: new Date(now.getTime() + EXPIRING_SOON_MS) },
+        }
+      : {}),
     ...(organizationId ? { organizationId } : {}),
     ...(email || cid
       ? {

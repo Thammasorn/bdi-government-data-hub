@@ -270,6 +270,9 @@ export type DatasetRequestStatus = RequestStatus;
 // ป้ายของแบบฟอร์มชุดข้อมูลย้ายไป lib/dataset-form.ts ทั้งชุด พร้อมกับกฎในชีท conditions
 // ที่ต้องอ่านคู่กัน — ดูหัวไฟล์นั้นว่าทำไมจึงเป็นสำเนาของ backend/src/lib/dataset.ts
 
+/** ผู้ดูแลระบบ — ใช้หน้า /console ไม่มีด่านของการอนุมัติ (สำเนาของการตัดสินใน `requireAdmin` ฝั่ง backend) */
+export const isSystemAdmin = (roles: string[]) => roles.includes("SYSTEM_ADMINISTRATOR");
+
 export const isBdiStaff = (roles: string[]) =>
   roles.some((r) =>
     ["BDI_OFFICER", "BDI_DATASET_SPECIALIST", "BDI_FINAL_APPROVER", "BDI_LEGAL_OFFICER"].includes(r),
