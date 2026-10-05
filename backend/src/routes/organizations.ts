@@ -50,18 +50,30 @@ import {
   ConfirmationType,
   LegalDocumentVersionStatus,
 } from "@prisma/client";
-import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
+import {
+  AuditAction,
+  AuditSubject,
+  blankAsNull,
+  diffFields,
+  logAudit,
+  sanitizeDiff,
+  sanitizeState,
+  sentOnly,
+} from "../lib/audit.js";
 import { releaseApproverSeat, type ReleasedSeat } from "../lib/approver-seat.js";
+import { clientIp } from "../lib/context.js";
 import {
   activatedApprover,
   activeAssignmentWhere,
   assignRole,
   issueActivationKey,
+  logKeysRevoked,
   revokeRoleAssignments,
   roleIdByCode,
   roleSeatTaken,
   type Db,
   type RevokedAssignment,
+  type RevokedKey,
 } from "../lib/iam.js";
 import {
   sendActivated,
@@ -88,10 +100,12 @@ import {
   renderPlaceholderDocuments,
 } from "../lib/organization-agreement.js";
 import { DocumentRenderError } from "../lib/document-render.js";
+import { captureError } from "../lib/error-capture.js";
 import { LEGAL_SCOPES, requestDocuments } from "../lib/legal.js";
 import { NAME_FIELDS, accountNameTh, fullNameTh } from "../lib/person-name.js";
 import {
   MAX_ADDRESS_LINE,
+  changedOnlyInForm,
   organizationDraftSchema as draftSchema,
   toRequestData,
 } from "../lib/organization-form.js";
@@ -1062,11 +1076,20 @@ organizationRouter.post("/", async (req, res) => {
     include: { organization: true },
   });
 
+  /**
+   * เปิดคำขอใบใหม่ ไม่ใช่แก้หน่วยงาน — แถวหน่วยงานไม่ถูกแตะเลย (เดิมเขียนเป็น ORGANIZATION_UPDATED)
+   *
+   * ทางนี้เหลือทางเดียวของ route ตั้งแต่ 2026-09-30: ทางที่ผู้ใช้ไม่มีหน่วยงานได้หน่วยงานใหม่
+   * (`ORGANIZATION_CREATED` `created_via: WEB_FORM` → `REQUEST_CREATED` → `ROLE_ASSIGNED`
+   * `assigned_via: ORGANIZATION_CREATED`) ถูกถอดไปพร้อมกฎนั้น แถวทั้งสามแบบจึงไม่เกิดจากที่นี่อีก
+   * ส่วน 403 `no_organization` ข้างบนไม่มีแถว เหมือนการปฏิเสธ 4xx อื่นของเส้นทางธุรกิจ (docs/21)
+   */
   await logAudit({
-    action: AuditAction.ORGANIZATION_UPDATED,
+    action: AuditAction.REQUEST_CREATED,
     subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
     subjectId: prefilled.id,
     organizationId: organization.id,
+    after: { requestNumber: prefilled.requestNumber, name: prefilled.organizationNameTh },
     metadata: {
       prefilled_from: "ADMIN_ORGANIZATION",
       organization_code: organization.organizationCode,
@@ -1332,9 +1355,10 @@ organizationRouter.patch("/:id", async (req, res) => {
    * มาตามเดิม และค่าที่มันส่งก็เป็นค่าเดียวกับที่ถูกล็อกอยู่ ตอบ 400 จึงได้แต่ทำให้ฟอร์ม
    * ที่ไม่ได้ทำอะไรผิดบันทึกไม่ได้ ผลข้างเคียงที่ต้องการอีกอย่างคือ snapshot ที่ค้างค่าเก่า
    * อยู่ถูกเขียนให้ตรงกับบัญชีตั้งแต่การบันทึกร่างครั้งแรก
+   *
+   * แยกเก็บไว้เป็นก้อนเดียว เพราะ audit ข้างล่างต้องบอกได้ว่าช่องไหนเปลี่ยนเพราะบัญชี
    */
-  const snapshot = {
-    ...(await toRequestData(parsed.data)),
+  const fromAccount = {
     ...contactFromAccount(await contactAccount(request)),
     /**
      * อีเมลกับเลขบัตรของผู้มีอำนาจฯ ที่เปิดใช้งานบัญชีแล้วก็ทับค่าจาก body แบบเดียวกัน —
@@ -1345,6 +1369,23 @@ organizationRouter.patch("/:id", async (req, res) => {
      */
     ...approverFromAccount(await activatedApprover(prisma, request)),
   };
+  const snapshot = { ...(await toRequestData(parsed.data)), ...fromAccount };
+
+  /**
+   * ชื่อหน่วยงานบน master ตามคำขอไปด้วย ตราบใดที่ยังไม่อนุมัติ — เฉพาะหน่วยงานที่ผู้กรอก
+   * เปิดเอง ไม่ใช่แค่ "ยังไม่ถูกล็อก" เพราะการเขียนทับหน่วยงานที่ระบบเปิดให้จะทำให้
+   * systemOrganizationName() เปลี่ยนคำตอบ แล้วช่องชื่อล็อกตัวเองกลางคัน (ดู nameOwnedByForm)
+   *
+   * แยกค่าออกมาก่อน transaction เพื่อให้ audit ข้างล่าง diff กับสิ่งที่เขียนจริงชุดเดียวกัน
+   */
+  const masterRename =
+    parsed.data.name && nameOwnedByForm(request)
+      ? {
+          nameTh: parsed.data.name,
+          nameEn: parsed.data.nameEn ?? null,
+          organizationType: parsed.data.organizationType ?? null,
+        }
+      : null;
 
   const updated = await prisma.$transaction(async (tx) => {
     const next = await tx.organizationRegistrationRequest.update({
@@ -1352,24 +1393,88 @@ organizationRouter.patch("/:id", async (req, res) => {
       data: { ...snapshot, updatedBy: session.sub },
       include: { organization: true },
     });
-    /**
-     * ชื่อหน่วยงานบน master ตามคำขอไปด้วย ตราบใดที่ยังไม่อนุมัติ — เฉพาะหน่วยงานที่ผู้กรอก
-     * เปิดเอง ไม่ใช่แค่ "ยังไม่ถูกล็อก" เพราะการเขียนทับหน่วยงานที่ระบบเปิดให้จะทำให้
-     * systemOrganizationName() เปลี่ยนคำตอบ แล้วช่องชื่อล็อกตัวเองกลางคัน (ดู nameOwnedByForm)
-     */
-    if (parsed.data.name && nameOwnedByForm(request)) {
+    if (masterRename) {
       await tx.organization.update({
         where: { id: request.organizationId },
-        data: {
-          nameTh: parsed.data.name,
-          nameEn: parsed.data.nameEn ?? null,
-          organizationType: parsed.data.organizationType ?? null,
-          updatedBy: session.sub,
-        },
+        data: { ...masterRename, updatedBy: session.sub },
       });
     }
     return next;
   });
+
+  /**
+   * ช่องไหนเปลี่ยนจากอะไรเป็นอะไร — เทียบแถวที่อ่านไว้ก่อนเขียนกับค่าที่ **เขียนลงจริง**
+   *
+   * ไม่ใช่กับ body: ฟอร์มนี้ส่งเฉพาะช่องที่ไม่ว่าง (บวกเลขต่อสองช่อง) และค่าตัวตนของผู้กรอก
+   * กับผู้มีอำนาจฯ ที่เปิดบัญชีแล้วถูกเขียนทับจากบัญชี ไม่ใช่จากที่พิมพ์มา `sentOnly()` ตัดช่องที่
+   * ไม่ได้ถูกเขียน แต่รหัสที่อยู่ที่ `resolveAddressCodes()` คืนเป็น null **ถูกเขียนจริง** จึงอยู่
+   * ในการเทียบด้วย — ที่อยู่ที่ไม่เคยกรอกเทียบ null กับ null ไม่เกิดแถว ผลลัพธ์ตรงกับตาราง
+   *
+   * ผลที่ตามมาจากหน้าจอ: ล้างช่องข้อความช่องใดช่องหนึ่ง (นอกจากเลขต่อ) แล้วบันทึก ฟอร์มไม่ส่ง
+   * ช่องนั้นมา ค่าเดิมจึงยังอยู่ในตาราง และ log ก็ไม่บันทึกว่าล้าง — ตรงกับสิ่งที่เกิดขึ้นจริง
+   * ที่อยู่ไม่เป็นแบบนั้น: ล้างจังหวัดแล้วรหัสทั้งสามช่องถูกเขียนเป็น null จริง แถวจึงบันทึกไว้
+   */
+  const rawChanged = diffFields(
+    blankAsNull(request) as Record<string, unknown>,
+    blankAsNull(sentOnly(snapshot)) as Record<string, unknown>,
+  );
+  const changed = sanitizeDiff(rawChanged);
+  /**
+   * ช่องที่เปลี่ยนเพราะค่าจากบัญชี ไม่ใช่เพราะผู้กรอกพิมพ์ — แยกออกจาก `fields_changed`
+   *
+   * ช่องเหล่านี้ล็อกอยู่บนฟอร์ม ผู้กรอกแก้ไม่ได้ แต่ snapshot ที่ไม่ตรงกับบัญชี (ร่างที่เปิดไว้
+   * ก่อนมีกฎนี้ บัญชีถูกแก้ชื่อหลังเปิดร่าง หรือผู้มีอำนาจฯ เพิ่งเปิดใช้งานบัญชี) จะถูกเขียนให้
+   * ตรงตอนบันทึกครั้งถัดไป ถ้ารวมไว้ใน `fields_changed` แถวจะอ่านว่าผู้ประสานงานพิมพ์ค่าพวกนั้น
+   * เอง ทั้งที่เขาไม่ได้แตะ (ร่างที่ `seed:demo` สร้างก็เป็นแบบนั้น — ชื่อกับเบอร์ของผู้ประสานงานว่าง)
+   * ยังอยู่ใน before/after ครบ เพราะถูกเขียนลงตารางจริง และบันทึกครั้งนั้นยังเกิดแถวแม้ไม่ได้
+   * พิมพ์อะไรเลย ไม่อย่างนั้น snapshot จะเปลี่ยนโดยไม่มีร่องรอย
+   */
+  const changedKeys = rawChanged ? Object.keys(rawChanged.after) : [];
+  const syncedFromAccount = changedKeys.filter((key) => key in fromAccount);
+  /**
+   * ช่องที่เปลี่ยนแค่รูปเพราะการแปลงของ route เอง (อีเมลเป็นตัวพิมพ์เล็ก เบอร์เป็นตัวเลขล้วน ตัดช่องว่าง)
+   * — แยกออกจาก `fields_changed` ด้วยเหตุผลเดียวกับกลุ่มข้างบน
+   *
+   * ร่างเก่าที่เก็บ "Saraban@DOL.go.th" หรือ "02-123-4567" ไว้ ฟอร์มแสดงตามนั้นแล้วส่งกลับมาตามนั้น
+   * route เขียนลงเป็นรูปใหม่ ตารางเปลี่ยนจริงจึงยังอยู่ใน before/after แต่ถ้านับใน `fields_changed`
+   * แถวจะอ่านว่าผู้ประสานงานแก้อีเมลและเบอร์ของหน่วยงานทั้งที่เขาไม่ได้แตะ (ลองกับ ORG-REG-2026-0002
+   * แล้ว 2026-09-29) ตัดสินจากค่าเดิมหลังแปลงเทียบกับค่าที่เขียนลง ไม่ใช่จาก body — `changedOnlyInForm()`
+   */
+  const normalisedByRoute = changedKeys.filter(
+    (key) =>
+      !(key in fromAccount) && changedOnlyInForm(key, rawChanged!.before[key], rawChanged!.after[key]),
+  );
+  const masterChanged = masterRename
+    ? sanitizeDiff(
+        diffFields(
+          blankAsNull(request.organization) as Record<string, unknown>,
+          blankAsNull(masterRename) as Record<string, unknown>,
+        ),
+      )
+    : null;
+
+  if (changed || masterChanged) {
+    await logAudit({
+      action: AuditAction.REQUEST_DRAFT_SAVED,
+      subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
+      subjectId: request.id,
+      organizationId: request.organizationId,
+      before: changed?.before,
+      after: changed?.after,
+      metadata: {
+        saved_via: "WEB_FORM",
+        request_number: request.requestNumber,
+        status: request.status,
+        fields_changed: changedKeys.filter(
+          (key) => !(key in fromAccount) && !normalisedByRoute.includes(key),
+        ),
+        ...(syncedFromAccount.length ? { synced_from_account: syncedFromAccount } : {}),
+        ...(normalisedByRoute.length ? { normalised_by_route: normalisedByRoute } : {}),
+        // ชื่อบนแถว organization ที่ตามคำขอไปด้วย — คนละแถวกับ subject จึงไม่ปนกับ before/after
+        ...(masterChanged ? { organization_master_changed: masterChanged } : {}),
+      },
+    });
+  }
 
   res.json({ organization: await toApiShape(updated) });
 });
@@ -1485,7 +1590,7 @@ organizationRouter.get("/:id/attachments/:attachmentId", async (req, res) => {
     after: { filename: attachment.originalFileName },
   });
 
-  await streamAttachment(res, attachment);
+  await streamAttachment(req, res, attachment);
 });
 
 /**
@@ -1681,6 +1786,21 @@ organizationRouter.post("/:id/generate-form", async (req, res) => {
     return;
   }
 
+  await logAudit({
+    action: AuditAction.REQUEST_FORM_GENERATED,
+    subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
+    subjectId: request.id,
+    organizationId: request.organizationId,
+    metadata: {
+      request_number: request.requestNumber,
+      documents: rendered.map((d) => ({
+        code: d.code,
+        version_id: d.versionId,
+        attachment_id: d.attachmentId,
+      })),
+    },
+  });
+
   const attachment = await activeAttachment(
     prisma,
     AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
@@ -1690,7 +1810,7 @@ organizationRouter.post("/:id/generate-form", async (req, res) => {
   res.status(201).json({
     attachment: attachment ? publicAttachment(attachment) : null,
     /** รหัสเอกสารที่สร้างให้รอบนี้ — หน้าตรวจสอบก่อนนำส่งใช้ยืนยันว่าครบ */
-    documents: rendered,
+    documents: rendered.map((d) => d.code),
   });
 });
 
@@ -1971,7 +2091,7 @@ organizationRouter.get("/:id/legal-documents/:versionId/file", async (req, res) 
     after: { filename: file.originalFileName, legalDocumentVersionId: versionId },
   });
 
-  await streamAttachment(res, file);
+  await streamAttachment(req, res, file);
 });
 
 // ---------------------------------------------------------------- submit
@@ -2361,6 +2481,10 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
     let releasedSeat: ReleasedSeat | null = null;
     /** ผู้มีอำนาจฯ ที่ด่านถัดไปเปิดให้ และเพิ่งได้รับคำเชิญหรือไม่ — ใช้จัดลำดับอีเมลหลัง commit */
     let approverToNotify: ApproverToNotify | null = null;
+    /** บัญชี คีย์ และ role ที่ `ensureApproverAccount()` เพิ่งทำ — เขียน audit หลัง commit */
+    let approverAccount: ApproverAccountOutcome | null = null;
+    /** ค่าที่อนุมัติขั้นสุดท้ายเขียนทับทะเบียนหน่วยงาน — `ORGANIZATION_ACTIVATED` หลัง commit */
+    let activatedMaster: Partial<RequestRow["organization"]> | null = null;
 
     const outcome = await prisma.$transaction(async (tx) => {
       /**
@@ -2446,7 +2570,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
               documentVersionIds: signedVersionIds,
               notApplicableVersionIds,
             },
-            ipAddress: req.ip ?? null,
+            ipAddress: clientIp(req),
             userAgent: req.get("user-agent") ?? null,
             createdBy: session.sub,
           },
@@ -2475,7 +2599,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
               acceptanceContextJson: signature.attestationText
                 ? { attestationText: signature.attestationText }
                 : undefined,
-              ipAddress: req.ip ?? null,
+              ipAddress: clientIp(req),
               userAgent: req.get("user-agent") ?? null,
               createdBy: session.sub,
             })),
@@ -2487,6 +2611,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
         const approver = await ensureApproverAccount(tx, request);
         replacedHolders = approver.replaced;
         approverToNotify = { id: approver.id, invited: approver.invited };
+        approverAccount = approver;
         await openTask(tx, {
           subjectType: SUBJECT,
           subjectId: request.id,
@@ -2522,29 +2647,33 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
           where: { id: request.id },
           data: { approvedAt: new Date(), updatedBy: session.sub },
         });
+        const master = {
+          status: OrganizationStatus.ACTIVE,
+          // รหัสที่ผู้ใช้ยืนยันในฟอร์มมีน้ำหนักกว่าที่ admin กรอกไว้ตอนสร้าง
+          organizationCode: request.organizationCode ?? request.organization.organizationCode,
+          nameTh: request.organizationNameTh ?? request.organization.nameTh,
+          nameEn: request.organizationNameEn,
+          addressLine: request.organizationAddressLine,
+          road: request.organizationRoad,
+          provinceCode: request.organizationProvinceCode,
+          districtCode: request.organizationDistrictCode,
+          subDistrictCode: request.organizationSubdistrictCode,
+          postalCode: request.organizationPostalCode,
+          phone: request.organizationPhone,
+          phoneExtension: request.organizationPhoneExtension,
+          email: request.organizationEmail,
+          websiteUrl: request.organizationWebsite,
+        };
         await tx.organization.update({
           where: { id: request.organizationId },
           data: {
-            status: OrganizationStatus.ACTIVE,
+            ...master,
             activatedAt: new Date(),
             activatedBy: session.sub,
-            // รหัสที่ผู้ใช้ยืนยันในฟอร์มมีน้ำหนักกว่าที่ admin กรอกไว้ตอนสร้าง
-            organizationCode: request.organizationCode ?? request.organization.organizationCode,
-            nameTh: request.organizationNameTh ?? request.organization.nameTh,
-            nameEn: request.organizationNameEn,
-            addressLine: request.organizationAddressLine,
-            road: request.organizationRoad,
-            provinceCode: request.organizationProvinceCode,
-            districtCode: request.organizationDistrictCode,
-            subDistrictCode: request.organizationSubdistrictCode,
-            postalCode: request.organizationPostalCode,
-            phone: request.organizationPhone,
-            phoneExtension: request.organizationPhoneExtension,
-            email: request.organizationEmail,
-            websiteUrl: request.organizationWebsite,
             updatedBy: session.sub,
           },
         });
+        activatedMaster = master;
       }
 
       if (result === ReviewResult.REJECTED) {
@@ -2572,6 +2701,29 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
       after: { taskType: task.taskType, result, note },
     });
 
+    /**
+     * ทะเบียนหน่วยงานเปลี่ยนจากอะไรเป็นอะไร — diff กับแถวหน่วยงานที่อ่านมาพร้อมคำขอก่อน transaction
+     * (ค่าที่ admin กรอกไว้ตอนสร้าง หรือค่าตั้งต้นตอนผู้ใช้เปิดหน่วยงานเอง) ไม่ใช่กับคำขอ
+     * ตัวแปรถูกตั้งใน callback ของ transaction ซึ่ง TS ตามไม่เห็น — แบบเดียวกับ `releasedSeat` ข้างล่าง
+     */
+    if (activatedMaster) {
+      const master: Partial<RequestRow["organization"]> = activatedMaster;
+      const diff = sanitizeDiff(diffFields(request.organization, master));
+      await logAudit({
+        action: AuditAction.ORGANIZATION_ACTIVATED,
+        subjectType: AuditSubject.ORGANIZATION,
+        subjectId: request.organizationId,
+        organizationId: request.organizationId,
+        before: diff?.before,
+        after: diff?.after,
+        metadata: {
+          activated_via: "REVIEW_API",
+          request_number: request.requestNumber,
+          fields_changed: Object.keys(diff?.after ?? {}),
+        },
+      });
+    }
+
     if (confirmationType && result === ReviewResult.APPROVED) {
       await logAudit({
         action: AuditAction.DOCUMENT_SIGNED,
@@ -2580,6 +2732,76 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
         organizationId: request.organizationId,
         after: { confirmationType, documentVersionIds: signedVersionIds },
       });
+    }
+
+    /**
+     * ผลของการกดผ่านด่านแรกต่อบัญชีผู้มีอำนาจฯ — แถวละเหตุการณ์ตาม subject ของมัน
+     *
+     * บัญชี PENDING กับคีย์เกิดพร้อมกันตอนยังไม่มีบัญชี ส่วนบัญชี PENDING เดิม (เคยถูกเชิญแล้วยังไม่เปิด)
+     * ได้คีย์ใบใหม่แทนใบเก่า และบัญชีที่เปิดแล้วได้ role แทนคีย์ รหัส `ACTIVATION_KEY_ISSUED` มีอยู่ก่อน
+     * การ์ด activity log แต่ทางนี้เพิ่งเขียนครั้งแรก จึงปิดเลขบัตรตามกติกาของ diff ใหม่ (`sanitizeState()`)
+     * ต่างจากแถวของ `POST /api/admin/invitations` ที่ยังเก็บแบบเดิมรอ BDI ตัดสิน
+     */
+    if (approverAccount) {
+      const approver: ApproverAccountOutcome = approverAccount;
+      if (approver.accountCreated) {
+        await logAudit({
+          action: AuditAction.USER_ACCOUNT_CREATED,
+          subjectType: AuditSubject.USER_ACCOUNT,
+          subjectId: approver.id,
+          organizationId: request.organizationId,
+          after: sanitizeState(approver.account),
+          metadata: {
+            created_via: "REVIEW_API",
+            request_number: request.requestNumber,
+            activation_key_id: approver.activationKeyId,
+            role: ROLE_CODES.ORGANIZATION_APPROVER,
+          },
+        });
+      }
+      if (approver.activationKeyId) {
+        await logKeysRevoked(approver.revokedKeys, {
+          revokedVia: "REVIEW_API",
+          replacedByKeyId: approver.activationKeyId,
+        });
+        await logAudit({
+          action: AuditAction.ACTIVATION_KEY_ISSUED,
+          subjectType: AuditSubject.USER_ACTIVATION_KEY,
+          subjectId: approver.activationKeyId,
+          organizationId: request.organizationId,
+          // key ชุดเดียวกับแถวของ `POST /api/admin/invitations` ต่างกันที่เลขบัตรถูกปิด
+          after: sanitizeState({
+            email: approver.account.email,
+            cid: approver.account.cid,
+            role: ROLE_CODES.ORGANIZATION_APPROVER,
+            name: approver.account.displayName,
+            userAccountId: approver.id,
+          }),
+          metadata: {
+            issued_via: "REVIEW_API",
+            reason: "APPROVER_INVITATION",
+            request_number: request.requestNumber,
+          },
+        });
+      }
+      if (approver.roleAssignmentId) {
+        await logAudit({
+          action: AuditAction.ROLE_ASSIGNED,
+          subjectType: AuditSubject.USER_ROLE_ASSIGNMENT,
+          subjectId: approver.roleAssignmentId,
+          organizationId: request.organizationId,
+          after: {
+            userAccountId: approver.id,
+            role: ROLE_CODES.ORGANIZATION_APPROVER,
+            organizationId: request.organizationId,
+          },
+          metadata: {
+            assigned_via: "REVIEW_API",
+            request_number: request.requestNumber,
+            replaced: approver.replaced.length,
+          },
+        });
+      }
     }
 
     /**
@@ -2598,6 +2820,8 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
         after: { accountDeleted: seat.accountDeleted, keptBecause: seat.keptBecause ?? undefined },
         metadata: { note, recalled_via: "REVIEW_API" },
       });
+      // บัญชีที่ลบไม่ได้ถูกเพิกถอนคำเชิญแทน — บัญชีที่ถูกลบไม่มีรายการนี้ (คีย์หายไปพร้อมบัญชี)
+      await logKeysRevoked(seat.revokedKeys, { revokedVia: "REVIEW_API" });
     }
 
     await announceRoleReplacement(replacedHolders);
@@ -2632,14 +2856,17 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
         });
       } catch (err) {
         agreementRendered = false;
-        console.error("[organizations] สร้างเอกสารข้อตกลงฉบับลงนามไม่สำเร็จ", err);
+        console.error("[organizations] สร้างเอกสารข้อตกลงฉบับลงนามไม่สำเร็จ — ดูบรรทัด [capture] ถัดไป");
+        // การลงนาม commit ไปแล้ว คำขอตอบ 200 — ถ้าไม่เก็บตรงนี้ เอกสารฉบับลงนามที่ขาดไปจะไม่มีใครเห็นนอกจาก docker logs
+        captureError(err, { req, tag: "render.agreement-after-commit" });
       }
     }
 
     res.json({ organization: await toApiShape(fresh), agreementRendered });
   } catch (err) {
+    // ให้ตัวจัดการท้าย index.ts ตอบ — คำตอบหน้าตาเดิม และ 5xx (ตัวแปลงล่มระหว่างเรนเดอร์ก่อน commit) ถูกเก็บเป็น issue
     if (err instanceof DocumentRenderError) {
-      res.status(err.status).json({ error: err.code, message: err.message, fields: err.fields });
+      next(err);
       return;
     }
     if (err instanceof WorkflowError) {
@@ -2806,10 +3033,37 @@ async function approverConflict(
   return null;
 }
 
+/**
+ * สิ่งที่ `ensureApproverAccount()` ทำลงฐานข้อมูล — ออกมากับผลของ transaction ให้ route เขียน audit
+ * หลัง commit (ข้างในเขียนไม่ได้: audit ใช้ prisma ตัวหลัก rollback แล้วจะเหลือแถวของบัญชีที่ไม่เคยเกิด)
+ * เดิมไม่มีอะไรออกมาเลย บัญชี คีย์ และ role ที่เกิดตอนผู้ประสานงานของ BDI กดผ่านจึงไม่มีแถว audit สักแถว
+ */
+interface ApproverAccountOutcome {
+  id: string;
+  replaced: RevokedAssignment[];
+  invited: boolean;
+  /** บัญชีของผู้มีอำนาจฯ ตามที่อยู่ในฐานข้อมูลตอนจบ transaction — ค่าที่แถว audit เก็บ */
+  account: {
+    email: string;
+    cid: string | null;
+    displayName: string;
+    accountType: AccountType;
+    status: UserAccountStatus;
+  };
+  /** บัญชีเพิ่งถูกสร้างในรอบนี้ (อีเมลนี้ยังไม่เคยมีบัญชี) */
+  accountCreated: boolean;
+  /** คีย์ใบใหม่ของคำเชิญ — null ถ้าบัญชี ACTIVE แล้ว (ได้ role แทน) */
+  activationKeyId: string | null;
+  /** assignment ที่มอบใหม่จริง — null ถ้าไม่ได้มอบ หรือ `assignRole()` เป็น no-op */
+  roleAssignmentId: string | null;
+  /** คีย์ใบเก่าของบัญชี PENDING เดิมที่ถูกแทนที่ด้วยใบใหม่ */
+  revokedKeys: RevokedKey[];
+}
+
 async function ensureApproverAccount(
   tx: Prisma.TransactionClient,
   request: RequestRow,
-): Promise<{ id: string; replaced: RevokedAssignment[]; invited: boolean }> {
+): Promise<ApproverAccountOutcome> {
   /**
    * ตัวพิมพ์เล็กเสมอ — บัญชีที่สร้างตรงนี้คือบัญชีที่ล็อกอิน (`emailSchema`) และ
    * `approverConflict()` จะค้นหาด้วยตัวพิมพ์เล็ก ร่างเก่าที่เก็บ "Somchai@x.go.th" ไว้
@@ -2879,35 +3133,68 @@ async function ensureApproverAccount(
   let replaced: RevokedAssignment[] = [];
   /** ออกคำเชิญให้ในรอบนี้หรือไม่ — ผู้เรียกใช้ตัดสินว่าต้องหน่วงอีเมลฉบับถัดไป */
   let invited = false;
+  let activationKeyId: string | null = null;
+  let roleAssignmentId: string | null = null;
+  let revokedKeys: RevokedKey[] = [];
 
   if (account.status === UserAccountStatus.ACTIVE) {
     // มีบัญชีอยู่แล้ว — ผูก role ผู้มีอำนาจให้กับหน่วยงานนี้ ผู้ถือคนเดิม (ถ้ามี) เสียสิทธิ์
     // ตรงนี้ ผู้เรียกต้องแจ้งเขาหลัง transaction commit
-    ({ replaced } = await assignRole(tx, {
+    const assignment = await assignRole(tx, {
       userAccountId: account.id,
       roleCode: ROLE_CODES.ORGANIZATION_APPROVER,
       organizationId: request.organizationId,
       actorId: SYSTEM_USER_ID,
-    }));
+    });
+    replaced = assignment.replaced;
+    if (assignment.created) roleAssignmentId = assignment.id;
   } else {
     // ยังไม่มีบัญชีใช้งานได้ — ออก activation key ให้ไปสมัคร
-    const { key, record } = await issueActivationKey(tx, {
+    const issued = await issueActivationKey(tx, {
       userAccountId: account.id,
       organizationId: request.organizationId,
       roleCode: ROLE_CODES.ORGANIZATION_APPROVER,
     });
-    // ส่งอีเมลนอก transaction ไม่ได้เพราะต้องใช้ raw key — ยอมส่งในนี้
-    void sendInvitationEmail(email, key, {
+    activationKeyId = issued.record.id;
+    revokedKeys = issued.revokedKeys;
+    /**
+     * ส่งอีเมลนอก transaction ไม่ได้เพราะต้องใช้ raw key — ยอมส่งในนี้โดยไม่รอ
+     *
+     * ไม่มีใคร await สัญญานี้ ถ้าไม่ดักไว้ SMTP ที่ล้มคือ unhandled rejection ซึ่ง Node 22 ฆ่าทั้งโปรเซส
+     * พร้อมคำขออื่นที่ค้างอยู่ (Traps ใน CLAUDE.md) — คำเชิญที่ส่งไม่ถึงแก้ได้ด้วย resend ส่วนโปรเซสที่ตาย
+     * แก้ไม่ได้ ไม่พิมพ์ข้อความของ error เอง: ข้อความของ nodemailer ยกที่อยู่ผู้รับที่ถูกปฏิเสธมาได้ — captureError พิมพ์
+     * ฉบับที่กวาดแล้ว
+     */
+    void sendInvitationEmail(email, issued.key, {
       roleLabel: ROLE_LABELS[ROLE_CODES.ORGANIZATION_APPROVER],
       // ชื่อที่หน่วยงานกรอกมาในคำขอมาก่อนชื่อในทะเบียน — เป็นชื่อที่ผู้รับเพิ่งเห็นในฟอร์ม
       organizationName: request.organizationNameTh ?? request.organization.nameTh,
-      expiresAt: record.expiresAt,
+      expiresAt: issued.record.expiresAt,
       internal: false,
+    }).catch((err: unknown) => {
+      console.error("[organizations] ส่งอีเมลคำเชิญผู้มีอำนาจกระทำการแทนไม่สำเร็จ — ดูบรรทัด [capture] ถัดไป");
+      // ผู้มีอำนาจฯ ไม่ได้คีย์ และไม่มีใครรู้จนกว่าเขาจะโทรมาถาม — แก้ได้ด้วย resend ถ้ามีคนเห็น
+      captureError(err, { tag: "mail.approver-invitation" });
     });
     invited = true;
   }
 
-  return { id: account.id, replaced, invited };
+  return {
+    id: account.id,
+    replaced,
+    invited,
+    account: {
+      email: account.email,
+      cid: account.cid,
+      displayName: account.displayName,
+      accountType: account.accountType,
+      status: account.status,
+    },
+    accountCreated: !existing,
+    activationKeyId,
+    roleAssignmentId,
+    revokedKeys,
+  };
 }
 
 /**

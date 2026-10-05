@@ -31,7 +31,6 @@
 import { Router } from "../lib/async-route.js";
 import { z } from "zod";
 import {
-  ActivationKeyStatus,
   Prisma,
   RequestStatus,
   RoleAssignmentStatus,
@@ -48,7 +47,9 @@ import {
   activeAssignmentWhere,
   assignRole,
   derivedAssignmentStatus,
+  logKeysRevoked,
   pendingInvitationFor,
+  revokeIssuedKeys,
   revokeRoleAssignments,
   roleIdByCode,
   roleSeatTaken,
@@ -337,10 +338,8 @@ adminUserRouter.post("/password-reset", async (req, res) => {
   }
 
   const { token, record } = await issuePasswordResetToken(prisma, account.id, PASSWORD_RESET_VIA_ADMIN);
-  await sendPasswordResetEmail(account.email, token, {
-    displayName: fullNameTh(account) || null,
-    expiresAt: record.expiresAt,
-  });
+  // audit ก่อนอีเมล: การส่งทำ inline (ลิงก์มีโทเคนดิบ) และ throw ได้ เดิมแถวอยู่หลังการส่ง SMTP ที่ล้ม
+  // จึงพาแถวหายไปด้วยทั้งที่โทเคนถูกออกไปแล้ว — แถวนี้บอกแค่ว่า "สั่งออก" ไม่ได้บอกว่า "ส่งถึง"
   await logAudit({
     action: AuditAction.PASSWORD_RESET_REQUESTED,
     subjectType: AuditSubject.USER_ACCOUNT,
@@ -351,6 +350,10 @@ adminUserRouter.post("/password-reset", async (req, res) => {
       expires_at: record.expiresAt.toISOString(),
       requested_via: PASSWORD_RESET_VIA_ADMIN,
     },
+  });
+  await sendPasswordResetEmail(account.email, token, {
+    displayName: fullNameTh(account) || null,
+    expiresAt: record.expiresAt,
   });
 
   res.status(202).json({
@@ -843,16 +846,12 @@ adminUserRouter.post("/:id/deactivate", async (req, res) => {
       actorId: SYSTEM_USER_ID,
       reason: parsed.data.reason,
     });
-    await tx.activationKey.updateMany({
-      where: { userAccountId: account.id, status: ActivationKeyStatus.ISSUED },
-      data: {
-        status: ActivationKeyStatus.REVOKED,
-        revokedAt: new Date(),
-        revokedBy: SYSTEM_USER_ID,
-        revokedReason: "บัญชียุติการใช้งาน",
-        updatedBy: SYSTEM_USER_ID,
-      },
-    });
+    // คีย์ที่ถูกเพิกถอนออกมากับผลของ transaction — `ACTIVATION_KEY_REVOKED` เขียนได้หลัง commit เท่านั้น
+    const revokedKeys = await revokeIssuedKeys(
+      tx,
+      { userAccountId: account.id },
+      { actorId: SYSTEM_USER_ID, reason: "บัญชียุติการใช้งาน" },
+    );
     await revokeSessionsFor(tx, {
       userAccountId: account.id,
       reason: SessionRevokeReason.ACCOUNT_SUSPENDED,
@@ -866,7 +865,7 @@ adminUserRouter.post("/:id/deactivate", async (req, res) => {
       },
       select: accountSelect,
     });
-    return { row, revoked };
+    return { row, revoked, revokedKeys };
   });
 
   await logAudit({
@@ -881,6 +880,7 @@ adminUserRouter.post("/:id/deactivate", async (req, res) => {
       roles_revoked: result.revoked.length,
     },
   });
+  await logKeysRevoked(result.revokedKeys, { revokedVia: "ADMIN_API" });
 
   res.json({
     user: result.row,
@@ -1048,17 +1048,45 @@ async function revertStrandedWork(
       organizationId: { in: params.organizationIds },
       submittedAt: { not: null },
     },
-    select: { id: true, requestNumber: true, organizationId: true, approverEmail: true },
+    select: {
+      id: true,
+      requestNumber: true,
+      organizationId: true,
+      approverEmail: true,
+      status: true,
+      submittedAt: true,
+    },
   });
 
-  const reverted: Array<{ id: string; requestNumber: string; approverCleared: boolean }> = [];
+  /**
+   * `before` คือสถานะก่อนถูกดัน — ผู้เรียกเขียน `REQUEST_RESET_TO_DRAFT` ต่อใบหลัง commit
+   * (เดิมเหลือแค่รายการเลขคำขอใน metadata ของ `ROLE_ASSIGNED` ของคนที่ย้าย ค้นจากคำขอไม่เจอ)
+   */
+  const reverted: Array<{
+    id: string;
+    requestNumber: string;
+    organizationId: string;
+    approverCleared: boolean;
+    before: { status: RequestStatus; submittedAt: Date | null };
+  }> = [];
   for (const request of stranded) {
-    await cancelActiveTask(tx, {
+    /**
+     * ใบนั้นนับว่าถูกดันกลับก็ต่อเมื่อ*การเรียกครั้งนี้*เป็นคนปิดด่านเอง
+     *
+     * การอ่านข้างบนบอกได้แค่ว่า "ตอนที่อ่าน ด่านยังเปิด" — การย้ายสองครั้งที่ซ้อนกันเห็นด่านเปิดทั้งคู่
+     * แต่ updateMany ใน `cancelActiveTask()` ปล่อยผ่านได้ฝั่งเดียว อีกฝั่งได้ `null` กลับมา ใบนั้นจึงเป็น
+     * ของทรานแซกชันที่ปิดด่านไปก่อน (อาจเป็นการย้ายอีกครั้ง หรือผู้มีอำนาจกดอนุมัติไปแล้วก็ได้) เดิมโค้ด
+     * ไม่ดูค่าที่คืนมา ฝั่งที่แพ้จึงเขียนคำขอซ้ำแล้วได้ `REQUEST_RESET_TO_DRAFT` อีกแถว อ้างว่า
+     * SUBMITTED→DRAFT ด้วยเหตุผลของตัวเอง ทั้งที่ด่านถือเหตุผลของอีกฝั่ง — และถ้าคนที่ปิดคือการอนุมัติ
+     * ก็จะดันใบที่เดินหน้าไปด่านถัดไปแล้วกลับเป็นร่าง
+     */
+    const cancelled = await cancelActiveTask(tx, {
       subjectType: SubjectType.ORGANIZATION_REGISTRATION_REQUEST,
       subjectId: request.id,
       actorId: SYSTEM_USER_ID,
       reason: params.reason,
     });
+    if (!cancelled) continue;
     const approverCleared =
       request.approverEmail?.toLowerCase() === params.email.toLowerCase();
     await tx.organizationRegistrationRequest.update({
@@ -1073,7 +1101,9 @@ async function revertStrandedWork(
     reverted.push({
       id: request.id,
       requestNumber: request.requestNumber,
+      organizationId: request.organizationId,
       approverCleared,
+      before: { status: request.status, submittedAt: request.submittedAt },
     });
   }
   return reverted;
@@ -1412,6 +1442,30 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
     },
   });
 
+  /**
+   * คำขอที่ถูกดันกลับเป็นร่างได้แถวของตัวเอง รหัสเดียวกับการสั่งกลับเป็นร่างของ
+   * `/api/admin/registrations/.../reset` เพราะผลกับคำขอเหมือนกันทุกอย่าง ต่างกันที่ต้นเหตุ
+   * (`reset_via`) — คนที่ไล่ประวัติของคำขอใบหนึ่งต้องเห็นว่ามันกลับเป็นร่างเพราะอะไร โดยไม่ต้องรู้ว่า
+   * ต้องไปค้นแถวของ*คนที่ย้าย*
+   */
+  for (const request of outcome.reverted) {
+    await logAudit({
+      action: AuditAction.REQUEST_RESET_TO_DRAFT,
+      subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
+      subjectId: request.id,
+      organizationId: request.organizationId,
+      before: request.before,
+      after: { status: RequestStatus.DRAFT },
+      metadata: {
+        reason,
+        reset_via: "ADMIN_TRANSFER",
+        request_number: request.requestNumber,
+        transferred_user_account_id: account.id,
+        approver_cleared: request.approverCleared,
+      },
+    });
+  }
+
   // ไม่มีหน่วยงานต้นทาง = เปลี่ยนบทบาทอยู่กับที่ ไม่ใช่การย้าย — อย่าบอกเขาว่าถูกย้าย
   const movedOrganization = sourceIds.length > 0;
   await notifyUsers([account.id], {
@@ -1457,7 +1511,12 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
     to: target,
     role,
     roleLabel: ROLE_LABELS[role],
-    requestsRevertedToDraft: outcome.reverted,
+    // รูปเดิมของคำตอบ — `organizationId` กับ `before` มีไว้ให้ audit ข้างบน
+    requestsRevertedToDraft: outcome.reverted.map(({ id, requestNumber, approverCleared }) => ({
+      id,
+      requestNumber,
+      approverCleared,
+    })),
     replacedUserAccountIds: outcome.replaced.map((r) => r.userAccountId),
     organizationsLeftWithoutStaff: vacancies,
     message:

@@ -47,6 +47,28 @@ export function hashToken(token: string): string {
 }
 
 /**
+ * ป้ายชื่อของ token ที่ลงบันทึกได้ — 12 ตัวแรกของ `hashToken()`
+ *
+ * audit ต้องตอบได้ว่า "ค่าที่ถูกยิงเข้ามาคือ token เก่าที่หลุดไปหรือเปล่า" โดยไม่เก็บค่าจริง
+ * fingerprint ที่ไม่มีกุญแจแบบนี้ใช้เดาย้อนกลับได้ก็ต่อเมื่อ token สั้น token ของผู้ดูแลระบบจึง
+ * ต้องยาวอย่างน้อย 128 บิต (`openssl rand -hex 32`) ใช้ HMAC ไม่ได้เพราะ fingerprint ต้อง
+ * คงที่ข้าม deploy และข้ามเครื่อง ถึงจะเทียบกับค่าที่จดไว้ก่อนหมุน token ได้
+ */
+export function tokenFingerprint(token: string): string {
+  return hashToken(token).slice(0, 12);
+}
+
+/**
+ * token ของผู้ดูแลระบบที่ fingerprint ข้างบนเดาย้อนกลับได้ — สั้นกว่า 32 ตัว หรือยังเป็นค่าตัวอย่าง `dev-…`
+ *
+ * เกณฑ์หยาบโดยตั้งใจ: 32 ตัวคือ 128 บิตเมื่อเป็นฐานสิบหก วลีที่ยาว 32 ตัวก็ยังเดาได้ แต่ค่าที่สั้นกว่านั้น
+ * เดาได้แน่ ใช้เตือนตอนบูต (`index.ts`) ไม่ใช่ปฏิเสธ ดูเหตุผลที่นั่น
+ */
+export function adminTokenLooksWeak(token: string): boolean {
+  return token.length < 32 || token.startsWith("dev-");
+}
+
+/**
  * Activation key ตาม sheet `activation_key`
  *
  * รูปแบบที่ sheet แนะนำ: สุ่มอย่างน้อย 32 ไบต์ แล้วเข้ารหัส URL-safe Base64

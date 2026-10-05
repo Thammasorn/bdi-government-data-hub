@@ -28,7 +28,7 @@ import {
 import { prisma } from "../db.js";
 import { AuditAction, AuditSubject, logAudit } from "./audit.js";
 import { buildJourneyProgress, type JourneyProgress } from "./journey-steps.js";
-import { correlationId } from "./context.js";
+import { addBreadcrumb, correlationId } from "./context.js";
 import { activeAssignmentWhere, type RevokedAssignment } from "./iam.js";
 import { ROLE_LABELS } from "./roles.js";
 import { ROLE_CODES, type RoleCode } from "./system.js";
@@ -108,6 +108,22 @@ export async function notifyUsers(userIds: Array<string | null | undefined>, inp
     select: { id: true, email: true },
   });
 
+  // breadcrumb: ชนิด จำนวนผู้รับ และว่าลงคิวอีเมลด้วยไหม — ไม่มีที่อยู่ผู้รับ
+  const crumb = `${input.type} → ${recipients.length} คน${input.email !== false ? " + คิวอีเมล" : ""}`;
+  try {
+    await writeNotifications(recipients, input, correlation);
+  } catch (err) {
+    addBreadcrumb("outbox", `${crumb} — เขียนไม่สำเร็จ`, false);
+    throw err;
+  }
+  addBreadcrumb("outbox", crumb);
+}
+
+async function writeNotifications(
+  recipients: Array<{ id: string; email: string }>,
+  input: NotifyInput,
+  correlation: string,
+) {
   await prisma.$transaction(async (tx) => {
     for (const recipient of recipients) {
       const notification = await tx.notification.create({

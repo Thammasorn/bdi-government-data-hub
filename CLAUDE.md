@@ -60,12 +60,34 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   สองทางที่ตั้งค่าได้และทางไหนใช้เมื่อไร, Azurite ที่แทน MinIO ในเครื่อง dev, สิ่งที่หายไป
   (หน้าคอนโซล, บริการ init), พอร์ตกับ `new-dev.sh` ที่ยังต้องแก้ตอน merge, และไฟล์เก่าที่
   **ยังไม่ได้ย้าย**
+- `docs/21-activity-log.md` — **the activity log and error store**: every audit event and the shape
+  of its row, the MongoDB copy (`activity`) and how it is masked and searched, the relay, retention,
+  error capture, the log read API, the alert digest, the admin's runbook, and the PDPA pack for
+  BDI's DPO. Read it before adding an `AuditAction` code or anything that writes to the log store
 - `docs/bdi-admin-portal.postman_collection.json` — Journey A as a runnable collection,
   plus `/api/admin/users` (**U1–U15**), the legal documents (**L1–L4**: L1 writes `shortname` /
   `legalNotice` / `isRequired`, L2 clears the first two, L3 lists everything plus the variable
   catalogue, L4 publishes a new `.docx`) and the registration requests (**R1–R5**), with three
   `*.postman_environment.json` files beside it (dev checkout / main / public). The admin token
   is left empty in the last two on purpose — it is a real secret from `.env`
+- `docs/bdi-activity-log.postman_collection.json` — the log read API (`/api/admin/logs/*`,
+  `backend/src/routes/admin-logs.ts`): **G1–G8** activity search, one person, a request's
+  timeline, failed logins of an e-mail, admin-token work, trace by reference, who read the log,
+  a rotated token's use; **E1–E4** error issues, one event, resolve/ignore; **S1** status. Kept
+  apart from the admin collection on purpose, with its own `x-log-token` (`LOG_READ_TOKEN`), so
+  holding the admin token does not hand out the log. Every read that returns data is written to
+  `audit_event` as `AUDIT_LOG_READ` before any data comes back (S1 `/status` holds no personal data
+  and is recorded nowhere); the reason goes in the `readReason` collection
+  variable (sent as a percent-encoded header, never in the URL). So does the person being looked
+  up: an e-mail, national ID or account uuid travels as `x-log-email` / `x-log-cid` /
+  `x-log-person`, and `?person=` / `?cid=` / `?email=` answer 400. Only `/activity` takes all three
+  headers and `/timeline` takes `x-log-person`; every other endpoint answers 400 when one arrives,
+  because a filter that is silently ignored returns everything and looks filtered — `baseUrl` defaults to
+  `bdi-api.thammasorn.org`, so a URL crosses Cloudflare. It must be pointed at the backend
+  itself — the site's proxy answers 404 for `/api/admin/logs*`. Page `/activity` with
+  `before=<nextBefore>` from the previous answer, not `page=2`: every read adds an
+  `AUDIT_LOG_READ` that the relay mirrors to the top within seconds, and an open-ended window
+  recomputes `to` on each call, so `page=2` a few seconds later repeats the end of page 1
 
 Read `docs/01-user-journey.md` before touching anything in `backend/src/routes/organizations.ts`
 or `backend/src/routes/dataset-requests.ts`.
@@ -103,10 +125,19 @@ through the admin API need neither — they refresh the cache themselves.
 Production build (also what a public deployment must use):
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# build as its own step, so a failed build touches nothing that is running
+TMPDIR=/hdd1tb/tmp GIT_SHA=$(git rev-parse --short HEAD) \
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 docker compose exec backend npm run seed:masters:prod  # must run first
 docker compose exec backend npm run seed:demo:prod     # seed:demo needs tsx, a devDependency
 ```
+
+`GIT_SHA` becomes `RELEASE` in the backend and worker images and `NEXT_PUBLIC_RELEASE` in the
+frontend bundle. Leave it out and every error event and issue in the log store reports release
+`unknown`. `TMPDIR` keeps compose's build metadata off `/`, which fills up on this machine. The
+full deploy of the log store, including the new `main/.env` lines, is
+`docs/21-activity-log.md` §10.
 
 `ACTIVATION_KEY_SECRET` must be set in `.env` before starting production — the backend throws
 at boot without it rather than falling back to the development value.
@@ -434,6 +465,82 @@ before it. The rule to keep: **every path that writes `review_task` ends with `s
 `AsyncLocalStorage` — don't thread it through function arguments. The Excel dropped the
 `actor_name` / `actor_roles` columns, so `lib/audit.ts` snapshots them into `metadata_json`
 instead; without that, old log rows change meaning when a user is renamed.
+
+**A diff you add goes through `sanitizeDiff()`** (`lib/audit.ts`): keys that hold a national ID
+(`…Cid`, `…NationalId`, `pid`, `thaid_subject`) become `{masked: "xxxxxxxxx1234", changed: true}`.
+The design column is "Sanitized state before/after" and the table has no retention, so a raw
+diff writes a CID on every save. Codes that predate the activity-log card (`REQUEST_UPDATED`,
+`INVITATION_DELETED`, `ACTIVATION_KEY_ISSUED`, …) still store the raw value **at the sites that
+wrote them before the card**, until BDI decides whether to mask existing codes; don't change their
+payloads in passing. A new site writing an old code is a new diff and goes through
+`sanitizeDiff()` / `sanitizeState()` — the approver invitation's `ACTIVATION_KEY_ISSUED` (written
+since 2026-09-29 when the BDI officer passes the first gate) is masked while
+`POST /api/admin/invitations`' is not. The officer's draft
+`PATCH` writes `REQUEST_DRAFT_SAVED`, diffed against what the route **writes**, never against the
+body: the organisation form sends only non-empty fields and the dataset form sends all of them, so
+neither body says what changed. `""` counts as null, and a save that changes nothing writes no row.
+That PATCH comes from "บันทึกแบบร่าง" **and** from the save the generate buttons ("ตรวจสอบข้อมูล",
+"ตรวจสอบคำขอ") make before calling `generate-form`; the row does not say which. A successful
+generate is followed by its own `REQUEST_FORM_GENERATED`, a failed one by nothing.
+The organisation route also writes the contact section and an activated signatory's e-mail/CID
+from the **account** over whatever the body carried; a change there goes in
+`metadata.synced_from_account`, not `fields_changed`, so the first save of a snapshot older than
+the account (a legacy or `seed:demo` draft, a renamed account) writes a row with
+`fields_changed: []` instead of crediting the officer with typing their own name. The same goes
+for the route's own normalisation: a draft stored before e-mails were lower-cased (2026-09-18) or
+phones reduced to digits (2026-08-29) is shown as stored, sent back as shown, and written in the
+new form. Such keys go in `metadata.normalised_by_route`, decided by `changedOnlyInForm()`
+(`lib/organization-form.ts`): does the old value, run through the form's own converters, equal
+what was written? A new converter on a draft field must be reflected there, or its first save
+credits the officer again.
+
+**Audit rows come before any inline send.** Activation-key, password-reset and OTP mails go out
+inline and can throw; a row written after them vanishes with the SMTP failure while the key or
+token it describes is already committed. **Revoke activation keys with `revokeIssuedKeys()`**
+(`lib/iam.ts`), never a bare `updateMany`: it returns the keys its own `UPDATE … RETURNING`
+changed, so the caller can write one `ACTIVATION_KEY_REVOKED` per key with `logKeysRevoked()`
+after commit — every revoke path used to change the status silently. Returning what a `findMany`
+saw instead is the read-then-write trap again: four simultaneous revokes of one key all answered
+200 and wrote four rows for one revocation. The one revoke that writes no such row is the ThaID
+CID mismatch (`revokeActivationKey()`, called from the callback in `routes/auth.ts`), on purpose:
+its `IDENTITY_VERIFICATION_FAILED` row with `failure_reason: CID_MISMATCH` is the record of that
+revocation. The transfer's `revertStrandedWork()` keeps the same rule for
+`REQUEST_RESET_TO_DRAFT`: a request counts as reverted only when its own `cancelActiveTask()`
+closed the gate — `null` means another transaction got there first, and two overlapping transfers
+used to write two reset rows for one reset. Anything created inside a transaction (an account, a
+key, a role) comes out in the transaction's result and is audited after commit, never from inside
+the callback (`ensureApproverAccount()` returns what it made for that reason; the in-transaction
+`ROLE_REVOKED` of `revokeRoleAssignments()` is QA A4's and is left alone). `requireAdminToken`
+stamps the request `admin-portal` and `logAudit` adds `metadata.admin_token_fp`, since the actor
+on that path is always "system".
+
+**MongoDB is a searchable copy, never the record.** The `mongo` service (database `bdi_logs`,
+`lib/log-store.ts`) holds a copy of every `audit_event` row (`activity`), the error store and the
+process start/stop records. `logAudit()` does not know Mongo exists: the delivery-worker's relay
+(`workers/log-relay.ts`) copies committed rows every 5 s through `projectAuditRow()`
+(`lib/activity-shape.ts`), which masks national IDs, adds HMAC search keys keyed by `LOG_HASH_KEY`
+and gives each row a category. Retention follows the category (`lib/log-retention.ts`, pruned daily
+by the worker; Postgres keeps everything), so a new `AuditAction` code fails typecheck until it has a
+row in `CATEGORY_BY_ACTION`. Nothing on a request path waits for Mongo, no service `depends_on` it,
+and `/health/ready` reports it without letting it decide `healthy`. A row `logAudit` cannot write is
+no longer lost silently: it becomes an `audit.write-failed` error plus an `audit_fallback` copy in
+`activity`. Every `/api/admin*` call, reads included, is recorded as `ADMIN_API_REQUEST` in Mongo
+only (`lib/admin-access.ts`), because the admin API returns unmasked CIDs. The two exceptions: a
+request that reaches the log router (it records itself as `AUDIT_LOG_READ`), and a CORS preflight,
+which `cors()` answers first.
+
+**Errors go through `captureError()`** (`lib/error-capture.ts`, see Traps): scrubbed by
+`lib/redact.ts`, grouped into issues by fingerprint, queued in memory and written every 2 s. A 5xx
+answered with `{error}` carries a reference (the first 8 hex of its correlation id) in its message,
+and that reference finds the request's activity and errors. Browser and Next-server errors arrive at
+`POST /api/client-errors`, and the worker mails a digest of new and recurring issues (**Email**).
+
+**People read the log only through `/api/admin/logs/*`** (`routes/admin-logs.ts`, Postman
+`bdi-activity-log`), with its own `LOG_READ_TOKEN`, a declared reader and a reason in headers. Every
+read that returns data (all but `/status`) is written to `audit_event` as `AUDIT_LOG_READ` before any data comes back, by
+`recordLogRead()`, the one writer besides `logAudit()`, and unlike it the one that does not swallow
+its errors. The site's proxy answers 404 for that path. **Audit is still never shown on screen**:
+this is an operator's API, not a page. `docs/21-activity-log.md` has all of it.
 
 **Email is no longer sent from request handlers.** `notifyUsers()` writes a `notification` row
 plus a `notification_delivery` row (the outbox), and `src/workers/delivery.ts` sends it — a
@@ -949,6 +1056,53 @@ be destroyed for our mistake. `docs/07-thaid-integration.md` §4.2 has the full 
 and the OTP to stdout instead of sending — that is the normal way to exercise the flows.
 Templates are table-based with inline styles because Gmail and Outlook strip `<style>`.
 
+The error digest (`workers/error-alerts.ts`, on only when `ERROR_ALERT_EMAILS` is set, worker
+only) is the one mail that is neither inline nor outbox: its recipients are not accounts, and
+`notification_delivery.recipient_user_id` is NOT NULL. It runs in its own loop in the
+delivery-worker, never inside the outbox `tick()`, and sends one message per recipient at a time
+through `sendRaw(…, {timeoutMs: 30_000})`. That is a hard 30 s per message: `sendWithDeadline()` in
+`lib/mail.ts` opens the socket itself (nodemailer's `getSocket`) and destroys it at the deadline.
+nodemailer's own timeouts only bound *silence* (10 s to greet, 20 s mid-conversation), so a server
+that answers every 19 s kept a send alive for minutes. A `Promise.race` gives up waiting without
+closing anything, and `close()` on a non-pooled transport does not touch a send in flight either.
+A send that hits the deadline ends that recipient's attempt, not the round: the next recipient is
+tried, the round as a whole stops starting sends after 90 s (`ROUND_BUDGET_MS`), and a recipient
+that was slow or still owed mail last time is tried last. **Nothing owed holds back a new digest,
+because the two clocks are separate.** A new digest goes out at most once per 15 minutes, counted
+from `lastDigestAt`, which only a round carrying a new digest moves. A digest someone is still owed
+is resent on its own at most once per 15 minutes *per recipient*, counted from that recipient's last
+attempt (`triedAt`). So a recipient gets at most two mails in any 15 minutes, and a fatal, crash
+loop or over-quota that arrives just after a resend still goes out on the next minute's tick, to
+everyone. Whoever a digest did not reach (timed out, a temporary failure, or not tried before the
+budget ran out) is kept in `pending` under an HMAC of the address (`LOG_HASH_KEY`; without it a
+per-process key, so pending is forgotten on restart), and that digest's text is appended to the same
+recipient's next new digest — or resent alone, marked "ส่งช้า", when their resend is due and there
+is nothing new. At most three digests are kept, none older than six hours. Until 2026-10-01 a late
+digest went out as its own mail *before* the new one and a round stopped at the first slow send, so
+one mailbox that was always slow held back every new alert (fatal, crash loop, over-quota) for every
+recipient for six hours, and one that kept failing temporarily got four mails in one slot. The first
+fix (`ea9ccbb`) still let a resend-only round move `lastDigestAt`, so one owed recipient delayed every
+new fatal, for everyone, by up to 15 minutes, every slot for six hours. **Only a 5xx answering
+`RCPT TO` or `DATA` is permanent** (no such mailbox, message refused): it is not retried, the owed
+digests it drops are logged, and `lastError` says so. Every other failure is retried, including a
+5xx at login (530/535 after the sending account's password changes) or at `MAIL FROM`, since those
+are our configuration, not the recipient; until the same fix every 5xx dropped the owed digests
+silently. A digest's issues count as alerted once it reaches one recipient; if it reaches nobody they
+do not, the next digest is composed afresh, and `lastError` on `/status` says so, as it says who is
+owed mail or slow. `lastError` is recomposed on every tick from the last round's facts (`lastRound`) and
+what is still owed, not only when something is sent: a due round that finds nothing left to compose,
+re-enabling, and switching alerting off all clear the "composed afresh" claim. Until 2026-10-01 it
+changed only on a send, so after a round that reached nobody, then off and on again, `/status` kept
+promising a recomposition that `enabledAt` had already ruled out. The SMTP server is Office 365, which takes about three connections. At most one
+digest per 15 minutes and one alert per issue per 6 hours unless it regressed. A regression alerts
+only an issue that would alert anyway (level error or fatal, or a sustained route-answered 5xx);
+`browser:chunk-load` and `…:log_access_disabled` never alert. Browser issues, which anyone can
+create, are held to five per six hours across digests and go into the mail without their message
+text. Its state lives in `relay_state` `_id: "error_alerts"`, so a restart does not resend;
+`GET /api/admin/logs/status` shows whether the worker last said it was on. The loop writes
+`checkedAt` every minute and before each send, so a `checkedAt` older than three minutes means it is
+not running. In dry-run it prints the whole digest to `docker compose logs delivery-worker`.
+
 ### PDF — every document comes from a .docx template
 
 **Nothing in the system draws a PDF in code any more.** `lib/pdf.ts` and the `pdfkit`
@@ -1342,6 +1496,97 @@ Two API base URLs, and they are not interchangeable:
   time, so changing it requires `--build`, never just a restart.
 - `INTERNAL_API_URL` — what Next's server side calls, over the compose network.
 
+**Errors in the browser and on the Next server reach the log store, not just the console.**
+`instrumentation-client.ts` reports uncaught `error`/`unhandledrejection` events,
+`app/global-error.tsx` shows a reference it generates and reports it, and `instrumentation.ts`
+reports `onRequestError` plus the process's unhandled rejections (through
+`lib/server-error-report.ts`, loaded only in the Node runtime). All go to
+`POST /api/client-errors`, which always answers 204. `lib/report-error.ts` never reports an
+`ApiError` — the backend already captured every 5xx — except the proxy's own 502
+`backend_unreachable`, which the backend never saw: that one is queued in
+`sessionStorage` (`bdi.pendingErrorReports`, five at most) and sent after the next API call
+that succeeds, so the reference in the toast is findable (Postman G6). A full queue drops the
+references nobody saw first, and it judges that from the page, not from the caller: for five
+seconds after a 502 a `MutationObserver` watches for the reference to appear anywhere in the DOM
+(a toast, the login page's inline error), and the newest reference that did is dropped last.
+Until 2026-10-01 it dropped the oldest, so five failed 15-second `/state` polls under an open
+detail page pushed the toast's reference out; the first fix counted every call not flagged
+`{ background: true }` as seen, and the list, summary and detail loads of one detail↔list round
+trip, whose toasts have fixed text, did the same. Flagging callers is what failed twice, so the
+flag now only spares the watch; a new silent call does not need it. An entry leaves the queue
+only once the backend has answered its report with a 2xx, so the flush uses `fetch`, not a beacon,
+whose result cannot be read; until the same day the queue was emptied before the beacons went
+out, and a page restored from bfcache, whose old requests finish with 200, flushed it through the
+proxy into 502s while the backend was still down. **A dev checkout
+does not take this path by default**: `new-dev.sh` writes `NEXT_PUBLIC_API_URL=http://localhost:41N0`,
+so the browser calls the backend directly and a stopped backend gives a status-0
+"เชื่อมต่อเซิร์ฟเวอร์ไม่ได้" with no reference, and nothing is queued (status 0 is deliberately not
+reported). To exercise the proxy's 502 and the queue, recreate the frontend with the value empty —
+`NEXT_PUBLIC_API_URL= docker compose up -d --no-build --no-deps frontend` — and run the same
+command without the override afterwards. Only `location.pathname`
+ever leaves the browser, and a URL inside an error's message or stack loses its query and fragment
+on the way out — in the browser, in the Next server's stdout line, and again in the backend —
+because a frame of an inline script quotes `/activate?token=…` and React's error links quote
+on-screen text in `?args[]=`; the redaction rules only know named keys. The Next server's own
+report keeps Next's `digest` (`extra.digest`), which is all the production global-error page gets
+instead of the message, so G6 lists the server's error for that page's reference as
+`serverErrors`. `onRequestError`, the rejection listener and `uncaughtExceptionMonitor` were
+checked under a production `output: "standalone"` build on 2026-10-01: all three report, and the
+server keeps running. `INGEST_SERVER_TOKEN` is what marks a report as the Next server's; it
+is read at runtime, so it must never become `NEXT_PUBLIC_`. A browser report's fingerprint is
+its own message text, so every distinct message is a new `error_issues` document: the backend
+lets browser reports create at most 100 new issues per process per hour and none while the log
+store is over its ceiling (beyond that they only count toward issues that already exist), and
+the worker deletes open browser issues not seen for 30 days. Two exceptions keep references
+findable: `browser:chunk-load` and `proxy:backend_unreachable` never use up that budget, and a
+report that carries a `reference` (the global-error page, the proxy's 502) is stored as an event
+even when its issue is refused (`extra.capped: "browser_fingerprints"`) and past the 50-per-hour
+sample cap. In the browser such a report also skips the dedupe and has its own budget of ten per
+page load, apart from the ten every other report shares; before that, ten earlier reports in one
+page load left the global-error page showing a reference that was never sent. Until 2026-10-01 a
+hundred junk messages to the unauthenticated endpoint, which a spoofed `X-Forwarded-For` gets
+past the per-IP limit, left every reference sent after them unfindable for the rest of the hour.
+The same goes for the 60-a-minute cap on stored browser events: a referenced report past it is
+kept as a reference-only stub (`extra.referenceOnly`, 240 a minute); one junk report a second used
+to be enough to hide every reference. **What browser reports may store in total is a byte budget,
+not those caps** (`lib/untrusted-budget.ts`): 15% of `LOG_STORE_MAX_MB` spread over their 30-day
+life, refilled continuously, per backend process. The caps bound only the rate: 300 referenced
+reports a minute stored about 1.5 GB a day and reached production's 5 GB ceiling in about three
+days, and `over_quota` then stopped every server error event too (review of steps 8–10,
+2026-10-01). Full events stop when a quarter of the budget is left and reference stubs may spend
+that quarter, so references outlast the junk for a while. Past that point, someone who keeps
+sending junk at the refill rate (about one full-size report a minute on production) keeps real
+reports, references included, out of the store. Before the budget, hiding a reference took more
+than the ingest's 300 reports a minute, and filled the disk while doing it. `/status` shows
+`untrustedBudget`, `browserOverBudget` and the references that were still lost
+(`browserReferencesLost`). The ingest scrubs at most 200 stack lines: the scrub runs line by line
+on the event loop, and a 16 KB body of 5,300 one-character lines held it for 20–75 ms per report.
+**A chunk that fails to load (a deploy under an open page) is a warning filed as
+`browser:chunk-load`, which never alerts, and there are two wordings for it.** `next dev --webpack`
+throws webpack's "Loading chunk 123 failed.". Production's `next build` is **Turbopack** (Next 16's
+default), which throws "Failed to load chunk /_next/static/chunks/<hash>.js from module 83412".
+The runtime Next 16.2.12 emits names both of these `ChunkLoadError`; that was checked on a real
+build in Chrome on 2026-10-01. The name alone is not enough, though. The Turbopack runtime copy
+shipped in `next/dist/bundle-analyzer` throws a plain `Error` with the same words, and a `window`
+error without `event.error` carries only the message. Any failure that slips past the check
+becomes an error-level issue per chunk hash per build, and mails the team on every deploy made
+under open pages. So `isChunkLoadError` in `lib/report-error.ts` and `isChunkLoadReport` in
+`routes/client-errors.ts` match the wording as well as the name, and must learn any new wording
+together. The backend check applies to browser reports only, because a Next server that cannot
+load its own chunk has a broken image.
+Both reporters fit their body into 15,000 **bytes** (`lib/report-body.ts`, trimming whole stack
+frames first), because the ingest's 16 KB limit is in UTF-8 bytes and an oversized body is dropped
+whole, still with a 204. A long stack plus a Thai message used to overflow it.
+The Next server's report keeps the query's key names, never its values (`request.queryKeys`); its
+stdout line keeps the pathname only. **A malformed request is a warning, not an error**: anyone can
+send an RSC request with a garbage `Next-Router-State-Tree` header (`curl -H 'RSC: 1' -H
+'Next-Router-State-Tree: %7Bx' …/login`), and Next answers 500 through `onRequestError`. Until
+2026-10-01 that was a verified error-level `frontend-server` issue per page template, so the alert
+digest mailed it as new, and as regressed every time someone resolved it and the caller fired again.
+`malformedRequest()` in `lib/server-error-report.ts` matches Next's error code (`E10`/`E142`/`E418`,
+checked on 16.2.12) or its wording; a new caller-caused error that reaches `onRequestError` belongs
+there. Unknown server actions, undecodable URLs and bad `Next-Url` headers never reach it.
+
 ## Conventions
 
 - All user-facing copy is Thai. Body line-height is 1.7 — Thai tone marks need the room.
@@ -1467,15 +1712,185 @@ Two API base URLs, and they are not interchangeable:
   every captured value: `POST /api/admin/invitations` went out with `"organizationId": ""` and
   answered 400 `validation`, revoke and PATCH answered 404, and `D` quietly listed *all*
   organizations instead of fetching one and still passed. Ids captured at runtime belong in
-  collection variables only; an environment carries `baseUrl` and `adminToken` and nothing
-  else. The requests that depend on a captured id now refuse to send in a pre-request script
-  that names the request to run first, so the next occurrence says what it is.
+  collection variables only; an environment carries `baseUrl`, `adminToken`, `logToken` and
+  `logReader` and nothing else (the last two are for `bdi-activity-log`). The same goes for the
+  inputs a reader types — `readReason`, `person`, `requestNumber`, `reference`, `issueFingerprint`
+  … are collection variables. The admin collection has **no** pre-request scripts: a request whose
+  captured id is still empty goes out and answers 400 or 404, so read the response.
+  `bdi-activity-log` has four kinds: the one-line collection script that sends `readReason` as
+  `x-log-reason` (percent-encoded — a raw Thai header arrives as latin1 bytes and is refused);
+  G5's, which sets the request-local `weekAgo` its `from` reads; a guard on G6, G8, E2 and E3 that
+  skips the request (`pm.execution.skipRequest()`, or throws on a Postman too old to have it) and
+  names what to fill in or run first; and E4's, which is that guard over **three inputs the reader
+  types** (`issueFingerprint`, `issueStatus`, `issueReason`) and then sets the request-local
+  `issuePath` / `issueReasonEscaped` its URL and body read. **E4 must never run on a captured
+  value** — until 2026-09-30 it took E1's auto-captured `errorFingerprint` and a sample reason in
+  its body, so running the collection as a whole resolved the newest open issue with the words
+  "แก้แล้วในรุ่น <SHA>"; its test now blanks the three inputs after a 200, and the API refuses a
+  reason still holding `<…>` or `{{…}}`. Newman sends a request whose pre-request script *throws*,
+  so the skip is what actually stops it there. `console.table` does not exist in newman's
+  sandbox — the collection's tests fall back to `console.log` per row, and anything a test
+  captures is set before it prints.
+- **An environment's `adminToken` and `logToken` are committed empty — run
+  `python3 docs/tools/check-postman-secrets.py` before committing any Postman file.** `0d0a0d4` (2026-09-24) committed the real production
+  token in `bdi-public`, and it reached Bitbucket and the public GitHub `origin` before anyone
+  noticed; the rule above was written down and did not stop it. The check goes by variable
+  *name*, not `type`, because `bdi-dev-checkout` declares its token `type: "default"`. With no
+  arguments it reads every `docs/*.postman_*.json`, the collection included. In each file it checks
+  environment `values`, collection and folder `variable`, headers, query params and `auth`
+  parameters, and accepts only an empty value, the `dev-…-change-me` placeholder or a
+  `{{variable}}` reference. Until 2026-09-29 it read only environment `values`, so a real token
+  pasted into the collection's own `adminToken`, which is where its description says to paste it,
+  passed with exit 0. Scripts and request bodies are still not checked. `0d0a0d4` also blanked
+  every value in `.env.example`, so `new-dev.sh` checkouts could not boot until it was restored.
 - Prisma reports "cannot reach the database" as **two** classes that keep the code in different
   fields. A pool that was connected and then lost the server raises
   `PrismaClientKnownRequestError` with `code: "P1001"`; a client that never connected raises
   `PrismaClientInitializationError`, which carries `errorCode` instead. Handling only the first
   looks correct — until the database is down at boot, when the API answers 500 again. Both are
   mapped in `index.ts`, and an initialization failure answers 503 even when it carries no code.
+- **`req.ip` is whatever the caller wrote.** `trust proxy 1` takes it from the last
+  `X-Forwarded-For` entry, and nothing in this stack appends the real peer: the backend is
+  reachable without the proxy, and the Next proxy (`app/api/[...path]/route.ts`) forwards the
+  browser's `X-Forwarded-For` as sent, because Next fills that header from the socket only when
+  it is absent (`??=` in `base-server.js`). So through the site too it can be any text of any
+  length. It is only the caller's address where an edge in front appends it. On `main` that edge
+  is Cloudflare; Cloudflare's docs say it appends, but nobody has checked that for our tunnel —
+  an open question, not a fact. Wherever the backend (`:4000`) or the site (`:3000`) is reached
+  without Cloudflare — the LAN, every dev checkout — the address in audit is whatever the caller
+  wrote. Dropping the header in the proxy is not a fix, because every user would then share
+  the frontend container's address; keeping it was decided on 2026-09-30. The proxy does replace
+  `x-correlation-id` with a fresh one on every request and strips `x-report-*`, so a browser
+  cannot plant rows in someone else's trace or pose as the Next server's error reporter. Every `ip_address` column is `VARCHAR(64)`. Until 2026-09-28 a 100-character
+  value made the OTP step answer 400, because the session insert failed, so that user could not
+  log in at all. It also made every `audit_event` row of the request vanish, since `logAudit`
+  swallows its own failure, and admin-token and password guessing could run with no trace.
+  Take the address from the context (`currentContext()?.ipAddress`) or from `clientIp(req)` in
+  `lib/context.ts`. Both keep only what `net.isIP()` accepts, with the IPv6 zone dropped. Never
+  write `req.ip` to a column.
+- **A middleware that calls `next` from a stream event drops the request context.** multer
+  (busboy) calls it from the socket's `data`/`finish` events, which run outside the
+  `AsyncLocalStorage` store of `lib/context.ts`. Every handler after a real-size upload therefore
+  ran with no store: until 2026-09-29 a 759 KB appointment order was audited as actor `SYSTEM`,
+  source `request-service`, no IP and a fresh correlation id, while a 45-byte test PDF looked fine
+  because its body arrived with the headers. `wrap()` in `lib/async-route.ts` now binds `next` with
+  `AsyncResource.bind`, so routes built on that `Router` are covered. A middleware mounted with
+  `app.use` in `index.ts` is not; `express.json` is safe only because raw-body binds its own
+  callback. Test uploads with a file of realistic size.
+- **`req.baseUrl` and `req.originalUrl` are what the caller typed, not what Express matched.**
+  Express matches mount paths case-insensitively and decodes `%xx` in route params, and
+  `GET http://host/api/…` (absolute-form) routes like `/api/…`. So `/API/Admin/Users/%65…` reaches
+  `GET /api/admin/users/:id`, while `baseUrl` says `/API/Admin/Users` and the raw id segment is not a
+  UUID. Until 2026-10-01 the admin access record matched its subject table against that `baseUrl`
+  and took the id out of `originalUrl`, so such a view of a person's e-mail and CID was recorded
+  without saying whose. Take ids from `req.params` (or `routeId` in the context), and routes from
+  the context, whose mount part `wrap()` lowercases. To learn whether a request reached a router,
+  mark it at that router's mount (`markLogApiRequest`). Don't regex-test the URL.
+- **Never print a body-parser error.** The `entity.parse.failed` error carries the raw body in
+  `err.body`, and V8's message can quote it too (`Unexpected token 'S', ..."assword": S...`). The
+  final error middleware used to `console.error(err)` it, so a truncated login JSON put the
+  plaintext password in `docker logs`. It now answers 400 `validation`, 413 `payload_too_large` or
+  415 `unsupported_media_type` from a branch that prints nothing. That branch recognises the error
+  by **where it came from**, not by its shape: `parseJsonBody()` in `index.ts` wraps `express.json`
+  and turns every 4xx it raises into a `RequestBodyError` that keeps only the status. Matching on
+  shape (`typeof err.type === "string"`) missed a corrupt `Content-Encoding: gzip`/`deflate` body,
+  which body-parser raises as `createError(400, zlibError)` with no `type`, so it still answered
+  500 and printed a stack. Other 4xx branches of that middleware (`DocumentRenderError`, Prisma
+  codes mapped to 409/400/404) do print, on purpose; the silence is for body errors only.
+- **Never hand an error, or its `message`, to `console.*` — call `captureError()`**
+  (`lib/error-capture.ts`). It prints one scrubbed line carrying the event id, with or without the
+  log store, and a `console` line beside it should say only where it happened and point at that
+  `[capture]` line. Raw error text carries data. When Postgres refuses a row, Prisma quotes the
+  whole row in `detail: Some("Failing row contains (…)")`: actor id, before/after JSON, IP, UA and
+  name. A raw query quotes it as a `DETAIL:` line. Nodemailer quotes rejected recipient addresses,
+  and DOPA's `error_description` is theirs to fill. Two sources print on their own, and both are
+  closed now. Prisma's `log: ["error"]` printed the whole message before the capture ran, so
+  `db.ts` takes its log as events and prints `databaseLogLine()`. Express's finalhandler prints
+  `err.stack` raw, so the error middleware never passes an error on with `next(err)`. After headers
+  are sent, it destroys the socket itself (checked 2026-09-30, with a `CHECK (false) NOT VALID`
+  probe constraint and a route that wrote before throwing). `scrubText()` in `lib/redact.ts` cuts
+  the database detail first, before any other rule. Its other rules are a backstop, not a licence to
+  print.
+- **A changed `LOG_HASH_KEY` needs a rebuild of the Mongo copy, and a rebuild is one command.** The
+  `cid#` / `email#` keys in `activity.hashKeys` are HMACs under that key, so after a rotation
+  `x-log-cid` / `x-log-email` find nothing in documents written before it. The worker notices, since
+  `relay_state.hashKeyFp` records the key that built the copy, but it only warns once per process
+  (`log-relay:hash-key-changed`) and does not fix it. A change to the projection (`SCHEMA_VERSION`
+  in `lib/activity-shape.ts`) is the same. Run this as root or `bdi_worker`:
+  `db.relay_state.updateOne({_id: "audit_event"}, {$set: {rebuildRequestedAt: new Date()}})`.
+  Within about 5 s the worker deletes the `source: "audit_event"` documents in chunks. It then clears
+  the cursor, `hashKeyFp`, `schemaVersion` and `caughtUpAt` in one update and refills from the first
+  row. **Don't** use the old two-step (`deleteMany`, then `$unset` the cursor by hand): until the
+  second command lands, the cursor still stands, so an hourly reconcile counts Mongo 0 against
+  Postgres N. It then warns that the relay missed N rows (43,498 on 2026-10-01). **Never delete the
+  whole `relay_state` document**: it also holds the size-ceiling figures and `lastPruneAt`. A rebuild
+  cannot bring back `audit_fallback` or `http` (admin access) documents, which exist only in Mongo
+  and keep their old keys. Rows `seed:demo` has wiped from Postgres are gone from the copy for good.
+  The header of `workers/log-relay.ts` has the whole procedure.
+- **A Mongo that stops answering for a couple of seconds clears the driver's pool, whatever
+  `maxTimeMS` says.** `maxTimeMS` below `socketTimeoutMS` (`MONGO_COMMAND_MAX_MS`) only makes a
+  *slow but live* server cancel its own command. An operation's own socket timeout closes only its
+  connection. What clears the pool is the driver's monitor. Its streaming `hello` waits
+  `connectTimeoutMS` (2 s) past each 10 s heartbeat, so a pause, frozen host or network drop that
+  crosses a heartbeat by more than that interrupts every in-flight command with
+  `PoolClearedOnNetworkError`. Reads retry once. Writes are never retried on the standalone mongod
+  every stack runs, so treat any multi-command Mongo job as one that can stop halfway. Count its
+  progress as it goes, the way prune does (`runPrune` in `workers/log-relay.ts`, reproduced
+  2026-10-01).
+- **Anything a caller without credentials can make the backend store needs a byte budget, not
+  only a per-minute cap.** A rate cap times a retention of 30 to 400 days has no practical bound,
+  and reaching `LOG_STORE_MAX_MB` switches off what matters more: every server error event, and
+  with it the sustained-5xx alert, which counts events. Three things draw from
+  `lib/untrusted-budget.ts`, 25% of the ceiling between them per backend process: browser reports,
+  `/api/admin*` calls whose token was rejected or never checked (`via: "ANONYMOUS"`), and error
+  events of requests with no credential (`isAnonymousRequest()` in `lib/context.ts`: no session
+  actor, no accepted admin or log token). The last one covers any route that answers 5xx to
+  anyone, such as `POST /api/auth/thaid/start` → 501 wherever ThaID is not configured. Until
+  2026-10-01 its reference stubs (`keepReference()`) were charged to nothing and limited only to
+  120 a minute, about 170,000 a day that live 90 days. Full events stop at the reserve and stubs
+  spend it; past that only the issue counter moves, and a route only anonymous callers reach then
+  stores no events, so its sustained-5xx alert goes quiet too. Anonymous stubs also get at most 60
+  of the 120 a minute, so signed-in users keep the other half. "Anonymous" is decided at capture
+  time: a route that never reads the session (`/api/auth/*`) is anonymous even with a cookie, and
+  so is a failure inside `requireAuth` itself. Anonymous admin access records live 90 days, not
+  their category's 400 (`ANONYMOUS_ADMIN_ACCESS_DAYS`), and their summary never closes to open
+  another; it truncates its keys instead. Admin access records whose token was **accepted** are
+  written even over the ceiling, like audit fallbacks, because they are the trail step 8 exists
+  for. That exemption has its own bucket, though (`admin-token`, 5% of the ceiling over 400 days,
+  charged only while `over_quota`). When it runs out, singles fold into summaries that wait for
+  it, and summaries still waiting at shutdown are written anyway; `/status` shows it as
+  `adminTokenOverQuotaAllowance`. Before that, a leaked token's summaries closed and reopened
+  without limit (`SUMMARY_CLOSED_MS` 0), so the store grew past the ceiling with no bound. Until 2026-10-01, token-less calls carrying random `?cid=` / `?q=` / `?email=`
+  values, or random tokens, opened a new summary every 20 to 67 calls with no limit. So filling
+  the store was the first step to reading every CID with a leaked token without leaving a record.
+- **The MongoDB passwords take effect only on an empty volume.** `MONGO_ROOT_PASSWORD`,
+  `MONGO_BACKEND_PASSWORD` and `MONGO_WORKER_PASSWORD` are read by the image's init and by
+  `mongo/init/01-users.js` the first time `mongo-data` is empty. Changing `.env` afterwards changes
+  nothing inside the volume, and backend and worker then fail to log in (`logStore: down`,
+  `Authentication failed`). To change one: edit `.env`, recreate `mongo` (`up -d --no-deps mongo`)
+  so the container sees it, rerun `01-users.js` as root with the command at the top of that file,
+  then recreate backend and delivery-worker, whose URI was built when they were created. Skip the
+  `mongo` recreate and the script writes the old password back while printing that it updated the
+  user. Root's own password changes only with `db.changeUserPassword`. Passwords go into the URI
+  unencoded, so use hex. The prod overlay refuses to start `mongo` with the `dev-…-change-me`
+  samples. On `main/` the volume is production's log: **never `down -v` there**. `docs/21` §3.12.
+- **The log store's kill switch is `LOG_STORE_ENABLED=false`, not an empty URI.** Compose never reads
+  `MONGODB_URI` from `.env`. It builds the URI from the passwords, or takes `MONGODB_BACKEND_URI` /
+  `MONGODB_WORKER_URI`, and `${…:-…}` treats an empty override as unset and puts the default URI
+  back. So a blank URI leaves the log store on. Set the flag to `false` in `.env` and recreate
+  backend and delivery-worker (`up -d --no-deps backend delivery-worker`, no build). The driver is
+  then never loaded, and `/health/ready` shows `disabled`. `docs/21` §5.11.
+- **The dev delivery-worker runs `tsx` without watch** (`npm run worker:delivery`), unlike the
+  backend's `tsx watch`. An edit to code the worker runs (the relay, prune, the alert loop, email
+  rendering, anything under `lib/` it imports) does nothing until
+  `docker compose restart delivery-worker`.
+- **On the shared dev machine `/` fills up, and Docker's images and build cache live there.** The
+  daemon uses the containerd snapshotter, so images and BuildKit cache sit in `/var/lib/containerd`
+  on `/` (about 2 GB free), even though `docker info` shows the root dir `/hdd1tb/docker`, where only
+  volumes go. Compose also writes build metadata to `$TMPDIR`. Build as a separate step,
+  `TMPDIR=/hdd1tb/tmp docker compose … build`, before `up -d`, so a build that fails for space
+  touches nothing that is running. `docker builder prune -f` frees cache when `/` is tight. A full
+  `/` makes every shell command fail.
 
 
 ## Notion

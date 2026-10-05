@@ -22,6 +22,8 @@ import { createPublicKey, randomBytes, type JsonWebKey, type KeyObject } from "n
 import jwt from "jsonwebtoken";
 
 import { env } from "../env.js";
+import { addBreadcrumb } from "./context.js";
+import { captureError } from "./error-capture.js";
 import { isValidThaiNationalId } from "./validation.js";
 
 /** ข้อมูลผู้ใช้ที่ ThaID ส่งกลับมา — เก็บเฉพาะที่ระบบนี้ใช้ */
@@ -137,11 +139,19 @@ async function postForm(path: string, body: Record<string, string>): Promise<Res
 }
 
 export async function exchangeCode(code: string): Promise<TokenResponse> {
-  const res = await postForm("/api/v2/oauth2/token/", {
-    grant_type: "authorization_code",
-    code,
-    redirect_uri: env.thaid.redirectUri,
-  });
+  let res: Response;
+  try {
+    res = await postForm("/api/v2/oauth2/token/", {
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: env.thaid.redirectUri,
+    });
+  } catch (err) {
+    addBreadcrumb("thaid", "แลก code เป็น token — ติดต่อ ThaID ไม่ได้", false);
+    throw err;
+  }
+  // บอกแค่ว่าเรียกแล้วได้อะไร — ไม่ใส่ code, token หรือ claim ใด ๆ
+  addBreadcrumb("thaid", `แลก code เป็น token — HTTP ${res.status}`, res.ok);
 
   const payload = (await res.json().catch(() => ({}))) as Record<string, string>;
   if (!res.ok) {
@@ -166,10 +176,9 @@ export async function revokeToken(
   try {
     await postForm("/api/v2/oauth2/revoke/", { token, token_type_hint: hint });
   } catch (err) {
-    console.warn(
-      `[thaid] revoke ${hint} ไม่สำเร็จ (ข้ามไป):`,
-      err instanceof Error ? err.message : err,
-    );
+    console.warn(`[thaid] revoke ${hint} ไม่สำเร็จ (ข้ามไป) — ดูบรรทัด [capture] ถัดไป`);
+    // ไม่กระทบผู้ใช้ แต่ถ้าเกิดทุกครั้งแปลว่า token ที่ ThaID ออกให้ค้างอยู่ทุกใบ — เก็บไว้ให้เห็นแนวโน้ม
+    captureError(err, { level: "warning", tag: "thaid.revoke" });
   }
 }
 

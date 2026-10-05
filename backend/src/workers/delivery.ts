@@ -17,6 +17,18 @@
 import { DeliveryStatus, PrismaClient } from "@prisma/client";
 
 import { runWithContext } from "../lib/context.js";
+import {
+  FLUSH_ON_EXIT_MS,
+  captureError,
+  exitAfterFatal,
+  flushErrors,
+  initErrorCapture,
+  recordRuntimeEvent,
+} from "../lib/error-capture.js";
+import { closeLogStore, startLogStore } from "../lib/log-store.js";
+import { startErrorAlerts, stopErrorAlerts } from "./error-alerts.js";
+import { startLogRelay, stopLogRelay } from "./log-relay.js";
+import { startLogUpkeep, stopLogUpkeep } from "./log-upkeep.js";
 import { renderAndSend } from "./render.js";
 
 const prisma = new PrismaClient();
@@ -61,8 +73,21 @@ async function claimBatch(): Promise<Claimed[]> {
     RETURNING d.id, d.notification_id, d.destination, d.attempt_count, d.correlation_id`;
 }
 
+/**
+ * รหัสของ SMTP ที่ใช้จัดกลุ่ม — `responseCode` ของ server (535 login ไม่ผ่าน, 550 ผู้รับถูกปฏิเสธ, 421 ช้าเกิน/เกินโควตา)
+ * หรือ `code` แบบ `E…` ของ nodemailer และ socket (EAUTH, ECONNECTION, ETIMEDOUT, ECONNREFUSED) — ไม่ใช่ error ของ
+ * SMTP (เช่น notification ถูกลบไปแล้ว P2025) ได้ null แล้วใช้ fingerprint ตั้งต้น
+ */
+function smtpCode(err: unknown): string | null {
+  const { responseCode, code } = err as { responseCode?: unknown; code?: unknown };
+  if (typeof responseCode === "number") return String(responseCode);
+  if (typeof code === "string" && /^E[A-Z]+$/.test(code)) return code;
+  return null;
+}
+
 async function deliver(row: Claimed) {
   const attempt = row.attempt_count + 1;
+  let notificationType: string | null = null;
 
   try {
     const notification = await prisma.notification.findUniqueOrThrow({
@@ -75,6 +100,8 @@ async function deliver(row: Claimed) {
         subjectId: true,
       },
     });
+
+    notificationType = notification.notificationType;
 
     // เนื้ออีเมลถูกประกอบตอนนี้ ไม่ได้เก็บไว้ในตาราง — ดู workers/render.ts
     await renderAndSend(prisma, row.destination, notification);
@@ -108,7 +135,39 @@ async function deliver(row: Claimed) {
       },
     });
 
-    console.error(`[delivery] ส่งไม่สำเร็จ ครั้งที่ ${attempt}: ${message}`);
+    /**
+     * บรรทัดนี้บอกแค่ว่าเกิดที่ไหน ครั้งที่เท่าไร กับรหัสของ SMTP แล้วชี้ไปที่บรรทัด [capture] ถัดไป — ไม่พิมพ์ข้อความ
+     * ของ error แม้จะกวาดแล้ว: captureError พิมพ์ฉบับที่กวาดแล้วอยู่แล้ว สองบรรทัดที่มีข้อความเดียวกันซ้ำกันเปล่า ๆ
+     * และข้อความของ SMTP ยกที่อยู่ผู้รับมาได้ ("550 5.1.1 <…>: Recipient address rejected") ที่เดียวที่กวาดจึงดีกว่าสองที่
+     */
+    const code = smtpCode(err);
+    console.error(`[delivery] ส่งไม่สำเร็จ ครั้งที่ ${attempt}${code ? ` (${code})` : ""} — ดูบรรทัด [capture] ถัดไป`);
+
+    // ทุกครั้งที่ล้มเป็น warning จัดกลุ่มตามรหัสของ SMTP — ล้มครั้งเดียวแล้ว retry ผ่านเป็นเรื่องปกติ
+    captureError(err, {
+      level: "warning",
+      tag: "delivery.send-failed",
+      fingerprint: code ? `smtp:${code}` : undefined,
+      extra: { deliveryId: row.id, attempt, notificationType },
+    });
+    /**
+     * ครบจำนวนครั้งแล้วเลิกส่ง — error ของตัวเอง แยก issue ตามชนิดของ notification เพราะนี่คืออีเมลที่ผู้รับจะไม่ได้
+     * เลย และก่อนหน้านี้ไม่มีใครเห็นนอกจากแถว DEAD_LETTER ในตาราง correlation id ของแถวยังเป็นของคำขอที่สร้างมัน
+     * (runWithContext ใน tick) event นี้จึงอยู่ในเส้นทางเดียวกับการกดปุ่มที่ทำให้เกิดอีเมลฉบับนั้น
+     */
+    if (exhausted) {
+      captureError(
+        new Error(`อีเมล ${notificationType ?? "(ไม่ทราบชนิด)"} ส่งไม่สำเร็จครบ ${MAX_ATTEMPTS} ครั้ง — เลิกส่ง (DEAD_LETTER)`, {
+          cause: err,
+        }),
+        {
+          level: "error",
+          tag: "delivery.dead-letter",
+          fingerprint: `delivery:dead-letter:${notificationType ?? "unknown"}`,
+          extra: { notificationType, deliveryId: row.id, attempts: attempt },
+        },
+      );
+    }
   }
 }
 
@@ -127,12 +186,39 @@ async function tick() {
 }
 
 async function main() {
+  // ตัวดัก unhandledRejection / uncaughtException และคิวของ error — ก่อนอย่างอื่น (ดู lib/error-capture.ts)
+  initErrorCapture({ service: "delivery-worker" });
   console.log(`[delivery] เริ่มทำงาน — poll ทุก ${POLL_INTERVAL_MS} ms, retry สูงสุด ${MAX_ATTEMPTS} ครั้ง`);
+
+  /**
+   * log store (MongoDB) — ไม่ await โดยตั้งใจ: ลูปส่งอีเมลข้างล่างต้องเริ่มทันทีและต้องไม่ผูกกับ Mongo เลย
+   * startLogStore ไม่ reject และปิดอยู่ก็ไม่โหลด driver (ดู lib/log-store.ts) งานดูแล (index, เพดานขนาด) และ relay ที่
+   * คัดลอก audit_event ลง Mongo (workers/log-relay.ts) เป็นลูปของตัวเองทั้งคู่ — ใช้ PrismaClient ตัวเดียวกับลูปอีเมล
+   * และอ่านทีละคำสั่ง ปกติจึงถือ connection ของ pool ครั้งละหนึ่งตัวต่อลูป ยกเว้นตอน Postgres ช้าจนคำสั่งเกิน 15 วินาที:
+   * `withTimeout` ใน log-relay.ts เลิกรอแต่ไม่ได้ยกเลิก คำสั่งนั้นถือ connection ต่อจนจบ ขณะที่รอบถัดไปเริ่มคำสั่งใหม่ —
+   * ช่วงนั้น relay ถือได้หลายตัว และลูปอีเมลรอ connection นานขึ้น (ช้าเพราะ Postgres ตัวเดียวกันอยู่แล้ว) Mongo ไม่เกี่ยว
+   */
+  void startLogStore({ service: "delivery-worker", maxPoolSize: 3 });
+  startLogUpkeep();
+  startLogRelay(prisma);
+  // อีเมลสรุป error — ลูปของตัวเอง ไม่อยู่ใน tick() ข้างล่าง: ส่งทีละฉบับผ่าน sendRaw เพดาน 30 วินาทีต่อฉบับ SMTP ที่ช้าจึงไม่รั้ง
+  // outbox ไว้ ปิดอยู่จนกว่าจะตั้ง ERROR_ALERT_EMAILS (workers/error-alerts.ts)
+  startErrorAlerts();
+  recordRuntimeEvent("start", { node: process.version });
 
   let running = true;
   const stop = async (signal: string) => {
     console.log(`[delivery] ${signal} received, shutting down`);
     running = false;
+    stopLogUpkeep();
+    stopErrorAlerts();
+    // รอบของ relay ที่กำลังเขียนไม่เกิน 1.5 วินาที — ที่ค้างอ่านซ้ำตอนเริ่มใหม่ได้
+    await stopLogRelay();
+    // เข้าคิว และเขียนป้าย "ปิดตามปกติ" ลงไฟล์ใน container — บันทึกในคิวหายได้ถ้า Mongo หยุดพร้อมกัน ป้ายไม่หาย (lib/error-capture.ts)
+    recordRuntimeEvent("shutdown", { signal });
+    // ไม่เกิน 1.5 + 2 + 1.5 วินาที — อยู่ใน 10 วินาทีของ compose
+    await flushErrors(FLUSH_ON_EXIT_MS);
+    await closeLogStore();
     await prisma.$disconnect();
     process.exit(0);
   };
@@ -143,13 +229,15 @@ async function main() {
     try {
       await tick();
     } catch (err) {
-      console.error("[delivery] รอบนี้ล้มเหลว:", err);
+      // ไม่พิมพ์ `err` ดิบ — error ของ Prisma/SMTP ยกแถวหรือที่อยู่ผู้รับมาได้ captureError พิมพ์ฉบับที่กวาดแล้ว
+      console.error("[delivery] รอบนี้ล้มเหลว — ดูบรรทัด [capture] ถัดไป");
+      captureError(err, { tag: "delivery.tick" });
     }
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
 }
 
-main().catch((err) => {
-  console.error("[delivery] fatal:", err);
-  process.exit(1);
+main().catch((err: unknown) => {
+  console.error("[delivery] fatal — ดูบรรทัด [capture] ถัดไป");
+  exitAfterFatal(err, { mechanism: "captured", tag: "delivery.main" });
 });

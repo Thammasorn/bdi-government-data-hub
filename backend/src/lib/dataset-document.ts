@@ -20,7 +20,7 @@ import {
 import { publicAttachment, storeAttachment } from "./attachment.js";
 import { DocumentRenderError, renderTemplateToPdf } from "./document-render.js";
 import { datasetDocumentValues, type DatasetDocumentInput } from "./dataset-values.js";
-import { LEGAL_SCOPES, publishedDocuments, templateDocx } from "./legal.js";
+import { LEGAL_SCOPES, publishedDocuments, templateDocx, type RenderedDocument } from "./legal.js";
 import { NAME_FIELDS, fullNameTh } from "./person-name.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -164,16 +164,16 @@ export async function renderDatasetDocument(
   return { attachment: publicAttachment(attachment), versionId: params.document.versionId };
 }
 
-/** render ทุกฉบับของ scope นี้ที่มี placeholder — คืนรหัสเอกสารที่สร้าง */
+/** render ทุกฉบับของ scope นี้ที่มี placeholder — คืนรหัส เวอร์ชัน และไฟล์ของแต่ละฉบับที่สร้าง */
 export async function renderDatasetDocuments(
   db: Db,
   params: { request: DatasetDocumentRequest; printedByName: string | null; actorId: string },
-): Promise<string[]> {
+): Promise<RenderedDocument[]> {
   const documents = await publishedDocuments(db, LEGAL_SCOPES.DATASET_REGISTRATION);
-  const rendered: string[] = [];
+  const rendered: RenderedDocument[] = [];
   for (const doc of documents) {
     if (!doc.hasPlaceholders) continue;
-    await renderDatasetDocument(db, {
+    const { attachment } = await renderDatasetDocument(db, {
       request: params.request,
       document: {
         code: doc.code,
@@ -185,7 +185,7 @@ export async function renderDatasetDocuments(
       printedByName: params.printedByName,
       actorId: params.actorId,
     });
-    rendered.push(doc.code);
+    rendered.push({ code: doc.code, versionId: doc.versionId, attachmentId: attachment.id });
   }
   return rendered;
 }
