@@ -111,7 +111,7 @@ export function ActionDialog({
             valid={phraseOk && phrase.length > 0}
           />
         ) : null}
-        {error ? <ErrorNotice view={error} /> : null}
+        {error ? <ErrorNotice view={error} hideFields={reason ? ["reason"] : []} /> : null}
         <div className="flex flex-wrap justify-end gap-2 pt-1">
           <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>
             ยกเลิก

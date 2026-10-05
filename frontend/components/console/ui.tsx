@@ -210,11 +210,33 @@ export function Tabs<K extends string>({
 }
 
 /** กล่องข้อผิดพลาดของคำสั่ง — หัวข้อ ข้อความของ backend และลิงก์ไปสิ่งที่ขวางอยู่ (lib/admin-errors.ts) */
-export function ErrorNotice({ view, className }: { view: AdminErrorView; className?: string }) {
+export function ErrorNotice({
+  view,
+  className,
+  hideFields = [],
+}: {
+  view: AdminErrorView;
+  className?: string;
+  /** ช่องที่หน้านั้นแสดงข้อความไว้ใต้ช่องอยู่แล้ว */
+  hideFields?: string[];
+}) {
+  const fieldMessages = [
+    ...new Set(Object.entries(view.fields).filter(([k]) => !hideFields.includes(k)).map(([, m]) => m)),
+  ];
   return (
     <div role="alert" className={clsx("rounded-xl bg-danger-bg px-4 py-3 text-[14px]", className)}>
       <p className="font-semibold text-danger">{view.title}</p>
-      <p className="mt-0.5 text-ink">{view.message}</p>
+      {fieldMessages.length > 0 ? (
+        // 400 `validation` มีข้อความต่อช่องและ `message` เป็นค่าตั้งต้นที่ไม่บอกอะไร — แสดงข้อความของแต่ละช่องแทน
+        // หน้าที่ผูกข้อความไว้ใต้ช่องเองส่ง `hideFields` มา ไม่งั้นข้อความเดียวกันขึ้นสองที่
+        <ul className="mt-0.5 list-disc pl-5 text-ink">
+          {fieldMessages.map((m) => (
+            <li key={m}>{m}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-0.5 text-ink">{view.message}</p>
+      )}
       {view.next ? (
         <Link href={view.next.href} className="mt-1.5 inline-block font-medium text-navy-700 underline">
           {view.next.label} →
