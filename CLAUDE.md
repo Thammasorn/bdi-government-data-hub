@@ -16,8 +16,9 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
 - `docs/02-ui-spec.md` — design tokens measured from the CI artwork, screen inventory
 - `docs/03-demo-walkthrough.md` — how to run any journey end to end, seed data, public deploy;
   its §10 is the script for demoing live, and the only part written for an audience
-- `notebooks/journey-a-admin-create-user.ipynb` — Journey A has no UI by design, so this walks
-  its API calls one cell at a time against a checkout with real SMTP configured
+- `notebooks/journey-a-admin-create-user.ipynb` — Journey A's API calls one cell at a time against
+  a checkout with real SMTP configured. Journey A had no UI by design until the Admin Console
+  (2026-10-05, `/console`, see **Auth**); the notebook still works, on the admin token
 - `docs/04-dataset-registration-plan.md` — how Journey C maps onto schema, endpoints and screens
 - `docs/07-thaid-integration.md` — the ThaID flow, its configuration, what DOPA has not
   granted us yet, and the SIT run that exercised it against their sandbox
@@ -512,7 +513,11 @@ key, a role) comes out in the transaction's result and is audited after commit, 
 the callback (`ensureApproverAccount()` returns what it made for that reason; the in-transaction
 `ROLE_REVOKED` of `revokeRoleAssignments()` is QA A4's and is left alone). `requireAdminToken`
 stamps the request `admin-portal` and `logAudit` adds `metadata.admin_token_fp`, since the actor
-on that path is always "system".
+on that path is always "system". On the console's session path (`requireAdmin`, see **Auth**) the
+actor is the administrator and `logAudit` adds `metadata.admin_via: "SESSION"` instead, which
+`viaOf()` projects as `ADMIN_SESSION`. Admin routes take every `*_by` and helper actor from
+`adminActorId()` (`lib/context.ts`), never `SYSTEM_USER_ID` — that is what keeps the two paths
+honest with one code path.
 
 **MongoDB is a searchable copy, never the record.** The `mongo` service (database `bdi_logs`,
 `lib/log-store.ts`) holds a copy of every `audit_event` row (`activity`), the error store and the
@@ -619,9 +624,28 @@ dispatcher had no `ORGANIZATION_APPROVAL` branch at all, so that stage opened in
 
 ### Auth
 
-Invite-only. There is no self-signup and no admin UI — the spec says so explicitly.
-`POST /api/admin/invitations` is guarded by a shared secret (`x-admin-token`), not a session,
-because the caller is an operator script.
+Invite-only. There is no self-signup. The admin API (`/api/admin/*` except the log API) is reachable
+two ways, both through **`requireAdmin`** in `middleware/auth.ts`:
+
+- **`x-admin-token`** (shared secret) — Postman, the Journey A notebook, and bootstrapping the first
+  administrator of a new deployment (`POST /api/admin/invitations {role: SYSTEM_ADMINISTRATOR}`).
+  A request with the header, or with no session cookie at all, goes down this path exactly as it
+  always has; a wrong token is a 401, never a fallback to the cookie.
+- **A session holding `SYSTEM_ADMINISTRATOR`** — the **Admin Console** at `/console` (card "Admin
+  Console", 2026-10-05; Phase 2 of the Notion "Admin Portal" page, whose Phase 1 was API-only).
+  Every non-GET on this path must carry an `Origin` in `CORS_ORIGIN` or `APP_URL` (403
+  `csrf_origin`): the cookie is `SameSite=lax`, every `*.thammasorn.org` host is the same site,
+  and the multipart template upload has no CORS preflight to stop a plain form. Browsers always
+  send `Origin` on those methods and the Next proxy forwards it, so real users never see this.
+
+On the session path the server also refuses what the token path never could: an administrator
+acting on their own account (409 `self_action` for suspend, deactivate, role removal, transfer,
+identity, release-identity, session revoke), and `lastBdiHolder()` now guards role removal and
+transfer as well as suspend/deactivate, so nobody can remove the last administrator or the last
+BDI officer. `SYSTEM_ADMINISTRATOR` sees every registration request through the ordinary list and
+detail endpoints (`seesAllRequests()` in `lib/roles.ts`) but closes no gate — it is not in
+`TASK_TYPE_ROLES`. `seed:demo` creates `admin@bdi.or.th`. The log API stays token-only and
+proxy-blocked; it has no screen, on purpose.
 
 **The session cookie identifies the user and nothing else.** `requireAuth` re-reads roles and
 organisation from the database on every request, because both change while a session is still
@@ -777,9 +801,9 @@ DELETE /api/admin/registrations/datasets/:id             ลบออกจา�
 
 `:id` is the **request** id or its request number — an operator holds the number, never the
 uuid. Every endpoint requires a `reason` of at least ten characters, the same rule
-`/api/admin/users` follows and for the same reason: the admin token is not a person, so
-`audit_event` can only say "the system did it" and the typed reason is the whole of the
-provenance. It also reaches the organisation as the notification text.
+`/api/admin/users` follows and for the same reason: on the token path the admin token is not a
+person, so `audit_event` can only say "the system did it" and the typed reason is the whole of the
+provenance (on the console's session path the row names the administrator as well). It also reaches the organisation as the notification text.
 
 **Reset closes the round; it does not delete it.** The active gate is closed `CANCELLED`
 (`cancelActiveTask()`) rather than `RETURNED` — nobody reviewed anything — `submitted_at`,
@@ -1380,6 +1404,17 @@ computed on upload. There is no virus scanner yet, so `scan_status` is set strai
 — that is a marked TODO in `lib/attachment.ts`, not an oversight.
 
 ### Frontend
+
+**The Admin Console is `/console`** (`app/console/*`, `components/console/*`), gated by
+`ConsoleShell` (`SYSTEM_ADMINISTRATOR` only; `/` redirects administrators there). It is not
+`/admin/*`, which is the BDI staff review queue. Three pieces carry most of it: `ActionDialog`
+(every mutating button — the API's ten-character reason, a typed confirmation for the commands
+that cannot be undone, refusals kept in the dialog), `lib/admin-errors.ts` (409 code → headline
+and a link to whatever is in the way, from the ids the API puts in the body; `ApiError.details`
+keeps that body), and `useUrlFilters` (list filters live in the query string so the overview's
+counts can link to a filtered list). The registration screens reuse `OrganizationRequestTable` /
+`DatasetRequestTable` and both `DetailView`s read-only under `RegistrationAdminPanel`;
+`SnapshotEditor` sends only changed keys to the `.strict()` admin `PUT`.
 
 Design tokens in `frontend/app/globals.css` under Tailwind 4's `@theme`. The colors were
 sampled from the `.ai` files in `assets/theme_ci_design/`, not chosen by eye —

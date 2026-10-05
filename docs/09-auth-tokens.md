@@ -252,6 +252,13 @@ OTP แบบ `REGISTRATION` อีกแล้ว
 ที่มี role `SYSTEM_ADMINISTRATOR` เป็นงานของการ์ด Admin Portal ซึ่งยังไม่มีหน้าจอ —
 ทำตอนนี้จะพัง Postman collection และ notebook ที่ใช้เส้นทางนี้อยู่ โดยยังไม่มีอะไรมาแทน
 
+**อัปเดต 2026-10-05 (การ์ด Admin Console):** ทำแล้วโดยไม่ถอด token — guard ของ `/api/admin/*` เปลี่ยนเป็น `requireAdmin`
+ซึ่งรับได้สองทาง: `x-admin-token` (หรือคำขอที่ไม่มี cookie เลย) ไปทาง `requireAdminToken` เหมือนเดิมทุกอย่าง ส่วนคำขอที่มี
+session ของบัญชีที่ถือ `SYSTEM_ADMINISTRATOR` คือหน้า `/console` — actor ในแถว audit เป็นคนนั้น (`adminActorId()`),
+`metadata.admin_via = SESSION`, via ใน log store เป็น `ADMIN_SESSION` และคำขอที่ไม่ใช่ GET ต้องมี `Origin` ของระบบ (403
+`csrf_origin`) เพราะ cookie เป็น `SameSite=lax` ซึ่งไม่กันโดเมนย่อยของไซต์เดียวกัน token จึงเหลือไว้สำหรับ Postman, notebook
+และการตั้งผู้ดูแลระบบคนแรกของ deployment ใหม่ (`POST /api/admin/invitations` ด้วย role `SYSTEM_ADMINISTRATOR`)
+
 คอลเลกชัน Postman ของ endpoint กลุ่มนี้อยู่ที่ `docs/bdi-admin-portal.postman_collection.json`
 (สร้างหน่วยงาน + ส่งลิงก์เปิดใช้งาน + ดู/ยกเลิกคำเชิญ)
 

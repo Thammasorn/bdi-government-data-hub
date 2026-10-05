@@ -87,6 +87,46 @@
       "response": []
     },
     {
+      "name": "S · Overview counts (what the console's first page shows)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/summary",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "summary"
+          ]
+        },
+        "description": "ตัวเลขของหน้าแรกของ `/console` — บัญชีตามสถานะ หน่วยงานตามสถานะ คำขอตามสถานะ คำเชิญที่ยังใช้ได้ / ใกล้หมดอายุ (48 ชม.) / เลยกำหนดแต่ยังไม่มีใครกด และอีเมลที่ส่งไม่สำเร็จ (`DEAD_LETTER`) ไม่มีข้อมูลส่วนบุคคล"
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "try {",
+              "    const b = pm.response.json();",
+              "    if (pm.response.code >= 300) {",
+              "        console.warn(pm.response.code, b.error, '·', b.message || JSON.stringify(b.fields));",
+              "    } else {",
+              "        console.log(JSON.stringify(b, null, 2));",
+              "    }",
+              "} catch (e) {",
+              "    // ไม่ใช่ JSON (เช่นไฟล์ที่ดาวน์โหลด) — ดูที่แท็บ Body",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "A · Create an organization (full details)",
       "event": [
         {
@@ -325,6 +365,161 @@
         }
       },
       "response": []
+    },
+    {
+      "name": "E1 · Suspend an organization",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/organizations/{{organizationId}}/suspend",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "organizations",
+            "{{organizationId}}",
+            "suspend"
+          ]
+        },
+        "description": "ระงับหน่วยงานชั่วคราว (การ์ด Admin Console 2026-10-05) — เปลี่ยนแค่ `status` เป็น `SUSPENDED` ไม่แตะบัญชี บทบาท หรือคำขอ คำตอบมี `warnings` บอกว่ายังมีบัญชีที่ใช้งานอยู่และคำขอที่ค้างกี่ใบ หน่วยงานที่ไม่ใช่ `PENDING_REGISTRATION` ยื่นคำขอจดทะเบียนใหม่ไม่ได้ และที่ไม่ใช่ `ACTIVE` ยื่นคำขอชุดข้อมูลไม่ได้\n\n| Status | Error | Cause |\n| --- | --- | --- |\n| 400 | `validation` | ไม่มี `reason` หรือสั้นกว่าสิบตัวอักษร |\n| 404 | `not_found` | ไม่มีหน่วยงานนี้ |\n| 409 | `bdi_organization` | หน่วยงาน BDI เปลี่ยนสถานะไม่ได้ |\n| 409 | `invalid_state` | ระงับได้จาก `PENDING_REGISTRATION` หรือ `ACTIVE` เท่านั้น |",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"ระบุเหตุผลที่ชัดเจนอย่างน้อยสิบตัวอักษร\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "try {",
+              "    const b = pm.response.json();",
+              "    if (pm.response.code >= 300) {",
+              "        console.warn(pm.response.code, b.error, '·', b.message || JSON.stringify(b.fields));",
+              "    } else {",
+              "        console.log('สถานะ =', b.organization.status);",
+              "        (b.warnings || []).forEach((w) => console.warn(w));",
+              "    }",
+              "} catch (e) {",
+              "    // ไม่ใช่ JSON (เช่นไฟล์ที่ดาวน์โหลด) — ดูที่แท็บ Body",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "E2 · Deactivate an organization (instead of deleting it)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/organizations/{{organizationId}}/deactivate",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "organizations",
+            "{{organizationId}}",
+            "deactivate"
+          ]
+        },
+        "description": "ยุติการใช้งานหน่วยงาน — `status` เป็น `INACTIVE` ใช้แทนการลบ (docs/10 §9) แถวและประวัติอยู่ครบ ไม่ลากบัญชีหรือคำขอไปด้วย `warnings` บอกสิ่งที่ค้าง เปิดกลับได้ด้วย **E3**",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"ระบุเหตุผลที่ชัดเจนอย่างน้อยสิบตัวอักษร\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "try {",
+              "    const b = pm.response.json();",
+              "    if (pm.response.code >= 300) {",
+              "        console.warn(pm.response.code, b.error, '·', b.message || JSON.stringify(b.fields));",
+              "    } else {",
+              "        console.log('สถานะ =', b.organization.status);",
+              "        (b.warnings || []).forEach((w) => console.warn(w));",
+              "    }",
+              "} catch (e) {",
+              "    // ไม่ใช่ JSON (เช่นไฟล์ที่ดาวน์โหลด) — ดูที่แท็บ Body",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "E3 · Reactivate an organization",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/organizations/{{organizationId}}/reactivate",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "organizations",
+            "{{organizationId}}",
+            "reactivate"
+          ]
+        },
+        "description": "เปิดหน่วยงานที่ระงับหรือยุติไว้อีกครั้ง — กลับเป็น `ACTIVE` ถ้าเคยมีคำขอจดทะเบียนที่อนุมัติแล้ว ไม่งั้นกลับเป็น `PENDING_REGISTRATION` (ไม่ข้าม Journey B)",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"ระบุเหตุผลที่ชัดเจนอย่างน้อยสิบตัวอักษร\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "try {",
+              "    const b = pm.response.json();",
+              "    if (pm.response.code >= 300) {",
+              "        console.warn(pm.response.code, b.error, '·', b.message || JSON.stringify(b.fields));",
+              "    } else {",
+              "        console.log('สถานะ =', b.organization.status);",
+              "    }",
+              "} catch (e) {",
+              "    // ไม่ใช่ JSON (เช่นไฟล์ที่ดาวน์โหลด) — ดูที่แท็บ Body",
+              "}"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "1 · Invite a user into that organization",
@@ -1297,6 +1492,109 @@
       "response": []
     },
     {
+      "name": "L5 · Download a published or old version (.docx or pdf)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/legal-documents/A0/versions/VERSION_ID/file?kind=docx",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "legal-documents",
+            "A0",
+            "versions",
+            "VERSION_ID",
+            "file"
+          ],
+          "query": [
+            {
+              "key": "kind",
+              "value": "docx"
+            }
+          ]
+        },
+        "description": "ดาวน์โหลดไฟล์ของเวอร์ชันหนึ่ง — `kind=docx` ต้นแบบที่อัปโหลด (ค่าตั้งต้น) หรือ `kind=pdf` ฉบับเปล่าที่แปลงไว้ตอนเผยแพร่ เอา id ของเวอร์ชันจาก **L3** (`documents[].versions[].id`) มาแทน `VERSION_ID` ใช้ Send and Download"
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "try {",
+              "    const b = pm.response.json();",
+              "    if (pm.response.code >= 300) {",
+              "        console.warn(pm.response.code, b.error, '·', b.message || JSON.stringify(b.fields));",
+              "    } else {",
+              "        console.log(b);",
+              "    }",
+              "} catch (e) {",
+              "    // ไม่ใช่ JSON (เช่นไฟล์ที่ดาวน์โหลด) — ดูที่แท็บ Body",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "L6 · Restore an old version (publishes it again as N+1)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/legal-documents/A0/versions/VERSION_ID/restore",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "legal-documents",
+            "A0",
+            "versions",
+            "VERSION_ID",
+            "restore"
+          ]
+        },
+        "description": "นำเนื้อหาของเวอร์ชันเก่ากลับมาใช้ — เผยแพร่ .docx ของเวอร์ชันนั้นเป็นเวอร์ชันใหม่ ไม่ลบหรือพลิกสถานะของแถวไหน ไฟล์ถูกตรวจ placeholder กับรายชื่อตัวแปรของวันนี้อีกครั้ง (อาจได้ 400 ถ้าใช้ชื่อที่เลิกไปแล้ว)\n\n| Status | Error | Cause |\n| --- | --- | --- |\n| 404 | `not_found` | ไม่มีเวอร์ชันนี้ของเอกสารนี้ |\n| 409 | `already_current` | เป็นฉบับที่เผยแพร่อยู่แล้ว |",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"ระบุเหตุผลที่ชัดเจนอย่างน้อยสิบตัวอักษร\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "try {",
+              "    const b = pm.response.json();",
+              "    if (pm.response.code >= 300) {",
+              "        console.warn(pm.response.code, b.error, '·', b.message || JSON.stringify(b.fields));",
+              "    } else {",
+              "        console.log(b.message);",
+              "    }",
+              "} catch (e) {",
+              "    // ไม่ใช่ JSON (เช่นไฟล์ที่ดาวน์โหลด) — ดูที่แท็บ Body",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "R1 · Reset an organization registration to draft",
       "request": {
         "method": "POST",
@@ -1687,6 +1985,60 @@
               "} catch (e) {",
               "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (เช่น 409 หรือ 404) — ดูที่ตัว response ได้เลย",
               "    console.log('response:', pm.response.code, pm.response.text().slice(0, 300));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "R8 · Cancel an organization registration (the row stays)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/registrations/organizations/ORG-REG-2026-0001/cancel",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "registrations",
+            "organizations",
+            "ORG-REG-2026-0001",
+            "cancel"
+          ]
+        },
+        "description": "ปิดเรื่องคำขอจดทะเบียนหน่วยงาน — ครึ่งของ Journey B ที่คู่กับ **R6** แถวยังอยู่ สถานะ `CANCELLED` ทางกลับคือ **R1** ผู้มีอำนาจฯ ที่ยังไม่เปิดใช้งาน: คำเชิญถูกยกเลิกและบัญชี PENDING ถูกลบ (เหมือน R1) ที่เปิดใช้งานแล้ว: ไม่แตะ และบอกไว้ใน `warnings` หน่วยงานได้รับแจ้งพร้อมเหตุผล\n\n| Status | Error | Cause |\n| --- | --- | --- |\n| 409 | `already_cancelled` | ยกเลิกไปแล้ว |\n| 409 | `already_approved` | อนุมัติแล้ว — ระงับหรือยุติหน่วยงานด้วย **E1** / **E2** แทน |\n\n**แก้เลขในลิงก์ให้เป็นใบที่คุณหมายถึงก่อนกดส่ง**",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"ระบุเหตุผลที่ชัดเจนอย่างน้อยสิบตัวอักษร\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "try {",
+              "    const b = pm.response.json();",
+              "    if (pm.response.code >= 300) {",
+              "        console.warn(pm.response.code, b.error, '·', b.message || JSON.stringify(b.fields));",
+              "    } else {",
+              "        console.log(b.message);",
+              "        console.log('สถานะ =', b.registration.status, '· ผู้มีอำนาจฯ =', b.approver.outcome);",
+              "        (b.warnings || []).forEach((w) => console.warn(w));",
+              "    }",
+              "} catch (e) {",
+              "    // ไม่ใช่ JSON (เช่นไฟล์ที่ดาวน์โหลด) — ดูที่แท็บ Body",
               "}"
             ]
           }

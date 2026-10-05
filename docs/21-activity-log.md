@@ -575,7 +575,7 @@ drop อะไรได้**:
 | `actor.name` | string \| null | ยกจาก `metadata.actor_name` ผ่านกฎเลขบัตร (3.6) |
 | `actor.roles` | string[] | ยกจาก `metadata.actor_roles` (`[]` ถ้าไม่มี) |
 | `actor.organizationId` | string \| null | ยกจาก `metadata.actor_organization_id` |
-| `via` | `SESSION` `ADMIN_TOKEN` `LOG_TOKEN` `WORKER` `SCRIPT` `ANONYMOUS` `SYSTEM` | 3.4 |
+| `via` | `SESSION` `ADMIN_SESSION` `ADMIN_TOKEN` `LOG_TOKEN` `WORKER` `SCRIPT` `ANONYMOUS` `SYSTEM` | 3.4 |
 | `tokenFps` | string[] | fingerprint 12 ตัวของ token ที่แถวนี้เกี่ยว: `metadata.admin_token_fp` (งานผ่าน admin token) · `token_fp` (แถวปฏิเสธทันที `AUDIT_LOG_READ` และ `ERROR_ISSUE_STATUS_CHANGED` — `tokenFp=<fp ของ log token>` จึงได้การเปลี่ยนสถานะ issue มาด้วย) · `token_fps` (แถวสรุปของการปฏิเสธ) · `http`: token ที่ส่งมา ผ่านหรือไม่ผ่าน — `tokenFp=` ของ API (G8) ค้นด้วยฟิลด์นี้ |
 | `subject.type` · `subject.id` | string · string \| null | `subject_type` · `subject_id` · `http`: ตาม route (4.11) |
 | `organizationId` | string \| null | `organization_id` · `http`: หน่วยงานของ `/organizations/:id` หรือ `?organizationId=` |
@@ -642,7 +642,10 @@ Postgres ส่วนที่ถูกตัดจึงหายจริง �
 2. `sourceComponent` เป็น `notification-worker` หรือ `activation-expiry-job` → `WORKER` — กฎเผื่ออนาคต วันนี้**ไม่มีแถวแบบนี้**: worker ไม่เขียน audit และ
    `activation-expiry-job` มีอยู่แค่ในคอมเมนต์ของ `schema.prisma`
 3. `action` เป็น `AUDIT_LOG_READ` หรือ `ERROR_ISSUE_STATUS_CHANGED` → `LOG_TOKEN`
-4. `sourceComponent = admin-portal` หรือมี `metadata.admin_token_fp` → `ADMIN_TOKEN` — มาก่อน actor โดยตั้งใจ: แถวที่ helper เขียนระหว่างคำสั่งของ
+4. `sourceComponent = admin-portal` กับ `metadata.admin_via = SESSION` (และไม่มี `admin_token_fp`) → `ADMIN_SESSION` — ผู้ดูแลระบบสั่งผ่านหน้า
+   `/console` ด้วย session (การ์ด Admin Console 2026-10-05) actor ของแถวคือผู้ดูแลคนนั้น บันทึก `http` ของ `ADMIN_API_REQUEST` ก็ได้ via นี้และ
+   actor เป็น USER ได้การยกเว้นตอนเกินเพดานเหมือน token ที่ผ่าน (`isTrustedAccess()`) ข้อนี้ทำให้ข้อถัดไปเลื่อนลำดับหนึ่งขั้น
+4′. `sourceComponent = admin-portal` หรือมี `metadata.admin_token_fp` → `ADMIN_TOKEN` — มาก่อน actor โดยตั้งใจ: แถวที่ helper เขียนระหว่างคำสั่งของ
    admin มี `actor_type USER` (บัญชีเป้าหมาย — 6.2) ถ้าดูแค่ actor จะได้ `SESSION` ทั้งที่มาทาง admin token
 5. `actor.type = ANONYMOUS` → `ANONYMOUS` — `ADMIN_TOKEN_REJECTED` `LOG_TOKEN_REJECTED` และแถวก่อนล็อกอินที่ route ส่ง `ANONYMOUS` เอง ·
    **ไม่ใช่ทุกแถวก่อนล็อกอิน**: แถวที่ส่ง `actorId` ของบัญชีที่เพิ่งพิสูจน์ตัวตน (`LOGIN_SUCCEEDED` · `USER_ACCOUNT_ACTIVATED` `ACTIVATION_KEY_USED`
