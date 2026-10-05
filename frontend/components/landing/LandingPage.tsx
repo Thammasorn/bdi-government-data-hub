@@ -31,7 +31,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
-import { D2Mark, LogoImage } from "@/components/brand/Logo";
+import { BDI_WEBSITE_URL, D2Mark, LogoImage } from "@/components/brand/Logo";
 
 import diagram from "./d2-how-it-works.webp";
 import {
@@ -278,10 +278,20 @@ function TopNav({ active }: { active: string }) {
       className="sticky top-0 z-30 border-b border-line/70 bg-white/80 frost-12"
     >
       <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3 sm:px-6">
-        <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="หน้าแรก D2">
-          <LogoImage className="h-14" />
-          <D2Mark className="h-9" />
-        </Link>
+        {/* โลโก้ BDI พาไปเว็บไซต์สถาบัน ส่วน D2 ไม่ใช่ลิงก์ — เราอยู่หน้าแรกอยู่แล้ว
+            ลิงก์กลับมาหน้าเดิมทำให้ขึ้นรูปมือทั้งที่กดแล้วไม่ไปไหน (การ์ด "Logo Link") */}
+        <div className="flex shrink-0 items-center gap-2.5">
+          <a
+            href={BDI_WEBSITE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex"
+            aria-label="เว็บไซต์สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) — เปิดในแท็บใหม่"
+          >
+            <LogoImage className="h-14" />
+          </a>
+          <D2Mark className="h-9 cursor-default" />
+        </div>
 
         <nav aria-label="หัวข้อในหน้านี้" className="hidden min-w-0 flex-1 xl:block">
           <ul
@@ -945,14 +955,19 @@ const DOWNLOAD_PILL =
   "inline-flex shrink-0 items-center gap-1.5 self-start rounded-full border border-line p-2 text-[13px] font-medium sm:self-center sm:px-3.5 sm:py-1.5";
 
 /**
- * ปุ่มดาวน์โหลดท้ายแถวของกฎหมายหนึ่งฉบับ — แบบเดียวกับปุ่มท้ายแถวของเอกสาร A0–A4
+ * ปุ่มดาวน์โหลดท้ายแถวของกฎหมายหรือเอกสารหนึ่งฉบับ — แบบเดียวกับปุ่มท้ายแถวของเอกสาร A0–A4
  * ในหน้าคำขอ ชื่อทางซ้ายจึงเป็นข้อความธรรมดา ไม่ต้องขีดเส้นใต้ทั้งบรรทัดให้เป็นลิงก์
  *
  * เปิดในแท็บใหม่ด้วย เพราะเบราว์เซอร์ส่วนใหญ่เปิด PDF ให้อ่านแทนการบันทึกอยู่ดี คนที่แค่
- * อยากอ่านจะได้ไม่หลุดออกจากหน้าแรก ถ้าบันทึก ไฟล์ได้ชื่อภาษาไทยของรายการ ไม่ใช่ชื่อภาษาอังกฤษ
- * ใน URL
+ * อยากอ่านจะได้ไม่หลุดออกจากหน้าแรก ถ้าบันทึก ไฟล์ได้ **ชื่อเดิมตามที่ BDI ส่งมา** (ดู `LegalItem`)
+ *
+ * ชื่อไฟล์มีภาษาไทย ช่องว่าง และ `[ ]` ซึ่งใส่ใน URL ดิบ ๆ ไม่ได้ — `encodeURIComponent`
+ * เข้ารหัสทุกตัว (`encodeURI` ปล่อย `[ ]` ไว้) ส่วน `download` ใช้ชื่อดิบ
  */
 function DownloadButton({ item }: { item: LegalItem }) {
+  const slash = item.file.lastIndexOf("/");
+  const filename = item.file.slice(slash + 1);
+  const href = `${item.file.slice(0, slash + 1)}${encodeURIComponent(filename)}`;
   const icon = (
     <svg className="h-4 w-4" {...iconProps}>
       <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />
@@ -960,8 +975,8 @@ function DownloadButton({ item }: { item: LegalItem }) {
   );
   return (
     <a
-      href={item.file}
-      download={`${item.title}${item.file.slice(item.file.lastIndexOf("."))}`}
+      href={href}
+      download={filename}
       target="_blank"
       rel="noopener"
       aria-label={`ดาวน์โหลด ${item.title}`}
@@ -1001,7 +1016,8 @@ function Legal() {
       {/* ข้อความตัดบรรทัดเฉพาะจอแคบ ป้ายรหัสจึงชิดบนที่นั่น ส่วนจอกว้างเป็นบรรทัดเดียว จัดกึ่งกลางถูกกว่า */}
       <div className="reveal mt-3 flex items-start gap-4 rounded-2xl bg-white px-6 py-4 shadow-card sm:items-center">
         <DocCode code={LEGAL_PRIMARY.code} />
-        <span className="text-[16px] leading-[1.7] text-ink">{LEGAL_PRIMARY.title}</span>
+        <span className="min-w-0 flex-1 text-[16px] leading-[1.7] text-ink">{LEGAL_PRIMARY.title}</span>
+        <DownloadButton item={LEGAL_PRIMARY} />
       </div>
 
       {/*
@@ -1021,7 +1037,8 @@ function Legal() {
               className="flex items-start gap-4 border-t border-line py-3.5 first:border-t-0 first:pt-0 last:pb-0 sm:items-center"
             >
               <DocCode code={doc.code} muted />
-              <span className="text-[15px] leading-[1.7] text-ink">{doc.title}</span>
+              <span className="min-w-0 flex-1 text-[15px] leading-[1.7] text-ink">{doc.title}</span>
+              <DownloadButton item={doc} />
             </li>
           ))}
         </ul>

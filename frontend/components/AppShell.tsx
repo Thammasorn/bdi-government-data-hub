@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { Logo } from "@/components/brand/Logo";
+import { BDI_WEBSITE_URL, D2Mark, Logo, LogoImage } from "@/components/brand/Logo";
 import { NotificationBell } from "@/components/NotificationBell";
 import { SessionChangedDialog } from "@/components/SessionChangedDialog";
 import { announceSignOut, sessionUserName, useSession } from "@/components/SessionProvider";
@@ -197,13 +197,26 @@ function Header() {
       <div className="bg-brand-gradient h-[3px]" />
       <div className="border-b border-line">
         <div className="mx-auto flex h-20 max-w-6xl items-center gap-6 px-4 sm:px-6">
-          {/* `flex` ไม่ใช่ block: <Logo> เป็น inline-flex ถ้าปล่อยให้มันอยู่ใน line box ของลิงก์
+          {/* `flex` ไม่ใช่ block: โลโก้เป็นภาพ inline ถ้าปล่อยให้มันอยู่ใน line box ของลิงก์
               ลิงก์จะสูงกว่าโลโก้ราว 7px (ที่ว่างใต้เส้นฐานของบรรทัด) แล้ว items-center ของแถบหัว
               จะจัดกึ่งกลางให้ "ลิงก์" ไม่ใช่ "โลโก้" — ตัวโลโก้กับชื่อระบบจึงลอยสูงกว่าป้ายเมนู
               ราว 3.6px ซึ่งคือสิ่งที่การ์ด "UI Navbar ไม่ตรง" รายงานมา */}
-          <Link href="/" className="flex shrink-0" aria-label="หน้าแรก ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)">
-            <Logo subtitle={null} />
-          </Link>
+          {/* โลโก้สองอันเป็นลิงก์คนละที่: BDI เปิดเว็บไซต์สถาบันในแท็บใหม่ (การ์ด "Logo Link")
+              D2 ยังพากลับหน้าแรกของระบบเหมือนเดิม — ช่องไฟ gap-3 เท่ากับใน <Logo> */}
+          <div className="flex shrink-0 items-center gap-3">
+            <a
+              href={BDI_WEBSITE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex"
+              aria-label="เว็บไซต์สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) — เปิดในแท็บใหม่"
+            >
+              <LogoImage />
+            </a>
+            <Link href="/" className="flex" aria-label="หน้าแรก ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)">
+              <D2Mark />
+            </Link>
+          </div>
 
           <nav aria-label="เมนูหลัก" className="hidden flex-1 items-center gap-1 md:flex">
             {items.map((item) => {

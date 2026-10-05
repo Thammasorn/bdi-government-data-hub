@@ -224,13 +224,19 @@ export const CONTACT = {
 // ── กฎหมายและเอกสารที่เกี่ยวข้อง ────────────────────────────────────────
 
 /**
- * กฎหมายหนึ่งฉบับบนหน้าแรก — `file` คือ path ใต้ `frontend/public` ที่ให้คนอ่านดาวน์โหลด
+ * กฎหมายหรือเอกสารหนึ่งฉบับบนหน้าแรก — `file` คือ path ใต้ `frontend/public` ที่ให้คนอ่านดาวน์โหลด
  *
- * **ดาวน์โหลดได้เฉพาะกฎหมาย** เอกสาร A0–A3 ข้างล่างเป็นรายการชื่อเฉย ๆ ไม่มีปุ่ม (BDI แจ้ง
- * 2026-09-30) — ฉบับที่หน่วยงานใช้จริงถูก render แยกให้แต่ละหน่วยงานในขั้นลงนาม
+ * ทุกรายการในหัวข้อนี้ดาวน์โหลดได้ และเป็น PDF ทั้งหมด ไฟล์มาจาก NJ (`assets/info_page/doc`)
+ * — A0–A3 เป็นชุด version_01_25691005 (2026-10-01) ฉบับเปล่าสำหรับอ่าน ไม่มีช่อง `{{...}}`
+ * ของ template ที่ระบบ render ให้แต่ละหน่วยงานในขั้นลงนาม และไม่ได้ผูกกับเวอร์ชันในฐานข้อมูล
+ * BDI ออกฉบับใหม่เมื่อไรต้องเปลี่ยนไฟล์ที่นี่ด้วย
  *
- * ตั้งชื่อไฟล์ใน `public/documents/` เป็นภาษาอังกฤษ เพื่อให้ URL ไม่ต้อง percent-encode
- * ชื่อที่ผู้ใช้ได้ตอนบันทึกคือชื่อภาษาไทยของรายการ (ดู `DownloadButton`)
+ * **ชื่อไฟล์ต้องเป็นชื่อเดิมตามที่ BDI ส่งมาทุกตัวอักษร** (สั่งไว้ 2026-10-01) ทั้งในโฟลเดอร์และ
+ * ตอนผู้ใช้บันทึก — ห้ามเปลี่ยนเป็นภาษาอังกฤษหรือตั้งชื่อตามหัวข้อรายการ `file` จึงเขียนเป็นชื่อดิบ
+ * (ภาษาไทย ช่องว่าง วงเล็บเหลี่ยม) แล้ว `DownloadButton` percent-encode ให้ตอนทำลิงก์
+ *
+ * (ประวัติ: 2026-09-30 เคยเอาปุ่มของ A0–A3 ออก แล้ว BDI แจ้งกลับวันรุ่งขึ้นว่าต้องมี · A0–A3
+ * เคยเป็น .docx อยู่ครึ่งวันก่อนได้ฉบับ PDF)
  */
 export interface LegalItem {
   title: string;
@@ -246,12 +252,12 @@ export interface LegalItem {
 export const LEGAL_REGULATIONS: LegalItem[] = [
   {
     title: "ระเบียบสำนักนายกรัฐมนตรีว่าด้วยการแบ่งปันข้อมูลดิจิทัล พ.ศ. 2569",
-    file: "/documents/pm-regulation-digital-data-sharing-2569.pdf",
+    file: "/documents/ระเบียบสำนักนายก Data sharing.pdf",
   },
   {
     title:
       "ประกาศสถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) เรื่อง รายการชุดข้อมูลดิจิทัล ด้านการจัดการภัยพิบัติและสถานการณ์ฉุกเฉิน",
-    file: "/documents/bdi-announcement-disaster-emergency-datasets.pdf",
+    file: "/documents/ประกาศสถาบันฯ - รายการชุดข้อมูลดิจิทัลด้านการจัดการภัยพิบัติและสถานการณ์ฉุกเฉิน.pdf",
   },
 ];
 
@@ -268,15 +274,28 @@ export const LEGAL_REGULATIONS: LegalItem[] = [
  * จริง ๆ ส่วนรหัส A1–A3 เป็นรหัสภายในที่หน้าอื่นเลิกแสดงไปแล้ว (ดู lib/legal-document.ts)
  * หน้าแรกยังคงป้ายรหัสไว้ เพราะที่นี่เป็นสารบัญของชุดเอกสาร ไม่ใช่เอกสารที่ยื่นให้ลงนาม
  */
-export const LEGAL_PRIMARY = {
+export const LEGAL_PRIMARY: LegalItem & { code: string } = {
   code: "A0",
   title: "ข้อตกลงหลักในการบริหารจัดการและแบ่งปันข้อมูล",
+  file: "/documents/A[0] ข้อตกลง_version_01_25691005.pdf",
 };
 
 export const LEGAL_ANNEX_LABEL = "เอกสารภาคผนวก";
 
-export const LEGAL_ANNEXES = [
-  { code: "A1", title: "ผนวก 1 ข้อตกลงรักษาความลับ (Non-Disclosure Agreement)" },
-  { code: "A2", title: "ผนวก 2 ข้อตกลงในการประมวลผลข้อมูล (Data Processing Agreement)" },
-  { code: "A3", title: "ผนวก 3 ข้อตกลงประมวลผลข้อมูลส่วนบุคคล (Personal Data Processing Agreement)" },
+export const LEGAL_ANNEXES: (LegalItem & { code: string })[] = [
+  {
+    code: "A1",
+    title: "ผนวก 1 ข้อตกลงรักษาความลับ (Non-Disclosure Agreement)",
+    file: "/documents/A[1] ผนวก_1_NDA_version_01_25691005.pdf",
+  },
+  {
+    code: "A2",
+    title: "ผนวก 2 ข้อตกลงในการประมวลผลข้อมูล (Data Processing Agreement)",
+    file: "/documents/A[2] ผนวก_2_DPA_version_01_25691005.pdf",
+  },
+  {
+    code: "A3",
+    title: "ผนวก 3 ข้อตกลงประมวลผลข้อมูลส่วนบุคคล (Personal Data Processing Agreement)",
+    file: "/documents/A[3] ผนวก_3_PDPA_version_01_25691005.pdf",
+  },
 ];
