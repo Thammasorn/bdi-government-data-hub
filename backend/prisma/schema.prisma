@@ -1668,15 +1668,21 @@ model IntegrationOperation {
 // "Configuration, lookup, holiday calendar" และภาพรายการ Master ระบุ `province` ไว้
 // organization ใช้ province_code / district_code / sub_district_code จึงต้องมีตาราง master รองรับ
 //
-// seed จาก backend/src/data/thai-address.json (77 จังหวัด / 927 อำเภอ / 7,423 ตำบล)
-// ซึ่ง main/CLAUDE.md ระบุว่า vendored ไว้โดยตั้งใจ ห้ามเอา npm package กลับมา
-// ไฟล์นั้นมีแต่ "ชื่อ" ไม่มีรหัส → รหัสที่ seed ให้เป็นรหัสที่ระบบสร้างเอง (เสถียรตามลำดับในไฟล์)
-// **ต้องแทนที่ด้วยรหัส TIS-1099 ของจริงเมื่อได้ข้อมูลมา**
+// ข้อมูลชุดแรกมาจาก migration 20261006120000_dopa_address_codes (77 จังหวัด / 928 อำเภอ /
+// 7,436 ตำบล) หลังจากนั้นแอดมินแก้ผ่าน /api/admin/addresses — seed:masters เติมได้แค่แถวที่ขาด
+// backend/src/data/thai-address.json vendored ไว้โดยตั้งใจ ห้ามเอา npm package กลับมา
 
+/// รหัสจังหวัด (2 หลัก) / อำเภอ (4) / ตำบล (6) คือรหัสกรมการปกครอง (กรุงเทพมหานคร = 10,
+/// สามเสนใน = 101401) ที่มาและการย้ายจากรหัสชุดเก่าที่ seed เคยออกเองอยู่ที่
+/// backend/scripts/build-address-data.mjs
+///
+/// เบี่ยงจากดีไซน์: schema `administration` ไม่มี sheet ใน Excel — `is_active` เพิ่มเองเพื่อให้แอดมิน
+/// ปิดรายการแทนการลบ (organization เก็บรหัสโดยไม่มี FK การลบจะทิ้งรหัสกำพร้าไว้)
 model Province {
-  code   String  @id @db.VarChar(16)
-  nameTh String  @map("name_th") @db.VarChar(255)
-  nameEn String? @map("name_en") @db.VarChar(255)
+  code     String  @id @db.VarChar(16)
+  nameTh   String  @map("name_th") @db.VarChar(255)
+  nameEn   String? @map("name_en") @db.VarChar(255)
+  isActive Boolean @default(true) @map("is_active")
 
   districts District[]
 
@@ -1685,9 +1691,10 @@ model Province {
 }
 
 model District {
-  code   String  @id @db.VarChar(16)
-  nameTh String  @map("name_th") @db.VarChar(255)
-  nameEn String? @map("name_en") @db.VarChar(255)
+  code     String  @id @db.VarChar(16)
+  nameTh   String  @map("name_th") @db.VarChar(255)
+  nameEn   String? @map("name_en") @db.VarChar(255)
+  isActive Boolean @default(true) @map("is_active")
 
   provinceCode String   @map("province_code") @db.VarChar(16)
   province     Province @relation(fields: [provinceCode], references: [code], onDelete: Cascade)
@@ -1700,9 +1707,10 @@ model District {
 }
 
 model SubDistrict {
-  code   String  @id @db.VarChar(16)
-  nameTh String  @map("name_th") @db.VarChar(255)
-  nameEn String? @map("name_en") @db.VarChar(255)
+  code     String  @id @db.VarChar(16)
+  nameTh   String  @map("name_th") @db.VarChar(255)
+  nameEn   String? @map("name_en") @db.VarChar(255)
+  isActive Boolean @default(true) @map("is_active")
 
   districtCode String   @map("district_code") @db.VarChar(16)
   district     District @relation(fields: [districtCode], references: [code], onDelete: Cascade)
