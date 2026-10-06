@@ -462,7 +462,7 @@ This is not optional and not sample data. It creates:
   `BDI_FINAL_APPROVER`, `BDI_DATASET_SPECIALIST`, `BDI_LEGAL_OFFICER`, `SYSTEM_ADMINISTRATOR`)
 - the **legal documents** A0–A3 and A4, uploading each `.docx` template to blob storage and
   rendering it once to prove LibreOffice can read it
-- the **Thai address masters** — 77 provinces, 927 districts, 7,423 sub-districts
+- the **Thai address masters** — 77 provinces, 928 districts, 7,436 sub-districts
 
 It is idempotent; running it twice is safe. It exercises Postgres, Blob Storage and gotenberg in
 one go, so **if `seed:masters:prod` succeeds, the three connections are all genuinely working.**

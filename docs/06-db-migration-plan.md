@@ -375,6 +375,9 @@ review_task และเขียน audit_event"* ดู §4 ข้อ 3
    `thai-address.json` vendored ไว้โดยตั้งใจ (ห้ามเอา npm package กลับมา)
    → *แนะนำ: seed `administration.province/district/sub_district` จาก `thai-address.json`
      ตัวเดิม ไม่เพิ่ม dependency*
+   → **ปิดแล้ว 2026-10-06**: ตารางทั้งสามใช้รหัสกรมการปกครองจริง (กรุงเทพมหานคร = 10) แอดมินแก้ได้
+     ผ่าน `/api/admin/addresses` และรหัสที่ seed เคยออกเองถูกย้ายด้วย migration
+     `20261006120000_dopa_address_codes` — ดู CLAUDE.md หัวข้อ *Thai addresses*
 
 7. **`attachment_type` ขาด `GENERATED_FORM` และประเภทเอกสารกฎหมาย** (§3.7)
    → *ถ้าไม่ได้คำตอบ: เพิ่ม `GENERATED_FORM` และ `LEGAL_DOCUMENT` เข้าไปเอง*

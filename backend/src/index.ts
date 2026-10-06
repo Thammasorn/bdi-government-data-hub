@@ -8,8 +8,10 @@ import { prisma } from "./db.js";
 import { env } from "./env.js";
 import { DocumentRenderError } from "./lib/document-render.js";
 import { correlationMiddleware } from "./lib/context.js";
+import { loadAddresses } from "./lib/address.js";
 import { loadChoices } from "./lib/dataset-choices.js";
 import { adminRegistrationRouter } from "./routes/admin-registrations.js";
+import { adminAddressRouter } from "./routes/admin-addresses.js";
 import { adminRouter } from "./routes/admin.js";
 import { adminUserRouter } from "./routes/admin-users.js";
 import { addressRouter } from "./routes/address.js";
@@ -41,6 +43,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/admin/users", adminUserRouter);
 // ต้องมาก่อน adminRouter ที่จับ /api/admin ทั้งก้อน ไม่งั้น /registrations/* ตกไปที่ 404 ของมัน
 app.use("/api/admin/registrations", adminRegistrationRouter);
+app.use("/api/admin/addresses", adminAddressRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/address", addressRouter);
 app.use("/api/dataset-choices", datasetChoiceRouter);
@@ -149,6 +152,8 @@ async function main() {
    * โหลดไม่ได้ก็ไม่ล้ม — ใช้ค่าตั้งต้นในโค้ดไปก่อนและเตือนไว้ ดู lib/dataset-choices.ts
    */
   await loadChoices();
+  // dropdown ที่อยู่และการตรวจที่อยู่อ่านจาก cache — ดู lib/address.ts
+  await loadAddresses();
 
   // Best-effort: don't block startup if Azure Blob Storage is briefly unavailable —
   // /health/ready will report it.

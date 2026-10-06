@@ -1692,6 +1692,147 @@
           }
         }
       ]
+    },
+    {
+      "name": "M1 · Find a province, district or sub-district",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/addresses/search?q=พญาไท",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "addresses",
+            "search"
+          ],
+          "query": [
+            {
+              "key": "q",
+              "value": "พญาไท"
+            }
+          ]
+        },
+        "description": "Search by Thai name (substring), English name (case-insensitive) or exact code, across all three levels, up to 50 per level. Inactive rows are included and say so in `isActive`.\n\nCodes are DOPA codes (กรมการปกครอง): province 2 digits (กรุงเทพมหานคร = `10`), district 4, sub-district 6, each starting with its parent's code. The full story — where the data came from and how the old self-issued codes were migrated — is in `backend/scripts/build-address-data.mjs`."
+      },
+      "response": []
+    },
+    {
+      "name": "M2 · A district and its sub-districts",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/addresses/districts/1014",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "addresses",
+            "districts",
+            "1014"
+          ]
+        },
+        "description": "One district with every sub-district under it, active or not. `usage` counts the organizations and registration requests that store this district's code — check it before renaming or deactivating.\n\nSiblings: `GET /provinces` (all provinces), `GET /provinces/:code` (a province and its districts), `GET /sub-districts/:code` (one sub-district with its parents).\n\nCodes are DOPA codes (กรมการปกครอง): province 2 digits (กรุงเทพมหานคร = `10`), district 4, sub-district 6, each starting with its parent's code. The full story — where the data came from and how the old self-issued codes were migrated — is in `backend/scripts/build-address-data.mjs`."
+      },
+      "response": []
+    },
+    {
+      "name": "M3 · Add a sub-district",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/addresses/sub-districts",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "addresses",
+            "sub-districts"
+          ]
+        },
+        "description": "Adds a sub-district under an existing district. `code` must be 6 digits and start with `districtCode`; `nameTh` must be unique within the district, because the form sends addresses as names and a duplicate would resolve to the wrong code. `postalCode` (5 digits) is what the form fills in when the sub-district is picked.\n\nThe dropdown sees the new row at once; browsers may keep the previous list for up to 5 minutes (`Cache-Control: max-age=300` on `/api/address/*`).\n\nSiblings: `POST /provinces` (`code`, `nameTh`, `nameEn`) and `POST /districts` (`code`, `provinceCode`, `nameTh`, `nameEn`).\n\nCodes are DOPA codes (กรมการปกครอง): province 2 digits (กรุงเทพมหานคร = `10`), district 4, sub-district 6, each starting with its parent's code. The full story — where the data came from and how the old self-issued codes were migrated — is in `backend/scripts/build-address-data.mjs`.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"code\": \"101499\",\n  \"districtCode\": \"1014\",\n  \"nameTh\": \"ชื่อแขวงใหม่\",\n  \"nameEn\": null,\n  \"postalCode\": \"10400\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "M4 · Rename, change the postal code, or deactivate",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/addresses/sub-districts/101401",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "addresses",
+            "sub-districts",
+            "101401"
+          ]
+        },
+        "description": "Send only what changes: `nameTh`, `nameEn`, `isActive`, and for sub-districts `postalCode`. **Codes and parents cannot be changed here** — organizations store the code, so changing it is a data migration, not an edit.\n\n**There is no DELETE.** Set `isActive: false` instead: the row leaves the dropdown, but every organization that already stores it still shows the name and can still submit. Deleting would leave codes with no name behind, because the organization tables have no foreign key to these.\n\nA rename shows up at once on every organization that stores the code — the response says how many. A postal-code change applies to the next time someone picks the sub-district; addresses already saved keep their own postal code.\n\nSame body on `PATCH /provinces/:code` and `PATCH /districts/:code` (without `postalCode`).\n\nCodes are DOPA codes (กรมการปกครอง): province 2 digits (กรุงเทพมหานคร = `10`), district 4, sub-district 6, each starting with its parent's code. The full story — where the data came from and how the old self-issued codes were migrated — is in `backend/scripts/build-address-data.mjs`.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"isActive\": false\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "M5 · Reload the address cache",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/addresses/refresh",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "addresses",
+            "refresh"
+          ]
+        },
+        "description": "The API keeps all addresses in memory. Edits through M3/M4 reload it themselves; call this after changing `administration.province/district/sub_district` by hand (psql, DBeaver) or after `seed:masters`, instead of restarting the backend. Returns the row counts now loaded — the same numbers `/health/ready` reports under `checks.addresses`."
+      },
+      "response": []
     }
   ]
 }

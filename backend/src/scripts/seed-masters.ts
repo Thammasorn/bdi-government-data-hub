@@ -5,13 +5,10 @@
  *   - iam.role ทั้งเจ็ดตาม sheet `role`
  *   - administration.dataset_choice — ตัวเลือกในแบบฟอร์มลงทะเบียนชุดข้อมูล
  *   - administration.province / district / sub_district จาก backend/src/data/thai-address.json
+ *     (เฉพาะแถวที่ยังไม่มี — แอดมินแก้ตารางนี้ได้ ดู seedAddresses())
  *
- * เรื่องรหัสที่อยู่: draft_db_design ใช้ province_code / district_code / sub_district_code
- * แต่ไม่มี sheet ของตาราง master (schema `administration` ยังไม่มี sheet) และ
- * thai-address.json ที่ vendor ไว้มีแต่ "ชื่อ" ไม่มีรหัส
- * → สคริปต์นี้ออกรหัสให้เองแบบเสถียร: จังหวัด 2 หลัก · อำเภอ 4 หลัก · ตำบล 6 หลัก
- *   (รูปทรงเดียวกับ TIS-1099 เพื่อให้เปลี่ยนไปใช้รหัสจริงเป็นแค่การแทนที่ข้อมูล ไม่ต้องแก้สคีมา)
- * **ยังไม่ใช่รหัสราชการจริง** — ดู docs/06-db-migration-plan.md §5 ข้อ 6
+ * เรื่องรหัสที่อยู่: ไฟล์นั้นมีรหัสกรมการปกครองมาด้วยแล้ว ดูที่มาที่
+ * backend/scripts/build-address-data.mjs — ก่อน 2026-10-06 สคริปต์นี้ออกรหัสเองจากลำดับในไฟล์
  */
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -19,7 +16,6 @@ import { readFile } from "node:fs/promises";
 import { PrismaClient } from "@prisma/client";
 import { AccountType, LegalDocumentStatus, OrganizationStatus, UserAccountStatus } from "@prisma/client";
 
-import { listProvinces, listAmphoes, listSubdistricts } from "../lib/address.js";
 import { DATASET_CHOICE_DEFAULTS } from "../lib/dataset-choices-defaults.js";
 import { refreshChoices } from "../lib/dataset-choices.js";
 import { publishVersion } from "../lib/legal.js";
@@ -32,8 +28,6 @@ import {
 } from "../lib/system.js";
 
 const prisma = new PrismaClient();
-
-const pad = (n: number, width: number) => String(n).padStart(width, "0");
 
 async function seedSystemUser() {
   await prisma.userAccount.upsert({
@@ -241,46 +235,57 @@ async function seedDatasetChoices() {
   console.log(`• administration.dataset_choice — ${DATASET_CHOICE_DEFAULTS.length} แถว`);
 }
 
-async function seedAddresses() {
-  const provinces = listProvinces();
-
-  const provinceRows: { code: string; nameTh: string }[] = [];
-  const districtRows: { code: string; nameTh: string; provinceCode: string }[] = [];
-  const subDistrictRows: {
+interface AddressFile {
+  code: string;
+  nameTh: string;
+  nameEn: string | null;
+  districts: {
     code: string;
     nameTh: string;
-    districtCode: string;
-    postalCode: string | null;
-  }[] = [];
+    nameEn: string | null;
+    subDistricts: { code: string; nameTh: string; nameEn: string | null; postalCode: string | null }[];
+  }[];
+}
 
-  provinces.forEach((province, pIndex) => {
-    const provinceCode = pad(pIndex + 1, 2);
-    provinceRows.push({ code: provinceCode, nameTh: province });
+/**
+ * เติมเฉพาะแถวที่ยังไม่มี — **ไม่ลบ ไม่ทับ**
+ *
+ * ตารางเหล่านี้แอดมินแก้ได้ผ่าน /api/admin/addresses แล้ว การลบทั้งชุดแล้วใส่ใหม่แบบเดิมจะล้าง
+ * สิ่งที่แอดมินแก้ทิ้งทุกครั้งที่มีคนรัน seed:masters ข้อมูลชุดแรกของฐานข้อมูลที่มีอยู่แล้วมาจาก
+ * migration `20261006120000_dopa_address_codes` ส่วนนี้มีไว้ให้ฐานข้อมูลที่ตารางถูกล้างไป
+ * กลับมาครบได้ — รหัสที่มีอยู่แล้วถูกข้าม แม้ชื่อในไฟล์จะต่างจากในตาราง
+ */
+async function seedAddresses() {
+  const provinces = JSON.parse(
+    await readFile(new URL("../data/thai-address.json", import.meta.url), "utf8"),
+  ) as AddressFile[];
 
-    listAmphoes(province).forEach((amphoe, aIndex) => {
-      const districtCode = `${provinceCode}${pad(aIndex + 1, 2)}`;
-      districtRows.push({ code: districtCode, nameTh: amphoe, provinceCode });
+  const provinceRows = provinces.map((p) => ({ code: p.code, nameTh: p.nameTh, nameEn: p.nameEn }));
+  const districtRows = provinces.flatMap((p) =>
+    p.districts.map((d) => ({ code: d.code, nameTh: d.nameTh, nameEn: d.nameEn, provinceCode: p.code })),
+  );
+  const subDistrictRows = provinces.flatMap((p) =>
+    p.districts.flatMap((d) =>
+      d.subDistricts.map((s) => ({
+        code: s.code,
+        nameTh: s.nameTh,
+        nameEn: s.nameEn,
+        districtCode: d.code,
+        postalCode: s.postalCode,
+      })),
+    ),
+  );
 
-      listSubdistricts(province, amphoe).forEach((tambon, tIndex) => {
-        subDistrictRows.push({
-          code: `${districtCode}${pad(tIndex + 1, 2)}`,
-          nameTh: tambon.name,
-          districtCode,
-          postalCode: tambon.zipcode || null,
-        });
-      });
-    });
-  });
-
-  // ลบแล้วใส่ใหม่ทั้งชุด — รหัสมาจากลำดับในไฟล์ ถ้าไฟล์เปลี่ยนรหัสต้องเปลี่ยนตาม
-  // FK เป็น ON DELETE CASCADE จึงลบจากบนสุดพอ
-  await prisma.province.deleteMany();
-  await prisma.province.createMany({ data: provinceRows });
-  await prisma.district.createMany({ data: districtRows });
-  await prisma.subDistrict.createMany({ data: subDistrictRows });
+  const added = [
+    await prisma.province.createMany({ data: provinceRows, skipDuplicates: true }),
+    await prisma.district.createMany({ data: districtRows, skipDuplicates: true }),
+    await prisma.subDistrict.createMany({ data: subDistrictRows, skipDuplicates: true }),
+  ].map((r) => r.count);
 
   console.log(
-    `• administration — ${provinceRows.length} จังหวัด / ${districtRows.length} อำเภอ / ${subDistrictRows.length} ตำบล`,
+    `• administration — เพิ่ม ${added[0]}/${provinceRows.length} จังหวัด · ` +
+      `${added[1]}/${districtRows.length} อำเภอ · ${added[2]}/${subDistrictRows.length} ตำบล ` +
+      "(ที่มีอยู่แล้วไม่ถูกแตะ)",
   );
 }
 

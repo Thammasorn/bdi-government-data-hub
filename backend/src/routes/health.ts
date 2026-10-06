@@ -1,6 +1,7 @@
 import { Router } from "../lib/async-route.js";
 
 import { pingDatabase } from "../db.js";
+import { addressStatus } from "../lib/address.js";
 import { choiceStatus } from "../lib/dataset-choices.js";
 import { pingStorage } from "../storage.js";
 
@@ -32,10 +33,12 @@ healthRouter.get("/ready", async (_req, res) => {
    * ถ้าปล่อยให้ตอบ 503 reverse proxy จะถอนเว็บสาธารณะออก ซึ่งตรงข้ามกับเหตุผลที่มี fallback
    */
   const datasetChoices = choiceStatus();
+  // ตารางที่อยู่ว่างไม่ทำให้ไม่ healthy (ระบบส่วนอื่นยังใช้ได้) แต่ต้องเห็นจากที่นี่ — ดู lib/address.ts
+  const addresses = addressStatus();
 
   const healthy = database.status === "up" && storage.status === "up";
   res.status(healthy ? 200 : 503).json({
     status: healthy ? "ok" : "degraded",
-    checks: { database, storage, datasetChoices },
+    checks: { database, storage, datasetChoices, addresses },
   });
 });
