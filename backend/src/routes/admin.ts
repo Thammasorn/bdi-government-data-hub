@@ -27,21 +27,11 @@ import {
   refreshChoices,
   type ChoiceFieldKey,
 } from "../lib/dataset-choices.js";
-import {
-  AuditAction,
-  AuditSubject,
-  diffFields,
-  logAudit,
-  sanitizeDiff,
-  sanitizeState,
-  sentOnly,
-} from "../lib/audit.js";
+import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
 import {
   activeAssignmentWhere,
   issueActivationKey,
-  logKeysRevoked,
   pendingInvitationFor,
-  revokeIssuedKeys,
   roleIdByCode,
   roleSeatTaken,
 } from "../lib/iam.js";
@@ -316,29 +306,6 @@ adminRouter.post("/organizations", async (req, res) => {
     subjectType: AuditSubject.ORGANIZATION,
     subjectId: organization.id,
     organizationId: organization.id,
-    /**
-     * ค่าที่ลงทะเบียนจริง (ที่อยู่เป็นรหัสที่แปลงแล้ว ไม่ใช่ชื่อที่ส่งมา) — เดิมเก็บแค่รหัสหน่วยงาน
-     * ช่องที่ admin กรอกผิดตั้งแต่ตอนสร้างจึงย้อนดูไม่ได้ว่าเป็นค่าตั้งต้นหรือถูกแก้ทีหลัง ทุกช่องเป็นของ
-     * หน่วยงาน ไม่มีข้อมูลบุคคลให้ปิด
-     */
-    after: {
-      organizationCode: organization.organizationCode,
-      organizationType: organization.organizationType,
-      nameTh: organization.nameTh,
-      nameEn: organization.nameEn,
-      status: organization.status,
-      addressLine: organization.addressLine,
-      road: organization.road,
-      provinceCode: organization.provinceCode,
-      districtCode: organization.districtCode,
-      subDistrictCode: organization.subDistrictCode,
-      postalCode: organization.postalCode,
-      phone: organization.phone,
-      phoneExtension: organization.phoneExtension,
-      email: organization.email,
-      websiteUrl: organization.websiteUrl,
-      parentOrganizationId: organization.parentOrganizationId,
-    },
     metadata: { organization_code: organization.organizationCode, created_via: "ADMIN_API" },
   });
 
@@ -514,57 +481,42 @@ adminRouter.patch("/organizations/:id", async (req, res) => {
         ? (lookupZipcode(merged.province, merged.district, merged.subdistrict) ?? before.postalCode)
         : before.postalCode;
 
-  /**
-   * ค่าที่เขียนลงจริง — diff ของ audit เทียบกับตัวนี้ ไม่ใช่กับ body: body ส่งที่อยู่มาเป็นชื่อ แต่แถว
-   * เก็บเป็นรหัส และรหัสไปรษณีย์ถูกหาให้ใหม่ได้แม้ไม่ได้ส่งมา
-   */
-  const written = {
-    ...(input.organizationCode !== undefined ? { organizationCode: input.organizationCode } : {}),
-    ...(input.nameTh !== undefined ? { nameTh: input.nameTh } : {}),
-    ...(input.nameEn !== undefined ? { nameEn: input.nameEn } : {}),
-    ...(input.organizationType !== undefined ? { organizationType: input.organizationType } : {}),
-    ...(input.addressLine !== undefined ? { addressLine: input.addressLine } : {}),
-    ...(input.road !== undefined ? { road: input.road } : {}),
-    ...(touchesAddress
-      ? {
-          provinceCode: codes.provinceCode,
-          districtCode: codes.districtCode,
-          subDistrictCode: codes.subDistrictCode,
-        }
-      : {}),
-    postalCode,
-    ...(input.phone !== undefined ? { phone: input.phone } : {}),
-    ...(input.phoneExtension !== undefined ? { phoneExtension: input.phoneExtension } : {}),
-    ...(input.email !== undefined ? { email: input.email } : {}),
-    ...(input.websiteUrl !== undefined ? { websiteUrl: input.websiteUrl } : {}),
-    ...(input.parentOrganizationId !== undefined
-      ? { parentOrganizationId: input.parentOrganizationId }
-      : {}),
-  };
-
   const organization = await prisma.organization.update({
     where: { id: before.id },
-    data: { ...written, updatedBy: adminActorId() },
+    data: {
+      ...(input.organizationCode !== undefined ? { organizationCode: input.organizationCode } : {}),
+      ...(input.nameTh !== undefined ? { nameTh: input.nameTh } : {}),
+      ...(input.nameEn !== undefined ? { nameEn: input.nameEn } : {}),
+      ...(input.organizationType !== undefined ? { organizationType: input.organizationType } : {}),
+      ...(input.addressLine !== undefined ? { addressLine: input.addressLine } : {}),
+      ...(input.road !== undefined ? { road: input.road } : {}),
+      ...(touchesAddress
+        ? {
+            provinceCode: codes.provinceCode,
+            districtCode: codes.districtCode,
+            subDistrictCode: codes.subDistrictCode,
+          }
+        : {}),
+      postalCode,
+      ...(input.phone !== undefined ? { phone: input.phone } : {}),
+      ...(input.phoneExtension !== undefined ? { phoneExtension: input.phoneExtension } : {}),
+      ...(input.email !== undefined ? { email: input.email } : {}),
+      ...(input.websiteUrl !== undefined ? { websiteUrl: input.websiteUrl } : {}),
+      ...(input.parentOrganizationId !== undefined
+        ? { parentOrganizationId: input.parentOrganizationId }
+        : {}),
+      updatedBy: adminActorId(),
+    },
   });
 
-  /**
-   * เดิม before/after เก็บแค่รหัสกับชื่อไทยไม่ว่าจะแก้ช่องไหน — การแก้ที่อยู่หรืออีเมลของหน่วยงานจึงเหลือ
-   * แถวที่บอกว่า "รหัสกับชื่อเหมือนเดิม" ตอนนี้เป็นช่องที่เปลี่ยนจริงทุกช่อง ยังเขียนแถวแม้ไม่มีอะไรเปลี่ยน
-   * (`fields_changed: []`) เพราะคำสั่งของผู้ดูแลระบบเกิดขึ้นจริงและเขียนแถวหน่วยงานจริง
-   */
-  const diff = sanitizeDiff(diffFields(before, sentOnly(written)));
   await logAudit({
     action: AuditAction.ORGANIZATION_UPDATED,
     subjectType: AuditSubject.ORGANIZATION,
     subjectId: organization.id,
     organizationId: organization.id,
-    before: diff?.before,
-    after: diff?.after,
-    metadata: {
-      updated_via: "ADMIN_API",
-      fields: Object.keys(input),
-      fields_changed: Object.keys(diff?.after ?? {}),
-    },
+    before: { organizationCode: before.organizationCode, nameTh: before.nameTh },
+    after: { organizationCode: organization.organizationCode, nameTh: organization.nameTh },
+    metadata: { updated_via: "ADMIN_API", fields: Object.keys(input) },
   });
 
   /**
@@ -1055,28 +1007,14 @@ adminRouter.post("/invitations", async (req, res) => {
       actorId: adminActorId(),
     });
 
-    // บัญชีเพิ่งเกิดใน transaction นี้ จึงไม่มีคีย์ใบเก่าให้ `revokedKeys` — ไม่ต้องเขียน REVOKED
     return { account, key, record };
   });
 
-  /**
-   * audit ทั้งสองแถวมาก่อนอีเมล — การส่งทำ inline และ throw ได้ เดิมแถวอยู่หลังการส่ง SMTP ที่ล้ม
-   * จึงพาแถวหายไปด้วยทั้งที่บัญชีกับคีย์ถูก commit ไปแล้ว (ผู้ดูแลระบบได้ 500 แล้วเชิญซ้ำไม่ได้เพราะอีเมล
-   * มีบัญชีแล้ว โดยไม่มีบันทึกว่าบัญชีนั้นมาจากไหน)
-   */
-  await logAudit({
-    action: AuditAction.USER_ACCOUNT_CREATED,
-    subjectType: AuditSubject.USER_ACCOUNT,
-    subjectId: result.account.id,
-    organizationId,
-    after: sanitizeState({
-      email,
-      cid,
-      displayName: result.account.displayName,
-      accountType: result.account.accountType,
-      status: result.account.status,
-    }),
-    metadata: { created_via: "ADMIN_API", activation_key_id: result.record.id, role },
+  await sendInvitationEmail(email, result.key, {
+    roleLabel: ROLE_LABELS[role],
+    organizationName: organization.nameTh,
+    expiresAt: result.record.expiresAt,
+    internal: organizationId === BDI_ORGANIZATION_ID,
   });
 
   /**
@@ -1090,13 +1028,6 @@ adminRouter.post("/invitations", async (req, res) => {
     organizationId,
     after: { email, cid, role, name: result.account.displayName, userAccountId: result.account.id },
     metadata: { issued_via: "ADMIN_API", reason: "INVITATION" },
-  });
-
-  await sendInvitationEmail(email, result.key, {
-    roleLabel: ROLE_LABELS[role],
-    organizationName: organization.nameTh,
-    expiresAt: result.record.expiresAt,
-    internal: organizationId === BDI_ORGANIZATION_ID,
   });
 
   res.status(201).json({
@@ -1279,7 +1210,7 @@ adminRouter.post("/invitations/:id/resend", async (req, res) => {
     }
   }
 
-  const { key: raw, record, revokedKeys } = await prisma.$transaction((tx) =>
+  const { key: raw, record } = await prisma.$transaction((tx) =>
     issueActivationKey(tx, {
       userAccountId: key.userAccountId,
       organizationId: key.organizationId,
@@ -1288,9 +1219,14 @@ adminRouter.post("/invitations/:id/resend", async (req, res) => {
     }),
   );
 
-  // audit ก่อนอีเมลที่ส่ง inline และ throw ได้ — เหตุผลเดียวกับ `POST /invitations`
-  // ใบเดิมที่สถานะยัง ISSUED ถูกแทนที่ (ใบที่เป็น EXPIRED หรือ REVOKED อยู่แล้วไม่อยู่ใน `revokedKeys`)
-  await logKeysRevoked(revokedKeys, { revokedVia: "ADMIN_API", replacedByKeyId: record.id });
+  await sendInvitationEmail(key.userAccount.email, raw, {
+    roleLabel: ROLE_LABELS[roleCode],
+    organizationName: key.organization.nameTh,
+    // วันหมดอายุของ **คีย์ใบใหม่** ไม่ใช่ของใบที่เพิ่งถูกแทนที่
+    expiresAt: record.expiresAt,
+    internal: key.organizationId === BDI_ORGANIZATION_ID,
+  });
+
   await logAudit({
     action: AuditAction.ACTIVATION_KEY_ISSUED,
     subjectType: AuditSubject.USER_ACTIVATION_KEY,
@@ -1299,14 +1235,6 @@ adminRouter.post("/invitations/:id/resend", async (req, res) => {
     before: { activationKeyId: key.id, status: key.status },
     after: { email: key.userAccount.email, role: roleCode },
     metadata: { issued_via: "ADMIN_API", reason: "RESEND", replaced_key_id: key.id },
-  });
-
-  await sendInvitationEmail(key.userAccount.email, raw, {
-    roleLabel: ROLE_LABELS[roleCode],
-    organizationName: key.organization.nameTh,
-    // วันหมดอายุของ **คีย์ใบใหม่** ไม่ใช่ของใบที่เพิ่งถูกแทนที่
-    expiresAt: record.expiresAt,
-    internal: key.organizationId === BDI_ORGANIZATION_ID,
   });
 
   res.status(201).json({
@@ -1481,52 +1409,22 @@ adminRouter.delete("/invitations/:id", async (req, res) => {
   });
 });
 
-/**
- * `reason` ของการเพิกถอน — ไม่บังคับมาตั้งแต่แรก (คู่มือผู้ทดสอบ `docs/13` เรียกโดยไม่ส่ง body) และค่าตั้งต้น
- * ก็ยังบอกได้ว่าผู้ดูแลระบบเป็นคนสั่ง
- *
- * แต่ถ้าส่งมาต้องเป็นข้อความ 10–500 ตัวอักษรเหมือน `/api/admin/users` เดิมรับ `String(...)` ของอะไรก็ได้
- * object กลายเป็น "[object Object]" ค่าว่างก็ผ่าน และยาวเป็นเมกะไบต์ก็ผ่าน ค่านี้ลงทั้ง `revoked_reason`
- * (ไม่จำกัดความยาว) และ `metadata.reason` ของ `audit_event` ซึ่งไม่มี retention และไม่มีวันถูกแก้
- */
-const revokeSchema = z.object({
-  reason: z
-    .string({ error: "reason ต้องเป็นข้อความ — เหตุผลนี้ถูกบันทึกลง audit" })
-    .trim()
-    .min(10, "กรุณาระบุเหตุผลอย่างน้อย 10 ตัวอักษร หรือไม่ต้องส่ง reason มาเลย — เหตุผลนี้ถูกบันทึกลง audit")
-    .max(500, "เหตุผลยาวได้ไม่เกิน 500 ตัวอักษร")
-    .optional(),
-});
-
-/**
- * เพิกถอนคำเชิญ แต่เก็บแถวไว้เป็นประวัติ — ต่างจาก `DELETE /invitations/:id` ที่คืนอีเมลกับเลขบัตร
- *
- * เดิมเส้นทางนี้ไม่เขียน audit เลย (QA A14) คำเชิญที่ถูกเพิกถอนจึงเหลือแค่ `revoked_reason` บนแถว
- * ซึ่งบอกไม่ได้ว่าถูกสั่งเมื่อไรในคำขอไหน ตอนนี้เขียน `ACTIVATION_KEY_REVOKED` พร้อมเหตุผลที่พิมพ์มา
- * แตะเฉพาะใบที่สถานะยังเป็น ISSUED — ใบที่เป็น USED, EXPIRED หรือ REVOKED แล้วตอบ 404 เหมือนเดิม
- * และไม่ได้แถวซ้ำ แม้สั่งพร้อมกันหลายครั้ง: `revokeIssuedKeys()` คืนเฉพาะใบที่คำสั่งนี้เปลี่ยนเอง
- */
 adminRouter.post("/invitations/:id/revoke", async (req, res) => {
-  const parsedId = z.string().uuid().safeParse(req.params.id);
-  if (!parsedId.success) {
+  const key = await prisma.activationKey.findUnique({ where: { id: req.params.id } });
+  if (!key || key.status !== ActivationKeyStatus.ISSUED) {
     res.status(404).json({ error: "not_found", message: "ไม่พบคำเชิญที่ยังใช้งานได้" });
     return;
   }
-  const parsed = revokeSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
-    return;
-  }
-  const revoked = await revokeIssuedKeys(
-    prisma,
-    { id: parsedId.data },
-    { actorId: adminActorId(), reason: parsed.data.reason ?? "ยกเลิกโดยผู้ดูแลระบบ" },
-  );
-  if (revoked.length === 0) {
-    res.status(404).json({ error: "not_found", message: "ไม่พบคำเชิญที่ยังใช้งานได้" });
-    return;
-  }
-  await logKeysRevoked(revoked, { revokedVia: "ADMIN_API" });
+  await prisma.activationKey.update({
+    where: { id: key.id },
+    data: {
+      status: ActivationKeyStatus.REVOKED,
+      revokedAt: new Date(),
+      revokedBy: adminActorId(),
+      revokedReason: String(req.body?.reason ?? "ยกเลิกโดยผู้ดูแลระบบ"),
+      updatedBy: adminActorId(),
+    },
+  });
   res.json({ ok: true });
 });
 
@@ -1678,9 +1576,8 @@ adminRouter.patch("/legal-documents/:code", async (req, res) => {
     throw error;
   }
 
-  // ไม่มีเวอร์ชันใหม่เกิดขึ้น — ไม่ใช่ LEGAL_DOCUMENT_PUBLISHED (ดูคอมเมนต์ของรหัสใน lib/audit.ts)
   await logAudit({
-    action: AuditAction.LEGAL_DOCUMENT_UPDATED,
+    action: AuditAction.LEGAL_DOCUMENT_PUBLISHED,
     subjectType: AuditSubject.LEGAL_DOCUMENT,
     subjectId: document.id,
     before: Object.fromEntries(changed.map((field) => [field, document[field]])),
@@ -1807,8 +1704,6 @@ adminRouter.post(
         filename: file.originalname,
         placeholders: published.placeholders,
       },
-      // subject เป็นเวอร์ชัน — id ของเอกสารทำให้ค้นคู่กับ LEGAL_DOCUMENT_UPDATED ของเอกสารเดียวกันได้
-      metadata: { legal_document_id: published.documentId },
     });
 
     res.status(201).json({
@@ -1876,7 +1771,7 @@ adminRouter.get("/legal-documents/:code/versions/:versionId/file", async (req, r
     subjectId: file.id,
     after: { filename: file.originalFileName, legalDocumentVersionId: version.id, kind },
   });
-  await streamAttachment(req, res, file, "attachment");
+  await streamAttachment(res, file, "attachment");
 });
 
 /**
@@ -1928,7 +1823,6 @@ adminRouter.post("/legal-documents/:code/versions/:versionId/restore", async (re
       placeholders: published.placeholders,
     },
     metadata: {
-      legal_document_id: published.documentId,
       restored_from_version_id: version.id,
       restored_from_version_number: version.versionNumber,
       reason: parsed.data.reason,

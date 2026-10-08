@@ -1,30 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-
-import { reportError } from "@/lib/report-error";
-
 /**
  * เรนเดอร์นอก layout หลัก จึงห้ามพึ่ง context ใด ๆ (SessionProvider/ToastProvider)
  * และต้องมี <html>/<body> ของตัวเอง
- *
- * แสดง**รหัสอ้างอิง**ให้ผู้ใช้อ่านให้เจ้าหน้าที่ฟังได้ — สร้างที่เบราว์เซอร์ (8 ตัวฐานสิบหก) แล้วส่งไปกับรายงาน error
- * (`browser.reference` ใน log store ค้นด้วย Postman G6 ได้ — lib/report-error.ts) สร้างใน `useEffect` ไม่ใช่ตอนเรนเดอร์:
- * หน้านี้ถูก prerender ตอน build ค่าสุ่มตอนเรนเดอร์จะติดไปกับ HTML ทุกคนได้รหัสเดียวกัน และไม่ตรงกับตอน hydrate
- * `error.digest` (ของ error ฝั่ง server ที่ Next ซ่อนข้อความ) ไปกับรายงานด้วย — Next server รายงาน error ตัวเดียวกันพร้อม
- * digest เดียวกัน (`extra.digest`, lib/server-error-report.ts) trace ของรหัสนี้ (Postman G6) จึงได้ข้อความจริงใน `serverErrors`
  */
-export default function GlobalError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
-  const [reference, setReference] = useState<string | null>(null);
-
-  useEffect(() => {
-    const bytes = new Uint8Array(4);
-    crypto.getRandomValues(bytes);
-    const generated = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-    setReference(generated);
-    reportError(error, { mechanism: "global-error", digest: error.digest, reference: generated });
-  }, [error]);
-
+export default function GlobalError({ reset }: { error: Error; reset: () => void }) {
   return (
     <html lang="th">
       <body
@@ -55,15 +35,6 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
           <p style={{ fontSize: 15, lineHeight: 1.7, color: "#5b6178", margin: "0 0 28px" }}>
             ระบบทำงานผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้ง
             หากยังพบปัญหาให้ติดต่อผู้ประสานงานของ BDI
-            {reference ? (
-              <>
-                <br />
-                พร้อมแจ้งรหัสอ้างอิง{" "}
-                <span style={{ fontFamily: "ui-monospace, monospace", color: "#192768", fontWeight: 600 }}>
-                  {reference}
-                </span>
-              </>
-            ) : null}
           </p>
           <button
             type="button"

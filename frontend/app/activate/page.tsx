@@ -139,7 +139,7 @@ function SignedInGate({
   const name = sessionUserName(user);
   const logout = async () => {
     setBusy(true);
-    await api.post("/api/auth/logout", undefined, { background: true }).catch(() => undefined);
+    await api.post("/api/auth/logout").catch(() => undefined);
     // ไม่ต้องประกาศให้แท็บอื่นรู้เอง — effect ใน SessionProvider ที่เฝ้า `user` ทำให้แล้ว
     setUser(null);
     setBusy(false);

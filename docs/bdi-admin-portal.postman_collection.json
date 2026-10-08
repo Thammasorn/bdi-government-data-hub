@@ -835,7 +835,7 @@
             "revoke"
           ]
         },
-        "description": "Revokes an invitation that is still `ISSUED`; the link stops working immediately.\n\n`{{activationKeyId}}` holds whichever invitation this collection created last. Replace it with an id from request 4 to revoke a different one.\n\n`reason` is optional (it defaults to \"ยกเลิกโดยผู้ดูแลระบบ\") but worth sending — it is stored in `activation_key.revoked_reason` and in the `ACTIVATION_KEY_REVOKED` audit row, and is the only record of why. When you do send it, it must be text of 10–500 characters; anything else is a 400 `validation`.\n\nA key that is already `USED` or `REVOKED` returns 404: revoking twice is not possible, even when two calls arrive at the same moment — only one of them answers 200.",
+        "description": "Revokes an invitation that is still `ISSUED`; the link stops working immediately.\n\n`{{activationKeyId}}` holds whichever invitation this collection created last. Replace it with an id from request 4 to revoke a different one.\n\n`reason` is optional (it defaults to \"ยกเลิกโดยผู้ดูแลระบบ\") but worth sending — it is stored in `activation_key.revoked_reason` and is the only record of why.\n\nA key that is already `USED` or `REVOKED` returns 404: revoking twice is not possible.",
         "body": {
           "mode": "raw",
           "raw": "{\n  \"reason\": \"sent to the wrong person\"\n}",

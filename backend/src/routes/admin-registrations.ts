@@ -19,6 +19,7 @@
  */
 import { z } from "zod";
 import {
+  ActivationKeyStatus,
   AttachmentOwnerType,
   AttachmentStatus,
   Prisma,
@@ -33,7 +34,7 @@ import { prisma } from "../db.js";
 import { Router } from "../lib/async-route.js";
 import { releaseApproverSeat, type ReleasedSeat } from "../lib/approver-seat.js";
 import { softDeleteAttachment } from "../lib/attachment.js";
-import { AuditAction, AuditSubject, diffFields, logAudit, sentOnly } from "../lib/audit.js";
+import { AuditAction, AuditSubject, diffFields, logAudit } from "../lib/audit.js";
 import {
   datasetDraftSchema,
   fromMetadataRow,
@@ -42,12 +43,9 @@ import {
 } from "../lib/dataset.js";
 import {
   activatedApprover,
-  logKeysRevoked,
-  revokeIssuedKeys,
   revokeRoleAssignments,
   roleIdByCode,
   roleSeatTaken,
-  type RevokedKey,
 } from "../lib/iam.js";
 import { adminActorId } from "../lib/context.js";
 import { buildJourneyProgress, summariseProgress } from "../lib/journey-steps.js";
@@ -145,6 +143,24 @@ function resetRefusal(
     };
   }
   return null;
+}
+
+/**
+ * ตัด key ที่ไม่ได้ส่งมาออกก่อนเทียบว่าอะไรเปลี่ยน
+ *
+ * `toRequestData()` คืน **ทุก** key เสมอ โดยที่ช่องที่ผู้เรียกไม่ได้ส่งมาเป็น `undefined` —
+ * Prisma ข้าม `undefined` ให้อยู่แล้ว การอัปเดตจึงถูกต้อง แต่ `diffFields()` เดินตาม
+ * `Object.keys(after)` และเทียบด้วย `JSON.stringify(v ?? null)` ดังนั้น `undefined` จะ
+ * อ่านเป็น `null` แล้วต่างจากค่าเดิมทุกช่อง — `fields_changed` ใน audit จะบอกว่าแก้ทั้งใบ
+ * ทั้งที่แตะช่องเดียว ซึ่งทำให้บันทึกที่มีไว้เพื่อตอบว่า "อะไรเปลี่ยน" ตอบผิด
+ *
+ * `null` **ไม่ถูกตัด** เพราะมันคือการสั่งล้างค่าจริง ๆ (`phoneExtensionSchema` แปลง `""`
+ * เป็น `null`) ต่างจาก `providedOnly()` ในฟอร์มที่ตัดทั้งคู่ด้วยเหตุผลคนละเรื่อง
+ */
+function sentOnly<T extends object>(value: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, v]) => v !== undefined),
+  ) as Partial<T>;
 }
 
 /**
@@ -458,8 +474,6 @@ adminRegistrationRouter.post("/organizations/:id/reset", async (req, res) => {
   const outcome = await prisma.$transaction(async (tx) => {
     let releasedSeat: ReleasedSeat | null = null;
     let deactivated: { id: string; email: string; rolesRevoked: number } | null = null;
-    /** คีย์ของผู้มีอำนาจฯ ที่ถูกเพิกถอนทางใดทางหนึ่งข้างล่าง — `ACTIVATION_KEY_REVOKED` หลัง commit */
-    let revokedKeys: RevokedKey[] = [];
     const cancelled = await cancelActiveTask(tx, {
       subjectType: ORG_SUBJECT,
       subjectId: request.id,
@@ -473,11 +487,16 @@ adminRegistrationRouter.post("/organizations/:id/reset", async (req, res) => {
         actorId: adminActorId(),
         reason,
       });
-      revokedKeys = await revokeIssuedKeys(
-        tx,
-        { userAccountId: approver.id },
-        { actorId: adminActorId(), reason },
-      );
+      await tx.activationKey.updateMany({
+        where: { userAccountId: approver.id, status: ActivationKeyStatus.ISSUED },
+        data: {
+          status: ActivationKeyStatus.REVOKED,
+          revokedAt: new Date(),
+          revokedBy: adminActorId(),
+          revokedReason: reason,
+          updatedBy: adminActorId(),
+        },
+      });
       await revokeSessionsFor(tx, {
         userAccountId: approver.id,
         reason: SessionRevokeReason.ACCOUNT_SUSPENDED,
@@ -508,7 +527,6 @@ adminRegistrationRouter.post("/organizations/:id/reset", async (req, res) => {
         actorId: adminActorId(),
         reason,
       });
-      revokedKeys = releasedSeat?.revokedKeys ?? [];
     }
 
     await tx.organizationRegistrationRequest.update({
@@ -527,7 +545,7 @@ adminRegistrationRouter.post("/organizations/:id/reset", async (req, res) => {
       where: { id: request.id },
       data: { status, updatedBy: adminActorId() },
     });
-    return { updated, cancelled, releasedSeat, deactivated, revokedKeys };
+    return { updated, cancelled, releasedSeat, deactivated };
   });
 
   const seat = outcome.releasedSeat;
@@ -583,9 +601,6 @@ adminRegistrationRouter.post("/organizations/:id/reset", async (req, res) => {
       },
     });
   }
-
-  // คำเชิญที่ยังใช้ได้ของผู้มีอำนาจฯ ทั้งสองทางข้างบน (ปิดบัญชี หรือปล่อยที่นั่งแต่ลบบัญชีไม่ได้)
-  await logKeysRevoked(outcome.revokedKeys, { revokedVia: "ADMIN_RESET_API" });
 
   await announceReset({
     subjectType: ORG_SUBJECT,
@@ -731,7 +746,6 @@ adminRegistrationRouter.post("/organizations/:id/cancel", async (req, res) => {
       metadata: { reason, recalled_via: "ADMIN_CANCEL_API" },
     });
   }
-  await logKeysRevoked(seat?.revokedKeys ?? [], { revokedVia: "ADMIN_CANCEL_API" });
 
   const members = await organizationMemberIds(request.organizationId);
   await notifyUsers([...members.users, request.createdBy], {

@@ -3,9 +3,7 @@
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 #
 # ต่างจากโหมด dev ตรงที่:
-#   - build เป็นบันเดิลจริง ไม่มี HMR และไม่มี source map ส่งถึงเบราว์เซอร์ — backend รันด้วย
-#     NODE_OPTIONS=--enable-source-maps (backend/Dockerfile) ให้ stack ใน log store ชี้ .ts แต่ไฟล์ .map อยู่ใน
-#     image เท่านั้น ไม่มีทางไหนเสิร์ฟออกไป และ stack ไม่เคยอยู่ในคำตอบของ API
+#   - build เป็นบันเดิลจริง ไม่มี source map / HMR / stack trace เต็ม ๆ หลุดออกไป
 #   - ไม่ bind-mount source เข้าไป โค้ดที่รันคือสิ่งที่ build ไว้เท่านั้น
 #   - รันด้วย user `node` ไม่ใช่ root
 #
@@ -13,41 +11,24 @@
 # เปลี่ยนค่าแล้วต้อง --build ใหม่เสมอ
 
 services:
-  # log ของ backend / worker / frontend มีเพดาน: json-file ของ docker ไม่จำกัดขนาดโดยค่าตั้งต้น และ /hdd1tb ที่เก็บมัน
-  # คือดิสก์เดียวกับ Postgres ของ production · 50 MB × 5 ไฟล์ต่อ service เกินพอสำหรับ "dump log ก่อน deploy"
-  # GIT_SHA → RELEASE ของ image (backend/Dockerfile) — ตั้งใน shell ตอน deploy ดู docs/21 · ไม่ตั้งได้ `unknown`
   backend:
     build:
       target: runner
-      args:
-        GIT_SHA: ${GIT_SHA:-unknown}
     environment:
       NODE_ENV: production
     command: >
       sh -c "npx prisma migrate deploy && node dist/index.js"
     volumes: !reset []
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
 
   frontend:
     build:
       target: runner
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
-        # รุ่นของบันเดิล → NEXT_PUBLIC_RELEASE (frontend/Dockerfile) ติดไปกับรายงาน error ของเบราว์เซอร์และ Next server
-        GIT_SHA: ${GIT_SHA:-unknown}
     environment:
       NODE_ENV: production
       HOSTNAME: "0.0.0.0"
     volumes: !reset []
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
 
   # worker ต้องรันเป็น production ด้วย ไม่งั้นมันจะรัน tsx จาก source ที่ bind-mount ไว้
   # ทั้งที่ backend ข้าง ๆ รันบันเดิลที่ build แล้ว — และ NODE_ENV จะไม่ใช่ production
@@ -58,37 +39,10 @@ services:
   delivery-worker:
     build:
       target: runner
-      args:
-        GIT_SHA: ${GIT_SHA:-unknown}
     environment:
       NODE_ENV: production
     command: ["node", "dist/workers/delivery.js"]
     volumes: !reset []
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
-
-  # MongoDB (log store) — ต้องอยู่ในไฟล์นี้ด้วยเหตุผลเดียวกับ azurite/gotenberg ข้างล่าง และต่างจาก dev สองอย่าง:
-  #
-  #   - cache 0.5 GB แทน 0.25
-  #   - **ไม่ยอมเริ่มด้วยรหัสผ่านตัวอย่าง**: MONGO_REFUSE_DEV_PASSWORDS ทำให้ mongo/entrypoint.sh ออกทันที (และ
-  #     init/01-users.js ไม่สร้าง user) ถ้ารหัสผ่านตัวไหนว่าง ยังเป็น dev-…/…change-me หรือใส่ใน URI ไม่ได้
-  #     mongo จึงวนรีสตาร์ตอยู่อย่างนั้น ส่วนเว็บขึ้นตามปกติเพราะไม่มีใคร depends_on มัน — ตั้งรหัสผ่านจริงใน .env
-  #     ก่อน deploy ครั้งแรกที่มี mongo แล้ว `up -d mongo` ใหม่
-  #
-  # ไม่ใช้ `${…:?}` กันรหัสผ่านที่ว่างตรงนี้ เพราะ compose ประเมินทั้งไฟล์ทุกคำสั่ง: build ของ backend ที่ไม่เกี่ยวกับ
-  # mongo เลย (ด่าน typecheck ของทุก checkout) จะล้มไปด้วย และ `:?` ก็ไม่เห็นค่าตัวอย่างที่ `:-` เติมให้อยู่ดี
-  #
-  # ไม่มี `volumes:` โดยตั้งใจ — `!reset` จะทิ้ง mongo-data ไปพร้อมกับ bind mount ของสคริปต์
-  # **ที่ main/ ห้าม `down -v`**: mongo-data คือ log ของ production
-  # `--slowOpSampleRate 0` เหมือน dev และด้วยเหตุผลเดียวกัน (ดู docker-compose.yml) — command ในไฟล์นี้แทนของ dev ทั้งบรรทัด
-  mongo:
-    restart: unless-stopped
-    command: ["mongod", "--quiet", "--wiredTigerCacheSizeGB", "0.5", "--slowOpSampleRate", "0"]
-    environment:
-      MONGO_REFUSE_DEV_PASSWORDS: "true"
 
   # Azurite เป็น **emulator** — บน Azure จริงไม่ต้องรันบริการนี้ แต่การ deploy ของโครงการ
   # ตอนนี้ยังเป็น docker compose บนเครื่องเดียว ไม่ใช่บน Azure จึงยังรันไว้ และไฟล์ยังอยู่ครบ

@@ -173,7 +173,7 @@ export function SessionProvider({
 
   const refresh = useCallback(async () => {
     try {
-      const data = await api.get<{ user: SessionUser }>("/api/auth/me", { background: true });
+      const data = await api.get<{ user: SessionUser }>("/api/auth/me");
       setUser(data.user);
     } catch {
       setUser(null);

@@ -34,7 +34,6 @@ import {
   DATASET_CHOICE_DEFAULTS,
   type ChoiceFieldKey,
 } from "./dataset-choices-defaults.js";
-import { captureError } from "./error-capture.js";
 
 export { CHOICE_FIELD_KEYS, type ChoiceFieldKey };
 
@@ -149,12 +148,10 @@ async function readRows(): Promise<Map<ChoiceFieldKey, ChoiceRow[]> | null> {
      * ครั้งแรกของ stack ใหม่ ไม่ใช่เหตุให้ API ทั้งตัวไม่ขึ้น
      */
     const code = error instanceof Prisma.PrismaClientKnownRequestError ? error.code : "";
-    // ไม่พิมพ์ข้อความของ Prisma เอง (ยกโค้ดรอบจุดที่เรียกและรายละเอียดของ Postgres มา) — บรรทัด [capture] ถัดไปคือฉบับที่กวาดแล้ว
     console.warn(
       `[dataset-choices] อ่านตาราง administration.dataset_choice ไม่ได้${code ? ` (${code})` : ""} — ` +
-        "ใช้ค่าตั้งต้นในโค้ดไปก่อน ดูบรรทัด [capture] ถัดไป",
+        `ใช้ค่าตั้งต้นในโค้ดไปก่อน: ${error instanceof Error ? error.message : String(error)}`,
     );
-    captureError(error, { level: "warning", tag: "dataset-choices.read-failed" });
     return null;
   }
 }
@@ -177,13 +174,6 @@ async function load(label: string): Promise<void> {
       `จึงใช้ค่าตั้งต้นในโค้ดแทน กรุณารัน \`npm run seed:masters\` แล้วรีสตาร์ต backend ` +
       `หรือเรียก POST /api/admin/dataset-choices/refresh`,
   );
-  // ไม่มี error ให้เก็บ — สร้างขึ้นเองให้เป็น issue เดียวที่นับว่าบูตกี่ครั้งแล้วยังใช้ค่าตั้งต้นอยู่
-  captureError(new Error(`ตัวเลือกของแบบฟอร์มชุดข้อมูลใช้ค่าตั้งต้นในโค้ด (${missing.length} ช่อง)`), {
-    level: "warning",
-    tag: "dataset-choices.defaults",
-    fingerprint: "dataset-choices:defaults",
-    extra: { label, missing },
-  });
 }
 
 /** เรียกครั้งเดียวตอนบูต ใน main() ก่อนเปิดรับ request */

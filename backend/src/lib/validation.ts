@@ -99,24 +99,10 @@ export function containsEnglish(value: string): boolean {
   return /[A-Za-z]/.test(value);
 }
 
-/**
- * อีเมลที่ใช้เป็นตัวตนหรือค้นบัญชี — ยาวไม่เกิน 254 ตัว
- *
- * 254 คือเพดานของที่อยู่ตาม RFC 5321 และทุกคอลัมน์อีเมลเป็น `VARCHAR(255)` อยู่แล้ว ไม่มีผู้ใช้จริง
- * คนไหนเสียอะไร ที่ต้องตรวจที่นี่เพราะแถว `LOGIN_FAILED` ที่ใครก็เขียนได้โดยไม่ต้องล็อกอิน
- * (`INVALID_CREDENTIAL` · `OTP_*` · `ACCOUNT_INACTIVE`) เก็บอีเมลที่พิมพ์มาลง metadata ตรง ๆ
- * regex อีเมลของ zod ไม่จำกัดความยาว เพดานเดียวจึงเป็น body 1 MB — ลองแล้ว (2026-09-29) อีเมลสุ่ม
- * 20,000 ตัวผ่านทั้ง `login` และ `verify-otp` ได้แถวละ 20 KB ในตารางที่ไม่มี retention
- *
- * `abort` ให้หยุดที่ข้อนี้: ข้อความ "ยาวเกิน" บอกวิธีแก้ได้ตรงกว่า "รูปแบบไม่ถูกต้อง" ที่ตามมา
- */
-const EMAIL_MAX = 254;
-
 export const emailSchema = z
   .string()
   .trim()
   .min(1, "กรุณากรอกอีเมล")
-  .max(EMAIL_MAX, { error: `อีเมลต้องยาวไม่เกิน ${EMAIL_MAX} ตัวอักษร`, abort: true })
   .email("รูปแบบอีเมลไม่ถูกต้อง")
   .transform((v) => v.toLowerCase());
 

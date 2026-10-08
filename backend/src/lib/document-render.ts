@@ -25,7 +25,6 @@ import {
   choiceTickVariables,
 } from "./dataset-choices.js";
 import { env } from "../env.js";
-import { addBreadcrumb } from "./context.js";
 
 /** `{{ }}` ไม่ใช่ `{ }` ของ docxtemplater — วงเล็บเดี่ยวชนกับข้อความในเอกสารกฎหมายเอง */
 const DELIMITERS = { start: "{{", end: "}}" } as const;
@@ -33,18 +32,13 @@ const DELIMITERS = { start: "{{", end: "}}" } as const;
 const PLACEHOLDER = /\{\{\s*([A-Za-z0-9_.]+)\s*\}\}/g;
 
 export class DocumentRenderError extends Error {
-  /**
-   * `options.cause` — error ต้นทางที่ทำให้เกิด (fetch ที่ต่อ gotenberg ไม่ติด ฯลฯ) ติดไปกับ error event ใน log store
-   * (`error.causes`) โดยข้อความที่ผู้ใช้เห็นยังเป็นภาษาไทยของเราเหมือนเดิม
-   */
   constructor(
     readonly code: string,
     message: string,
     readonly status = 500,
     readonly fields?: Record<string, string>,
-    options?: { cause?: unknown },
   ) {
-    super(message, options);
+    super(message);
   }
 }
 
@@ -542,7 +536,6 @@ export async function docxToPdf(docx: Buffer, filename: string): Promise<Buffer>
     filename.endsWith(".docx") ? filename : `${filename}.docx`,
   );
 
-  const started = Date.now();
   let res: Response;
   try {
     res = await fetch(`${env.gotenberg.url}/forms/libreoffice/convert`, {
@@ -551,20 +544,16 @@ export async function docxToPdf(docx: Buffer, filename: string): Promise<Buffer>
       signal: AbortSignal.timeout(env.gotenberg.timeoutMs),
     });
   } catch (err) {
-    addBreadcrumb("render", `แปลง .docx → PDF — ติดต่อตัวแปลงไม่ได้ (${Date.now() - started} ms)`, false);
     // ไม่มี fallback โดยตั้งใจ — ปล่อย PDF ที่เลย์เอาต์เพี้ยนออกไปให้ลงนาม
-    // แย่กว่าบอกตรง ๆ ว่าตัวแปลงเอกสารไม่พร้อม · error ของ fetch ติดไปเป็น cause ให้เห็นว่าต่อไม่ติดหรือหมดเวลา
+    // แย่กว่าบอกตรง ๆ ว่าตัวแปลงเอกสารไม่พร้อม
     throw new DocumentRenderError(
       "converter_unavailable",
       "ตัวแปลงเอกสารเป็น PDF ไม่ตอบสนอง กรุณาลองอีกครั้ง หากยังเป็นเหมือนเดิมโปรดแจ้งผู้ดูแลระบบ",
       503,
-      undefined,
-      { cause: err },
     );
   }
 
   if (!res.ok) {
-    addBreadcrumb("render", `แปลง .docx → PDF — HTTP ${res.status} (${Date.now() - started} ms)`, false);
     const body = await res.text().catch(() => "");
     throw new DocumentRenderError(
       "conversion_failed",
@@ -573,7 +562,6 @@ export async function docxToPdf(docx: Buffer, filename: string): Promise<Buffer>
     );
   }
 
-  addBreadcrumb("render", `แปลง .docx → PDF สำเร็จ (${Date.now() - started} ms)`);
   return Buffer.from(await res.arrayBuffer());
 }
 

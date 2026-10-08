@@ -41,11 +41,6 @@ COPY --from=build /app/node_modules/prisma ./node_modules/prisma
 COPY --from=build /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
 COPY --from=build /app/dist ./dist
 COPY prisma ./prisma
-# รุ่นของโค้ด (SHA ของ commit) — ติดไปกับทุก error event และ `GET /` · prod overlay ส่ง GIT_SHA มา ไม่ส่งได้ `unknown`
-# วางท้ายสุดเพราะค่าเปลี่ยนทุก build ชั้นข้างบน (npm ci) จึงยังใช้ cache ได้
-# --enable-source-maps: stack ของ error ใน log store ชี้ไฟล์ .ts กับบรรทัดจริง ไม่ใช่ dist/*.js (tsconfig ออก .map ให้แล้ว)
-ARG GIT_SHA=unknown
-ENV RELEASE=$GIT_SHA NODE_OPTIONS=--enable-source-maps
 USER node
 EXPOSE 4000
 CMD ["node", "dist/index.js"]

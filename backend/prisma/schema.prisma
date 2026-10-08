@@ -1456,9 +1456,6 @@ model AuditEvent {
   @@index([subjectType, subjectId, occurredAt])
   @@index([actorId, occurredAt])
   @@index([correlationId])
-  /// เบี่ยงจากดีไซน์ (index ไม่ใช่คอลัมน์): relay ของ log store (workers/log-relay.ts) อ่านตาราง
-  /// นี้ทีละหน้าตาม cursor (occurred_at, id) — ไม่มี index นี้ทุกหน้าคือการอ่านทั้งตาราง
-  @@index([occurredAt, id])
   @@map("audit_event")
   @@schema("audit")
 }

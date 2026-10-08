@@ -71,7 +71,7 @@ export LOC=southeastasia
 export ENVNAME=cae-d2dsp-dev          # Container Apps environment
 export PGNAME=psql-d2dsp-dev
 export SANAME=std2dspdev              # storage account: 3-24 chars, lowercase+digits only
-export TAG=<image-tag>                # the git short SHA the images were built from (and passed as GIT_SHA — §9)
+export TAG=<image-tag>                # e.g. the git short SHA the images were built from
 ```
 
 ---
@@ -164,107 +164,12 @@ names this system used before the move, though `bdi-uploads` satisfies both.
 ```bash
 export ADMIN_API_TOKEN=$(openssl rand -base64 48)
 export ACTIVATION_KEY_SECRET=$(openssl rand -base64 48)
-export LOG_READ_TOKEN=$(openssl rand -hex 32)
-export INGEST_SERVER_TOKEN=$(openssl rand -hex 32)
 ```
 
-Keep all four. `ACTIVATION_KEY_SECRET` is the HMAC key behind every activation link
+Keep both. `ACTIVATION_KEY_SECRET` is the HMAC key behind every activation link
 (`key_hash = HMAC-SHA-256(secret, raw_key)`) — **rotating it invalidates every activation key
 that has not been used yet**, and the backend refuses to boot without it when
 `NODE_ENV=production`.
-
-`LOG_READ_TOKEN` is the `x-log-token` of the log read API (`/api/admin/logs/*`,
-`docs/21-activity-log.md` §3.11) — a **different** secret from `ADMIN_API_TOKEN` on purpose, so
-holding the admin token does not open the activity log. Hand it only to the people who
-investigate. Empty, the `dev-…-change-me` sample, or shorter than 32 characters, and that API
-answers 503 `log_access_disabled` while everything else runs normally; the backend never
-refuses to boot over it.
-
-`INGEST_SERVER_TOKEN` is the `x-report-token` the Next server attaches to its own error reports
-(`POST /api/client-errors`); the **backend and the frontend both get the same value** (§4.3,
-§4.5). A report whose token matches is stored as `service: "frontend-server"`; anything else,
-including every report from a browser, is stored as an unverified `browser` report, because the
-backend is reachable without the frontend and a header on its own proves nothing. Empty, the
-`dev-…-change-me` sample or anything under 32 characters in production (the backend then treats
-it as empty), or a mismatch between the two apps: Next server errors are still stored, only as
-unverified browser reports. Nothing refuses to boot over it. That is more than a label, though: the
-report's route is discarded, so the same message on every page becomes one issue, and the browser's
-limits apply — 30 a minute from the frontend's IP, the `browser` byte budget, and alert mails capped
-at five per six hours without the message text (`docs/21` §5.12).
-
-`LOG_HASH_KEY` is not generated here. It belongs to the log store, which stays off on Azure for now
-(§3.5), and it is generated on the day the log store is turned on.
-
-### 3.5 MongoDB — the log store, off for now
-
-The backend and the delivery-worker can keep a searchable copy of the audit trail and of the
-system's errors in MongoDB (`docs/21-activity-log.md`). **On Azure it stays off until BDI chooses a
-managed MongoDB service**: both apps get `LOG_STORE_ENABLED=false` (§4.3, §4.4), so the MongoDB
-driver never loads. Nothing else depends on it:
-
-- Postgres `audit.audit_event` is the system of record and stays complete. MongoDB only ever holds
-  a copy of it.
-- `/health/ready` reports `logStore: disabled` and does not count it towards `healthy`.
-- Container stdout already reaches Log Analytics, and every captured error still prints one
-  `[capture]` line there with its reference and issue.
-- The log read API (`/api/admin/logs/*`) answers 503 `log_store_disabled` (except `GET /status`,
-  which answers 200 with `logStore.status: "disabled"`), `POST /api/client-errors`
-  answers 204 and stores nothing, and the error digest (§4.4) sends nothing.
-
-When it is turned on, the service must be one of:
-
-- **Azure Cosmos DB for MongoDB (vCore)**, if it has to be Azure-native or use Entra, or
-- **MongoDB Atlas** in an Azure region, for exact parity with the `mongo:7.0` that compose runs.
-
-**Not Cosmos DB for MongoDB RU**: TTL only on `_ts`, 2 MB documents, `retryWrites=false` and
-throttling (error 16500) all differ from what was built and tested. **And not `mongo` as a
-container app**: Container Apps storage is Azure Files, which mongod does not support for its data
-files.
-
-What turning it on involves:
-
-1. **Two users, not one.** `bdi_backend` (find everywhere, insert into four collections, update
-   only `error_issues`, no remove) for the backend, which faces the internet and so must not be able
-   to delete or rewrite the copy; `bdi_worker` (adds update, remove, createIndex and the stats
-   commands) for the delivery-worker, which runs the relay and the daily prune. The roles are in
-   `mongo/init/01-users.js`. That script uses `createRole`, which compose's `mongo` allows. **On a
-   managed service, check first that custom roles can be created**. Atlas manages database users
-   and custom roles in its own console and Admin API rather than through mongosh. If no custom role
-   is possible, the split falls back to built-in roles, and the guarantee that the backend cannot
-   delete has to be re-established some other way. That is a decision for BDI, not a setting.
-2. **Secrets.** Each app gets its own URI secret, `mongodb-backend-uri` and `mongodb-worker-uri`,
-   plus one shared `log-hash-key`:
-
-   ```bash
-   export LOG_HASH_KEY=$(openssl rand -hex 32)   # keep it: changing it later needs a rebuild of the copy
-
-   az containerapp secret set -n ca-backend-dev -g $RG --secrets \
-       mongodb-backend-uri="<uri of bdi_backend>" log-hash-key="$LOG_HASH_KEY"
-   az containerapp update -n ca-backend-dev -g $RG --set-env-vars \
-       LOG_STORE_ENABLED=true MONGODB_URI=secretref:mongodb-backend-uri MONGODB_DB=bdi_logs \
-       LOG_HASH_KEY=secretref:log-hash-key
-
-   az containerapp secret set -n ca-delivery-worker-dev -g $RG --secrets \
-       mongodb-worker-uri="<uri of bdi_worker>" log-hash-key="$LOG_HASH_KEY"
-   az containerapp update -n ca-delivery-worker-dev -g $RG --set-env-vars \
-       LOG_STORE_ENABLED=true MONGODB_URI=secretref:mongodb-worker-uri MONGODB_DB=bdi_logs \
-       LOG_HASH_KEY=secretref:log-hash-key
-   ```
-
-   `LOG_HASH_KEY` must be **the same value in both apps**. It keys the `cid#` and `email#` search
-   keys, so a copy written under one key cannot be searched with another. Changing it means
-   rebuilding the copy (`docs/21` §3.8).
-3. **Size ceiling.** Without `LOG_STORE_MAX_MB` the apps assume 5120 MB, counted as data plus
-   indexes. If the chosen tier holds less, set `LOG_STORE_MAX_MB` on both apps to below its quota.
-4. **Connections.** Each backend replica opens up to 5 connections and the worker up to 3, so 18 at
-   `--max-replicas 3`.
-5. **Verify.** `/health/ready` should show `logStore: up` within 30 seconds. The worker's relay
-   then backfills all of `audit_event`, at most 10,000 rows every 5 seconds (`docs/21` §3.8).
-   `S1` in `docs/bdi-activity-log.postman_collection.json` shows how far behind the copy is
-   (`relayLagSeconds`).
-
-Q2 on the card (which MongoDB service on Azure) is still open. Until it is answered, none of this
-applies.
 
 ---
 
@@ -340,8 +245,6 @@ az containerapp create \
       database-url="$DATABASE_URL" \
       admin-api-token="$ADMIN_API_TOKEN" \
       activation-key-secret="$ACTIVATION_KEY_SECRET" \
-      log-read-token="$LOG_READ_TOKEN" \
-      ingest-server-token="$INGEST_SERVER_TOKEN" \
       smtp-pass="<gmail-app-password>" \
       thaid-client-secret="<thaid-client-secret>" \
       thaid-api-key="<thaid-api-key>" \
@@ -351,9 +254,6 @@ az containerapp create \
       DATABASE_URL=secretref:database-url \
       ADMIN_API_TOKEN=secretref:admin-api-token \
       ACTIVATION_KEY_SECRET=secretref:activation-key-secret \
-      LOG_READ_TOKEN=secretref:log-read-token \
-      INGEST_SERVER_TOKEN=secretref:ingest-server-token \
-      LOG_STORE_ENABLED=false DEPLOY_ENV=azure \
       AZURE_STORAGE_ACCOUNT_URL="https://${SANAME}.blob.core.windows.net" \
       AZURE_STORAGE_CONTAINER=bdi-uploads \
       GOTENBERG_URL="https://${GOTENBERG_FQDN}" \
@@ -379,21 +279,6 @@ internal ingress and routes to the target port itself; writing `:3000` there fai
 
 `APP_URL`, `CORS_ORIGIN` and `THAID_REDIRECT_URI` are missing on purpose — they need the
 frontend's hostname, which does not exist yet. §4.5 fills them in.
-
-`LOG_READ_TOKEN` goes to the **backend only** — the delivery-worker and the frontend never read
-it. On its own it opens nothing yet: the log read API also needs the log store, which stays off on
-Azure until BDI chooses a managed MongoDB service (`LOG_STORE_ENABLED=false` here and in
-`deploy/azure/backend.env`, which also lists `MONGODB_URI` and `LOG_HASH_KEY` for that day — §3.5),
-so the API answers 503 `log_store_disabled` until then (only `GET /status` answers 200, reporting
-`disabled`). Setting the token now means turning the log
-store on later needs no second secret. `INGEST_SERVER_TOKEN` is set now for the same reason: with
-the log store off, `POST /api/client-errors` still answers 204 and stores nothing, and the frontend
-(§4.5) must carry the same value.
-
-`DEPLOY_ENV=azure` is the deployment name stored as `environment` on every error event, issue and
-runtime event, and shown in the subject of the error digest. Without it the name falls back to
-`NODE_ENV`, which is `production`. Compose deployments set their project name (`bdi-main`), so
-`azure` keeps the two apart. The release comes from the image (§9), not from a variable.
 
 Now grant the backend's identity access to blob data:
 
@@ -458,23 +343,8 @@ az containerapp create \
       DELIVERY_POLL_INTERVAL_MS=15000 DELIVERY_MAX_ATTEMPTS=5 \
       ADMIN_API_TOKEN=secretref:admin-api-token \
       ACTIVATION_KEY_SECRET=secretref:activation-key-secret \
-      AZURE_STORAGE_ACCOUNT_URL="https://${SANAME}.blob.core.windows.net" \
-      LOG_STORE_ENABLED=false DEPLOY_ENV=azure \
-      ERROR_ALERT_EMAILS="<team-list-comma-separated>"
+      AZURE_STORAGE_ACCOUNT_URL="https://${SANAME}.blob.core.windows.net"
 ```
-
-`ERROR_ALERT_EMAILS` is the list that gets the error digest (`workers/error-alerts.ts`: new
-errors, regressions, fatals, dead letters, sustained 5xx, crash loops, the log store over its
-size ceiling — at most one new digest per 15 minutes; a recipient still owed an earlier digest
-may also get that one resent, so at most two mails per recipient in any 15 minutes). It is not a
-secret, and it belongs to the **delivery-worker only**. Empty switches alerting off. It also does
-nothing while the log store is off (`LOG_STORE_ENABLED=false` in `deploy/azure/delivery-worker.env`), since the digest is built
-from the issues stored there. The digest goes through the same `SMTP_*` settings as every other
-mail, one message at a time.
-
-The worker is also the log store's relay. Once the log store is on (§3.5), it copies every
-`audit_event` row into MongoDB and prunes old documents daily. With the log store off it does
-neither, and the email queue is unaffected either way. `DEPLOY_ENV=azure` works as on the backend.
 
 Four details decide whether this app works at all:
 
@@ -505,19 +375,12 @@ az containerapp create \
   --ingress external --target-port 3000 \
   --min-replicas 1 --max-replicas 3 \
   --cpu 0.5 --memory 1Gi \
-  --secrets \
-      ingest-server-token="$INGEST_SERVER_TOKEN" \
   --env-vars \
       NODE_ENV=production \
       PORT=3000 \
       HOSTNAME=0.0.0.0 \
-      INTERNAL_API_URL="https://${BACKEND_INTERNAL}" \
-      INGEST_SERVER_TOKEN=secretref:ingest-server-token
+      INTERNAL_API_URL="https://${BACKEND_INTERNAL}"
 ```
-
-`INGEST_SERVER_TOKEN` must be the **same value as the backend's** (§3.4). The Next server reads it
-at runtime and attaches it to its own error reports; it is never `NEXT_PUBLIC_`, so it never
-reaches the browser bundle.
 
 `HOSTNAME=0.0.0.0` is set explicitly. Next's standalone server defaults to `0.0.0.0` already, but
 if anything ever binds it to localhost the ingress health check fails and the revision never goes
@@ -732,9 +595,7 @@ az containerapp list -g $RG --query "[].{name:name,running:properties.runningSta
 
 # 2. the backend can reach Postgres AND Blob Storage
 curl -s "https://${BACKEND_FQDN}/health/ready" | jq
-# {"status":"ok","checks":{"database":{"status":"up"},"storage":{"status":"up"},
-#   "datasetChoices":{"source":"database","count":…},"logStore":{"status":"disabled"}}}
-# only database and storage decide "ok"; datasetChoices "defaults" means seed:masters has not run (§5.2)
+# {"status":"ok","checks":{"database":{"status":"up"},"storage":{"status":"up"}}}
 
 # 3. the frontend proxy reaches the backend — this is the one that used to fail
 curl -s -o /dev/null -w '%{http_code}\n' "https://${FRONTEND_FQDN}/api/address/provinces"   # 200
@@ -786,41 +647,17 @@ everything through. `docs/07-thaid-integration.md` §4 has the detail.
 | `getaddrinfo ENOTFOUND backend` in the frontend log, and setting `INTERNAL_API_URL` changes nothing | Fixed on 10 Sep 2026. Before that, `rewrites()` in `next.config.ts` was evaluated at `next build` and the destination baked into `routes-manifest.json` | Use an image built from `2327b50` or later, where the proxy is a route handler that reads the variable per request |
 | Setting `NEXT_PUBLIC_API_URL` in Azure has no effect | By design — it is substituted into the browser bundle at build time | Leave it empty. It is the only variable in the system that still requires a rebuild to change |
 | Backend or worker crash-loops with `Missing required environment variable` | `env.ts` builds everything at import time | Supply `DATABASE_URL`, `ADMIN_API_TOKEN`, `ACTIVATION_KEY_SECRET` and one of the two Azure Storage variables — the worker too, even though it uses neither of the last two |
-| `/health/ready` reports `storage: down`, database `up` | Role assignment missing or still propagating — most often. `/health/ready` is public, so it answers one word per check and never the cause: read the cause from the backend log line `[capture] backend error … issue=health:storage GET /health/ready — <Error>: <message>` (at most one a minute per check), or from the log store: issue `health:storage`, events tagged `health.storage`. `database: down` works the same way, with `health:database` / `health.database` | If the cause is an authorisation error, grant **Storage Blob Data Contributor** to the backend's principal and wait a couple of minutes |
+| `/health/ready` reports `storage: down`, database `up` | Role assignment missing or still propagating | Grant **Storage Blob Data Contributor** to the backend's principal, wait a couple of minutes |
 | Storage works, but you were testing the wrong path | `AZURE_STORAGE_CONNECTION_STRING` was also set and takes precedence over the account URL | Remove it entirely on Azure |
 | Emails never arrive, no errors anywhere | `delivery-worker` scaled to zero, or its command was not overridden | `--min-replicas 1`, and `--command "node" --args "dist/workers/delivery.js"` |
 | Document conversion fails at ~30 s with a 503 half a minute later | gotenberg's default `--api-timeout` is 30 s while the backend waits 60 s | `--args "--api-timeout=60s"` |
 | `500` on the first upload, tables exist | `prisma migrate deploy` ran but `seed:masters:prod` did not | Run it; A0–A4 templates live in the database, not the repo |
 | Everyone is logged out after a deploy | Session cookie format changed in a release | Expected and unavoidable; do not deploy that release on a demo day without warning |
 | Internal calls fail between two apps that both look healthy | They are in different Container Apps environments | Internal ingress only resolves within one environment |
-| `logStore` stays `disabled` after setting `MONGODB_URI` | `LOG_STORE_ENABLED=false` is still set. The log store is on only when that variable is `true` or unset **and** the URI is non-empty | `--set-env-vars LOG_STORE_ENABLED=true` on both apps (§3.5) |
-| Every error from Azure reports release `unknown` | The image was built without `--build-arg GIT_SHA` | Rebuild with the argument (§9); setting `RELEASE` on the app is not the fix |
 
 ---
 
 ## 9. Updating to a new image
-
-**Build the images with their commit SHA.** The images come from the Docker Hub procedure
-(`assets/docker-push-manual/manual.txt` on the build machine, outside git). The backend and frontend
-builds must pass the commit as the build argument `GIT_SHA`:
-
-```bash
-TAG=$(git rev-parse --short HEAD)
-docker build --target runner --build-arg GIT_SHA=$TAG -t gbdi/d2s-portal-backend:$TAG ./backend
-docker build --target runner --build-arg GIT_SHA=$TAG --build-arg NEXT_PUBLIC_API_URL= \
-             -t gbdi/d2s-portal-frontend:$TAG ./frontend
-```
-
-`GIT_SHA` becomes `RELEASE` in the backend image, and so in the worker, which is the same image
-re-tagged. In the frontend it becomes `NEXT_PUBLIC_RELEASE`, inlined into both the browser bundle
-and the Next server. Every error event and issue in the log store records it as its release
-(`docs/21`), which is how an issue tells you the build it first and last happened in, and whether a
-resolved issue came back after a deploy. **Without the argument both Dockerfiles fall back to
-`unknown`**, and every error from Azure reports release `unknown`. It is a build-time value only: do
-not set `RELEASE` or `NEXT_PUBLIC_RELEASE` on a container app. On the frontend it would do nothing,
-because Next inlines `NEXT_PUBLIC_*` during `next build`. `main/` gets the same argument from
-`docker-compose.prod.yml`, which passes `GIT_SHA: ${GIT_SHA:-unknown}` to all three built services,
-so its deploy shell must export `GIT_SHA` before `build`.
 
 ```bash
 az containerapp update -n ca-backend-dev         -g $RG --image docker.io/gbdi/d2s-portal-backend:<new-tag>
@@ -859,19 +696,9 @@ rather than overriding it.
 | --- | --- | --- | --- |
 | `NODE_ENV` | | `development` | set to `production` |
 | `PORT` | | `4000` | must equal `--target-port` |
-| ~~`RELEASE`~~ | | baked into the image | set at build time from `--build-arg GIT_SHA` (§9); do not set it on the app |
 | `DATABASE_URL` | **yes** | — | needs `sslmode=require` on Azure |
 | `ADMIN_API_TOKEN` | **yes** | — | shared secret for `/api/admin/*` |
-| `ADMIN_TOKEN_WATCH_FPS` | | empty | comma-separated 12-hex fingerprints of retired admin tokens; each gets its own `ADMIN_TOKEN_REJECTED` row (`docs/09` §4.1). Fingerprints only, never a token |
 | `ACTIVATION_KEY_SECRET` | **in production** | dev value | HMAC key for activation keys |
-| `LOG_READ_TOKEN` | | empty (dev value outside production) | `x-log-token` of `/api/admin/logs/*`, backend only; `openssl rand -hex 32`. Empty, `dev-…` or under 32 characters = 503 `log_access_disabled`. Useless until the log store is on (§4.3) |
-| `INGEST_SERVER_TOKEN` | | empty (dev value outside production) | `x-report-token` of the Next server's error reports; `openssl rand -hex 32`, **same value in the frontend**. Empty, `dev-…`, under 32 characters or mismatched = those reports are stored as unverified browser reports (§3.4) |
-| `DEPLOY_ENV` | | `NODE_ENV` | deployment name stored on every error event and in the digest's subject; `azure` (§4.3) |
-| `LOG_STORE_ENABLED` | | `true` | **`false` on Azure** until a managed MongoDB service is chosen (§3.5). Any value other than `true` turns the log store off, and so does an empty `MONGODB_URI` |
-| `MONGODB_URI` | | empty = log store off | secret `mongodb-backend-uri`: the `bdi_backend` user, which cannot remove or rewrite (§3.5). Holds a password, so never print it |
-| `MONGODB_DB` | | `bdi_logs` | |
-| `LOG_STORE_MAX_MB` | | `5120` in production, `512` elsewhere | ceiling on data plus indexes; set below the managed service's quota if that is smaller. Same value on the worker |
-| `LOG_HASH_KEY` | | empty in production (dev value elsewhere) | secret `log-hash-key`, **same value on the worker**, `openssl rand -hex 32`. Empty = no `cid#`/`email#` search keys, and searches by ID number or email answer 503 `hash_search_unavailable`. Changing it needs a rebuild of the copy (§3.5) |
 | `AZURE_STORAGE_ACCOUNT_URL` | one of the two | — | managed identity; the production answer |
 | `AZURE_STORAGE_CONNECTION_STRING` | one of the two | — | account key; dev only. Wins if both are set |
 | `AZURE_STORAGE_CONTAINER` | | `bdi-uploads` | must match the container that exists |
@@ -897,11 +724,7 @@ rather than overriding it.
 `NODE_ENV`, `DATABASE_URL`, `APP_URL`, all six `SMTP_*`, `SUPPORT_EMAIL`, `SUPPORT_PHONE`,
 `DELIVERY_POLL_INTERVAL_MS` (default `15000`), `DELIVERY_MAX_ATTEMPTS` (default `5`), plus
 `ADMIN_API_TOKEN`, `ACTIVATION_KEY_SECRET` and one Azure Storage variable that exist only to get
-`env.ts` past its boot checks. `ERROR_ALERT_EMAILS` (default empty = no error digest; comma-separated,
-worker only, inert while the log store is off — §4.4). `DEPLOY_ENV`, `LOG_STORE_ENABLED`,
-`MONGODB_DB`, `LOG_STORE_MAX_MB` and `LOG_HASH_KEY` behave as on the backend. `MONGODB_URI` is the
-worker's own secret, `mongodb-worker-uri`, for the `bdi_worker` user, which may delete for the
-daily prune (§3.5).
+`env.ts` past its boot checks.
 
 ### frontend
 
@@ -911,9 +734,7 @@ daily prune (§3.5).
 | `PORT=3000` | must equal `--target-port` |
 | `HOSTNAME=0.0.0.0` | |
 | `INTERNAL_API_URL` | `https://<backend-internal-fqdn>`, no port. Read per request |
-| `INGEST_SERVER_TOKEN` | secret, same value as the backend's (§4.5). Read at runtime, never `NEXT_PUBLIC_` |
 | ~~`NEXT_PUBLIC_API_URL`~~ | build-time only, must stay empty — see §4.5 |
-| ~~`NEXT_PUBLIC_RELEASE`~~ | build-time only, from `--build-arg GIT_SHA` — see §9 |
 | ~~`ALLOWED_DEV_ORIGINS`~~ | affects `next dev` only; irrelevant in production |
 
 ### gotenberg
@@ -929,7 +750,5 @@ None. Configuration is command-line flags — `--api-timeout=60s` is the one tha
 - `docs/07-thaid-integration.md` — the ThaiD flow, what DOPA has and has not granted
 - `docs/09-auth-tokens.md` — every token in the system: where it lives, how it is hashed, when it
   expires
-- `docs/21-activity-log.md` — the activity log and error store: what MongoDB holds, the relay, the
-  log read API, and the PDPA pack
 - `docs/03-demo-walkthrough.md` — running the same journeys against a compose deployment
 - `docs/06-db-migration-plan.md` §7 — the migration baseline and what it means for existing data

@@ -74,32 +74,19 @@ export type PasswordResetRecord = Prisma.PasswordResetTokenGetPayload<{
  * "ใช้ไปแล้ว" ให้ไปเข้าสู่ระบบ ส่วน "หมดอายุ/ถูกยกเลิก" ให้ขอลิงก์ใหม่
  *
  * ค้นด้วย hash โดยตรง (unique index) แล้วเทียบซ้ำแบบคงเวลาอีกชั้นเหมือน activation key
- *
- * ใบที่เจอแต่ใช้ไม่ได้แล้วคืน `stale` (id ของใบกับบัญชี) มาด้วย — ไม่ใช่ให้ใช้ต่อ แต่ให้
- * `PASSWORD_RESET_COMPLETED` ที่ล้มเหลวบอกได้ว่าเป็นลิงก์ของบัญชีไหน ผู้ถือลิงก์ที่หมดอายุแล้ว
- * มากดซ้ำคือคำถามที่ผู้ประสานงานของ BDI ต้องตอบเจ้าของบัญชีได้
  */
 export async function findUsablePasswordResetToken(
   rawToken: string,
-): Promise<
-  | { record: PasswordResetRecord; reason: null; stale: null }
-  | { record: null; reason: PasswordResetLookupFailure; stale: StaleResetToken | null }
-> {
+): Promise<{ record: PasswordResetRecord; reason: null } | { record: null; reason: PasswordResetLookupFailure }> {
   const record = await prisma.passwordResetToken.findUnique({
     where: { tokenHash: hashActivationKey(rawToken) },
     include: RESET_TOKEN_INCLUDE,
   });
   if (!record || !activationKeyMatches(rawToken, record.tokenHash)) {
-    return { record: null, reason: "not_found", stale: null };
+    return { record: null, reason: "not_found" };
   }
-  const stale = { id: record.id, userAccountId: record.userAccountId };
-  if (record.usedAt) return { record: null, reason: "used", stale };
-  if (record.revokedAt) return { record: null, reason: "revoked", stale };
-  if (record.expiresAt < new Date()) return { record: null, reason: "expired", stale };
-  return { record, reason: null, stale: null };
-}
-
-export interface StaleResetToken {
-  id: string;
-  userAccountId: string;
+  if (record.usedAt) return { record: null, reason: "used" };
+  if (record.revokedAt) return { record: null, reason: "revoked" };
+  if (record.expiresAt < new Date()) return { record: null, reason: "expired" };
+  return { record, reason: null };
 }

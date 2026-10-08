@@ -233,13 +233,11 @@ export async function assignRole(
     });
   }
 
-  // `created` บอกผู้เรียกว่ามีการมอบจริงหรือเป็น no-op — `ROLE_ASSIGNED` ต้องไม่ถูกเขียน
-  // ให้ assignment ที่มีอยู่ก่อนแล้ว ไม่งั้น log จะบอกเวลามอบผิด
   const existing = await db.userRoleAssignment.findFirst({
     where: { userAccountId, roleId, organizationId, ...activeAssignmentWhere() },
     select: { id: true },
   });
-  if (existing) return { id: existing.id, created: false, replaced };
+  if (existing) return { id: existing.id, replaced };
 
   const created = await db.userRoleAssignment.create({
     data: {
@@ -252,7 +250,7 @@ export async function assignRole(
     },
     select: { id: true },
   });
-  return { id: created.id, created: true, replaced };
+  return { id: created.id, replaced };
 }
 
 /**
@@ -401,87 +399,6 @@ export async function activeRoleCodes(db: Db, userAccountId: string): Promise<Ro
   return rows.filter((r) => r.role.isActive).map((r) => r.role.code as RoleCode);
 }
 
-/** activation key ที่เพิ่งถูกเพิกถอน — ผู้เรียกส่งต่อให้ `logKeysRevoked()` หลัง commit */
-export interface RevokedKey {
-  id: string;
-  userAccountId: string;
-  organizationId: string;
-  roleCode: string;
-  /** ค่าที่เขียนลง `revoked_reason` — แถว audit ใช้ค่าเดียวกัน */
-  reason: string;
-}
-
-/**
- * เพิกถอนคีย์ที่ยัง `ISSUED` ตามเงื่อนไข แล้ว **คืนคีย์ที่ถูกเพิกถอนกลับไป**
- *
- * เหตุผลเดียวกับ `revokeRoleAssignments()`: `updateMany` ไม่บอกว่าโดนใบไหนไปบ้าง และทุกผู้เรียกอยู่ใน
- * transaction ซึ่งเขียน audit เองไม่ได้ (audit เขียนผ่าน prisma ตัวหลัก rollback แล้วจะเหลือแถวของการ
- * เพิกถอนที่ไม่เคยเกิด) ผู้เรียกจึงต้องถือค่านี้ออกจาก transaction แล้วเขียน `ACTIVATION_KEY_REVOKED`
- * หลัง commit เดิมแต่ละทางเขียน `updateMany` ของตัวเองและไม่มีทางไหนเขียน audit เลย
- *
- * **คืนเฉพาะใบที่ UPDATE นี้เปลี่ยนเอง** (`updateManyAndReturn` = `UPDATE … RETURNING`) ไม่ใช่ใบที่อ่านเจอก่อน
- * เขียน: รุ่นแรกอ่าน ISSUED ด้วย `findMany` แล้วค่อย `updateMany` สี่คำสั่ง revoke ที่ยิงพร้อมกันจึงเห็นใบเดียวกัน
- * เป็น ISSUED ทั้งสี่ ได้ 200 ทั้งสี่ และเขียน `ACTIVATION_KEY_REVOKED` สี่แถว ทั้งที่มีแค่ใบแรกที่เปลี่ยนสถานะได้จริง
- * (สามแถวเป็นการเพิกถอนที่ไม่เคยเกิด และใบที่ `/activate` เพิ่งใช้ไปก็ถูกบันทึกว่าถูกเพิกถอนได้ด้วย) ตอนนี้
- * เงื่อนไข ISSUED อยู่ใน WHERE ของคำสั่งเดียวกับที่เขียน คนที่มาทีหลังรอ lock ของแถวแล้วได้รายการว่าง
- *
- * ต้องระบุ `id` หรือ `userAccountId` อย่างใดอย่างหนึ่งเสมอ — เงื่อนไขว่างคือการเพิกถอนคีย์ทั้งระบบ
- */
-export async function revokeIssuedKeys(
-  db: Db,
-  where: { id: string } | { userAccountId: string; organizationId?: string; roleId?: string },
-  params: { actorId: string; reason: string },
-): Promise<RevokedKey[]> {
-  const revoked = await db.activationKey.updateManyAndReturn({
-    where: { ...where, status: ActivationKeyStatus.ISSUED },
-    data: {
-      status: ActivationKeyStatus.REVOKED,
-      revokedAt: new Date(),
-      revokedBy: params.actorId,
-      revokedReason: params.reason,
-      updatedBy: params.actorId,
-    },
-    select: { id: true, userAccountId: true, organizationId: true, role: { select: { code: true } } },
-  });
-
-  return revoked.map((t) => ({
-    id: t.id,
-    userAccountId: t.userAccountId,
-    organizationId: t.organizationId,
-    roleCode: t.role.code,
-    reason: params.reason,
-  }));
-}
-
-/**
- * `ACTIVATION_KEY_REVOKED` หนึ่งแถวต่อคีย์ — เรียกหลัง commit ของ transaction ที่คืน `RevokedKey[]` มา
- *
- * `revokedVia` คือช่องทางเดียวกับแถวต้นเรื่องของคำขอนั้น (ADMIN_API · ADMIN_RESET_API · REVIEW_API)
- * `replacedByKeyId` ใส่เมื่อเพิกถอนเพราะออกใบใหม่แทน ไม่ throw เหมือน `logAudit()`
- */
-export async function logKeysRevoked(
-  keys: RevokedKey[],
-  context: { revokedVia: string; replacedByKeyId?: string },
-): Promise<void> {
-  for (const key of keys) {
-    await logAudit({
-      action: AuditAction.ACTIVATION_KEY_REVOKED,
-      subjectType: AuditSubject.USER_ACTIVATION_KEY,
-      subjectId: key.id,
-      organizationId: key.organizationId,
-      before: { status: ActivationKeyStatus.ISSUED },
-      after: { status: ActivationKeyStatus.REVOKED },
-      metadata: {
-        reason: key.reason,
-        revoked_via: context.revokedVia,
-        user_account_id: key.userAccountId,
-        role: key.roleCode,
-        ...(context.replacedByKeyId ? { replaced_by_key_id: context.replacedByKeyId } : {}),
-      },
-    });
-  }
-}
-
 /**
  * ออก activation key ใหม่ตาม sheet `activation_key`
  *
@@ -489,8 +406,7 @@ export async function logKeysRevoked(
  * ที่ใช้ได้หลายอันพร้อมกัน — และเพื่อไม่ให้ชน partial unique index uq_active_activation_key
  * (index ของ activation_key ยังอยู่ ตัวที่ถูกลบไปคือของ user_role_assignment)
  *
- * คืน raw key กลับมาให้ผู้เรียกส่งอีเมล ฐานข้อมูลเก็บแค่ HMAC และคืนใบที่ถูกแทนที่ (`revokedKeys`)
- * ให้ผู้เรียกส่งต่อ `logKeysRevoked()` พร้อม `replacedByKeyId` หลัง commit
+ * คืน raw key กลับมาให้ผู้เรียกส่งอีเมล ฐานข้อมูลเก็บแค่ HMAC
  */
 export async function issueActivationKey(
   db: Db,
@@ -506,11 +422,21 @@ export async function issueActivationKey(
   const roleId = await roleIdByCode(db, params.roleCode);
   const { key, keyHash } = generateActivationKey();
 
-  const revokedKeys = await revokeIssuedKeys(
-    db,
-    { userAccountId: params.userAccountId, organizationId: params.organizationId, roleId },
-    { actorId, reason: "ออกคีย์ใหม่แทน" },
-  );
+  await db.activationKey.updateMany({
+    where: {
+      userAccountId: params.userAccountId,
+      organizationId: params.organizationId,
+      roleId,
+      status: ActivationKeyStatus.ISSUED,
+    },
+    data: {
+      status: ActivationKeyStatus.REVOKED,
+      revokedAt: new Date(),
+      revokedBy: actorId,
+      revokedReason: "ออกคีย์ใหม่แทน",
+      updatedBy: actorId,
+    },
+  });
 
   const ttlDays = params.ttlDays ?? env.auth.activationKeyTtlDays;
   const record = await db.activationKey.create({
@@ -525,7 +451,7 @@ export async function issueActivationKey(
     },
   });
 
-  return { key, record, revokedKeys };
+  return { key, record };
 }
 
 export type ActivationLookupFailure = "not_found" | "used" | "expired" | "revoked";
@@ -576,27 +502,10 @@ async function evaluateActivationKey(record: ActivationKeyRecord) {
   }
   if (record.expiresAt < new Date()) {
     if (record.status !== ActivationKeyStatus.EXPIRED) {
-      // เงื่อนไขสถานะเดิมอยู่ใน where — สองคำขอที่เปิดลิงก์เดียวกันพร้อมกันจะมีใบเดียว
-      // ที่พลิกได้จริง และ `ACTIVATION_KEY_EXPIRED` จึงมีแถวเดียวต่อคีย์
-      const { count } = await prisma.activationKey.updateMany({
-        where: { id: record.id, status: record.status },
+      await prisma.activationKey.update({
+        where: { id: record.id },
         data: { status: ActivationKeyStatus.EXPIRED, updatedBy: SYSTEM_USER_ID },
       });
-      if (count > 0) {
-        await logAudit({
-          action: AuditAction.ACTIVATION_KEY_EXPIRED,
-          subjectType: AuditSubject.USER_ACTIVATION_KEY,
-          subjectId: record.id,
-          organizationId: record.organizationId,
-          before: { status: record.status },
-          after: { status: ActivationKeyStatus.EXPIRED },
-          metadata: {
-            user_account_id: record.userAccountId,
-            role: record.role.code,
-            expires_at: record.expiresAt,
-          },
-        });
-      }
     }
     return { key: null, reason: "expired" as ActivationLookupFailure };
   }
@@ -609,9 +518,6 @@ async function evaluateActivationKey(record: ActivationKeyRecord) {
  *
  * §2.4 ของสเปกสั่งไว้ว่าเลขบัตรจาก ThaID ไม่ตรงกับที่บันทึกไว้ → REVOKED ไม่ใช่แค่
  * ปฏิเสธครั้งนั้น คนที่ถือลิงก์ต้องขอใบใหม่จากเจ้าหน้าที่ ลองสุ่มเลขบัตรซ้ำ ๆ ไม่ได้
- *
- * ไม่ผ่าน `revokeIssuedKeys()` และไม่มี `ACTIVATION_KEY_REVOKED` โดยตั้งใจ — ผู้เรียกเขียน
- * `IDENTITY_VERIFICATION_FAILED` (`CID_MISMATCH`) ซึ่งเป็นหลักฐานของการเพิกถอนครั้งนี้อยู่แล้ว
  */
 export async function revokeActivationKey(
   db: Db,
@@ -631,20 +537,6 @@ export async function revokeActivationKey(
 }
 
 /**
- * คีย์ไม่ได้เป็น `ISSUED` แล้วตอนที่ `completeActivation()` จะใช้มัน — อีก transaction เปลี่ยนไปก่อน
- *
- * `POST /activate` อ่านคีย์ก่อนเปิด transaction แล้วใช้เวลา hash รหัสผ่านอยู่ข้างใน ระหว่างนั้นผู้ดูแลระบบ
- * เพิกถอนได้ หรือฟอร์มเดิมถูกส่งซ้ำแล้วใบแรกใช้คีย์ไปแล้ว `reason` คือสถานะที่ transaction อื่น commit ไว้
- * ผู้เรียกตอบ 410 ด้วยรหัสเดียวกับตอนอ่านคีย์ไม่ผ่าน และทั้ง transaction ถอยกลับ บัญชีจึงไม่ถูกเปิด
- */
-export class ActivationKeyUnusableError extends Error {
-  constructor(readonly reason: ActivationLookupFailure) {
-    super(`activation key ถูกเปลี่ยนสถานะไปก่อน (${reason})`);
-    this.name = "ActivationKeyUnusableError";
-  }
-}
-
-/**
  * ปิดงาน activation ตามขั้นที่ 6–8 ของ lifecycle ใน sheet
  * เรียกจากใน transaction เท่านั้น
  */
@@ -652,38 +544,6 @@ export async function completeActivation(
   db: Db,
   params: { activationKeyId: string; userAccountId: string; roleCode: RoleCode; organizationId: string },
 ) {
-  /**
-   * ขั้นที่ 8 ทำก่อน และเงื่อนไข `ISSUED` อยู่ใน WHERE ของคำสั่งที่เขียน — กับดัก read-then-write
-   * เดียวกับ `revokeIssuedKeys()` เดิมเป็น `update` ตามสถานะที่อ่านไว้นอก transaction จึงทับ `REVOKED`
-   * ของคำสั่งเพิกถอนที่ commit ระหว่างนั้นได้ (บัญชีเปิดด้วยคำเชิญที่ถูกยกเลิกแล้ว และ log มีสองแถว
-   * ที่ออกจาก ISSUED ขัดกันเอง) ส่วนฟอร์มที่ส่งซ้ำ ใบที่สองรอ lock ของแถวบัญชีแล้วผ่านทุกขั้น
-   * ได้ `USER_ACCOUNT_ACTIVATED` กับ `ACTIVATION_KEY_USED` สองชุด ตอนนี้คนที่มาทีหลังได้ 0 แถวแล้วหยุด
-   * ก่อนแตะบัญชีหรือ role ลำดับภายใน transaction เดียวไม่เปลี่ยนผลของการ commit
-   */
-  const claimed = await db.activationKey.updateMany({
-    where: { id: params.activationKeyId, status: ActivationKeyStatus.ISSUED },
-    data: {
-      status: ActivationKeyStatus.USED,
-      usedAt: new Date(),
-      updatedBy: params.userAccountId,
-    },
-  });
-  if (claimed.count === 0) {
-    const current = await db.activationKey.findUnique({
-      where: { id: params.activationKeyId },
-      select: { status: true },
-    });
-    throw new ActivationKeyUnusableError(
-      current?.status === ActivationKeyStatus.USED
-        ? "used"
-        : current?.status === ActivationKeyStatus.REVOKED
-          ? "revoked"
-          : current?.status === ActivationKeyStatus.EXPIRED
-            ? "expired"
-            : "not_found",
-    );
-  }
-
   await db.userAccount.update({
     where: { id: params.userAccountId },
     data: {
@@ -694,23 +554,24 @@ export async function completeActivation(
     },
   });
 
-  const assignment = await assignRole(db, {
+  // ส่งกลับให้ผู้เรียกประกาศหลัง commit — คนที่ถูกแทนที่ต้องได้รู้ตัว
+  const { replaced } = await assignRole(db, {
     userAccountId: params.userAccountId,
     roleCode: params.roleCode,
     organizationId: params.organizationId,
     actorId: params.userAccountId,
   });
 
-  /**
-   * ส่งกลับให้ผู้เรียกทำต่อหลัง commit ทั้งสองอย่าง — ที่นี่อยู่ใน transaction และทั้ง audit
-   * กับอีเมลเขียนผ่าน prisma ตัวหลัก: `replaced` คือคนที่ถูกแทนที่ซึ่งต้องได้รู้ตัว ส่วน id ของ
-   * assignment คือ subject ของ `ROLE_ASSIGNED` (ถ้า `assignRole()` มอบใหม่จริง ไม่ใช่ no-op)
-   */
-  return {
-    roleAssignmentId: assignment.id,
-    roleAssignmentCreated: assignment.created,
-    replaced: assignment.replaced,
-  };
+  await db.activationKey.update({
+    where: { id: params.activationKeyId },
+    data: {
+      status: ActivationKeyStatus.USED,
+      usedAt: new Date(),
+      updatedBy: params.userAccountId,
+    },
+  });
+
+  return { replaced };
 }
 
 /**

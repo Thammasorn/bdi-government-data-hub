@@ -87,57 +87,6 @@ services:
       retries: 5
       start_period: 20s
 
-  # MongoDB — log store: สำเนาค้นหาได้ของ audit.audit_event และที่เก็บ error ของระบบ · ดู docs/21
-  #
-  # เป็นของเสริม ไม่ใช่ของที่ระบบขาดไม่ได้ จึง**ไม่ผูกพอร์ตออกโฮสต์ และห้ามมี service ไหน depends_on ตัวนี้**:
-  # mongo ล่ม ขึ้นไม่ได้ หรือชนอะไรตอน deploy แล้วเว็บต้องยังขึ้น (เหตุ azurite พอร์ต 9000 เคยทำเว็บสาธารณะล่มมาแล้ว)
-  # backend รายงานสถานะไว้ที่ /health/ready แต่ไม่นับรวมใน healthy · ปิดทั้งหมดด้วย LOG_STORE_ENABLED=false
-  #
-  # cache ของ WiredTiger ตั้งเองเสมอ: ค่าตั้งต้นคือครึ่งหนึ่งของ RAM เครื่อง *ต่อหนึ่ง instance* และเครื่องนี้รันหลาย
-  # stack พร้อมกัน (prod overlay ให้ 0.5 GB) · log ของคอนเทนเนอร์มีเพดาน เพราะ / กับ /hdd1tb เคยเต็มมาแล้ว
-  #
-  # รหัสผ่านทั้งสามใช้**ครั้งเดียวตอน volume ว่าง** (init/01-users.js) — เปลี่ยนใน .env ทีหลังไม่มีผลกับ volume เดิม
-  # ค่าตั้งต้นเป็นค่าตัวอย่างสาธารณะ ซึ่ง prod overlay สั่งให้ entrypoint.sh ไม่ยอมเริ่มถ้ายังใช้อยู่
-  # รหัสผ่านของ backend/worker ถูกแทนลง URI ตรง ๆ ต้องเป็นฐานสิบหก (`openssl rand -hex 32`)
-  #
-  # `--slowOpSampleRate 0` ปิดบรรทัด "Slow query" ใน log ของคอนเทนเนอร์: mongod พิมพ์คำสั่งที่ช้ากว่า slowms (100 ms)
-  # ทั้งคำสั่ง รวม `$setOnInsert` ของเอกสาร activity ทั้งใบ (ชื่อ อีเมลบัญชี IP UA บันทึกที่ปิดเลขแล้ว) และตัวกรองของการค้น
-  # สำเนานั้นอยู่นอกตาราง retention และการตัด IP/UA ไปจนกว่า json-file จะหมุนทิ้ง ซึ่งกับ `--quiet` อาจเป็นเดือน (ตรวจขั้น 6,
-  # 2026-09-30) Community ไม่มี redactClientLogData ให้ใช้ · เปิดชั่วคราวตอนไล่ความช้าด้วย root:
-  # `db.setProfilingLevel(0, { slowms: 100, sampleRate: 1 })` แล้วตั้ง `sampleRate: 0` คืนเมื่อเสร็จ (restart ก็กลับเป็น 0)
-  mongo:
-    image: mongo:7.0
-    restart: unless-stopped
-    entrypoint: ["sh", "/opt/bdi-mongo/entrypoint.sh"]
-    command: ["mongod", "--quiet", "--wiredTigerCacheSizeGB", "0.25", "--slowOpSampleRate", "0"]
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-bdi}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-dev-mongo-root-change-me}
-      MONGO_BACKEND_PASSWORD: ${MONGO_BACKEND_PASSWORD:-dev-mongo-backend-change-me}
-      MONGO_WORKER_PASSWORD: ${MONGO_WORKER_PASSWORD:-dev-mongo-worker-change-me}
-      # user อ่านอย่างเดียวของ Metabase — ว่าง = ไม่สร้าง (01-users.js)
-      MONGO_READER_PASSWORD: ${MONGO_READER_PASSWORD:-}
-      MONGODB_DB: ${MONGODB_DB:-bdi_logs}
-    expose:
-      - "27017"
-    volumes:
-      - mongo-data:/data/db
-      - ./mongo:/opt/bdi-mongo:ro
-      - ./mongo/init:/docker-entrypoint-initdb.d:ro
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    healthcheck:
-      # ping ไม่ต้อง login — บอกแค่ว่า mongod รับคำสั่งแล้ว ผู้ใช้ของแอปดูที่ logStore ใน /health/ready
-      test: ["CMD", "mongosh", "--quiet", "--norc", "--eval", "quit(db.adminCommand('ping').ok ? 0 : 1)"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-      start_interval: 5s
-
   backend:
     build:
       context: ./backend
@@ -165,8 +114,6 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:${FRONTEND_PORT:-3000}}
       APP_URL: ${APP_URL:-http://localhost:3000}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:?ตั้งค่า ADMIN_API_TOKEN ใน .env ก่อน}
-      # เฉพาะ backend — worker ไม่ได้รับคำขอที่ถือ x-admin-token
-      ADMIN_TOKEN_WATCH_FPS: ${ADMIN_TOKEN_WATCH_FPS:-}
       SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-7}
       SESSION_IDLE_HOURS: ${SESSION_IDLE_HOURS:-8}
       INVITATION_TTL_DAYS: ${INVITATION_TTL_DAYS:-7}
@@ -195,28 +142,6 @@ services:
       THAID_USE_PID: ${THAID_USE_PID:-true}
       THAID_REQUIRE_NONCE: ${THAID_REQUIRE_NONCE:-false}
       COOKIE_SECURE: ${COOKIE_SECURE:-}
-      # log store (MongoDB) — ดู lib/log-store.ts · สวิตช์ปิดคือ LOG_STORE_ENABLED=false (ค่าบูลีน ไม่ใช่การเว้น URI
-      # ให้ว่าง เพราะ `:-` ถือว่าค่าว่างคือไม่ได้ตั้ง แล้วเติม URI ตั้งต้นกลับมาให้เอง)
-      # backend ใช้ bdi_backend ซึ่งลบอะไรไม่ได้ · ชี้ Mongo ตัวอื่นด้วย MONGODB_BACKEND_URI
-      # **ชุดเดียวกันต้องอยู่ใน delivery-worker ข้างล่างด้วย** (ต่างกันแค่ user)
-      LOG_STORE_ENABLED: ${LOG_STORE_ENABLED:-true}
-      MONGODB_URI: ${MONGODB_BACKEND_URI:-mongodb://bdi_backend:${MONGO_BACKEND_PASSWORD:-dev-mongo-backend-change-me}@mongo:27017/${MONGODB_DB:-bdi_logs}?authSource=${MONGODB_DB:-bdi_logs}}
-      MONGODB_DB: ${MONGODB_DB:-bdi_logs}
-      LOG_STORE_MAX_MB: ${LOG_STORE_MAX_MB:-}
-      # กุญแจของ key ค้นหา cid#/email# ในสำเนากิจกรรม — ว่าง = ค่าของ dev ใน env.ts, production ว่าง = ไม่มี key ค้นหา
-      # ต้องเป็นค่าเดียวกับของ delivery-worker ข้างล่าง (relay ใช้ทำ key ของทุกแถว)
-      LOG_HASH_KEY: ${LOG_HASH_KEY:-}
-      # token ของ API อ่าน log (x-log-token ของ /api/admin/logs/*) — ว่าง = ค่าของ dev ใน env.ts, production ว่างหรือเป็น
-      # ค่าตัวอย่าง = API นั้นตอบ 503 · **backend เท่านั้น** worker ไม่ได้ให้บริการ API นี้
-      LOG_READ_TOKEN: ${LOG_READ_TOKEN:-}
-      # ความลับที่ Next server แนบกับรายงาน error ของตัวเอง (POST /api/client-errors) — ตรงแล้วเก็บเป็น frontend-server
-      # ว่าง = ค่าของ dev ใน env.ts, production ว่างหรือเป็นค่าตัวอย่าง = รายงานของ Next server เก็บเป็น browser ที่ยืนยันไม่ได้
-      # **ค่าเดียวกันต้องอยู่ใน frontend ข้างล่าง**
-      INGEST_SERVER_TOKEN: ${INGEST_SERVER_TOKEN:-}
-      # ชื่อ deployment ที่ติดไปกับทุก error event (ค่าตั้งต้นคือชื่อ project ของ compose: bdi-main, bdi-dev_…)
-      # **ไม่มี RELEASE ตรงนี้โดยตั้งใจ**: image ของ production ฝัง RELEASE=<SHA> ไว้แล้ว (backend/Dockerfile) และค่าว่าง
-      # จาก `${RELEASE:-}` จะทับค่านั้นจนกลายเป็น `dev`
-      DEPLOY_ENV: ${DEPLOY_ENV:-${COMPOSE_PROJECT_NAME:-bdi-project}}
     ports:
       # ตรึงไว้ — โดเมนสาธารณะ bdi-api.thammasorn.org ชี้มาที่พอร์ตนี้
       # checkout อื่นให้ทับด้วย docker-compose.override.yml (new-dev.sh สร้างให้)
@@ -268,18 +193,6 @@ services:
       SUPPORT_PHONE: ${SUPPORT_PHONE:-02-480-8833}
       DELIVERY_POLL_INTERVAL_MS: ${DELIVERY_POLL_INTERVAL_MS:-15000}
       DELIVERY_MAX_ATTEMPTS: ${DELIVERY_MAX_ATTEMPTS:-5}
-      # log store — ชุดเดียวกับ backend แต่เป็น user bdi_worker (ลบได้ สำหรับ prune ตามอายุ) · ชี้ Mongo ตัวอื่นด้วย
-      # MONGODB_WORKER_URI · ไม่มี depends_on mongo ตรงนี้เช่นกัน: ลูปส่งอีเมลต้องไม่ผูกกับ log store
-      LOG_STORE_ENABLED: ${LOG_STORE_ENABLED:-true}
-      MONGODB_URI: ${MONGODB_WORKER_URI:-mongodb://bdi_worker:${MONGO_WORKER_PASSWORD:-dev-mongo-worker-change-me}@mongo:27017/${MONGODB_DB:-bdi_logs}?authSource=${MONGODB_DB:-bdi_logs}}
-      MONGODB_DB: ${MONGODB_DB:-bdi_logs}
-      # worker เป็นคนเทียบค่านี้กับขนาดจริงทุกชั่วโมง (workers/log-upkeep.ts)
-      LOG_STORE_MAX_MB: ${LOG_STORE_MAX_MB:-}
-      # ค่าเดียวกับของ backend — relay (workers/log-relay.ts) ใช้ทำ key ค้นหา cid#/email# ของทุกแถวที่คัดลอก
-      LOG_HASH_KEY: ${LOG_HASH_KEY:-}
-      # ผู้รับอีเมลสรุป error คั่นด้วย comma (workers/error-alerts.ts) — ว่าง = ไม่แจ้งเตือน · **worker เท่านั้น** backend ไม่ส่ง
-      ERROR_ALERT_EMAILS: ${ERROR_ALERT_EMAILS:-}
-      DEPLOY_ENV: ${DEPLOY_ENV:-${COMPOSE_PROJECT_NAME:-bdi-project}}
     volumes:
       - ./backend:/app
       - backend-node-modules:/app/node_modules
@@ -300,9 +213,6 @@ services:
       ALLOWED_DEV_ORIGINS: ${APP_URL:-}
       # Server-side (RSC / route handlers): uses the compose network.
       INTERNAL_API_URL: http://backend:4000
-      # แนบกับรายงาน error ของ Next server (frontend/lib/server-error-report.ts) — อ่านตอนรัน ห้ามเป็น NEXT_PUBLIC_
-      # ค่าตั้งต้นตรงกับค่าของ dev ใน backend/src/env.ts · production ตั้งใน .env ค่าเดียวกับของ backend
-      INGEST_SERVER_TOKEN: ${INGEST_SERVER_TOKEN:-dev-ingest-token-change-me}
     ports:
       # ตรึงไว้ — โดเมนสาธารณะ bdi.thammasorn.org ชี้มาที่พอร์ตนี้
       - "3000:3000"
@@ -311,36 +221,9 @@ services:
       - frontend-node-modules:/app/node_modules
       - frontend-next-cache:/app/.next
 
-  # Metabase — หน้าเว็บค้น log ใน MongoDB แบบคลิกเลือก (docs/21 §11) ไม่ขึ้นเองกับ stack:
-  #   docker compose --profile tools up -d metabase
-  # ต่อ Mongo ด้วย bdi_reader (อ่านได้แค่สำเนาที่ปิดเลขบัตรแล้ว) การอ่านทางนี้ไม่เป็น AUDIT_LOG_READ
-  # เหมือน API อ่าน log — จึง bind แค่ 127.0.0.1 และต้องจำกัดคนที่มีบัญชี Metabase
-  # image ~780 MB อยู่บน / (containerd) · ฐานข้อมูลของ Metabase เองเป็น H2 ใน volume metabase-data
-  metabase:
-    image: metabase/metabase:v0.63.19
-    profiles: ["tools"]
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:${METABASE_PORT:-3030}:3000"
-    environment:
-      MB_DB_FILE: /metabase-data/metabase.db
-      MB_ANON_TRACKING_ENABLED: "false"
-      MB_CHECK_FOR_UPDATES: "false"
-      JAVA_OPTS: -Xmx768m
-    volumes:
-      - metabase-data:/metabase-data
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
 volumes:
-  metabase-data:
   postgres-data:
   azurite-data:
-  # log store — `down -v` ลบทิ้ง ที่ dev ไม่เป็นไร แต่ที่ main/ คือ log ของ production ห้ามใช้ -v ที่นั่น
-  mongo-data:
   backend-node-modules:
   frontend-node-modules:
   frontend-next-cache:

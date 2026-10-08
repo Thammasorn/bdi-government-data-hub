@@ -14,7 +14,6 @@ import { DefaultAzureCredential } from "@azure/identity";
 import { BlobServiceClient, type ContainerClient } from "@azure/storage-blob";
 
 import { env } from "./env.js";
-import { addBreadcrumb } from "./lib/context.js";
 
 /**
  * connection string ชนะ account URL เมื่อตั้งมาทั้งคู่ — ดู env.ts ว่าทางไหนใช้เมื่อไร
@@ -53,32 +52,15 @@ export async function pingStorage(): Promise<void> {
   }
 }
 
-/**
- * จด breadcrumb ของงาน storage หนึ่งครั้ง แล้วส่ง error ต่อตามเดิม — error event ของคำขอที่ล้มทีหลังจะเห็นว่าไฟล์
- * ถูกเขียนหรืออ่านไปแล้วหรือยัง ข้อความบอกแค่ชนิดงานกับขนาด ไม่มีชื่อไฟล์หรือ key
- */
-async function tracked<T>(operation: string, work: () => Promise<T>): Promise<T> {
-  try {
-    const result = await work();
-    addBreadcrumb("storage", operation);
-    return result;
-  } catch (err) {
-    addBreadcrumb("storage", `${operation} — ไม่สำเร็จ`, false);
-    throw err;
-  }
-}
-
 /** เขียนไฟล์ทับชื่อเดิมได้ แต่ storage key มี attachment_id อยู่ จึงไม่เกิดขึ้นจริง */
 export async function putObject(
   key: string,
   body: Buffer,
   contentType: string,
 ): Promise<void> {
-  await tracked(`เขียนไฟล์ ${body.length} ไบต์`, () =>
-    containerOf().getBlockBlobClient(key).uploadData(body, {
-      blobHTTPHeaders: { blobContentType: contentType },
-    }),
-  );
+  await containerOf().getBlockBlobClient(key).uploadData(body, {
+    blobHTTPHeaders: { blobContentType: contentType },
+  });
 }
 
 /**
@@ -91,9 +73,7 @@ export async function getObjectStream(
   container: string,
   key: string,
 ): Promise<NodeJS.ReadableStream> {
-  const response = await tracked("เปิดไฟล์เพื่ออ่านแบบสตรีม", () =>
-    containerOf(container).getBlobClient(key).download(),
-  );
+  const response = await containerOf(container).getBlobClient(key).download();
   if (!response.readableStreamBody) {
     throw new Error(`Blob "${key}" in container "${container}" returned no readable body`);
   }
@@ -102,5 +82,5 @@ export async function getObjectStream(
 
 /** ทั้งก้อนใน memory — ใช้กับ template .docx ที่ต้องเอาไปเติมค่าต่อ ไม่ใช่ส่งต่อทันที */
 export async function getObjectBuffer(container: string, key: string): Promise<Buffer> {
-  return tracked("อ่านไฟล์ทั้งก้อน", () => containerOf(container).getBlobClient(key).downloadToBuffer());
+  return containerOf(container).getBlobClient(key).downloadToBuffer();
 }

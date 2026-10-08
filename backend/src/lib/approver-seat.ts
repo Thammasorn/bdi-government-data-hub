@@ -6,9 +6,8 @@
  * คือ `POST /api/admin/registrations/organizations/:id/reset` ซึ่งต้องปล่อยที่นั่งด้วยกติกา
  * เดียวกันเป๊ะ — กติกานี้เป็นเรื่องของ unique constraint บน `email`/`cid` ไม่ใช่ของด่านไหน
  */
-import { Prisma, UserAccountStatus } from "@prisma/client";
+import { ActivationKeyStatus, Prisma, UserAccountStatus } from "@prisma/client";
 
-import { revokeIssuedKeys, type RevokedKey } from "./iam.js";
 import { WorkflowError } from "./workflow.js";
 
 /** ที่นั่งผู้มีอำนาจฯ ที่ถูกปล่อยคืน — ผู้เรียกเอาไปเขียน audit หลัง commit */
@@ -20,11 +19,6 @@ export interface ReleasedSeat {
   status: UserAccountStatus;
   accountDeleted: boolean;
   keptBecause: string | null;
-  /**
-   * คีย์ที่ถูกเพิกถอนเพราะลบบัญชีไม่ได้ — ผู้เรียกส่งต่อ `logKeysRevoked()` หลัง commit
-   * บัญชีที่ถูกลบไม่มีรายการนี้: คีย์หายไปพร้อมบัญชี (`APPROVER_INVITATION_RECALLED` คือหลักฐาน)
-   */
-  revokedKeys: RevokedKey[];
 }
 
 /**
@@ -135,16 +129,21 @@ export async function releaseApproverSeat(
      * ลบไม่ได้ ก็ต้องอย่างน้อยทำให้ลิงก์ที่อยู่ในกล่องจดหมายผิด ๆ นั้นใช้ไม่ได้ —
      * คนที่ได้เมลไปคือคนที่ไม่ควรได้ ปล่อยคีย์ที่ยังใช้ได้ทิ้งไว้คือปล่อยทางเข้าไว้ให้เขา
      */
-    const revokedKeys = await revokeIssuedKeys(
-      tx,
-      { userAccountId: account.id, organizationId },
-      { actorId, reason: params.reason },
-    );
-    return { ...base, accountDeleted: false, keptBecause, revokedKeys };
+    await tx.activationKey.updateMany({
+      where: { userAccountId: account.id, organizationId, status: ActivationKeyStatus.ISSUED },
+      data: {
+        status: ActivationKeyStatus.REVOKED,
+        revokedAt: new Date(),
+        revokedBy: actorId,
+        revokedReason: params.reason,
+        updatedBy: actorId,
+      },
+    });
+    return { ...base, accountDeleted: false, keptBecause };
   }
 
   // activation_key ตามไปเองด้วย onDelete: Cascade — ไม่ต้องลบแยก
   await tx.userAccount.delete({ where: { id: account.id } });
-  return { ...base, accountDeleted: true, keptBecause: null, revokedKeys: [] };
+  return { ...base, accountDeleted: true, keptBecause: null };
 }
 

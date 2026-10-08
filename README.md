@@ -63,19 +63,16 @@ BDI Approver อนุมัติ/ไม่อนุมัติ → ได้�
 คำขอที่นำส่งแล้วยกเลิกได้ (สถานะ `CANCELLED`) แทนการลบ
 มีทั้งการแจ้งเตือนในระบบ (กระดิ่งบน header) และ audit log ที่เก็บ diff ของข้อมูลกับ IP
 อีเมลทุกฉบับออกผ่านตาราง outbox ที่ `delivery-worker` หยิบไปส่ง ไม่ได้ส่งใน request
-audit log มีสำเนาที่ค้นได้ใน MongoDB คู่กับ error ของระบบ (แบบ Sentry) อ่านผ่าน API ที่บันทึกทุกการอ่าน —
-ไม่มีหน้าจอ ดู [`docs/21-activity-log.md`](docs/21-activity-log.md)
 
 ## Stack
 
 | Service           | Stack                                                  | Port (main) |
 | ----------------- | ------------------------------------------------------ | ----------- |
 | `postgres`        | Postgres 16                                            | 5432        |
-| `mongo`           | MongoDB 7.0 — log store: สำเนา audit log กับ error ของระบบ | ภายในเท่านั้น |
 | `azurite`         | Azure Blob Storage (emulator ตอน dev)                  | 9000        |
 | `gotenberg`       | LibreOffice แปลง `.docx` → PDF                         | ภายในเท่านั้น |
 | `backend`         | Node.js · Express · TypeScript · Prisma · docxtemplater | 4000        |
-| `delivery-worker` | ตัวเดียวกับ backend — ส่งอีเมลจาก outbox คัดลอก audit log ไป MongoDB และส่งอีเมลสรุป error | —           |
+| `delivery-worker` | ตัวเดียวกับ backend — ส่งอีเมลจาก outbox                | —           |
 | `frontend`        | Next.js 16 · React 19 · TypeScript · Tailwind 4        | 3000        |
 
 พอร์ตในตารางเป็นของ checkout `main` ซึ่งเปิดสู่สาธารณะ checkout อื่นได้ช่วงพอร์ตของตัวเอง —
@@ -178,10 +175,7 @@ one — the compose project name is derived from it.
 
 - `GET /health/live` — liveness, touches no dependencies.
 - `GET /health/ready` — checks Postgres (`SELECT 1`) and Azure Blob Storage (container exists).
-  Returns `200` when both are up, `503` otherwise, with one word per check. It also reports
-  `datasetChoices` (`defaults` = `seed:masters` has not run) and `logStore` (`up` · `down` ·
-  `disabled` · `over_quota`), which never decide the status: a MongoDB outage must not take the
-  site out of rotation.
+  Returns `200` when both are up, `503` otherwise, with per-check detail.
 
 ## เชิญผู้ใช้คนแรก
 

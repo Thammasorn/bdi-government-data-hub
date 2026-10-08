@@ -24,7 +24,7 @@ export function NotificationBell() {
 
   const load = useCallback(() => {
     api
-      .get<{ notifications: AppNotification[]; unreadCount: number }>("/api/notifications", { background: true })
+      .get<{ notifications: AppNotification[]; unreadCount: number }>("/api/notifications")
       .then((d) => {
         setItems(d.notifications);
         setUnread(d.unreadCount);
@@ -52,7 +52,7 @@ export function NotificationBell() {
       setItems((list) =>
         list.map((i) => (i.id === item.id ? { ...i, readAt: new Date().toISOString() } : i)),
       );
-      await api.post(`/api/notifications/${item.id}/read`, undefined, { background: true }).catch(() => undefined);
+      await api.post(`/api/notifications/${item.id}/read`).catch(() => undefined);
     }
     if (item.link) router.push(item.link);
   };
@@ -60,7 +60,7 @@ export function NotificationBell() {
   const markAll = async () => {
     setUnread(0);
     setItems((list) => list.map((i) => ({ ...i, readAt: i.readAt ?? new Date().toISOString() })));
-    await api.post("/api/notifications/read-all", undefined, { background: true }).catch(() => undefined);
+    await api.post("/api/notifications/read-all").catch(() => undefined);
   };
 
   return (

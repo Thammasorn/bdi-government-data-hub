@@ -88,9 +88,8 @@ export function useRequestWatch(params: {
     let cancelled = false;
     const check = () => {
       if (document.visibilityState !== "visible") return;
-      // `background`: 502 ระหว่าง backend ล่มได้รหัสใหม่ทุก 15 วินาที ต้องไม่ดันรหัสที่ผู้ใช้เห็นใน toast ออกจากคิวรายงาน
       void api
-        .get<{ state: RequestState }>(`/api/${kind}/${requestId}/state`, { background: true })
+        .get<{ state: RequestState }>(`/api/${kind}/${requestId}/state`)
         .then(({ state }) => {
           const shown = currentRef.current;
           if (cancelled || !shown || shown.stateVersion === state.stateVersion) return;

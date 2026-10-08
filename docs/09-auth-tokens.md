@@ -4,7 +4,7 @@
 > ที่มีตารางอยู่ฝั่ง server เพิกถอนได้ทีละใบ (ข้อ 1.4) refresh token มีไว้แก้ปัญหาของ
 > access token อายุสั้นที่เพิกถอนไม่ได้ ซึ่งเป็นปัญหาที่ระบบนี้ไม่มีแล้ว
 
-ระบบมีของที่เป็น "โทเคน" อยู่ 9 อย่าง แต่ละอย่างตอบคำถามคนละข้อ
+ระบบมีของที่เป็น "โทเคน" อยู่ 7 อย่าง แต่ละอย่างตอบคำถามคนละข้อ
 
 | # | โทเคน | ตอบว่า | อายุ | เก็บที่ฝั่ง server |
 |---|---|---|---|---|
@@ -15,13 +15,10 @@
 | 5 | โทเคนจาก ThaID | "กรมการปกครองยืนยันตัวตนให้แล้ว" | ใช้ครั้งเดียวแล้วทิ้ง | **ไม่เก็บ** |
 | 6 | OAuth `state` | "callback นี้มาจากคำขอที่เราเป็นคนเริ่ม" | 15 นาที | `integration_operation` |
 | 7 | OIDC `nonce` | "id_token ใบนี้ออกให้คำขอของเราจริง" | 15 นาที | `integration_operation` |
-| 8 | `x-log-token` | "ผู้เรียกมีสิทธิ์อ่าน activity log และ error" | ไม่หมดอายุ | ค่าคงที่ใน env (`LOG_READ_TOKEN`) |
-| 9 | `x-report-token` | "รายงาน error นี้มาจาก Next server ของเราเอง" | ไม่หมดอายุ | ค่าคงที่ใน env ของ backend และ frontend (`INGEST_SERVER_TOKEN`) |
 
 โค้ดที่เกี่ยวข้องอยู่ใน `backend/src/lib/auth.ts` (สร้าง/แฮช/ตรวจ),
 `backend/src/lib/session.ts` (วงจรชีวิตของ session), `backend/src/middleware/auth.ts`
-(บังคับใช้) และ `backend/src/routes/auth.ts` (เส้นทางทั้งหมด) · ทุกขั้นของการพิสูจน์ตัวตน รวมความล้มเหลว ลง `audit_event`
-(ข้อ 4.2 และ `docs/21-activity-log.md` หมวด 4)
+(บังคับใช้) และ `backend/src/routes/auth.ts` (เส้นทางทั้งหมด)
 
 ---
 
@@ -216,32 +213,20 @@ OTP แบบ `REGISTRATION` อีกแล้ว
 | ใช้ที่ไหน | `GET /api/auth/password-reset?token=` ตรวจลิงก์ (410 `expired`/`used`/`revoked`/`not_found`) แล้ว `POST /api/auth/password-reset` `{ token, password, confirmPassword }` กฎรหัสผ่านชุดเดียวกับ `/activate` |
 | ผลข้างเคียง | เขียน `password_hash`, เผาโทเคน, **เพิกถอน session ทุกใบ** (`PASSWORD_CHANGED`) ใน transaction เดียว — `updateMany` ที่มี `used_at IS NULL` ใน WHERE กันสองคำขอพร้อมกันด้วยลิงก์เดียว |
 | ไม่ทำอะไร | **ไม่ออก session** ต้องไปเข้าสู่ระบบด้วยรหัสใหม่ + OTP เหมือนปกติ ไม่งั้นลิงก์ในอีเมลฉบับเดียวจะข้ามชั้นที่สองของการเข้าสู่ระบบไป |
-| audit | `PASSWORD_RESET_REQUESTED` (actor = ระบบ ตามข้อ 4) แล้ว `PASSWORD_RESET_COMPLETED` (actor = เจ้าของบัญชี) — ใบ REQUESTED ที่ไม่มี COMPLETED **`result = SUCCESS`** ตามมาคือลิงก์ที่ไม่มีใครใช้สำเร็จ ลิงก์ที่กดแล้วใช้ไม่ได้ก็ได้ `PASSWORD_RESET_COMPLETED` เหมือนกันแต่ `result = FAILURE`, actor `ANONYMOUS` และ `failure_reason` เป็นรหัสเดียวกับ `error` ที่ตอบไป (`expired` · `revoked` · `used` · `inactive` · `not_found`) subject เป็นบัญชีของลิงก์นั้น (ว่างเมื่อ `not_found`) — แถวนี้แปลว่ามีคนกดลิงก์ ไม่ได้แปลว่ารหัสผ่านเปลี่ยน |
+| audit | `PASSWORD_RESET_REQUESTED` (actor = ระบบ ตามข้อ 4) แล้ว `PASSWORD_RESET_COMPLETED` (actor = เจ้าของบัญชี) — ใบ REQUESTED ที่ไม่มี COMPLETED ตามมาคือลิงก์ที่ไม่มีใครใช้ |
 
 เป็นตารางของตัวเองเพราะ `activation_key` บังคับ `organization_id` + `role_id` และ `otp_code`
 เก็บ bcrypt ค้นด้วยโทเคนในลิงก์ตรง ๆ ไม่ได้ Postman: `U15`
 
 ## 4. `x-admin-token` — shared secret ไม่ใช่ session
 
-`/api/admin/*` ทั้งหมด (ยกเว้น `/api/admin/logs/*` ที่ใช้ token ของตัวเอง — 4.3) ป้องกันด้วย header `x-admin-token` เทียบกับ `ADMIN_API_TOKEN`
+`POST /api/admin/*` ทั้งหมดป้องกันด้วย header `x-admin-token` เทียบกับ `ADMIN_API_TOKEN`
 ตรง ๆ เพราะสเปกระบุว่าขั้นตอนเชิญผู้ใช้ "ไม่มี UI แต่ต้องมี api" ผู้เรียกจึงเป็นสคริปต์
 ไม่ใช่เบราว์เซอร์ที่มี session
 
 ข้อจำกัดที่ควรรู้ (ยอมรับไว้ ไม่ใช่มองข้าม): ไม่หมดอายุ ไม่หมุน ไม่ผูกกับตัวบุคคล —
 `audit_event` ของงานที่ทำผ่านเส้นทางนี้จึงบอกได้แค่ว่า "ระบบทำ" ไม่ได้บอกว่าเจ้าหน้าที่คนไหน
 ถ้าวันหนึ่งต้องรู้ตัวบุคคล ต้องเปลี่ยนไปใช้บัญชีจริงที่มี role `SYSTEM_ADMINISTRATOR`
-
-**สิ่งที่บอกได้คือ token ใบไหน** — `requireAdminToken` ที่ token ผ่านประทับคำขอเป็น `source_component = admin-portal`
-และ `logAudit` เติม `metadata.admin_token_fp` (12 ตัวแรกของ SHA-256 ของ token — `tokenFingerprint()` ใน `lib/auth.ts`)
-ลงทุกแถวของคำขอนั้น รวมแถวที่ helper ลงชื่อบัญชีเป้าหมายเป็น actor (`docs/21-activity-log.md` §2.3 §3.4) หมุน token แล้ว
-แถวใหม่จึงแยกจากแถวเก่าได้ และการใช้ token เก่าเห็นได้ (4.1) · **ทุกการเรียก `/api/admin*` ไม่ว่าอ่านหรือเขียน token ผ่านหรือไม่**
-(ยกเว้นคำขอที่ถึง router ของ `/api/admin/logs` ซึ่งบันทึกตัวเองเป็น `AUDIT_LOG_READ` และ CORS preflight `OPTIONS`)
-ถูกบันทึกเป็น `ADMIN_API_REQUEST` ใน log store ด้วย (`docs/21` §4.11) — `GET /api/admin/users?cid=…` ตอบเลขบัตรและอีเมลแบบไม่ปิด
-บันทึกนี้จึงตอบได้ว่า token ใบไหนค้นเลขบัตรของใคร (เก็บเป็น key HMAC ไม่ใช่เลขจริง)
-
-**token ต้องยาวอย่างน้อย 128 บิต** — ใช้ `openssl rand -hex 32` (256 บิต) fingerprint ข้างบนไม่มีกุญแจ ใครอ่าน log ได้จึงทดสอบ
-คำเดาแบบ offline ได้ถ้า token สั้นหรือเดาได้ backend ที่รันแบบ production พร้อม token ที่สั้นกว่า 32 ตัวหรือขึ้นต้นด้วย `dev-`
-พิมพ์คำเตือนตอนบูต (4.1)
 
 การเทียบใช้ `timingSafeEqual` แล้วตั้งแต่ 2026-08-16 (เดิมเป็น `!==` ธรรมดา)
 โดย hash ทั้งสองฝั่งก่อนเทียบ — `timingSafeEqual` โยนเมื่อความยาวไม่เท่ากัน ซึ่งเท่ากับ
@@ -255,200 +240,12 @@ OTP แบบ `REGISTRATION` อีกแล้ว
 **อัปเดต 2026-10-05 (การ์ด Admin Console):** ทำแล้วโดยไม่ถอด token — guard ของ `/api/admin/*` เปลี่ยนเป็น `requireAdmin`
 ซึ่งรับได้สองทาง: `x-admin-token` (หรือคำขอที่ไม่มี cookie เลย) ไปทาง `requireAdminToken` เหมือนเดิมทุกอย่าง ส่วนคำขอที่มี
 session ของบัญชีที่ถือ `SYSTEM_ADMINISTRATOR` คือหน้า `/console` — actor ในแถว audit เป็นคนนั้น (`adminActorId()`),
-`metadata.admin_via = SESSION`, via ใน log store เป็น `ADMIN_SESSION` และคำขอที่ไม่ใช่ GET ต้องมี `Origin` ของระบบ (403
+`metadata.admin_via = SESSION` และคำขอที่ไม่ใช่ GET ต้องมี `Origin` ของระบบ (403
 `csrf_origin`) เพราะ cookie เป็น `SameSite=lax` ซึ่งไม่กันโดเมนย่อยของไซต์เดียวกัน token จึงเหลือไว้สำหรับ Postman, notebook
 และการตั้งผู้ดูแลระบบคนแรกของ deployment ใหม่ (`POST /api/admin/invitations` ด้วย role `SYSTEM_ADMINISTRATOR`)
 
 คอลเลกชัน Postman ของ endpoint กลุ่มนี้อยู่ที่ `docs/bdi-admin-portal.postman_collection.json`
 (สร้างหน่วยงาน + ส่งลิงก์เปิดใช้งาน + ดู/ยกเลิกคำเชิญ)
-
-### 4.1 คำขอที่ถูกปฏิเสธ — และการเฝ้า token ตัวที่ปลดไปแล้ว
-
-`x-admin-token` ที่ผิดหรือไม่ได้ส่งมาถูกนับทุกครั้ง และลง `audit_event` เป็น `ADMIN_TOKEN_REJECTED`
-(`backend/src/lib/token-rejection.ts`) โดยไม่เก็บค่าที่ส่งมา เก็บแค่ `token_fp` คือ 12 ตัวแรกของ
-SHA-256 ของค่านั้น (`tokenFingerprint()` ใน `lib/auth.ts`) ซึ่งพอบอกได้ว่า "ค่านี้คือ token เก่าหรือ
-เปล่า" fingerprint แบบไม่มีกุญแจของค่าสั้น ๆ เดาย้อนกลับได้ token จึงต้องยาวอย่างน้อย 128 บิต
-(`openssl rand -hex 32`) — fingerprint ของ token ที่ใช้อยู่ก็ลงทุกแถวของ admin API ด้วย
-(`metadata.admin_token_fp`) token ที่เดาได้จึงให้ใครก็ตามที่อ่าน log ได้ทดสอบคำเดาแบบ offline จนได้ token
-ที่เปิด `/api/admin` ทั้งหมด backend ที่รันแบบ production พร้อม token ที่สั้นกว่า 32 ตัวหรือขึ้นต้นด้วย `dev-`
-พิมพ์ `[backend] คำเตือน: ADMIN_API_TOKEN …` ตอนบูต (`adminTokenLooksWeak()` ใน `lib/auth.ts` เกณฑ์หยาบ:
-วลียาว 32 ตัวก็ยังเดาได้) แค่เตือน ไม่ปฏิเสธการบูต เพราะ deploy ที่ออกก่อนหมุน token ต้องไม่ทำให้ backend
-วนรีสตาร์ตจนหน้าเว็บล่ม **หมุน token ก่อน deploy ที่เริ่มเขียน fingerprint** ไม่ใช่หลังจากนั้น
-
-ไม่ได้เขียนทุกครั้ง เพราะ 401 ใครก็ยิงได้ไม่จำกัด และตารางนี้ไม่มี retention:
-
-| สิ่งที่เกิด | แถวที่ได้ |
-|---|---|
-| ครั้งแรกจาก IP หนึ่งในหน้าต่าง 10 นาที | แถวทันทีหนึ่งแถว |
-| ครั้งถัดไปจาก IP เดิมในหน้าต่างเดิม | นับอย่างเดียว แล้วได้แถวสรุปแถวเดียวตอนหน้าต่างปิด (`suppressed_count` · `token_fps` · `paths`) |
-| แถวทันทีรวมทุก IP ครบ 20 แถวในช่วง 10 นาทีที่ผ่านมาแล้ว | IP ที่ยังไม่มีหน้าต่างนับรวมในถังเดียว แถวของถังมี `throttle_overflow: true` และไม่มี IP กับ user agent |
-| ค่าที่ได้เป็น IP มาไม่ใช่ IP | ทุกค่าใช้หน้าต่างเดียวกัน แถวไม่มี IP แต่มี `ip_unparsed: true` |
-| fingerprint อยู่ใน `ADMIN_TOKEN_WATCH_FPS` | แถวของตัวเองทันที มี `watched_token: true` และอยู่นอกงบข้างบน — ที่มาละแถวต่อนาที รวมไม่เกิน 60 แถวในช่วง 10 นาทีใด ๆ |
-| ↳ ที่มาเดิมยิง token นั้นซ้ำภายในนาทีเดียวกัน | ไม่มีแถวใหม่ นับเข้าหน้าต่างเงียบของที่มานั้น ซึ่งแยกจากหน้าต่างปกติของที่มาเดียวกัน (ไม่เขียนแถวทันทีและไม่กินงบ 20 แถว) แล้วได้แถวสรุปที่มี IP และมี `suppressed_count` เท่ากับ `watched_suppressed_count` — token อื่นจากที่มาเดียวกันยังไปทางปกติ ได้แถวทันทีของตัวเองเหมือนไม่เคยมี T |
-| ↳ งบ 60 แถวของ token ที่เฝ้าไว้หมดแล้ว | ไปทางปกติเหมือนคำขออื่น: ใช้งบ 20 แถวร่วมกัน แถวทันทีที่ได้มี `watched_over_budget: true` (**ไม่ใช่** `watched_token`) งบนั้นหมดด้วยก็ลงถังรวม ครั้งที่ถูกนับอยู่ใน `watched_suppressed_count` ของแถวสรุป |
-
-งบทั้งสองเป็นหน้าต่างเลื่อน ไม่ใช่รอบ 10 นาทีที่ล้างงบเมื่อครบกำหนด (`createBudget()`) — ใช้งบหมด
-ก่อนรอบปิดหนึ่งวินาทีแล้วยิงอีกชุดหลังรอบใหม่เปิดจึงไม่ได้แถวเพิ่มอีกเท่าตัว ช่วง 10 นาทีใด ๆ ก็ตาม
-ได้แถวไม่เกิน: แถวทันที 20 + ของถังรวม 1 + แถวสรุปของหน้าต่างเหล่านั้น + แถว `watched_token` 60 +
-แถวสรุปของที่มาที่ยิง token ที่เฝ้าไว้ซ้ำ (ไม่เกินจำนวนที่มาที่ได้แถว `watched_token`) คนที่ไม่ได้ถือ
-token เก่าจริงทำได้แค่ส่วนแรก
-
-**เพดานข้างบนเป็นของ `ADMIN_TOKEN_REJECTED` อย่างเดียว ไม่ได้คุ้มครองทั้งตาราง** (ยอมรับไว้ 2026-09-29
-ไม่ใช่มองข้าม) แถวต่อไปนี้ใครก็เขียนได้โดยไม่ต้องมีอะไรอยู่ในมือ หนึ่งคำขอหนึ่งแถว ไม่มีหน้าต่าง ไม่มีงบ
-และ backend ไม่มี rate limit เลย:
-
-| แถว | สิ่งที่ผู้ยิงต้องมี |
-|---|---|
-| `LOGIN_FAILED` `INVALID_CREDENTIAL` (มีมาก่อนการ์ด activity log) | อีเมลใดก็ได้ — อีเมลที่ไม่มีบัญชีไม่ต้องรอ bcrypt ด้วยซ้ำ |
-| `LOGIN_FAILED` `OTP_NOT_PENDING` | อีเมลใดก็ได้ แถวเก็บอีเมลที่พิมพ์มา |
-| `IDENTITY_VERIFICATION_FAILED` `state_not_found` | `state` ใดก็ได้ |
-| `PASSWORD_RESET_COMPLETED` `FAILURE` `not_found` | โทเคนใดก็ได้ |
-| `IDENTITY_VERIFICATION_STARTED` | ไม่มี — ทุก `POST /thaid/start` ขา login พร้อมแถว `integration_operation` ของมัน (แถวนั้นมีมาก่อนการ์ด) |
-
-**ขนาดของแต่ละแถวมีเพดาน ไม่ใช่แค่จำนวน** ข้อความที่ผู้ยิงเขียนเองลงแถวเหล่านี้ได้มีสามช่อง: อีเมลที่พิมพ์มา
-(ไม่เกิน 254 ตัว ตาม `emailSchema`) `user_agent` (ไม่เกิน 512 ตัว ตาม `storedUserAgent()`) และ `ip_address`
-(ต้องเป็น IP จริงตาม `net.isIP()` ไม่งั้นเป็น null) ส่วน `state` กับโทเคนไม่ลงแถว มีแค่ id และ `failure_reason`
-ของ ThaID ถูกตัดที่ 64 ตัว แถวหนึ่งจึงพาข้อความของผู้ยิงมาได้ราว 1 KB ต่อคำขอ ก่อน 2026-09-29 อีเมลไม่มีเพดาน
-เพดานเดียวคือ body 1 MB — ลองแล้ว อีเมลสุ่ม 20,000 ตัวผ่าน `login` และ `verify-otp` ได้แถวละ 20 KB การยิงถล่ม
-จึงโตเป็นหลายพันเท่าของที่คำว่า "หนึ่งคำขอหนึ่งแถว" ฟังดู เพิ่มช่องใหม่ที่เก็บข้อความจากคำขอที่ยังไม่ล็อกอิน
-ต้องมีเพดานความยาวของมันเองด้วย
-
-วนยิงตรงเข้า backend ก็ขยาย `audit_event` ได้เท่าอัตราคำขอ และตั้งแต่มีสำเนาใน MongoDB ก็ขยายที่นั่นด้วย
-ที่ไม่ throttle แบบ `ADMIN_TOKEN_REJECTED`: throttle แค่บางแถวไม่ได้กันอะไร ตราบที่ทางอื่นในกลุ่มเดียวกันยังเปิด —
-`INVALID_CREDENTIAL` ของบัญชีที่มีอยู่จริงคือหลักฐานว่ามีคนเดารหัสผ่านของคนคนหนึ่ง ซึ่งเป็นสิ่งที่ log นี้ต้องเก็บ
-ทีละแถว และ `integration_operation` ของ `/thaid/start` ก็โตตามคำขออยู่ดี ขอบเขตที่ได้ผลจริงคือ rate limit ของ
-`/api/auth/*` ซึ่งต้องมีที่อยู่ของผู้เรียกที่เชื่อได้ก่อน: IP ในระบบนี้ผู้เรียกเขียนเอง (ย่อหน้าถัดไป) limit ต่อ IP
-จึงถูกเลี่ยงได้ด้วยการยิงตรง ส่วน limit รวมทั้งระบบกลายเป็นคันโยกที่ทำให้ทุกคนเข้าสู่ระบบไม่ได้ จึงรอจนตัดสินเรื่อง
-X-Forwarded-For และการปิดพอร์ต 4000 จากภายนอก ระหว่างนี้ดูว่ามีการยิงถล่มหรือไม่ด้วย:
-
-```sql
-select date_trunc('minute', occurred_at) as minute, action,
-       metadata_json->>'failure_reason' as reason, count(*)
-from audit.audit_event
-where actor_type = 'ANONYMOUS' and occurred_at > now() - interval '1 hour'
-group by 1, 2, 3 order by 1 desc, 4 desc;
-```
-
-**IP ในแถวเหล่านี้คือสิ่งที่ผู้เรียกเขียนมาเอง** เว้นแต่ชั้นนอกสุดต่อท้ายที่อยู่จริงให้
-`trust proxy 1` อ่านค่าสุดท้ายของ X-Forwarded-For และไม่มีชั้นไหนในระบบเราต่อท้ายที่อยู่จริงเลย:
-backend ยิงตรงได้ และ proxy ของหน้าเว็บ (`frontend/app/api/[...path]/route.ts`) ส่ง
-X-Forwarded-For ของเบราว์เซอร์ต่อไปทั้งดุ้น — Next เติม header นี้จาก socket ก็ต่อเมื่อไม่มีมา
-(`??=`) ยิงผ่านหน้าเว็บของ dev checkout พร้อม `X-Forwarded-For: 198.51.100.200` จึงได้แถวที่ IP
-เป็น `198.51.100.200` บน production ค่านี้ถูกเท่าที่ Cloudflare ต่อท้ายที่อยู่ของผู้ที่ต่อเข้ามาจริง
-(เอกสารของ Cloudflare บอกว่าต่อท้าย ยังไม่ได้ยืนยันกับ tunnel ของเรา) ส่วนใครที่เข้าถึงพอร์ต 3000 หรือ
-4000 ของเครื่องได้ตรง ๆ ตั้งค่าเองได้ทั้งหมด
-
-`metadata.path` เป็นรูปแบบ ไม่ใช่ข้อความที่ผู้ยิงพิมพ์ — ถอด `%xx` ซ้ำจนไม่เปลี่ยน (ไม่เกินสี่รอบ แต่ละรอบผ่าน NFKC
-`＠` `﹫` และเลขเต็มความกว้างจึงเป็นตัวจริง) แล้วอีเมล → `:email` ท่อนที่ยังมี `@` → `:email` ทั้งท่อน UUID → `:id`
-ตัวอักษรนอก `A-Z a-z 0-9 / _ . : -` → `_` กลุ่มเลขที่ชี้ตัวคนได้ → `:n` และยาวไม่เกิน 120 ตัว
-"กลุ่มเลข" คือเลขที่ติดกันหรือคั่นด้วย `-` `.` `_` `:` ไม่เกินสามตัวติดกัน (ช่องว่างกลายเป็น `_`
-ไปก่อนแล้ว) และนับเป็นเลขชี้ตัวคนเมื่อมีเลขติดกัน 6 หลัก หรือรวมทั้งกลุ่ม 9 หลักขึ้นไป —
-`1-1017-00203-45-1`, `1101700203451`, `1 1017 00203 45 1` และ `081-234-5678` กลายเป็น `:n` ทั้งหมด
-
-กฎกลุ่มไม่รวมเลขที่คั่นด้วย `/` หรือด้วยตัวคั่นสี่ตัวขึ้นไป และ `%xx` ที่ encode ซ้อนเกินสี่ชั้น
-(`%252525252D` ถอดสี่รอบแล้วยังเหลือ `%2D` ซึ่งกลายเป็น `_2D` และตัว `D` ตัดกลุ่ม) จึงมีชั้นที่สอง: ถ้าทั้ง path ยังเหลือเลขรวม 9 ตัวขึ้นไป
-เลขทุกช่วงใน path กลายเป็น `:n` — `/users/1/1017/00203/45/1` และ `/users/1----1017----00203----45----1`
-ได้ `/users/:n/:n/:n/:n/:n` (หรือ `:n----:n…`) ส่วนแบบ encode ห้าชั้นได้ `:n_:nD:n…` · encode ซ้อนไม่เกินสี่ชั้น
-(`/users/1%252D1017%252D00203%252D45%252D1`) ถอดจนเหลือ `-` แล้วเข้ากฎกลุ่มชั้นแรกเป็น `/users/:n` (ลองแล้ว 2026-10-01) เส้นทางของ admin API ที่มีจริงมีเลขไม่เกิน 8 ตัว (UUID เป็น `:id` ไปก่อนแล้ว และ
-`ORG-REG-2026-0002` กับวันที่ `2026-09-28` มี 8 หลัก) จึงยังอ่านได้ เลขที่ encode ไว้กี่ชั้นก็เหลือเป็น
-เลขฐานสิบหกให้นับเสมอ เลขบัตรครบ 13 หลักในรูปตัวเลขจึงไม่มีทางผ่าน **แต่ตัวอักษรยังเหลือได้ถึง 120
-ตัว**: คนที่ตั้งใจสะกดเลขเป็นตัวอักษร (หรือ base64) ยังเขียนลงช่องนี้ได้ อ่านมันเป็นข้อความของผู้ยิงเสมอ
-
-`user_agent` ของแถวเหล่านี้ (และของ `LOGIN_FAILED` และแถวอื่นก่อนล็อกอิน) ก็เป็นข้อความที่ผู้ยิง
-เขียนเอง `logAudit` ตัดให้เหลือไม่เกิน 512 ตัว และแทนกลุ่มเลขที่คั่นด้วย `-` `_` `:` หรือช่องว่าง
-ซึ่งรวม 9 หลักขึ้นไปด้วย `:n` ก่อนเก็บ (`storedUserAgent()` ใน `lib/audit.ts` ใช้กับทุกแถวของ
-`audit_event`) กฎหลวมกว่าของ path เพราะต้องไม่แตะ user agent จริง: เลขเวอร์ชันมีจุด
-(`Edg/151.0.3405.80`) และมีเลขติดกัน 8 หลัก (`Gecko/20100101`) ที่ยังผ่านได้คือ ตัวอักษร เลขที่คั่น
-ด้วย `.` หรือ `/` และตัวคั่นสี่ตัวขึ้นไป ส่วน `iam.session` และหลักฐานการลงนามเก็บค่าที่ได้รับ
-เพราะเกิดได้หลังยืนยันตัวตนแล้วเท่านั้น
-
-**ทุกครั้งที่ปลด token ให้เพิ่ม fingerprint ของตัวเก่าลง `ADMIN_TOKEN_WATCH_FPS`** แถวสรุปจด
-fingerprint ได้แค่ 20 ค่าต่อหน้าต่าง คนที่ยิงค่ามั่ว ๆ 20 ค่าก่อนแล้วค่อยใช้ token เก่า จะเหลือ
-ร่องรอยแค่ `token_fps_truncated: true` รายการเฝ้าทำให้ token เก่าได้แถวของตัวเองเสมอ
-
-คำนวณ **ก่อน** เปลี่ยนค่าใน `.env` จากไดเรกทอรีของ deployment นั้น คำสั่งนี้อ่านค่าจาก `.env`
-ทาง stdin ค่าจริงจึงไม่ขึ้นจอ ไม่อยู่ใน argv ของ process ไหน และไม่เข้า shell history ผลที่ได้
-เท่ากับ `tokenFingerprint()` ทุกตัวอักษร:
-
-```bash
-grep '^ADMIN_API_TOKEN=' .env | cut -d= -f2- | docker compose exec -T backend node -e 'let s="";process.stdin.on("data",(c)=>(s+=c)).on("end",()=>console.log(require("node:crypto").createHash("sha256").update(s.trim().replace(/^["\x27]|["\x27]$/g,"")).digest("hex").slice(0,12)))'
-```
-
-ถ้า token ที่จะเฝ้าไม่ได้อยู่ใน `.env` (เช่นหลุดมาจากไฟล์ Postman ของใครสักคน) ใช้
-`read -rs T && printf %s "$T" | node -e '…'` ด้วยสคริปต์เดียวกัน — `read -s` ไม่แสดงค่าที่วาง
-แล้วแก้ `.env` ครั้งเดียวให้ได้ทั้งสองบรรทัด:
-
-```bash
-ADMIN_API_TOKEN=<ค่าใหม่จาก openssl rand -hex 32>
-ADMIN_TOKEN_WATCH_FPS=<fingerprint ตัวที่เพิ่งปลด>,<fingerprint ที่เคยใส่ไว้ก่อนหน้า>
-```
-
-จากนั้น recreate container ของ backend (`restart` ไม่อ่าน `.env` ใหม่) แถวที่ได้ดูด้วย:
-
-```sql
-select occurred_at, ip_address,
-       case when metadata_json ? 'watched_token' then 'งบของ token ที่เฝ้า'
-            when metadata_json ? 'watched_over_budget' then 'เกินงบ 60 — ใช้งบรวม'
-            else 'แถวสรุป' end as row_kind,
-       metadata_json->>'path' as path,
-       metadata_json->>'watched_suppressed_count' as counted_only
-from audit.audit_event
-where action = 'ADMIN_TOKEN_REJECTED'
-  and (metadata_json ? 'watched_token' or metadata_json ? 'watched_over_budget'
-       or metadata_json ? 'watched_suppressed_count')
-order by occurred_at desc limit 50;
-```
-
-แถว `watched_token` ไม่เกิน 60 ในช่วง 10 นาทีใด ๆ ถ้าเห็นครบ 60 หรือเห็น `watched_over_budget` แปลว่า
-token เก่าถูกใช้จากที่มามากกว่าที่งบให้แถวได้ ให้ดู `counted_only` ของแถวสรุปประกอบ แถวสรุปของ
-ถังรวมไม่มี IP
-
-ค่าที่ไม่ใช่ฐานสิบหก 12 ตัวถูกข้ามพร้อมคำเตือนตอนบูต (`[env] ADMIN_TOKEN_WATCH_FPS: ข้าม …`)
-โดยไม่พิมพ์ค่านั้นออกมา เผื่อเป็น token จริงที่วางผิดช่อง
-
-### 4.2 การพิสูจน์ตัวตนที่ถูกบันทึก
-
-ทุกขั้นของทุกโทเคนในเอกสารนี้ลง `audit_event` **รวมความล้มเหลว** (การ์ด activity log ขั้น 1) ยกเว้นคำขอที่ zod ปฏิเสธรูป (400
-`validation`) และ body ที่อ่านไม่ออก รายละเอียดของแต่ละแถวอยู่ใน `docs/21-activity-log.md` หมวด 4:
-
-| โทเคน | แถว |
-|---|---|
-| รหัสผ่าน + OTP | `LOGIN_OTP_ISSUED` (ออก OTP ไม่เก็บรหัส) · `LOGIN_SUCCEEDED` · `LOGIN_FAILED` แยกด้วย `failure_reason`: `INVALID_CREDENTIAL` · `ACCOUNT_PENDING` / `ACCOUNT_SUSPENDED` / `ACCOUNT_DEACTIVATED` · `OTP_NOT_PENDING` · `OTP_EXPIRED` · `OTP_LOCKED` · `OTP_INVALID` · `ACCOUNT_INACTIVE` — อีเมลที่**พิมพ์มา**เก็บดิบใน Postgres (สำเนาใน log store ปิดไว้) |
-| Session id | `SESSION_REVOKED` ทุกการเพิกถอน พร้อม `reason` (ข้อ 1.4) — การสร้าง session ไม่มีแถวของตัวเอง |
-| Activation key | `ACTIVATION_KEY_ISSUED` · `USED` · `REVOKED` · `EXPIRED` (เขียนตอนมีคนเปิดลิงก์เก่า) · `INVITATION_DELETED` |
-| ลิงก์ตั้งรหัสผ่าน | `PASSWORD_RESET_REQUESTED` · `PASSWORD_RESET_COMPLETED` (`SUCCESS` หรือ `FAILURE` ข้อ 3.1) |
-| ThaID · `state` · `nonce` | `IDENTITY_VERIFICATION_STARTED` · `IDENTITY_VERIFIED` · `IDENTITY_VERIFICATION_FAILED` (รวม `state_not_found` `state_expired` `CID_MISMATCH` `nonce_mismatch`) · `LOGIN_SUCCEEDED` `method: THAID` · `LOGIN_FAILED` `THAID_NO_MATCHING_ACCOUNT` — `metadata.thaid_subject` คือ `sub` ของ DOPA ซึ่งเป็นเลขบัตร 13 หลักเต็มไม่ว่า `THAID_USE_PID` จะเป็นอะไร |
-| `x-admin-token` | งานที่ token ผ่าน: `admin-portal` + `admin_token_fp` บนแถวของงานนั้น · ไม่ผ่าน: `ADMIN_TOKEN_REJECTED` (4.1) · ทุกการเรียกยกเว้น `/api/admin/logs/*` และ `OPTIONS`: `ADMIN_API_REQUEST` ใน log store |
-| `x-log-token` | ทุกการอ่านที่ส่งข้อมูล: `AUDIT_LOG_READ` ก่อนส่ง — `GET /status` (ไม่มีข้อมูลบุคคล) ไม่มีบันทึกใดเลย และคำขอที่ถูกปฏิเสธก่อนขั้นอ่านก็ไม่มี (`docs/21` §4.12) · ไม่ผ่าน: `LOG_TOKEN_REJECTED` (4.3) |
-
-แถวเหล่านี้ใครก็สร้างได้บางส่วนโดยไม่ต้องมีอะไรในมือ — ตารางกับข้อจำกัดอยู่ใน 4.1
-
-### 4.3 `x-log-token` — token ของ API อ่าน log
-
-`/api/admin/logs/*` (`backend/src/routes/admin-logs.ts`) อ่าน activity log ทุกการกระทำของทุกคน และ error ของระบบ — ป้องกันด้วย
-`x-log-token` เทียบกับ `LOG_READ_TOKEN` **แยกจาก `ADMIN_API_TOKEN` โดยตั้งใจ**: admin token เคยหลุดมาแล้ว และคนถือ admin token ไม่ควร
-ได้สิทธิ์อ่าน log ไปด้วย Postman ของมันก็แยก (`docs/bdi-activity-log.postman_collection.json`) และ proxy ของหน้าเว็บตอบ 404 ให้ path นี้
-
-- เทียบด้วย `secretMatches()` (hash ทั้งสองฝั่งก่อน `timingSafeEqual` แบบเดียวกับ admin token) ไม่ผ่าน → 401 และ `LOG_TOKEN_REJECTED`
-  ด้วยตัวบันทึกเดียวกับ `ADMIN_TOKEN_REJECTED` (หน้าต่างและงบแยกกัน ไม่มีรายการเฝ้า)
-- ไม่ใช่ตัวตน: ทุกคำขอต้องมี `x-log-reader` (อีเมลที่**ประกาศ** ไม่ได้พิสูจน์) endpoint ที่เปิดประวัติของคนบังคับ `x-log-reason` ด้วย
-  (เหตุผล 10–500 ตัว percent-encode — ใน URL ไม่รับ) ทั้งคู่ลงแถว
-  `AUDIT_LOG_READ` พร้อม `token_fp` ของ token ที่ใช้ — ตัวที่ผูกกับ token จริงคือ fingerprint
-- **production ไม่รับค่าตัวอย่าง** (`dev-…`, `…change-me`) และค่าที่สั้นกว่า 32 ตัว — ถือว่าไม่ได้ตั้ง API ตอบ 503 `log_access_disabled`
-  พร้อมคำเตือนตอนบูต (เข้มกว่าของ admin token ที่แค่เตือน: token นี้ใหม่ ไม่มีอะไรพังถ้าปฏิเสธ) dev มีค่า `dev-log-token-change-me`
-- ไม่หมดอายุ ไม่หมุนเอง — หมุนด้วยการเปลี่ยน `.env` แล้วสร้าง backend ใหม่ ใช้ `tokenFp=<fp เก่า>` ของ Postman G8 ดูการใช้ค่าเก่า
-
-### 4.4 `x-report-token` — Next server รายงาน error ของตัวเอง
-
-`POST /api/client-errors` ไม่ต้องล็อกอิน (error เกิดได้ตั้งแต่หน้า login) รายงานจากเบราว์เซอร์จึงเชื่อไม่ได้ทั้งก้อน รายงานที่มี `x-report-token`
-ตรงกับ `INGEST_SERVER_TOKEN` (และ `x-report-source: frontend-server`) ถูกเก็บเป็น `service: "frontend-server"` นอกนั้นทุกตัวเป็น `browser`
-ที่ `ingest.verified: false` — backend เรียกได้ตรงไม่ผ่านหน้าเว็บ header อย่างเดียวจึงพิสูจน์อะไรไม่ได้ (`docs/21` §5.12)
-
-- **ค่าเดียวกันทั้ง backend และ frontend** Next server อ่านตอนรัน — ห้ามเป็น `NEXT_PUBLIC_` ไม่งั้นค่าลงบันเดิลของเบราว์เซอร์
-- proxy ของหน้าเว็บลบ `x-report-*` ที่เบราว์เซอร์ส่งมาทิ้ง
-- production ไม่รับค่าตัวอย่างหรือที่สั้นกว่า 32 ตัว (ถือว่าไม่ได้ตั้ง) · ไม่ได้ตั้งหรือไม่ตรงกันระหว่างสองฝั่ง: รายงานของ Next server ยังถูกเก็บ
-  แค่เป็น browser ที่ยืนยันไม่ได้ ไม่มีอะไรบูตไม่ขึ้น — **แต่ไม่ใช่แค่ป้าย**: route ถูกทิ้ง (error ข้อความเดียวกันของทุกหน้ารวมเป็น issue เดียว) และติดกติกาของ
-  เบราว์เซอร์ทั้งหมด (30 ต่อนาทีของ IP ของ container frontend · งบไบต์ `browser` · อีเมลแจ้งเตือนไม่เกิน 5 ต่อหกชั่วโมงแบบไม่มีข้อความ — `docs/21` §5.12)
 
 ## 5. โทเคนจาก ThaID — รับมาแล้วทิ้งทันที
 
@@ -536,10 +333,6 @@ ACTIVATION_KEY_TTL_DAYS=7
 ACTIVATION_KEY_SECRET=         # HMAC ของ activation key — บังคับบน production
 PASSWORD_RESET_TTL_MINUTES=60  # ลิงก์ตั้งรหัสผ่านใหม่ (ข้อ 3.1) hash ด้วย secret ตัวเดียวกัน
 ADMIN_API_TOKEN=               # ค่าใน header x-admin-token
-ADMIN_TOKEN_WATCH_FPS=         # fingerprint ของ token ที่ปลดแล้ว คั่นด้วย comma (ข้อ 4.1)
-LOG_READ_TOKEN=                # ค่าใน header x-log-token (ข้อ 4.3) — openssl rand -hex 32
-INGEST_SERVER_TOKEN=           # ค่าใน header x-report-token ค่าเดียวกันใน frontend (ข้อ 4.4)
-LOG_HASH_KEY=                  # กุญแจ HMAC ของ key ค้นหาเลขบัตร/อีเมลใน log store (ไม่ใช่โทเคน แต่เป็นความลับ)
 THAID_STATE_TTL_MINUTES=15
 THAID_VERIFICATION_TTL_MINUTES=30
 THAID_REQUIRE_NONCE=false      # ดูข้อ 7
@@ -548,7 +341,7 @@ THAID_REQUIRE_NONCE=false      # ดูข้อ 7
 **ไม่มี `JWT_SECRET` แล้ว** ตั้งแต่ 2026-08-16 — session ไม่ใช่ JWT อีกต่อไป ถ้ายังมีค่านี้
 ค้างอยู่ใน `.env` ก็ไม่มีอะไรอ่านมัน ลบทิ้งได้
 
-`ACTIVATION_KEY_SECRET` `ADMIN_API_TOKEN` `LOG_READ_TOKEN` `INGEST_SERVER_TOKEN` และ `LOG_HASH_KEY` อยู่ใน `.env` ซึ่ง git ไม่ติดตาม
+`ACTIVATION_KEY_SECRET` และ `ADMIN_API_TOKEN` อยู่ใน `.env` ซึ่ง git ไม่ติดตาม
 **ห้ามย้ายไปไฟล์ที่ track ไว้**
 
 ## 9. สรุปสั้น ๆ สำหรับคนที่มาจากระบบที่มี refresh token
@@ -561,7 +354,7 @@ THAID_REQUIRE_NONCE=false      # ดูข้อ 7
 | บังคับให้ผู้ใช้คนหนึ่งออกจากระบบทันที | `POST /api/auth/logout-all` หรือตั้ง `user_account.status` เป็น `SUSPENDED`/`DEACTIVATED` |
 | ให้ session ใบเดียวตาย | `POST /api/auth/logout` — หรือ `UPDATE iam.session SET revoked_at = now()` |
 | บังคับให้ทุกคนออกจากระบบ | `UPDATE iam.session SET revoked_at = now() WHERE revoked_at IS NULL` (ไม่ต้องรีสตาร์ต ไม่ต้องหมุนความลับ) |
-| เรียก API ด้วย Bearer token ได้ไหม | ไม่ได้ ยกเว้น `/api/admin/*` ที่ใช้ `x-admin-token` และ `/api/admin/logs/*` ที่ใช้ `x-log-token` |
+| เรียก API ด้วย Bearer token ได้ไหม | ไม่ได้ ยกเว้น `/api/admin/*` ที่ใช้ `x-admin-token` |
 
 ## Session กับการจัดการบัญชีของแอดมิน
 

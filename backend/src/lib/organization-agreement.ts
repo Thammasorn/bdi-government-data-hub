@@ -30,7 +30,7 @@ import {
 
 import { publicAttachment, storeAttachment } from "./attachment.js";
 import { DocumentRenderError, renderTemplateToPdf } from "./document-render.js";
-import { LEGAL_SCOPES, publishedDocuments, templateDocx, type RenderedDocument } from "./legal.js";
+import { LEGAL_SCOPES, publishedDocuments, templateDocx } from "./legal.js";
 import { agreementValues, type AgreementInput } from "./legal-values.js";
 import { NAME_FIELDS, fullNameTh } from "./person-name.js";
 import { BDI_ORGANIZATION_ID } from "./system.js";
@@ -245,12 +245,12 @@ export async function renderLegalDocument(
 export async function renderPlaceholderDocuments(
   db: Db,
   params: { request: AgreementRequest; printedByName: string | null; actorId: string },
-): Promise<RenderedDocument[]> {
+): Promise<string[]> {
   const documents = await publishedDocuments(db, LEGAL_SCOPES.ORGANIZATION_REGISTRATION);
-  const rendered: RenderedDocument[] = [];
+  const rendered: string[] = [];
   for (const doc of documents) {
     if (!doc.hasPlaceholders) continue;
-    const { attachment } = await renderLegalDocument(db, {
+    await renderLegalDocument(db, {
       request: params.request,
       document: {
         code: doc.code,
@@ -262,7 +262,7 @@ export async function renderPlaceholderDocuments(
       printedByName: params.printedByName,
       actorId: params.actorId,
     });
-    rendered.push({ code: doc.code, versionId: doc.versionId, attachmentId: attachment.id });
+    rendered.push(doc.code);
   }
   return rendered;
 }
