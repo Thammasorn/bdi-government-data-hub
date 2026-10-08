@@ -100,6 +100,8 @@ fast if `iam.role` is empty. Both are idempotent.
 after any hand-edit of `administration.dataset_choice`: the API caches those rows at boot, and
 a seed run is a different process, so its writes are invisible to a running backend. Edits made
 through the admin API need neither — they refresh the cache themselves.
+The same holds for the address tables (`administration.province/district/sub_district`):
+`POST /api/admin/addresses/refresh` after a hand edit.
 
 Production build (also what a public deployment must use):
 
@@ -1217,16 +1219,36 @@ and appends a blank page per page unless the bottom margin is zeroed for that on
 
 ### Thai addresses
 
-`backend/src/data/thai-address.json` (77 provinces / 927 amphoes / 7,423 tambons) is vendored
-deliberately. The obvious npm package lists `mocha` in its runtime dependencies, which pulls a
-vulnerable `serialize-javascript` into production. Do not reintroduce it.
+`administration.province / district / sub_district` is the source of truth, and admins edit it through
+`/api/admin/addresses` (Postman M1–M5) — rename, change a postal code, add a row, or deactivate one.
+**There is no delete**: organizations store the codes without a foreign key, so a deleted row would leave
+codes with no name behind; `is_active = false` takes a row out of the dropdown while every address that
+already holds it still reads and submits. Codes cannot be edited either — that is a data migration.
 
-The schema stores `province_code` / `district_code` / `sub_district_code`, but that file has
-only names, and the Excel has no sheet for the address masters. `seed:masters` therefore
-populates `administration.province/district/sub_district` from it and **generates the codes**
-(2/4/6 digits, TIS-1099 shaped) from the file order. These are not real government codes —
-replacing them is a data swap, not a schema change. `lib/address.ts` converts names↔codes so
-the form contract stayed the same.
+Codes are **DOPA codes** (กรมการปกครอง): province 2 digits (กรุงเทพมหานคร = `10`), district 4, sub-district
+6. They come from `kongvut/thai-province-data` `data/raw`, whose district and sub-district ids match DOPA's
+2567 population statistics exactly — **but its province ids are a 1–77 sequence**, so the province code is
+taken from the first two digits of its districts instead. Five sub-district names follow DOPA where kongvut
+differs, and its two pseudo-districts (`7074`, `9077`, registration offices with no sub-districts) are
+dropped. `backend/scripts/build-address-data.mjs` (run on the host with plain node) does all of that,
+writes `backend/src/data/thai-address.json`, and writes the migration below.
+
+Until 2026-10-06 `seed:masters` **invented** the codes from the order of a names-only file (Bangkok was
+`02`, สามเสนใน `023001`). Migration `20261006120000_dopa_address_codes` moved every stored code across
+through a name-matched old→new table and replaced the master rows; seven old sub-districts with no clear
+counterpart (บางนา and บางบอน were split, a few no longer exist) keep only their district. Old and new
+codes have the same shape and overlap, so **converting twice corrupts data silently** — Prisma runs it
+once, and its first statement refuses to run against tables that are not in the old shape.
+
+`seed:masters` now only **adds missing rows** from `thai-address.json`; it never deletes or overwrites,
+because admins edit these tables. `lib/address.ts` keeps the whole set in memory (loaded at boot, reloaded
+after every admin write, or via `POST /api/admin/addresses/refresh` after a hand edit) and converts
+names↔codes, so the form contract — names in, names out — did not change. Unlike dataset choices there is
+no fallback to the JSON file: `resolveAddressCodes()` reads the tables, and a dropdown fed from the file
+while the tables were empty would save `null` codes without complaint.
+
+The vendored file is deliberate. The obvious npm package lists `mocha` in its runtime dependencies, which
+pulls a vulnerable `serialize-javascript` into production. Do not reintroduce it.
 
 ### Attachments
 

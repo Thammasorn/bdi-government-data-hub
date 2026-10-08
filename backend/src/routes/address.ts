@@ -4,9 +4,12 @@ import { listAmphoes, listProvinces, listSubdistricts } from "../lib/address.js"
 
 export const addressRouter = Router();
 
-/** ข้อมูลนิ่งมาก — ให้ browser cache ได้ยาว ๆ ลดการยิงซ้ำระหว่างกรอกฟอร์ม */
+/**
+ * ข้อมูลนิ่งมาก ให้ browser cache ไว้ลดการยิงซ้ำระหว่างกรอกฟอร์ม — แต่แอดมินแก้ได้ผ่าน
+ * /api/admin/addresses แล้ว จึงสั้นพอที่การแก้จะไปถึงผู้ใช้ภายในไม่กี่นาที (เดิม 1 วัน)
+ */
 addressRouter.use((_req, res, next) => {
-  res.set("Cache-Control", "public, max-age=86400");
+  res.set("Cache-Control", "public, max-age=300");
   next();
 });
 

@@ -206,6 +206,14 @@ export const AuditAction = {
   DATASET_CHOICE_CHANGED: "DATASET_CHOICE_CHANGED",
 
   /**
+   * เพิ่ม แก้ หรือปิดจังหวัด/อำเภอ/ตำบลใน `administration` ผ่าน /api/admin/addresses
+   *
+   * ชื่อในตารางเหล่านี้คือสิ่งที่ที่อยู่ของทุกหน่วยงานแสดงและพิมพ์ลงเอกสาร (หน่วยงานเก็บแค่รหัส)
+   * การเปลี่ยนชื่อหนึ่งครั้งจึงเปลี่ยนที่อยู่ของทุกแถวที่อ้างรหัสนั้น ต้องตอบได้ว่าใครเปลี่ยนเมื่อไร
+   */
+  ADDRESS_MASTER_CHANGED: "ADDRESS_MASTER_CHANGED",
+
+  /**
    * ผู้เชี่ยวชาญด้านข้อมูลบันทึกความเห็นต่อคำขอชุดข้อมูล
    *
    * ไม่ใช่ `REQUEST_APPROVED` และไม่ใช่ `REQUEST_RETURNED` — ความเห็นไม่ปิดด่านและไม่ย้าย
@@ -238,6 +246,11 @@ export const AuditSubject = {
    * `DATASET` หมายถึงชุดข้อมูลที่ลงทะเบียนแล้ว จึงใช้แทนกันไม่ได้
    */
   DATASET_CHOICE: "DATASET_CHOICE",
+  /**
+   * จังหวัด/อำเภอ/ตำบลหนึ่งแถว — ไม่มีใน sheet subject_id เป็น UUID แต่ตารางเหล่านี้ใช้รหัส
+   * จึงเว้น subject_id ว่าง แล้วเก็บระดับกับรหัสไว้ใน metadata (`level`, `code`)
+   */
+  ADDRESS_MASTER: "ADDRESS_MASTER",
   NOTIFICATION: "NOTIFICATION",
   INTEGRATION_JOB: "INTEGRATION_JOB",
 } as const;
