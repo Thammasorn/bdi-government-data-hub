@@ -29,10 +29,10 @@ import { addressStatus, refreshAddresses } from "../lib/address.js";
 import { Router } from "../lib/async-route.js";
 import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
 import { formatZodError } from "../lib/validation.js";
-import { requireAdminToken } from "../middleware/auth.js";
+import { requireAdmin } from "../middleware/auth.js";
 
 export const adminAddressRouter = Router();
-adminAddressRouter.use(requireAdminToken);
+adminAddressRouter.use(requireAdmin);
 
 type Level = "province" | "district" | "subDistrict";
 
