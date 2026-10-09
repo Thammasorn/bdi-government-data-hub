@@ -118,7 +118,7 @@ export default function ConsoleInvitationsPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="บัญชีและสิทธิ์"
+        eyebrow="หน่วยงานและผู้ใช้"
         title="คำเชิญ"
         description="ผู้ใช้ทุกคนเข้าระบบด้วยคำเชิญ — ผู้รับกดลิงก์ในอีเมล ยืนยันตัวตนด้วย ThaID แล้วตั้งรหัสผ่าน ลิงก์ใช้ได้ครั้งเดียวและมีวันหมดอายุ"
         actions={<Button size="sm" onClick={() => set({ new: "1" })}>เชิญผู้ใช้</Button>}

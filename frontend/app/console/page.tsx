@@ -68,23 +68,6 @@ export default function ConsoleHomePage() {
       </div>
 
       <div className="mt-8 grid gap-5 lg:grid-cols-2">
-        <Panel title="บัญชีผู้ใช้" actions={<SeeAll href="/console/users" />}>
-          <StatRow
-            items={[
-              { label: "ใช้งานอยู่", value: data.users.ACTIVE, href: "/console/users?status=ACTIVE" },
-              { label: "รอเปิดใช้งาน", value: data.users.PENDING, href: "/console/users?status=PENDING" },
-              { label: "ระงับชั่วคราว", value: data.users.SUSPENDED, href: "/console/users?status=SUSPENDED" },
-              { label: "ยุติการใช้งาน", value: data.users.DEACTIVATED, href: "/console/users?status=DEACTIVATED" },
-            ]}
-          />
-          <p className="mt-4 text-[13.5px] text-ink-muted">
-            คำเชิญที่ยังใช้ได้ {data.invitations.usable} ฉบับ —{" "}
-            <Link href="/console/invitations?status=ISSUED" className="font-medium text-navy-700 underline">
-              ดูคำเชิญ
-            </Link>
-          </p>
-        </Panel>
-
         <Panel title="หน่วยงาน" actions={<SeeAll href="/console/organizations" />}>
           <StatRow
             items={[
@@ -102,6 +85,23 @@ export default function ConsoleHomePage() {
               { label: "ยุติการใช้งาน", value: data.organizations.INACTIVE, href: "/console/organizations?status=INACTIVE" },
             ]}
           />
+        </Panel>
+
+        <Panel title="บัญชีผู้ใช้" actions={<SeeAll href="/console/users" />}>
+          <StatRow
+            items={[
+              { label: "ใช้งานอยู่", value: data.users.ACTIVE, href: "/console/users?status=ACTIVE" },
+              { label: "รอเปิดใช้งาน", value: data.users.PENDING, href: "/console/users?status=PENDING" },
+              { label: "ระงับชั่วคราว", value: data.users.SUSPENDED, href: "/console/users?status=SUSPENDED" },
+              { label: "ยุติการใช้งาน", value: data.users.DEACTIVATED, href: "/console/users?status=DEACTIVATED" },
+            ]}
+          />
+          <p className="mt-4 text-[13.5px] text-ink-muted">
+            คำเชิญที่ยังใช้ได้ {data.invitations.usable} ฉบับ —{" "}
+            <Link href="/console/invitations?status=ISSUED" className="font-medium text-navy-700 underline">
+              ดูคำเชิญ
+            </Link>
+          </p>
         </Panel>
 
         <Panel title="คำขอลงทะเบียนหน่วยงาน" actions={<SeeAll href="/console/registrations/organizations" />}>

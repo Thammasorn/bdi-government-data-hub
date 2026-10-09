@@ -84,7 +84,7 @@ export default function ConsoleUsersPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="บัญชีและสิทธิ์"
+        eyebrow="หน่วยงานและผู้ใช้"
         title="ผู้ใช้"
         description="ทุกบัญชีในระบบ รวมบัญชีที่ยังรอเปิดใช้งานจากคำเชิญ — กดแถวเพื่อแก้ข้อมูล เปลี่ยนบทบาท หรือระงับบัญชี"
         actions={<ButtonLink href="/console/invitations?new=1">เชิญผู้ใช้</ButtonLink>}

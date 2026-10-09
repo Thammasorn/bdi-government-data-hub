@@ -63,7 +63,7 @@ export default function ConsoleOrganizationsPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="หน่วยงานและคำขอ"
+        eyebrow="หน่วยงานและผู้ใช้"
         title="หน่วยงาน"
         description="สร้างหน่วยงานก่อนเชิญผู้ประสานงานของหน่วยงานนั้น — ข้อมูลที่กรอกไว้ที่นี่ถูกเติมลงคำขอลงทะเบียนให้หน่วยงานโดยอัตโนมัติ"
         actions={

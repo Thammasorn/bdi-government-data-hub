@@ -11,7 +11,7 @@ export default function ConsoleRegistrationList() {
   return (
     <div>
       <PageHeader
-        eyebrow="หน่วยงานและคำขอ"
+        eyebrow="คำขอ"
         title="คำขอลงทะเบียนหน่วยงาน"
         description="ทุกคำขอของทุกหน่วยงาน อ่านได้ทั้งหมดแต่ไม่มีปุ่มของด่านตรวจ — เปิดคำขอเพื่อแก้เนื้อ ปรับกลับเป็นฉบับร่าง หรือยกเลิกแทนหน่วยงาน"
       />

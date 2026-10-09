@@ -23,8 +23,8 @@ const icon = (d: string) => (
 );
 
 /**
- * เมนูของ /console จัดตามงาน ไม่ใช่ตาม endpoint — "บัญชี" คือคนกับคำเชิญที่จะกลายเป็นคน "หน่วยงานและคำขอ" คือสิ่งที่หน่วยงาน
- * ยื่นเข้ามา "ตั้งค่า" คือสิ่งที่ทุกหน่วยงานเห็นเหมือนกัน (เอกสารข้อตกลง ตัวเลือกในแบบฟอร์ม)
+ * เมนูของ /console จัดตามลำดับที่งานเกิดจริง — สร้างหน่วยงานก่อน แล้วจึงมีผู้ใช้ และคำเชิญที่จะกลายเป็นผู้ใช้ (ลำดับที่ BDI
+ * ขอเมื่อ 2026-10-09) "คำขอ" คือสิ่งที่หน่วยงานยื่นเข้ามา "ตั้งค่าระบบ" คือสิ่งที่ทุกหน่วยงานเห็นเหมือนกัน
  */
 export const CONSOLE_GROUPS: Array<{ title: string | null; items: Section[] }> = [
   {
@@ -32,16 +32,16 @@ export const CONSOLE_GROUPS: Array<{ title: string | null; items: Section[] }> =
     items: [{ href: "/console", label: "ภาพรวม", icon: icon("M3 10.5 10 4l7 6.5M5 9v7h4v-4h2v4h4V9") }],
   },
   {
-    title: "บัญชีและสิทธิ์",
+    title: "หน่วยงานและผู้ใช้",
     items: [
+      { href: "/console/organizations", label: "หน่วยงาน", icon: icon("M4 17V5l6-2 6 2v12M4 17h12M8 8h1m2 0h1M8 11h1m2 0h1M9 17v-3h2v3") },
       { href: "/console/users", label: "ผู้ใช้", icon: icon("M10 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm-6 7c.6-3 3-4.5 6-4.5s5.4 1.5 6 4.5") },
       { href: "/console/invitations", label: "คำเชิญ", icon: icon("M3 5.5h14v9H3zM3 6l7 5 7-5") },
     ],
   },
   {
-    title: "หน่วยงานและคำขอ",
+    title: "คำขอ",
     items: [
-      { href: "/console/organizations", label: "หน่วยงาน", icon: icon("M4 17V5l6-2 6 2v12M4 17h12M8 8h1m2 0h1M8 11h1m2 0h1M9 17v-3h2v3") },
       {
         href: "/console/registrations/organizations",
         label: "คำขอลงทะเบียนหน่วยงาน",
