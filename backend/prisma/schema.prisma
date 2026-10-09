@@ -725,6 +725,8 @@ enum AttachmentOwnerType {
   LEGAL_DOCUMENT_VERSION
   /// เบี่ยงจากดีไซน์: เพิ่มเพราะ dataset.dataset ถือ attachment ต่อจากคำขอที่อนุมัติแล้ว
   DATASET
+  /// เบี่ยงจากดีไซน์: ไฟล์ของเอกสารดาวน์โหลดบนหน้าแรก (`administration.public_document`)
+  PUBLIC_DOCUMENT
 
   @@schema("attachment")
 }
@@ -740,6 +742,8 @@ enum AttachmentType {
   /// LEGAL_DOCUMENT = ไฟล์เอกสารกฎหมายที่ legal_document_version อ้างถึง
   GENERATED_FORM
   LEGAL_DOCUMENT
+  /// เบี่ยงจากดีไซน์: PDF ที่ผู้เยี่ยมชมดาวน์โหลดจากหน้าแรก — ไม่ผูกกับคำขอหรือ template ใด
+  PUBLIC_DOCUMENT_FILE
 
   @@schema("attachment")
 }
@@ -1763,5 +1767,37 @@ model DatasetChoice {
   @@unique([fieldKey, code])
   @@index([fieldKey, isActive, displayOrder])
   @@map("dataset_choice")
+  @@schema("administration")
+}
+
+/// เบี่ยงจากดีไซน์: ไม่มีใน Excel — เอกสารที่ผู้เยี่ยมชมดาวน์โหลดจากหัวข้อ "กฎหมายและเอกสารที่เกี่ยวข้อง" บนหน้าแรก
+///
+/// เดิมเป็น PDF ใน `frontend/public/documents/` กับรายการใน `components/landing/content.ts` BDI ออกฉบับใหม่ทีไรต้องแก้โค้ด
+/// แล้ว deploy (c39fec4 คือครั้งล่าสุด) ตอนนี้ผู้ดูแลระบบอัปโหลดเองที่ /console ไฟล์ปัจจุบันคือ attachment ที่ ACTIVE ของแถวนี้
+/// (`owner_type = PUBLIC_DOCUMENT`) ฉบับก่อนหน้าเป็น REPLACED เก็บไว้เป็นประวัติ
+///
+/// **ไม่ใช่ `legal.legal_document`** — ที่นั่นคือ template .docx ที่ระบบเติมค่าแล้วให้ผู้มีอำนาจลงนาม ที่นี่คือ PDF ฉบับอ่าน
+/// ที่ BDI ส่งมา (ชื่อไฟล์เดิมตามที่ส่งมาทุกตัวอักษร ตามที่สั่งไว้ 2026-10-01) สองชุดนี้ไม่ได้ผูกเวอร์ชันกัน
+model PublicDocument {
+  id           String  @id @default(uuid()) @db.Uuid
+  /// REGULATION = กฎหมายที่เกี่ยวข้อง · PRIMARY = ข้อตกลงหลัก (A0) · ANNEX = เอกสารภาคผนวก (A1–A3)
+  section      String  @db.VarChar(32)
+  /// ป้ายรหัสหน้าชื่อ (A0, A1 …) — กฎหมายไม่มี
+  code         String? @db.VarChar(16)
+  title        String  @db.VarChar(500)
+  /// ข้อความที่ผู้เยี่ยมชมเห็นใต้ชื่อ เช่น "ฉบับที่ 1 · 5 ต.ค. 2569" — ผู้ดูแลพิมพ์เอง ไม่ได้นับให้
+  versionLabel String? @map("version_label") @db.VarChar(100)
+  /// ไฟล์ใน `frontend/public` ที่ใช้จนกว่าจะมีคนอัปโหลดไฟล์แรก — แถวที่ย้ายมาจาก content.ts
+  staticPath   String? @map("static_path") @db.VarChar(500)
+  displayOrder Int     @map("display_order")
+  isActive     Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  @@index([section, isActive, displayOrder])
+  @@map("public_document")
   @@schema("administration")
 }

@@ -12,6 +12,7 @@ import { loadAddresses } from "./lib/address.js";
 import { loadChoices } from "./lib/dataset-choices.js";
 import { adminRegistrationRouter } from "./routes/admin-registrations.js";
 import { adminAddressRouter } from "./routes/admin-addresses.js";
+import { adminPublicDocumentRouter, publicDocumentRouter } from "./routes/public-documents.js";
 import { adminRouter } from "./routes/admin.js";
 import { adminUserRouter } from "./routes/admin-users.js";
 import { addressRouter } from "./routes/address.js";
@@ -44,8 +45,10 @@ app.use("/api/admin/users", adminUserRouter);
 // ต้องมาก่อน adminRouter ที่จับ /api/admin ทั้งก้อน ไม่งั้น /registrations/* ตกไปที่ 404 ของมัน
 app.use("/api/admin/registrations", adminRegistrationRouter);
 app.use("/api/admin/addresses", adminAddressRouter);
+app.use("/api/admin/public-documents", adminPublicDocumentRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/address", addressRouter);
+app.use("/api/public-documents", publicDocumentRouter);
 app.use("/api/dataset-choices", datasetChoiceRouter);
 app.use("/api/organizations", organizationRouter);
 app.use("/api/dataset-requests", datasetRequestRouter);

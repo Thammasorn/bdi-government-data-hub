@@ -1373,6 +1373,18 @@ gets there first), and anything needing another row. Copying the first would re-
 snapshot `dataset-choices.ts` exists to avoid; inventing Thai wording for the second would make
 one field speak twice.
 
+**The landing page's downloads are rows, not files in the repo** (since 2026-10-09).
+`administration.public_document` holds the section (REGULATION · PRIMARY · ANNEX), code, title and the
+version label shown under it; the file is that row's ACTIVE attachment (`owner_type PUBLIC_DOCUMENT`),
+and replaced files stay as REPLACED history. Admins manage it at `/console/public-documents`
+(`routes/public-documents.ts`: public `GET /api/public-documents` + `/:id/file`, admin
+`/api/admin/public-documents`). The six rows the migration created point at the old PDFs in
+`frontend/public/documents` through `static_path` until someone uploads a replacement, so nothing broke
+on deploy. `LandingPage`'s `useLegalDocuments()` shows the `content.ts` list at once and swaps to the
+API's when it answers; that list is now only a fallback, so don't update it for a new edition. These
+PDFs are **not** the signing templates in `legal.legal_document`: a new edition from BDI means
+updating both places.
+
 **The organization code is not a form field.** `organization_code` is `@unique`, comes from the
 admin (`POST /api/admin/organizations`) or `nextOrganizationCode()`, and is what A0 uses to name
 the organization — so the registration form shows it `readOnly` and `toRequestData()` does not

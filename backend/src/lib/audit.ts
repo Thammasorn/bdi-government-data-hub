@@ -214,6 +214,13 @@ export const AuditAction = {
   ADDRESS_MASTER_CHANGED: "ADDRESS_MASTER_CHANGED",
 
   /**
+   * เพิ่ม แก้ ซ่อน หรือเปลี่ยนไฟล์ของเอกสารดาวน์โหลดบนหน้าแรก (`administration.public_document`) — หน้าแรกเป็นหน้าเดียว
+   * ที่คนนอกเห็นก่อนล็อกอิน ไฟล์ที่นั่นคือฉบับที่หน่วยงานเอาไปอ่านก่อนตัดสินใจเข้าร่วม ต้องตอบได้ว่าใครเปลี่ยนเป็นฉบับไหนเมื่อไร
+   * `metadata.operation` = CREATE · UPDATE · FILE
+   */
+  PUBLIC_DOCUMENT_CHANGED: "PUBLIC_DOCUMENT_CHANGED",
+
+  /**
    * ผู้เชี่ยวชาญด้านข้อมูลบันทึกความเห็นต่อคำขอชุดข้อมูล
    *
    * ไม่ใช่ `REQUEST_APPROVED` และไม่ใช่ `REQUEST_RETURNED` — ความเห็นไม่ปิดด่านและไม่ย้าย
@@ -251,6 +258,8 @@ export const AuditSubject = {
    * จึงเว้น subject_id ว่าง แล้วเก็บระดับกับรหัสไว้ใน metadata (`level`, `code`)
    */
   ADDRESS_MASTER: "ADDRESS_MASTER",
+  /** เอกสารดาวน์โหลดหนึ่งแถวบนหน้าแรก — ไม่มีใน sheet */
+  PUBLIC_DOCUMENT: "PUBLIC_DOCUMENT",
   NOTIFICATION: "NOTIFICATION",
   INTEGRATION_JOB: "INTEGRATION_JOB",
 } as const;

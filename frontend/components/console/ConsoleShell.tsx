@@ -59,6 +59,7 @@ export const CONSOLE_GROUPS: Array<{ title: string | null; items: Section[] }> =
     items: [
       { href: "/console/legal-documents", label: "เอกสารข้อตกลง", icon: icon("M5 3h7l3 3v11H5zM8 9h4M8 12h4M8 15h2") },
       { href: "/console/dataset-choices", label: "ตัวเลือกในแบบฟอร์ม", icon: icon("M4 5h2m3 0h7M4 10h2m3 0h7M4 15h2m3 0h7") },
+      { href: "/console/public-documents", label: "เอกสารดาวน์โหลด", icon: icon("M10 3v9m-4-4 4 4 4-4M4 15v2h12v-2") },
     ],
   },
 ];

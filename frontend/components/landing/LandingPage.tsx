@@ -965,9 +965,11 @@ const DOWNLOAD_PILL =
  * เข้ารหัสทุกตัว (`encodeURI` ปล่อย `[ ]` ไว้) ส่วน `download` ใช้ชื่อดิบ
  */
 function DownloadButton({ item }: { item: LegalItem }) {
+  // ไฟล์ที่ผู้ดูแลอัปโหลดมาทาง API (`/api/public-documents/:id/file`) ใช้ path ตรง ๆ ชื่อไฟล์มาจาก `fileName`
+  // ไฟล์เดิมใน public/ ชื่อไฟล์คือท้าย path ซึ่งต้อง percent-encode เอง (ภาษาไทย ช่องว่าง วงเล็บเหลี่ยม)
   const slash = item.file.lastIndexOf("/");
-  const filename = item.file.slice(slash + 1);
-  const href = `${item.file.slice(0, slash + 1)}${encodeURIComponent(filename)}`;
+  const filename = item.fileName ?? item.file.slice(slash + 1);
+  const href = item.fileName ? item.file : `${item.file.slice(0, slash + 1)}${encodeURIComponent(filename)}`;
   const icon = (
     <svg className="h-4 w-4" {...iconProps}>
       <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />
@@ -988,7 +990,63 @@ function DownloadButton({ item }: { item: LegalItem }) {
   );
 }
 
+/** ฉบับของเอกสาร ("ฉบับที่ 2 · 9 ต.ค. 2569") ใต้ชื่อ — ผู้ดูแลระบบตั้งเองที่ /console ไม่มีก็ไม่แสดง */
+function VersionLabel({ item }: { item: LegalItem }) {
+  if (!item.versionLabel) return null;
+  return <span className="mt-0.5 block text-[13px] leading-snug text-ink-subtle">{item.versionLabel}</span>;
+}
+
+/**
+ * รายการเอกสารดาวน์โหลด — จาก `GET /api/public-documents` ที่ผู้ดูแลระบบแก้ได้ที่ /console (การ์ด Admin Console 2026-10-09)
+ *
+ * แสดงรายการใน content.ts ทันทีตอนเปิดหน้า แล้วสลับเป็นของ API เมื่อตอบกลับ — หน้าแรกเป็นหน้าแรกที่คนนอกเห็น จะรอ API
+ * ก่อนแสดงหัวข้อนี้ไม่ได้ และถ้า API ล่ม รายการเดิมยังดาวน์โหลดได้จากไฟล์ใน public/ (ฉบับที่อาจเก่ากว่า ดีกว่าหัวข้อว่าง)
+ */
+function useLegalDocuments() {
+  const [docs, setDocs] = useState<PublicDocument[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch(`${process.env.NEXT_PUBLIC_API_URL ?? ""}/api/public-documents`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { documents: PublicDocument[] } | null) => {
+        if (alive && d && d.documents.length > 0) setDocs(d.documents);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+  if (!docs) {
+    return { regulations: LEGAL_REGULATIONS, primary: [LEGAL_PRIMARY], annexes: LEGAL_ANNEXES };
+  }
+  const API = process.env.NEXT_PUBLIC_API_URL ?? "";
+  const toItem = (d: PublicDocument): LegalItem => ({
+    title: d.title,
+    code: d.code,
+    versionLabel: d.versionLabel,
+    // ไฟล์ที่อัปโหลดผ่าน API ต้องเรียก backend ตรง (dev checkout ตั้ง NEXT_PUBLIC_API_URL) ไฟล์ใน public/ อยู่กับหน้าเว็บ
+    file: d.href.startsWith("/api/") ? `${API}${d.href}` : d.href,
+    fileName: d.href.startsWith("/api/") ? d.fileName : null,
+  });
+  return {
+    regulations: docs.filter((d) => d.section === "REGULATION").map(toItem),
+    primary: docs.filter((d) => d.section === "PRIMARY").map(toItem),
+    annexes: docs.filter((d) => d.section === "ANNEX").map(toItem),
+  };
+}
+
+interface PublicDocument {
+  id: string;
+  section: "REGULATION" | "PRIMARY" | "ANNEX";
+  code: string | null;
+  title: string;
+  versionLabel: string | null;
+  href: string;
+  fileName: string | null;
+}
+
 function Legal() {
+  const { regulations, primary, annexes } = useLegalDocuments();
   return (
     <Section id="legal" tone="canvas">
       <Heading id="legal" />
@@ -997,12 +1055,15 @@ function Legal() {
         กฎหมายที่เกี่ยวข้อง
       </h3>
       <ul className="reveal mt-3 rounded-2xl bg-white px-6 py-1.5 shadow-card">
-        {LEGAL_REGULATIONS.map((item) => (
+        {regulations.map((item) => (
           <li
             key={item.title}
             className="flex items-start justify-between gap-4 border-t border-line py-3.5 first:border-t-0 sm:items-center"
           >
-            <span className="min-w-0 text-[16px] leading-[1.85] text-ink">{item.title}</span>
+            <span className="min-w-0 text-[16px] leading-[1.85] text-ink">
+              {item.title}
+              <VersionLabel item={item} />
+            </span>
             <DownloadButton item={item} />
           </li>
         ))}
@@ -1014,11 +1075,19 @@ function Legal() {
 
       {/* ข้อตกลงหลัก */}
       {/* ข้อความตัดบรรทัดเฉพาะจอแคบ ป้ายรหัสจึงชิดบนที่นั่น ส่วนจอกว้างเป็นบรรทัดเดียว จัดกึ่งกลางถูกกว่า */}
-      <div className="reveal mt-3 flex items-start gap-4 rounded-2xl bg-white px-6 py-4 shadow-card sm:items-center">
-        <DocCode code={LEGAL_PRIMARY.code} />
-        <span className="min-w-0 flex-1 text-[16px] leading-[1.7] text-ink">{LEGAL_PRIMARY.title}</span>
-        <DownloadButton item={LEGAL_PRIMARY} />
-      </div>
+      {primary.map((doc) => (
+        <div
+          key={doc.code ?? doc.title}
+          className="reveal mt-3 flex items-start gap-4 rounded-2xl bg-white px-6 py-4 shadow-card sm:items-center"
+        >
+          {doc.code ? <DocCode code={doc.code} /> : null}
+          <span className="min-w-0 flex-1 text-[16px] leading-[1.7] text-ink">
+            {doc.title}
+            <VersionLabel item={doc} />
+          </span>
+          <DownloadButton item={doc} />
+        </div>
+      ))}
 
       {/*
         ภาคผนวกอยู่ในกล่องเดียวที่มีหัวข้อกำกับและเส้นนำทางด้านซ้าย
@@ -1031,13 +1100,16 @@ function Legal() {
           <span className="ml-2 font-sans font-normal text-ink-subtle">แนบท้าย A0</span>
         </p>
         <ul className="mt-3 border-l-2 border-navy-100 pl-5 sm:pl-6">
-          {LEGAL_ANNEXES.map((doc) => (
+          {annexes.map((doc) => (
             <li
-              key={doc.code}
+              key={doc.code ?? doc.title}
               className="flex items-start gap-4 border-t border-line py-3.5 first:border-t-0 first:pt-0 last:pb-0 sm:items-center"
             >
-              <DocCode code={doc.code} muted />
-              <span className="min-w-0 flex-1 text-[15px] leading-[1.7] text-ink">{doc.title}</span>
+              {doc.code ? <DocCode code={doc.code} muted /> : null}
+              <span className="min-w-0 flex-1 text-[15px] leading-[1.7] text-ink">
+                {doc.title}
+                <VersionLabel item={doc} />
+              </span>
               <DownloadButton item={doc} />
             </li>
           ))}
