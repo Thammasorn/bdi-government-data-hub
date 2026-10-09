@@ -364,6 +364,14 @@ function EditDialog({ doc, onClose, onSaved }: { doc: LegalDocument | null; onCl
   );
 }
 
+interface UploadResult {
+  versionNumber: number;
+  placeholders: string[];
+  warning?: string;
+  /** สิ่งที่ backend จัดรูปให้ก่อนเก็บ (`normaliseTemplate()`) */
+  normalised: { optionParagraphs: number; highlights: number };
+}
+
 function UploadDialog({
   doc,
   onClose,
@@ -377,7 +385,9 @@ function UploadDialog({
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<AdminErrorView | null>(null);
-  const [result, setResult] = useState<{ versionNumber: number; placeholders: string[]; warning?: string } | null>(null);
+  const [result, setResult] = useState<UploadResult | null>(null);
+
+  const ticks = result ? result.placeholders.filter((p) => p.startsWith("tick.")).length : 0;
 
   const close = () => {
     setFile(null);
@@ -393,7 +403,7 @@ function UploadDialog({
     try {
       const form = new FormData();
       form.append("file", file);
-      const res = await api.upload<{ versionNumber: number; placeholders: string[]; warning?: string }>(
+      const res = await api.upload<UploadResult>(
         `/api/admin/legal-documents/${doc.code}/versions`,
         form,
       );
@@ -414,13 +424,25 @@ function UploadDialog({
             เผยแพร่เป็น <strong>เวอร์ชัน {result.versionNumber}</strong> แล้ว — คำขอที่เปิดหน้าเอกสารหลังจากนี้เห็นฉบับใหม่
           </p>
           <WarningList warnings={result.warning ? [result.warning] : []} />
+          {result.normalised.optionParagraphs > 0 || result.normalised.highlights > 0 ? (
+            <p className="text-[13.5px] text-ink-muted">
+              ระบบจัดรูปให้แล้ว:
+              {result.normalised.optionParagraphs > 0 ? ` บรรทัดช่องติ๊ก ${result.normalised.optionParagraphs} บรรทัด` : ""}
+              {result.normalised.optionParagraphs > 0 && result.normalised.highlights > 0 ? " ·" : ""}
+              {result.normalised.highlights > 0 ? ` ลบไฮไลต์ ${result.normalised.highlights} จุด` : ""}
+            </p>
+          ) : null}
           <div>
-            <p className="text-[13px] font-medium text-ink-muted">ตัวแปรที่พบในไฟล์ ({result.placeholders.length})</p>
+            <p className="text-[13px] font-medium text-ink-muted">
+              ตัวแปรที่พบในไฟล์ ({result.placeholders.length})
+              {/* ช่องติ๊กของ A4 มีเกือบร้อยช่อง ชื่อแต่ละช่องไม่ได้ช่วยให้ตรวจอะไร — นับรวมแทน แสดงชื่อเฉพาะตัวแปรข้อความ */}
+              {ticks > 0 ? ` — ช่องติ๊ก ${ticks} ช่อง` : ""}
+            </p>
             <p className="mt-1 flex flex-wrap gap-1">
               {result.placeholders.length === 0 ? (
                 <span className="text-[13px] text-ink-subtle">ไม่มี — ใช้ไฟล์ PDF กลางฉบับเดียวกับทุกคำขอ</span>
               ) : (
-                result.placeholders.map((p) => <Tag key={p}>{p}</Tag>)
+                result.placeholders.filter((p) => !p.startsWith("tick.")).map((p) => <Tag key={p}>{p}</Tag>)
               )}
             </p>
           </div>
@@ -431,16 +453,23 @@ function UploadDialog({
       ) : (
         <div className="space-y-4">
           <p className="text-[14px] text-ink-muted">
-            ไฟล์ Word (.docx) ไม่เกิน 20 MB — ระบบตรวจชื่อตัวแปรและแปลงเป็น PDF ก่อนรับ ถ้าไม่ผ่านจะไม่มีอะไรถูกบันทึก
-            ก่อนอัปโหลดให้รัน <code className="rounded bg-navy-50 px-1">docs/tools/normalise-template.py</code> ตามคู่มือ docs/18
+            เลือกไฟล์ Word (.docx) ที่แก้เสร็จแล้ว ไม่เกิน 20 MB — อัปโหลดได้ตรงจาก Word ระบบจัดรูปบรรทัดช่องติ๊กและลบไฮไลต์ให้เอง
+            แล้วตรวจชื่อตัวแปรก่อนเผยแพร่ ถ้าไม่ผ่านจะไม่มีอะไรถูกบันทึก
           </p>
-          <input
-            ref={input}
-            type="file"
-            accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="block w-full text-[14px] file:mr-3 file:rounded-full file:border-0 file:bg-navy-50 file:px-4 file:py-2 file:font-medium file:text-navy-800 hover:file:bg-navy-100"
-          />
+          {/* ปุ่มของ <input type="file"> เขียนเป็นภาษาของเบราว์เซอร์ ("Choose File") — ซ่อนไว้แล้ววาดปุ่มภาษาไทยแทน */}
+          <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-line bg-canvas px-4 py-3 hover:border-navy-300">
+            <input
+              ref={input}
+              type="file"
+              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              className="sr-only"
+            />
+            <span className="shrink-0 rounded-full bg-navy-800 px-4 py-1.5 text-[14px] font-medium text-white">เลือกไฟล์</span>
+            <span className="min-w-0 truncate text-[14px] text-ink-muted">
+              {file ? `${file.name} · ${(file.size / 1024 / 1024).toFixed(1)} MB` : "ยังไม่ได้เลือกไฟล์ .docx"}
+            </span>
+          </label>
           {error ? <ErrorNotice view={error} /> : null}
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={close} disabled={busy}>

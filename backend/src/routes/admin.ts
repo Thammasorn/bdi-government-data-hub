@@ -1717,6 +1717,8 @@ adminRouter.post(
        * ในเวอร์ชันถัดไป (ดู docs/18-document-template-variables.md)
        */
       deprecatedPlaceholders: published.deprecatedPlaceholders,
+      /** สิ่งที่ระบบจัดรูปให้ก่อนเก็บ (ย่อหน้าตัวเลือก ไฮไลต์) — ไม่ต้องรัน docs/tools/normalise-template.py เองแล้ว */
+      normalised: published.normalised,
       ...(published.deprecatedPlaceholders.length > 0
         ? {
             warning:
@@ -1836,6 +1838,7 @@ adminRouter.post("/legal-documents/:code/versions/:versionId/restore", async (re
     restoredFrom: version.versionNumber,
     placeholders: published.placeholders,
     deprecatedPlaceholders: published.deprecatedPlaceholders,
+    normalised: published.normalised,
     message: `เผยแพร่เนื้อหาของเวอร์ชัน ${version.versionNumber} อีกครั้งเป็นเวอร์ชัน ${published.versionNumber} แล้ว`,
   });
 });

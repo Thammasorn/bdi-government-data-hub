@@ -49,6 +49,7 @@ import {
   assertReadableDocx,
   docxToPdf,
   fillTemplate,
+  normaliseTemplate,
   type VariableScope,
 } from "./document-render.js";
 
@@ -292,8 +293,15 @@ export async function publishVersion(
   versionNumber: number;
   placeholders: string[];
   deprecatedPlaceholders: string[];
+  /** สิ่งที่ `normaliseTemplate()` แก้ให้ก่อนเก็บ — หน้า /console บอกผู้อัปโหลด */
+  normalised: { optionParagraphs: number; highlights: number };
 }> {
   assertReadableDocx(params.docx);
+  /**
+   * จัดรูปก่อนทำอย่างอื่น — ตรวจ placeholder แปลง PDF และเก็บไฟล์ จากฉบับที่จัดรูปแล้วฉบับเดียว ไฟล์ที่ผู้ดูแลดาวน์โหลดกลับไป
+   * ภายหลังจึงเป็นฉบับเดียวกับที่ระบบใช้จริง (เดิมต้องรัน docs/tools/normalise-template.py เองก่อนอัปโหลด)
+   */
+  const { docx, optionParagraphs, highlights } = normaliseTemplate(params.docx);
 
   const document = await db.legalDocument.findUnique({
     where: { documentCode: params.documentCode },
@@ -308,7 +316,7 @@ export async function publishVersion(
 
   // ตรวจชื่อตัวแปรตาม flow ของเอกสาร — `{{dataset.title}}` ในข้อตกลงหน่วยงานไม่มีค่าให้เติม
   const placeholders = assertKnownPlaceholders(
-    params.docx,
+    docx,
     variableScopeOf(document.applicationScope),
   );
   /**
@@ -324,7 +332,7 @@ export async function publishVersion(
    * เปิดไฟล์กลางของเอกสารที่ปกติต้อง render ต่อคำขอ
    */
   const pdf = await docxToPdf(
-    placeholders.length > 0 ? fillTemplate(params.docx, {}) : params.docx,
+    placeholders.length > 0 ? fillTemplate(docx, {}) : docx,
     params.filename,
   );
 
@@ -346,10 +354,10 @@ export async function publishVersion(
     ownerId: versionId,
     attachmentType: AttachmentType.LEGAL_DOCUMENT,
     file: {
-      buffer: params.docx,
+      buffer: docx,
       originalname: params.filename,
       mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      size: params.docx.length,
+      size: docx.length,
     },
     uploadedBy: params.actorId,
   });
@@ -405,5 +413,11 @@ export async function publishVersion(
     });
   }
 
-  return { versionId, versionNumber, placeholders, deprecatedPlaceholders: deprecated };
+  return {
+    versionId,
+    versionNumber,
+    placeholders,
+    deprecatedPlaceholders: deprecated,
+    normalised: { optionParagraphs, highlights },
+  };
 }

@@ -1062,10 +1062,20 @@ substitutes another and the whole document shifts, which reads as a broken templ
 **LibreOffice reads `w:jc w:val="thaiDistribute"` as left-aligned.** That is the value Word
 writes for "Thai distributed" — the justify button every Thai body paragraph in the legal team's
 files has been through — so every template arrived looking justified in Word and rendered
-ragged-right in production until 2026-09-20. `docs/tools/normalise-template.py` rewrites it (and
-the kashida values) to `both`, which LibreOffice lays out the way Word shows it; `distribute`
-would stretch the last line of every paragraph too. Run the script on **every** file before
-publishing, annexes included — nothing else about a placeholder-free file needs it, this does.
+ragged-right in production until 2026-09-20. `justifyForLibreOffice()` (inside `docxToPdf()`,
+since 2026-10-01) rewrites it (and the kashida values) to `both` on every render, which LibreOffice
+lays out the way Word shows it; `distribute` would stretch the last line of every paragraph too. The
+stored file keeps `thaiDistribute`, so the legal team can download it and keep editing in Word.
+
+**Templates are normalised when published, not by hand.** `normaliseTemplate()` in
+`lib/document-render.ts`, called first thing in `publishVersion()`, does what
+`docs/tools/normalise-template.py` used to require someone to remember: every paragraph starting
+with `{{tick.<field>.<code>}}` is rebuilt into the canonical option paragraph, and drafting
+highlights are stripped. The upload therefore goes straight from Word, and the response's
+`normalised` says what was changed (the console shows it). It is idempotent and returns the same
+buffer when nothing changes, so a clean file keeps its `content_hash`. The Python script stays for
+preparing the bootstrap files in `backend/src/assets/legal-templates/` and gives the same
+`document.xml` (checked against A4 on 2026-10-09), except that it also rewrites `w:jc`.
 
 **Every document with placeholders is rendered per request, not just A0.**
 `hasPlaceholders` is read from the stored `.docx`, never from the document code, so adding a
@@ -1130,7 +1140,7 @@ the script and publish what it writes.
 **The 2026-09-20 set arrived as edits of the live templates**, not of blank drafts — the legal
 team opened `docs/A0-template.docx` / `docs/A4-template.docx` and typed the new
 `{{tick.objective.NN}}` lines and five `{{tick.dataFormat.N}}` options themselves. For that shape
-the script is `docs/tools/normalise-template.py`: it finds every paragraph that starts with a tick
+the script was `docs/tools/normalise-template.py` (now `normaliseTemplate()` at publish): it finds every paragraph that starts with a tick
 placeholder by *text*, not by index, and rewrites it into the canonical option paragraph (mark in
 its own DejaVu Sans run, option text in TH SarabunPSK, `ListParagraph` indent), then strips the
 highlight. Everything else in the file is left exactly as typed, which is the point: BDI wants

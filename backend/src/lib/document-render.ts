@@ -517,6 +517,100 @@ export function justifyForLibreOffice(docx: Buffer): Buffer {
   return zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
 }
 
+// ---------------------------------------------------------------- จัดรูป template ตอนเผยแพร่
+
+/**
+ * ย่อหน้าหนึ่งย่อหน้า — ไม่จับ `<w:p …/>` ที่ปิดในตัว (ย่อหน้าว่าง) ไม่งั้น `.*?` จะกลืนย่อหน้าถัดไปเข้ามาด้วย
+ * แล้วการเขียนใหม่จะทิ้งแท็กเปิดที่ปิดในตัวไว้หน้า `</w:p>` กลายเป็น XML ที่ Word เปิดไม่ได้
+ * (สคริปต์ Python ต้นทางมีช่องนี้อยู่ แต่ไฟล์ที่เคยผ่านมันไม่มีย่อหน้าว่างแบบนั้นหน้าบรรทัดตัวเลือก)
+ */
+const PARAGRAPH = /<w:p(?: [^>]*[^/])?>[\s\S]*?<\/w:p>/g;
+const TEXT_NODE = /<w:t(?: [^>]*)?>([\s\S]*?)<\/w:t>/g;
+const HIGHLIGHT = /<w:highlight w:val="[^"]*"\/>/g;
+const TICK_PREFIX = /^\s*(\{\{tick\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+\}\})\s*/;
+
+/** pPr ของรายการตัวเลือก — ตัวเดียวกับที่ docs/tools/build-a4-template.py ทิ้งไว้ในทุกบรรทัดตัวเลือก */
+const OPTION_PPR =
+  "<w:pPr>" +
+  '<w:pStyle w:val="ListParagraph"/>' +
+  '<w:ind w:left="1440"/>' +
+  "<w:rPr>" +
+  '<w:rFonts w:ascii="TH SarabunPSK" w:eastAsia="TH Sarabun PSK" w:hAnsi="TH SarabunPSK" w:cs="TH SarabunPSK"/>' +
+  '<w:color w:val="000000" w:themeColor="text1"/>' +
+  '<w:sz w:val="32"/><w:szCs w:val="32"/>' +
+  "</w:rPr>" +
+  "</w:pPr>";
+
+/** เครื่องหมายใน run ของตัวเอง ฟอนต์และขนาดตายตัว — เหตุผลอยู่ใน CLAUDE.md ("The mark gets a `<w:r>` of its own") */
+const tickRun = (mark: string) =>
+  "<w:r><w:rPr>" +
+  '<w:rFonts w:ascii="DejaVu Sans" w:hAnsi="DejaVu Sans" w:cs="DejaVu Sans"/>' +
+  '<w:sz w:val="28"/><w:szCs w:val="28"/>' +
+  "</w:rPr>" +
+  `<w:t xml:space="preserve">${mark} </w:t></w:r>`;
+
+const textRun = (text: string) =>
+  "<w:r><w:rPr>" +
+  '<w:rFonts w:ascii="TH SarabunPSK" w:eastAsia="TH Sarabun PSK" w:hAnsi="TH SarabunPSK" w:cs="TH SarabunPSK"/>' +
+  '<w:color w:val="000000" w:themeColor="text1"/>' +
+  '<w:sz w:val="32"/><w:szCs w:val="32"/>' +
+  "</w:rPr>" +
+  `<w:t xml:space="preserve">${text}</w:t></w:r>`;
+
+export interface NormaliseResult {
+  docx: Buffer;
+  /** ย่อหน้าตัวเลือก (`{{tick.…}}`) ที่ถูกเขียนใหม่เป็นรูปมาตรฐาน */
+  optionParagraphs: number;
+  /** ไฮไลต์ที่ถูกลบ */
+  highlights: number;
+}
+
+/**
+ * จัดรูป template ที่ฝ่ายกฎหมายแก้ใน Word ให้เป็นรูปที่ระบบต้องการ — งานของ docs/tools/normalise-template.py ที่ย้ายมาทำ
+ * ตอนเผยแพร่ (`publishVersion()`) ไม่ต้องมีใครจำไปรันก่อนอัปโหลดอีก (คำขอจากหน้า /console 2026-10-09: "ดู ux ไม่ดี")
+ *
+ * สองอย่าง ตามสคริปต์เดิม:
+ *   - **ทุกย่อหน้าที่ขึ้นต้นด้วย `{{tick.<ช่อง>.<รหัส>}}`** ถูกเขียนใหม่ทั้งย่อหน้า: pPr ของรายการตัวเลือก + run ของเครื่องหมาย
+ *     (DejaVu Sans 14pt — TH SarabunPSK ไม่มี glyph ของ ○ ✔ แล้ว fontconfig เลือกฟอนต์แทนทีละบรรทัด วงกลมจึงโตไม่เท่ากัน)
+ *     + run เดียวของข้อความที่เหลือใน TH SarabunPSK 16pt ย่อหน้าอื่นไม่แตะ
+ *   - **ไฮไลต์ทั้งไฟล์** ที่ฝ่ายกฎหมายใช้ทำเครื่องหมายตอนร่าง — ไม่งั้นค่าที่ระบบเติมมีแถบเหลืองติดไปบนเอกสารที่ต้องลงนาม
+ *
+ * การจัดชิดขอบแบบไทย (ขั้นที่สามของสคริปต์) **ไม่ทำที่นี่**: `justifyForLibreOffice()` ทำตอนแปลงเป็น PDF ทุกครั้งอยู่แล้ว
+ * และการคง `thaiDistribute` ไว้ในไฟล์ที่เก็บทำให้ฝ่ายกฎหมายดาวน์โหลดไปแก้ต่อใน Word แล้วเห็นแบบที่ตัวเองจัดไว้
+ *
+ * ทำซ้ำได้: ไฟล์ที่ผ่านแล้ว (หรือผ่านสคริปต์มาแล้ว) ได้ผลเหมือนเดิม ย่อหน้าตัวเลือกถูกเขียนเป็นรูปเดียวกันทุกครั้ง
+ * ไฟล์ที่ไม่มีอะไรต้องแก้คืน buffer เดิม — ค่า `content_hash` ของเวอร์ชันจึงไม่เปลี่ยนโดยไม่จำเป็น
+ */
+export function normaliseTemplate(docx: Buffer): NormaliseResult {
+  const zip = openDocx(docx);
+  const xml = zip.file("word/document.xml")?.asText();
+  if (!xml) return { docx, optionParagraphs: 0, highlights: 0 };
+
+  let optionParagraphs = 0;
+  let next = xml.replace(PARAGRAPH, (seg) => {
+    // ข้อความตามที่อยู่ใน XML (ยัง escape อยู่) ต่อกันไม่ว่า Word จะผ่าเป็นกี่ run — เขียนกลับไปทั้งที่ยัง escape จึงถูกต้อง
+    const text = [...seg.matchAll(TEXT_NODE)].map((m) => m[1]).join("");
+    const prefix = TICK_PREFIX.exec(text);
+    if (!prefix) return seg;
+    optionParagraphs += 1;
+    const openTag = seg.slice(0, seg.indexOf(">") + 1);
+    return openTag + OPTION_PPR + tickRun(prefix[1]!) + textRun(text.slice(prefix[0].length)) + "</w:p>";
+  });
+  let highlights = 0;
+  next = next.replace(HIGHLIGHT, () => {
+    highlights += 1;
+    return "";
+  });
+
+  if (next === xml) return { docx, optionParagraphs: 0, highlights: 0 };
+  zip.file("word/document.xml", next);
+  return {
+    docx: zip.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer,
+    optionParagraphs,
+    highlights,
+  };
+}
+
 /**
  * .docx -> PDF ผ่าน gotenberg
  *
