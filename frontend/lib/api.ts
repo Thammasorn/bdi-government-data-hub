@@ -60,8 +60,27 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+/**
+ * ไฟล์ที่ได้จากคำสั่ง (ไม่ใช่ JSON) — PDF ตัวอย่างของหน้า /console ที่ต้องส่งไฟล์ขึ้นไปแปลงแล้วรับกลับมาแสดงใน `<iframe>`
+ * ข้อผิดพลาดยังเป็น `ApiError` เหมือน `request()` เพราะ backend ตอบ JSON เมื่อไม่สำเร็จ
+ */
+async function requestBlob(path: string, init: RequestInit = {}): Promise<Blob> {
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, { ...init, credentials: "include" });
+  } catch {
+    throw new ApiError(0, { message: "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ กรุณาตรวจสอบการเชื่อมต่อ" });
+  }
+  if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => ({})));
+  return res.blob();
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
+  /** GET ที่ตอบเป็นไฟล์ */
+  getBlob: (path: string) => requestBlob(path),
+  /** POST แบบ multipart ที่ตอบเป็นไฟล์ */
+  uploadBlob: (path: string, form: FormData) => requestBlob(path, { method: "POST", body: form }),
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) }),
   patch: <T>(path: string, body: unknown) =>

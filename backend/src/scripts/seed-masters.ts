@@ -141,12 +141,10 @@ async function seedLegalDocuments() {
       // isRequired อยู่ใน create เท่านั้น โดยตั้งใจ — แอดมินสลับค่านี้เองได้ผ่าน
       // PATCH /api/admin/legal-documents/:code ถ้าใส่ไว้ใน update ด้วย การรัน seed:masters
       // รอบถัดไปจะล้างสิ่งที่แอดมินตั้งไว้เงียบ ๆ ฐานข้อมูลที่มีอยู่แล้วจึงต้องยิง PATCH เอง
+      // ชื่อ ชื่อสั้น คำเตือน และลำดับเป็นของหน้า /console แล้ว (card "Enhance Legal document management") —
+      // อยู่ใน update แล้วการรัน seed:masters ตอน deploy จะล้างสิ่งที่ฝ่ายกฎหมายแก้ไว้ จึงเหลือแต่ประเภท
       update: {
         documentType: doc.type,
-        nameTh: doc.nameTh,
-        shortname: doc.shortname,
-        legalNotice: doc.notice,
-        displayOrder: doc.order,
       },
       create: {
         documentCode: doc.code,
@@ -192,6 +190,11 @@ async function seedLegalDocuments() {
       docx,
       filename: doc.template,
       actorId: SYSTEM_USER_ID,
+    });
+    // publishVersion() ไม่เปิดใช้เอกสารให้แล้ว — เอกสารที่ seed สร้างเป็น DRAFT เปิดใช้ที่นี่หลังมีเวอร์ชันแรก
+    await prisma.legalDocument.update({
+      where: { documentCode: doc.code },
+      data: { status: LegalDocumentStatus.ACTIVE },
     });
     console.log(
       `  ${doc.code} — เผยแพร่ v${versionNumber} (${placeholders.length} placeholder)`,

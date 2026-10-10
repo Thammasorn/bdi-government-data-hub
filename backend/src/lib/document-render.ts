@@ -436,14 +436,30 @@ function withDeprecatedNames(values: TemplateValues): Record<string, string> {
 }
 
 /**
+ * ตัวคั่นที่ครอบค่าที่เติม เพื่อให้ `highlightMarkedRuns()` รู้ว่าช่วงไหนของข้อความมาจาก template — อักขระ private use ที่ไม่มีใครพิมพ์ลงเอกสาร
+ */
+const HL_OPEN = "\uE000";
+const HL_CLOSE = "\uE001";
+
+export interface FillOptions {
+  /** true = ไฮไลต์เหลืองเฉพาะข้อความที่ถูกเติมจาก placeholder — ใช้กับตัวอย่าง preview ในหน้า /console ไม่ใช้กับเอกสารจริง */
+  highlight?: boolean;
+}
+
+/**
  * เติมค่าลง placeholder แล้วคืน .docx ที่เติมแล้ว
  *
  * ค่าที่ไม่ได้ส่งมาจะกลายเป็นค่าว่าง ไม่ใช่ข้อความ "undefined" — ตั้งใจ เพราะเอกสาร
  * ฉบับก่อนลงนามต้องมีช่องลายมือชื่อว่างไว้ให้เห็นว่ายังไม่มีใครลงนาม
  */
-export function fillTemplate(docx: Buffer, values: TemplateValues): Buffer {
+export function fillTemplate(docx: Buffer, values: TemplateValues, options: FillOptions = {}): Buffer {
   const zip = openDocx(docx);
-  const filled = withDeprecatedNames(values);
+  const marked = options.highlight
+    ? (Object.fromEntries(
+        Object.entries(values).map(([k, v]) => [k, v ? `${HL_OPEN}${v}${HL_CLOSE}` : v]),
+      ) as TemplateValues)
+    : values;
+  const filled = withDeprecatedNames(marked);
   let doc: Docxtemplater;
   try {
     doc = new Docxtemplater(zip, {
@@ -466,7 +482,65 @@ export function fillTemplate(docx: Buffer, values: TemplateValues): Buffer {
       { file: `placeholder ในเอกสารผิดรูปแบบ: ${detail}` },
     );
   }
-  return doc.getZip().generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+  const out = doc.getZip();
+  if (options.highlight) highlightMarkedRuns(out);
+  return out.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+}
+
+/** `<w:highlight>` ต้องอยู่ใน `<w:rPr>` ของ run — ไม่มี rPr ก็สร้างให้ */
+function withHighlight(rPr: string): string {
+  const mark = '<w:highlight w:val="yellow"/>';
+  if (!rPr) return `<w:rPr>${mark}</w:rPr>`;
+  if (rPr.includes("<w:highlight")) return rPr;
+  return rPr.replace("</w:rPr>", `${mark}</w:rPr>`);
+}
+
+/**
+ * แยก run ที่มีตัวคั่น (HL_OPEN/HL_CLOSE) ออกเป็นหลาย run แล้วใส่ไฮไลต์เฉพาะช่วงที่ถูกเติม
+ *
+ * run หนึ่งอาจมีข้อความของ template ปนกับค่าที่เติม ("เลขที่ {{request.number}} ลงวันที่ …") ไฮไลต์ทั้ง run จึงเกินจริง —
+ * ต้องแยกที่ตัวคั่น ค่าหลายบรรทัดที่ docxtemplater แทรก `<w:br/>` ไว้ก็ยังอยู่ในช่วงเดียวกัน run ที่มีรูปวาด/กล่องข้อความไม่แตะ
+ * (run ซ้อน run ทำให้จับคู่ `</w:r>` ผิด) แค่ลอกตัวคั่นออก
+ */
+function highlightRun(run: string): string {
+  if (!run.includes(HL_OPEN) && !run.includes(HL_CLOSE)) return run;
+  const strip = (xml: string) => xml.split(HL_OPEN).join("").split(HL_CLOSE).join("");
+  if (/<w:drawing|<mc:AlternateContent|<w:pict/.test(run)) return strip(run);
+  const m = run.match(/^(<w:r(?:\s[^>]*)?>)(<w:rPr>[\s\S]*?<\/w:rPr>)?([\s\S]*)<\/w:r>$/);
+  if (!m) return strip(run);
+  const [, open = "", rPr = "", body = ""] = m;
+
+  const chunks: Array<{ hl: boolean; xml: string }> = [];
+  const push = (xml: string, hl: boolean) => {
+    if (!xml) return;
+    const last = chunks.at(-1);
+    if (last && last.hl === hl) last.xml += xml;
+    else chunks.push({ hl, xml });
+  };
+
+  let inside = false;
+  for (const part of body.split(/(<w:t(?:\s[^>]*)?>[\s\S]*?<\/w:t>)/)) {
+    const t = part.match(/^<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>$/);
+    if (!t) {
+      push(part, inside);
+      continue;
+    }
+    for (const seg of t[1]!.split(/([\uE000\uE001])/)) {
+      if (seg === HL_OPEN) inside = true;
+      else if (seg === HL_CLOSE) inside = false;
+      else if (seg !== "") push(`<w:t xml:space="preserve">${seg}</w:t>`, inside);
+    }
+  }
+  return chunks.map(({ hl, xml }) => `${open}${hl ? withHighlight(rPr) : rPr}${xml}</w:r>`).join("");
+}
+
+function highlightMarkedRuns(zip: PizZip): void {
+  for (const name of Object.keys(zip.files)) {
+    if (!/^word\/(?:document|header\d*|footer\d*)\.xml$/.test(name)) continue;
+    const xml = zip.file(name)!.asText();
+    if (!xml.includes(HL_OPEN)) continue;
+    zip.file(name, xml.replace(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g, highlightRun));
+  }
 }
 
 function describeTemplateError(err: unknown): string {

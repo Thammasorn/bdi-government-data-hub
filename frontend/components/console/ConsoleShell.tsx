@@ -2,18 +2,29 @@
 
 import clsx from "clsx";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect } from "react";
 import type { ReactNode } from "react";
 
 import { useSession } from "@/components/SessionProvider";
 import { Spinner } from "@/components/ui/Spinner";
 import { useRequireAuth } from "@/lib/require-auth";
-import { isSystemAdmin } from "@/lib/status";
+import { isDocumentAdmin, isSystemAdmin } from "@/lib/status";
 
 interface Section {
   href: string;
   label: string;
   icon: ReactNode;
+}
+
+interface Group {
+  title: string | null;
+  items: Section[];
+  /**
+   * true = ผู้ดูแลระบบเท่านั้น — ผู้เชี่ยวชาญด้านกฎหมายของ BDI (`BDI_LEGAL_OFFICER`) เห็นแค่หมวด "ตั้งค่าเอกสาร" (card "Enhance Legal
+   * document management" ข้อ 6) ด่านจริงคือ `requireDocumentAdmin` ฝั่ง backend ที่นี่แค่ไม่วาดเมนูและหน้าที่ทุกคำขอจะได้ 403
+   */
+  adminOnly?: boolean;
 }
 
 const icon = (d: string) => (
@@ -26,13 +37,15 @@ const icon = (d: string) => (
  * เมนูของ /console จัดตามลำดับที่งานเกิดจริง — สร้างหน่วยงานก่อน แล้วจึงมีผู้ใช้ และคำเชิญที่จะกลายเป็นผู้ใช้ (ลำดับที่ BDI
  * ขอเมื่อ 2026-10-09) "คำขอ" คือสิ่งที่หน่วยงานยื่นเข้ามา "ตั้งค่าระบบ" คือสิ่งที่ทุกหน่วยงานเห็นเหมือนกัน
  */
-export const CONSOLE_GROUPS: Array<{ title: string | null; items: Section[] }> = [
+export const CONSOLE_GROUPS: Group[] = [
   {
     title: null,
+    adminOnly: true,
     items: [{ href: "/console", label: "ภาพรวม", icon: icon("M3 10.5 10 4l7 6.5M5 9v7h4v-4h2v4h4V9") }],
   },
   {
     title: "หน่วยงานและผู้ใช้",
+    adminOnly: true,
     items: [
       { href: "/console/organizations", label: "หน่วยงาน", icon: icon("M4 17V5l6-2 6 2v12M4 17h12M8 8h1m2 0h1M8 11h1m2 0h1M9 17v-3h2v3") },
       { href: "/console/users", label: "ผู้ใช้", icon: icon("M10 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm-6 7c.6-3 3-4.5 6-4.5s5.4 1.5 6 4.5") },
@@ -41,6 +54,7 @@ export const CONSOLE_GROUPS: Array<{ title: string | null; items: Section[] }> =
   },
   {
     title: "คำขอ",
+    adminOnly: true,
     items: [
       {
         href: "/console/registrations/organizations",
@@ -55,20 +69,29 @@ export const CONSOLE_GROUPS: Array<{ title: string | null; items: Section[] }> =
     ],
   },
   {
-    title: "ตั้งค่าระบบ",
+    title: "ตั้งค่าเอกสาร",
     items: [
       { href: "/console/legal-documents", label: "เอกสารข้อตกลง", icon: icon("M5 3h7l3 3v11H5zM8 9h4M8 12h4M8 15h2") },
-      { href: "/console/dataset-choices", label: "ตัวเลือกในแบบฟอร์ม", icon: icon("M4 5h2m3 0h7M4 10h2m3 0h7M4 15h2m3 0h7") },
+      { href: "/console/dataset-choices", label: "ตัวเลือกเอกสารชุดข้อมูล", icon: icon("M4 5h2m3 0h7M4 10h2m3 0h7M4 15h2m3 0h7") },
       { href: "/console/public-documents", label: "เอกสารดาวน์โหลด", icon: icon("M10 3v9m-4-4 4 4 4-4M4 15v2h12v-2") },
+      // อยู่ใต้ "เอกสารดาวน์โหลด" ตามที่ BDI ขอ — เป็นหน้าอ้างอิงของคนเขียนเอกสารเหมือนกัน
+      {
+        href: "/console/template-variables",
+        label: "ตัวแปรที่ใช้ใน template",
+        icon: icon("M7 4C5.5 4 5 5 5 6.5v1.2C5 8.6 4.4 9.5 3.5 10c.9.5 1.5 1.4 1.5 2.3v1.2C5 15 5.5 16 7 16M13 4c1.5 0 2 1 2 2.5v1.2c0 .9.6 1.8 1.5 2.3-.9.5-1.5 1.4-1.5 2.3v1.2c0 1.5-.5 2.5-2 2.5"),
+      },
     ],
   },
 ];
 
-const ALL_SECTIONS = CONSOLE_GROUPS.flatMap((g) => g.items);
+/** หมวดที่ผู้ดูแลเห็น — ผู้เชี่ยวชาญด้านกฎหมายของ BDI ได้เฉพาะที่ไม่ใช่ `adminOnly` */
+function groupsFor(roles: string[]): Group[] {
+  return isSystemAdmin(roles) ? CONSOLE_GROUPS : CONSOLE_GROUPS.filter((g) => !g.adminOnly);
+}
 
 /** เมนูที่ตรงกับ path ที่ยาวที่สุดชนะ — `/console` ต้องไม่ติดสถานะ "อยู่ที่นี่" ไปกับทุกหน้าย่อย */
-function activeHref(pathname: string): string | null {
-  const matches = ALL_SECTIONS.filter((s) => pathname === s.href || pathname.startsWith(`${s.href}/`));
+function activeHref(pathname: string, sections: Section[]): string | null {
+  const matches = sections.filter((s) => pathname === s.href || pathname.startsWith(`${s.href}/`));
   return matches.sort((a, b) => b.href.length - a.href.length)[0]?.href ?? null;
 }
 
@@ -83,27 +106,48 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
   const { ready } = useRequireAuth();
   const { user } = useSession();
   const pathname = usePathname();
+  const router = useRouter();
 
-  if (!ready || !user) return <Spinner />;
-  if (!isSystemAdmin(user.roles)) {
+  // หน้าแรกของ /console คือภาพรวมของผู้ดูแลระบบ — ผู้เชี่ยวชาญด้านกฎหมายเริ่มที่หมวดของเขาเลย ไม่ต้องเจอการ์ด "ไม่มีสิทธิ์" ก่อน
+  const legalOnlyHome =
+    user !== null && isDocumentAdmin(user.roles) && !isSystemAdmin(user.roles) && pathname === "/console";
+  useEffect(() => {
+    if (legalOnlyHome) router.replace("/console/legal-documents");
+  }, [legalOnlyHome, router]);
+
+  if (!ready || !user || legalOnlyHome) return <Spinner />;
+
+  const groups = groupsFor(user.roles);
+  const sections = groups.flatMap((g) => g.items);
+  const current = activeHref(pathname, sections);
+
+  // ผู้เชี่ยวชาญด้านกฎหมายเปิดหน้านอกหมวดของตัวเอง (พิมพ์ URL เอง) — บอกว่าเป็นของผู้ดูแลระบบ ไม่ใช่ปล่อยให้ทุกคำขอตอบ 403
+  const outsideScope = isDocumentAdmin(user.roles) && !isSystemAdmin(user.roles) && current === null;
+
+  if (!isDocumentAdmin(user.roles) || outsideScope) {
     return (
       <div className="mx-auto max-w-xl px-4 py-20 text-center sm:px-6">
         <h1 className="text-xl font-semibold text-navy-800">หน้านี้สำหรับผู้ดูแลระบบ</h1>
-        <p className="mt-2 text-ink-muted">บัญชีของคุณไม่มีบทบาทผู้ดูแลระบบ หากต้องการสิทธิ์ กรุณาติดต่อผู้ดูแลระบบของ BDI</p>
-        <Link href="/" className="mt-6 inline-block font-medium text-navy-700 underline">
-          กลับหน้าแรก
+        <p className="mt-2 text-ink-muted">
+          {outsideScope
+            ? "บัญชีของคุณใช้ได้เฉพาะหมวดตั้งค่าเอกสาร หากต้องการสิทธิ์เพิ่ม กรุณาติดต่อผู้ดูแลระบบของ BDI"
+            : "บัญชีของคุณไม่มีบทบาทผู้ดูแลระบบ หากต้องการสิทธิ์ กรุณาติดต่อผู้ดูแลระบบของ BDI"}
+        </p>
+        <Link
+          href={outsideScope ? "/console/legal-documents" : "/"}
+          className="mt-6 inline-block font-medium text-navy-700 underline"
+        >
+          {outsideScope ? "ไปที่ตั้งค่าเอกสาร" : "กลับหน้าแรก"}
         </Link>
       </div>
     );
   }
 
-  const current = activeHref(pathname);
-
   return (
     <div className="mx-auto flex max-w-6xl gap-8 px-4 py-8 sm:px-6 lg:py-10">
       <aside className="hidden w-56 shrink-0 lg:block">
         <nav aria-label="เมนูผู้ดูแลระบบ" className="sticky top-28 space-y-5">
-          {CONSOLE_GROUPS.map((group) => (
+          {groups.map((group) => (
             <div key={group.title ?? "top"}>
               {group.title ? (
                 <p className="mb-1.5 px-3 text-[11.5px] font-semibold uppercase tracking-[0.08em] text-ink-subtle">
@@ -138,7 +182,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
         {/* จอแคบ: เมนูเดียวกันเป็นแถบเลื่อนข้าง — กดได้ทุกหน้า ไม่ต้องย้อนกลับไปหน้าภาพรวมก่อน */}
         <nav aria-label="เมนูผู้ดูแลระบบ" className="-mx-4 mb-6 overflow-x-auto px-4 lg:hidden">
           <ul className="flex gap-1.5">
-            {ALL_SECTIONS.map((item) => (
+            {sections.map((item) => (
               <li key={item.href} className="shrink-0">
                 <Link
                   href={item.href}

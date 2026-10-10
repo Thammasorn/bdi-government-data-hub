@@ -52,7 +52,7 @@ const INACTIVE = { label: "ปิดใช้", className: "bg-navy-50 text-ink-
  *
  * **ไม่มีปุ่มลบโดยตั้งใจ** คำขอที่บันทึกไปแล้วและเอกสาร A4 ที่ลงนามแล้วถือรหัสนั้นอยู่ ปิดใช้แทน: หายจากตัวเลือกของคนที่
  * กำลังกรอก แต่คำขอเก่ายังตรวจผ่านและพิมพ์ช่องติ๊กได้ รหัสแก้ไม่ได้ด้วยเหตุผลเดียวกัน — แก้ได้แค่ป้ายและลำดับ
- * ทุกคำสั่งบันทึกแล้ว cache ของ API ถูกโหลดใหม่ให้เอง "โหลดตัวเลือกใหม่" มีไว้หลังแก้ฐานข้อมูลด้วยมือเท่านั้น
+ * ทุกคำสั่งบันทึกแล้ว cache ของ API ถูกโหลดใหม่ให้เอง "Refresh Cache" (เดิมชื่อ "โหลดตัวเลือกใหม่") มีไว้หลังแก้ฐานข้อมูลด้วยมือเท่านั้น
  */
 export default function ConsoleDatasetChoicesPage() {
   const { values, set } = useUrlFilters(["field"] as const);
@@ -72,9 +72,8 @@ export default function ConsoleDatasetChoicesPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="ตั้งค่าระบบ"
-        title="ตัวเลือกในแบบฟอร์มชุดข้อมูล"
-        description="เพิ่มตัวเลือกหรือแก้ป้ายได้ทันทีโดยไม่ต้อง deploy — ตัวเลือกที่ใช้แล้วลบไม่ได้ ให้ปิดใช้แทน คำขอเก่าที่เลือกไว้ยังอ่านได้ตามเดิม"
+        eyebrow="ตั้งค่าเอกสาร"
+        title="ตัวเลือกเอกสารชุดข้อมูล"
         actions={
           <Button
             size="sm"
@@ -84,7 +83,7 @@ export default function ConsoleDatasetChoicesPage() {
               setRefreshing(true);
               try {
                 const res = await api.post<{ message: string }>("/api/admin/dataset-choices/refresh");
-                show({ tone: "success", title: "โหลดตัวเลือกใหม่แล้ว", detail: res.message });
+                show({ tone: "success", title: "Refresh Cache แล้ว", detail: res.message });
                 reload();
               } catch (err) {
                 show({ tone: "error", title: "โหลดใหม่ไม่สำเร็จ", detail: adminErrorView(err).message });
@@ -93,7 +92,7 @@ export default function ConsoleDatasetChoicesPage() {
               }
             }}
           >
-            โหลดตัวเลือกใหม่
+            Refresh Cache
           </Button>
         }
       />
@@ -119,7 +118,7 @@ export default function ConsoleDatasetChoicesPage() {
 
         <Panel
           title={FIELD_LABELS[field.fieldKey] ?? field.fieldKey}
-          description={field.addRestriction ?? `ช่อง ${field.fieldKey} — เรียงตามลำดับที่แสดงในฟอร์ม`}
+          description={field.addRestriction ?? undefined}
           actions={
             field.addRestriction ? null : (
               <Button size="sm" onClick={() => setAdding(true)}>
@@ -280,7 +279,6 @@ function AddChoiceDialog({
         onClose();
       }}
       title={`เพิ่มตัวเลือกใน “${FIELD_LABELS[fieldKey] ?? fieldKey}”`}
-      description="รหัสแก้ภายหลังไม่ได้ และใช้เป็นชื่อช่องติ๊กในเอกสาร A4 ({{tick.<ช่อง>.<รหัส>}}) — ตั้งให้ต่อจากรหัสเดิมของช่องนี้"
       confirmLabel="เพิ่มตัวเลือก"
       reason={false}
       canSubmit={Boolean(form.code.trim() && form.labelTh.trim())}

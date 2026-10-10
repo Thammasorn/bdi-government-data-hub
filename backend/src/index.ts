@@ -13,6 +13,7 @@ import { loadChoices } from "./lib/dataset-choices.js";
 import { adminRegistrationRouter } from "./routes/admin-registrations.js";
 import { adminAddressRouter } from "./routes/admin-addresses.js";
 import { adminPublicDocumentRouter, publicDocumentRouter } from "./routes/public-documents.js";
+import { adminLegalDocumentRouter } from "./routes/admin-legal-documents.js";
 import { adminRouter } from "./routes/admin.js";
 import { adminUserRouter } from "./routes/admin-users.js";
 import { addressRouter } from "./routes/address.js";
@@ -46,6 +47,8 @@ app.use("/api/admin/users", adminUserRouter);
 app.use("/api/admin/registrations", adminRegistrationRouter);
 app.use("/api/admin/addresses", adminAddressRouter);
 app.use("/api/admin/public-documents", adminPublicDocumentRouter);
+// เอกสารกฎหมายและตัวแปร template อยู่ที่ไฟล์ของมันเอง และต้องมาก่อน adminRouter ที่ใช้ guard ของผู้ดูแลระบบอย่างเดียว
+app.use("/api/admin", adminLegalDocumentRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/address", addressRouter);
 app.use("/api/public-documents", publicDocumentRouter);

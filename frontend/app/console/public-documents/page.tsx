@@ -41,10 +41,10 @@ interface PublicDocument {
 }
 
 /** หัวข้อเดียวกับบนหน้าแรก (components/landing/LandingPage.tsx `Legal`) เรียงตามที่ผู้เยี่ยมชมเห็น */
-const SECTIONS: Array<{ key: Section; title: string; note: string; hasCode: boolean }> = [
-  { key: "REGULATION", title: "กฎหมายที่เกี่ยวข้อง", note: "ระเบียบ ประกาศ และกฎหมายที่หน่วยงานควรอ่าน", hasCode: false },
-  { key: "PRIMARY", title: "ข้อตกลงหลัก", note: "ข้อตกลงที่หน่วยงานลงนามเมื่อเข้าร่วม (A0)", hasCode: true },
-  { key: "ANNEX", title: "เอกสารภาคผนวก", note: "แนบท้ายข้อตกลงหลัก (A1–A3)", hasCode: true },
+const SECTIONS: Array<{ key: Section; title: string; hasCode: boolean }> = [
+  { key: "REGULATION", title: "กฎหมายที่เกี่ยวข้อง", hasCode: false },
+  { key: "PRIMARY", title: "ข้อตกลงหลัก", hasCode: true },
+  { key: "ANNEX", title: "เอกสารภาคผนวก", hasCode: true },
 ];
 
 type Dialog =
@@ -102,9 +102,8 @@ export default function ConsolePublicDocumentsPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="ตั้งค่าระบบ"
+        eyebrow="ตั้งค่าเอกสาร"
         title="เอกสารดาวน์โหลด"
-        description="ไฟล์ PDF ที่ผู้เยี่ยมชมดาวน์โหลดได้จากหัวข้อ “กฎหมายและเอกสารที่เกี่ยวข้อง” บนหน้าแรก — อัปโหลดฉบับใหม่แล้วหน้าแรกเปลี่ยนภายในครึ่งนาที ไม่ต้อง deploy"
         actions={
           <a
             href="/#legal"
@@ -124,7 +123,6 @@ export default function ConsolePublicDocumentsPage() {
             <Panel
               key={section.key}
               title={section.title}
-              description={section.note}
               actions={
                 <Button size="sm" variant="secondary" onClick={() => setDialog({ kind: "add", section: section.key })}>
                   เพิ่มรายการ
@@ -308,7 +306,6 @@ function UploadDialog({ doc, onClose, onDone }: { doc: PublicDocument | null; on
       open={doc !== null}
       onClose={onClose}
       title={doc ? `อัปโหลดฉบับใหม่ — ${doc.code ?? doc.title}` : ""}
-      description="ไฟล์ PDF ไม่เกิน 30 MB — ผู้เยี่ยมชมได้ไฟล์ชื่อเดิมตามที่อัปโหลดทุกตัวอักษร ฉบับเดิมเก็บไว้ในประวัติ"
       confirmLabel="เผยแพร่ฉบับใหม่"
       reason={false}
       canSubmit={file !== null}
@@ -328,7 +325,6 @@ function UploadDialog({ doc, onClose, onDone }: { doc: PublicDocument | null; on
         maxLength={100}
         onChange={(e) => setVersion(e.target.value)}
         placeholder="เช่น ฉบับที่ 2 · 9 ต.ค. 2569"
-        hint="แก้ให้ตรงกับไฟล์ใหม่ เว้นว่างถ้าไม่ต้องการแสดง"
       />
     </ActionDialog>
   );
@@ -349,7 +345,6 @@ function EditDialog({ doc, onClose, onDone }: { doc: PublicDocument | null; onCl
       open={doc !== null}
       onClose={onClose}
       title="แก้ไขรายการ"
-      description="เปลี่ยนชื่อหรือฉบับที่แสดงบนหน้าแรก — ไฟล์ไม่เปลี่ยน"
       confirmLabel="บันทึก"
       reason={false}
       canSubmit={form.title.trim().length > 0}
@@ -398,7 +393,6 @@ function AddDialog({ section, onClose, onDone }: { section: Section | null; onCl
         onClose();
       }}
       title={meta ? `เพิ่มเอกสารใน “${meta.title}”` : ""}
-      description="รายการใหม่ต่อท้ายหัวข้อและแสดงบนหน้าแรกทันที"
       confirmLabel="เพิ่มเอกสาร"
       reason={false}
       canSubmit={form.title.trim().length > 0 && file !== null}

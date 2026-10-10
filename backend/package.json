@@ -21,6 +21,8 @@
     "seed:demo:prod": "node dist/scripts/seed-demo.js",
     "backfill:display-name": "tsx src/scripts/backfill-display-name.ts",
     "backfill:display-name:prod": "node dist/scripts/backfill-display-name.js",
+    "backfill:document-snapshots": "tsx src/scripts/backfill-document-snapshots.ts",
+    "backfill:document-snapshots:prod": "node dist/scripts/backfill-document-snapshots.js",
     "worker:delivery": "tsx src/workers/delivery.ts",
     "worker:delivery:prod": "node dist/workers/delivery.js"
   },

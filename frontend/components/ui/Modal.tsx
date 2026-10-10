@@ -16,7 +16,7 @@ export function Modal({
   title: string;
   description?: string;
   children: ReactNode;
-  size?: "md" | "lg";
+  size?: "md" | "lg" | "xl";
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -78,7 +78,7 @@ export function Modal({
         /** โฟกัสได้ด้วยโปรแกรมเมื่อไม่มีช่องกรอกให้โฟกัส แต่ไม่อยู่ในลำดับ Tab */
         tabIndex={-1}
         className={`animate-in-up relative flex max-h-[calc(100vh_-_2rem)] w-full flex-col overflow-hidden rounded-2xl bg-white shadow-pop ${
-          size === "lg" ? "max-w-3xl" : "max-w-lg"
+          size === "xl" ? "max-w-6xl" : size === "lg" ? "max-w-3xl" : "max-w-lg"
         }`}
       >
         <div className="bg-brand-gradient h-1 shrink-0" />

@@ -43,6 +43,7 @@ import {
   SYSTEM_USER_ID,
   type RoleCode,
 } from "../lib/system.js";
+import { LEGAL_SCOPES, SUBJECT_OF_SCOPE, pinSubmittedRequest } from "../lib/legal.js";
 import { nextDatasetCode } from "../lib/request-number.js";
 import { fullNameTh } from "../lib/person-name.js";
 import { ensureContainer } from "../storage.js";
@@ -215,6 +216,7 @@ async function main() {
   await prisma.notificationDelivery.deleteMany();
   await prisma.notification.deleteMany();
   await prisma.integrationOperation.deleteMany();
+  await prisma.requestDocumentSnapshot.deleteMany();
   await prisma.legalAcceptance.deleteMany();
   await prisma.signatureConfirmation.deleteMany();
   await prisma.reviewTask.deleteMany();
@@ -981,6 +983,21 @@ async function main() {
       where: { id: request.id },
       data: { status: await statusOf(DS_SUBJECT, request.id, true) },
     });
+  }
+
+  // ---------------------------------------------------------- ชุดเอกสารของคำขอที่นำส่งแล้ว
+  // คำขอที่ seed ไว้ไม่ได้ผ่าน POST /:id/submit จึงไม่มี snapshot — ผูกชุดเอกสารให้เหมือนที่การนำส่งจริงทำ
+  // (ต้องรันหลัง seed:masters เพราะอ่านเวอร์ชันที่เผยแพร่ ซึ่ง seed-demo ต้องการอยู่แล้ว)
+  for (const scope of Object.values(LEGAL_SCOPES)) {
+    const subjectType = SUBJECT_OF_SCOPE[scope];
+    const where = { submittedAt: { not: null }, status: { notIn: ["DRAFT" as const, "RETURNED" as const] } };
+    const rows =
+      scope === LEGAL_SCOPES.ORGANIZATION_REGISTRATION
+        ? await prisma.organizationRegistrationRequest.findMany({ where, select: { id: true } })
+        : await prisma.datasetRegistrationRequest.findMany({ where, select: { id: true } });
+    for (const { id } of rows) {
+      await pinSubmittedRequest(prisma, scope, { subjectType, subjectId: id }, { write: true });
+    }
   }
 
   // ---------------------------------------------------------- สรุป

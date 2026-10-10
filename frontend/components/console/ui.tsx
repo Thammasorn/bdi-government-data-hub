@@ -127,19 +127,31 @@ export function Panel({
   children,
   className,
   flush,
+  centered,
+  compact,
 }: {
   title?: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
-  children: ReactNode;
+  children?: ReactNode;
   className?: string;
   /** เนื้อในชิดขอบ (ตาราง) ไม่มี padding */
   flush?: boolean;
+  /** หัวกรอบจัดชื่อกับปุ่มให้อยู่กึ่งกลางแนวตั้ง — ใช้เมื่อปุ่มต้องอยู่ระนาบเดียวกับชื่อ ไม่ใช่ชิดบน */
+  centered?: boolean;
+  /** กรอบที่มีแต่หัว (ชื่อ + ปุ่ม) ไม่มีเนื้อ: กึ่งกลาง ไม่มีเส้นใต้หัว และไม่วาดส่วนเนื้อ */
+  compact?: boolean;
 }) {
   return (
     <section className={clsx("rounded-2xl bg-white shadow-card ring-1 ring-line", className)}>
       {title || actions ? (
-        <header className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-5 py-4 sm:flex-nowrap">
+        <header
+          className={clsx(
+            "flex flex-wrap justify-between gap-3 px-5 py-4 sm:flex-nowrap",
+            centered || compact ? "items-center" : "items-start",
+            !compact && "border-b border-line",
+          )}
+        >
           <div className="min-w-0 flex-1">
             {title ? <h2 className="text-[16px] font-semibold text-navy-800">{title}</h2> : null}
             {description ? <p className="mt-0.5 text-[13.5px] text-ink-muted">{description}</p> : null}
@@ -147,7 +159,7 @@ export function Panel({
           {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
         </header>
       ) : null}
-      <div className={flush ? undefined : "p-5"}>{children}</div>
+      {compact ? null : <div className={flush ? undefined : "p-5"}>{children}</div>}
     </section>
   );
 }

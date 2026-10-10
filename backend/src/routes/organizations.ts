@@ -88,7 +88,7 @@ import {
   renderPlaceholderDocuments,
 } from "../lib/organization-agreement.js";
 import { DocumentRenderError } from "../lib/document-render.js";
-import { LEGAL_SCOPES, requestDocuments } from "../lib/legal.js";
+import { LEGAL_SCOPES, documentsAwaitingRender, pinRequestDocuments, requestDocuments } from "../lib/legal.js";
 import { NAME_FIELDS, accountNameTh, fullNameTh } from "../lib/person-name.js";
 import {
   MAX_ADDRESS_LINE,
@@ -2057,6 +2057,26 @@ organizationRouter.post("/:id/submit", async (req, res) => {
     return;
   }
 
+  /**
+   * เอกสารที่นำส่งคือเวอร์ชันล่าสุด ณ วินาทีที่กดปุ่มนี้ และจะคงเป็นเวอร์ชันนั้นไปตลอดเรื่อง — ผู้กรอกจึงต้องเคยเห็นมันมาแล้ว
+   * ถ้าฝ่ายกฎหมายเผยแพร่ฉบับใหม่หลังจากที่กดตรวจสอบข้อมูล ให้กลับไปสร้างเอกสารใหม่ก่อน
+   */
+  const awaiting = await documentsAwaitingRender(
+    prisma,
+    LEGAL_SCOPES.ORGANIZATION_REGISTRATION,
+    AttachmentOwnerType.ORGANIZATION_REGISTRATION_REQUEST,
+    request.id,
+  );
+  if (awaiting.length > 0) {
+    res.status(409).json({
+      error: "documents_changed",
+      message:
+        `เอกสาร ${awaiting.join(" ")} มีการปรับปรุงหลังจากที่คุณตรวจสอบข้อมูล ` +
+        "กรุณากดตรวจสอบข้อมูลเพื่อสร้างเอกสารฉบับล่าสุดอีกครั้ง แล้วนำส่งใหม่",
+    });
+    return;
+  }
+
   if (!(await hasRoleHolder(ROLE_CODES.BDI_OFFICER, BDI_ORGANIZATION_ID))) {
     res.status(503).json({
       error: "no_reviewer",
@@ -2069,6 +2089,11 @@ organizationRouter.post("/:id/submit", async (req, res) => {
     await tx.organizationRegistrationRequest.update({
       where: { id: request.id },
       data: { submittedAt: new Date(), updatedBy: session.sub },
+    });
+    // ชุดเอกสารของการนำส่งครั้งนี้ — จากนี้ไปทุกจุดอ่านชุดนี้ ไม่ใช่เวอร์ชันล่าสุด (lib/legal.ts documentsForRequest)
+    await pinRequestDocuments(tx, LEGAL_SCOPES.ORGANIZATION_REGISTRATION, {
+      subjectType: SUBJECT,
+      subjectId: request.id,
     });
     await openTask(tx, {
       subjectType: SUBJECT,

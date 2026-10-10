@@ -193,6 +193,12 @@ export const AuditAction = {
    */
   LEGAL_DOCUMENT_PUBLISHED: "LEGAL_DOCUMENT_PUBLISHED",
 
+  /**
+   * สร้างเอกสารกฎหมายใหม่ แก้ข้อมูลประจำตัว เปิด/ปิดใช้ หรือเผยแพร่ฉบับร่างจาก /console — ทุกอย่างที่เปลี่ยนชุดเอกสารที่หน่วยงานเห็น
+   * โดยไม่ใช่การอัปโหลดไฟล์ (อันนั้นคือ LEGAL_DOCUMENT_PUBLISHED) `metadata.operation` = CREATE · UPDATE · ACTIVATE · DEACTIVATE · VERSION_ACTIVATED
+   */
+  LEGAL_DOCUMENT_CHANGED: "LEGAL_DOCUMENT_CHANGED",
+
   /** ลงนามอิเล็กทรอนิกส์บนเอกสารข้อตกลง (signature.signature_confirmation) */
   DOCUMENT_SIGNED: "DOCUMENT_SIGNED",
 

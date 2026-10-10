@@ -91,7 +91,12 @@ import {
   renderDatasetDocuments,
 } from "../lib/dataset-document.js";
 import { DocumentRenderError } from "../lib/document-render.js";
-import { LEGAL_SCOPES, publishedDocuments } from "../lib/legal.js";
+import {
+  LEGAL_SCOPES,
+  documentsAwaitingRender,
+  documentsForRequest,
+  pinRequestDocuments,
+} from "../lib/legal.js";
 import { nextDatasetCode, nextDatasetRequestNumber } from "../lib/request-number.js";
 import { buildJourneyProgress, summariseMany } from "../lib/journey-steps.js";
 import { REVIEW_TASK_TYPE_LABELS, isBdiStaff, isSpecialistOnly, seesAllRequests } from "../lib/roles.js";
@@ -1329,6 +1334,18 @@ datasetRequestRouter.post("/:id/submit", async (req, res) => {
     return;
   }
 
+  // เหตุผลเดียวกับ POST /api/organizations/:id/submit — เอกสารที่นำส่งต้องเป็นฉบับที่ผู้กรอกเพิ่งเห็น
+  const awaiting = await documentsAwaitingRender(prisma, LEGAL_SCOPES.DATASET_REGISTRATION, OWNER, request.id);
+  if (awaiting.length > 0) {
+    res.status(409).json({
+      error: "documents_changed",
+      message:
+        `เอกสาร ${awaiting.join(" ")} มีการปรับปรุงหลังจากที่คุณสร้าง PDF ` +
+        "กรุณาสร้างและตรวจสอบ PDF อีกครั้ง แล้วนำส่งใหม่",
+    });
+    return;
+  }
+
   if (!(await roleHolderId(prisma, ROLE_CODES.BDI_OFFICER, BDI_ORGANIZATION_ID))) {
     res
       .status(503)
@@ -1340,6 +1357,10 @@ datasetRequestRouter.post("/:id/submit", async (req, res) => {
     await tx.datasetRegistrationRequest.update({
       where: { id: request.id },
       data: { submittedAt: new Date(), updatedBy: session.sub },
+    });
+    await pinRequestDocuments(tx, LEGAL_SCOPES.DATASET_REGISTRATION, {
+      subjectType: SUBJECT,
+      subjectId: request.id,
     });
     await openTask(tx, {
       subjectType: SUBJECT,
@@ -1536,7 +1557,10 @@ datasetRequestRouter.get("/:id/legal-documents", async (req, res) => {
     return;
   }
 
-  const documents = await publishedDocuments(prisma, LEGAL_SCOPES.DATASET_REGISTRATION);
+  const documents = await documentsForRequest(prisma, LEGAL_SCOPES.DATASET_REGISTRATION, {
+    subjectType: SUBJECT,
+    subjectId: request.id,
+  });
   const versions = await prisma.legalDocumentVersion.findMany({
     where: { id: { in: documents.map((d) => d.versionId) } },
     select: { id: true, publishedAt: true },
@@ -1925,7 +1949,10 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
         });
         return;
       }
-      const published = await publishedDocuments(prisma, LEGAL_SCOPES.DATASET_REGISTRATION);
+      const published = await documentsForRequest(prisma, LEGAL_SCOPES.DATASET_REGISTRATION, {
+        subjectType: SUBJECT,
+        subjectId: request.id,
+      });
       if (published.length === 0) {
         res.status(503).json({
           error: "no_legal_documents",

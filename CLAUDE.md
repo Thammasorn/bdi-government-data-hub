@@ -57,6 +57,9 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
 - `docs/17-legal-document-rendering.md` — เอกสารข้อตกลง A0–A3: ทำไมต้องเดินทาง
   `.docx` → LibreOffice → PDF, template อยู่ในฐานข้อมูลไม่ใช่ใน repo, รายชื่อ placeholder
   ที่ใช้ได้, การลงนามที่ฝังอยู่ใน `POST /:id/review`, และคำถามที่ยังค้าง
+- `docs/22-legal-document-management.md` — **คำขอถือชุดเอกสารของตัวเองตั้งแต่นำส่ง** (`request_document_snapshot`,
+  `documentsForRequest()`, `backfill:document-snapshots` ขึ้น production) และหน้าตั้งค่าเอกสารใน `/console`:
+  เพิ่มเอกสาร เปิด/ปิดใช้ + กติกาต่อหมวด ฉบับร่าง "ใช้ทันที" preview ก่อน/หลัง render บทบาท `BDI_LEGAL_OFFICER`
 - `docs/19-azure-blob-storage.md` — ไฟล์แนบย้ายจาก MinIO ไป **Azure Blob Storage** (2026-08-24):
   สองทางที่ตั้งค่าได้และทางไหนใช้เมื่อไร, Azurite ที่แทน MinIO ในเครื่อง dev, สิ่งที่หายไป
   (หน้าคอนโซล, บริการ init), พอร์ตกับ `new-dev.sh` ที่ยังต้องแก้ตอน merge, และไฟล์เก่าที่
@@ -1160,6 +1163,30 @@ accepted. `backups/bdi-main-20260910-before-version-reset.sql` and
 `backups/bdi-main-20260920-before-version-reset.sql` are the states before; the SQL that did
 the second one is `backups/reset-legal-versions-20260920.sql` (it lists the blobs it orphans —
 SQL cannot delete from storage). Not in the repo, on purpose: it is not a tool.
+
+**A request holds the documents it was submitted with, not the latest ones** (card "Enhance Legal document management",
+2026-10-10). `POST /:id/submit` on both journeys writes `legal.request_document_snapshot` — one set per submission,
+`submission_no` + the version of every document, plus `is_required` and `display_order` as they were — and everything that
+lists, signs, renders or downloads a request's documents reads it through `documentsForRequest()` in `lib/legal.ts`, never
+`publishedDocuments()` directly (that is only the *latest* set: what a `DRAFT`/`RETURNED` request sees and what the next
+submit will record). A returned request that is submitted again gets a new set at the then-latest versions; the old set stays.
+Publishing a version, adding a document or deactivating one therefore changes nothing for a request already submitted. A
+submitted request with **no** snapshot (rows from before the table, until `npm run backfill:document-snapshots -- --write`
+has run on that database) falls back to the latest set, so deploying first is safe. `seed:demo` pins its own requests.
+Submit also refuses 409 `documents_changed` when a document with placeholders was published after the form was last
+generated — the document that gets pinned must be one the filler has seen. `docs/22`.
+
+**`/console` → ตั้งค่าเอกสาร is where BDI changes documents, and `BDI_LEGAL_OFFICER` can reach only that section**
+(`requireDocumentAdmin`; the rest of `/api/admin/*` stays `SYSTEM_ADMINISTRATOR`). Routes live in
+`routes/admin-legal-documents.ts` (moved out of `admin.ts`). A document is active (`legal_document.status = ACTIVE`) or not
+(`RETIRED`, or `DRAFT` when created without "apply now"); each `application_scope` must always keep at least one active
+document **with a PUBLISHED version**, and at least one of those must be `is_required` — checked inside a transaction that
+locks the scope's rows, answering 409 `last_active_document` / `no_required_document` / `no_published_version` with a Thai
+reason. `publishVersion()` no longer activates a document as a side effect (an inactive document can publish a version and
+stay inactive), takes `status: "DRAFT"` for "apply now" unticked, and `activateVersion()` publishes a draft. `seed:masters`
+no longer overwrites `name_th` / `shortname` / `legal_notice` / `display_order` on a re-run — they belong to the console now.
+The "after render" preview fills the template with the fixed formal-Thai sample in `lib/legal-preview.ts` and highlights the
+filled text yellow (`fillTemplate(…, { highlight: true })` wraps each value in private-use sentinels, then splits the runs).
 
 **Reading is attested, not measured.** The organisation approver ticks
 "ข้าพเจ้าได้อ่านเอกสารฉบับนี้ครบถ้วนแล้ว" per document before `เห็นชอบ` unlocks, and the tick

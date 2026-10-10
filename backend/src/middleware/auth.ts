@@ -193,31 +193,44 @@ function trustedOrigin(origin: string): boolean {
  * มากั้น ฟอร์มธรรมดาบนหน้าใดก็ได้ในโดเมนนั้นจึงยิงคำสั่งของผู้ดูแลระบบด้วย cookie ของเขาได้ถ้าไม่ตรวจตรงนี้ เบราว์เซอร์ส่ง `Origin`
  * กับ POST/PUT/PATCH/DELETE เสมอ และ proxy ของหน้าเว็บ (`app/api/[...path]`) ส่งต่อตามเดิม ผู้ใช้จริงจึงไม่เคยโดนข้อนี้
  */
-export function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  if (req.header("x-admin-token") !== undefined || !req.cookies?.[SESSION_COOKIE]) {
-    requireAdminToken(req, res, next);
-    return;
-  }
-  if (req.method !== "GET" && req.method !== "HEAD") {
-    const origin = req.header("origin");
-    if (!origin || !trustedOrigin(origin)) {
-      res.status(403).json({
-        error: "csrf_origin",
-        message: "คำขอนี้ไม่ได้มาจากหน้าเว็บของระบบ — เปิดหน้าผู้ดูแลระบบจากที่อยู่ของระบบแล้วลองใหม่",
-      });
+function adminGuard(allowed: readonly RoleCode[], deniedMessage: string) {
+  return function guard(req: Request, res: Response, next: NextFunction) {
+    if (req.header("x-admin-token") !== undefined || !req.cookies?.[SESSION_COOKIE]) {
+      requireAdminToken(req, res, next);
       return;
     }
-  }
-  void requireAuth(req, res, (err?: unknown) => {
-    if (err) {
-      next(err);
-      return;
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      const origin = req.header("origin");
+      if (!origin || !trustedOrigin(origin)) {
+        res.status(403).json({
+          error: "csrf_origin",
+          message: "คำขอนี้ไม่ได้มาจากหน้าเว็บของระบบ — เปิดหน้าผู้ดูแลระบบจากที่อยู่ของระบบแล้วลองใหม่",
+        });
+        return;
+      }
     }
-    if (!req.session?.roles.includes(ROLE_CODES.SYSTEM_ADMINISTRATOR)) {
-      res.status(403).json({ error: "forbidden", message: "เฉพาะผู้ดูแลระบบเท่านั้น" });
-      return;
-    }
-    setAdminVia("SESSION");
-    next();
-  });
+    void requireAuth(req, res, (err?: unknown) => {
+      if (err) {
+        next(err);
+        return;
+      }
+      if (!req.session?.roles.some((role) => (allowed as readonly string[]).includes(role))) {
+        res.status(403).json({ error: "forbidden", message: deniedMessage });
+        return;
+      }
+      setAdminVia("SESSION");
+      next();
+    });
+  };
 }
+
+export const requireAdmin = adminGuard([ROLE_CODES.SYSTEM_ADMINISTRATOR], "เฉพาะผู้ดูแลระบบเท่านั้น");
+
+/**
+ * guard ของหมวด "ตั้งค่าเอกสาร" ใน /console — ผู้ดูแลระบบ **หรือ** ผู้เชี่ยวชาญด้านกฎหมายของ BDI (card "Enhance Legal document
+ * management" ข้อ 6) กฎอื่นทุกข้อเหมือน `requireAdmin` ทุกประการ: token ยังใช้ได้ session ต้องมี Origin ที่เชื่อได้กับคำสั่งเปลี่ยนข้อมูล
+ */
+export const requireDocumentAdmin = adminGuard(
+  [ROLE_CODES.SYSTEM_ADMINISTRATOR, ROLE_CODES.BDI_LEGAL_OFFICER],
+  "เฉพาะผู้ดูแลระบบหรือผู้เชี่ยวชาญด้านกฎหมายของ BDI เท่านั้น",
+);
