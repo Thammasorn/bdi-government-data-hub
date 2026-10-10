@@ -20,7 +20,7 @@ import {
 import { publicAttachment, storeAttachment } from "./attachment.js";
 import { DocumentRenderError, renderTemplateToPdf } from "./document-render.js";
 import { datasetDocumentValues, type DatasetDocumentInput } from "./dataset-values.js";
-import { LEGAL_SCOPES, publishedDocuments, templateDocx } from "./legal.js";
+import { LEGAL_SCOPES, documentsForRequest, publishedDocuments, templateDocx } from "./legal.js";
 import { NAME_FIELDS, fullNameTh } from "./person-name.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -169,7 +169,10 @@ export async function renderDatasetDocuments(
   db: Db,
   params: { request: DatasetDocumentRequest; printedByName: string | null; actorId: string },
 ): Promise<string[]> {
-  const documents = await publishedDocuments(db, LEGAL_SCOPES.DATASET_REGISTRATION);
+  const documents = await documentsForRequest(db, LEGAL_SCOPES.DATASET_REGISTRATION, {
+    subjectType: SUBJECT,
+    subjectId: params.request.id,
+  });
   const rendered: string[] = [];
   for (const doc of documents) {
     if (!doc.hasPlaceholders) continue;

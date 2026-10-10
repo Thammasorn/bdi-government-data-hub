@@ -273,6 +273,13 @@ export type DatasetRequestStatus = RequestStatus;
 /** ผู้ดูแลระบบ — ใช้หน้า /console ไม่มีด่านของการอนุมัติ (สำเนาของการตัดสินใน `requireAdmin` ฝั่ง backend) */
 export const isSystemAdmin = (roles: string[]) => roles.includes("SYSTEM_ADMINISTRATOR");
 
+/**
+ * ผู้ที่เข้าหมวด "ตั้งค่าเอกสาร" ของ /console ได้ — ผู้ดูแลระบบ หรือผู้เชี่ยวชาญด้านกฎหมายของ BDI (สำเนาของ `requireDocumentAdmin`
+ * ฝั่ง backend) ผู้เชี่ยวชาญด้านกฎหมายเห็นแค่หมวดนี้ ที่เหลือของ /console เป็นของผู้ดูแลระบบอย่างเดียว
+ */
+export const isDocumentAdmin = (roles: string[]) =>
+  roles.includes("SYSTEM_ADMINISTRATOR") || roles.includes("BDI_LEGAL_OFFICER");
+
 export const isBdiStaff = (roles: string[]) =>
   roles.some((r) =>
     ["BDI_OFFICER", "BDI_DATASET_SPECIALIST", "BDI_FINAL_APPROVER", "BDI_LEGAL_OFFICER"].includes(r),

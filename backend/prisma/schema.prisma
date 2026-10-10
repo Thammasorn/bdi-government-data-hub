@@ -1279,10 +1279,44 @@ model LegalDocumentVersion {
   createdBy String   @map("created_by") @db.Uuid
 
   acceptances LegalAcceptance[]
+  snapshots   RequestDocumentSnapshot[]
 
   @@unique([legalDocumentId, versionNumber])
   @@index([status])
   @@map("legal_document_version")
+  @@schema("legal")
+}
+
+/// ชุดเอกสารที่คำขอหนึ่งใบ "ถือ" ตั้งแต่กดนำส่ง — ไม่มีใน Excel
+///
+/// เบี่ยงจากดีไซน์: `publishedDocuments()` อ่านเวอร์ชันล่าสุดที่เผยแพร่เสมอ ฝ่ายกฎหมายจึงเปลี่ยนเอกสารใต้คำขอที่
+/// กำลังเดินอยู่ได้ (card "Enhance Legal document management") แถวนี้บันทึกว่าตอนกดนำส่งแต่ละครั้งใช้เอกสารฉบับไหน
+/// เวอร์ชันไหน ลำดับเท่าไร และบังคับหรือไม่ — หลังจากนั้นทุกจุดที่แสดง ลงนาม หรือดาวน์โหลดอ่านจากที่นี่ ไม่อ่านค่าล่าสุด
+///
+/// หนึ่งการนำส่ง = หนึ่ง `submission_no` คำขอที่ถูกส่งกลับแล้วนำส่งใหม่ได้ชุดใหม่ (เลขถัดไป) ชุดเก่าเก็บไว้เป็นประวัติ
+/// ชุดที่ใช้อยู่คือเลขสูงสุดของคำขอนั้น
+model RequestDocumentSnapshot {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// ORGANIZATION_REGISTRATION_REQUEST หรือ DATASET_REGISTRATION_REQUEST — logical reference ไม่มี FK (เหมือน review_task)
+  subjectType SubjectType @map("subject_type")
+  subjectId   String      @map("subject_id") @db.Uuid
+
+  submissionNo Int @map("submission_no")
+
+  legalDocumentVersionId String               @map("legal_document_version_id") @db.Uuid
+  legalDocumentVersion   LegalDocumentVersion @relation(fields: [legalDocumentVersionId], references: [id])
+
+  /// ค่าของเอกสาร ณ ตอนนำส่ง — แอดมินสลับบังคับ/ไม่บังคับหรือจัดลำดับภายหลังต้องไม่เปลี่ยนชุดที่หน่วยงานเห็นไปแล้ว
+  displayOrder Int     @map("display_order")
+  isRequired   Boolean @map("is_required")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([subjectType, subjectId, submissionNo, legalDocumentVersionId])
+  @@index([subjectType, subjectId, submissionNo])
+  @@index([legalDocumentVersionId])
+  @@map("request_document_snapshot")
   @@schema("legal")
 }
 

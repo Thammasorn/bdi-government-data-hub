@@ -105,6 +105,8 @@ function roleNavItems(
       { href: "/", label: "หน้าแรก" },
       { href: "/admin/organizations", label: ORGANIZATION_LABEL },
       { href: "/admin/datasets", label: DATASET_LABEL },
+      // ผู้เชี่ยวชาญด้านกฎหมายดูแลเอกสารข้อตกลงเอง — หมวด "ตั้งค่าเอกสาร" ของ /console (card "Enhance Legal document management")
+      ...(roles.includes("BDI_LEGAL_OFFICER") ? [{ href: "/console/legal-documents", label: "ตั้งค่าเอกสาร" }] : []),
     ];
   }
   // ผู้มีอำนาจกระทำการแทนที่ถูกเชิญเข้ามาทีหลังยังไม่ถูกผูก organizationId
@@ -146,7 +148,12 @@ function roleNavItems(
 /** เมนูนี้คือหน้าที่เปิดอยู่ไหม — "ระบบจัดการ" ครอบทุกหน้าใต้ /console ไม่ใช่แค่หน้าภาพรวม */
 function isActive(pathname: string, href: string): boolean {
   const path = href.split("?")[0];
-  return pathname === path || (path === "/console" && pathname.startsWith("/console/"));
+  // หน้าใต้ /console ทั้งหมดนับเป็นที่เดียวกัน — รวมเมนู "ตั้งค่าเอกสาร" ของผู้เชี่ยวชาญด้านกฎหมายที่ลิงก์ลงไปลึกกว่า /console
+  return (
+    pathname === path ||
+    (path === "/console" && pathname.startsWith("/console/")) ||
+    (path.startsWith("/console/") && pathname.startsWith(`${path}/`))
+  );
 }
 
 /**

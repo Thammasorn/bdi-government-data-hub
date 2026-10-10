@@ -26,7 +26,7 @@ import { Router } from "../lib/async-route.js";
 import { AuditAction, AuditSubject, diffFields, logAudit } from "../lib/audit.js";
 import { adminActorId } from "../lib/context.js";
 import { formatZodError } from "../lib/validation.js";
-import { requireAdmin } from "../middleware/auth.js";
+import { requireDocumentAdmin } from "../middleware/auth.js";
 
 const OWNER = AttachmentOwnerType.PUBLIC_DOCUMENT;
 const FILE_TYPE = AttachmentType.PUBLIC_DOCUMENT_FILE;
@@ -110,7 +110,7 @@ publicDocumentRouter.get("/:id/file", async (req, res) => {
 // ════════════════════════════════════════════════════════ ผู้ดูแลระบบ
 
 export const adminPublicDocumentRouter = Router();
-adminPublicDocumentRouter.use(requireAdmin);
+adminPublicDocumentRouter.use(requireDocumentAdmin);
 
 adminPublicDocumentRouter.get("/", async (_req, res) => {
   const rows = (await prisma.publicDocument.findMany()).sort(bySectionThenOrder);
