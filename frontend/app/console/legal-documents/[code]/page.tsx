@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { ActionDialog } from "@/components/console/ActionDialog";
+import { RelatedRequestsModal, type RelatedRequestsTarget } from "@/components/console/RelatedRequestsModal";
 import { PdfPane, UploadVersionModal, usePdfPreview } from "@/components/console/LegalUpload";
 import { Badge, ErrorNotice, PageHeader, Panel, Tag } from "@/components/console/ui";
 import { Pagination } from "@/components/list/Pagination";
@@ -40,6 +41,7 @@ export default function ConsoleLegalDocumentPage() {
   const [showHistory, setShowHistory] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [previewing, setPreviewing] = useState<PreviewTarget | null>(null);
+  const [related, setRelated] = useState<RelatedRequestsTarget | null>(null);
   const { show } = useToast();
 
   if (loading && !data) return <Spinner />;
@@ -121,6 +123,10 @@ export default function ConsoleLegalDocumentPage() {
           code={code}
           onUpload={() => setUploading(true)}
           onPreview={() => doc.activeVersion && setPreviewing({ id: doc.activeVersion.id, versionNumber: doc.activeVersion.versionNumber, mode: "rendered" })}
+          onRelated={() =>
+            doc.activeVersion &&
+            setRelated({ code: doc.code, versionId: doc.activeVersion.id, versionNumber: doc.activeVersion.versionNumber })
+          }
           onHistory={() => setShowHistory((s) => !s)}
           historyOpen={showHistory}
         />
@@ -130,11 +136,13 @@ export default function ConsoleLegalDocumentPage() {
             doc={doc}
             onChanged={reload}
             onPreview={(v) => setPreviewing({ id: v.id, versionNumber: v.versionNumber, mode: "rendered" })}
+            onRelated={(v) => setRelated({ code: doc.code, versionId: v.id, versionNumber: v.versionNumber })}
           />
         ) : null}
       </div>
 
       <VersionPreviewModal doc={doc} target={previewing} onClose={() => setPreviewing(null)} />
+      <RelatedRequestsModal target={related} onClose={() => setRelated(null)} />
       <UploadVersionModal
         doc={uploading ? doc : null}
         onClose={() => setUploading(false)}
@@ -290,6 +298,7 @@ function ActiveVersion({
   code,
   onUpload,
   onPreview,
+  onRelated,
   onHistory,
   historyOpen,
 }: {
@@ -297,6 +306,7 @@ function ActiveVersion({
   code: string;
   onUpload: () => void;
   onPreview: () => void;
+  onRelated: () => void;
   onHistory: () => void;
   historyOpen: boolean;
 }) {
@@ -329,6 +339,9 @@ function ActiveVersion({
               {v.publishedBy ? ` โดย ${v.publishedBy}` : ""}
               {doc.draftVersionCount > 0 ? ` · มีฉบับร่างรอเผยแพร่ ${doc.draftVersionCount} ฉบับ` : ""}
             </p>
+            <p className="text-[13.5px] text-ink-muted">
+              ใช้งานใน <span className="tabular-nums font-medium text-ink">{v.usageCount.toLocaleString("th-TH")}</span> คำขอ
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-1">
             <button
@@ -337,6 +350,13 @@ function ActiveVersion({
               className="rounded-full px-3 py-1.5 text-[13.5px] font-medium text-navy-700 hover:bg-navy-50"
             >
               ดูตัวอย่าง
+            </button>
+            <button
+              type="button"
+              onClick={onRelated}
+              className="rounded-full px-3 py-1.5 text-[13.5px] font-medium text-navy-700 hover:bg-navy-50"
+            >
+              ดูคำขอที่เกี่ยวข้อง
             </button>
             <a href={file(v.id, "docx")} className="rounded-full px-3 py-1.5 text-[13.5px] font-medium text-navy-700 hover:bg-navy-50">
               ดาวน์โหลด .docx
@@ -368,10 +388,12 @@ function VersionHistory({
   doc,
   onChanged,
   onPreview,
+  onRelated,
 }: {
   doc: LegalDocument;
   onChanged: () => void;
   onPreview: (v: LegalVersionRow) => void;
+  onRelated: (v: LegalVersionRow) => void;
 }) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -417,6 +439,13 @@ function VersionHistory({
                       >
                         ดูตัวอย่าง
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => onRelated(v)}
+                        className="rounded-full px-2.5 py-1 text-[13px] font-medium text-navy-700 hover:bg-navy-50"
+                      >
+                        ดูคำขอที่เกี่ยวข้อง
+                      </button>
                       <a href={file(v)} className="rounded-full px-2.5 py-1 text-[13px] font-medium text-navy-700 hover:bg-navy-50">
                         .docx
                       </a>
@@ -443,6 +472,9 @@ function VersionHistory({
                   <p className="mt-0.5 text-[13px] text-ink-muted">
                     {v.filename} · อัปโหลด {formatThaiDate(v.createdAt)}
                     {v.createdBy ? ` โดย ${v.createdBy}` : ""}
+                  </p>
+                  <p className="text-[13px] text-ink-muted">
+                    ใช้งานใน <span className="tabular-nums font-medium text-ink">{v.usageCount.toLocaleString("th-TH")}</span> คำขอ
                   </p>
                   <p className="text-[13px] text-ink-muted">
                     {v.publishedAt ? `เผยแพร่ ${formatThaiDate(v.publishedAt)}${v.publishedBy ? ` โดย ${v.publishedBy}` : ""}` : "ยังไม่เผยแพร่"}

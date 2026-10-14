@@ -16,6 +16,8 @@ import {
   LegalDocumentStatus,
   LegalDocumentVersionStatus,
   Prisma,
+  RequestStatus,
+  SubjectType,
 } from "@prisma/client";
 
 import { prisma } from "../db.js";
@@ -200,12 +202,27 @@ adminLegalDocumentRouter.get("/template-variables", (_req, res) => {
 
 // ------------------------------------------------------------------ รายการเอกสาร
 
+/**
+ * จำนวนคำขอที่ผูกเอกสารเวอร์ชันนี้ไว้ (`request_document_snapshot`) — นับคำขอไม่ใช่แถว
+ * คำขอที่ถูกส่งกลับแล้วนำส่งใหม่มีหลายรอบ (submission_no) ผูกเวอร์ชันเดิมซ้ำได้ นับซ้ำไม่ได้
+ */
+async function usageCounts(versionIds: string[]): Promise<Map<string, number>> {
+  if (versionIds.length === 0) return new Map();
+  const rows = await prisma.$queryRaw<{ id: string; n: bigint }[]>`
+    SELECT legal_document_version_id::text AS id, COUNT(DISTINCT subject_id) AS n
+    FROM legal.request_document_snapshot
+    WHERE legal_document_version_id::text IN (${Prisma.join(versionIds)})
+    GROUP BY legal_document_version_id`;
+  return new Map(rows.map((r) => [r.id, Number(r.n)]));
+}
+
 adminLegalDocumentRouter.get("/legal-documents", async (_req, res) => {
   const documents = await prisma.legalDocument.findMany({
     orderBy: [{ applicationScope: "asc" }, { displayOrder: "asc" }],
     include: { versions: { orderBy: { versionNumber: "desc" } } },
   });
   const names = await personNames(documents.flatMap((d) => d.versions.map((v) => v.publishedBy)));
+  const usage = await usageCounts(documents.flatMap((d) => d.versions.map((v) => v.id)));
 
   res.json({
     variableGroups: variableCatalogue(),
@@ -220,6 +237,7 @@ adminLegalDocumentRouter.get("/legal-documents", async (_req, res) => {
           ? {
               id: active.id,
               versionNumber: active.versionNumber,
+              usageCount: usage.get(active.id) ?? 0,
               publishedAt: active.publishedAt,
               publishedBy: active.publishedBy ? (names.get(active.publishedBy) ?? null) : null,
             }
@@ -230,6 +248,7 @@ adminLegalDocumentRouter.get("/legal-documents", async (_req, res) => {
           id: v.id,
           versionNumber: v.versionNumber,
           status: v.status,
+          usageCount: usage.get(v.id) ?? 0,
           contentHash: v.contentHash,
           publishedAt: v.publishedAt,
           supersededAt: v.supersededAt,
@@ -788,6 +807,7 @@ adminLegalDocumentRouter.get("/legal-documents/:code/versions", async (req, res)
     }),
   ]);
   const names = await personNames(rows.flatMap((v) => [v.publishedBy, v.createdBy]));
+  const usage = await usageCounts(rows.map((v) => v.id));
 
   res.json({
     document: documentShape(document),
@@ -800,6 +820,7 @@ adminLegalDocumentRouter.get("/legal-documents/:code/versions", async (req, res)
       status: v.status,
       /** true = ฉบับที่ใช้อยู่ตอนนี้ */
       isActive: v.status === LegalDocumentVersionStatus.PUBLISHED,
+      usageCount: usage.get(v.id) ?? 0,
       filename: v.attachment.originalFileName,
       contentHash: v.contentHash,
       createdAt: v.createdAt,
@@ -807,6 +828,121 @@ adminLegalDocumentRouter.get("/legal-documents/:code/versions", async (req, res)
       publishedAt: v.publishedAt,
       publishedBy: v.publishedBy ? (names.get(v.publishedBy) ?? null) : null,
       supersededAt: v.supersededAt,
+    })),
+  });
+});
+
+const usageRequestsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).catch(1),
+  pageSize: z.coerce.number().int().min(1).max(100).catch(10),
+  q: z.string().trim().max(100).catch(""),
+  status: z.nativeEnum(RequestStatus).optional().catch(undefined),
+});
+
+/**
+ * คำขอที่ผูกเอกสารเวอร์ชันนี้ไว้ — popup "ดูคำขอที่เกี่ยวข้อง" แบ่งหน้า ค้นหา (เลขที่คำขอ ชื่อหน่วยงาน
+ * และชื่อชุดข้อมูลสำหรับคำขอส่งชุดข้อมูล) และกรองตามสถานะ ใหม่สุดก่อน
+ * เอกสารหนึ่งฉบับอยู่ในหมวดเดียว (`applicationScope`) จึงค้นตารางคำขอตารางเดียว
+ */
+adminLegalDocumentRouter.get("/legal-documents/:code/versions/:versionId/requests", async (req, res) => {
+  const code = String(req.params.code ?? "").toUpperCase();
+  const version = await legalVersionOf(code, String(req.params.versionId));
+  if (!version) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบเอกสารเวอร์ชันนี้" });
+    return;
+  }
+  const { page, pageSize, q, status } = usageRequestsQuerySchema.parse(req.query);
+  const isOrg = version.legalDocument.applicationScope === "ORGANIZATION_REGISTRATION";
+
+  const bound = await prisma.requestDocumentSnapshot.findMany({
+    where: {
+      legalDocumentVersionId: version.id,
+      subjectType: isOrg ? SubjectType.ORGANIZATION_REGISTRATION_REQUEST : SubjectType.DATASET_REGISTRATION_REQUEST,
+    },
+    select: { subjectId: true },
+    distinct: ["subjectId"],
+  });
+  const ids = bound.map((b) => b.subjectId);
+  const orgMatch = { OR: [{ nameTh: { contains: q, mode: "insensitive" as const } }, { nameEn: { contains: q, mode: "insensitive" as const } }] };
+  const skip = (page - 1) * pageSize;
+  const orgSelect = { select: { id: true, nameTh: true } };
+
+  if (isOrg) {
+    const where: Prisma.OrganizationRegistrationRequestWhereInput = {
+      id: { in: ids },
+      ...(status ? { status } : {}),
+      ...(q
+        ? {
+            OR: [
+              { requestNumber: { contains: q, mode: "insensitive" } },
+              { organizationNameTh: { contains: q, mode: "insensitive" } },
+              { organizationNameEn: { contains: q, mode: "insensitive" } },
+            ],
+          }
+        : {}),
+    };
+    const [total, rows] = await Promise.all([
+      prisma.organizationRegistrationRequest.count({ where }),
+      prisma.organizationRegistrationRequest.findMany({
+        where,
+        orderBy: [{ submittedAt: { sort: "desc", nulls: "last" } }, { requestNumber: "desc" }],
+        skip,
+        take: pageSize,
+        select: { id: true, requestNumber: true, status: true, submittedAt: true, organizationNameTh: true, organization: orgSelect },
+      }),
+    ]);
+    res.json({
+      scope: "ORGANIZATION_REGISTRATION",
+      page,
+      pageSize,
+      total,
+      requests: rows.map((r) => ({
+        id: r.id,
+        requestNumber: r.requestNumber,
+        status: r.status,
+        submittedAt: r.submittedAt,
+        organizationName: r.organizationNameTh ?? r.organization.nameTh,
+        title: null,
+      })),
+    });
+    return;
+  }
+
+  const where: Prisma.DatasetRegistrationRequestWhereInput = {
+    id: { in: ids },
+    ...(status ? { status } : {}),
+    ...(q
+      ? {
+          OR: [
+            { requestNumber: { contains: q, mode: "insensitive" } },
+            { proposedTitle: { contains: q, mode: "insensitive" } },
+            { organization: orgMatch },
+          ],
+        }
+      : {}),
+  };
+  const [total, rows] = await Promise.all([
+    prisma.datasetRegistrationRequest.count({ where }),
+    prisma.datasetRegistrationRequest.findMany({
+      where,
+      orderBy: [{ submittedAt: { sort: "desc", nulls: "last" } }, { requestNumber: "desc" }],
+      skip,
+      take: pageSize,
+      select: { id: true, requestNumber: true, status: true, submittedAt: true, proposedTitle: true, organization: orgSelect },
+    }),
+  ]);
+  res.json({
+    scope: "DATASET_REGISTRATION",
+    page,
+    pageSize,
+    total,
+    requests: rows.map((r) => ({
+      id: r.id,
+      requestNumber: r.requestNumber,
+      status: r.status,
+      submittedAt: r.submittedAt,
+      organizationName: r.organization.nameTh,
+      title: r.proposedTitle,
     })),
   });
 });

@@ -106,12 +106,12 @@ export default function ConsolePublicDocumentsPage() {
         title="เอกสารดาวน์โหลด"
         actions={
           <a
-            href="/#legal"
+            href="/about#legal"
             target="_blank"
             rel="noopener"
             className="inline-flex h-9 items-center rounded-full border border-line bg-white px-4 text-sm font-medium text-navy-800 hover:bg-navy-50"
           >
-            ดูหน้าแรก ↗
+            ดูข้อมูลโครงการ ↗
           </a>
         }
       />
@@ -166,20 +166,27 @@ export default function ConsolePublicDocumentsPage() {
                             ) : null}
                           </p>
                           <p className="mt-1 text-[13.5px] text-ink-muted">
-                            {doc.versionLabel ? <span className="text-ink">{doc.versionLabel} · </span> : null}
-                            {doc.href ? (
-                              <a
-                                href={doc.href.startsWith("/api/") ? api.fileUrl(doc.href) : encodeURI(doc.href)}
-                                target="_blank"
-                                rel="noopener"
-                                className="text-navy-700 underline"
-                              >
-                                {doc.fileName}
-                              </a>
+                            {doc.usesStaticFile ? (
+                              // ไฟล์ตั้งต้นที่มากับระบบ — ไม่แสดงลิงก์หรือป้ายบอกที่มา แสดงแค่เวอร์ชัน
+                              doc.versionLabel ? <span className="text-ink">{doc.versionLabel}</span> : null
                             ) : (
-                              "ยังไม่มีไฟล์"
+                              <>
+                                {doc.versionLabel ? <span className="text-ink">{doc.versionLabel} · </span> : null}
+                                {doc.href ? (
+                                  <a
+                                    href={doc.href.startsWith("/api/") ? api.fileUrl(doc.href) : encodeURI(doc.href)}
+                                    target="_blank"
+                                    rel="noopener"
+                                    className="text-navy-700 underline"
+                                  >
+                                    {doc.fileName}
+                                  </a>
+                                ) : (
+                                  "ยังไม่มีไฟล์"
+                                )}
+                                {` · อัปโหลด ${formatThaiDate(doc.updatedAt)}`}
+                              </>
                             )}
-                            {doc.usesStaticFile ? " · ไฟล์ตั้งต้นที่มากับระบบ" : ` · อัปโหลด ${formatThaiDate(doc.updatedAt)}`}
                           </p>
                         </div>
                         <div className="flex flex-wrap items-center gap-1">

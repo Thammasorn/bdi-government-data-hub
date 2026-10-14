@@ -9,6 +9,8 @@ export type LegalVersionStatus = "DRAFT" | "PUBLISHED" | "SUPERSEDED" | "RETIRED
 export interface LegalVersionSummary {
   id: string;
   versionNumber: number;
+  /** จำนวนคำขอที่ผูกเวอร์ชันนี้ไว้ */
+  usageCount: number;
   status: LegalVersionStatus;
   publishedAt: string | null;
   publishedBy: string | null;
@@ -37,6 +39,7 @@ export interface LegalVersionRow {
   status: LegalVersionStatus;
   /** true = ฉบับที่ใช้อยู่ตอนนี้ */
   isActive: boolean;
+  usageCount: number;
   filename: string;
   createdAt: string;
   createdBy: string | null;
