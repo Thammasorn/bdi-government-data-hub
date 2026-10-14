@@ -10,7 +10,7 @@ import { NotificationBell } from "@/components/NotificationBell";
 import { SessionChangedDialog } from "@/components/SessionChangedDialog";
 import { announceSignOut, sessionUserName, useSession } from "@/components/SessionProvider";
 import { api } from "@/lib/api";
-import { ROLE_LABELS, isBdiStaff, isSpecialistOnly, isSystemAdmin, type Role } from "@/lib/status";
+import { ROLE_LABELS, isBdiStaff, isDocumentAdmin, isSpecialistOnly, type Role } from "@/lib/status";
 
 /** หน้าที่ไม่ต้องมี header/footer — เต็มจอเพื่อให้โฟกัสกับงานตรงหน้า */
 const BARE_ROUTES = ["/login", "/register"];
@@ -79,10 +79,10 @@ function roleNavItems(
 ): NavItem[] {
   const hasOrganization = Boolean(organizationId);
   /**
-   * ผู้ดูแลระบบมีงานอยู่ที่ /console ที่เดียว — เมนูของหน้านั้นอยู่ในหน้าเอง (ConsoleShell) แถบหัวจึงมีช่องเดียว
+   * ผู้ดูแลระบบและผู้เชี่ยวชาญด้านกฎหมายของ BDI มีงานอยู่ที่ /console ที่เดียว — เมนูของหน้านั้นอยู่ในหน้าเอง (ConsoleShell) แถบหัวจึงมีช่องเดียว
    * ต้องเช็กก่อน `hasOrganization` ข้างล่าง เพราะบทบาทของเขาผูกกับแถวหน่วยงาน BDI และจะได้เมนูของผู้ใช้หน่วยงานไป
    */
-  if (isSystemAdmin(roles)) {
+  if (isDocumentAdmin(roles)) {
     return [{ href: "/console", label: "ระบบจัดการ" }];
   }
   if (isBdiStaff(roles)) {
@@ -105,8 +105,6 @@ function roleNavItems(
       { href: "/", label: "หน้าแรก" },
       { href: "/admin/organizations", label: ORGANIZATION_LABEL },
       { href: "/admin/datasets", label: DATASET_LABEL },
-      // ผู้เชี่ยวชาญด้านกฎหมายดูแลเอกสารข้อตกลงเอง — หมวด "ตั้งค่าเอกสาร" ของ /console (card "Enhance Legal document management")
-      ...(roles.includes("BDI_LEGAL_OFFICER") ? [{ href: "/console/legal-documents", label: "ตั้งค่าเอกสาร" }] : []),
     ];
   }
   // ผู้มีอำนาจกระทำการแทนที่ถูกเชิญเข้ามาทีหลังยังไม่ถูกผูก organizationId

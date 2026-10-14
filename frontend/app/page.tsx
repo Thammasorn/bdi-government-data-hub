@@ -20,7 +20,7 @@ import { useOrganizationRegistration } from "@/lib/use-organization-registration
 import {
   formatThaiDate,
   isBdiStaff,
-  isSystemAdmin,
+  isDocumentAdmin,
   isOrganizationScopedRole,
   type OrganizationStatus,
 } from "@/lib/status";
@@ -66,10 +66,10 @@ export default function HomePage() {
    * assignment มีหน่วยงานติดมาด้วย ผู้ประสานงานของ BDI จึงสังกัดแถวหน่วยงาน BDI จริง ๆ
    * และจะตกไปได้หน้าแรกของผู้ใช้หน่วยงานถ้าปล่อยผ่าน
    */
+  // ผู้เชี่ยวชาญด้านกฎหมายของ BDI เหมือนผู้ดูแลระบบ: หน้าแรกคือ /console (ซึ่งพาต่อไปที่ ตั้งค่าเอกสาร > เอกสารข้อตกลง) ไม่ใช่ตารางคำขอ
+  // ต้องเช็กก่อน isBdiStaff เพราะบทบาทนี้ถูกนับเป็นเจ้าหน้าที่ BDI ด้วย
+  if (isDocumentAdmin(user.roles)) return <RedirectTo href="/console" />;
   if (isBdiStaff(user.roles)) return <BdiHome />;
-  // ผู้ดูแลระบบไม่มีด่านของการอนุมัติ หน้าแรกของเขาคือ /console — เช็กก่อน organizationId ด้วยเหตุผลเดียวกับข้างบน
-  if (isSystemAdmin(user.roles)) return <RedirectTo href="/console" />;
-
   // ผู้มีอำนาจกระทำการแทนที่ถูกเชิญเข้ามาทีหลังยังไม่ถูกผูก organizationId
   // แต่เห็นคำขอของหน่วยงานตัวเองผ่าน signatoryEmail จึงต้องได้หน้าแรกแบบเดียวกัน
   // ไม่ใช่หน้าชวนสร้างหน่วยงาน
