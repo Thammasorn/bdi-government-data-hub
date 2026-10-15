@@ -42,6 +42,7 @@ export default function ConsoleLegalDocumentPage() {
   const [toggling, setToggling] = useState(false);
   const [previewing, setPreviewing] = useState<PreviewTarget | null>(null);
   const [related, setRelated] = useState<RelatedRequestsTarget | null>(null);
+  const [downloading, setDownloading] = useState<RelatedRequestsTarget | null>(null);
   const { show } = useToast();
 
   if (loading && !data) return <Spinner />;
@@ -123,6 +124,10 @@ export default function ConsoleLegalDocumentPage() {
           code={code}
           onUpload={() => setUploading(true)}
           onPreview={() => doc.activeVersion && setPreviewing({ id: doc.activeVersion.id, versionNumber: doc.activeVersion.versionNumber, mode: "rendered" })}
+          onDownload={() =>
+            doc.activeVersion &&
+            setDownloading({ code: doc.code, versionId: doc.activeVersion.id, versionNumber: doc.activeVersion.versionNumber })
+          }
           onRelated={() =>
             doc.activeVersion &&
             setRelated({ code: doc.code, versionId: doc.activeVersion.id, versionNumber: doc.activeVersion.versionNumber })
@@ -137,12 +142,14 @@ export default function ConsoleLegalDocumentPage() {
             onChanged={reload}
             onPreview={(v) => setPreviewing({ id: v.id, versionNumber: v.versionNumber, mode: "rendered" })}
             onRelated={(v) => setRelated({ code: doc.code, versionId: v.id, versionNumber: v.versionNumber })}
+            onDownload={(v) => setDownloading({ code: doc.code, versionId: v.id, versionNumber: v.versionNumber })}
           />
         ) : null}
       </div>
 
       <VersionPreviewModal doc={doc} target={previewing} onClose={() => setPreviewing(null)} />
       <RelatedRequestsModal target={related} onClose={() => setRelated(null)} />
+      <DownloadModal target={downloading} onClose={() => setDownloading(null)} />
       <UploadVersionModal
         doc={uploading ? doc : null}
         onClose={() => setUploading(false)}
@@ -299,6 +306,7 @@ function ActiveVersion({
   onUpload,
   onPreview,
   onRelated,
+  onDownload,
   onHistory,
   historyOpen,
 }: {
@@ -307,11 +315,11 @@ function ActiveVersion({
   onUpload: () => void;
   onPreview: () => void;
   onRelated: () => void;
+  onDownload: () => void;
   onHistory: () => void;
   historyOpen: boolean;
 }) {
   const v = doc.activeVersion;
-  const file = (id: string, kind: "docx" | "pdf") => api.fileUrl(`/api/admin/legal-documents/${code}/versions/${id}/file?kind=${kind}`);
 
   return (
     <Panel
@@ -358,12 +366,14 @@ function ActiveVersion({
             >
               ดูคำขอที่เกี่ยวข้อง
             </button>
-            <a href={file(v.id, "docx")} className="rounded-full px-3 py-1.5 text-[13.5px] font-medium text-navy-700 hover:bg-navy-50">
-              ดาวน์โหลด .docx
-            </a>
-            <a href={file(v.id, "pdf")} className="rounded-full px-3 py-1.5 text-[13.5px] font-medium text-navy-700 hover:bg-navy-50">
-              PDF ฉบับเปล่า
-            </a>
+            <button
+              type="button"
+              onClick={onDownload}
+              className="rounded-full px-3 py-1.5 text-[13.5px] font-medium text-navy-700 hover:bg-navy-50"
+            >
+              ดาวน์โหลด
+            </button>
+            <DeleteButton reason="ลบไม่ได้ — เป็นฉบับที่ใช้อยู่" onClick={() => undefined} />
           </div>
         </div>
       ) : (
@@ -389,11 +399,13 @@ function VersionHistory({
   onChanged,
   onPreview,
   onRelated,
+  onDownload,
 }: {
   doc: LegalDocument;
   onChanged: () => void;
   onPreview: (v: LegalVersionRow) => void;
   onRelated: (v: LegalVersionRow) => void;
+  onDownload: (v: LegalVersionRow) => void;
 }) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -402,14 +414,13 @@ function VersionHistory({
   );
   const [activating, setActivating] = useState<LegalVersionRow | null>(null);
   const [restoring, setRestoring] = useState<LegalVersionRow | null>(null);
+  const [deleting, setDeleting] = useState<LegalVersionRow | null>(null);
   const { show } = useToast();
 
   const refresh = () => {
     history.reload();
     onChanged();
   };
-
-  const file = (v: LegalVersionRow) => api.fileUrl(`/api/admin/legal-documents/${doc.code}/versions/${v.id}/file?kind=docx`);
 
   return (
     <Panel title="Version History" flush>
@@ -446,9 +457,13 @@ function VersionHistory({
                       >
                         ดูคำขอที่เกี่ยวข้อง
                       </button>
-                      <a href={file(v)} className="rounded-full px-2.5 py-1 text-[13px] font-medium text-navy-700 hover:bg-navy-50">
-                        .docx
-                      </a>
+                      <button
+                        type="button"
+                        onClick={() => onDownload(v)}
+                        className="rounded-full px-2.5 py-1 text-[13px] font-medium text-navy-700 hover:bg-navy-50"
+                      >
+                        ดาวน์โหลด
+                      </button>
                       {v.status === "DRAFT" ? (
                         <button
                           type="button"
@@ -467,6 +482,19 @@ function VersionHistory({
                           เผยแพร่อีกครั้ง
                         </button>
                       ) : null}
+                      <DeleteButton
+                        small
+                        reason={
+                          v.isActive
+                            ? "ลบไม่ได้ — เป็นฉบับที่ใช้อยู่"
+                            : v.usageCount > 0
+                              ? `ลบไม่ได้ — มี ${v.usageCount.toLocaleString("th-TH")} คำขอใช้เอกสารเวอร์ชันนี้อยู่`
+                              : !v.canDelete
+                                ? "ลบไม่ได้ — มีหลักฐานการยอมรับเอกสารเวอร์ชันนี้"
+                                : null
+                        }
+                        onClick={() => setDeleting(v)}
+                      />
                     </div>
                   </div>
                   <p className="mt-0.5 text-[13px] text-ink-muted">
@@ -526,7 +554,69 @@ function VersionHistory({
           refresh();
         }}
       />
+      <ActionDialog
+        open={deleting !== null}
+        onClose={() => setDeleting(null)}
+        title={deleting ? `ลบ Version ${deleting.versionNumber} ของ ${doc.code} ถาวร` : ""}
+        description="ไฟล์ต้นฉบับและ PDF ของเวอร์ชันนี้จะถูกลบออกจากระบบ ย้อนกลับไม่ได้"
+        confirmLabel="ลบถาวร"
+        tone="danger"
+        reason={false}
+        onConfirm={async () => {
+          if (!deleting) return;
+          const res = await api.remove<{ message: string }>(
+            `/api/admin/legal-documents/${doc.code}/versions/${deleting.id}`,
+          );
+          show({ tone: "success", title: res.message });
+          refresh();
+        }}
+      />
     </Panel>
+  );
+}
+
+/** ปุ่ม "ลบ" ของเวอร์ชัน — อยู่ขวาสุดของทุกแถว ลบไม่ได้ก็ยังเห็น แต่จาง และ title บอกเหตุผล */
+function DeleteButton({ reason, onClick, small }: { reason: string | null; onClick: () => void; small?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={reason !== null}
+      title={reason ?? undefined}
+      className={clsx(
+        "rounded-full font-medium text-danger enabled:hover:bg-danger-bg disabled:cursor-not-allowed disabled:opacity-40",
+        small ? "px-2.5 py-1 text-[13px]" : "px-3 py-1.5 text-[13.5px]",
+      )}
+    >
+      ลบ
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------- ดาวน์โหลด
+
+/** popup เลือกชนิดไฟล์ของเวอร์ชันหนึ่ง — ต้นฉบับ (.docx ที่อัปโหลด) หรือ PDF ฉบับเปล่า */
+function DownloadModal({ target, onClose }: { target: RelatedRequestsTarget | null; onClose: () => void }) {
+  const file = (kind: "docx" | "pdf") =>
+    target ? api.fileUrl(`/api/admin/legal-documents/${target.code}/versions/${target.versionId}/file?kind=${kind}`) : "#";
+  const option = "block rounded-xl border border-line px-4 py-3 text-[14.5px] font-medium text-navy-700 hover:bg-navy-50";
+  return (
+    <Modal
+      open={target !== null}
+      onClose={onClose}
+      title={target ? `ดาวน์โหลด ${target.code} Version ${target.versionNumber}` : ""}
+    >
+      <div className="space-y-3">
+        <a href={file("docx")} onClick={onClose} className={option}>
+          ดาวน์โหลดเอกสารต้นฉบับ
+          <span className="block text-[13px] font-normal text-ink-muted">ไฟล์ .docx ที่อัปโหลดไว้</span>
+        </a>
+        <a href={file("pdf")} onClick={onClose} className={option}>
+          ดาวน์โหลด PDF
+          <span className="block text-[13px] font-normal text-ink-muted">PDF ฉบับเปล่า ยังไม่เติมข้อมูลคำขอ</span>
+        </a>
+      </div>
+    </Modal>
   );
 }
 

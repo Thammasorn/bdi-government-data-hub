@@ -81,6 +81,11 @@ export async function getObjectStream(
 }
 
 /** ทั้งก้อนใน memory — ใช้กับ template .docx ที่ต้องเอาไปเติมค่าต่อ ไม่ใช่ส่งต่อทันที */
+/** ลบ blob ถาวร — ไม่มีก็ไม่ถือว่าผิด (ลบซ้ำได้) */
+export async function deleteObject(container: string, key: string): Promise<void> {
+  await containerOf(container).getBlobClient(key).deleteIfExists();
+}
+
 export async function getObjectBuffer(container: string, key: string): Promise<Buffer> {
   return containerOf(container).getBlobClient(key).downloadToBuffer();
 }

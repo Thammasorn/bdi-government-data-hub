@@ -21,6 +21,7 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "../db.js";
+import { deleteObject } from "../storage.js";
 import { Router } from "../lib/async-route.js";
 import { activeAttachment, readAttachment, sendRenderedPdf, streamAttachment, uploadedFile } from "../lib/attachment.js";
 import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
@@ -808,6 +809,12 @@ adminLegalDocumentRouter.get("/legal-documents/:code/versions", async (req, res)
   ]);
   const names = await personNames(rows.flatMap((v) => [v.publishedBy, v.createdBy]));
   const usage = await usageCounts(rows.map((v) => v.id));
+  const accepted = await prisma.legalAcceptance.groupBy({
+    by: ["legalDocumentVersionId"],
+    where: { legalDocumentVersionId: { in: rows.map((v) => v.id) } },
+    _count: { _all: true },
+  });
+  const acceptedBy = new Map(accepted.map((a) => [a.legalDocumentVersionId, a._count._all]));
 
   res.json({
     document: documentShape(document),
@@ -821,6 +828,9 @@ adminLegalDocumentRouter.get("/legal-documents/:code/versions", async (req, res)
       /** true = ฉบับที่ใช้อยู่ตอนนี้ */
       isActive: v.status === LegalDocumentVersionStatus.PUBLISHED,
       usageCount: usage.get(v.id) ?? 0,
+      /** ลบถาวรได้ = ไม่ใช่ฉบับที่ใช้อยู่ ไม่มีคำขอผูก และไม่มีหลักฐานการยอมรับ — ตรงกับด่านของ DELETE …/versions/:versionId */
+      canDelete:
+        v.status !== LegalDocumentVersionStatus.PUBLISHED && (usage.get(v.id) ?? 0) === 0 && (acceptedBy.get(v.id) ?? 0) === 0,
       filename: v.attachment.originalFileName,
       contentHash: v.contentHash,
       createdAt: v.createdAt,
@@ -1060,6 +1070,71 @@ adminLegalDocumentRouter.post("/legal-documents/:code/versions/:versionId/activa
     versionNumber: activated.versionNumber,
     message: `ใช้ Version ${activated.versionNumber} แล้ว`,
   });
+});
+
+/**
+ * ลบเวอร์ชันถาวร — ได้เฉพาะฉบับที่ไม่ได้ใช้อยู่ ไม่มีคำขอใดผูกไว้ (`request_document_snapshot`) และไม่มีหลักฐานการยอมรับ
+ * (`legal_acceptance`) ไฟล์ .docx กับ PDF ที่แปลงไว้ถูกลบจาก storage ด้วย ลบแล้วเลขเวอร์ชันนั้นว่าง อัปโหลดใหม่จะได้เลขถัดจากฉบับสูงสุดที่เหลือ
+ */
+adminLegalDocumentRouter.delete("/legal-documents/:code/versions/:versionId", async (req, res) => {
+  const code = String(req.params.code ?? "").toUpperCase();
+  const version = await legalVersionOf(code, String(req.params.versionId));
+  if (!version) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบเวอร์ชันนี้ของเอกสาร" });
+    return;
+  }
+  const n = version.versionNumber;
+  if (version.status === LegalDocumentVersionStatus.PUBLISHED) {
+    res.status(409).json({ error: "version_active", message: `ลบ Version ${n} ไม่ได้ — เป็นฉบับที่ใช้อยู่ เปลี่ยนไปใช้ฉบับอื่นก่อน` });
+    return;
+  }
+
+  const deleted = await prisma.$transaction(async (tx) => {
+    // ตรวจและลบใน transaction เดียว — คำขอที่นำส่งระหว่างนั้นต้องไม่หลุดเข้ามาทีหลังการนับ
+    const [requests, acceptances] = await Promise.all([
+      tx.requestDocumentSnapshot.count({ where: { legalDocumentVersionId: version.id } }),
+      tx.legalAcceptance.count({ where: { legalDocumentVersionId: version.id } }),
+    ]);
+    if (requests > 0) return { blocked: "version_in_use" as const };
+    if (acceptances > 0) return { blocked: "version_accepted" as const };
+
+    const files = await tx.attachment.findMany({
+      where: {
+        OR: [
+          { id: version.attachmentId },
+          { ownerType: AttachmentOwnerType.LEGAL_DOCUMENT_VERSION, ownerId: version.id },
+        ],
+      },
+      select: { id: true, storageBucket: true, storageKey: true },
+    });
+    await tx.legalDocumentVersion.delete({ where: { id: version.id } });
+    await tx.attachment.deleteMany({ where: { id: { in: files.map((f) => f.id) } } });
+    return { blocked: null, files };
+  });
+
+  if (deleted.blocked) {
+    res.status(409).json({
+      error: deleted.blocked,
+      message:
+        deleted.blocked === "version_in_use"
+          ? `ลบ Version ${n} ไม่ได้ — ยังมีคำขอที่ใช้เอกสารเวอร์ชันนี้อยู่`
+          : `ลบ Version ${n} ไม่ได้ — มีหลักฐานการยอมรับเอกสารเวอร์ชันนี้เก็บไว้`,
+    });
+    return;
+  }
+
+  // ลบไฟล์หลังบันทึกฐานข้อมูลสำเร็จ — ลบไม่ได้ก็ไม่ย้อนการลบเวอร์ชัน (blob ที่ค้างไม่มีแถวอ้างถึง ไม่กระทบใคร)
+  await Promise.allSettled(deleted.files.map((f) => deleteObject(f.storageBucket, f.storageKey)));
+
+  await logAudit({
+    action: AuditAction.LEGAL_DOCUMENT_CHANGED,
+    subjectType: AuditSubject.LEGAL_DOCUMENT,
+    subjectId: version.legalDocument.id,
+    before: { documentCode: code, versionNumber: n, status: version.status },
+    metadata: { operation: "VERSION_DELETED", document_code: code, version_id: version.id, version_number: n },
+  });
+
+  res.json({ documentCode: code, versionNumber: n, message: `ลบ Version ${n} แล้ว` });
 });
 
 /**
