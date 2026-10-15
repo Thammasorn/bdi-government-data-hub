@@ -40,6 +40,8 @@ export interface LegalVersionRow {
   /** true = ฉบับที่ใช้อยู่ตอนนี้ */
   isActive: boolean;
   usageCount: number;
+  /** ลบถาวรได้ — ไม่ใช่ฉบับที่ใช้อยู่ ไม่มีคำขอผูก และไม่มีหลักฐานการยอมรับ */
+  canDelete: boolean;
   filename: string;
   createdAt: string;
   createdBy: string | null;
