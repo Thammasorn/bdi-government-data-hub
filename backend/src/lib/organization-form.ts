@@ -85,6 +85,50 @@ export const organizationDraftSchema = z.object({
 });
 
 
+/**
+ * เก็บเบอร์ในรูปตัวเลขล้วนเสมอ ไม่ว่าผู้ใช้จะพิมพ์ขีดหรือ +66 มา
+ *
+ * เบอร์เดียวกันที่เก็บคนละรูปทำให้ค้นไม่เจอและพิมพ์ลงเอกสาร A0 ไม่เหมือนกันสองใบ
+ * ค่าที่อ่านเป็นเบอร์ไม่ได้เลยปล่อยผ่านตามเดิม เพื่อให้ตอนนำส่ง phoneSchema เป็นคน
+ * บอกว่าผิดตรงไหน แทนที่จะกลายเป็นค่าว่างเงียบ ๆ ระหว่างบันทึกร่าง
+ */
+function draftPhone(value?: string): string | undefined {
+  return value ? (normaliseThaiPhone(value) ?? value) : value;
+}
+
+/** คอลัมน์ที่ `toRequestData()` เขียนจากช่องอีเมล (`draftEmailSchema`) และจากช่องเบอร์ (`draftPhone()`) */
+const EMAIL_COLUMNS = new Set(["organizationEmail", "approverEmail", "userEmail"]);
+const PHONE_COLUMNS = new Set(["organizationPhone", "approverPhoneNumber", "userPhoneNumber"]);
+
+/**
+ * ค่าเดิมในคอลัมน์ snapshot ถ้าส่งกลับมาทางฟอร์มนี้ จะถูกเขียนลงไปเป็นอะไร
+ *
+ * ทุกช่องใน `organizationDraftSchema` ถูกตัดช่องว่างหัวท้าย อีเมลเป็นตัวพิมพ์เล็ก และเบอร์เป็น
+ * ตัวเลขล้วน — ใช้ตัวแปลงตัวเดียวกันกับทางเขียน (`draftEmailSchema` · `draftPhone()`) ไม่ได้เขียน
+ * กฎซ้ำ แก้การแปลงของช่องไหนเมื่อไร ถ้าช่องนั้นไม่ได้ผ่านสองตัวนี้ ต้องเพิ่มที่นี่ด้วย
+ */
+function asDraftWouldStore(column: string, value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  if (EMAIL_COLUMNS.has(column)) return draftEmailSchema.parse(value);
+  const trimmed = value.trim();
+  return PHONE_COLUMNS.has(column) ? draftPhone(trimmed) : trimmed;
+}
+
+/**
+ * ช่องนี้เปลี่ยนแค่รูป ไม่ได้เปลี่ยนค่า — ค่าเดิมผ่านการแปลงของฟอร์มแล้วได้ค่าที่เขียนลงพอดี
+ *
+ * ใช้แยกแถว audit ของการบันทึกร่าง: ร่างที่เก็บไว้ก่อนมีการแปลง (อีเมลตัวพิมพ์ใหญ่ก่อน 2026-09-18 ·
+ * เบอร์มีขีดก่อน 2026-08-29) ถูกหน้าจอแสดงตามที่เก็บ ส่งกลับมาตามนั้น แล้ว route เขียนลงในรูปใหม่
+ * ช่องนั้นจึงเปลี่ยนในตารางจริงโดยที่ผู้กรอกไม่ได้แตะ ผู้กรอกที่พิมพ์ค่าเดิมใหม่ต่างกันแค่ตัวพิมพ์
+ * หรือขีดก็ได้ผลเดียวกันทุกประการ และนับเป็นกลุ่มนี้ด้วย — ความหมายของค่าไม่ได้เปลี่ยน
+ *
+ * `""` เท่ากับ null เหมือน `blankAsNull()` ที่ใช้ก่อน diff
+ */
+export function changedOnlyInForm(column: string, before: unknown, after: unknown): boolean {
+  const blank = (v: unknown) => (v === "" || v === undefined ? null : v);
+  return JSON.stringify(blank(asDraftWouldStore(column, before))) === JSON.stringify(blank(after));
+}
+
 /** แปลงชื่อฟิลด์ฝั่ง API เป็นคอลัมน์ snapshot ตามดีไซน์ */
 export type OrganizationDraftInput = z.infer<typeof organizationDraftSchema>;
 
@@ -96,15 +140,6 @@ export async function toRequestData(input: OrganizationDraftInput) {
     (input.province && input.district && input.subdistrict
       ? (lookupZipcode(input.province, input.district, input.subdistrict) ?? undefined)
       : undefined);
-
-  /**
-   * เก็บเบอร์ในรูปตัวเลขล้วนเสมอ ไม่ว่าผู้ใช้จะพิมพ์ขีดหรือ +66 มา
-   *
-   * เบอร์เดียวกันที่เก็บคนละรูปทำให้ค้นไม่เจอและพิมพ์ลงเอกสาร A0 ไม่เหมือนกันสองใบ
-   * ค่าที่อ่านเป็นเบอร์ไม่ได้เลยปล่อยผ่านตามเดิม เพื่อให้ตอนนำส่ง phoneSchema เป็นคน
-   * บอกว่าผิดตรงไหน แทนที่จะกลายเป็นค่าว่างเงียบ ๆ ระหว่างบันทึกร่าง
-   */
-  const phone = (value?: string) => (value ? (normaliseThaiPhone(value) ?? value) : value);
 
   return {
     /**
@@ -121,7 +156,7 @@ export async function toRequestData(input: OrganizationDraftInput) {
     organizationDistrictCode: codes.districtCode,
     organizationSubdistrictCode: codes.subDistrictCode,
     organizationPostalCode: postalCode,
-    organizationPhone: phone(input.phone),
+    organizationPhone: draftPhone(input.phone),
     // phoneExtensionSchema แปลง "" เป็น null ให้แล้ว — undefined (ไม่ได้ส่งมา) คงค่าเดิมไว้
     organizationPhoneExtension: input.phoneExtension,
     organizationEmail: input.email,
@@ -133,7 +168,7 @@ export async function toRequestData(input: OrganizationDraftInput) {
     approverPositionTh: input.signatoryPosition,
     approverEmail: input.signatoryEmail,
     approverCid: input.signatoryNationalId,
-    approverPhoneNumber: phone(input.signatoryPhone),
+    approverPhoneNumber: draftPhone(input.signatoryPhone),
     approverPhoneNumberExtension: input.signatoryPhoneExtension,
     approverDepartmentTh: input.signatoryDepartment,
 
@@ -143,7 +178,7 @@ export async function toRequestData(input: OrganizationDraftInput) {
     userPositionTh: input.contactPosition,
     userDepartmentTh: input.contactDepartment,
     userEmail: input.contactEmail,
-    userPhoneNumber: phone(input.contactPhone),
+    userPhoneNumber: draftPhone(input.contactPhone),
     userPhoneNumberExtension: input.contactPhoneExtension,
     userCid: input.contactNationalId,
   };

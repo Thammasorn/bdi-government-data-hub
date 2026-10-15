@@ -1,0 +1,1228 @@
+{
+  "info": {
+    "name": "D2 — Activity log API (อ่าน log)",
+    "_postman_id": "4f0c2d6e-8b1a-4c3e-9d57-a1e6b3c9f210",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "อ่าน activity log และ error ที่ระบบเก็บไว้ใน MongoDB (docs/21-activity-log.md) — **ไม่ใช่ admin API** และแยก collection ไว้โดยตั้งใจ: คนที่ถือ admin token ไม่ได้สิทธิ์อ่าน log ไปด้วย\n\n## ก่อนเริ่ม\n\n1. **เลือก environment** (ไฟล์อยู่ข้างไฟล์นี้ใน `docs/`) แล้วใส่ค่าสองตัว:\n\n| ตัวแปร | ใส่อะไร |\n| --- | --- |\n| `logToken` | `LOG_READ_TOKEN` จาก `.env` ของเครื่องนั้น — **ความลับ** ไฟล์ `bdi-main-local` กับ `bdi-public` เว้นว่างไว้ (`bdi-dev-checkout` ใส่ค่าตัวอย่าง `dev-log-token-change-me` ไว้แล้ว) |\n| `logReader` | อีเมลของคุณ (ASCII) — ส่งเป็น header `x-log-reader` ทุกคำขอ และลงบันทึกการอ่าน |\n\n2. **ใส่เหตุผลที่อ่าน** ในตัวแปร `readReason` ของ collection (10–500 ตัว ภาษาไทยได้) — script ของ collection แปลงเป็น header `x-log-reason` ให้เองทุกคำขอ **ห้ามใส่เหตุผลใน URL** (API ตอบ 400): เหตุผลมักมีชื่อคนที่ถูกสอบสวน และ URL ไปอยู่ใน log ของ proxy ทุกชั้น activity · timeline · trace บังคับให้มีเหตุผล\n\n   **ตัวระบุบุคคลก็ห้ามอยู่ใน URL ด้วยเหตุผลเดียวกัน** — อีเมล เลขบัตร หรือ uuid ของบัญชีไปทาง header `x-log-email` `x-log-cid` `x-log-person` (G1–G4 ตั้งไว้ให้แล้ว ใส่ค่าในตัวแปร) `?person=` `?cid=` `?email=` ตอบ 400 ค่า ASCII ส่งตรง ๆ ได้ ค่าที่มีอักษรอื่นต้อง `encodeURIComponent`\n\n3. **ทุกการอ่านถูกบันทึกก่อนได้ข้อมูล** เป็น `AUDIT_LOG_READ` ใน audit_event: ผู้อ่าน เหตุผล endpoint ตัวกรอง และ fingerprint ของ token (G7 ดูได้ว่าใครอ่านอะไร) บันทึกไม่ได้ = ไม่ได้ข้อมูล (503 `log_read_unrecorded`)\n\n`baseUrl` ต้องชี้ **backend ตรง** (`https://bdi-api.thammasorn.org`, `http://localhost:4000` หรือ 41N0 ของ dev checkout) — proxy ของหน้าเว็บ (`bdi.thammasorn.org/api/...`) ตอบ 404 ให้ทุก `/api/admin/logs*` โดยตั้งใจ\n\n## ตัวแปรของ collection\n\n| ตัวแปร | ใช้กับ |\n| --- | --- |\n| `readReason` | ทุกคำขอ (header `x-log-reason`) |\n| `person` | G1 G2 G3 — อีเมลหรือ uuid ของบัญชี (header `x-log-person`) |\n| `requestNumber` | G1 G3 — เลขที่คำขอ เช่น `DS-REG-2026-0010` |\n| `email` | G1 G4 — อีเมลที่พิมพ์มาตอนล็อกอิน (header `x-log-email`) |\n| `oldTokenFp` | G1 G8 — fingerprint 12 ตัวของ token ที่หมุนแล้ว (ไม่ใช่ตัว token) |\n| `reference` | G1 G6 — รหัสอ้างอิง 8 ตัวบนข้อความ error |\n| `errorFingerprint` · `errorEventId` | E1 → E2 → E3 เก็บให้อัตโนมัติ |\n| `issueFingerprint` · `issueStatus` · `issueReason` | E4 — **กรอกเองทั้งสามตัว** ขาดตัวใด E4 ไม่ถูกส่ง และล้างทั้งสามหลังเปลี่ยนสำเร็จ: การรันทั้ง collection (Runner, newman) จึงไม่เปลี่ยนสถานะ issue ใดเอง |\n\nid ที่ script เก็บอยู่ใน**ตัวแปรของ collection เท่านั้น** — ถ้าชื่อเดียวกันอยู่ใน environment ด้วย Postman ใช้ค่าจาก environment เสมอ แล้วค่าที่เก็บได้จะไม่มีผล (CLAUDE.md)\n\n## หน้าถัดไปของ activity (G1 G2 G4 G5 G7 G8)\n\nคำตอบที่หน้าเต็มมี `nextBefore` — เปิด query `before` แล้วใส่ค่านั้น **อย่าเพิ่ม `page`**: log โตตลอดเวลา และการอ่านแต่ละครั้งก็เพิ่มแถว `AUDIT_LOG_READ` ขึ้นบนสุดในไม่กี่วินาที `page=2` ที่เปิดทีหลังจึงเห็นท้ายหน้าแรกซ้ำ `before` ต่อจากแถวสุดท้ายที่เห็นพอดี (ใช้คู่กับ `page` ไม่ได้) คำตอบยังบอกช่วงที่ใช้จริงใน `window` — **ส่ง `to` เท่ากับ `window.to` ก็ยังไม่ทำให้ `page` นิ่ง**: สำเนาตามหลังแถวจริงไม่กี่วินาที แถวที่เกิดก่อน `to` แต่ยังคัดลอกไม่ถึง (ปกติคือบันทึกการอ่านครั้งก่อนของคุณเอง) จึงเข้ามาทีหลังแล้วดันหน้าถัดไปให้ซ้ำ `page` นิ่งเฉพาะช่วงในอดีตที่ไม่มีอะไรมาเพิ่มแล้ว (`to` ที่ผ่านไปเกินสองนาทีในเวลาปกติ — หลัง MongoDB ล่ม relay กับคิวยังเติมแถวเก่าย้อนหลังได้อีก) หน้าถัดไปของช่วงล่าสุดใช้ `before` อย่างเดียว\n\n## คำตอบที่พบบ่อย\n\n| status | error | แปลว่า |\n| --- | --- | --- |\n| 400 | `validation` | พารามิเตอร์ผิดหรือไม่รู้จัก — `fields` บอกทีละตัว (รวม `x-log-reader` / `x-log-reason` / `x-log-person` / `x-log-cid` / `x-log-email`) |\n| 401 | `unauthenticated` | `logToken` ผิด — การปฏิเสธถูกบันทึกเป็น `LOG_TOKEN_REJECTED` |\n| 404 | `not_found` | ไม่มี path นี้ หรือไม่พบสิ่งที่ขอ |\n| 503 | `log_access_disabled` | เครื่องนี้ยังไม่ได้ตั้ง `LOG_READ_TOKEN` |\n| 503 | `log_store_unavailable` / `log_store_disabled` | MongoDB ล่ม ค้าง หรือปิดไว้ — ตอบในราว 2 วินาที ก่อนบันทึกการอ่าน (ไม่มีอะไรให้ส่ง) แม้ Postgres จะล่มด้วย |\n| 503 | `hash_search_unavailable` | ค้นด้วยเลขบัตรหรืออีเมลไม่ได้ เพราะไม่ได้ตั้ง `LOG_HASH_KEY` |\n| 503 | `log_read_unrecorded` | Postgres บันทึกการอ่านไม่ได้ และ MongoDB ล้มระหว่างเขียนสำเนาแทน (ตอบ ping ได้ตอนเริ่มคำขอ) — ไม่ส่งข้อมูล |\n| 503 | `database_unavailable` | Postgres ไม่พร้อม จึงแปลงอีเมล เลขที่คำขอ หรือรหัสหน่วยงานไม่ได้ — ค้นด้วย uuid ได้ระหว่างนี้ |\n"
+  },
+  "item": [
+    {
+      "name": "G1 · ค้นหากิจกรรม (search activity)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "x-log-reader",
+            "value": "{{logReader}}",
+            "type": "text",
+            "description": "อีเมลของผู้อ่าน (ASCII ไม่เกิน 100 ตัว) — ประกาศเอง ไม่ได้พิสูจน์ แต่ลงบันทึกการอ่านทุกครั้ง"
+          },
+          {
+            "key": "x-log-person",
+            "value": "{{person}}",
+            "type": "text",
+            "description": "uuid ของบัญชี หรืออีเมล — server แปลงอีเมลเป็น id เอง (ไม่มีบัญชี = ค้นด้วย key HMAC ของอีเมล) · ส่งใน header ไม่ใช่ URL — URL ไปอยู่ใน log ของ proxy และ edge ทุกชั้น (API ตอบ 400 ถ้าอยู่ใน query)",
+            "disabled": true
+          },
+          {
+            "key": "x-log-cid",
+            "value": "",
+            "type": "text",
+            "description": "เลขบัตร 13 หลัก — จับด้วย key HMAC เท่านั้น บันทึกการอ่านเก็บแค่ key ไม่เก็บเลข · ส่งใน header ไม่ใช่ URL — URL ไปอยู่ใน log ของ proxy และ edge ทุกชั้น (API ตอบ 400 ถ้าอยู่ใน query)",
+            "disabled": true
+          },
+          {
+            "key": "x-log-email",
+            "value": "{{email}}",
+            "type": "text",
+            "description": "อีเมลที่อยู่ในแถว (รวมอีเมลที่พิมพ์มาตอนล็อกอินไม่ผ่าน) — จับด้วย key HMAC · ส่งใน header ไม่ใช่ URL — URL ไปอยู่ใน log ของ proxy และ edge ทุกชั้น (API ตอบ 400 ถ้าอยู่ใน query)",
+            "disabled": true
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/logs/activity",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "logs",
+            "activity"
+          ],
+          "query": [
+            {
+              "key": "action",
+              "value": "LOGIN_FAILED,LOGIN_OTP_ISSUED",
+              "description": "รหัส action คั่นด้วย comma ไม่เกิน 20 รหัส (docs/21 §4)",
+              "disabled": true
+            },
+            {
+              "key": "category",
+              "value": "auth",
+              "description": "auth · session · account · role · invitation · organization · request · document · review · config · log-access · admin-access · system · other",
+              "disabled": true
+            },
+            {
+              "key": "result",
+              "value": "FAILURE",
+              "description": "SUCCESS หรือ FAILURE",
+              "disabled": true
+            },
+            {
+              "key": "via",
+              "value": "ADMIN_TOKEN",
+              "description": "SESSION · ADMIN_TOKEN · LOG_TOKEN · WORKER · SCRIPT · ANONYMOUS · SYSTEM",
+              "disabled": true
+            },
+            {
+              "key": "actorId",
+              "value": "",
+              "description": "uuid ของผู้กระทำ",
+              "disabled": true
+            },
+            {
+              "key": "subjectType",
+              "value": "USER_ACCOUNT",
+              "description": "ชนิดของ subject — ต้องมีคู่กับ subjectId",
+              "disabled": true
+            },
+            {
+              "key": "subjectId",
+              "value": "",
+              "description": "uuid ของ subject",
+              "disabled": true
+            },
+            {
+              "key": "request",
+              "value": "{{requestNumber}}",
+              "description": "เลขที่คำขอ (ORG-REG-2026-0002) หรือ uuid ของคำขอ",
+              "disabled": true
+            },
+            {
+              "key": "organization",
+              "value": "",
+              "description": "รหัสหน่วยงาน (organization_code) หรือ uuid",
+              "disabled": true
+            },
+            {
+              "key": "tokenFp",
+              "value": "{{oldTokenFp}}",
+              "description": "fingerprint 12 ตัวของ token (admin token ที่ใช้ หรือที่ถูกปฏิเสธ)",
+              "disabled": true
+            },
+            {
+              "key": "correlationId",
+              "value": "{{reference}}",
+              "description": "correlation id เต็ม หรือรหัสอ้างอิง 8 ตัวขึ้นไป",
+              "disabled": true
+            },
+            {
+              "key": "source",
+              "value": "audit_event",
+              "description": "audit_event · audit_fallback · http",
+              "disabled": true
+            },
+            {
+              "key": "from",
+              "value": "2026-10-01T00:00:00+07:00",
+              "description": "ISO 8601 ที่มี offset — ไม่ระบุและไม่มีตัวกรองที่แคบลง = 30 วันล่าสุด · ช่วงยาวได้ไม่เกิน 366 วัน",
+              "disabled": true
+            },
+            {
+              "key": "to",
+              "value": "2026-10-31T23:59:59+07:00",
+              "description": "ISO 8601 ที่มี offset",
+              "disabled": true
+            },
+            {
+              "key": "before",
+              "value": "",
+              "description": "หน้าถัดไป: ค่า nextBefore จากคำตอบก่อนหน้า — ใช้แทน page (ใช้คู่กันไม่ได้)",
+              "disabled": true
+            },
+            {
+              "key": "page",
+              "value": "1",
+              "description": "เริ่มที่ 1 — เปิดได้ถึงรายการที่ 10,000 · หน้าถัดไปของช่วงล่าสุดใช้ before: page ซ้ำแถวได้แม้ส่ง to = window.to (ดูคำอธิบายของ collection) — page นิ่งเฉพาะช่วงในอดีตที่ to ผ่านไปเกินสองนาที",
+              "disabled": true
+            },
+            {
+              "key": "pageSize",
+              "value": "50",
+              "description": "ค่าตั้งต้น 50 สูงสุด 200",
+              "disabled": true
+            }
+          ]
+        },
+        "description": "ค้นสำเนาของ audit_event ใน log store — ตัวกรองทุกตัว AND กัน ติ๊กเปิดตัวที่ต้องการใน Params — ตัวระบุบุคคล (`x-log-person` `x-log-cid` `x-log-email`) อยู่ใน **Headers** ไม่ใช่ Params\n\n- ไม่ระบุช่วงเวลาและไม่มีตัวกรองที่แคบลง (person, request, organization, actorId, subjectId, cid, email, tokenFp, correlationId) = 30 วันล่าสุด\n- เรียงใหม่ไปเก่า `total` นับถึง 10,000 (`totalIsLowerBound: true` = อย่างน้อยเท่านี้)\n- หน้าเต็มได้ `nextBefore` — หน้าถัดไปคือ `before=<nextBefore>` ไม่ใช่ `page=2` · `window` คือช่วงที่ใช้จริง\n- **ทุกคำขอถูกบันทึกเป็น `AUDIT_LOG_READ` ก่อนได้ข้อมูล** พร้อมผู้อ่าน เหตุผล และตัวกรอง — `readId` ในคำตอบคือ id ของบันทึกนั้น\n- ต้องมีเหตุผล (`readReason`) ไม่งั้น 400"
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// console.table ไม่มีใน sandbox ทุกรุ่น (newman ไม่มี) — ไม่มีก็พิมพ์ทีละแถว",
+              "const table = (rows) => (typeof console.table === 'function' ? console.table(rows) : rows.forEach((row) => console.log(row)));",
+              "try {",
+              "    const events = pm.response.json().events || [];",
+              "    table(events.map((e) => ({ เวลา: e.occurredAtBangkok, action: e.action, via: e.via, ผู้กระทำ: e.actor.name || e.actor.type,",
+              "        subject: e.subject.type, คำขอ: e.requestNumber, ผล: e.result, ref: e.request.reference })));",
+              "    console.log('total =', pm.response.json().total, pm.response.json().totalIsLowerBound ? '(อย่างน้อย)' : '', '· readId =', pm.response.json().readId);",
+              "    if (pm.response.json().nextBefore) console.log('หน้าถัดไป: เปิด query before แล้วใส่', pm.response.json().nextBefore);",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "G2 · ทุกอย่างของบุคคลนี้ (everything about one person, by email)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "x-log-reader",
+            "value": "{{logReader}}",
+            "type": "text",
+            "description": "อีเมลของผู้อ่าน (ASCII ไม่เกิน 100 ตัว) — ประกาศเอง ไม่ได้พิสูจน์ แต่ลงบันทึกการอ่านทุกครั้ง"
+          },
+          {
+            "key": "x-log-person",
+            "value": "{{person}}",
+            "type": "text",
+            "description": "อีเมลหรือ uuid ของบัญชี · ส่งใน header ไม่ใช่ URL — URL ไปอยู่ใน log ของ proxy และ edge ทุกชั้น (API ตอบ 400 ถ้าอยู่ใน query)"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/logs/activity?pageSize=200",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "logs",
+            "activity"
+          ],
+          "query": [
+            {
+              "key": "pageSize",
+              "value": "200",
+              "description": "สูงสุด 200"
+            },
+            {
+              "key": "before",
+              "value": "",
+              "description": "หน้าถัดไป: ค่า nextBefore จากคำตอบก่อนหน้า — ใช้แทน page (ใช้คู่กันไม่ได้)",
+              "disabled": true
+            },
+            {
+              "key": "page",
+              "value": "1",
+              "description": "",
+              "disabled": true
+            },
+            {
+              "key": "from",
+              "value": "",
+              "description": "ISO 8601 ที่มี offset",
+              "disabled": true
+            },
+            {
+              "key": "to",
+              "value": "",
+              "description": "ISO 8601 ที่มี offset",
+              "disabled": true
+            }
+          ]
+        },
+        "description": "ทุกแถวที่คนนี้เกี่ยว — เป็นผู้กระทำ เป็น subject (บัญชีของเขา) ได้ role ถูกเชิญ ถูกขอความเห็น (`relatedUserIds`) และแถวที่มีแค่อีเมลของเขา (`email#` เช่นคำเชิญที่ถูกลบ) ใส่อีเมลหรือ uuid ในตัวแปร `person` ของ collection (ส่งเป็น header `x-log-person` — ตัวระบุบุคคลไม่อยู่ใน URL)\n\nไม่ระบุช่วงเวลา = ทั้งประวัติ · เรียงตามเวลาแบบเก่าไปใหม่รวม error ด้วยใช้ `timeline` กับ header `x-log-person` แทน · นี่คือทางตอบคำขอเข้าถึงข้อมูลของเจ้าของข้อมูล (PDPA) — บันทึกการอ่านเก็บอีเมลเป็น key HMAC เท่านั้น · ผลรวมการอ่านประวัติของคนนี้ครั้งก่อน ๆ (`AUDIT_LOG_READ`) ด้วย — ใครเปิดประวัติของเขาก็เป็นสิ่งที่เกิดกับข้อมูลของเขา"
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// console.table ไม่มีใน sandbox ทุกรุ่น (newman ไม่มี) — ไม่มีก็พิมพ์ทีละแถว",
+              "const table = (rows) => (typeof console.table === 'function' ? console.table(rows) : rows.forEach((row) => console.log(row)));",
+              "try {",
+              "    const events = pm.response.json().events || [];",
+              "    table(events.map((e) => ({ เวลา: e.occurredAtBangkok, action: e.action, via: e.via, ผู้กระทำ: e.actor.name || e.actor.type,",
+              "        subject: e.subject.type, คำขอ: e.requestNumber, ผล: e.result, ref: e.request.reference })));",
+              "    console.log('total =', pm.response.json().total, pm.response.json().totalIsLowerBound ? '(อย่างน้อย)' : '', '· readId =', pm.response.json().readId);",
+              "    if (pm.response.json().nextBefore) console.log('หน้าถัดไป: เปิด query before แล้วใส่', pm.response.json().nextBefore);",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "G3 · เส้นเวลาของคำขอ (timeline of one request, by request number)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "x-log-reader",
+            "value": "{{logReader}}",
+            "type": "text",
+            "description": "อีเมลของผู้อ่าน (ASCII ไม่เกิน 100 ตัว) — ประกาศเอง ไม่ได้พิสูจน์ แต่ลงบันทึกการอ่านทุกครั้ง"
+          },
+          {
+            "key": "x-log-person",
+            "value": "{{person}}",
+            "type": "text",
+            "description": "อีเมลหรือ uuid — แทน request · ส่งใน header ไม่ใช่ URL — URL ไปอยู่ใน log ของ proxy และ edge ทุกชั้น (API ตอบ 400 ถ้าอยู่ใน query)",
+            "disabled": true
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/logs/timeline?request={{requestNumber}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "logs",
+            "timeline"
+          ],
+          "query": [
+            {
+              "key": "request",
+              "value": "{{requestNumber}}",
+              "description": "เลขที่คำขอหรือ uuid"
+            },
+            {
+              "key": "organization",
+              "value": "",
+              "description": "รหัสหน่วยงานหรือ uuid — แทน request",
+              "disabled": true
+            },
+            {
+              "key": "from",
+              "value": "",
+              "description": "ISO 8601 ที่มี offset",
+              "disabled": true
+            },
+            {
+              "key": "to",
+              "value": "",
+              "description": "ISO 8601 ที่มี offset",
+              "disabled": true
+            }
+          ]
+        },
+        "description": "ทุกอย่างของคำขอหนึ่งใบเรียงเก่าไปใหม่ — บันทึกร่าง → สร้างเอกสาร → นำส่ง → การตรวจแต่ละด่าน รวมไฟล์แนบ และ error ที่เกิดกับคำขอนั้น (คำขอ HTTP เดียวกัน หรือ path ที่มี id ของคำขอ) ไม่เกิน 500 รายการ (`truncated: true` = มีมากกว่านี้ ให้แคบด้วย from/to)\n\nใส่เลขที่คำขอในตัวแปร `requestNumber` — ไม่ระบุช่วง = ทั้งชีวิตของคำขอ · ใช้ header `x-log-person` หรือ `organization=` แทนได้ (อย่างใดอย่างหนึ่ง ค่าตั้งต้น 7 วัน)"
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// console.table ไม่มีใน sandbox ทุกรุ่น (newman ไม่มี) — ไม่มีก็พิมพ์ทีละแถว",
+              "const table = (rows) => (typeof console.table === 'function' ? console.table(rows) : rows.forEach((row) => console.log(row)));",
+              "try {",
+              "    const items = pm.response.json().items || [];",
+              "    table(items.map((i) => i.type === 'activity'",
+              "        ? { เวลา: i.occurredAtBangkok, ชนิด: 'กิจกรรม', อะไร: i.action, ใคร: i.actor.name || i.actor.type, ด่าน: i.gate, ref: i.request.reference }",
+              "        : { เวลา: i.occurredAtBangkok, ชนิด: 'error', อะไร: i.name + ': ' + i.message, ใคร: i.actorId, ด่าน: i.level, ref: i.request && i.request.reference }));",
+              "    console.log('truncated =', pm.response.json().truncated, '· readId =', pm.response.json().readId);",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "G4 · ล็อกอินที่ล้มเหลวของอีเมลนี้ (failed logins for one email)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "x-log-reader",
+            "value": "{{logReader}}",
+            "type": "text",
+            "description": "อีเมลของผู้อ่าน (ASCII ไม่เกิน 100 ตัว) — ประกาศเอง ไม่ได้พิสูจน์ แต่ลงบันทึกการอ่านทุกครั้ง"
+          },
+          {
+            "key": "x-log-email",
+            "value": "{{email}}",
+            "type": "text",
+            "description": "อีเมลที่พิมพ์มา · ส่งใน header ไม่ใช่ URL — URL ไปอยู่ใน log ของ proxy และ edge ทุกชั้น (API ตอบ 400 ถ้าอยู่ใน query)"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/logs/activity?action=LOGIN_FAILED&pageSize=200",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "logs",
+            "activity"
+          ],
+          "query": [
+            {
+              "key": "action",
+              "value": "LOGIN_FAILED",
+              "description": ""
+            },
+            {
+              "key": "pageSize",
+              "value": "200",
+              "description": ""
+            },
+            {
+              "key": "from",
+              "value": "",
+              "description": "ISO 8601 ที่มี offset",
+              "disabled": true
+            },
+            {
+              "key": "before",
+              "value": "",
+              "description": "หน้าถัดไป: ค่า nextBefore จากคำตอบก่อนหน้า — ใช้แทน page (ใช้คู่กันไม่ได้)",
+              "disabled": true
+            }
+          ]
+        },
+        "description": "การล็อกอินไม่ผ่านของอีเมลหนึ่งตัว — รวมอีเมลที่ไม่มีบัญชีในระบบ (อีเมลที่พิมพ์มาถูกปิดในสำเนา ค้นได้ด้วย key HMAC เท่านั้น) ใส่อีเมลในตัวแปร `email` (ส่งเป็น header `x-log-email`) · ช่วงเวลาตั้งต้นคือทั้งประวัติ เพราะมีตัวกรองอีเมลแล้ว\n\nระบบที่ไม่ได้ตั้ง `LOG_HASH_KEY` ตอบ 503 `hash_search_unavailable`"
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// console.table ไม่มีใน sandbox ทุกรุ่น (newman ไม่มี) — ไม่มีก็พิมพ์ทีละแถว",
+              "const table = (rows) => (typeof console.table === 'function' ? console.table(rows) : rows.forEach((row) => console.log(row)));",
+              "try {",
+              "    const events = pm.response.json().events || [];",
+              "    table(events.map((e) => ({ เวลา: e.occurredAtBangkok, เหตุ: e.metadata && e.metadata.failure_reason, บัญชี: e.subject.id, ip: e.request.ip })));",
+              "    if (pm.response.json().nextBefore) console.log('หน้าถัดไป: เปิด query before แล้วใส่', pm.response.json().nextBefore);",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "G5 · งานผ่าน admin token สัปดาห์นี้ (admin-token work this week)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "x-log-reader",
+            "value": "{{logReader}}",
+            "type": "text",
+            "description": "อีเมลของผู้อ่าน (ASCII ไม่เกิน 100 ตัว) — ประกาศเอง ไม่ได้พิสูจน์ แต่ลงบันทึกการอ่านทุกครั้ง"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/logs/activity?via=ADMIN_TOKEN&from={{weekAgo}}&pageSize=200",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "logs",
+            "activity"
+          ],
+          "query": [
+            {
+              "key": "via",
+              "value": "ADMIN_TOKEN",
+              "description": ""
+            },
+            {
+              "key": "from",
+              "value": "{{weekAgo}}",
+              "description": "ตั้งให้ใน pre-request script"
+            },
+            {
+              "key": "pageSize",
+              "value": "200",
+              "description": ""
+            },
+            {
+              "key": "action",
+              "value": "",
+              "description": "จำกัดเฉพาะบางรหัส",
+              "disabled": true
+            },
+            {
+              "key": "before",
+              "value": "",
+              "description": "หน้าถัดไป: ค่า nextBefore จากคำตอบก่อนหน้า — ใช้แทน page (ใช้คู่กันไม่ได้)",
+              "disabled": true
+            }
+          ]
+        },
+        "description": "ทุกแถวที่มาทาง `x-admin-token` ใน 7 วันล่าสุด (`from` คำนวณให้ใน pre-request script) — `tokenFps` บอกว่าใช้ token ใบไหน เทียบกับ fingerprint ของ token ปัจจุบันได้ ช่วงยาวกว่านี้แก้ `from` เอง · ตั้งแต่ขั้น 8 รวมบันทึกการเรียก admin API ทุกครั้ง การอ่านด้วย (`action=ADMIN_API_REQUEST`, `source=http` — route, status, path แบบรูปแบบที่อีเมล UUID และเลขยาวถูกแทนแล้ว, ชื่อ query ทุกตัว (ชื่อที่เป็นอีเมลเหลือ `[email]`) และ**ค่า**ของ `status` `role` `organizationId` `page` `pageSize` เฉพาะที่เป็นค่าที่ API รับจริง (นอกนั้น `[other]`) — ค่าของ `cid` `email` `q` ไม่ถูกเก็บ ได้แค่ key ค้นหา `cid#`/`email#` · การเรียกที่เกินเพดานต่อนาทีหรือคิวเต็มรวมอยู่ในบันทึกสรุป `metadata.summary: true` (`count`, `routes`, `statuses`, `subjects`, `ips`, ช่วง `first_at`–`last_at` — key ค้นหาของทุกตัวที่พับอยู่ใน `hashKeys` `relatedUserIds` `tokenFps` ของใบสรุป ใบที่ key เต็ม (200 ต่อรายการ) ปิดแล้วขึ้นใบใหม่ `metadata.truncated_lists` มีเฉพาะตอนคิวเต็มจนใบที่รออยู่ครบ 20 ใบ ซึ่งแปลว่าบาง key ค้นไม่เจอ)) แคบเฉพาะการเปลี่ยนแปลงด้วย `&source=audit_event` · **ไม่รวม**คำขอที่ตัวอ่าน body ปฏิเสธ (400/413/415) ก่อนถึง admin API แม้จะส่ง token ที่ถูกมา: ไม่มีใครตรวจ token ของคำขอนั้น จึงเป็น `via: ANONYMOUS` พร้อม `metadata.token_checked: false` — หาด้วย G8 (`tokenFp=` ของ token นั้น) หรือ `action=ADMIN_API_REQUEST` โดยไม่ใส่ `via`"
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// 7 วันก่อนตอนนี้ — ตัวแปรชั่วคราวของคำขอนี้ ไม่เก็บลง collection",
+              "pm.variables.set('weekAgo', new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString());"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// console.table ไม่มีใน sandbox ทุกรุ่น (newman ไม่มี) — ไม่มีก็พิมพ์ทีละแถว",
+              "const table = (rows) => (typeof console.table === 'function' ? console.table(rows) : rows.forEach((row) => console.log(row)));",
+              "try {",
+              "    const events = pm.response.json().events || [];",
+              "    table(events.map((e) => ({ เวลา: e.occurredAtBangkok, action: e.action, via: e.via, ผู้กระทำ: e.actor.name || e.actor.type,",
+              "        subject: e.subject.type, คำขอ: e.requestNumber, ผล: e.result, ref: e.request.reference })));",
+              "    console.log('total =', pm.response.json().total, pm.response.json().totalIsLowerBound ? '(อย่างน้อย)' : '', '· readId =', pm.response.json().readId);",
+              "    if (pm.response.json().nextBefore) console.log('หน้าถัดไป: เปิด query before แล้วใส่', pm.response.json().nextBefore);",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "G6 · ไล่ตามรหัสอ้างอิง (follow a reference)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "x-log-reader",
+            "value": "{{logReader}}",
+            "type": "text",
+            "description": "อีเมลของผู้อ่าน (ASCII ไม่เกิน 100 ตัว) — ประกาศเอง ไม่ได้พิสูจน์ แต่ลงบันทึกการอ่านทุกครั้ง"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/logs/trace/{{reference}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "logs",
+            "trace",
+            "{{reference}}"
+          ]
+        },
+        "description": "ทุกอย่างที่คำขอ HTTP หนึ่งครั้งทิ้งไว้: กิจกรรม error อีเมลที่เข้าคิว (สถานะ จำนวนครั้ง error ที่กวาดแล้ว — ไม่มีที่อยู่ผู้รับ) และงานกับระบบภายนอก ใส่ \"รหัสอ้างอิง\" 8 ตัวที่ผู้ใช้เห็นบนข้อความ error (หรือ correlation id เต็ม) ในตัวแปร `reference`\n\n- prefix ที่ตรงหลาย id ได้ `{ambiguous: true, candidates}` — เลือกตัวที่ใช่แล้วใส่ id เต็ม\n- `mixedActors: true` = id นี้มาจากผู้กระทำหรือช่องทางมากกว่าหนึ่ง: ผู้เรียก API ตรงส่ง `x-correlation-id` เองได้ จึงไม่ใช่หลักฐานว่าเป็นคลิกเดียว\n- อีเมลและงานภายนอกอ่านจาก Postgres — ถ้าฐานข้อมูลหลักล่ม `postgres: \"unavailable\"` และสองรายการนั้นเป็น null\n- `reports` = รายงานจากเบราว์เซอร์ที่**อ้าง**รหัสนี้ (`browser.reference`): 502 ของหน้าเว็บตอน backend ล่ม (ส่งตามมาหลัง backend กลับมา) และรหัสบนหน้า \"เกิดข้อผิดพลาดที่ไม่คาดคิด\" — ผู้ส่งเขียนรหัสเอง จึงอ่านเป็นคำบอกเล่า มีแต่ `reports` ได้ `correlationId: null` · รายงานที่มี `extra.capped: \"browser_fingerprints\"` มาตอนที่เบราว์เซอร์สร้าง issue ใหม่ครบร้อยตัวของชั่วโมงแล้ว — เก็บตัว event ไว้ให้รหัสค้นเจอ แต่ issue ของ `fingerprint` นั้นอาจไม่มี (E2 ตอบ 404)\n- `serverErrors` = error ของ Next server ที่รายงานใน `reports` ชี้ถึงด้วย `digest` (`extra.digest` ของ event `frontend-server`) — หน้า \"เกิดข้อผิดพลาดที่ไม่คาดคิด\" บน production ได้จาก server แค่ digest ข้อความจริงอยู่ที่นี่ digest คือ hash ของข้อความกับ stack ไม่ใช่ id ของคำขอ จึงอาจเป็นของผู้ใช้คนอื่นที่เจอ error เดียวกันภายในหนึ่งชั่วโมงรอบรายงาน"
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// ไม่ส่งถ้ายังไม่มี reference — ค่าว่างทำให้ path กลายเป็นอีก endpoint หนึ่ง (หรือ 400 ที่ไม่บอกว่าขาดอะไร)",
+              "const missing = 'ยังไม่มี reference — ใส่รหัสอ้างอิง 8 ตัวจากข้อความ error ในตัวแปร reference ของ collection';",
+              "if (!pm.variables.get('reference')) {",
+              "    if (pm.execution && typeof pm.execution.skipRequest === 'function') { console.warn(missing); pm.execution.skipRequest(); }",
+              "    else throw new Error(missing);",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// console.table ไม่มีใน sandbox ทุกรุ่น (newman ไม่มี) — ไม่มีก็พิมพ์ทีละแถว",
+              "const table = (rows) => (typeof console.table === 'function' ? console.table(rows) : rows.forEach((row) => console.log(row)));",
+              "try {",
+              "    const t = pm.response.json();",
+              "    if (t.ambiguous) { table(t.candidates); return; }",
+              "    console.log('correlationId =', t.correlationId, '· mixedActors =', t.mixedActors);",
+              "    table((t.activity || []).map((e) => ({ เวลา: e.occurredAtBangkok, action: e.action, via: e.via, ผู้กระทำ: e.actor.name || e.actor.type })));",
+              "    table((t.errors || []).map((e) => ({ เวลา: e.occurredAtBangkok, error: e.error.name + ': ' + e.error.message, route: e.request && e.request.route })));",
+              "    table(t.deliveries || []);",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "G7 · ใครเปิดอ่าน log (who read the log)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "x-log-reader",
+            "value": "{{logReader}}",
+            "type": "text",
+            "description": "อีเมลของผู้อ่าน (ASCII ไม่เกิน 100 ตัว) — ประกาศเอง ไม่ได้พิสูจน์ แต่ลงบันทึกการอ่านทุกครั้ง"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/logs/activity?action=AUDIT_LOG_READ&pageSize=100",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "logs",
+            "activity"
+          ],
+          "query": [
+            {
+              "key": "action",
+              "value": "AUDIT_LOG_READ",
+              "description": ""
+            },
+            {
+              "key": "pageSize",
+              "value": "100",
+              "description": ""
+            },
+            {
+              "key": "from",
+              "value": "",
+              "description": "ISO 8601 ที่มี offset",
+              "disabled": true
+            },
+            {
+              "key": "before",
+              "value": "",
+              "description": "หน้าถัดไป: ค่า nextBefore จากคำตอบก่อนหน้า — ใช้แทน page (ใช้คู่กันไม่ได้)",
+              "disabled": true
+            }
+          ]
+        },
+        "description": "บันทึกการอ่าน log ทุกครั้ง (`AUDIT_LOG_READ`) — ผู้อ่านที่ประกาศ เหตุผล endpoint ตัวกรอง (อีเมลกับเลขบัตรเป็น key HMAC ใต้ `emailKey` / `cidKey` · `person` ที่เป็นบัญชีเป็น uuid ของบัญชี) และ fingerprint ของ log token ที่ใช้ · การเปลี่ยนสถานะ issue ดูด้วย `action=ERROR_ISSUE_STATUS_CHANGED` · การอ่านครั้งนี้ก็ถูกบันทึกเหมือนกัน\n\n**ใครเคยค้นประวัติของคนหนึ่ง** — เปิด header `x-log-person` `x-log-cid` หรือ `x-log-email` (ของ G1) คู่กับ `action=AUDIT_LOG_READ`: สำเนาของบันทึกการอ่านมี key ที่ค้นและบัญชีที่ถูกเปิดประวัติเป็นตัวค้นหาของมันเอง"
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// console.table ไม่มีใน sandbox ทุกรุ่น (newman ไม่มี) — ไม่มีก็พิมพ์ทีละแถว",
+              "const table = (rows) => (typeof console.table === 'function' ? console.table(rows) : rows.forEach((row) => console.log(row)));",
+              "try {",
+              "    const events = pm.response.json().events || [];",
+              "    table(events.map((e) => ({ เวลา: e.occurredAtBangkok, ผู้อ่าน: e.metadata && e.metadata.reader, เหตุผล: e.reason,",
+              "        endpoint: e.metadata && e.metadata.endpoint, ตัวกรอง: JSON.stringify(e.metadata && e.metadata.filters) })));",
+              "    if (pm.response.json().nextBefore) console.log('หน้าถัดไป: เปิด query before แล้วใส่', pm.response.json().nextBefore);",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "G8 · การใช้ token ที่ถูกหมุนแล้ว (use of the rotated token)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "x-log-reader",
+            "value": "{{logReader}}",
+            "type": "text",
+            "description": "อีเมลของผู้อ่าน (ASCII ไม่เกิน 100 ตัว) — ประกาศเอง ไม่ได้พิสูจน์ แต่ลงบันทึกการอ่านทุกครั้ง"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/logs/activity?tokenFp={{oldTokenFp}}&pageSize=200",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "logs",
+            "activity"
+          ],
+          "query": [
+            {
+              "key": "tokenFp",
+              "value": "{{oldTokenFp}}",
+              "description": "fingerprint 12 ตัว"
+            },
+            {
+              "key": "pageSize",
+              "value": "200",
+              "description": ""
+            },
+            {
+              "key": "before",
+              "value": "",
+              "description": "หน้าถัดไป: ค่า nextBefore จากคำตอบก่อนหน้า — ใช้แทน page (ใช้คู่กันไม่ได้)",
+              "disabled": true
+            }
+          ]
+        },
+        "description": "แถว `ADMIN_TOKEN_REJECTED` (และงานที่ผ่าน) ของ token ใบหนึ่ง — ใส่ fingerprint 12 ตัวของ token เก่าในตัวแปร `oldTokenFp` (วิธีคำนวณอยู่ docs/09-auth-tokens.md §4.1 — **ใส่ fingerprint เท่านั้น ห้ามใส่ตัว token**) แถวสรุปของการปฏิเสธที่รวมหลาย token ก็ค้นเจอ · ตั้งแต่ขั้น 8 บันทึกการเรียก admin API (`ADMIN_API_REQUEST`) ของ token นั้นก็ค้นเจอด้วย ทั้งที่ผ่านและถูกปฏิเสธ รวมคำขอที่ตัวอ่าน body ปฏิเสธ (`via: ANONYMOUS`, `token_checked: false`) และบันทึกสรุป (`metadata.summary: true`) ที่มีการเรียกของ token นั้นพับอยู่ — บอกได้ว่ามันเปิดอ่านอะไร ไม่ใช่แค่ว่าถูกใช้"
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// ไม่ส่งถ้ายังไม่มี oldTokenFp — ค่าว่างทำให้ path กลายเป็นอีก endpoint หนึ่ง (หรือ 400 ที่ไม่บอกว่าขาดอะไร)",
+              "const missing = 'ยังไม่มี oldTokenFp — ใส่ fingerprint 12 ตัวของ token เก่าในตัวแปร oldTokenFp ของ collection';",
+              "if (!pm.variables.get('oldTokenFp')) {",
+              "    if (pm.execution && typeof pm.execution.skipRequest === 'function') { console.warn(missing); pm.execution.skipRequest(); }",
+              "    else throw new Error(missing);",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// console.table ไม่มีใน sandbox ทุกรุ่น (newman ไม่มี) — ไม่มีก็พิมพ์ทีละแถว",
+              "const table = (rows) => (typeof console.table === 'function' ? console.table(rows) : rows.forEach((row) => console.log(row)));",
+              "try {",
+              "    const events = pm.response.json().events || [];",
+              "    table(events.map((e) => ({ เวลา: e.occurredAtBangkok, action: e.action, path: e.metadata && (e.metadata.path || (e.metadata.paths || []).join(' ')),",
+              "        ครั้งที่นับ: e.metadata && e.metadata.suppressed_count, ip: e.request.ip })));",
+              "    if (pm.response.json().nextBefore) console.log('หน้าถัดไป: เปิด query before แล้วใส่', pm.response.json().nextBefore);",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "E1 · ปัญหาที่เปิดอยู่ (open issues)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "x-log-reader",
+            "value": "{{logReader}}",
+            "type": "text",
+            "description": "อีเมลของผู้อ่าน (ASCII ไม่เกิน 100 ตัว) — ประกาศเอง ไม่ได้พิสูจน์ แต่ลงบันทึกการอ่านทุกครั้ง"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/logs/errors/issues?status=open",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "logs",
+            "errors",
+            "issues"
+          ],
+          "query": [
+            {
+              "key": "status",
+              "value": "open",
+              "description": "open · resolved · ignored · all"
+            },
+            {
+              "key": "sort",
+              "value": "lastSeen",
+              "description": "lastSeen · count · firstSeen",
+              "disabled": true
+            },
+            {
+              "key": "service",
+              "value": "backend",
+              "description": "backend · delivery-worker · frontend-server · browser",
+              "disabled": true
+            },
+            {
+              "key": "level",
+              "value": "error",
+              "description": "fatal · error · warning",
+              "disabled": true
+            },
+            {
+              "key": "release",
+              "value": "",
+              "description": "SHA ของ release",
+              "disabled": true
+            },
+            {
+              "key": "since",
+              "value": "",
+              "description": "lastSeen ตั้งแต่ (ISO 8601 ที่มี offset)",
+              "disabled": true
+            },
+            {
+              "key": "page",
+              "value": "1",
+              "description": "",
+              "disabled": true
+            },
+            {
+              "key": "pageSize",
+              "value": "50",
+              "description": "",
+              "disabled": true
+            }
+          ]
+        },
+        "description": "error ที่รวมเป็น issue — ค่าตั้งต้นเฉพาะที่ยังเปิด เรียงตามที่เห็นล่าสุด ไม่บังคับเหตุผล (ส่งมาก็ถูกบันทึก) · script เก็บ fingerprint ของตัวแรกไว้ใน `errorFingerprint` (encode แล้ว) ให้ E2 ใช้ — E4 **ไม่ใช้** ค่านี้ (ต้องกรอก `issueFingerprint` เอง)"
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// console.table ไม่มีใน sandbox ทุกรุ่น (newman ไม่มี) — ไม่มีก็พิมพ์ทีละแถว",
+              "const table = (rows) => (typeof console.table === 'function' ? console.table(rows) : rows.forEach((row) => console.log(row)));",
+              "try {",
+              "    const issues = pm.response.json().issues || [];",
+              "    // เก็บแบบ encode แล้ว — fingerprint มี ':' ' ' และ '/' ได้ (prisma:P2002:POST /api/…) ซึ่งตัด path ของ URL",
+              "    if (issues[0]) pm.collectionVariables.set('errorFingerprint', encodeURIComponent(issues[0].fingerprint));",
+              "    table(issues.map((i) => ({ fingerprint: i.fingerprint, title: i.title, count: i.count, ล่าสุด: i.lastSeenBangkok, สถานะ: i.status })));",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "E2 · รายละเอียดปัญหา (issue detail)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "x-log-reader",
+            "value": "{{logReader}}",
+            "type": "text",
+            "description": "อีเมลของผู้อ่าน (ASCII ไม่เกิน 100 ตัว) — ประกาศเอง ไม่ได้พิสูจน์ แต่ลงบันทึกการอ่านทุกครั้ง"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/logs/errors/issues/{{errorFingerprint}}?events=20",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "logs",
+            "errors",
+            "issues",
+            "{{errorFingerprint}}"
+          ],
+          "query": [
+            {
+              "key": "events",
+              "value": "20",
+              "description": "จำนวน event ล่าสุด (0–100)"
+            }
+          ]
+        },
+        "description": "issue หนึ่งตัวกับ event ล่าสุดของมัน (ย่อ — ตัวเต็มเปิดด้วย E3) · script เก็บ id ของ event ล่าสุดไว้ใน `errorEventId`"
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// ไม่ส่งถ้ายังไม่มี errorFingerprint — ค่าว่างทำให้ path กลายเป็นอีก endpoint หนึ่ง (หรือ 400 ที่ไม่บอกว่าขาดอะไร)",
+              "const missing = 'ยังไม่มี errorFingerprint — รัน E1 ก่อน';",
+              "if (!pm.variables.get('errorFingerprint')) {",
+              "    if (pm.execution && typeof pm.execution.skipRequest === 'function') { console.warn(missing); pm.execution.skipRequest(); }",
+              "    else throw new Error(missing);",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// console.table ไม่มีใน sandbox ทุกรุ่น (newman ไม่มี) — ไม่มีก็พิมพ์ทีละแถว",
+              "const table = (rows) => (typeof console.table === 'function' ? console.table(rows) : rows.forEach((row) => console.log(row)));",
+              "try {",
+              "    const r = pm.response.json();",
+              "    if (r.recentEvents && r.recentEvents[0]) pm.collectionVariables.set('errorEventId', r.recentEvents[0].id);",
+              "    console.log(r.issue.title, '· count', r.issue.count, '· status', r.issue.status);",
+              "    console.log('เปลี่ยนสถานะด้วย E4: กรอก issueFingerprint =', r.issue.fingerprint, 'กับ issueStatus และ issueReason');",
+              "    table((r.recentEvents || []).map((e) => ({ id: e.id, เวลา: e.occurredAtBangkok, route: e.request && e.request.route, ref: e.request && e.request.reference })));",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "E3 · เหตุการณ์เดียว (one event)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "x-log-reader",
+            "value": "{{logReader}}",
+            "type": "text",
+            "description": "อีเมลของผู้อ่าน (ASCII ไม่เกิน 100 ตัว) — ประกาศเอง ไม่ได้พิสูจน์ แต่ลงบันทึกการอ่านทุกครั้ง"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/logs/errors/events/{{errorEventId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "logs",
+            "errors",
+            "events",
+            "{{errorEventId}}"
+          ]
+        },
+        "description": "error event หนึ่งตัวเต็ม ๆ — stack ที่กวาดแล้ว breadcrumb (คำขอนั้นทำอะไรไปแล้วก่อนล้ม) รูปร่างของ body และผู้ใช้ · เก็บไว้ 90 วัน"
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// ไม่ส่งถ้ายังไม่มี errorEventId — ค่าว่างทำให้ path กลายเป็นอีก endpoint หนึ่ง (หรือ 400 ที่ไม่บอกว่าขาดอะไร)",
+              "const missing = 'ยังไม่มี errorEventId — รัน E2 ก่อน';",
+              "if (!pm.variables.get('errorEventId')) {",
+              "    if (pm.execution && typeof pm.execution.skipRequest === 'function') { console.warn(missing); pm.execution.skipRequest(); }",
+              "    else throw new Error(missing);",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// console.table ไม่มีใน sandbox ทุกรุ่น (newman ไม่มี) — ไม่มีก็พิมพ์ทีละแถว",
+              "const table = (rows) => (typeof console.table === 'function' ? console.table(rows) : rows.forEach((row) => console.log(row)));",
+              "try {",
+              "    const e = pm.response.json().event;",
+              "    console.log(e.error.name + ': ' + e.error.message);",
+              "    table(e.breadcrumbs || []);",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "E4 · ปิด/ละเว้นปัญหา (resolve or ignore an issue)",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "x-log-reader",
+            "value": "{{logReader}}",
+            "type": "text",
+            "description": "อีเมลของผู้อ่าน (ASCII ไม่เกิน 100 ตัว) — ประกาศเอง ไม่ได้พิสูจน์ แต่ลงบันทึกการอ่านทุกครั้ง"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/logs/errors/issues/{{issuePath}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "logs",
+            "errors",
+            "issues",
+            "{{issuePath}}"
+          ]
+        },
+        "description": "เปลี่ยนสถานะเป็น `resolved` (เกิดซ้ำเมื่อไรเปิดกลับเอง) `ignored` (นับต่อแต่ไม่แจ้งเตือน) หรือ `open`\n\n**กรอกตัวแปรของ collection เองทั้งสามตัวก่อนส่ง** — `issueFingerprint` (fingerprint ตามที่ E1/E2 แสดง ไม่ต้อง encode) `issueStatus` และ `issueReason` (10–500 ตัว) ขาดตัวใดคำขอนี้ไม่ถูกส่ง ส่งสำเร็จแล้ว script ล้างทั้งสามตัว: หนึ่งการกรอกคือหนึ่งการเปลี่ยน การรันทั้ง collection (Runner, newman) จึงไม่ไปเปลี่ยนสถานะ issue ใดเอง ด้วยเหตุผลเดียวกัน E4 **ไม่ใช้** `errorFingerprint` ที่ E1 เก็บให้อัตโนมัติ\n\n- body ประกอบจากตัวแปร — `issuePath` กับ `issueReasonEscaped` คือค่าที่ pre-request script แปลงให้ (encode ลง path · escape ลง JSON)\n- API ปฏิเสธเหตุผลที่ยังมีตัวยึดตำแหน่ง `<…>` หรือ `{{…}}`\n- ทุกครั้งได้แถว `ERROR_ISSUE_STATUS_CHANGED` ใน audit_event (G7 ด้วย `action=ERROR_ISSUE_STATUS_CHANGED`)",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"status\": \"{{issueStatus}}\",\n  \"reason\": \"{{issueReasonEscaped}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// E4 เปลี่ยนสถานะจริง — ส่งเฉพาะเมื่อกรอกครบสามตัวเอง ไม่ใช้ errorFingerprint ที่ E1 เก็บให้ (รันทั้ง collection แล้วจะไปปิด issue ล่าสุด)",
+              "const fp = (pm.variables.get('issueFingerprint') || '').trim();",
+              "const status = (pm.variables.get('issueStatus') || '').trim();",
+              "const reason = (pm.variables.get('issueReason') || '').trim();",
+              "const missing = !fp ? 'issueFingerprint (fingerprint ตามที่ E1/E2 แสดง)'",
+              "    : !['open', 'resolved', 'ignored'].includes(status) ? 'issueStatus (open · resolved · ignored)'",
+              "    : reason.length < 10 ? 'issueReason (เหตุผล 10–500 ตัว)' : null;",
+              "if (missing) {",
+              "    const message = 'E4 ไม่ส่ง — ยังไม่ได้กรอก ' + missing + ' ในตัวแปรของ collection';",
+              "    if (pm.execution && typeof pm.execution.skipRequest === 'function') { console.warn(message); pm.execution.skipRequest(); }",
+              "    else throw new Error(message);",
+              "} else {",
+              "    // ตัวแปรชั่วคราวของคำขอนี้: fingerprint มี ':' ' ' '/' ได้ (encode ลง path) เหตุผลอาจมี \" หรือ \\ (escape ลง JSON)",
+              "    pm.variables.set('issuePath', encodeURIComponent(fp));",
+              "    pm.variables.set('issueReasonEscaped', JSON.stringify(reason).slice(1, -1));",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "try {",
+              "    const i = pm.response.json().issue;",
+              "    console.log(i.fingerprint, '→', i.status, '·', i.statusReason);",
+              "    // หนึ่งการกรอก = หนึ่งการเปลี่ยน — ครั้งหน้า (และการรันทั้ง collection) ต้องกรอกใหม่",
+              "    if (pm.response.code === 200) ['issueFingerprint', 'issueStatus', 'issueReason'].forEach((key) => pm.collectionVariables.set(key, ''));",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 404, 503 …) — ดูที่ตัว response ได้เลย ตัวแปรที่กรอกไว้ยังอยู่",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "S1 · สถานะระบบบันทึก (log store status)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "x-log-reader",
+            "value": "{{logReader}}",
+            "type": "text",
+            "description": "อีเมลของผู้อ่าน (ASCII ไม่เกิน 100 ตัว) — ประกาศเอง ไม่ได้พิสูจน์ แต่ลงบันทึกการอ่านทุกครั้ง"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/admin/logs/status",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "admin",
+            "logs",
+            "status"
+          ]
+        },
+        "description": "สถานะของ log store ที่ `/health/ready` ไม่แสดงต่อสาธารณะ — คิวของ backend process นี้ (`buffered`, `dropped`, `browserReportsNotCreatingIssues` = รายงานเบราว์เซอร์ที่เดินได้แค่ตัวนับของ issue เดิม เพราะเกินร้อย fingerprint ใหม่ต่อชั่วโมงหรือเกินเพดานขนาด, `browserReferencesLost` = รายงานเบราว์เซอร์ที่มีรหัสอ้างอิงซึ่งไม่ได้เก็บเลยแม้แต่ตัวย่อ — รหัสเหล่านั้น G6 ตอบว่าไม่พบ) ความล่าช้าของ relay (วินาที) กุญแจ hash ตั้งแล้วหรือยัง ขนาดเทียบเพดาน · **ไม่ถูกบันทึกเป็นการอ่าน** (ไม่มีข้อมูลบุคคล) แต่ยังต้องมี token และผู้อ่าน · `adminAccess` = บันทึกการเรียก admin API ของ process นี้ (`recorded` = บันทึกเดี่ยวที่เข้าคิว · `overCap` / `queueFull` = เกินเพดานต่อนาที / คิวเต็ม จึงพับลงบันทึกสรุป · `evicted` = เข้าคิวแล้ว (นับใน `recorded`) แต่ถูกของที่สำคัญกว่าเบียดออกหรือคิวรับกลับไม่ได้หลังเขียนล้ม จึงพับลงบันทึกสรุป · `summaries` = บันทึกสรุปที่เข้าคิว · `pendingInSummary` = การเรียกที่รออยู่ในสรุปที่ยังไม่เข้าคิว · `notStored` = ไม่ได้เก็บที่ไหนเลย เพราะ log store เกินเพดานขนาด) · `alerts` = ลูปอีเมลสรุป error ของ worker ตามที่ worker บอกเอง (backend อ่าน `ERROR_ALERT_EMAILS` ของ worker ไม่ได้): `enabled` กับ `recipients` ณ `checkedAt` — เปิดอยู่เขียนทุกนาทีและก่อนทุกฉบับระหว่างรอบที่กำลังส่ง ปิดอยู่เขียนครั้งเดียวตอน worker เริ่ม ดังนั้น `enabled: true` ที่ `checkedAt` เก่ากว่าสามนาทีแปลว่าลูปไม่ได้วิ่งแล้ว (worker ดับ) · `enabledAt` เริ่มนับใหม่ทุกครั้งที่เปิดกลับมา · `lastDigestAt` = สรุปฉบับใหม่ล่าสุด (การส่งซ้ำของฉบับที่ค้างไม่ขยับค่านี้), `lastError` ของรอบล่าสุด · `alerts: null` = worker ยังไม่เคยเขียน (log store ใหม่)"
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// console.table ไม่มีใน sandbox ทุกรุ่น (newman ไม่มี) — ไม่มีก็พิมพ์ทีละแถว",
+              "const table = (rows) => (typeof console.table === 'function' ? console.table(rows) : rows.forEach((row) => console.log(row)));",
+              "try {",
+              "    table([pm.response.json().logStore]);",
+              "    console.log('release =', pm.response.json().release);",
+              "} catch (e) {",
+              "    // คำตอบไม่ใช่รูปที่ script คาดไว้ (400 fields, 401, 503 …) — ดูที่ตัว response ได้เลย",
+              "    console.log('response:', pm.response.code, pm.response.text().slice(0, 400));",
+              "}"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      {
+        "key": "key",
+        "value": "x-log-token",
+        "type": "string"
+      },
+      {
+        "key": "value",
+        "value": "{{logToken}}",
+        "type": "string"
+      },
+      {
+        "key": "in",
+        "value": "header",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.request.headers.upsert({ key: 'x-log-reason', value: encodeURIComponent(pm.variables.get('readReason') || '') });"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://bdi-api.thammasorn.org",
+      "type": "string",
+      "description": "backend ตรง — main = 4000 · dev slot NN = 41N0 (proxy ของหน้าเว็บตอบ 404)"
+    },
+    {
+      "key": "logToken",
+      "value": "",
+      "type": "string",
+      "description": "LOG_READ_TOKEN จาก .env ของเครื่องนั้น — ใส่ใน environment ไม่ใช่ที่นี่"
+    },
+    {
+      "key": "logReader",
+      "value": "",
+      "type": "string",
+      "description": "อีเมลของผู้อ่าน — ใส่ใน environment ไม่ใช่ที่นี่"
+    },
+    {
+      "key": "readReason",
+      "value": "",
+      "type": "string",
+      "description": "เหตุผลที่อ่าน 10–500 ตัว — ส่งเป็น header x-log-reason (encodeURIComponent) ทุกคำขอ"
+    },
+    {
+      "key": "person",
+      "value": "",
+      "type": "string",
+      "description": "G1 G2 G3 — อีเมลหรือ uuid ของบัญชี (ส่งเป็น header x-log-person ไม่ใช่ query)"
+    },
+    {
+      "key": "requestNumber",
+      "value": "",
+      "type": "string",
+      "description": "G1 G3 — เลขที่คำขอหรือ uuid"
+    },
+    {
+      "key": "email",
+      "value": "",
+      "type": "string",
+      "description": "G1 G4 — อีเมลที่พิมพ์มาตอนล็อกอิน (ส่งเป็น header x-log-email ไม่ใช่ query)"
+    },
+    {
+      "key": "oldTokenFp",
+      "value": "",
+      "type": "string",
+      "description": "G1 G8 — fingerprint 12 ตัวของ token ที่หมุนแล้ว (ห้ามใส่ตัว token)"
+    },
+    {
+      "key": "reference",
+      "value": "",
+      "type": "string",
+      "description": "G1 G6 — รหัสอ้างอิง 8 ตัว หรือ correlation id เต็ม"
+    },
+    {
+      "key": "errorFingerprint",
+      "value": "",
+      "type": "string",
+      "description": "E1 เก็บให้ (encode แล้ว) — ใช้กับ E2 เท่านั้น E4 ไม่ใช้"
+    },
+    {
+      "key": "errorEventId",
+      "value": "",
+      "type": "string",
+      "description": "E2 เก็บให้ — ใช้กับ E3"
+    },
+    {
+      "key": "issueFingerprint",
+      "value": "",
+      "type": "string",
+      "description": "E4 — fingerprint ของ issue ที่จะเปลี่ยนสถานะ ตามที่ E1/E2 แสดง (ไม่ต้อง encode) กรอกเอง"
+    },
+    {
+      "key": "issueStatus",
+      "value": "",
+      "type": "string",
+      "description": "E4 — open · resolved · ignored กรอกเอง"
+    },
+    {
+      "key": "issueReason",
+      "value": "",
+      "type": "string",
+      "description": "E4 — เหตุผล 10–500 ตัว (ลง statusReason และแถว ERROR_ISSUE_STATUS_CHANGED) กรอกเอง · E4 ล้างสามตัวนี้หลังเปลี่ยนสำเร็จ"
+    }
+  ]
+}

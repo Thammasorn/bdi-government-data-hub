@@ -104,7 +104,7 @@ publicDocumentRouter.get("/:id/file", async (req, res) => {
     return;
   }
   // inline: ปุ่มบนหน้าแรกเปิดแท็บใหม่ให้อ่าน คนที่จะบันทึกได้ชื่อเดิมของไฟล์จาก Content-Disposition
-  await streamAttachment(res, file, "inline");
+  await streamAttachment(req, res, file, "inline");
 });
 
 // ════════════════════════════════════════════════════════ ผู้ดูแลระบบ
@@ -338,5 +338,5 @@ adminPublicDocumentRouter.get("/:id/files/:attachmentId", async (req, res) => {
     res.status(404).json(NOT_FOUND);
     return;
   }
-  await streamAttachment(res, file, "attachment");
+  await streamAttachment(req, res, file, "attachment");
 });

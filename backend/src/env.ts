@@ -31,11 +31,107 @@ function requiredInProduction(name: string, devFallback: string): string {
   return devFallback;
 }
 
+/**
+ * รายการ fingerprint ของ token (ฐานสิบหก 12 ตัว คั่นด้วย comma) — ค่าที่ผิดรูปถูกข้ามพร้อมคำเตือนตอนบูต
+ *
+ * ไม่ throw: รายการนี้ช่วยเฝ้าดู ไม่ใช่สิ่งที่ระบบขาดไม่ได้ พิมพ์ผิดตัวเดียวไม่ควรทำให้ API บูตไม่ขึ้น
+ * แต่ต้องบอก ไม่งั้นคนตั้งจะเชื่อว่ากำลังเฝ้าอยู่ทั้งที่ค่านั้นไม่มีวันตรง คำเตือน **ไม่พิมพ์ค่าที่ผิดรูป**
+ * เพราะความผิดที่น่าจะเกิดที่สุดคือวาง token จริงลงไปแทน fingerprint ของมัน
+ */
+function fingerprintList(name: string): string[] {
+  const entries = optional(name, "")
+    .split(",")
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean);
+  const valid = entries.filter((v) => /^[0-9a-f]{12}$/.test(v));
+  if (valid.length < entries.length) {
+    console.warn(
+      `[env] ${name}: ข้าม ${entries.length - valid.length} ค่าที่ไม่ใช่ fingerprint ฐานสิบหก 12 ตัว ` +
+        "(ไม่พิมพ์ค่านั้น เผื่อเป็น token จริง)",
+    );
+  }
+  return valid;
+}
+
+/**
+ * จำนวนบวกจาก env — ค่าที่อ่านไม่ออกใช้ค่าตั้งต้นแทนพร้อมคำเตือน ไม่ throw
+ *
+ * `Number("5GB")` ได้ NaN และการเทียบกับ NaN เป็นเท็จเสมอ เพดานที่ตั้งผิดรูปจึงกลายเป็น "ไม่มีเพดาน" เงียบ ๆ
+ * ค่านี้ไม่ใช่ความลับ พิมพ์ชื่อตัวแปรกับค่าตั้งต้นที่ใช้แทนได้
+ */
+function positiveNumber(name: string, fallback: number): number {
+  const raw = optional(name, "");
+  if (raw === "") return fallback;
+  const value = Number(raw);
+  if (Number.isFinite(value) && value > 0) return value;
+  console.warn(`[env] ${name}: ไม่ใช่จำนวนบวก — ใช้ค่าตั้งต้น ${fallback} แทน`);
+  return fallback;
+}
+
+/**
+ * รายการอีเมลคั่นด้วย comma — ค่าที่ไม่ใช่อีเมลถูกข้ามพร้อมคำเตือน (บอกจำนวน ไม่พิมพ์ค่า) ตัวพิมพ์เล็ก ไม่ซ้ำ
+ */
+function emailList(name: string): string[] {
+  const entries = optional(name, "")
+    .split(",")
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean);
+  const valid = [...new Set(entries.filter((v) => /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(v)))];
+  if (valid.length < new Set(entries).size) {
+    console.warn(`[env] ${name}: ข้าม ${new Set(entries).size - valid.length} ค่าที่ไม่ใช่อีเมล`);
+  }
+  return valid;
+}
+
 /** อ่านก่อนสร้าง env เพราะ redirect_uri ของ ThaID ตั้งต้นจากค่านี้ */
 const APP_URL = optional("APP_URL", "http://localhost:3000").replace(/\/$/, "");
+/** อ่านก่อนสร้าง env เพราะค่าตั้งต้นบางตัว (เพดานของ log store) ต่างกันระหว่าง production กับที่อื่น */
+const NODE_ENV = optional("NODE_ENV", "development");
+const MONGODB_URI = optional("MONGODB_URI", "");
+
+/**
+ * LOG_READ_TOKEN ที่ใช้ได้จริง — ดู `logStore.readToken` ข้างล่าง
+ *
+ * production: ค่าตัวอย่าง (`dev-…`, `…change-me`) หรือสั้นกว่า 32 ตัว (128 บิตเมื่อเป็นฐานสิบหก — fingerprint 12 ตัวที่ลง
+ * `AUDIT_LOG_READ.metadata.token_fp` เดาย้อนกลับได้ถ้า token สั้น) ถือเป็น**ไม่ได้ตั้ง** API อ่าน log จึงปิด (503) แทนที่จะเปิด
+ * ด้วยค่าที่ใครก็รู้ ต่างจาก ADMIN_API_TOKEN ที่แค่เตือน: token นี้ใหม่ ไม่มีใครพึ่งมันอยู่ ปฏิเสธจึงไม่ทำให้อะไรที่ใช้งาน
+ * อยู่พัง ไม่พิมพ์ค่าหรือความยาว
+ */
+function logReadToken(): string {
+  return productionSecret(
+    "LOG_READ_TOKEN",
+    "dev-log-token-change-me",
+    "ปิด API อ่าน log (/api/admin/logs ตอบ 503 log_access_disabled)",
+  );
+}
+
+/**
+ * ความลับที่ dev มีค่าตัวอย่าง แต่ production ไม่รับค่าตัวอย่าง (`dev-…`, `…change-me`) หรือค่าที่สั้นกว่า 32 ตัว — ถือเป็น
+ * **ไม่ได้ตั้ง** พร้อมคำเตือนตอนบูตที่บอกผล (`effect`) ไม่พิมพ์ค่าหรือความยาว ไม่ throw: สิ่งที่ความลับนี้เปิดแค่ปิดไป
+ */
+function productionSecret(name: string, devValue: string, effect: string): string {
+  const value = optional(name, NODE_ENV === "production" ? "" : devValue);
+  if (NODE_ENV !== "production" || value === "") return value;
+  if (value.length < 32 || value.startsWith("dev-") || value.includes("change-me")) {
+    console.warn(
+      `[env] ${name} ยังเป็นค่าตัวอย่างหรือสั้นกว่า 32 ตัว — ${effect} จนกว่าจะตั้งเป็นค่าจาก \`openssl rand -hex 32\``,
+    );
+    return "";
+  }
+  return value;
+}
 
 export const env = {
-  nodeEnv: optional("NODE_ENV", "development"),
+  nodeEnv: NODE_ENV,
+  /**
+   * รุ่นของโค้ดที่รันอยู่ — SHA ของ commit ที่ build image นี้ (`GIT_SHA` → `ENV RELEASE` ใน backend/Dockerfile)
+   * ติดไปกับทุก error event และ `GET /` เพื่อบอกได้ว่า error เกิดกับรุ่นไหน และ issue ที่ปิดไปแล้วกลับมาในรุ่นไหน
+   * dev (tsx จาก source) ไม่ได้ build image จึงเป็น `dev` · **อย่าใส่ใน environment ของ compose**: ค่าว่างจาก `${…:-}`
+   * จะทับค่าที่ image ฝังไว้แล้ว optional() อ่านเป็นไม่ได้ตั้ง กลายเป็น `dev` บน production
+   */
+  release: optional("RELEASE", "dev"),
+  /** ชื่อ deployment ที่ error เกิด (ค่าตั้งต้นใน compose คือ COMPOSE_PROJECT_NAME เช่น `bdi-main`) — แยก checkout ออกจากกัน */
+  deployEnv: optional("DEPLOY_ENV", NODE_ENV),
   port: Number(optional("PORT", "4000")),
   /**
    * รับได้หลาย origin คั่นด้วย comma เพราะตอนเปิดสู่สาธารณะยังต้องเข้าจาก
@@ -67,6 +163,12 @@ export const env = {
     otpMaxAttempts: Number(optional("OTP_MAX_ATTEMPTS", "5")),
     /** shared secret สำหรับ API ฝั่ง admin ที่สเปกระบุว่ายังไม่มี UI */
     adminApiToken: required("ADMIN_API_TOKEN"),
+    /**
+     * fingerprint (`tokenFingerprint()`) ของ token ผู้ดูแลระบบที่ปลดไปแล้ว ว่างได้ — การปฏิเสธที่ตรง
+     * รายการนี้ได้แถว `ADMIN_TOKEN_REJECTED` ของตัวเองเสมอ (lib/token-rejection.ts) คนที่ยังถือค่าเก่า
+     * อยู่จึงไม่หายไปในแถวสรุป วิธีคำนวณ fingerprint อยู่ใน docs/09 §4.1
+     */
+    adminTokenWatchFps: fingerprintList("ADMIN_TOKEN_WATCH_FPS"),
     /**
      * server_secret ของ activation key
      * sheet `activation_key` กำหนดว่า key_hash = HMAC-SHA-256(server_secret, raw_activation_key)
@@ -238,6 +340,78 @@ export const env = {
   support: {
     email: optional("SUPPORT_EMAIL", "d2share-support@bdi.or.th"),
     phone: optional("SUPPORT_PHONE", "02-480-8833"),
+  },
+
+  /**
+   * log store — MongoDB ที่เก็บสำเนาค้นหาได้ของ audit.audit_event และ error ของระบบ (lib/log-store.ts, docs/21)
+   *
+   * **ใช้ `optional()` เท่านั้น ห้าม `required()` / `requiredInProduction()`** — log store เป็นของเสริม และไฟล์นี้
+   * ถูก import โดย backend, delivery-worker, seed ทุกตัว และ job seed บน ACA ตัวแปรที่ขาดตัวเดียวต้องไม่ทำให้
+   * process ไหนบูตไม่ขึ้น ขาดแล้วผลคือ log store ปิด (`disabled`) เท่านั้น
+   */
+  logStore: {
+    /**
+     * สวิตช์ปิดคือ `LOG_STORE_ENABLED=false` — ปิดแล้วไม่โหลด driver ของ Mongo เลย ใช้ได้ทั้งตอน Mongo มีปัญหา
+     * และบน Azure ที่ยังไม่ได้เลือกบริการ ต้องมี URI ด้วยถึงจะเปิด: URI ว่างก็ถือว่าปิด ไม่ใช่ error
+     */
+    enabled: optional("LOG_STORE_ENABLED", "true") === "true" && MONGODB_URI !== "",
+    /** มีรหัสผ่านอยู่ข้างใน — ห้ามพิมพ์ลง log (lib/log-store.ts พิมพ์ได้แค่ชื่อฐานข้อมูล) */
+    uri: MONGODB_URI,
+    db: optional("MONGODB_DB", "bdi_logs"),
+    /**
+     * เพดานขนาดของ log store (MB ที่ข้อมูลกับ index ใช้อยู่จริงจาก dbStats — ไม่นับพื้นที่ว่างที่ WiredTiger จองไว้
+     * ใช้ซ้ำหลังลบ ซึ่งคืนให้ดิสก์ได้ด้วย `compact` เท่านั้น บริการที่ไม่บอกพื้นที่ว่างเทียบขนาดที่จองไว้แทน) มีเพดานเพราะ
+     * /hdd1tb ที่ Mongo อยู่คือดิสก์เดียวกับ Postgres ของ production แต่มันคุมไบต์ที่ใช้อยู่ ไม่ใช่ขนาดบนดิสก์: พื้นที่ว่าง
+     * ของ collection หนึ่งไม่ถูกอีก collection ใช้ ขนาดบนดิสก์จึงเกินค่านี้ได้ (`checkQuota` ใน workers/log-upkeep.ts)
+     * · 5 GB บน production 512 MB ที่อื่น · บน managed Mongo โควตาของบริการเป็นตัวคุมอีกชั้น
+     *
+     * worker เทียบค่านี้ทุกชั่วโมงและตอนบูต (workers/log-upkeep.ts) เกินแล้วตั้งธง `overQuota` ใน relay_state ซึ่ง
+     * backend กับ worker อ่านเป็นสถานะ `over_quota` (lib/log-store.ts) และระหว่างนั้นเก็บแค่ตัวนับของ issue (สำเนา audit กับ
+     * บันทึกการเรียก admin API ที่ token ผ่านยังเก็บต่อ ไม่เกินส่วนยกเว้น 5% ต่อ process) ธงลงเมื่อขนาดต่ำกว่า 90% ของเพดาน · สิ่งที่ใครก็
+     * ส่งได้ (รายงานเบราว์เซอร์ การเรียก admin API ที่ token ไม่ผ่าน error ของคำขอที่ไม่มีตัวตน) กินได้ไม่เกิน 25% ของค่านี้ต่อ
+     * process (lib/untrusted-budget.ts) จึงพาธงขึ้นเองไม่ได้
+     */
+    maxMb: positiveNumber("LOG_STORE_MAX_MB", NODE_ENV === "production" ? 5120 : 512),
+    /**
+     * กุญแจ HMAC ของ key ค้นหาในสำเนากิจกรรม — `cid#…` / `email#…` ใน `activity.hashKeys` (lib/activity-shape.ts) ที่ทำให้
+     * การค้นด้วยเลขบัตรหรืออีเมล (`x-log-cid` `x-log-email`) หาแถวเจอโดยไม่ต้องเก็บเลขบัตรหรืออีเมลที่พิมพ์มาไว้ตรง ๆ ใช้ทั้ง backend (สำเนาของแถวที่ Postgres
+     * ไม่รับ) และ delivery-worker (relay) ต้องเป็นค่าเดียวกัน
+     *
+     * ไม่ตั้ง → ปิดค่าอย่างเดียว `hashKeys` ว่าง บรรทัดเตือนตอนบูต (lib/log-store.ts) และ `x-log-cid` / `x-log-email` ตอบ 503
+     * `hash_search_unavailable` — ไม่ทำให้ process ไหนบูตไม่ขึ้น dev มีค่าตั้งต้น production ไม่มี: กุญแจที่อยู่ในซอร์สคือ
+     * กุญแจที่ทุกคนรู้ และเลขบัตรมีแค่ 10¹³ ค่า ใครได้ hashKeys ไปก็ไล่ย้อนหาเลขบัตรได้ทั้งหมด
+     * **เปลี่ยนค่าแล้วต้อง rebuild สำเนา** — key เดิมหาด้วยกุญแจใหม่ไม่เจอ (workers/log-relay.ts เตือนเมื่อเห็นว่าเปลี่ยน)
+     */
+    hashKey: optional("LOG_HASH_KEY", NODE_ENV === "production" ? "" : "dev-log-hash-key"),
+    /**
+     * ความลับของ API อ่าน log (`x-log-token` ของ `/api/admin/logs/*` — routes/admin-logs.ts) แยกจาก ADMIN_API_TOKEN
+     * โดยตั้งใจ (plan decision 9): log รวมทุกอย่างที่ admin API เห็นบวกประวัติการกระทำของทุกคน และ admin token เคยหลุดมาแล้ว
+     * คนถือ admin token จึงไม่ได้สิทธิ์อ่าน log ไปด้วย
+     *
+     * ว่าง = API ตอบ 503 `log_access_disabled` ทุกคำขอ (ไม่เปิดให้ใครอ่าน และไม่ทำให้บูตไม่ขึ้น) · dev มีค่าตัวอย่าง
+     * `dev-log-token-change-me` (ตรงกับ `.env.example` และ Postman environment ของ dev checkout) · **production ไม่รับค่า
+     * ตัวอย่างและค่าที่สั้นกว่า 32 ตัว** — ถือเป็นว่างพร้อมคำเตือนตอนบูต (`logReadToken()`) เพราะคนที่คัดลอก `.env.example`
+     * ไปเป็น `.env` ของ main/ จะได้ token ที่เขียนอยู่ใน repo สาธารณะ ค่าจริงคือ `openssl rand -hex 32`
+     */
+    readToken: logReadToken(),
+    /**
+     * ความลับที่ Next server แนบมากับรายงาน error ของตัวเอง (`x-report-token` ของ `POST /api/client-errors` —
+     * routes/client-errors.ts) รายงานที่ token ตรงถูกเก็บเป็น `service: "frontend-server"` ที่เหลือทุกตัวเป็น `browser`
+     * `ingest.verified: false` — backend เรียกได้ตรงไม่ผ่านหน้าเว็บ header อย่างเดียวจึงพิสูจน์อะไรไม่ได้ ต้องเป็นค่าเดียวกับ
+     * `INGEST_SERVER_TOKEN` ของ frontend · ว่าง (หรือค่าตัวอย่างบน production) = ไม่มีรายงานไหนได้เป็น frontend-server
+     * ไม่กระทบอย่างอื่น
+     */
+    ingestToken: productionSecret(
+      "INGEST_SERVER_TOKEN",
+      "dev-ingest-token-change-me",
+      "รายงาน error จาก Next server ถูกเก็บเป็นของเบราว์เซอร์ที่ยืนยันไม่ได้ (ingest.verified: false)",
+    ),
+    /**
+     * ผู้รับอีเมลสรุป error (workers/error-alerts.ts — delivery-worker เท่านั้น) คั่นด้วย comma **ว่าง = ปิดการแจ้งเตือน**
+     * ทั้งหมด (issue ยังถูกเก็บตามปกติ) ค่าที่ไม่ใช่อีเมลถูกข้ามพร้อมคำเตือนตอนบูต ไม่ throw — ผู้รับพิมพ์ผิดคนเดียวต้องไม่ทำให้
+     * worker บูตไม่ขึ้นแล้วอีเมลทั้งระบบหยุดตาม
+     */
+    alertEmails: emailList("ERROR_ALERT_EMAILS"),
   },
 } as const;
 

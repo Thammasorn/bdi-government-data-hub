@@ -118,6 +118,19 @@ interface DocumentVersionRow {
 }
 
 /**
+ * เอกสารหนึ่งฉบับที่เพิ่ง render ให้คำขอหนึ่งใบ — ผลของ `renderPlaceholderDocuments()` และ
+ * `renderDatasetDocuments()`
+ *
+ * เดิมสองฟังก์ชันนั้นคืนแค่รหัสเอกสาร ซึ่งพอสำหรับหน้าจอ แต่ `REQUEST_FORM_GENERATED`
+ * ต้องบอกได้ว่าได้ไฟล์ไหนจาก template เวอร์ชันไหน ไม่ใช่แค่ "A0 ถูกสร้าง"
+ */
+export interface RenderedDocument {
+  code: string;
+  versionId: string;
+  attachmentId: string;
+}
+
+/**
  * เอกสารที่ "แสดงให้ผู้ใช้ยอมรับได้" ตามตารางท้าย sheet legal_document_version:
  * document ACTIVE + version PUBLISHED เท่านั้น
  */
@@ -616,6 +629,8 @@ export async function publishVersion(
   },
 ): Promise<{
   versionId: string;
+  /** แถว `legal_document` ของเวอร์ชันนี้ — `LEGAL_DOCUMENT_PUBLISHED` เก็บไว้ให้ค้นตามเอกสารได้ */
+  documentId: string;
   versionNumber: number;
   placeholders: string[];
   deprecatedPlaceholders: string[];
@@ -732,6 +747,7 @@ export async function publishVersion(
 
   return {
     versionId,
+    documentId: document.id,
     versionNumber,
     placeholders,
     deprecatedPlaceholders: deprecated,

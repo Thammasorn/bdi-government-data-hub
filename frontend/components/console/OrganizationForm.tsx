@@ -63,7 +63,7 @@ export function OrganizationForm({
 
   useEffect(() => {
     api
-      .get<{ provinces: string[] }>("/api/address/provinces")
+      .get<{ provinces: string[] }>("/api/address/provinces", { background: true })
       .then((d) => setProvinces(d.provinces))
       .catch(() => setProvinces([]));
   }, []);

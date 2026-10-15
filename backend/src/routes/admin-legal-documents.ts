@@ -1170,7 +1170,7 @@ adminLegalDocumentRouter.get("/legal-documents/:code/versions/:versionId/file", 
     subjectId: file.id,
     after: { filename: file.originalFileName, legalDocumentVersionId: version.id, kind },
   });
-  await streamAttachment(res, file, "attachment");
+  await streamAttachment(req, res, file, "attachment");
 });
 
 /**

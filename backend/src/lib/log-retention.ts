@@ -1,0 +1,78 @@
+/**
+ * อายุการเก็บของทุกอย่างใน log store — ตารางเดียวที่ BDI ตรวจและแก้ตัวเลขได้ (plan §3 "Retention", คำถาม Q3)
+ *
+ * worker ใช้ตารางนี้วันละครั้งหลัง 03:00 น. (workers/log-relay.ts, `pruneLogStore`) ไม่ใช้ TTL index: prune แบบนี้
+ * ทำงานเหมือนกันทั้งบน mongo ในเครื่อง Atlas และ Cosmos ทั้งสองแบบ (Cosmos RU มี TTL ได้แค่บน `_ts`)
+ *
+ * **Postgres `audit.audit_event` ไม่อยู่ในตารางนี้และไม่ถูกลบ** — มันคือระบบบันทึกหลัก ตารางนี้คุมแค่สำเนาใน Mongo
+ * สำเนาที่ถูกลบตามอายุ relay ไม่คัดลอกกลับ (cursor เดินผ่านไปแล้ว) ยกเว้นตอน rebuild ซึ่งเติมใหม่ตั้งแต่แถวแรกของ
+ * Postgres แล้ว prune รอบถัดไปลบซ้ำ (docs/21 runbook)
+ */
+import type { ActivityCategory } from "./activity-shape.js";
+
+/**
+ * activity แต่ละหมวด:
+ *   - `deleteAfterDays` — ลบทั้งเอกสารเมื่อ `occurredAt` เก่ากว่านี้ (null = ไม่ลบ)
+ *   - `stripClientAfterDays` — `$unset` `request.ip` กับ `request.userAgent` เมื่อเก่ากว่านี้ (null = ไม่ตัด)
+ */
+export interface ActivityRetention {
+  deleteAfterDays: number | null;
+  stripClientAfterDays: number | null;
+}
+
+/** เรื่องของธุรกิจ — เก็บตลอด แต่ IP กับ user agent หมดความจำเป็นหลังหนึ่งปี */
+const KEEP: ActivityRetention = { deleteAfterDays: null, stripClientAfterDays: 365 };
+/**
+ * การเข้าสู่ระบบ session และการเข้าถึง admin API — 400 วัน: ได้ประวัติการเดารหัสผ่านย้อนหลังครบหนึ่งปีเต็ม และนานกว่า
+ * 90 วันของ พ.ร.บ.คอมพิวเตอร์ ม.26 ถ้าบังคับใช้ ลบทั้งใบจึงไม่ต้องตัด IP ก่อน
+ */
+const AUTH_LIKE: ActivityRetention = { deleteAfterDays: 400, stripClientAfterDays: null };
+
+/** ตัดสินแล้ว 2026-09-30 — `system` กับ `other` (รหัสที่ยังไม่ได้จัดหมวด) ถือแบบ auth ไม่ใช่แบบธุรกิจ */
+export const ACTIVITY_RETENTION: Record<ActivityCategory, ActivityRetention> = {
+  account: KEEP,
+  role: KEEP,
+  invitation: KEEP,
+  organization: KEEP,
+  request: KEEP,
+  document: KEEP,
+  review: KEEP,
+  config: KEEP,
+  "log-access": KEEP,
+  auth: AUTH_LIKE,
+  session: AUTH_LIKE,
+  "admin-access": AUTH_LIKE,
+  system: AUTH_LIKE,
+  other: AUTH_LIKE,
+};
+
+/**
+ * บันทึกการเรียก admin API ที่ token ไม่ผ่านหรือไม่ได้ตรวจ (`ADMIN_API_REQUEST` ที่ `via: "ANONYMOUS"`, `source: "http"` —
+ * lib/admin-access.ts) — สั้นกว่าหมวด `admin-access` ที่มันอยู่ (400 วัน) ตัดสินในรอบแก้ขั้น 8-10, 2026-10-01
+ *
+ * ทำไม: ใครก็สร้างบันทึกชนิดนี้ได้โดยไม่ต้องมีอะไรเลย ถ้าเก็บ 400 วัน งบไบต์ของมัน (lib/untrusted-budget.ts ซึ่งเติมวันละ
+ * ส่วนแบ่งของเพดาน ÷ อายุ) เหลือวันละราวสามร้อยตัวเดี่ยวบน production — น้อยจนการลองเดา token ช่วงสั้น ๆ ก็ใช้หมด ไม่มีข้อมูลออกไป
+ * กับคำขอพวกนี้ และประวัติการเดา token ย้อนหลังหนึ่งปียังอยู่ที่แถว `ADMIN_TOKEN_REJECTED` ใน Postgres (ไม่ถูกลบ) กับสำเนาใน
+ * `activity` (400 วัน) 90 วันเท่ากับขั้นต่ำของ พ.ร.บ.คอมพิวเตอร์ ม.26 ที่ plan อ้าง · บันทึกที่ token ผ่านยังเป็น 400 วันตามหมวด
+ * ยังเป็นค่าตั้งต้นให้ BDI ตัดสิน (Q3) เหมือนทุกตัวในไฟล์นี้
+ */
+export const ANONYMOUS_ADMIN_ACCESS_DAYS = 90;
+
+/** error ทีละครั้ง — ตัวอย่างสำหรับไล่ปัญหา ตัวนับอยู่ใน error_issues */
+export const ERROR_EVENT_DAYS = 90;
+/** รายงานจากเบราว์เซอร์ (step 9) — มากและบอกได้น้อยกว่า */
+export const BROWSER_EVENT_DAYS = 30;
+/** process เริ่ม ปิด และตาย — ใช้ดูการวนรีสตาร์ต (step 10) */
+export const RUNTIME_EVENT_DAYS = 90;
+/**
+ * issue ที่ปิด (resolved) หรือละเว้น (ignored) แล้วไม่เกิดอีก — issue ของ server ที่ยัง `open` ไม่ถูกลบไม่ว่าเก่าแค่ไหน
+ * (ของเบราว์เซอร์ดู OPEN_BROWSER_ISSUE_DAYS)
+ */
+export const CLOSED_ISSUE_DAYS = 365;
+/**
+ * issue ของเบราว์เซอร์ที่ยัง `open` และไม่เกิดอีก — เท่าอายุของ event ของมัน (ถึงตอนนั้นไม่เหลือ event ให้เปิดดูแล้ว) ไม่ใช่ไม่มี
+ * กำหนดเหมือนของ server: รายงานจากเบราว์เซอร์ใครก็ส่งได้ และข้อความไม่ซ้ำกันหนึ่งตัวคือ issue ใหม่หนึ่งใบ (lib/error-capture.ts
+ * `BROWSER_FINGERPRINTS_PER_HOUR`) issue ที่คนปิดหรือละเว้นไว้ยังใช้ CLOSED_ISSUE_DAYS — ตัวที่ละเว้นต้องไม่หายแล้วกลับมาเป็น
+ * issue ใหม่ที่แจ้งเตือนอีก
+ */
+export const OPEN_BROWSER_ISSUE_DAYS = BROWSER_EVENT_DAYS;

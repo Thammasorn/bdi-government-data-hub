@@ -334,7 +334,10 @@ export default function EditOrganizationPage() {
 
   // ---------- dropdown ที่อยู่แบบลูกโซ่ ----------
   useEffect(() => {
-    api.get<{ provinces: string[] }>("/api/address/provinces").then((d) => setProvinces(d.provinces)).catch(() => undefined);
+    api
+      .get<{ provinces: string[] }>("/api/address/provinces", { background: true })
+      .then((d) => setProvinces(d.provinces))
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => {

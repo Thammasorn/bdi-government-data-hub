@@ -19,8 +19,9 @@ import {
   hashPassword,
   verifyPassword,
 } from "../lib/auth.js";
-import { AuditAction, AuditSubject, logAudit } from "../lib/audit.js";
+import { AuditAction, AuditSubject, diffFields, logAudit, sanitizeDiff } from "../lib/audit.js";
 import {
+  ActivationKeyUnusableError,
   activeRoleCodes,
   completeActivation,
   findUsableActivationKey,
@@ -29,11 +30,15 @@ import {
   RoleOccupiedError,
   roleSeatTaken,
   usableActivationKeyById,
-  type RevokedAssignment,
 } from "../lib/iam.js";
+import { captureError } from "../lib/error-capture.js";
 import { announceRoleReplacement } from "../lib/notify.js";
 import { sendOtpEmail } from "../lib/mail.js";
-import { findUsablePasswordResetToken, type PasswordResetLookupFailure } from "../lib/password-reset.js";
+import {
+  findUsablePasswordResetToken,
+  type PasswordResetLookupFailure,
+  type StaleResetToken,
+} from "../lib/password-reset.js";
 import { ROLE_LABELS } from "../lib/roles.js";
 import {
   activeSessionsFor,
@@ -54,9 +59,11 @@ import {
   claimThaidState,
   failThaidOperation,
   latestVerification,
+  logThaidFailure,
   purposeOf,
   startThaidOperation,
   succeedThaidOperation,
+  thaidCallbackErrorCode,
 } from "../lib/thaid-flow.js";
 import {
   emailSchema,
@@ -76,20 +83,36 @@ const ACTIVATION_FAILURE_MESSAGES: Record<string, string> = {
   not_found: "ไม่พบลิงก์คำเชิญนี้ในระบบ",
 };
 
-async function issueOtp(email: string, purpose: OtpPurpose) {
+/**
+ * `LOGIN_OTP_ISSUED` เขียนหลังบันทึกรหัสและ **ก่อน** ส่งอีเมล — การส่งทำ inline และ throw ได้
+ * ถ้าเขียนทีหลัง SMTP ที่ล้มจะพาแถวนี้หายไปด้วย ทั้งที่รหัสถูกออกไปแล้วจริง
+ */
+async function issueOtp(
+  email: string,
+  purpose: OtpPurpose,
+  audit: { userAccountId: string | null; resend: boolean },
+) {
   const code = generateOtp();
   // ยกเลิกรหัสเก่าที่ยังไม่ถูกใช้ ป้องกันมีรหัสใช้ได้หลายตัวพร้อมกัน
   await prisma.otpCode.updateMany({
     where: { email, purpose, consumedAt: null },
     data: { consumedAt: new Date() },
   });
-  await prisma.otpCode.create({
+  const otp = await prisma.otpCode.create({
     data: {
       email,
       codeHash: await bcrypt.hash(code, 8),
       purpose,
       expiresAt: new Date(Date.now() + env.auth.otpTtlMinutes * 60_000),
     },
+  });
+  await logAudit({
+    action: AuditAction.LOGIN_OTP_ISSUED,
+    subjectType: AuditSubject.USER_ACCOUNT,
+    subjectId: audit.userAccountId,
+    actorType: "ANONYMOUS",
+    // ไม่มีตัวรหัสหรือ hash ของมัน — id ของแถวพอให้จับคู่กับความพยายามที่ขั้น OTP ได้
+    metadata: { resend: audit.resend, otp_code_id: otp.id, expires_at: otp.expiresAt },
   });
   await sendOtpEmail(email, code);
 }
@@ -231,6 +254,7 @@ authRouter.post("/thaid/start", async (req, res) => {
 
   let subjectId: string | undefined;
   let organizationId: string | null = null;
+  let userAccountId: string | null = null;
 
   if (parsed.data.purpose === "activate") {
     if (!parsed.data.token) {
@@ -254,12 +278,24 @@ authRouter.post("/thaid/start", async (req, res) => {
     }
     subjectId = key.id;
     organizationId = key.organizationId;
+    userAccountId = key.userAccountId;
   }
 
-  const { state, nonce } = await startThaidOperation({
+  const { state, nonce, operation } = await startThaidOperation({
     purpose: parsed.data.purpose,
     subjectId,
     organizationId,
+  });
+  await logAudit({
+    action: AuditAction.IDENTITY_VERIFICATION_STARTED,
+    subjectType: AuditSubject.INTEGRATION_JOB,
+    subjectId: operation.id,
+    organizationId,
+    actorType: "ANONYMOUS",
+    metadata: {
+      purpose: parsed.data.purpose,
+      ...(subjectId ? { activation_key_id: subjectId, user_account_id: userAccountId } : {}),
+    },
   });
 
   res.json({ authorizeUrl: authorizeUrl(state, nonce) });
@@ -286,8 +322,11 @@ authRouter.post("/thaid/callback", async (req, res) => {
     return;
   }
 
-  const { operation, reason } = await claimThaidState(parsed.data.state);
+  const { operation, reason, found } = await claimThaidState(parsed.data.state);
   if (!operation) {
+    // ที่เดียวที่เขียน `state_*` — `claimThaidState()` ปิดแถวที่หมดเวลาโดยไม่ audit เพื่อไม่ให้ซ้ำ
+    // และ `not_found` ไม่มีแถวให้ `failThaidOperation()` ปิดอยู่แล้ว
+    await logThaidFailure(found, `state_${reason}`);
     res.status(400).json({
       error: `state_${reason}`,
       message:
@@ -301,11 +340,13 @@ authRouter.post("/thaid/callback", async (req, res) => {
   }
 
   if (parsed.data.error) {
-    await failThaidOperation(operation, parsed.data.error, parsed.data.errorDescription ?? "");
+    // มาจาก query string ผ่านเบราว์เซอร์ ใครก็ใส่อะไรก็ได้ — เก็บและตอบกลับเฉพาะค่าที่เป็นรูปรหัส
+    const code = thaidCallbackErrorCode(parsed.data.error);
+    await failThaidOperation(operation, code, parsed.data.errorDescription ?? "");
     res.status(400).json({
-      error: parsed.data.error,
+      error: code,
       message:
-        parsed.data.error === "user_denied"
+        code === "user_denied"
           ? "คุณไม่ได้ให้ความยินยอมกับ ThaID การยืนยันตัวตนจึงไม่สำเร็จ"
           : "ยืนยันตัวตนกับ ThaID ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
     });
@@ -325,8 +366,19 @@ authRouter.post("/thaid/callback", async (req, res) => {
     identity = await resolveIdentity(parsed.data.code, operation.requestNonce);
   } catch (err) {
     const code = err instanceof ThaidError ? err.code : "unexpected";
+    // failThaidOperation() กวาดก่อนเขียนลง integration_operation — ที่นี่ไม่พิมพ์มันดิบ ๆ
     const detail = err instanceof Error ? err.message : String(err);
-    console.error(`[thaid] ${code}: ${detail}`);
+    // ข้อความเต็ม (error_description ของ DOPA, ข้อความของตัวตรวจ JWT) อยู่ในบรรทัด [capture] ถัดไปที่กวาดแล้ว
+    console.error(`[thaid] ${code} — ดูบรรทัด [capture] ถัดไป`);
+    /**
+     * nonce ที่ไม่ตรงคือ id_token ที่ไม่ได้ออกให้คำขอนี้ — ผู้ใช้ไม่ได้ทำอะไรผิด แต่ก็ไม่ใช่ระบบเราล่ม เก็บเป็น warning
+     * ที่เหลือ (ThaID ไม่ตอบ, แลก code ไม่ผ่าน, id_token เสีย) คือยืนยันตัวตนไม่ได้ทั้งที่ผู้ใช้ทำถูกทุกขั้น
+     */
+    captureError(err, {
+      req,
+      level: code === "nonce_mismatch" || code === "nonce_missing" ? "warning" : "error",
+      tag: "thaid.resolve-identity",
+    });
     await failThaidOperation(operation, code, detail);
 
     /**
@@ -366,6 +418,12 @@ authRouter.post("/thaid/callback", async (req, res) => {
       `claim ${claim} ไม่มา หรือไม่ใช่เลขประจำตัวประชาชนที่ถูกต้อง (THAID_USE_PID/scope ตั้งถูกหรือไม่)`,
     );
     console.error(`[thaid] ไม่ได้เลขบัตรจาก claim ${claim} — ตรวจ THAID_USE_PID และ THAID_SCOPE`);
+    // ตั้งค่าผิดฝั่งเรา ผู้ใช้ทุกคนที่ผ่าน ThaID จะติดตรงนี้เหมือนกันหมด จึงต้องเป็น issue ที่มีคนเห็น
+    captureError(new Error(`ThaID ไม่ส่งเลขประจำตัวประชาชนมาใน claim ${claim}`), {
+      req,
+      tag: "thaid.cid-unavailable",
+      fingerprint: `thaid:cid-unavailable:${claim}`,
+    });
     res.status(502).json({
       error: "cid_unavailable",
       message: "ระบบไม่ได้รับเลขประจำตัวประชาชนจาก ThaID จึงยืนยันตัวตนไม่ได้ กรุณาติดต่อผู้ดูแลระบบ",
@@ -391,12 +449,17 @@ authRouter.post("/thaid/callback", async (req, res) => {
       activationKeyId: key.id,
       reason: "เลขประจำตัวประชาชนจาก ThaID ไม่ตรงกับที่บันทึกไว้",
     });
-    await failThaidOperation(operation, "cid_mismatch", "เลขบัตรจาก ThaID ไม่ตรงกับบัญชี");
+    // audit: false — แถวข้างล่างคือแถวของเหตุการณ์นี้ และมี thaid_subject ที่ hook ทั่วไปไม่มี
+    await failThaidOperation(operation, "cid_mismatch", "เลขบัตรจาก ThaID ไม่ตรงกับบัญชี", {
+      audit: false,
+    });
     await logAudit({
       action: AuditAction.IDENTITY_VERIFICATION_FAILED,
       subjectType: AuditSubject.USER_ACTIVATION_KEY,
       subjectId: key.id,
       organizationId: key.organizationId,
+      // ยังไม่มี session — ไม่ใช่ SYSTEM ซึ่งเป็นค่าตั้งต้นของ logAudit เมื่อไม่มี actor
+      actorType: "ANONYMOUS",
       result: "FAILURE",
       metadata: {
         failure_reason: "CID_MISMATCH",
@@ -421,6 +484,7 @@ authRouter.post("/thaid/callback", async (req, res) => {
     subjectType: AuditSubject.USER_ACTIVATION_KEY,
     subjectId: key.id,
     organizationId: key.organizationId,
+    actorType: "ANONYMOUS",
     metadata: {
       user_account_id: key.userAccountId,
       thaid_subject: identity.subject,
@@ -450,6 +514,36 @@ authRouter.post("/thaid/callback", async (req, res) => {
       where: { id: key.userAccountId },
       data: { ...fromCard, updatedBy: key.userAccountId },
     });
+    /**
+     * ชื่อบนบัญชีเปลี่ยนโดยไม่มีใครพิมพ์ — ต้องบอกได้ว่าเปลี่ยนจากอะไรเป็นอะไร เพราะชื่อที่
+     * เจ้าหน้าที่กรอกไว้ตอนเชิญผู้มีอำนาจฯ ถูกเขียนทับตรงนี้ และชื่อนี้คือชื่อที่จะไปอยู่บน A0
+     * เขียนเฉพาะช่องที่ต่างจากเดิมจริง บัตรที่ตรงกับที่กรอกไว้แล้วไม่ได้แถว
+     *
+     * ผ่าน `sanitizeDiff()` แม้ตอนนี้มีแค่ชื่อ: ใครเติม `pid` ของบัตรลง `fromCard` วันหลังจะได้เลขที่ถูกปิด
+     * เองโดยไม่ต้องรู้ว่าจุดนี้เคยเป็นข้อยกเว้น
+     */
+    const changed = sanitizeDiff(
+      diffFields(
+        {
+          prefixTh: key.userAccount.prefixTh,
+          firstnameTh: key.userAccount.firstnameTh,
+          lastnameTh: key.userAccount.lastnameTh,
+        },
+        fromCard,
+      ),
+    );
+    if (changed) {
+      await logAudit({
+        action: AuditAction.USER_ACCOUNT_UPDATED,
+        subjectType: AuditSubject.USER_ACCOUNT,
+        subjectId: key.userAccountId,
+        organizationId: key.organizationId,
+        actorType: "ANONYMOUS",
+        before: changed.before,
+        after: changed.after,
+        metadata: { updated_via: "THAID", integration_operation_id: operation.id },
+      });
+    }
   }
 
   res.json({
@@ -492,10 +586,14 @@ async function thaidLogin(
   });
 
   if (matches.length === 0) {
-    await failThaidOperation(operation, "account_not_found", "ไม่มีบัญชีที่ผูกกับเลขบัตรนี้");
+    // audit: false — ขา login ที่ไม่พบบัญชีคือการเข้าสู่ระบบที่ล้มเหลว เขียนเป็น LOGIN_FAILED ข้างล่าง
+    await failThaidOperation(operation, "account_not_found", "ไม่มีบัญชีที่ผูกกับเลขบัตรนี้", {
+      audit: false,
+    });
     await logAudit({
       action: AuditAction.LOGIN_FAILED,
       subjectType: AuditSubject.USER_ACCOUNT,
+      actorType: "ANONYMOUS",
       result: "FAILURE",
       metadata: { failure_reason: "THAID_NO_MATCHING_ACCOUNT", thaid_subject: identity.subject },
     });
@@ -622,13 +720,14 @@ authRouter.post("/activate", async (req, res) => {
   }
 
   /**
-   * assignment ของคนที่ถูกแทนที่ตอนมอบ role ให้บัญชีนี้ — ประกาศหลัง transaction commit
-   * เท่านั้น audit และอีเมลเขียนผ่าน prisma ตัวหลัก ไม่ใช่ tx จะเรียกจากในนั้นไม่ได้
+   * ผลของการมอบ role — คนที่ถูกแทนที่ และ id ของ assignment ที่ได้มา ทั้งสองอย่างใช้หลัง
+   * transaction commit เท่านั้น audit และอีเมลเขียนผ่าน prisma ตัวหลัก ไม่ใช่ tx
+   * จะเรียกจากในนั้นไม่ได้ (rollback แล้วจะเหลือหลักฐานของเหตุการณ์ที่ไม่เคยเกิด)
    */
-  let replaced: RevokedAssignment[] = [];
+  let activation: Awaited<ReturnType<typeof completeActivation>>;
 
   try {
-    await prisma.$transaction(async (tx) => {
+    activation = await prisma.$transaction(async (tx) => {
       await tx.userAccount.update({
         where: { id: key.userAccountId },
         data: {
@@ -644,14 +743,12 @@ authRouter.post("/activate", async (req, res) => {
           updatedBy: key.userAccountId,
         },
       });
-      const activation = await completeActivation(tx, {
+      return completeActivation(tx, {
         activationKeyId: key.id,
         userAccountId: key.userAccountId,
         roleCode: key.role.code as RoleCode,
         organizationId: key.organizationId,
       });
-      // ประกาศหลัง commit — เก็บไว้ก่อน ดู announceRoleReplacement()
-      replaced = activation.replaced;
     });
   } catch (err) {
     // external_subject ซ้ำ = ThaID คนเดียวกันเคยเปิดบัญชีอื่นไปแล้ว
@@ -678,6 +775,11 @@ authRouter.post("/activate", async (req, res) => {
       });
       return;
     }
+    // คีย์ถูกเพิกถอนหรือถูกใช้ไประหว่างที่อ่านมากับตอนเขียน — ตอบเหมือนอ่านเจอสถานะนั้นตั้งแต่ต้น
+    if (err instanceof ActivationKeyUnusableError) {
+      res.status(410).json({ error: err.reason, message: ACTIVATION_FAILURE_MESSAGES[err.reason] });
+      return;
+    }
     throw err;
   }
 
@@ -689,8 +791,37 @@ authRouter.post("/activate", async (req, res) => {
     organizationId: key.organizationId,
     metadata: { method: "THAID", activation_key_id: key.id },
   });
+  // คีย์กับ role เปลี่ยนใน transaction เดียวกับบัญชี — บันทึกแยกแถวเพราะคนละ subject:
+  // ประวัติของคีย์ใบนี้ต้องจบที่ USED และ assignment ต้องมีแถวเกิดของตัวเอง
+  // before เป็น ISSUED เสมอ: `completeActivation()` พลิกได้เฉพาะคีย์ที่ยัง ISSUED ตอนเขียน ไม่ใช่ตอนที่อ่านไว้
+  await logAudit({
+    action: AuditAction.ACTIVATION_KEY_USED,
+    subjectType: AuditSubject.USER_ACTIVATION_KEY,
+    subjectId: key.id,
+    actorId: key.userAccountId,
+    organizationId: key.organizationId,
+    before: { status: "ISSUED" },
+    after: { status: "USED" },
+    metadata: { user_account_id: key.userAccountId, role: key.role.code },
+  });
+  if (activation.roleAssignmentCreated) {
+    await logAudit({
+      action: AuditAction.ROLE_ASSIGNED,
+      subjectType: AuditSubject.USER_ROLE_ASSIGNMENT,
+      subjectId: activation.roleAssignmentId,
+      actorId: key.userAccountId,
+      organizationId: key.organizationId,
+      after: { userAccountId: key.userAccountId, role: key.role.code, organizationId: key.organizationId },
+      metadata: {
+        assigned_via: "ACTIVATION",
+        activation_key_id: key.id,
+        replaced: activation.replaced.length,
+      },
+    });
+  }
 
-  await announceRoleReplacement(replaced);
+  // ประกาศหลัง commit เท่านั้น — ดู announceRoleReplacement()
+  await announceRoleReplacement(activation.replaced);
 
   await issueSession(req, res, key.userAccountId);
 });
@@ -763,12 +894,31 @@ authRouter.post("/password-reset", async (req, res) => {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;
   }
-  const { record, reason } = await findUsablePasswordResetToken(parsed.data.token);
+
+  /**
+   * ลิงก์ที่ใช้ไม่ได้ก็บันทึก — เป็น COMPLETED ที่ `result = FAILURE` ไม่ใช่ action ใหม่ เพราะคือ
+   * ความพยายามทำสิ่งเดียวกันที่ไม่สำเร็จ `failure_reason` เป็นรหัสเดียวกับ `error` ที่ตอบกลับไป
+   * ผู้ถือลิงก์ยังไม่ได้พิสูจน์ว่าเป็นเจ้าของบัญชี (ไม่มี session) จึงเป็น ANONYMOUS ไม่ใช่ตัวบัญชี
+   * — ต่างจากแถวที่สำเร็จ ซึ่งการตั้งรหัสได้คือการพิสูจน์นั้นแล้ว
+   */
+  const resetFailed = (failureReason: string, token: StaleResetToken | null) =>
+    logAudit({
+      action: AuditAction.PASSWORD_RESET_COMPLETED,
+      subjectType: AuditSubject.USER_ACCOUNT,
+      subjectId: token?.userAccountId ?? null,
+      actorType: "ANONYMOUS",
+      result: "FAILURE",
+      metadata: { failure_reason: failureReason, password_reset_token_id: token?.id ?? null },
+    });
+
+  const { record, reason, stale } = await findUsablePasswordResetToken(parsed.data.token);
   if (!record) {
+    await resetFailed(reason, stale);
     res.status(410).json({ error: reason, message: PASSWORD_RESET_FAILURE_MESSAGES[reason] });
     return;
   }
   if (record.userAccount.status !== UserAccountStatus.ACTIVE) {
+    await resetFailed("inactive", record);
     res.status(409).json({
       error: "inactive",
       message: "บัญชีนี้ถูกระงับการใช้งาน จึงตั้งรหัสผ่านใหม่ไม่ได้ กรุณาติดต่อผู้ประสานงานของ BDI",
@@ -795,6 +945,8 @@ authRouter.post("/password-reset", async (req, res) => {
     });
   });
   if (revokedSessions === null) {
+    // อีกคำขอที่ถือลิงก์เดียวกันเผาโทเคนไปก่อนหน้าเสี้ยววินาที — ลงเป็น used เหมือนที่ตอบ
+    await resetFailed("used", record);
     res.status(410).json({ error: "used", message: PASSWORD_RESET_FAILURE_MESSAGES.used });
     return;
   }
@@ -849,6 +1001,8 @@ authRouter.post("/login", async (req, res) => {
       action: AuditAction.LOGIN_FAILED,
       subjectType: AuditSubject.USER_ACCOUNT,
       subjectId: user?.id ?? null,
+      // ยังไม่มีใครล็อกอิน — ไม่ระบุไว้ logAudit จะลงเป็น SYSTEM ซึ่งเท่ากับบอกว่าระบบเป็นคนลอง
+      actorType: "ANONYMOUS",
       result: "FAILURE",
       metadata: { failure_reason: "INVALID_CREDENTIAL", email: parsed.data.email },
     });
@@ -860,6 +1014,16 @@ authRouter.post("/login", async (req, res) => {
     return;
   }
   if (user.status !== UserAccountStatus.ACTIVE) {
+    // รหัสผ่านถูกแต่บัญชีเข้าไม่ได้ — แยกจาก INVALID_CREDENTIAL เพราะคนละความหมายทีเดียว:
+    // ตัวนี้คือเจ้าของตัวจริง (หรือคนที่ถือรหัสของเขา) พยายามเข้าบัญชีที่ถูกระงับหรือยังไม่เปิดใช้
+    await logAudit({
+      action: AuditAction.LOGIN_FAILED,
+      subjectType: AuditSubject.USER_ACCOUNT,
+      subjectId: user.id,
+      actorType: "ANONYMOUS",
+      result: "FAILURE",
+      metadata: { failure_reason: `ACCOUNT_${user.status}` },
+    });
     res.status(403).json({
       error: "inactive",
       message:
@@ -870,7 +1034,7 @@ authRouter.post("/login", async (req, res) => {
     return;
   }
 
-  await issueOtp(user.email, OtpPurpose.LOGIN);
+  await issueOtp(user.email, OtpPurpose.LOGIN, { userAccountId: user.id, resend: false });
   res.status(202).json({ email: user.email, nextStep: "verify_otp" });
 });
 
@@ -886,16 +1050,45 @@ authRouter.post("/login/verify-otp", async (req, res) => {
     return;
   }
 
+  /**
+   * ขั้น OTP ล้มเหลว — หาบัญชีจากอีเมล **เฉพาะในทางที่ล้มเหลวเท่านั้น** ทางที่สำเร็จอ่านบัญชี
+   * อยู่แล้วข้างล่าง ไม่ต้องเพิ่ม query ให้ทุกการเข้าสู่ระบบ อีเมลที่พิมพ์มาเก็บไว้ด้วยเหมือน
+   * INVALID_CREDENTIAL เพราะอีเมลที่ไม่มีบัญชีก็ยังต้องตอบได้ว่าถูกลองกี่ครั้ง
+   *
+   * query นี้มีไว้ให้ audit อย่างเดียว จึงกลืน error แบบเดียวกับ logAudit — ฐานข้อมูลสะดุด
+   * ตรงนี้ได้แถวที่ไม่มี subject ไม่ใช่ 500 แทนคำตอบ "รหัสไม่ถูกต้อง" ที่ผู้ใช้ควรได้
+   */
+  const otpFailed = async (failureReason: string, extra: Record<string, unknown>) => {
+    const account = await prisma.userAccount
+      .findUnique({ where: { email: parsed.data.email }, select: { id: true } })
+      .catch(() => null);
+    await logAudit({
+      action: AuditAction.LOGIN_FAILED,
+      subjectType: AuditSubject.USER_ACCOUNT,
+      subjectId: account?.id ?? null,
+      actorType: "ANONYMOUS",
+      result: "FAILURE",
+      metadata: { failure_reason: failureReason, email: parsed.data.email, ...extra },
+    });
+  };
+
   const otp = await prisma.otpCode.findFirst({
     where: { email: parsed.data.email, purpose: OtpPurpose.LOGIN, consumedAt: null },
     orderBy: { createdAt: "desc" },
   });
   if (!otp || otp.expiresAt < new Date()) {
+    // ผู้ใช้เห็นข้อความเดียวกันทั้งสองกรณี แต่ log แยก: "ไม่มีรหัสค้างอยู่เลย" (ใช้ไปแล้ว ถูกล็อกไปแล้ว
+    // หรือไม่เคยผ่านขั้นรหัสผ่าน) ไม่ใช่เรื่องเดียวกับรหัสที่ออกให้จริงแล้วหมดเวลา
+    await otpFailed(
+      otp ? "OTP_EXPIRED" : "OTP_NOT_PENDING",
+      otp ? { otp_code_id: otp.id, expires_at: otp.expiresAt } : {},
+    );
     res.status(400).json({ error: "otp_expired", message: "รหัสหมดอายุแล้ว กรุณากดขอรหัสใหม่" });
     return;
   }
   if (otp.attempts >= env.auth.otpMaxAttempts) {
     await prisma.otpCode.update({ where: { id: otp.id }, data: { consumedAt: new Date() } });
+    await otpFailed("OTP_LOCKED", { otp_code_id: otp.id, attempts: otp.attempts });
     res
       .status(429)
       .json({ error: "otp_locked", message: "กรอกรหัสผิดเกินจำนวนที่กำหนด กรุณาขอรหัสใหม่" });
@@ -904,6 +1097,7 @@ authRouter.post("/login/verify-otp", async (req, res) => {
   if (!(await bcrypt.compare(parsed.data.code, otp.codeHash))) {
     await prisma.otpCode.update({ where: { id: otp.id }, data: { attempts: { increment: 1 } } });
     const left = env.auth.otpMaxAttempts - otp.attempts - 1;
+    await otpFailed("OTP_INVALID", { otp_code_id: otp.id, attempts_left: Math.max(left, 0) });
     res.status(400).json({
       error: "otp_invalid",
       message: left > 0 ? `รหัสไม่ถูกต้อง เหลืออีก ${left} ครั้ง` : "รหัสไม่ถูกต้อง กรุณาขอรหัสใหม่",
@@ -913,6 +1107,20 @@ authRouter.post("/login/verify-otp", async (req, res) => {
 
   const user = await prisma.userAccount.findUnique({ where: { email: parsed.data.email } });
   if (!user || user.status !== UserAccountStatus.ACTIVE) {
+    // รหัสถูก แต่บัญชีถูกระงับหรือหายไประหว่างสองขั้น — ช่วงนั้นยาวได้เท่าอายุ OTP
+    await logAudit({
+      action: AuditAction.LOGIN_FAILED,
+      subjectType: AuditSubject.USER_ACCOUNT,
+      subjectId: user?.id ?? null,
+      actorType: "ANONYMOUS",
+      result: "FAILURE",
+      metadata: {
+        failure_reason: "ACCOUNT_INACTIVE",
+        account_status: user?.status ?? null,
+        email: parsed.data.email,
+        otp_code_id: otp.id,
+      },
+    });
     res.status(403).json({ error: "inactive", message: "บัญชีนี้เข้าสู่ระบบไม่ได้" });
     return;
   }
@@ -952,7 +1160,15 @@ authRouter.post("/login/resend-otp", async (req, res) => {
     res.status(409).json({ error: "no_pending", message: "กรุณาเข้าสู่ระบบด้วยรหัสผ่านอีกครั้ง" });
     return;
   }
-  await issueOtp(parsed.data.email, OtpPurpose.LOGIN);
+  // รหัสค้างอยู่ = ขั้นรหัสผ่านผ่านมาแล้ว บัญชีจึงมีอยู่จริง — อ่านมาเพื่อเป็น subject ของ audit
+  // อย่างเดียว อ่านไม่ได้ก็ส่งรหัสใหม่ตามปกติ แถวแค่ไม่มี subject
+  const account = await prisma.userAccount
+    .findUnique({ where: { email: parsed.data.email }, select: { id: true } })
+    .catch(() => null);
+  await issueOtp(parsed.data.email, OtpPurpose.LOGIN, {
+    userAccountId: account?.id ?? null,
+    resend: true,
+  });
   res.status(202).json({ ok: true });
 });
 
@@ -969,7 +1185,7 @@ authRouter.post("/logout", async (req, res) => {
   const presented = req.cookies?.[SESSION_COOKIE];
   if (presented) {
     const { session } = await resolveSession(presented);
-    if (session) await revokeSession(prisma, session.id, SessionRevokeReason.LOGOUT);
+    if (session) await revokeSession(prisma, session, SessionRevokeReason.LOGOUT);
   }
   res.clearCookie(SESSION_COOKIE, { ...cookieOptions(), maxAge: undefined });
   res.json({ ok: true });
@@ -1133,7 +1349,7 @@ async function issueSession(
   const presented = req.cookies?.[SESSION_COOKIE];
   if (presented) {
     const { session } = await resolveSession(presented);
-    if (session) await revokeSession(prisma, session.id, SessionRevokeReason.ROTATED);
+    if (session) await revokeSession(prisma, session, SessionRevokeReason.ROTATED);
   }
 
   const { sessionId } = await createSession(prisma, userAccountId);
