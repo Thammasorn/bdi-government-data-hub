@@ -92,11 +92,57 @@ Rules, enforced by `seconds()` in `backend/src/env.ts`:
 
 `last_seen_at` is **not** written on every request — one page load fires dozens of API calls.
 `resolveSession()` writes it only when it is at least `TOUCH_INTERVAL_MS` old, which is
-**60 seconds, or half of the idle window if that is shorter**. The cap matters only for very
-short test values: with `SESSION_IDLE_SECONDS=30` and a fixed one-minute touch, a session in
-constant use would still die after 30 seconds.
+**60 seconds, or half of the idle window if that is shorter**.
 
-Consequence: idle expiry is accurate to about a minute, which is irrelevant at 8 hours.
+The stored value can therefore trail the real last request by up to one interval, so the
+effective idle timeout lies between *idle − interval* and *idle*. In production that is between
+59 and 60 minutes, which nobody notices.
+
+#### Worked example — production's values
+
+`main/.env` on 2026-10-20: `SESSION_IDLE_SECONDS=3600` (1 hour), `SESSION_TTL_SECONDS=604800`
+(7 days). Interval = min(60 s, 3600 ÷ 2) = **60 s**.
+
+A user logs in at 09:00:00 on 20 Oct:
+
+| Time | User does | `last_seen_at` age | Written? | Stored `last_seen_at` | Idle deadline (+3600 s) |
+|---|---|---|---|---|---|
+| 09:00:00 | logs in (OTP verified) | — | created | 09:00:00 | **10:00:00** |
+| 09:00:10 | opens the request list (~20 API calls) | 10 s | no, < 60 s | 09:00:00 | 10:00:00 |
+| 09:00:40 | opens one request | 40 s | no | 09:00:00 | 10:00:00 |
+| 09:01:05 | clicks a tab | 65 s | **yes**, ≥ 60 s | 09:01:05 | **10:01:05** |
+| 09:01:30 | scrolls, loads attachments | 25 s | no | 09:01:05 | 10:01:05 |
+| 09:01:50 | last click, goes to a meeting | 45 s | no | 09:01:05 | 10:01:05 |
+
+The last real activity was 09:01:50, but the stored value is 09:01:05, so the session ends
+45 s earlier than "exactly one hour after the last click". About 60 API calls in those
+110 seconds cost **one** write.
+
+The user comes back:
+
+| Returns at | Check | Result |
+|---|---|---|
+| **10:01:00** | 10:01:05 > now → valid; value is 3595 s old → written | stays logged in; new deadline **11:01:00** |
+| **10:01:10** | 10:01:05 ≤ now → expired | **401**, frontend sends them to `/login`; row closed `EXPIRED`, audit `expiry_kind: IDLE` |
+
+The absolute expiry runs alongside, untouched by activity: `expires_at` = 20 Oct 09:00:00 +
+604800 s = **27 Oct 09:00:00**, and the cookie's `Max-Age` is the same 604800. Someone who clicks
+every minute for a week is still logged out then, with `expiry_kind: ABSOLUTE`.
+
+#### Why the interval is capped at half the idle window
+
+The cap matters only for very short test values. With `SESSION_IDLE_SECONDS=30` and a fixed
+60 s interval, a session in constant use dies anyway:
+
+| Time | Stored `last_seen_at` | Deadline |
+|---|---|---|
+| 0 s login | 0 | 30 s |
+| 1–29 s, clicking constantly — value < 60 s old, never written | 0 | 30 s |
+| 30 s next click | — | **expired** |
+
+With the cap the interval is 15 s, so a write always lands before the deadline (15 s → deadline
+45 s, 30 s → 60 s, …). The window is still coarse: the session ends anywhere from 15 to 30 s
+after the last click. A short test value proves idle expiry happens, not exactly when.
 
 ### 3.3 Nobody sweeps expired rows
 
