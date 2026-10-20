@@ -42,6 +42,7 @@ import {
 import { prisma } from "../db.js";
 import { env } from "../env.js";
 import { adminActorId, currentContext } from "../lib/context.js";
+import { thaiDuration } from "../lib/duration.js";
 import { NAME_FIELDS, fullNameTh } from "../lib/person-name.js";
 import { AuditAction, AuditSubject, diffFields, logAudit } from "../lib/audit.js";
 import {
@@ -339,7 +340,7 @@ const listQuerySchema = z.object({
  * ระบุบัญชีด้วย **อีเมล** ไม่ใช่ id ตามที่การ์ดเขียน: คนที่โทรมาบอกว่าลืมรหัสผ่านบอกอีเมล
  * ของตัวเองได้ แต่ไม่รู้ UUID ของแถวตัวเอง อยู่ก่อน `/:id` และไม่ชนกัน (คนละจำนวน segment)
  *
- * แอดมิน**ไม่ได้ตั้งรหัสให้** — ระบบส่งลิงก์ครั้งเดียว อายุ `PASSWORD_RESET_TTL_MINUTES`
+ * แอดมิน**ไม่ได้ตั้งรหัสให้** — ระบบส่งลิงก์ครั้งเดียว อายุ `PASSWORD_RESET_TTL_SECONDS`
  * ไปที่อีเมลของบัญชี แล้วเจ้าตัวตั้งเองที่ `/reset-password` แอดมินจึงไม่เคยรู้รหัสผ่าน
  * ของใคร และการตอบกลับก็ไม่มีโทเคนอยู่ในนั้น (ตอน SMTP ยังไม่ตั้ง mailer พิมพ์ลิงก์ลง log
  * ให้ทดสอบเหมือนคำเชิญ)
@@ -397,7 +398,7 @@ adminUserRouter.post("/password-reset", async (req, res) => {
     userAccountId: account.id,
     email: account.email,
     expiresAt: record.expiresAt,
-    message: `ส่งลิงก์ตั้งรหัสผ่านใหม่ไปที่ ${account.email} แล้ว ลิงก์ใช้ได้ ${env.auth.passwordResetTtlMinutes} นาที`,
+    message: `ส่งลิงก์ตั้งรหัสผ่านใหม่ไปที่ ${account.email} แล้ว ลิงก์ใช้ได้ ${thaiDuration(env.auth.passwordResetTtlSeconds)}`,
   });
 });
 

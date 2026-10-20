@@ -17,7 +17,8 @@ function optional(name: string, fallback: string): string {
 }
 
 /**
- * ระยะเวลาเป็นวินาที — หน่วยมาตรฐานของ session (cookie `Max-Age`, `expires_in` ของ OAuth)
+ * อายุเป็นวินาที — ทุก `*_TTL_SECONDS` อ่านผ่านตัวนี้ (cookie `Max-Age` และ `expires_in` ของ OAuth
+ * ก็เป็นวินาที) timeout ของ I/O ยังเป็น `*_MS` เพราะเป็นอีกเรื่องหนึ่ง
  *
  * ค่าต้องเป็นจำนวนเต็มบวก ค่าเพี้ยนทำให้ server ไม่ขึ้นเลยดีกว่าออก session ที่ตายทันทีหรือไม่ตายเลย
  */
@@ -173,8 +174,7 @@ export const env = {
      * ต้องเข้าสู่ระบบใหม่ ทั้งสองค่าตั้งผ่าน env ได้เพื่อให้เจ้าของสเปกปรับได้เองภายหลัง
      */
     sessionIdleSeconds: seconds("SESSION_IDLE_SECONDS", 8 * 60 * 60),
-    invitationTtlDays: Number(optional("INVITATION_TTL_DAYS", "7")),
-    otpTtlMinutes: Number(optional("OTP_TTL_MINUTES", "10")),
+    otpTtlSeconds: seconds("OTP_TTL_SECONDS", 10 * 60),
     otpMaxAttempts: Number(optional("OTP_MAX_ATTEMPTS", "5")),
     /** shared secret สำหรับ API ฝั่ง admin ที่สเปกระบุว่ายังไม่มี UI */
     adminApiToken: required("ADMIN_API_TOKEN"),
@@ -195,13 +195,13 @@ export const env = {
       "ACTIVATION_KEY_SECRET",
       "dev-activation-key-secret",
     ),
-    activationKeyTtlDays: Number(optional("ACTIVATION_KEY_TTL_DAYS", "7")),
+    activationKeyTtlSeconds: seconds("ACTIVATION_KEY_TTL_SECONDS", 7 * 24 * 60 * 60),
     /**
      * อายุลิงก์ตั้งรหัสผ่านใหม่ที่ผู้ดูแลระบบสั่งออก — สั้นกว่าคำเชิญมาก (นาที ไม่ใช่วัน)
      * เพราะแอดมินเพิ่งคุยกับเจ้าตัวอยู่ กดไม่ทันก็ขอใหม่ได้ทันที ลิงก์ที่ค้างอยู่ในกล่อง
      * จดหมายเป็นวัน ๆ มีแต่โอกาสถูกคนอื่นใช้ (hash ด้วย activationKeySecret ตัวเดียวกัน)
      */
-    passwordResetTtlMinutes: Number(optional("PASSWORD_RESET_TTL_MINUTES", "60")),
+    passwordResetTtlSeconds: seconds("PASSWORD_RESET_TTL_SECONDS", 60 * 60),
     /**
      * ตั้ง Secure ให้ session cookie โดยอัตโนมัติเมื่อ APP_URL เป็น https
      * (เบราว์เซอร์ทิ้ง cookie ที่มี Secure ถ้าเชื่อมต่อผ่าน http ธรรมดา
@@ -271,9 +271,9 @@ export const env = {
      */
     requireNonce: optional("THAID_REQUIRE_NONCE", "false") === "true",
     /** อายุของ state ที่ค้างรอ callback — ยาวพอให้เปิดแอป ThaID บนมือถือแล้วกลับมา */
-    stateTtlMinutes: Number(optional("THAID_STATE_TTL_MINUTES", "15")),
+    stateTtlSeconds: seconds("THAID_STATE_TTL_SECONDS", 15 * 60),
     /** ยืนยันตัวตนแล้วมีเวลาเท่านี้ในการตั้งรหัสผ่านให้จบ ก่อนต้องยืนยันใหม่ */
-    verificationTtlMinutes: Number(optional("THAID_VERIFICATION_TTL_MINUTES", "30")),
+    verificationTtlSeconds: seconds("THAID_VERIFICATION_TTL_SECONDS", 30 * 60),
   },
 
   /**

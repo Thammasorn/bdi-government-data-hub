@@ -678,7 +678,7 @@ endpoint. `docs/09-auth-tokens.md` §1.4 is the full account.
 /api/admin/users/password-reset` `{ email }` (admin token, `ACTIVE` accounts only — `PENDING`
 has no password yet, and a suspended one would still not get in) issues a one-shot token in
 `iam.password_reset_token`, HMAC'd with `ACTIVATION_KEY_SECRET` exactly like an activation key,
-good for `PASSWORD_RESET_TTL_MINUTES` (60), one usable per account (a reissue revokes the last),
+good for `PASSWORD_RESET_TTL_SECONDS` (3600), one usable per account (a reissue revokes the last),
 and mails `/reset-password?token=…`. The response carries no token; the dry-run mailer prints
 the link. `GET /api/auth/password-reset` checks the link and `POST` sets the password — same
 `passwordSchema` + `confirmPassword` as `/activate` — burns the token and revokes **every**
@@ -1723,6 +1723,10 @@ there. Unknown server actions, undecodable URLs and bad `Next-Url` headers never
   without the flag **every** storage call answers "The API version … is not supported by
   Azurite" — the backend still boots, `/health/ready` just goes amber and no file can be
   uploaded. Drop the flag once Azurite catches up.
+- **Every lifetime setting is `*_TTL_SECONDS`, read through `seconds()` in `env.ts`**; I/O timeouts stay
+  `*_MS`. Text a person reads goes through `thaiDuration()` (`lib/duration.ts`), never the raw number —
+  an e-mail would otherwise say "ใช้ได้ 604800 วินาที". Unified 2026-10-20 with no fallback for the old
+  `_DAYS` / `_HOURS` / `_MINUTES` names.
 - `optional()` in `backend/src/env.ts` treats an empty string as unset. Compose emits `FOO=`
   for every `${FOO:-}`, and `??` would let that empty value override the default.
 - The frontend `build` stage sets `NODE_ENV=production`. Without it, prerendering
