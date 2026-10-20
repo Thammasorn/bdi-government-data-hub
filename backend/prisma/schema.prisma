@@ -272,8 +272,8 @@ enum SessionRevokeReason {
 /// ใช้ SHA-256 ไม่ใช่ bcrypt ด้วยเหตุผลเดียวกับ `generateToken()` — ค่าสุ่มความยาวเต็ม
 /// ไม่ใช่รหัสผ่านที่คนตั้งเอง จึงไม่มีอะไรให้ brute-force และต้อง lookup ด้วยค่าตรง ๆ
 ///
-/// อายุมีสองชั้นและต้องผ่านทั้งคู่: `expires_at` (absolute, SESSION_TTL_DAYS)
-/// และ `last_seen_at` (idle, SESSION_IDLE_HOURS)
+/// อายุมีสองชั้นและต้องผ่านทั้งคู่: `expires_at` (absolute, SESSION_TTL_SECONDS)
+/// และ `last_seen_at` (idle, SESSION_IDLE_SECONDS)
 model Session {
   id String @id @default(uuid()) @db.Uuid
 

@@ -1607,7 +1607,7 @@ operation คงรหัสเดิมไว้ ข้อความอิส
 
 | `reason` | เกิดเมื่อ | subject | actor | โค้ด |
 |---|---|---|---|---|
-| `EXPIRED` | มีคนยื่น cookie ของ session ที่เลย `expires_at` (ABSOLUTE) หรือว่างเกิน `SESSION_IDLE_HOURS` (IDLE) — ผ่าน `requireAuth` ทุก route, `/logout`, `/password-reset`, `issueSession()` | `SESSION` · id ของแถว session | `USER` = เจ้าของ session | `session.ts:115` |
+| `EXPIRED` | มีคนยื่น cookie ของ session ที่เลย `expires_at` (ABSOLUTE) หรือว่างเกิน `SESSION_IDLE_SECONDS` (IDLE) — ผ่าน `requireAuth` ทุก route, `/logout`, `/password-reset`, `issueSession()` | `SESSION` · id ของแถว session | `USER` = เจ้าของ session | `session.ts:115` |
 | `LOGOUT` | `POST /api/auth/logout` กับ session ที่ยังใช้ได้ | `SESSION` | `SYSTEM` (null) | `session.ts:147` ← `auth.ts:1188` |
 | `ROTATED` | ออก session ใหม่ขณะเบราว์เซอร์ถือ cookie ที่ยังใช้ได้ (verify-otp, `/activate`, ThaID login) | `SESSION` · **ใบเก่า** | `SYSTEM` (null) | `session.ts:147` ← `auth.ts:1352` |
 | `LOGOUT_ALL` | `POST /api/auth/logout-all` | UA | `USER` = เจ้าของบัญชี | `session.ts:182` ← `auth.ts:1196` |

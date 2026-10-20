@@ -362,7 +362,7 @@ az containerapp create \
       SMTP_USER="<gmail-address>" SMTP_PASS=secretref:smtp-pass \
       SMTP_FROM="ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล <no-reply@bdi.or.th>" \
       SUPPORT_EMAIL=d2share-support@bdi.or.th \
-      SESSION_TTL_DAYS=7 SESSION_IDLE_HOURS=8 \
+      SESSION_TTL_SECONDS=604800 SESSION_IDLE_SECONDS=28800 \
       INVITATION_TTL_DAYS=7 ACTIVATION_KEY_TTL_DAYS=7 \
       OTP_TTL_MINUTES=10 OTP_MAX_ATTEMPTS=5 \
       THAID_ROOT_URL=https://imauthsbx.bora.dopa.go.th \
@@ -882,7 +882,7 @@ rather than overriding it.
 | `GOTENBERG_TIMEOUT_MS` | | `60000` | keep ≤ gotenberg's `--api-timeout` |
 | `SMTP_HOST` `SMTP_PORT` `SMTP_SECURE` `SMTP_USER` `SMTP_PASS` `SMTP_FROM` | | Gmail defaults | no `SMTP_USER` = log instead of send |
 | `SUPPORT_EMAIL` `SUPPORT_PHONE` | | `d2share-support@bdi.or.th`, empty | printed at the foot of every email; empty phone omits the line |
-| `SESSION_TTL_DAYS` `SESSION_IDLE_HOURS` | | `7`, `8` | absolute and idle expiry |
+| `SESSION_TTL_SECONDS` `SESSION_IDLE_SECONDS` | | `604800`, `28800` | absolute and idle expiry, in seconds (`docs/23-session.md`) |
 | `INVITATION_TTL_DAYS` `ACTIVATION_KEY_TTL_DAYS` | | `7`, `7` | |
 | `OTP_TTL_MINUTES` `OTP_MAX_ATTEMPTS` | | `10`, `5` | |
 | `THAID_ROOT_URL` | | sandbox | |

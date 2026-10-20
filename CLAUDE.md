@@ -28,6 +28,9 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   admin token, ThaID's tokens, OAuth `state`, OIDC `nonce`): where each lives, how it is
   hashed, when it expires. **There is no refresh token and no need for one**; §1.4 explains
   the session table that replaced the old JWT
+- `docs/23-session.md` — how a session lives and dies, end to end: cookie, the two expiries
+  (`SESSION_TTL_SECONDS` / `SESSION_IDLE_SECONDS`, **in seconds** since 2026-10-20 — the old
+  `SESSION_TTL_DAYS` / `SESSION_IDLE_HOURS` are gone and ignored if set), every revoke reason
 - `docs/10-admin-prefill-organization.md` — organizations an admin creates ahead of time,
   and how their data reaches the user's registration form
 - `docs/11-metadata-registration-form.md` — the dataset metadata form: which sheet of
@@ -583,7 +586,7 @@ several officers can sit on the same request's detail page at once, so `frontend
 asks `GET /:id/state` every 15 seconds while the tab is visible. What is stale on that screen is
 not just news — it is a button offering an action that no longer exists. It stops on the terminal
 statuses, stops while `document.hidden` (which also keeps a parked tab from holding the session
-open against `SESSION_IDLE_HOURS`), and is silent on error. **Never point it at `GET /:id`**: that
+open against `SESSION_IDLE_SECONDS`), and is silent on error. **Never point it at `GET /:id`**: that
 handler is ten to seventeen SELECTs, `/state` is three. Both compute `stateVersion` from the same
 `stateVersionOf()`, so the page can tell "changed" from "same" without a second full fetch — and
 if they ever disagree, a freshly loaded page announces a change that did not happen.
@@ -661,8 +664,8 @@ the cookie, and don't "optimise" this read away.
 **The cookie holds an opaque random value, not a JWT.** It points at a row in `iam.session`,
 which is what makes revocation possible at all; there is no `JWT_SECRET` any more
 (`jsonwebtoken` stays, for ThaID's `id_token`). `lib/session.ts` owns the lifecycle. Two
-expiries, both enforced: absolute (`SESSION_TTL_DAYS`, 7 days, not renewable) and idle
-(`SESSION_IDLE_HOURS`, 8 hours, `last_seen_at` moves — written at most once a minute, not per
+expiries, both enforced: absolute (`SESSION_TTL_SECONDS`, 604800 = 7 days, not renewable) and idle
+(`SESSION_IDLE_SECONDS`, 28800 = 8 hours, `last_seen_at` moves — written at most once a minute, not per
 request). `issueSession()` revokes whatever session the caller arrived with, so logging in
 always rotates the value. Every revocation writes an `audit_event` whose
 `metadata_json.reason` says which of LOGOUT · LOGOUT_ALL · PASSWORD_CHANGED ·

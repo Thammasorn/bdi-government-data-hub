@@ -119,6 +119,7 @@ export function cookieOptions() {
     sameSite: "lax" as const,
     secure: env.auth.cookieSecure,
     path: "/",
-    maxAge: env.auth.sessionTtlDays * 24 * 60 * 60 * 1000,
+    // express รับ maxAge เป็นมิลลิวินาที แล้วเขียน `Max-Age` (วินาที) ลง header เอง
+    maxAge: env.auth.sessionTtlSeconds * 1000,
   };
 }

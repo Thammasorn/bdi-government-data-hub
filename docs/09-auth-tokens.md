@@ -36,7 +36,7 @@
 ```js
 // lib/auth.ts
 { httpOnly: true, sameSite: "lax", secure: env.auth.cookieSecure, path: "/",
-  maxAge: SESSION_TTL_DAYS * 24 * 60 * 60 * 1000 }
+  maxAge: SESSION_TTL_SECONDS * 1000 }
 ```
 
 - **`httpOnly`** — XSS ที่รันสคริปต์ในหน้าเว็บได้ ก็ยังขโมย cookie ออกไปใช้ที่อื่นไม่ได้
@@ -102,14 +102,16 @@ session หนึ่งใบ = แถวหนึ่งแถวใน `iam.ses
 
 **อายุมีสองชั้น ต้องผ่านทั้งคู่**
 
+(ค่าทั้งสองเป็น **วินาที** ตั้งแต่ 2026-10-20 — คำอธิบายเต็มอยู่ใน `docs/23-session.md`)
+
 | ชั้น | คอลัมน์ | ค่าตั้งต้น | ต่ออายุได้ไหม |
 |---|---|---|---|
-| absolute | `expires_at` | `SESSION_TTL_DAYS` = 7 วัน | ไม่ได้ ครบแล้วต้องเข้าสู่ระบบใหม่ |
-| idle | `last_seen_at` | `SESSION_IDLE_HOURS` = 8 ชั่วโมง | ขยับทุกครั้งที่ใช้งาน |
+| absolute | `expires_at` | `SESSION_TTL_SECONDS` = 604800 (7 วัน) | ไม่ได้ ครบแล้วต้องเข้าสู่ระบบใหม่ |
+| idle | `last_seen_at` | `SESSION_IDLE_SECONDS` = 28800 (8 ชั่วโมง) | ขยับทุกครั้งที่ใช้งาน |
 
 `last_seen_at` ถูกเขียนอย่างมากทุก 1 นาที (`TOUCH_INTERVAL_MS` ใน `lib/session.ts`)
-ไม่ใช่ทุก request — หน้าเว็บหน้าเดียวยิง API หลายสิบครั้ง และ idle ที่นับเป็นชั่วโมง
-ไม่ต้องการความละเอียดกว่านั้น ใบที่หมดอายุถูกปิดเป็น `EXPIRED` ตอนมีคนเอามายิง
+(หรือครึ่งหนึ่งของ idle ถ้า idle สั้นกว่า 2 นาที) ไม่ใช่ทุก request — หน้าเว็บหน้าเดียวยิง API หลายสิบครั้ง
+และ idle ที่นับเป็นชั่วโมงไม่ต้องการความละเอียดกว่านั้น ใบที่หมดอายุถูกปิดเป็น `EXPIRED` ตอนมีคนเอามายิง
 จึงไม่ต้องมี cron มาไล่เก็บ
 
 **สิ่งที่ทำได้แล้ว** (ทั้งหมดทำไม่ได้ก่อน 2026-08-16)
@@ -527,8 +529,8 @@ id_token มาจริง การทำลายลิงก์ของเ�
 ## 8. ตัวแปรที่เกี่ยวข้องทั้งหมด
 
 ```bash
-SESSION_TTL_DAYS=7             # absolute expiry ของ session
-SESSION_IDLE_HOURS=8           # ไม่ได้ใช้งานนานเท่านี้แล้วตาย
+SESSION_TTL_SECONDS=604800     # absolute expiry ของ session (วินาที)
+SESSION_IDLE_SECONDS=28800     # ไม่ได้ใช้งานนานเท่านี้ (วินาที) แล้วตาย
 COOKIE_SECURE=                 # ว่าง = เปิดเองเมื่อ APP_URL เป็น https
 OTP_TTL_MINUTES=10
 OTP_MAX_ATTEMPTS=5

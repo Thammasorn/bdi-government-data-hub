@@ -17,6 +17,21 @@ function optional(name: string, fallback: string): string {
 }
 
 /**
+ * ระยะเวลาเป็นวินาที — หน่วยมาตรฐานของ session (cookie `Max-Age`, `expires_in` ของ OAuth)
+ *
+ * ค่าต้องเป็นจำนวนเต็มบวก ค่าเพี้ยนทำให้ server ไม่ขึ้นเลยดีกว่าออก session ที่ตายทันทีหรือไม่ตายเลย
+ */
+function seconds(name: string, fallback: number): number {
+  const value = process.env[name];
+  if (value === undefined || value === "") return fallback;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error(`${name} must be a positive whole number of seconds, got "${value}"`);
+  }
+  return n;
+}
+
+/**
  * ความลับที่มีค่า default ให้ตอน dev เพื่อความสะดวก แต่ห้ามใช้ค่านั้นจริง
  *
  * ปล่อยให้ fallback เงียบ ๆ บน production คือสิ่งที่แย่ที่สุดของทั้งสองทาง —
@@ -151,13 +166,13 @@ export const env = {
      * อายุสูงสุดของ session นับจากตอนออก — ต่ออายุไม่ได้ ครบแล้วต้องเข้าสู่ระบบใหม่
      * (ไม่มี JWT_SECRET แล้ว: session ไม่ใช่ JWT อีกต่อไป สถานะจริงอยู่ในตาราง iam.session)
      */
-    sessionTtlDays: Number(optional("SESSION_TTL_DAYS", "7")),
+    sessionTtlSeconds: seconds("SESSION_TTL_SECONDS", 7 * 24 * 60 * 60),
     /**
      * ไม่ได้ใช้งานนานเท่านี้แล้ว session ตาย แม้ยังไม่ถึง absolute expiry
-     * ตัดสินไว้ 2026-08-16: absolute 7 วัน + idle 8 ชั่วโมง — เครื่องที่เปิดค้างข้ามคืน
+     * ตัดสินไว้ 2026-08-16: absolute 7 วัน (604800) + idle 8 ชั่วโมง (28800) — เครื่องที่เปิดค้างข้ามคืน
      * ต้องเข้าสู่ระบบใหม่ ทั้งสองค่าตั้งผ่าน env ได้เพื่อให้เจ้าของสเปกปรับได้เองภายหลัง
      */
-    sessionIdleHours: Number(optional("SESSION_IDLE_HOURS", "8")),
+    sessionIdleSeconds: seconds("SESSION_IDLE_SECONDS", 8 * 60 * 60),
     invitationTtlDays: Number(optional("INVITATION_TTL_DAYS", "7")),
     otpTtlMinutes: Number(optional("OTP_TTL_MINUTES", "10")),
     otpMaxAttempts: Number(optional("OTP_MAX_ATTEMPTS", "5")),
