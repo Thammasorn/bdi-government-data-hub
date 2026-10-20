@@ -1425,7 +1425,7 @@ error ท้าย `index.ts` (แยกตามที่มาตั้งแ�
 |---|---|---|
 | `resend` | กดขอรหัสใหม่หรือไม่ | `false` |
 | `otp_code_id` | id ของแถว `iam.otp_code` ใหม่ | `"b1e0c7d2-…"` |
-| `expires_at` | now + `OTP_TTL_MINUTES` (ISO) | `"2026-09-29T03:15:00.000Z"` |
+| `expires_at` | now + `OTP_TTL_SECONDS` (ISO) | `"2026-09-29T03:15:00.000Z"` |
 
 - **ข้อมูลส่วนบุคคล** ไม่มีอีเมล **ไม่มีตัวรหัสหรือ hash**
 - ก่อนออกรหัสใหม่ `issueOtp()` ตั้ง `consumed_at` ให้ OTP `LOGIN` ที่ยังไม่ถูกใช้**ทุกใบ**ของอีเมลนั้น (`auth.ts:97-100`) การยกเลิกนี้**ไม่มีแถว**
@@ -1451,7 +1451,7 @@ error ท้าย `index.ts` (แยกตามที่มาตั้งแ�
 |---|---|---|
 | `email` | อีเมลของ**บัญชี**ที่ลิงก์ถูกส่งไป | `"somchai@agency.go.th"` |
 | `password_reset_token_id` | id ของแถว `iam.password_reset_token` ใหม่ | `"6b1f0c2e-…"` |
-| `expires_at` | now + `PASSWORD_RESET_TTL_MINUTES` (ISO) | `"2026-09-29T16:30:00.000Z"` |
+| `expires_at` | now + `PASSWORD_RESET_TTL_SECONDS` (ISO) | `"2026-09-29T16:30:00.000Z"` |
 | `requested_via` | `PASSWORD_RESET_VIA_ADMIN` | `"ADMIN_API"` |
 
 - **ข้อมูลส่วนบุคคล** อีเมลของบัญชี (ไม่ปิด ทั้งใน Postgres และในสำเนา)
@@ -1559,7 +1559,7 @@ operation คงรหัสเดิมไว้ ข้อความอิส
 
 | `failure_reason` | เกิดเมื่อ (`POST /api/auth/thaid/callback`) | โค้ด |
 |---|---|---|
-| `state_not_found` · `state_expired` · `state_already_used` | หา `state` ไม่เจอ · หมดเวลา · ถูกใช้ไปแล้ว — ที่เดียวที่เขียน `state_*` อายุถูกตรวจ**ก่อน**สถานะ (`thaid-flow.ts:108-129`): เกิน `THAID_STATE_TTL_MINUTES` (ค่าตั้งต้น 15) แล้วได้ `state_expired` แม้ operation นั้นสำเร็จไปแล้ว · ก่อนนั้น `state_already_used` = operation ไม่ `PENDING` แล้ว ซึ่งอาจตามหลังความสำเร็จ ความล้มเหลว (`IDENTITY_VERIFICATION_FAILED` หรือ `LOGIN_FAILED`) ของความพยายามเดียวกัน หรือ callback อีกใบที่ยัง `PROCESSING` อยู่ | `auth.ts:329` |
+| `state_not_found` · `state_expired` · `state_already_used` | หา `state` ไม่เจอ · หมดเวลา · ถูกใช้ไปแล้ว — ที่เดียวที่เขียน `state_*` อายุถูกตรวจ**ก่อน**สถานะ (`thaid-flow.ts:108-129`): เกิน `THAID_STATE_TTL_SECONDS` (ค่าตั้งต้น 900) แล้วได้ `state_expired` แม้ operation นั้นสำเร็จไปแล้ว · ก่อนนั้น `state_already_used` = operation ไม่ `PENDING` แล้ว ซึ่งอาจตามหลังความสำเร็จ ความล้มเหลว (`IDENTITY_VERIFICATION_FAILED` หรือ `LOGIN_FAILED`) ของความพยายามเดียวกัน หรือ callback อีกใบที่ยัง `PROCESSING` อยู่ | `auth.ts:329` |
 | รหัสที่ส่งมาในช่อง `error` หลัง `trim()` + ตัวพิมพ์เล็ก ถ้าตรง `^[a-z][a-z_]{0,39}$` เก็บตามนั้น ไม่งั้น `thaid_error_unrecognised` | callback มี `error` — **ค่านี้ไม่ได้มาจาก ThaID โดยตรง** หน้า callback ของเบราว์เซอร์อ่านจาก query string แล้วส่งต่อ ใครที่มี `state` ของตัวเอง (เรียก `/thaid/start` ได้) ยิงค่าอะไรก็ได้ รหัสตัวพิมพ์เล็กยาวไม่เกิน 40 ตัวจึงถูกเก็บตามที่ส่ง (`thaid-flow.ts:158-176`) | `auth.ts:345` |
 | `missing_code` | ไม่มีทั้ง `error` และ `code` | `auth.ts:356` |
 | `network_error` · `http_<status>` · รหัส error ของ token endpoint · `no_id_token` · `jwks_unavailable` · `unknown_kid` · `invalid_id_token` · `nonce_missing` · `nonce_mismatch` · `unexpected` | แลก token หรือตรวจ id_token ไม่ผ่าน — `nonce_missing` เกิดเฉพาะเมื่อ `THAID_REQUIRE_NONCE=true` (ค่าตั้งต้น `false` ไม่งั้นแค่เตือนใน log แล้วไปต่อ `thaid.ts:308-316`) · `jwks_unavailable` เฉพาะเมื่อ JWKS ตอบ HTTP ไม่ ok ส่วนเครือข่ายล้มหรือ JSON เสียตอนดึง JWKS ออกมาเป็น `unexpected` (`fetch` ใน `fetchJwks()` ไม่ถูกห่อ `thaid.ts:220-223`) | `auth.ts:382` |
@@ -1607,7 +1607,7 @@ operation คงรหัสเดิมไว้ ข้อความอิส
 
 | `reason` | เกิดเมื่อ | subject | actor | โค้ด |
 |---|---|---|---|---|
-| `EXPIRED` | มีคนยื่น cookie ของ session ที่เลย `expires_at` (ABSOLUTE) หรือว่างเกิน `SESSION_IDLE_HOURS` (IDLE) — ผ่าน `requireAuth` ทุก route, `/logout`, `/password-reset`, `issueSession()` | `SESSION` · id ของแถว session | `USER` = เจ้าของ session | `session.ts:115` |
+| `EXPIRED` | มีคนยื่น cookie ของ session ที่เลย `expires_at` (ABSOLUTE) หรือว่างเกิน `SESSION_IDLE_SECONDS` (IDLE) — ผ่าน `requireAuth` ทุก route, `/logout`, `/password-reset`, `issueSession()` | `SESSION` · id ของแถว session | `USER` = เจ้าของ session | `session.ts:115` |
 | `LOGOUT` | `POST /api/auth/logout` กับ session ที่ยังใช้ได้ | `SESSION` | `SYSTEM` (null) | `session.ts:147` ← `auth.ts:1188` |
 | `ROTATED` | ออก session ใหม่ขณะเบราว์เซอร์ถือ cookie ที่ยังใช้ได้ (verify-otp, `/activate`, ThaID login) | `SESSION` · **ใบเก่า** | `SYSTEM` (null) | `session.ts:147` ← `auth.ts:1352` |
 | `LOGOUT_ALL` | `POST /api/auth/logout-all` | UA | `USER` = เจ้าของบัญชี | `session.ts:182` ← `auth.ts:1196` |

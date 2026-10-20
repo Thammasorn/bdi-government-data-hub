@@ -11,8 +11,9 @@
  * ของ stateless JWT ตั้งแต่แรก
  *
  * อายุมีสองชั้นและต้องผ่านทั้งคู่
- *   absolute — `expires_at` = ตอนออก + SESSION_TTL_DAYS ต่ออายุไม่ได้
- *   idle     — `last_seen_at` + SESSION_IDLE_HOURS ขยับทุกครั้งที่ใช้งาน
+ *   absolute — `expires_at` = ตอนออก + SESSION_TTL_SECONDS ต่ออายุไม่ได้
+ *   idle     — `last_seen_at` + SESSION_IDLE_SECONDS ขยับทุกครั้งที่ใช้งาน
+ * ทั้งสองค่าเป็นวินาที (docs/23-session.md)
  */
 import { SessionRevokeReason, type Prisma, type Session } from "@prisma/client";
 
@@ -28,15 +29,18 @@ export type SessionRejection = "not_found" | "revoked" | "expired" | "idle";
 /**
  * ไม่เขียน `last_seen_at` ทุก request — request เดียวของหน้าเว็บหนึ่งหน้ามีหลายสิบครั้ง
  * ขยับทีละ 1 นาทีก็พอต่อการวัด idle ที่นับเป็นชั่วโมง และประหยัด write ไปเกือบทั้งหมด
+ *
+ * แต่ไม่เกินครึ่งหนึ่งของ idle: พอตั้ง idle เป็นวินาทีได้ ค่าสั้น ๆ อย่าง 30 (ตอนทดสอบ) จะทำให้
+ * session ที่ใช้งานอยู่ตลอดตายเพราะ `last_seen_at` ไม่เคยถูกขยับทัน
  */
-const TOUCH_INTERVAL_MS = 60_000;
+const TOUCH_INTERVAL_MS = Math.min(60_000, (env.auth.sessionIdleSeconds * 1000) / 2);
 
 function absoluteExpiry(from: Date): Date {
-  return new Date(from.getTime() + env.auth.sessionTtlDays * 24 * 60 * 60 * 1000);
+  return new Date(from.getTime() + env.auth.sessionTtlSeconds * 1000);
 }
 
 function idleDeadline(lastSeenAt: Date): Date {
-  return new Date(lastSeenAt.getTime() + env.auth.sessionIdleHours * 60 * 60 * 1000);
+  return new Date(lastSeenAt.getTime() + env.auth.sessionIdleSeconds * 1000);
 }
 
 /**

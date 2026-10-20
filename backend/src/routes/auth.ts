@@ -103,7 +103,7 @@ async function issueOtp(
       email,
       codeHash: await bcrypt.hash(code, 8),
       purpose,
-      expiresAt: new Date(Date.now() + env.auth.otpTtlMinutes * 60_000),
+      expiresAt: new Date(Date.now() + env.auth.otpTtlSeconds * 1000),
     },
   });
   await logAudit({

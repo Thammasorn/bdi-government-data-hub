@@ -41,7 +41,7 @@ export async function issuePasswordResetToken(
     data: {
       userAccountId,
       tokenHash,
-      expiresAt: new Date(Date.now() + env.auth.passwordResetTtlMinutes * 60_000),
+      expiresAt: new Date(Date.now() + env.auth.passwordResetTtlSeconds * 1000),
       requestedVia,
       createdBy: SYSTEM_USER_ID,
     },

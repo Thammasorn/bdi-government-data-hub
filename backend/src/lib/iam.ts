@@ -499,7 +499,7 @@ export async function issueActivationKey(
     organizationId: string;
     roleCode: RoleCode;
     actorId?: string;
-    ttlDays?: number;
+    ttlSeconds?: number;
   },
 ) {
   const actorId = params.actorId ?? SYSTEM_USER_ID;
@@ -512,14 +512,14 @@ export async function issueActivationKey(
     { actorId, reason: "ออกคีย์ใหม่แทน" },
   );
 
-  const ttlDays = params.ttlDays ?? env.auth.activationKeyTtlDays;
+  const ttlSeconds = params.ttlSeconds ?? env.auth.activationKeyTtlSeconds;
   const record = await db.activationKey.create({
     data: {
       userAccountId: params.userAccountId,
       organizationId: params.organizationId,
       roleId,
       keyHash,
-      expiresAt: new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000),
+      expiresAt: new Date(Date.now() + ttlSeconds * 1000),
       createdBy: actorId,
       updatedBy: actorId,
     },

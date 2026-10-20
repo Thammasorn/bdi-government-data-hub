@@ -1369,7 +1369,7 @@
             "password-reset"
           ]
         },
-        "description": "ส่งลิงก์ตั้งรหัสผ่านใหม่ไปที่อีเมลของบัญชี (อายุ PASSWORD_RESET_TTL_MINUTES นาที ใช้ได้ครั้งเดียว) เจ้าตัวกดลิงก์ → หน้า /reset-password → กรอกรหัสใหม่สองช่อง → ไปหน้าเข้าสู่ระบบ session เดิมทุกใบถูกเพิกถอน แอดมินไม่เคยเห็นรหัสผ่าน และคำตอบไม่มีโทเคน (checkout ที่ยังไม่ตั้ง SMTP พิมพ์ลิงก์ลง log ของ backend) รับเฉพาะบัญชี ACTIVE — PENDING ให้ใช้ 4.1 resend แทน, SUSPENDED/DEACTIVATED ให้ U6/U8 ก่อน ส่งซ้ำได้ ใบใหม่ยกเลิกใบเก่า",
+        "description": "ส่งลิงก์ตั้งรหัสผ่านใหม่ไปที่อีเมลของบัญชี (อายุ PASSWORD_RESET_TTL_SECONDS วินาที ใช้ได้ครั้งเดียว) เจ้าตัวกดลิงก์ → หน้า /reset-password → กรอกรหัสใหม่สองช่อง → ไปหน้าเข้าสู่ระบบ session เดิมทุกใบถูกเพิกถอน แอดมินไม่เคยเห็นรหัสผ่าน และคำตอบไม่มีโทเคน (checkout ที่ยังไม่ตั้ง SMTP พิมพ์ลิงก์ลง log ของ backend) รับเฉพาะบัญชี ACTIVE — PENDING ให้ใช้ 4.1 resend แทน, SUSPENDED/DEACTIVATED ให้ U6/U8 ก่อน ส่งซ้ำได้ ใบใหม่ยกเลิกใบเก่า",
         "body": {
           "mode": "raw",
           "raw": "{\n  \"email\": \"user@agency.go.th\"\n}"

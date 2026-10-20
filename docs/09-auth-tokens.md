@@ -36,7 +36,7 @@
 ```js
 // lib/auth.ts
 { httpOnly: true, sameSite: "lax", secure: env.auth.cookieSecure, path: "/",
-  maxAge: SESSION_TTL_DAYS * 24 * 60 * 60 * 1000 }
+  maxAge: SESSION_TTL_SECONDS * 1000 }
 ```
 
 - **`httpOnly`** — XSS ที่รันสคริปต์ในหน้าเว็บได้ ก็ยังขโมย cookie ออกไปใช้ที่อื่นไม่ได้
@@ -102,14 +102,16 @@ session หนึ่งใบ = แถวหนึ่งแถวใน `iam.ses
 
 **อายุมีสองชั้น ต้องผ่านทั้งคู่**
 
+(ค่าทั้งสองเป็น **วินาที** ตั้งแต่ 2026-10-20 — คำอธิบายเต็มอยู่ใน `docs/23-session.md`)
+
 | ชั้น | คอลัมน์ | ค่าตั้งต้น | ต่ออายุได้ไหม |
 |---|---|---|---|
-| absolute | `expires_at` | `SESSION_TTL_DAYS` = 7 วัน | ไม่ได้ ครบแล้วต้องเข้าสู่ระบบใหม่ |
-| idle | `last_seen_at` | `SESSION_IDLE_HOURS` = 8 ชั่วโมง | ขยับทุกครั้งที่ใช้งาน |
+| absolute | `expires_at` | `SESSION_TTL_SECONDS` = 604800 (7 วัน) | ไม่ได้ ครบแล้วต้องเข้าสู่ระบบใหม่ |
+| idle | `last_seen_at` | `SESSION_IDLE_SECONDS` = 28800 (8 ชั่วโมง) | ขยับทุกครั้งที่ใช้งาน |
 
 `last_seen_at` ถูกเขียนอย่างมากทุก 1 นาที (`TOUCH_INTERVAL_MS` ใน `lib/session.ts`)
-ไม่ใช่ทุก request — หน้าเว็บหน้าเดียวยิง API หลายสิบครั้ง และ idle ที่นับเป็นชั่วโมง
-ไม่ต้องการความละเอียดกว่านั้น ใบที่หมดอายุถูกปิดเป็น `EXPIRED` ตอนมีคนเอามายิง
+(หรือครึ่งหนึ่งของ idle ถ้า idle สั้นกว่า 2 นาที) ไม่ใช่ทุก request — หน้าเว็บหน้าเดียวยิง API หลายสิบครั้ง
+และ idle ที่นับเป็นชั่วโมงไม่ต้องการความละเอียดกว่านั้น ใบที่หมดอายุถูกปิดเป็น `EXPIRED` ตอนมีคนเอามายิง
 จึงไม่ต้องมี cron มาไล่เก็บ
 
 **สิ่งที่ทำได้แล้ว** (ทั้งหมดทำไม่ได้ก่อน 2026-08-16)
@@ -156,7 +158,7 @@ session หนึ่งใบ = แถวหนึ่งแถวใน `iam.ses
 การเทียบใช้ `timingSafeEqual` (`activationKeyMatches()`)
 
 วงจรชีวิตอยู่ในตาราง `iam.activation_key`: `ISSUED` → `USED` / `REVOKED` / หมดอายุใน 7 วัน
-(`ACTIVATION_KEY_TTL_DAYS`) ออกใบใหม่ให้ (บัญชี, หน่วยงาน, role) เดิมจะ `REVOKED` ใบเก่าอัตโนมัติ
+(`ACTIVATION_KEY_TTL_SECONDS`) ออกใบใหม่ให้ (บัญชี, หน่วยงาน, role) เดิมจะ `REVOKED` ใบเก่าอัตโนมัติ
 
 **คีย์ดิบไม่เคยถูกเขียนลงฐานข้อมูลและไม่เคยถูกส่งไป ThaID** — callback ของ ThaID หาทางกลับ
 เข้าเรื่องเดิมด้วย `subject_id` ซึ่งเป็น id ของแถว activation_key ไม่ใช่ตัวคีย์
@@ -188,7 +190,7 @@ session หนึ่งใบ = แถวหนึ่งแถวใน `iam.ses
 ## 3. OTP — ชั้นที่สองของการเข้าสู่ระบบด้วยรหัสผ่าน
 
 6 หลักจาก `randomInt` (ไม่ใช่ `Math.random`) เก็บเป็น **bcrypt cost 8** ในตาราง `iam.otp_code`
-อายุ 10 นาที (`OTP_TTL_MINUTES`) ผิดได้ 5 ครั้ง (`OTP_MAX_ATTEMPTS`) แล้วรหัสนั้นถูกเผาทิ้ง
+อายุ 10 นาที (`OTP_TTL_SECONDS` = 600) ผิดได้ 5 ครั้ง (`OTP_MAX_ATTEMPTS`) แล้วรหัสนั้นถูกเผาทิ้ง
 
 - ขอรหัสใหม่ = ปิด (`consumed_at`) รหัสเก่าที่ยังไม่ถูกใช้ทั้งหมด ไม่มีรหัสใช้ได้พร้อมกันหลายตัว
 - `POST /api/auth/login/resend-otp` **ต้องมี OTP ของรอบนั้นค้างอยู่ก่อน** ไม่งั้นตอบ 409
@@ -210,7 +212,7 @@ OTP แบบ `REGISTRATION` อีกแล้ว
 | ออกที่ไหน | `POST /api/admin/users/password-reset` `{ email }` ด้วย `x-admin-token` — 202 พร้อม `expiresAt` **ไม่มีโทเคนในคำตอบ** (checkout ที่ไม่ตั้ง SMTP พิมพ์ลิงก์ลง log เหมือนคำเชิญ) |
 | หน้าตา | 32 ไบต์ base64url ในลิงก์ `{APP_URL}/reset-password?token=…` |
 | เก็บอย่างไร | `iam.password_reset_token.token_hash` = HMAC-SHA-256(`ACTIVATION_KEY_SECRET`, token) — กุญแจเดียวกับ activation key เหตุผลเดียวกัน |
-| อายุ | `PASSWORD_RESET_TTL_MINUTES` (60) — นาที ไม่ใช่วัน เพราะแอดมินเพิ่งคุยกับเจ้าตัว |
+| อายุ | `PASSWORD_RESET_TTL_SECONDS` (3600 = 1 ชั่วโมง) — ชั่วโมง ไม่ใช่วัน เพราะแอดมินเพิ่งคุยกับเจ้าตัว |
 | ใช้ได้กี่ครั้ง | ครั้งเดียว (`used_at`) หนึ่งบัญชีมีใบที่ใช้ได้ทีละใบ ออกใบใหม่ = ใบเก่า `revoked_at` |
 | รับบัญชีไหน | `ACTIVE` เท่านั้น — `PENDING` ยังไม่มีรหัสผ่าน (ให้ resend คำเชิญ) `SUSPENDED`/`DEACTIVATED` ตั้งไปก็เข้าไม่ได้ (409 `invalid_state` บอกทางออก) |
 | ใช้ที่ไหน | `GET /api/auth/password-reset?token=` ตรวจลิงก์ (410 `expired`/`used`/`revoked`/`not_found`) แล้ว `POST /api/auth/password-reset` `{ token, password, confirmPassword }` กฎรหัสผ่านชุดเดียวกับ `/activate` |
@@ -490,10 +492,10 @@ id_token มาถึงเราทาง back channel ผ่าน TLS มา�
 
 `claimThaidState()` จองด้วย `updateMany` ที่กรอง `status = PENDING` — เป็น atomic
 กด refresh ที่หน้า callback รอบสองจะได้ `already_used` แทนที่จะแลก token ซ้ำ
-อายุ 15 นาที (`THAID_STATE_TTL_MINUTES`) ยาวพอให้เปิดแอป ThaID บนมือถือแล้วกลับมา
+อายุ 15 นาที (`THAID_STATE_TTL_SECONDS` = 900) ยาวพอให้เปิดแอป ThaID บนมือถือแล้วกลับมา
 
 หลังยืนยันผ่าน แถวเดิมทำหน้าที่เป็น "ใบเสร็จ" ให้ขั้นตั้งรหัสผ่านอีก 30 นาที
-(`THAID_VERIFICATION_TTL_MINUTES`) — `POST /api/auth/activate` เรียก `latestVerification()`
+(`THAID_VERIFICATION_TTL_SECONDS`) — `POST /api/auth/activate` เรียก `latestVerification()`
 อ่านจากฐานข้อมูล ไม่เชื่อคำบอกเล่าจากเบราว์เซอร์
 
 ## 7. OIDC `nonce` — ผูก id_token เข้ากับคำขอที่เราเริ่ม
@@ -527,21 +529,21 @@ id_token มาจริง การทำลายลิงก์ของเ�
 ## 8. ตัวแปรที่เกี่ยวข้องทั้งหมด
 
 ```bash
-SESSION_TTL_DAYS=7             # absolute expiry ของ session
-SESSION_IDLE_HOURS=8           # ไม่ได้ใช้งานนานเท่านี้แล้วตาย
+SESSION_TTL_SECONDS=604800     # absolute expiry ของ session (วินาที)
+SESSION_IDLE_SECONDS=28800     # ไม่ได้ใช้งานนานเท่านี้ (วินาที) แล้วตาย
 COOKIE_SECURE=                 # ว่าง = เปิดเองเมื่อ APP_URL เป็น https
-OTP_TTL_MINUTES=10
+OTP_TTL_SECONDS=600            # วินาที
 OTP_MAX_ATTEMPTS=5
-ACTIVATION_KEY_TTL_DAYS=7
+ACTIVATION_KEY_TTL_SECONDS=604800  # วินาที
 ACTIVATION_KEY_SECRET=         # HMAC ของ activation key — บังคับบน production
-PASSWORD_RESET_TTL_MINUTES=60  # ลิงก์ตั้งรหัสผ่านใหม่ (ข้อ 3.1) hash ด้วย secret ตัวเดียวกัน
+PASSWORD_RESET_TTL_SECONDS=3600  # วินาที · ลิงก์ตั้งรหัสผ่านใหม่ (ข้อ 3.1) hash ด้วย secret ตัวเดียวกัน
 ADMIN_API_TOKEN=               # ค่าใน header x-admin-token
 ADMIN_TOKEN_WATCH_FPS=         # fingerprint ของ token ที่ปลดแล้ว คั่นด้วย comma (ข้อ 4.1)
 LOG_READ_TOKEN=                # ค่าใน header x-log-token (ข้อ 4.3) — openssl rand -hex 32
 INGEST_SERVER_TOKEN=           # ค่าใน header x-report-token ค่าเดียวกันใน frontend (ข้อ 4.4)
 LOG_HASH_KEY=                  # กุญแจ HMAC ของ key ค้นหาเลขบัตร/อีเมลใน log store (ไม่ใช่โทเคน แต่เป็นความลับ)
-THAID_STATE_TTL_MINUTES=15
-THAID_VERIFICATION_TTL_MINUTES=30
+THAID_STATE_TTL_SECONDS=900
+THAID_VERIFICATION_TTL_SECONDS=1800
 THAID_REQUIRE_NONCE=false      # ดูข้อ 7
 ```
 

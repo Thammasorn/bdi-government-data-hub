@@ -106,7 +106,7 @@ export async function claimThaidState(
   if (!existing) return { operation: null, reason: "not_found", found: null };
 
   const ageMs = Date.now() - existing.createdAt.getTime();
-  if (ageMs > env.thaid.stateTtlMinutes * 60_000) {
+  if (ageMs > env.thaid.stateTtlSeconds * 1000) {
     if (existing.status === IntegrationStatus.PENDING) {
       // audit: false — callback เขียน `state_expired` เองทุกกรณี (รวมแถวที่ไม่ใช่ PENDING แล้ว)
       // ถ้าเขียนตรงนี้ด้วย การหมดเวลาครั้งเดียวจะได้สองแถว
@@ -278,5 +278,5 @@ export async function latestVerification(activationKeyId: string): Promise<Integ
   if (!operation?.completedAt) return null;
 
   const ageMs = Date.now() - operation.completedAt.getTime();
-  return ageMs <= env.thaid.verificationTtlMinutes * 60_000 ? operation : null;
+  return ageMs <= env.thaid.verificationTtlSeconds * 1000 ? operation : null;
 }

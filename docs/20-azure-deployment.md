@@ -362,16 +362,16 @@ az containerapp create \
       SMTP_USER="<gmail-address>" SMTP_PASS=secretref:smtp-pass \
       SMTP_FROM="ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล <no-reply@bdi.or.th>" \
       SUPPORT_EMAIL=d2share-support@bdi.or.th \
-      SESSION_TTL_DAYS=7 SESSION_IDLE_HOURS=8 \
-      INVITATION_TTL_DAYS=7 ACTIVATION_KEY_TTL_DAYS=7 \
-      OTP_TTL_MINUTES=10 OTP_MAX_ATTEMPTS=5 \
+      SESSION_TTL_SECONDS=604800 SESSION_IDLE_SECONDS=28800 \
+      ACTIVATION_KEY_TTL_SECONDS=604800 PASSWORD_RESET_TTL_SECONDS=3600 \
+      OTP_TTL_SECONDS=600 OTP_MAX_ATTEMPTS=5 \
       THAID_ROOT_URL=https://imauthsbx.bora.dopa.go.th \
       THAID_CLIENT_ID="<thaid-client-id>" \
       THAID_CLIENT_SECRET=secretref:thaid-client-secret \
       THAID_API_KEY=secretref:thaid-api-key \
       THAID_SCOPE="openid pid given_name family_name given_name_en family_name_en" \
       THAID_USE_PID=true THAID_REQUIRE_NONCE=false \
-      THAID_STATE_TTL_MINUTES=15 THAID_VERIFICATION_TTL_MINUTES=30
+      THAID_STATE_TTL_SECONDS=900 THAID_VERIFICATION_TTL_SECONDS=1800
 ```
 
 `GOTENBERG_URL` is **`https://` with no port**. Container Apps terminates TLS at 443 on the
@@ -882,15 +882,15 @@ rather than overriding it.
 | `GOTENBERG_TIMEOUT_MS` | | `60000` | keep ≤ gotenberg's `--api-timeout` |
 | `SMTP_HOST` `SMTP_PORT` `SMTP_SECURE` `SMTP_USER` `SMTP_PASS` `SMTP_FROM` | | Gmail defaults | no `SMTP_USER` = log instead of send |
 | `SUPPORT_EMAIL` `SUPPORT_PHONE` | | `d2share-support@bdi.or.th`, empty | printed at the foot of every email; empty phone omits the line |
-| `SESSION_TTL_DAYS` `SESSION_IDLE_HOURS` | | `7`, `8` | absolute and idle expiry |
-| `INVITATION_TTL_DAYS` `ACTIVATION_KEY_TTL_DAYS` | | `7`, `7` | |
-| `OTP_TTL_MINUTES` `OTP_MAX_ATTEMPTS` | | `10`, `5` | |
+| `SESSION_TTL_SECONDS` `SESSION_IDLE_SECONDS` | | `604800`, `28800` | absolute and idle expiry, in seconds (`docs/23-session.md`) |
+| `ACTIVATION_KEY_TTL_SECONDS` `PASSWORD_RESET_TTL_SECONDS` | | `604800`, `3600` | seconds |
+| `OTP_TTL_SECONDS` `OTP_MAX_ATTEMPTS` | | `600`, `5` | seconds, count |
 | `THAID_ROOT_URL` | | sandbox | |
 | `THAID_CLIENT_ID` `THAID_CLIENT_SECRET` `THAID_API_KEY` | | empty | empty = 501 `not_configured` |
 | `THAID_REDIRECT_URI` | | `${APP_URL}/auth/callback/thaid` | must match DOPA's registration exactly |
 | `THAID_SCOPE` | | see §4.3 | |
 | `THAID_USE_PID` `THAID_REQUIRE_NONCE` | | `true`, `false` | |
-| `THAID_STATE_TTL_MINUTES` `THAID_VERIFICATION_TTL_MINUTES` | | `15`, `30` | |
+| `THAID_STATE_TTL_SECONDS` `THAID_VERIFICATION_TTL_SECONDS` | | `900`, `1800` | seconds |
 
 ### delivery-worker
 

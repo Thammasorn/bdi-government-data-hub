@@ -4,6 +4,7 @@ import net from "node:net";
 import nodemailer, { type Transporter } from "nodemailer";
 
 import { env } from "../env.js";
+import { thaiDuration } from "./duration.js";
 import { addBreadcrumb } from "./context.js";
 import type { JourneyProgress } from "./journey-steps.js";
 
@@ -514,7 +515,7 @@ export async function sendInvitationEmail(
          </p>`,
         paragraph(
           `ทั้งนี้ ขอให้${info.internal ? "ท่าน" : "หน่วยงาน"}เก็บรักษา Activation Key ไว้เป็นความลับ และโปรดลงทะเบียนภายใน ` +
-            `${env.auth.activationKeyTtlDays} วัน — <strong style="color:${TEXT};">Activation Key นี้ใช้ได้ถึงวันที่ ${expiresOn}</strong>`,
+            `${thaiDuration(env.auth.activationKeyTtlSeconds)} — <strong style="color:${TEXT};">Activation Key นี้ใช้ได้ถึงวันที่ ${expiresOn}</strong>`,
         ),
         `<div style="background:${WARNING_BG};border-left:3px solid ${WARNING};border-radius:8px;padding:16px;">
            <div style="font:400 14px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};">
@@ -599,7 +600,7 @@ export async function sendOtpEmail(to: string, code: string) {
                <span style="font:700 32px/1 'Helvetica Neue',Arial,sans-serif;color:${NAVY};letter-spacing:8px;">${code}</span>
              </div>
              <p style="margin:20px 0 0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-               รหัสนี้ใช้ได้ภายใน <strong style="color:${TEXT};">${env.auth.otpTtlMinutes} นาที</strong>
+               รหัสนี้ใช้ได้ภายใน <strong style="color:${TEXT};">${thaiDuration(env.auth.otpTtlSeconds)}</strong>
              </p>
              <p style="margin:8px 0 0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
                กรุณาอย่าเปิดเผยรหัสนี้แก่ผู้อื่น
