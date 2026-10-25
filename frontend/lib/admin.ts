@@ -145,6 +145,19 @@ export interface AdminOrganizationDetail {
   }>;
 }
 
+/**
+ * คำเตือนที่ `PATCH /api/admin/organizations/:id` แนบมากับคำตอบที่สำเร็จ เมื่อหน่วยงานมีคำขอลงทะเบียนที่ยังเปิดอยู่
+ * (docs/10-admin-prefill-organization.md §warning) — เป็น object ไม่ใช่ข้อความ: หน้าจอต้องหยิบ `message` กับเลขที่คำขอ
+ * ไปแสดงเอง เดิมหน้าหน่วยงานส่งทั้งก้อนเข้า `WarningList` ซึ่งรับ `string[]` React จึง throw
+ * "Objects are not valid as a React child" และผู้ดูแลระบบเห็นหน้า "เกิดข้อผิดพลาดที่ไม่คาดคิด" ทุกครั้งที่บันทึก
+ * ทะเบียนของหน่วยงานที่กำลังลงทะเบียน (ขั้น ②–⑥) ทั้งที่ข้อมูลถูกบันทึกไปแล้ว
+ */
+export interface AdminOrganizationSaveWarning {
+  code: string;
+  message: string;
+  request: { id: string; requestNumber: string; status: RequestStatus };
+}
+
 export interface AdminSummary {
   users: Record<UserAccountStatus, number>;
   organizations: Record<OrganizationStatus, number>;

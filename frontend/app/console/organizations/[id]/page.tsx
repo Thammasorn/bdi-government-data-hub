@@ -28,6 +28,7 @@ import {
   invitationState,
   type AdminOrganization,
   type AdminOrganizationDetail,
+  type AdminOrganizationSaveWarning,
   type AdminUserListItem,
 } from "@/lib/admin";
 import { adminErrorView } from "@/lib/admin-errors";
@@ -166,9 +167,10 @@ export default function ConsoleOrganizationPage() {
             <OrganizationForm
               organization={org}
               onCancel={() => setEditing(false)}
-              onSaved={(_org: AdminOrganization, warning?: string) => {
+              onSaved={(_org: AdminOrganization, warning?: AdminOrganizationSaveWarning) => {
                 setEditing(false);
-                setWarnings(warning ? [warning] : []);
+                // API ส่งคำเตือนมาเป็น object — แสดงข้อความพร้อมเลขที่คำขอ ไม่ใช่โยนทั้งก้อนลง WarningList
+                setWarnings(warning ? [`${warning.message} (คำขอ ${warning.request.requestNumber})`] : []);
                 show({ tone: "success", title: "บันทึกทะเบียนหน่วยงานแล้ว" });
                 reload();
               }}
