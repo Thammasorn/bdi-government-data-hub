@@ -900,7 +900,7 @@
         "method": "GET",
         "header": [],
         "url": {
-          "raw": "{{baseUrl}}/api/admin/users?q=&cid=&status=&role=&organizationId=",
+          "raw": "{{baseUrl}}/api/admin/users?q=&cid=&status=&role=&organizationId=&includeFormer=1",
           "host": [
             "{{baseUrl}}"
           ],
@@ -934,10 +934,15 @@
               "key": "organizationId",
               "value": "",
               "disabled": true
+            },
+            {
+              "key": "includeFormer",
+              "value": "1",
+              "disabled": true
             }
           ]
         },
-        "description": "ค้นหาบัญชี — `q` ค้นบางส่วนของอีเมลหรือชื่อ · `cid` ต้องตรงตัวเต็ม 13 หลัก (กันการไล่เดาเลขบัตร) · กรองด้วย `status` `role` `organizationId` ได้ และแบ่งหน้าด้วย `page`/`pageSize`"
+        "description": "ค้นหาบัญชี — `q` ค้นบางส่วนของอีเมลหรือชื่อ · `cid` ต้องตรงตัวเต็ม 13 หลัก (กันการไล่เดาเลขบัตร) · กรองด้วย `status` `role` `organizationId` ได้ และแบ่งหน้าด้วย `page`/`pageSize`\n\n`includeFormer=1` ร่วมกับ `organizationId` รวม**อดีตสมาชิก**ของหน่วยงานนั้นด้วย (บัญชีที่เคยถือบทบาทที่นั่นแต่ถูกถอนแล้ว — ยุติการใช้งาน ถอนบทบาท หรือย้ายหน่วยงาน) แถว `roleAssignments` ของหน่วยงานนั้นจะมี `status: \"REVOKED\"` พร้อม `revokedAt` และ `revocationReason` ส่วนหน่วยงานอื่นยังส่งเฉพาะที่ใช้งานอยู่ — หน้า \"สมาชิก\" ของหน่วยงานใน /console ใช้ตัวนี้"
       },
       "response": [],
       "event": [

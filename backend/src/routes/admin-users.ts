@@ -327,6 +327,12 @@ const listQuerySchema = z.object({
   status: z.enum(Object.values(UserAccountStatus) as [string, ...string[]]).optional(),
   role: roleEnum.optional(),
   organizationId: uuidSchema("organizationId ต้องเป็น UUID").optional(),
+  /**
+   * `includeFormer=1` ร่วมกับ `organizationId` — รวมบัญชีที่**เคย**ถือบทบาทในหน่วยงานนั้นแต่ถูกถอนไปแล้ว
+   * (ยุติการใช้งาน ถอนบทบาท ย้ายหน่วยงาน) หน้า "สมาชิก" ของหน่วยงานใน /console ใช้ เพื่อให้หน่วยงานที่คนถูกยุติไปหมด
+   * ไม่ขึ้นว่าง ๆ เหมือนไม่เคยมีใคร (การ์ด Issue 2026-10-25) ไม่มี organizationId → ไม่มีผล
+   */
+  includeFormer: z.enum(["1", "true"]).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(50),
 });
@@ -408,7 +414,8 @@ adminUserRouter.get("/", async (req, res) => {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;
   }
-  const { q, cid, status, role, organizationId, page, pageSize } = parsed.data;
+  const { q, cid, status, role, organizationId, includeFormer, page, pageSize } = parsed.data;
+  const withFormer = Boolean(organizationId && includeFormer);
 
   const assignmentFilter =
     role || organizationId
@@ -417,11 +424,21 @@ adminUserRouter.get("/", async (req, res) => {
             some: {
               ...(role ? { role: { code: role } } : {}),
               ...(organizationId ? { organizationId } : {}),
-              ...activeAssignmentWhere(),
+              // อดีตสมาชิก = เคยมีแถว assignment ของหน่วยงานนี้ สถานะอะไรก็ได้ — บทบาท (`role`) ยังนับเฉพาะที่ใช้งานอยู่
+              ...(withFormer ? {} : activeAssignmentWhere()),
             },
           },
         }
       : {};
+
+  /**
+   * แถว assignment ที่ส่งกลับ: ปกติเฉพาะที่ใช้งานอยู่ แต่เมื่อขออดีตสมาชิกของหน่วยงาน ต้องส่งแถวที่ถูกถอนของ**หน่วยงานนั้น**
+   * มาด้วย (พร้อมวันที่และเหตุผล) ไม่งั้นหน้าจอรู้แค่ว่า "เคยอยู่" แต่บอกไม่ได้ว่าออกเมื่อไร — แถวของหน่วยงานอื่นยังเป็น
+   * active-only จึงเห็นได้ว่าคนที่ย้ายไปแล้วตอนนี้อยู่ที่ไหน
+   */
+  const assignmentRows: Prisma.UserRoleAssignmentWhereInput = withFormer
+    ? { OR: [activeAssignmentWhere(), { organizationId }] }
+    : activeAssignmentWhere();
 
   const where: Prisma.UserAccountWhereInput = {
     ...(cid ? { cid } : {}),
@@ -447,9 +464,13 @@ adminUserRouter.get("/", async (req, res) => {
       select: {
         ...accountSelect,
         roleAssignments: {
-          where: activeAssignmentWhere(),
+          where: assignmentRows,
+          orderBy: { createdAt: "desc" },
           select: {
             id: true,
+            status: true,
+            revokedAt: true,
+            revocationReason: true,
             role: { select: { code: true } },
             organization: { select: { id: true, nameTh: true } },
           },

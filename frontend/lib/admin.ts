@@ -32,8 +32,15 @@ export interface AdminUser {
 }
 
 export interface AdminUserListItem extends AdminUser {
+  /**
+   * ปกติเฉพาะบทบาทที่ใช้งานอยู่ — เมื่อขอ `?organizationId=…&includeFormer=1` แถวที่ถูกถอนของ**หน่วยงานนั้น**มาด้วย
+   * (`status: "REVOKED"` พร้อม `revokedAt`) นั่นคือ "อดีตสมาชิก" บนหน้าสมาชิกของหน่วยงาน
+   */
   roleAssignments: Array<{
     id: string;
+    status: "ACTIVE" | "REVOKED";
+    revokedAt: string | null;
+    revocationReason: string | null;
     role: { code: Role };
     organization: { id: string; nameTh: string } | null;
   }>;
