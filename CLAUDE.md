@@ -1478,6 +1478,20 @@ counts can link to a filtered list). The registration screens reuse `Organizatio
 `DatasetRequestTable` and both `DetailView`s read-only under `RegistrationAdminPanel`;
 `SnapshotEditor` sends only changed keys to the `.strict()` admin `PUT`.
 
+**An organisation has its own members and invitations pages** (`/console/organizations/[id]/members`,
+`…/invitations`, card "flow หน่วยงาน → เชิญผู้ใช้ → กลับไม่ได้", 2026-10-25). Until then every "invite" button
+was a `ButtonLink` to the global `/console/invitations?new=1`, so an administrator who had drilled into an
+organisation lost it on the way, and the users list filtered by `?organizationId=` said only "เฉพาะหน่วยงานที่
+เลือก" with no way back. `InviteDialog`, `InvitationsTable` and `MembersTable` in `components/console/` are
+shared by the global pages and the per-organisation ones; `InviteDialog` takes `lockedOrganization` (no picker,
+organisation roles only) and every page opens it in place. `useOrganizationScope()` (`OrganizationScope.tsx`)
+gives any page in an organisation's context the `back` link and the chip label with the organisation's name.
+The members page asks `GET /api/admin/users?organizationId=…&includeFormer=1`, which also returns accounts
+whose assignment **to that organisation** is `REVOKED` (deactivated, role removed, transferred — a suspended
+account keeps its role and was never hidden); those rows carry `status`, `revokedAt` and `revocationReason`
+and are shown greyed as "อดีตสมาชิก". Without the flag the list is active-only as before, which is what the
+global users page still asks for.
+
 Design tokens in `frontend/app/globals.css` under Tailwind 4's `@theme`. The colors were
 sampled from the `.ai` files in `assets/theme_ci_design/`, not chosen by eye —
 navy `#192768`, coral `#E5775A`. The same values are duplicated as constants in

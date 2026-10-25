@@ -5,10 +5,11 @@ import { useParams } from "next/navigation";
 import { useState } from "react";
 
 import { ActionDialog } from "@/components/console/ActionDialog";
+import { InviteDialog } from "@/components/console/InviteDialog";
+import { membershipOf } from "@/components/console/MembersTable";
 import { OrganizationForm } from "@/components/console/OrganizationForm";
 import {
   Badge,
-  ButtonLink,
   DetailList,
   EmptyState,
   ErrorNotice,
@@ -61,14 +62,27 @@ const STATUS_COPY: Record<StatusChange, { title: string; description: string; co
   },
 };
 
-/** หน่วยงานหนึ่งแห่ง — ทะเบียน สถานะ สมาชิก คำเชิญ และคำขอลงทะเบียนของหน่วยงานนั้นในหน้าเดียว */
+/** กรอบสรุปบนหน้านี้แสดงกี่แถวก่อนส่งต่อไปหน้าย่อย */
+const PREVIEW_ROWS = 6;
+
+/**
+ * หน่วยงานหนึ่งแห่ง — ทะเบียน สถานะ และสรุปของสมาชิก คำเชิญ คำขอลงทะเบียนของหน่วยงานนั้น
+ *
+ * สมาชิกและคำเชิญมีหน้าย่อยของตัวเอง (`/members`, `/invitations`) ที่มีตารางเต็ม ตัวกรอง และคำสั่งต่อแถว — กรอบในหน้านี้
+ * เป็นตัวอย่างไม่กี่แถวพร้อมลิงก์ไปหน้านั้น ส่วนปุ่ม "เชิญเข้าหน่วยงานนี้" เปิดกล่องในหน้านี้เลย ไม่พาออกไปไหน (การ์ด Issue
+ * 2026-10-25: เคยพาไปหน้าคำเชิญรวมแล้วไม่มีทางกลับ)
+ */
 export default function ConsoleOrganizationPage() {
   const { id } = useParams<{ id: string }>();
   const { show } = useToast();
   const { data, error, loading, reload } = useAdminData<AdminOrganizationDetail>(`/api/admin/organizations/${id}`);
-  const members = useAdminData<{ users: AdminUserListItem[] }>(`/api/admin/users?organizationId=${id}&pageSize=100`);
+  // รวมอดีตสมาชิกด้วย เพื่อให้นับได้ว่ามีกี่คน — หน่วยงานที่ทุกคนถูกยุติไปแล้วต้องไม่ดูเหมือนไม่เคยมีใคร
+  const members = useAdminData<{ users: AdminUserListItem[] }>(
+    `/api/admin/users?organizationId=${id}&includeFormer=1&pageSize=100`,
+  );
   const [editing, setEditing] = useState(false);
   const [change, setChange] = useState<StatusChange | null>(null);
+  const [inviting, setInviting] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
 
   if (loading && !data) return <Spinner />;
@@ -82,6 +96,10 @@ export default function ConsoleOrganizationPage() {
   }
   if (!data) return null;
   const org = data.organization;
+  const allMembers = members.data?.users ?? [];
+  const currentMembers = allMembers.filter((m) => !membershipOf(m, org.id).former);
+  const formerCount = allMembers.length - currentMembers.length;
+  const openInvitations = data.invitations.filter((inv) => invitationState(inv) === "ISSUED");
 
   return (
     <div>
@@ -97,9 +115,9 @@ export default function ConsoleOrganizationPage() {
         description={org.nameEn ?? undefined}
         actions={
           <>
-            <ButtonLink href={`/console/invitations?new=1&organizationId=${org.id}&role=ORGANIZATION_USER`}>
+            <Button size="sm" onClick={() => setInviting(true)}>
               เชิญเข้าหน่วยงานนี้
-            </ButtonLink>
+            </Button>
             {org.status === "ACTIVE" || org.status === "PENDING_REGISTRATION" ? (
               <Button size="sm" variant="secondary" onClick={() => setChange("suspend")}>
                 ระงับชั่วคราว
@@ -187,15 +205,15 @@ export default function ConsoleOrganizationPage() {
           title="สมาชิก"
           description="หนึ่งหน่วยงานมีผู้ประสานงานหนึ่งคนและผู้มีอำนาจอนุมัติหนึ่งคน"
           actions={
-            <Link href={`/console/users?organizationId=${org.id}`} className="text-[13.5px] font-medium text-navy-700 hover:underline">
-              ดูในรายชื่อผู้ใช้ →
+            <Link href={`/console/organizations/${org.id}/members`} className="text-[13.5px] font-medium text-navy-700 hover:underline">
+              ดูสมาชิกทั้งหมด →
             </Link>
           }
           flush
         >
-          {members.data && members.data.users.length > 0 ? (
+          {currentMembers.length > 0 ? (
             <ul className="divide-y divide-line">
-              {members.data.users.map((m) => (
+              {currentMembers.slice(0, PREVIEW_ROWS).map((m) => (
                 <li key={m.id}>
                   <Link
                     href={`/console/users/${m.id}`}
@@ -206,11 +224,9 @@ export default function ConsoleOrganizationPage() {
                       <span className="block text-[13px] text-ink-muted">{m.email}</span>
                     </span>
                     <span className="flex items-center gap-2">
-                      {m.roleAssignments
-                        .filter((a) => a.organization?.id === org.id)
-                        .map((a) => (
-                          <Tag key={a.id}>{ROLE_LABELS[a.role.code]}</Tag>
-                        ))}
+                      {membershipOf(m, org.id).current.map((a) => (
+                        <Tag key={a.id}>{ROLE_LABELS[a.role.code]}</Tag>
+                      ))}
                       <Badge meta={USER_STATUS_META[m.status]} />
                     </span>
                   </Link>
@@ -218,23 +234,50 @@ export default function ConsoleOrganizationPage() {
               ))}
             </ul>
           ) : (
-            <EmptyState title={members.loading ? "กำลังโหลด…" : "ยังไม่มีสมาชิก"}>
+            <EmptyState title={members.loading ? "กำลังโหลด…" : formerCount > 0 ? "ไม่มีสมาชิกที่ยังใช้งานอยู่" : "ยังไม่มีสมาชิก"}>
               {members.loading ? null : "เชิญผู้ประสานงานของหน่วยงานเพื่อให้เริ่มยื่นคำขอลงทะเบียนได้"}
             </EmptyState>
           )}
+          {!members.loading && (currentMembers.length > PREVIEW_ROWS || formerCount > 0) ? (
+            <p className="border-t border-line px-5 py-2.5 text-[13px] text-ink-muted">
+              {currentMembers.length > PREVIEW_ROWS ? `แสดง ${PREVIEW_ROWS} จาก ${currentMembers.length} คน` : null}
+              {currentMembers.length > PREVIEW_ROWS && formerCount > 0 ? " · " : null}
+              {formerCount > 0 ? (
+                <>
+                  อดีตสมาชิก {formerCount} คน —{" "}
+                  <Link href={`/console/organizations/${org.id}/members`} className="font-medium text-navy-700 underline">
+                    ดูในหน้าสมาชิก
+                  </Link>
+                </>
+              ) : null}
+            </p>
+          ) : null}
         </Panel>
 
         <div className="grid gap-5 lg:grid-cols-2">
-          <Panel title="คำเชิญ" flush>
-            {data.invitations.length === 0 ? (
-              <EmptyState title="ยังไม่มีคำเชิญ" />
+          <Panel
+            title="คำเชิญที่รอผู้รับ"
+            actions={
+              <Link
+                href={`/console/organizations/${org.id}/invitations`}
+                className="text-[13.5px] font-medium text-navy-700 hover:underline"
+              >
+                ดูคำเชิญทั้งหมด →
+              </Link>
+            }
+            flush
+          >
+            {openInvitations.length === 0 ? (
+              <EmptyState title={data.invitations.length === 0 ? "ยังไม่มีคำเชิญ" : "ไม่มีคำเชิญที่ยังรออยู่"}>
+                {data.invitations.length === 0 ? null : `ทั้งหมด ${data.invitations.length} ใบ ใช้แล้ว หมดอายุ หรือถูกยกเลิก`}
+              </EmptyState>
             ) : (
               <ul className="divide-y divide-line">
-                {data.invitations.map((inv) => (
+                {openInvitations.slice(0, PREVIEW_ROWS).map((inv) => (
                   <li key={inv.id} className="px-5 py-3 text-[14px]">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <Link
-                        href={`/console/invitations?email=${encodeURIComponent(inv.userAccount.email)}`}
+                        href={`/console/organizations/${org.id}/invitations?email=${encodeURIComponent(inv.userAccount.email)}`}
                         className="truncate font-medium text-navy-800 hover:underline"
                       >
                         {inv.userAccount.email}
@@ -275,6 +318,17 @@ export default function ConsoleOrganizationPage() {
           </Panel>
         </div>
       </div>
+
+      <InviteDialog
+        open={inviting}
+        lockedOrganization={{ id: org.id, nameTh: org.nameTh }}
+        onClose={() => setInviting(false)}
+        onDone={(email) => {
+          show({ tone: "success", title: "ส่งคำเชิญแล้ว", detail: email });
+          reload();
+          members.reload();
+        }}
+      />
 
       <ActionDialog
         open={change !== null}
