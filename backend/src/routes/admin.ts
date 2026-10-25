@@ -39,6 +39,7 @@ import {
   roleSeatTaken,
 } from "../lib/iam.js";
 import { sendInvitationEmail } from "../lib/mail.js";
+import { snapshotFromOrganization } from "../lib/organization-form.js";
 import { ORGANIZATION_STATUS_LABELS, ROLE_LABELS } from "../lib/roles.js";
 import {
   BDI_ORGANIZATION_ID,
@@ -543,9 +544,48 @@ adminRouter.patch("/organizations/:id", async (req, res) => {
       : {}),
   };
 
-  const organization = await prisma.organization.update({
-    where: { id: before.id },
-    data: { ...written, updatedBy: adminActorId() },
+  /**
+   * คำขอลงทะเบียนที่ยังไม่จบของหน่วยงานนี้ (ถ้ามี) — ฟอร์มของผู้ประสานงานอ่านจาก snapshot บนคำขอ
+   * ไม่ได้อ่านจากแถวหน่วยงาน เดิมเส้นทางนี้เขียนแค่แถวหน่วยงานแล้วเตือนว่า "จะไม่ไปปรากฏในฟอร์ม"
+   * ผลคือผู้ทดสอบแก้ที่อยู่ในคอนโซลแล้วผู้ประสานงานเปิดฟอร์มมาเจอค่าเดิม (Issue 20261025-04, P-02)
+   * และพอ BDI อนุมัติขั้นสุดท้าย snapshot ยังถูกคัดกลับมาทับทะเบียน ค่าที่ admin แก้จึงหายไปด้วย
+   *
+   * ตอนนี้เขียน **ช่องเดียวกับที่ admin ส่งมา** ลงคำขอใบนั้นด้วยในทรานแซกชันเดียวกัน (ทุกสถานะที่ยังไม่จบ
+   * — ตัดสินใจ 2026-10-25) ช่องที่ไม่ได้ส่งมาไม่แตะ สิ่งที่ผู้ใช้พิมพ์ไว้ในช่องอื่นจึงยังอยู่
+   */
+  const openRequest = await prisma.organizationRegistrationRequest.findFirst({
+    where: {
+      organizationId: before.id,
+      status: { notIn: [RequestStatus.APPROVED, RequestStatus.REJECTED, RequestStatus.CANCELLED] },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  /**
+   * `written.postalCode` มีค่าเสมอ (คงค่าเดิมไว้เมื่อไม่ได้แตะที่อยู่) — ส่งต่อไปคำขอเฉพาะเมื่อ admin
+   * ตั้งใจเปลี่ยน ไม่งั้นการแก้เบอร์โทรช่องเดียวจะไปเขียนรหัสไปรษณีย์ของทะเบียนทับของที่ผู้ใช้พิมพ์
+   */
+  const { postalCode: _keptPostalCode, parentOrganizationId: _noSnapshotColumn, ...forwarded } = written;
+  const snapshotPatch = openRequest
+    ? snapshotFromOrganization({
+        ...forwarded,
+        ...(input.postalCode !== undefined || touchesAddress ? { postalCode } : {}),
+      })
+    : {};
+  const syncsRequest = openRequest !== null && Object.keys(snapshotPatch).length > 0;
+
+  const [organization, syncedRequest] = await prisma.$transaction(async (tx) => {
+    const org = await tx.organization.update({
+      where: { id: before.id },
+      data: { ...written, updatedBy: adminActorId() },
+    });
+    const req = syncsRequest
+      ? await tx.organizationRegistrationRequest.update({
+          where: { id: openRequest.id },
+          data: { ...snapshotPatch, updatedBy: adminActorId() },
+        })
+      : null;
+    return [org, req] as const;
   });
 
   /**
@@ -565,31 +605,65 @@ adminRouter.patch("/organizations/:id", async (req, res) => {
       updated_via: "ADMIN_API",
       fields: Object.keys(input),
       fields_changed: Object.keys(diff?.after ?? {}),
+      ...(openRequest ? { synced_request_number: openRequest.requestNumber } : {}),
     },
   });
 
   /**
-   * ฟอร์มของผู้ใช้คัดลอกข้อมูลไปตั้งแต่ตอนเปิดคำขอ การแก้ที่นี่จึงไปไม่ถึงคำขอที่เปิดแล้ว
-   * บอกกลับไปตรง ๆ ดีกว่าให้ admin เข้าใจว่าแก้แล้วผู้ใช้จะเห็น
+   * แถวที่สองบนคำขอ — รูปเดียวกับ `PUT /api/admin/registrations/organizations/:id` เพื่อให้ประวัติของคำขอ
+   * บอกได้ว่าค่านี้เปลี่ยนเพราะ admin แก้ทะเบียน ไม่ใช่ผู้ใช้แก้ในฟอร์ม เขียนเฉพาะเมื่อมีช่องเปลี่ยนจริง
    */
-  const openRequest = await prisma.organizationRegistrationRequest.findFirst({
-    where: {
+  const requestDiff =
+    openRequest && syncedRequest
+      ? diffFields(
+          openRequest as unknown as Record<string, unknown>,
+          snapshotPatch as Record<string, unknown>,
+        )
+      : null;
+  if (openRequest && requestDiff) {
+    await logAudit({
+      action: AuditAction.REQUEST_UPDATED,
+      subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
+      subjectId: openRequest.id,
       organizationId: organization.id,
-      status: { notIn: [RequestStatus.APPROVED, RequestStatus.REJECTED, RequestStatus.CANCELLED] },
-    },
-    select: { id: true, requestNumber: true, status: true },
-  });
+      before: requestDiff.before,
+      after: requestDiff.after,
+      metadata: {
+        updated_via: "ADMIN_ORGANIZATION_SYNC",
+        request_number: openRequest.requestNumber,
+        status: openRequest.status,
+        fields_changed: Object.keys(requestDiff.after),
+      },
+    });
+  }
+
+  /**
+   * บอก admin ว่าคำขอใบไหนถูกปรับตาม และถ้าคำขออยู่ขั้นที่ผู้ประสานงานแก้เองไม่ได้แล้ว (ส่งแล้ว กำลังตรวจ
+   * รอหรือผ่านการลงนาม) เนื้อหาที่เปลี่ยนจะไม่ตรงกับฉบับที่ลงนามไว้ — ทางที่ถูกคือปรับกลับเป็นฉบับร่าง
+   * รูปของ `warning` ({ code, message, request }) คงเดิม หน้าคอนโซลและ Postman อ่านรูปนี้อยู่แล้ว
+   */
+  const inReview =
+    openRequest !== null &&
+    openRequest.status !== RequestStatus.DRAFT &&
+    openRequest.status !== RequestStatus.RETURNED;
+  const fieldsSynced = Object.keys(requestDiff?.after ?? {});
 
   res.json({
     organization: await toAdminOrganizationShape(organization),
     ...(openRequest
       ? {
           warning: {
-            code: "registration_in_progress",
-            message:
-              "หน่วยงานนี้มีคำขอจดทะเบียนที่เปิดอยู่แล้ว การแก้ตรงนี้จะไม่ไปปรากฏในฟอร์มของผู้ใช้ " +
-              "เพราะคำขอคัดลอกข้อมูลไปตั้งแต่ตอนเปิด ต้องให้ผู้ใช้แก้ในฟอร์มเอง",
-            request: openRequest,
+            code: inReview ? "registration_synced_in_review" : "registration_synced",
+            message: inReview
+              ? "ปรับข้อมูลในคำขอลงทะเบียนที่เปิดอยู่ให้ตรงกันแล้ว แต่คำขออยู่ระหว่างตรวจหรือรอ/ผ่านการลงนาม " +
+                "เนื้อหาที่เปลี่ยนจะไม่ตรงกับฉบับที่ผู้มีอำนาจลงนามไว้ ถ้าแก้สาระสำคัญควรปรับคำขอกลับเป็นฉบับร่างเพื่อให้ลงนามใหม่"
+              : "ปรับข้อมูลในคำขอลงทะเบียนที่เปิดอยู่ให้ตรงกันแล้ว ผู้ประสานงานจะเห็นค่าใหม่เมื่อเปิดฟอร์ม",
+            request: {
+              id: openRequest.id,
+              requestNumber: openRequest.requestNumber,
+              status: openRequest.status,
+            },
+            fieldsSynced,
           },
         }
       : {}),

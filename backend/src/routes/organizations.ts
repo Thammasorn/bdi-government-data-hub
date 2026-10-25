@@ -108,6 +108,7 @@ import {
   changedOnlyInForm,
   organizationDraftSchema as draftSchema,
   toRequestData,
+  snapshotFromOrganization,
 } from "../lib/organization-form.js";
 import { nextOrganizationRequestNumber } from "../lib/request-number.js";
 import { buildJourneyProgress, summariseMany } from "../lib/journey-steps.js";
@@ -292,6 +293,10 @@ type RequestRow = Prisma.OrganizationRegistrationRequestGetPayload<{
  *
  * เป็นการคัดลอก ไม่ใช่การอ้างอิง — คำขอเก็บ snapshot ตามดีไซน์ ผู้ใช้แก้ในคำขอได้
  * โดยไม่กระทบ master และ master จะถูกเขียนทับด้วย snapshot อีกทีตอนอนุมัติขั้นสุดท้าย
+ *
+ * ตาราง "ช่องไหนคู่กับช่องไหน" อยู่ที่ `snapshotFromOrganization()` ที่เดียว — `PATCH
+ * /api/admin/organizations/:id` ใช้ตารางเดียวกันเขียนช่องที่ admin แก้ลงคำขอที่ยังไม่จบ
+ * (เดิมไม่เขียน ฟอร์มของผู้ประสานงานจึงขึ้นค่าเดิม — Issue 20261025-04)
  */
 function prefillFromOrganization(org: {
   organizationCode: string;
@@ -309,23 +314,7 @@ function prefillFromOrganization(org: {
   email: string | null;
   websiteUrl: string | null;
 }) {
-  return {
-    organizationCode: org.organizationCode,
-    organizationType: org.organizationType,
-    // ชื่อชั่วคราวที่ระบบตั้งให้เองไม่ใช่ข้อมูลจริง อย่าเอาไปเติมในฟอร์มให้ผู้ใช้ต้องมาลบ
-    organizationNameTh: org.nameTh === PLACEHOLDER_ORGANIZATION_NAME ? null : org.nameTh,
-    organizationNameEn: org.nameEn,
-    organizationAddressLine: org.addressLine,
-    organizationRoad: org.road,
-    organizationProvinceCode: org.provinceCode,
-    organizationDistrictCode: org.districtCode,
-    organizationSubdistrictCode: org.subDistrictCode,
-    organizationPostalCode: org.postalCode,
-    organizationPhone: org.phone,
-    organizationPhoneExtension: org.phoneExtension,
-    organizationEmail: org.email,
-    organizationWebsite: org.websiteUrl,
-  };
+  return snapshotFromOrganization(org);
 }
 
 /**

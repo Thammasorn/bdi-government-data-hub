@@ -917,7 +917,12 @@ Only `organization_code` and `name_th` are required there — the two columns th
 itself makes NOT NULL — and the code is supplied, not generated. When that user starts
 registering, `POST /api/organizations` opens the draft **against their existing
 organization** and copies its columns into the request snapshot; it no longer creates a
-second organization. It also looks for an in-flight request by organization, not just by
+second organization. Since 2026-10-25 the copy also runs the other way while a request is
+open: `PATCH /api/admin/organizations/:id` writes the fields it was sent onto the open
+request's snapshot too (same mapping, `snapshotFromOrganization()` in
+`lib/organization-form.ts`) and says so in `warning.code = registration_synced` /
+`registration_synced_in_review` — before that the admin's edit never reached the
+coordinator's form (Issue 20261025-04). It also looks for an in-flight request by organization, not just by
 `created_by`, so the second person invited into the same organization edits the same
 request rather than starting a rival one. `docs/10-admin-prefill-organization.md` has the
 decisions behind it.

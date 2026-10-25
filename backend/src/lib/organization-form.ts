@@ -15,6 +15,7 @@ import { z } from "zod";
 
 import { prisma } from "../db.js";
 import { lookupZipcode, resolveAddressCodes } from "./address.js";
+import { PLACEHOLDER_ORGANIZATION_NAME } from "./system.js";
 import { draftEmailSchema, normaliseThaiPhone, phoneExtensionSchema } from "./validation.js";
 
 /**
@@ -184,3 +185,57 @@ export async function toRequestData(input: OrganizationDraftInput) {
   };
 }
 
+
+// ---------------------------------------------------------------- organization → snapshot
+
+/**
+ * คอลัมน์ของแถว `organization` ที่มีคู่อยู่บน snapshot ของคำขอ — key คือชื่อบนแถวหน่วยงาน
+ * value คือชื่อบนคำขอ ตารางนี้เป็นที่เดียวที่บอกว่าสองตารางนี้ "ช่องไหนคือช่องเดียวกัน"
+ *
+ * ใช้สองทาง: `POST /api/organizations` คัดลอกทั้งแถวตอนเปิดคำขอ (prefill) และ
+ * `PATCH /api/admin/organizations/:id` เขียนเฉพาะช่องที่ admin แก้ลงคำขอที่ยังไม่จบ
+ * (Issue 20261025-04 / ข้อสังเกต P-02 — เดิมแก้ทะเบียนแล้วฟอร์มของผู้ประสานงานยังขึ้นค่าเดิม)
+ * `parent_organization_id` ไม่มีคู่บนคำขอ จึงไม่อยู่ในตารางนี้
+ */
+export const ORGANIZATION_SNAPSHOT_COLUMNS = {
+  organizationCode: "organizationCode",
+  organizationType: "organizationType",
+  nameTh: "organizationNameTh",
+  nameEn: "organizationNameEn",
+  addressLine: "organizationAddressLine",
+  road: "organizationRoad",
+  provinceCode: "organizationProvinceCode",
+  districtCode: "organizationDistrictCode",
+  subDistrictCode: "organizationSubdistrictCode",
+  postalCode: "organizationPostalCode",
+  phone: "organizationPhone",
+  phoneExtension: "organizationPhoneExtension",
+  email: "organizationEmail",
+  websiteUrl: "organizationWebsite",
+} as const;
+
+type OrganizationSnapshotSource = {
+  [K in keyof typeof ORGANIZATION_SNAPSHOT_COLUMNS]?: string | null;
+};
+export type OrganizationSnapshotPatch = {
+  [K in keyof typeof ORGANIZATION_SNAPSHOT_COLUMNS as (typeof ORGANIZATION_SNAPSHOT_COLUMNS)[K]]?:
+    | string
+    | null;
+};
+
+/**
+ * แปลงช่องของแถว `organization` เป็นช่องบน snapshot ของคำขอ — เฉพาะ key ที่ **มีอยู่** ใน input
+ * (`undefined` = ไม่ได้ส่งมา = ไม่แตะ · `null` = ล้างค่า ตามสัญญาของ PATCH)
+ *
+ * ชื่อ placeholder ที่ระบบตั้งเอง ("หน่วยงานใหม่") ไม่ใช่ข้อมูลจริง จึงไม่ถูกส่งต่อไปเป็นชื่อบนคำขอ
+ * ปล่อยว่างให้ผู้ใช้พิมพ์เอง ดีกว่าให้เขาต้องลบทิ้งก่อน (กติกาเดิมของ prefill)
+ */
+export function snapshotFromOrganization(org: OrganizationSnapshotSource): OrganizationSnapshotPatch {
+  const out: Record<string, string | null> = {};
+  for (const [source, target] of Object.entries(ORGANIZATION_SNAPSHOT_COLUMNS)) {
+    const value = org[source as keyof OrganizationSnapshotSource];
+    if (value === undefined) continue;
+    out[target] = source === "nameTh" && value === PLACEHOLDER_ORGANIZATION_NAME ? null : value;
+  }
+  return out as OrganizationSnapshotPatch;
+}

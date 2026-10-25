@@ -146,16 +146,20 @@ export interface AdminOrganizationDetail {
 }
 
 /**
- * คำเตือนที่ `PATCH /api/admin/organizations/:id` แนบมากับคำตอบที่สำเร็จ เมื่อหน่วยงานมีคำขอลงทะเบียนที่ยังเปิดอยู่
- * (docs/10-admin-prefill-organization.md §warning) — เป็น object ไม่ใช่ข้อความ: หน้าจอต้องหยิบ `message` กับเลขที่คำขอ
- * ไปแสดงเอง เดิมหน้าหน่วยงานส่งทั้งก้อนเข้า `WarningList` ซึ่งรับ `string[]` React จึง throw
- * "Objects are not valid as a React child" และผู้ดูแลระบบเห็นหน้า "เกิดข้อผิดพลาดที่ไม่คาดคิด" ทุกครั้งที่บันทึก
- * ทะเบียนของหน่วยงานที่กำลังลงทะเบียน (ขั้น ②–⑥) ทั้งที่ข้อมูลถูกบันทึกไปแล้ว
+ * สิ่งที่ `PATCH /api/admin/organizations/:id` แนบมากับคำตอบที่สำเร็จ เมื่อหน่วยงานมีคำขอลงทะเบียนที่ยังไม่จบ
+ * (docs/10-admin-prefill-organization.md §4) — เป็น object ไม่ใช่ข้อความ: หน้าจอต้องหยิบ `message` กับเลขที่คำขอไปแสดงเอง
+ * (เคยส่งทั้งก้อนเข้า `WarningList` แล้ว React throw "Objects are not valid as a React child" — การ์ด Issue 20261025-03)
+ *
+ * ตั้งแต่ 2026-10-25 API เขียนช่องที่แก้ลง snapshot ของคำขอใบนั้นด้วย (การ์ด Issue 20261025-04) `code` จึงบอกว่า
+ * - `registration_synced` — คำขอเป็นฉบับร่างหรือถูกส่งกลับแก้ ผู้ประสานงานจะเห็นค่าใหม่เมื่อเปิดฟอร์ม (แค่แจ้งให้ทราบ)
+ * - `registration_synced_in_review` — คำขอส่งแล้ว/กำลังตรวจ/รอหรือผ่านการลงนาม เนื้อหาเปลี่ยนหลังลงนาม ควรเตือนเป็นกล่องสีเหลือง
+ * `fieldsSynced` คือคอลัมน์บนคำขอที่เปลี่ยนค่าจริง (ว่างได้ ถ้าค่าที่แก้ตรงกับที่คำขอมีอยู่แล้ว)
  */
 export interface AdminOrganizationSaveWarning {
-  code: string;
+  code: "registration_synced" | "registration_synced_in_review";
   message: string;
   request: { id: string; requestNumber: string; status: RequestStatus };
+  fieldsSynced: string[];
 }
 
 export interface AdminSummary {

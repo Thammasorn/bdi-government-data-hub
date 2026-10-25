@@ -154,7 +154,7 @@ export default function ConsoleOrganizationPage() {
       <div className="space-y-5">
         <Panel
           title="ทะเบียนหน่วยงาน"
-          description="ข้อมูลนี้ถูกคัดลอกลงคำขอลงทะเบียนตอนหน่วยงานเปิดคำขอ — แก้ที่นี่ไม่เปลี่ยนคำขอที่เปิดไปแล้ว"
+          description="ถ้าหน่วยงานมีคำขอลงทะเบียนที่ยังไม่จบ ระบบจะปรับข้อมูลในคำขอให้ตรงกับที่แก้ที่นี่ด้วย"
           actions={
             editing ? null : (
               <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
@@ -169,9 +169,16 @@ export default function ConsoleOrganizationPage() {
               onCancel={() => setEditing(false)}
               onSaved={(_org: AdminOrganization, warning?: AdminOrganizationSaveWarning) => {
                 setEditing(false);
-                // API ส่งคำเตือนมาเป็น object — แสดงข้อความพร้อมเลขที่คำขอ ไม่ใช่โยนทั้งก้อนลง WarningList
-                setWarnings(warning ? [`${warning.message} (คำขอ ${warning.request.requestNumber})`] : []);
-                show({ tone: "success", title: "บันทึกทะเบียนหน่วยงานแล้ว" });
+                // API ส่ง warning มาเป็น object — หยิบ message กับเลขที่คำขอมาแสดง ไม่ใช่โยนทั้งก้อนลง WarningList
+                // คำขอที่ผู้ประสานงานยังแก้เองได้ (ร่าง/ส่งกลับแก้) แค่แจ้งใน toast · คำขอที่เลยขั้นนั้นแล้วค้างเป็นกล่องสีเหลือง
+                const note = warning ? `${warning.message} (คำขอ ${warning.request.requestNumber})` : null;
+                const inReview = warning?.code === "registration_synced_in_review";
+                setWarnings(note && inReview ? [note] : []);
+                show({
+                  tone: "success",
+                  title: "บันทึกทะเบียนหน่วยงานแล้ว",
+                  ...(note && !inReview ? { detail: note } : {}),
+                });
                 reload();
               }}
             />
