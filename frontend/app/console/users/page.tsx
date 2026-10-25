@@ -3,30 +3,31 @@
 import Link from "next/link";
 
 import { DataTable, type Column } from "@/components/console/DataTable";
-import {
-  Badge,
-  ButtonLink,
-  EmptyState,
-  ErrorNotice,
-  FilterSelect,
-  PageHeader,
-  Panel,
-  SearchBox,
-  Tag,
-} from "@/components/console/ui";
+import { InviteDialog } from "@/components/console/InviteDialog";
+import { OrganizationChip, useOrganizationScope } from "@/components/console/OrganizationScope";
+import { Badge, EmptyState, ErrorNotice, FilterSelect, PageHeader, Panel, SearchBox, Tag } from "@/components/console/ui";
+import { Button } from "@/components/ui/Button";
+import { useToast } from "@/components/ui/Toast";
 import { USER_STATUS_META, type AdminUserListItem, type UserAccountStatus } from "@/lib/admin";
 import { adminErrorView } from "@/lib/admin-errors";
 import { ROLE_LABELS, formatThaiDate, type Role } from "@/lib/status";
 import { DEFAULT_PAGE_SIZE } from "@/lib/use-request-list";
 import { accountName, qs, useAdminData, useUrlFilters } from "@/lib/use-admin";
 
-const FILTERS = ["q", "status", "role", "organizationId", "pageSize"] as const;
+const FILTERS = ["q", "status", "role", "organizationId", "pageSize", "new"] as const;
 
 /** 13 หลักล้วนในช่องค้นหา = เลขบัตร — API ค้นเลขบัตรแบบตรงตัวเท่านั้น (`?cid=`) ไม่ใช่ส่วนหนึ่งของชื่อ */
 const CID = /^\d{13}$/;
 
+/**
+ * ผู้ใช้ทั้งระบบ — `?organizationId=` กรองเฉพาะหน่วยงานหนึ่ง (บทบาทที่ยังใช้งานอยู่เท่านั้น; อดีตสมาชิกอยู่ที่หน้า "สมาชิก"
+ * ของหน่วยงานนั้น) และเมื่อกรองอยู่ หัวหน้ามีลิงก์กลับหน่วยงานกับป้ายบอกชื่อ — ก่อนหน้านี้บอกแค่ "เฉพาะหน่วยงานที่เลือก"
+ * และปุ่มเชิญพาออกไปหน้าคำเชิญโดยทิ้งหน่วยงานที่กรองอยู่ (การ์ด Issue 2026-10-25) กล่องเชิญเปิดในหน้านี้แล้ว
+ */
 export default function ConsoleUsersPage() {
   const { values, set, page } = useUrlFilters(FILTERS);
+  const { show } = useToast();
+  const scope = useOrganizationScope(values.organizationId || null);
   const pageSize = Number(values.pageSize) || DEFAULT_PAGE_SIZE;
   const query = values.q.replace(/[\s-]/g, "");
   const path = `/api/admin/users${qs({
@@ -37,7 +38,7 @@ export default function ConsoleUsersPage() {
     page,
     pageSize,
   })}`;
-  const { data, error, loading } = useAdminData<{ users: AdminUserListItem[]; total: number }>(path);
+  const { data, error, loading, reload } = useAdminData<{ users: AdminUserListItem[]; total: number }>(path);
 
   const columns: Column<AdminUserListItem>[] = [
     {
@@ -84,10 +85,15 @@ export default function ConsoleUsersPage() {
   return (
     <div>
       <PageHeader
+        back={scope.back ?? undefined}
         eyebrow="หน่วยงานและผู้ใช้"
         title="ผู้ใช้"
         description="ทุกบัญชีในระบบ รวมบัญชีที่ยังรอเปิดใช้งานจากคำเชิญ — กดแถวเพื่อแก้ข้อมูล เปลี่ยนบทบาท หรือระงับบัญชี"
-        actions={<ButtonLink href="/console/invitations?new=1">เชิญผู้ใช้</ButtonLink>}
+        actions={
+          <Button size="sm" onClick={() => set({ new: "1" })}>
+            {scope.organization ? "เชิญเข้าหน่วยงานนี้" : "เชิญผู้ใช้"}
+          </Button>
+        }
       />
       <Panel flush>
         <div className="flex flex-wrap items-center gap-3 border-b border-line p-4">
@@ -113,16 +119,17 @@ export default function ConsoleUsersPage() {
             onChange={(v) => set({ role: v })}
             options={(Object.keys(ROLE_LABELS) as Role[]).map((r) => ({ value: r, label: ROLE_LABELS[r] }))}
           />
-          {values.organizationId ? (
-            <button
-              type="button"
-              onClick={() => set({ organizationId: "" })}
-              className="rounded-full bg-navy-50 px-3 py-1.5 text-[13px] text-navy-700 hover:bg-navy-100"
-            >
-              เฉพาะหน่วยงานที่เลือก ✕
-            </button>
-          ) : null}
+          {scope.chipLabel ? <OrganizationChip label={scope.chipLabel} onClear={() => set({ organizationId: "" })} /> : null}
         </div>
+        {scope.organization ? (
+          <p className="border-b border-line bg-canvas/60 px-5 py-2 text-[13px] text-ink-muted">
+            แสดงเฉพาะบัญชีที่ยังมีบทบาทในหน่วยงานนี้ —{" "}
+            <Link href={`/console/organizations/${scope.organization.id}/members`} className="font-medium text-navy-700 underline">
+              หน้าสมาชิกของหน่วยงาน
+            </Link>{" "}
+            รวมอดีตสมาชิกที่ถูกถอนบทบาทไปแล้วด้วย
+          </p>
+        ) : null}
         {error ? <ErrorNotice view={adminErrorView(error)} className="m-4" /> : null}
         <DataTable
           columns={columns}
@@ -138,6 +145,16 @@ export default function ConsoleUsersPage() {
           onPageSize={(s) => set({ pageSize: String(s) })}
         />
       </Panel>
+
+      <InviteDialog
+        open={values.new === "1"}
+        lockedOrganization={scope.organization ? { id: scope.organization.id, nameTh: scope.organization.nameTh } : undefined}
+        onClose={() => set({ new: "" })}
+        onDone={(email) => {
+          show({ tone: "success", title: "ส่งคำเชิญแล้ว", detail: email });
+          reload();
+        }}
+      />
     </div>
   );
 }
