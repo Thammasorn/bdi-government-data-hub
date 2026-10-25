@@ -310,14 +310,14 @@ export default function ConsoleUserPage() {
       <ActionDialog
         open={dialog === "release"}
         onClose={close}
-        title="ปล่อยอีเมลให้ใช้ใหม่"
-        description={`อีเมล ${u.email} ถูกแทนด้วยที่อยู่ภายในระบบ เพื่อให้เชิญคนใหม่ด้วยอีเมลนี้ได้ เลขบัตรยังผูกกับบัญชีเดิม และบัญชีนี้เปิดใช้อีกไม่ได้`}
-        confirmLabel="ปล่อยอีเมล"
+        title="ถอดอีเมลออกจากบัญชี เพื่อเชิญคนใหม่ด้วยอีเมลนี้"
+        description={`อีเมล ${u.email} จะถูกถอดออกจากบัญชีนี้ และแทนด้วยที่อยู่ภายในระบบ หลังจากนั้นผู้ดูแลระบบจึงส่งคำเชิญถึงคนใหม่ด้วยอีเมลนี้ได้ ใช้เมื่อกล่องจดหมายกลางของหน่วยงานเปลี่ยนมือ เช่น it@agency.go.th ส่งต่อให้เจ้าหน้าที่คนใหม่ — เลขบัตรประชาชนยังผูกกับบัญชีเดิม และบัญชีนี้จะเปิดใช้อีกครั้งไม่ได้`}
+        confirmLabel="ถอดอีเมลออก"
         tone="danger"
         confirmPhrase={u.email}
         onConfirm={async (reason) => {
           await post("/release-identity", { releaseEmail: true, reason });
-          done("ปล่อยอีเมลแล้ว");
+          done("ถอดอีเมลออกจากบัญชีแล้ว", `ส่งคำเชิญถึงคนใหม่ด้วย ${u.email} ได้แล้ว`);
         }}
       />
       <ActionDialog
@@ -429,7 +429,7 @@ function StatusActions({
                 เปิดใช้อีกครั้ง
               </Button>
               <Button size="sm" variant="secondary" onClick={() => open("release")}>
-                ปล่อยอีเมลให้ใช้ใหม่
+                ถอดอีเมลออก เพื่อเชิญคนใหม่
               </Button>
             </>
           )}

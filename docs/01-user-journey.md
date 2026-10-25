@@ -128,7 +128,7 @@ Content-Type: application/json
 | `POST /users/:id/reinstate` | คืนสถานะจาก `SUSPENDED` |
 | `POST /users/:id/deactivate` | ยุติการใช้งาน · ถอน role ทุกใบ ยกเลิกคำเชิญ ปิด session |
 | `POST /users/:id/reactivate` | เปิดกลับจาก `DEACTIVATED` — **ไม่คืน role ให้เอง** |
-| `POST /users/:id/release-identity` | ปล่อย **อีเมล** ให้ใช้ใหม่ได้ (บัญชีต้อง `DEACTIVATED` ก่อน) |
+| `POST /users/:id/release-identity` | ถอด **อีเมล** ออกจากบัญชี เพื่อเชิญคนใหม่ด้วยอีเมลนี้ (บัญชีต้อง `DEACTIVATED` ก่อน) — ปุ่ม "ถอดอีเมลออก เพื่อเชิญคนใหม่" |
 | `POST /users/:id/roles` · `DELETE /users/:id/roles/:assignmentId` | มอบ / ถอนสิทธิ์ |
 | `POST /users/:id/transfer` | ย้ายหน่วยงาน — ถอนของเดิมและมอบของใหม่ในคำสั่งเดียว |
 | `GET`/`DELETE /users/:id/sessions` | ดู / บังคับออกจากระบบทุกเครื่อง |
@@ -138,7 +138,7 @@ Content-Type: application/json
 #### เลขบัตรกับอีเมลเป็นตัวระบุคนละชนิด
 
 `cid` คือ **คน** — ถาวร ไม่ซ้ำทั้งประเทศ **ไม่มีคำสั่งไหนปล่อยคืน** · `email` คือ
-**กล่องจดหมาย** ซึ่งเปลี่ยนมือได้จริง จึงปล่อยคืนได้ผ่าน `release-identity` เท่านั้น
+**กล่องจดหมาย** ซึ่งเปลี่ยนมือได้จริง จึงถอดออกจากบัญชีไปเชิญคนใหม่ได้ผ่าน `release-identity` เท่านั้น
 
 ผลคือ *สร้างบัญชีใหม่ด้วยเลขบัตรเดิม* ไม่มีในระบบ คนเดิมที่กลับเข้ามาใช้ `reactivate`
 แถวเดิม เพราะ `legal_acceptance` กับ `signature` ชี้มาที่บัญชี ถ้าแตกคนคนเดียวเป็นสองแถว

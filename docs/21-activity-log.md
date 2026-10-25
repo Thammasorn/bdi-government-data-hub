@@ -1726,7 +1726,7 @@ operation คงรหัสเดิมไว้ ข้อความอิส
 - **ตัวอย่าง** `{"before": {"firstnameTh": "สมชาย"}, "after": {"firstnameTh": "สมชัย"}, "metadata": {"updated_via": "THAID", "integration_operation_id": "e7d4…"}}`
 - **โค้ด** `routes/admin-users.ts:533` (โปรไฟล์) · `:629` (อีเมล/เลขบัตร ตามหลัง [`SESSION_REVOKED` ROTATED ในธุรกรรม] ถ้าบัญชีมี session เปิดอยู่) · `routes/auth.ts:536` (ชื่อจากบัตร)
 
-#### `USER_IDENTITY_RELEASED` — ปล่อยอีเมลของบัญชีให้ใช้ใหม่
+#### `USER_IDENTITY_RELEASED` — ถอดอีเมลออกจากบัญชี เพื่อเชิญคนใหม่
 
 กล่องจดหมายกลางเปลี่ยนมือ `before` เก็บอีเมลเดิมเพราะหลังจากนี้แถวบัญชีไม่มีมันแล้ว **เลขบัตรไม่มีทางถูกปล่อย**
 

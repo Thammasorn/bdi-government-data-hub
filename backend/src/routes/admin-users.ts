@@ -678,7 +678,8 @@ adminUserRouter.post("/:id/identity", async (req, res) => {
 });
 
 /**
- * ปล่อยอีเมลให้กลับไปใช้ใหม่ได้ — ใช้กับกล่องจดหมายที่เปลี่ยนมือจริง ๆ
+ * ถอดอีเมลออกจากบัญชี เพื่อให้เชิญคนใหม่ด้วยอีเมลนี้ได้ — ใช้กับกล่องจดหมายที่เปลี่ยนมือจริง ๆ
+ * (หน้าคอนโซลเรียกปุ่มนี้ว่า "ถอดอีเมลออก เพื่อเชิญคนใหม่")
  *
  * **ไม่มีตัวเลือกปล่อยเลขบัตร** เลขบัตรคือคน ไม่ใช่ตำแหน่ง — เป็นของคนอื่นไม่ได้เลย
  * ส่วนอีเมลกลางของฝ่าย (`it@agency.go.th`) ถูกส่งต่อให้เจ้าหน้าที่คนใหม่ได้จริง
@@ -700,7 +701,7 @@ adminUserRouter.post("/:id/release-identity", async (req, res) => {
     res.status(400).json({
       error: "validation",
       fields: formatZodError(parsed.error),
-      message: "ปล่อยได้เฉพาะอีเมล (releaseEmail: true) — เลขบัตรประชาชนปล่อยคืนไม่ได้",
+      message: "ถอดออกได้เฉพาะอีเมล (releaseEmail: true) — เลขบัตรประชาชนถอดออกจากบัญชีไม่ได้",
     });
     return;
   }
@@ -709,7 +710,7 @@ adminUserRouter.post("/:id/release-identity", async (req, res) => {
     res.status(409).json({
       error: "not_deactivated",
       message:
-        `ปล่อยอีเมลได้เฉพาะบัญชีที่ยุติการใช้งานแล้ว — บัญชีนี้อยู่สถานะ ${account.status} ` +
+        `ถอดอีเมลออกได้เฉพาะบัญชีที่ยุติการใช้งานแล้ว — บัญชีนี้อยู่สถานะ ${account.status} ` +
         `ถ้าตั้งใจจะเปลี่ยนอีเมลของบัญชีที่ยังใช้งานอยู่ ให้ใช้ POST /api/admin/users/:id/identity แทน`,
     });
     return;
@@ -734,7 +735,7 @@ adminUserRouter.post("/:id/release-identity", async (req, res) => {
   res.json({
     user: updated,
     releasedEmail: account.email,
-    message: `อีเมล ${account.email} ใช้เชิญใหม่ได้แล้ว — เลขบัตรประชาชนยังผูกกับบัญชีนี้ตามเดิม`,
+    message: `ถอดอีเมล ${account.email} ออกจากบัญชีแล้ว ส่งคำเชิญถึงคนใหม่ด้วยอีเมลนี้ได้ — เลขบัตรประชาชนยังผูกกับบัญชีนี้ตามเดิม`,
   });
 });
 
@@ -941,7 +942,7 @@ adminUserRouter.post("/:id/reactivate", async (req, res) => {
     res.status(409).json({
       error: "identity_released",
       message:
-        "อีเมลของบัญชีนี้ถูกปล่อยคืนไปแล้ว จึงเปิดใช้งานกลับมาไม่ได้จนกว่าจะตั้งอีเมลใหม่ — " +
+        "อีเมลของบัญชีนี้ถูกถอดออกไปเชิญคนใหม่แล้ว จึงเปิดใช้งานกลับมาไม่ได้จนกว่าจะตั้งอีเมลใหม่ — " +
         "ใช้ POST /api/admin/users/:id/identity ตั้งอีเมลก่อน",
     });
     return;
