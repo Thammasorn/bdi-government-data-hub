@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
 import { SelectField, TextField } from "@/components/ui/Field";
-import type { AdminOrganization } from "@/lib/admin";
+import type { AdminOrganization, AdminOrganizationSaveWarning } from "@/lib/admin";
 import { adminErrorView, type AdminErrorView } from "@/lib/admin-errors";
 import { api } from "@/lib/api";
 
@@ -51,7 +51,7 @@ export function OrganizationForm({
   onCancel,
 }: {
   organization: AdminOrganization | null;
-  onSaved: (org: AdminOrganization, warning?: string) => void;
+  onSaved: (org: AdminOrganization, warning?: AdminOrganizationSaveWarning) => void;
   onCancel: () => void;
 }) {
   const [form, setForm] = useState<Values>(() => valuesOf(organization));
@@ -108,7 +108,7 @@ export function OrganizationForm({
           onCancel();
           return;
         }
-        const res = await api.patch<{ organization: AdminOrganization; warning?: string }>(
+        const res = await api.patch<{ organization: AdminOrganization; warning?: AdminOrganizationSaveWarning }>(
           `/api/admin/organizations/${organization.id}`,
           changed,
         );
