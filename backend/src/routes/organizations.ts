@@ -91,6 +91,7 @@ import {
   emailsOf,
   notifyUsers,
   organizationMemberIds,
+  submitterIfMember,
 } from "../lib/notify.js";
 import {
   AGREEMENT_CODE,
@@ -3342,7 +3343,7 @@ async function dispatchReviewNotifications(
   });
 
   if (result === ReviewResult.RETURNED) {
-    await notifyUsers([...members.users, request.createdBy], {
+    await notifyUsers([...members.users, submitterIfMember(request.createdBy, members)], {
       type: NotificationType.REQUEST_RETURNED,
       title: "คำขอถูกส่งกลับให้แก้ไข",
       message: note ?? "",
@@ -3354,7 +3355,7 @@ async function dispatchReviewNotifications(
   }
 
   if (result === ReviewResult.REJECTED) {
-    await notifyUsers([...members.users, request.createdBy], {
+    await notifyUsers([...members.users, submitterIfMember(request.createdBy, members)], {
       type: NotificationType.REQUEST_REJECTED,
       title: "คำขอไม่ได้รับอนุมัติ",
       message: note ?? "",
@@ -3396,7 +3397,7 @@ async function dispatchReviewNotifications(
   }
 
   if (taskType === ReviewTaskType.BDI_FINAL_APPROVAL) {
-    await notifyUsers([...members.users, ...members.approvers, request.createdBy], {
+    await notifyUsers([...members.users, ...members.approvers, submitterIfMember(request.createdBy, members)], {
       type: NotificationType.REQUEST_APPROVED,
       title: "หน่วยงานได้รับอนุมัติแล้ว",
       message: `${name} เปิดใช้งานเรียบร้อย`,

@@ -273,6 +273,22 @@ export async function organizationMemberIds(organizationId: string): Promise<{
 }
 
 /**
+ * ผู้สร้างคำขอ ถ้ายังเป็นสมาชิกที่ใช้งานอยู่ของหน่วยงานนั้น — ไม่เช่นนั้นคืน null
+ *
+ * `request.createdBy` ถูกใส่เข้ารายชื่อผู้รับตรง ๆ มาตลอด จึงข้ามตัวกรองของ
+ * `organizationMemberIds()` (บัญชี ACTIVE + role ที่ยังไม่ถูกถอด) ผู้ใช้ที่ถูกยุติ ระงับ
+ * หรือถอดออกจากหน่วยงานแล้วจึงยังได้อีเมลส่งกลับแก้ไข/ไม่อนุมัติของคำขอที่ตัวเองเคยเปิดไว้
+ * (card "ลองยุติ org officer แล้ว … ยังได้รับ email อยู่", 2026-10-25) คนที่เข้ามารับช่วง
+ * อยู่ใน `members` อยู่แล้ว จึงยังได้รับเมลตามปกติ
+ */
+export function submitterIfMember(
+  createdBy: string,
+  members: { users: string[]; approvers: string[] },
+): string | null {
+  return members.users.includes(createdBy) || members.approvers.includes(createdBy) ? createdBy : null;
+}
+
+/**
  * stakeholders ของคำขอหนึ่งฉบับ
  * ผู้สร้าง + ผู้ใช้และผู้มีอำนาจของหน่วยงาน + BDI officer/approver ทุกคน
  * + ผู้เชี่ยวชาญที่ถือ task อยู่
@@ -289,15 +305,15 @@ export async function requestStakeholderIds(request: {
   ]);
 
   return [
-    ...new Set([
-      request.createdBy,
+    ...new Set<string | null>([
+      submitterIfMember(request.createdBy, members),
       ...members.users,
       ...members.approvers,
       ...officers,
       ...approvers,
       ...(request.assignedUserIds ?? []),
     ]),
-  ];
+  ].filter((id): id is string => id !== null);
 }
 
 /**
@@ -383,7 +399,7 @@ export async function announceProgress(params: {
   const members = await organizationMemberIds(params.organizationId);
   const recipients = [
     ...members.users,
-    params.createdBy,
+    submitterIfMember(params.createdBy, members),
     ...(step.taskType === ReviewTaskType.ORGANIZATION_APPROVAL ? [] : members.approvers),
   ];
 

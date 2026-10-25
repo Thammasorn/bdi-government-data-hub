@@ -82,6 +82,7 @@ import {
   emailsOf,
   notifyUsers,
   organizationMemberIds,
+  submitterIfMember,
 } from "../lib/notify.js";
 import {
   DATASET_FORM_CODE,
@@ -2390,7 +2391,7 @@ async function dispatchDatasetNotifications(
   });
 
   if (result === ReviewResult.RETURNED) {
-    await notifyUsers([...members.users, request.createdBy], {
+    await notifyUsers([...members.users, submitterIfMember(request.createdBy, members)], {
       type: NotificationType.REQUEST_RETURNED,
       title: "คำขอถูกส่งกลับให้แก้ไข",
       message: note ?? "",
@@ -2402,7 +2403,7 @@ async function dispatchDatasetNotifications(
   }
 
   if (result === ReviewResult.REJECTED) {
-    await notifyUsers([...members.users, request.createdBy], {
+    await notifyUsers([...members.users, submitterIfMember(request.createdBy, members)], {
       type: NotificationType.REQUEST_REJECTED,
       title: "คำขอไม่ได้รับอนุมัติ",
       message: note ?? "",
@@ -2459,7 +2460,7 @@ async function dispatchDatasetNotifications(
   }
 
   if (taskType === ReviewTaskType.BDI_FINAL_APPROVAL && result === ReviewResult.APPROVED) {
-    await notifyUsers([...members.users, ...members.approvers, request.createdBy], {
+    await notifyUsers([...members.users, ...members.approvers, submitterIfMember(request.createdBy, members)], {
       type: NotificationType.REQUEST_APPROVED,
       title: "คำขอได้รับอนุมัติแล้ว",
       message: info.datasetName,
