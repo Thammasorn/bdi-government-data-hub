@@ -7,6 +7,7 @@ import { ActionDialog } from "@/components/console/ActionDialog";
 import { Badge, ErrorNotice, PageHeader, Panel, Tag } from "@/components/console/ui";
 import { Button } from "@/components/ui/Button";
 import { TextField } from "@/components/ui/Field";
+import { EyeIcon, EyeSlashIcon } from "@/components/ui/Icons";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { adminErrorView } from "@/lib/admin-errors";
@@ -196,9 +197,21 @@ export default function ConsolePublicDocumentsPage() {
                           <Button size="sm" variant="ghost" onClick={() => setDialog({ kind: "edit", doc })}>
                             แก้ไข
                           </Button>
+                          {/* ไอคอนคือสถานะตอนนี้ ข้อความคือสิ่งที่กดแล้วจะเกิด — แบบเดียวกับปุ่มลูกตาของช่องรหัสผ่าน (feedback แถว 20) */}
                           <Button
                             size="sm"
                             variant="ghost"
+                            icon={
+                              doc.isActive ? (
+                                <EyeIcon className="h-4 w-4" />
+                              ) : (
+                                <EyeSlashIcon className="h-4 w-4" />
+                              )
+                            }
+                            aria-label={`${doc.isActive ? "ซ่อน" : "แสดง"} ${doc.code ?? doc.title} ${
+                              doc.isActive ? "จากหน้าแรก" : "บนหน้าแรก"
+                            }`}
+                            title={doc.isActive ? "แสดงบนหน้าแรกอยู่ — กดเพื่อซ่อน" : "ซ่อนจากหน้าแรกอยู่ — กดเพื่อแสดง"}
                             onClick={() =>
                               void patch(
                                 doc,

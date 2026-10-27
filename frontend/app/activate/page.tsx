@@ -8,7 +8,7 @@ import { AuthLayout } from "@/components/AuthLayout";
 import { ThaidButton, storeActivationToken } from "@/components/auth/Thaid";
 import { sessionUserName, useSession, type SessionUser } from "@/components/SessionProvider";
 import { Button } from "@/components/ui/Button";
-import { SelectField, TextField } from "@/components/ui/Field";
+import { PasswordField, SelectField, TextField } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
@@ -444,9 +444,8 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
         </div>
 
         <div className="flex flex-col gap-3">
-          <TextField
+          <PasswordField
             label="ตั้งรหัสผ่าน"
-            type="password"
             required
             autoComplete="new-password"
             value={form.password}
@@ -457,9 +456,8 @@ function AccountCreationStep({ token, invitation }: { token: string; invitation:
           <PasswordRequirements value={form.password} />
         </div>
 
-        <TextField
+        <PasswordField
           label="ยืนยันรหัสผ่าน"
-          type="password"
           required
           autoComplete="new-password"
           value={form.confirmPassword}

@@ -7,7 +7,9 @@ import type {
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from "react";
-import { useId } from "react";
+import { useId, useState } from "react";
+
+import { EyeIcon, EyeSlashIcon } from "./Icons";
 
 const CONTROL = [
   "w-full rounded-[10px] border bg-white px-3.5 text-[15px] text-ink",
@@ -45,11 +47,11 @@ const stateRing = (invalid?: boolean, valid?: boolean) => {
 };
 
 /** เครื่องหมายถูกท้ายช่องที่กรอกผ่านแล้ว — คู่กับขอบเขียว ไม่ใช่แทนกัน */
-function ValidMark() {
+function ValidMark({ className = "right-3.5" }: { className?: string }) {
   return (
     <svg
       viewBox="0 0 16 16"
-      className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-success"
+      className={clsx("pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-success", className)}
       fill="none"
       stroke="currentColor"
       strokeWidth="2.2"
@@ -118,6 +120,56 @@ export function TextField({
             className={clsx(CONTROL, READ_ONLY, stateRing(Boolean(error), showValid), "h-11", showValid && "pr-10")}
           />
           {showValid ? <ValidMark /> : null}
+        </div>
+      )}
+    </Field>
+  );
+}
+
+/**
+ * ช่องรหัสผ่านที่มีปุ่มลูกตาให้เปิดดูสิ่งที่พิมพ์ (feedback "features 1 full" แถว 2) — รหัสผ่านของระบบยาว 12 ตัวขึ้นไป
+ * และต้องมีสัญลักษณ์ พิมพ์ผิดหนึ่งตัวแล้วมองไม่เห็นว่าผิดตรงไหนคือเหตุที่ผู้ใช้ขอ
+ *
+ * ปุ่มเป็น `type="button"` ไม่ใช่ submit (Enter ในช่องยังส่งฟอร์มตามปกติ) และกัน mousedown ไว้ โฟกัสกับตำแหน่ง cursor
+ * จึงอยู่ในช่องเดิม เปิดดูกลางคำแล้วพิมพ์ต่อได้เลย ไอคอนบอกสถานะปัจจุบัน (ลูกตา = กำลังแสดง) ส่วน `aria-label` บอกสิ่งที่กดแล้ว
+ * จะเกิด คนที่ใช้โปรแกรมอ่านจอได้ทั้งสองอย่างจาก `aria-pressed` แต่ละช่องสลับของตัวเอง ช่องยืนยันไม่เปิดตามช่องแรก
+ */
+export function PasswordField({
+  label,
+  error,
+  hint,
+  required,
+  valid,
+  className,
+  ...rest
+}: Omit<InputHTMLAttributes<HTMLInputElement>, "type"> &
+  Validatable & { label: string; error?: string; hint?: string }) {
+  const [shown, setShown] = useState(false);
+  const showValid = Boolean(valid) && !error;
+  return (
+    <Field label={label} error={error} hint={hint} required={required} className={className}>
+      {(id) => (
+        <div className="relative">
+          <input
+            {...rest}
+            id={id}
+            type={shown ? "text" : "password"}
+            aria-invalid={error ? true : undefined}
+            className={clsx(CONTROL, READ_ONLY, stateRing(Boolean(error), showValid), "h-11", showValid ? "pr-16" : "pr-11")}
+          />
+          {showValid ? <ValidMark className="right-10" /> : null}
+          <button
+            type="button"
+            aria-controls={id}
+            aria-pressed={shown}
+            aria-label={shown ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"}
+            title={shown ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setShown((s) => !s)}
+            className="absolute right-1.5 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-navy-50 hover:text-navy-700 focus-visible:outline-2 focus-visible:outline-navy-500"
+          >
+            {shown ? <EyeIcon className="h-[18px] w-[18px]" /> : <EyeSlashIcon className="h-[18px] w-[18px]" />}
+          </button>
         </div>
       )}
     </Field>
