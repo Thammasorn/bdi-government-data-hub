@@ -11,6 +11,7 @@ import { Badge, ErrorNotice, PageHeader, Panel, Tag } from "@/components/console
 import { Pagination } from "@/components/list/Pagination";
 import { Button } from "@/components/ui/Button";
 import { TextAreaField, TextField } from "@/components/ui/Field";
+import { EyeIcon, EyeSlashIcon } from "@/components/ui/Icons";
 import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
@@ -107,6 +108,8 @@ export default function ConsoleLegalDocumentPage() {
             <Button
               size="sm"
               variant={doc.isActive ? "secondary" : "primary"}
+              // ลูกตาชุดเดียวกับหน้าเอกสารดาวน์โหลดและช่องรหัสผ่าน: ไอคอนคือสถานะตอนนี้ ข้อความคือสิ่งที่กดแล้วจะเกิด
+              icon={doc.isActive ? <EyeIcon className="h-4 w-4" /> : <EyeSlashIcon className="h-4 w-4" />}
               disabled={Boolean(cannotDeactivate ?? cannotActivate)}
               onClick={() => setToggling(true)}
             >
