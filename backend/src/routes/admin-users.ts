@@ -44,7 +44,7 @@ import { env } from "../env.js";
 import { adminActorId, currentContext } from "../lib/context.js";
 import { thaiDuration } from "../lib/duration.js";
 import { NAME_FIELDS, fullNameTh } from "../lib/person-name.js";
-import { AuditAction, AuditSubject, diffFields, logAudit } from "../lib/audit.js";
+import { AuditAction, AuditSubject, diffFields, logAudit, sanitizeState } from "../lib/audit.js";
 import {
   activeAssignmentWhere,
   assignRole,
@@ -539,9 +539,20 @@ adminUserRouter.get("/:id", async (req, res) => {
       ipAddress: s.ipAddress,
       userAgent: s.userAgent,
     })),
-    recentAudit: audit,
+    // ค่าก่อน/หลังขึ้นจอในแท็บประวัติแล้ว (feedback "features 1 full" แถว 14) — แถวเปลี่ยนตัวตนของ admin เขียนเลขบัตรเต็ม
+    // มาตั้งแต่ก่อนการ์ด activity log และ CLAUDE.md ห้ามแก้ payload ที่จุดเขียนเดิม จึงปิดตอนส่งออกแทน กฎเดียวกับ sanitizeDiff()
+    recentAudit: audit.map((a) => ({
+      ...a,
+      beforeSummaryJson: summaryForScreen(a.beforeSummaryJson),
+      afterSummaryJson: summaryForScreen(a.afterSummaryJson),
+    })),
   });
 });
+
+/** before/after ของแถว audit ที่จะส่งให้หน้าจอ — เฉพาะ object (แถวเก่าบางแถวไม่มีหรือเป็นค่าอื่น) และปิดเลขบัตรเสมอ */
+function summaryForScreen(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? sanitizeState(value) : null;
+}
 
 // ---------------------------------------------------------------- แก้ข้อมูล
 
