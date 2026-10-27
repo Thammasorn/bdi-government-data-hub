@@ -38,6 +38,7 @@ import { datasetRequestRouter } from "./routes/dataset-requests.js";
 import { healthRouter } from "./routes/health.js";
 import { notificationRouter } from "./routes/notifications.js";
 import { organizationRouter } from "./routes/organizations.js";
+import { statisticsRouter } from "./routes/statistics.js";
 import { ensureContainer } from "./storage.js";
 
 const app = express();
@@ -205,6 +206,7 @@ app.use("/api/dataset-choices", datasetChoiceRouter);
 app.use("/api/organizations", organizationRouter);
 app.use("/api/dataset-requests", datasetRequestRouter);
 app.use("/api/notifications", notificationRouter);
+app.use("/api/statistics", statisticsRouter);
 
 app.use((_req, res) => {
   res.status(404).json({ error: "not_found", message: "ไม่พบเส้นทางนี้" });

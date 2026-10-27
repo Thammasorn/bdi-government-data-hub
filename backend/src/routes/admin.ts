@@ -13,6 +13,7 @@ import {
 import { prisma } from "../db.js";
 import { adminActorId } from "../lib/context.js";
 import { fullNameTh } from "../lib/person-name.js";
+import { countsByStatus, registrationCounts } from "../lib/statistics.js";
 import { lookupZipcode, resolveAddressCodes, resolveAddressNames } from "../lib/address.js";
 import {
   CHOICE_FIELD_KEYS,
@@ -74,13 +75,6 @@ adminRouter.use((req, res, next) =>
 /** คำเชิญที่จะหมดอายุภายในช่วงนี้นับเป็น "ใกล้หมดอายุ" บนหน้าแรกของ /console */
 const EXPIRING_SOON_MS = 48 * 60 * 60 * 1000;
 
-/** แถวของ `groupBy` → `{ <status>: <count> }` ที่มีทุกสถานะ (สถานะที่ไม่มีแถวเป็น 0 ไม่หายไปจากคำตอบ) */
-function countsByStatus<S extends string>(all: readonly S[], rows: { status: S; _count: { _all: number } }[]) {
-  const out = Object.fromEntries(all.map((s) => [s, 0])) as Record<S, number>;
-  for (const row of rows) out[row.status] = row._count._all;
-  return out;
-}
-
 /**
  * ตัวเลขของหน้าแรกของ /console — การ์ด Admin Console (2026-10-05)
  *
@@ -91,20 +85,15 @@ function countsByStatus<S extends string>(all: readonly S[], rows: { status: S; 
 adminRouter.get("/summary", async (_req, res) => {
   const now = new Date();
   const soon = new Date(now.getTime() + EXPIRING_SOON_MS);
-  const [users, organizations, orgRequests, datasetRequests, usable, expiringSoon, lapsed, deadLetters] =
+  // หน่วยงานกับคำขอนับที่ lib/statistics.ts ตัวเดียวกับหน้า "สถิติ" ของ BDI — สองหน้าจึงไม่มีวันได้ตัวเลขต่างกัน
+  const [users, registration, usable, expiringSoon, lapsed, deadLetters] =
     await Promise.all([
       prisma.userAccount.groupBy({
         by: ["status"],
         where: { id: { not: SYSTEM_USER_ID } },
         _count: { _all: true },
       }),
-      prisma.organization.groupBy({
-        by: ["status"],
-        where: { id: { not: BDI_ORGANIZATION_ID } },
-        _count: { _all: true },
-      }),
-      prisma.organizationRegistrationRequest.groupBy({ by: ["status"], _count: { _all: true } }),
-      prisma.datasetRegistrationRequest.groupBy({ by: ["status"], _count: { _all: true } }),
+      registrationCounts(),
       prisma.activationKey.count({ where: { status: ActivationKeyStatus.ISSUED, expiresAt: { gt: now } } }),
       prisma.activationKey.count({
         where: { status: ActivationKeyStatus.ISSUED, expiresAt: { gt: now, lte: soon } },
@@ -115,9 +104,7 @@ adminRouter.get("/summary", async (_req, res) => {
 
   res.json({
     users: countsByStatus(Object.values(UserAccountStatus), users),
-    organizations: countsByStatus(Object.values(OrganizationStatus), organizations),
-    organizationRequests: countsByStatus(Object.values(RequestStatus), orgRequests),
-    datasetRequests: countsByStatus(Object.values(RequestStatus), datasetRequests),
+    ...registration,
     invitations: { usable, expiringSoon, lapsed },
     deadLetters,
     generatedAt: now,

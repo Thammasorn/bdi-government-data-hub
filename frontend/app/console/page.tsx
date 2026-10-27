@@ -1,10 +1,9 @@
 "use client";
 
-import clsx from "clsx";
 import Link from "next/link";
-import type { ReactNode } from "react";
 
-import { ButtonLink, ErrorNotice, PageHeader, Panel } from "@/components/console/ui";
+import { ButtonLink, ErrorNotice, PageHeader, Panel, StatRow, Tile } from "@/components/console/ui";
+import { OrganizationDatasetTable } from "@/components/statistics/OrganizationDatasetTable";
 import { Spinner } from "@/components/ui/Spinner";
 import type { AdminSummary } from "@/lib/admin";
 import { adminErrorView } from "@/lib/admin-errors";
@@ -126,6 +125,11 @@ export default function ConsoleHomePage() {
           />
         </Panel>
       </div>
+
+      {/* ตารางเดียวกับหน้า "สถิติ" ของ BDI — ผู้ดูแลระบบไม่มีหน้าแยก ดูจากที่นี่ (feedback "features 1 full" แถว 15) */}
+      <div className="mt-8">
+        <OrganizationDatasetTable />
+      </div>
     </div>
   );
 }
@@ -135,68 +139,5 @@ function SeeAll({ href }: { href: string }) {
     <Link href={href} className="text-[13.5px] font-medium text-navy-700 hover:underline">
       ดูทั้งหมด →
     </Link>
-  );
-}
-
-function Tile({
-  href,
-  value,
-  label,
-  hint,
-  tone,
-}: {
-  href?: string;
-  value: number;
-  label: string;
-  hint: string;
-  tone: "alert" | "warn";
-}) {
-  const quiet = value === 0;
-  const body: ReactNode = (
-    <>
-      <p className="text-[13.5px] font-medium text-ink-muted">{label}</p>
-      <p
-        className={clsx(
-          "mt-1 text-[32px] font-semibold leading-none tabular-nums",
-          quiet ? "text-ink-subtle" : tone === "alert" ? "text-danger" : "text-warning",
-        )}
-      >
-        {value}
-      </p>
-      <p className="mt-2 text-[12.5px] text-ink-muted">{quiet ? "ไม่มีรายการค้าง" : hint}</p>
-    </>
-  );
-  const className = clsx(
-    "block rounded-2xl bg-white p-5 shadow-card ring-1 ring-line",
-    !quiet && (tone === "alert" ? "border-l-4 border-danger" : "border-l-4 border-warning"),
-  );
-  return href && !quiet ? (
-    <Link href={href} className={clsx(className, "transition-shadow hover:shadow-pop")}>
-      {body}
-    </Link>
-  ) : (
-    <div className={className}>{body}</div>
-  );
-}
-
-function StatRow({ items }: { items: Array<{ label: string; value: number; href?: string }> }) {
-  return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-      {items.map((item) => {
-        const body = (
-          <>
-            <span className="block text-[12.5px] text-ink-muted">{item.label}</span>
-            <span className="mt-0.5 block text-2xl font-semibold tabular-nums text-navy-800">{item.value}</span>
-          </>
-        );
-        return item.href ? (
-          <Link key={item.label} href={item.href} className="-m-2 rounded-xl p-2 transition-colors hover:bg-navy-50">
-            {body}
-          </Link>
-        ) : (
-          <div key={item.label}>{body}</div>
-        );
-      })}
-    </div>
   );
 }

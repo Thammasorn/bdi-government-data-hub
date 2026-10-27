@@ -345,3 +345,71 @@ export function FilterSelect({
     </label>
   );
 }
+
+/**
+ * ตัวเลขใหญ่หนึ่งช่องพร้อมคำอธิบาย — ศูนย์จางลงให้ตัวที่ไม่ใช่ศูนย์เด่น กดได้เมื่อมีที่ให้ไป (ตัวเลขที่กดไม่ได้บนหน้าแบบนี้คือทางตัน)
+ * ย้ายมาจากหน้า ภาพรวม ของ /console ให้หน้า "สถิติ" ของ BDI ใช้ตัวเดียวกัน
+ */
+export function Tile({
+  href,
+  value,
+  label,
+  hint,
+  tone,
+}: {
+  href?: string;
+  value: number;
+  label: string;
+  hint: string;
+  tone: "alert" | "warn";
+}) {
+  const quiet = value === 0;
+  const body: ReactNode = (
+    <>
+      <p className="text-[13.5px] font-medium text-ink-muted">{label}</p>
+      <p
+        className={clsx(
+          "mt-1 text-[32px] font-semibold leading-none tabular-nums",
+          quiet ? "text-ink-subtle" : tone === "alert" ? "text-danger" : "text-warning",
+        )}
+      >
+        {value}
+      </p>
+      <p className="mt-2 text-[12.5px] text-ink-muted">{quiet ? "ไม่มีรายการค้าง" : hint}</p>
+    </>
+  );
+  const className = clsx(
+    "block rounded-2xl bg-white p-5 shadow-card ring-1 ring-line",
+    !quiet && (tone === "alert" ? "border-l-4 border-danger" : "border-l-4 border-warning"),
+  );
+  return href && !quiet ? (
+    <Link href={href} className={clsx(className, "transition-shadow hover:shadow-pop")}>
+      {body}
+    </Link>
+  ) : (
+    <div className={className}>{body}</div>
+  );
+}
+
+/** แถวตัวเลขในกรอบ — แต่ละตัวเป็นลิงก์ไปรายการที่กรองไว้แล้วเมื่อมี `href` */
+export function StatRow({ items }: { items: Array<{ label: string; value: number; href?: string }> }) {
+  return (
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      {items.map((item) => {
+        const body = (
+          <>
+            <span className="block text-[12.5px] text-ink-muted">{item.label}</span>
+            <span className="mt-0.5 block text-2xl font-semibold tabular-nums text-navy-800">{item.value}</span>
+          </>
+        );
+        return item.href ? (
+          <Link key={item.label} href={item.href} className="-m-2 rounded-xl p-2 transition-colors hover:bg-navy-50">
+            {body}
+          </Link>
+        ) : (
+          <div key={item.label}>{body}</div>
+        );
+      })}
+    </div>
+  );
+}

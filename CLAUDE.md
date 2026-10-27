@@ -1478,6 +1478,18 @@ counts can link to a filtered list). The registration screens reuse `Organizatio
 `DatasetRequestTable` and both `DetailView`s read-only under `RegistrationAdminPanel`;
 `SnapshotEditor` sends only changed keys to the `.strict()` admin `PUT`.
 
+**สถิติ — one set of numbers, two screens** (feedback "features 1 full" row 15, 2026-10-27). BDI officers and approvers get a
+"สถิติ" menu item to `/admin/statistics`; the system administrator gets the same per-organisation table as a section of the
+`/console` overview instead of a page of its own. Both read `routes/statistics.ts` (`/api/statistics/*`, `requireAuth` +
+`requireRole` for those three roles, **not** under `/api/admin`, which is administrator-only and takes the admin token), and the
+console's own `/api/admin/summary` now counts organisations and requests through the same `registrationCounts()` in
+`lib/statistics.ts`, so the two screens cannot disagree. The table is one SQL statement — requests counted per organisation and
+status in a CTE, LEFT JOINed to organisations, sorted and paged in the database; the ORDER BY comes only from the token table in
+that file. Measured on a dev checkout with 5,007 organisations and 100,009 requests: 20 ms in Postgres, 27–60 ms through the API,
+the whole CSV in 0.36 s. The CSV streams in batches of 500, starts with a UTF-8 BOM (Excel reads a BOM-less CSV in the machine's
+code page and Thai turns to mojibake), and prefixes a name starting with `= + - @` with `'` so Excel does not run it as a formula.
+`Tile` and `StatRow` moved out of `app/console/page.tsx` into `components/console/ui.tsx` for this.
+
 **An organisation has its own members and invitations pages** (`/console/organizations/[id]/members`,
 `…/invitations`, card "flow หน่วยงาน → เชิญผู้ใช้ → กลับไม่ได้", 2026-10-25). Until then every "invite" button
 was a `ButtonLink` to the global `/console/invitations?new=1`, so an administrator who had drilled into an

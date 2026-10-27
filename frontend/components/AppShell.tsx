@@ -105,6 +105,9 @@ function roleNavItems(
       { href: "/", label: "หน้าแรก" },
       { href: "/admin/organizations", label: ORGANIZATION_LABEL },
       { href: "/admin/datasets", label: DATASET_LABEL },
+      // ผู้ประสานงานและผู้มีอำนาจอนุมัติของ BDI (feedback "features 1 full" แถว 15) — ไม่ใช่ "ภาพรวม" เพราะจะอ่านซ้ำกับ
+      // "หน้าแรก" ที่อยู่ติดกัน ผู้ดูแลระบบเห็นตัวเลขชุดเดียวกันบนหน้า ภาพรวม ของ /console แทน
+      { href: "/admin/statistics", label: "สถิติ" },
     ];
   }
   // ผู้มีอำนาจกระทำการแทนที่ถูกเชิญเข้ามาทีหลังยังไม่ถูกผูก organizationId
