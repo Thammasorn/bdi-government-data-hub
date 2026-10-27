@@ -164,6 +164,10 @@ function useActiveSection() {
  *
  * คลาส js-reveal ถูกใส่จาก JS เท่านั้น ถ้าสคริปต์ไม่ทำงานเนื้อหาจะแสดงตามปกติ
  * ไม่ใช่หน้าว่าง — หน้านี้เป็นหน้าที่คนนอกเข้ามาอ่าน จะพลาดตรงนี้ไม่ได้
+ *
+ * `.reveal` ที่เกิดทีหลังต้องถูก observe ด้วย ไม่ใช่แค่ชุดที่มีตอน mount — `js-reveal` ซ่อนทุก `.reveal` ที่ยังไม่มี `.is-in`
+ * ใบที่ไม่มีใคร observe จึงค้างโปร่งใสตลอดไป รายการเอกสารดาวน์โหลดแสดงชุดสำรองจาก content.ts ก่อนแล้วสลับเป็นของ API
+ * เอกสารที่ไม่อยู่ในชุดสำรอง (A20 ที่ผู้ดูแลเพิ่มเอง) จึงเป็นช่องว่างบนหน้าแรกจนถึง 2026-10-27 (feedback "features 1 full" แถว 19)
  */
 function useRevealOnScroll() {
   useEffect(() => {
@@ -183,7 +187,20 @@ function useRevealOnScroll() {
     );
 
     document.querySelectorAll(".reveal").forEach((el) => observer.observe(el));
+
+    const added = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (!(node instanceof Element)) continue;
+          if (node.matches(".reveal:not(.is-in)")) observer.observe(node);
+          node.querySelectorAll(".reveal:not(.is-in)").forEach((el) => observer.observe(el));
+        }
+      }
+    });
+    added.observe(document.body, { childList: true, subtree: true });
+
     return () => {
+      added.disconnect();
       observer.disconnect();
       root.classList.remove("js-reveal");
     };
