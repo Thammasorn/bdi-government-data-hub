@@ -8,7 +8,7 @@ import { AuthLayout } from "@/components/AuthLayout";
 import { PasswordRequirements } from "@/components/auth/PasswordRequirements";
 import { useSession } from "@/components/SessionProvider";
 import { Button } from "@/components/ui/Button";
-import { TextField } from "@/components/ui/Field";
+import { PasswordField } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
@@ -113,9 +113,8 @@ function ResetForm({ token, email }: { token: string; email: string }) {
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>
         <div className="flex flex-col gap-3">
-          <TextField
+          <PasswordField
             label="รหัสผ่านใหม่"
-            type="password"
             required
             autoComplete="new-password"
             value={password}
@@ -126,9 +125,8 @@ function ResetForm({ token, email }: { token: string; email: string }) {
           <PasswordRequirements value={password} />
         </div>
 
-        <TextField
+        <PasswordField
           label="ยืนยันรหัสผ่านใหม่"
-          type="password"
           required
           autoComplete="new-password"
           value={confirmPassword}

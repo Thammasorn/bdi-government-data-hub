@@ -8,7 +8,7 @@ import { AuthLayout } from "@/components/AuthLayout";
 import { ThaidButton } from "@/components/auth/Thaid";
 import { useSession } from "@/components/SessionProvider";
 import { Button } from "@/components/ui/Button";
-import { TextField } from "@/components/ui/Field";
+import { PasswordField, TextField } from "@/components/ui/Field";
 import { nextFromLocation } from "@/lib/require-auth";
 import { OtpInput } from "@/components/ui/OtpInput";
 import { useToast } from "@/components/ui/Toast";
@@ -92,9 +92,8 @@ function CredentialsStep({
           error={fields.email}
           placeholder="name@agency.go.th"
         />
-        <TextField
+        <PasswordField
           label="รหัสผ่าน"
-          type="password"
           autoComplete="current-password"
           required
           value={password}
