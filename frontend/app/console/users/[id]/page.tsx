@@ -23,12 +23,14 @@ import { SelectField, TextField } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import {
+  ACCOUNT_FIELD_LABELS,
   AUDIT_ACTION_LABELS,
   BDI_ROLE_CODES,
   INVITATION_STATUS_META,
   ORGANIZATION_ROLES,
   USER_STATUS_META,
   invitationState,
+  type AdminAuditRow,
   type AdminRoleAssignment,
   type AdminUser,
   type AdminUserDetail,
@@ -233,19 +235,38 @@ export default function ConsoleUserPage() {
               <ul className="divide-y divide-line">
                 {data.recentAudit.map((a) => {
                   const reason = typeof a.metadataJson?.reason === "string" ? a.metadataJson.reason : null;
-                  const actor = typeof a.metadataJson?.actor_name === "string" ? a.metadataJson.actor_name : null;
+                  const actor = auditActor(a);
+                  const changes = auditChanges(a);
                   return (
                     <li key={a.id} className="px-5 py-3 text-[14px]">
                       <div className="flex flex-wrap items-baseline justify-between gap-2">
-                        <span className="font-medium text-ink">{AUDIT_ACTION_LABELS[a.action] ?? a.action}</span>
+                        <span className="font-medium text-ink">{auditHeadline(a)}</span>
                         <span className="text-[13px] text-ink-muted">{formatThaiDate(a.occurredAt)}</span>
                       </div>
                       {actor || reason ? (
                         <p className="text-[13px] text-ink-muted">
-                          {actor ? `โดย ${actor}` : null}
+                          {actor ? `โดย${actor}` : null}
                           {actor && reason ? " · " : null}
                           {reason ? `เหตุผล: ${reason}` : null}
                         </p>
+                      ) : null}
+                      {changes.length > 0 ? (
+                        <ul className="mt-1 space-y-0.5 text-[13px] text-ink-muted">
+                          {changes.map((c) => (
+                            <li key={c.key}>
+                              {c.label}:{" "}
+                              {c.before === undefined ? (
+                                "มีการเปลี่ยนแปลง"
+                              ) : (
+                                <>
+                                  <span className="line-through decoration-ink-subtle">{c.before}</span>
+                                  {" → "}
+                                  <span className="text-ink">{c.after}</span>
+                                </>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
                       ) : null}
                     </li>
                   );
@@ -819,4 +840,53 @@ function IdentityDialog({
       />
     </ActionDialog>
   );
+}
+
+// ---------------------------------------------------------------- แถวประวัติบัญชี
+
+/**
+ * ชื่อแถว — แถว `USER_ACCOUNT_UPDATED` ที่ ThaID เขียน (ชื่อจากบัตรทับชื่อที่พิมพ์ไว้ตอนเชิญ ระหว่างเปิดใช้บัญชี) ได้ชื่อของ
+ * ตัวเอง feedback "features 1 full" แถว 14 อ่าน "แก้ข้อมูลบัญชี" ที่ไม่มี "โดย" ว่ามีคนแก้บัญชีแล้วไม่รู้ว่าใคร
+ * ตัดสินจาก `metadata.updated_via` ที่ callback เขียนไว้ตั้งแต่ต้น แถวเก่าบน production จึงได้ชื่อใหม่ไปด้วย
+ */
+function auditHeadline(a: AdminAuditRow): string {
+  if (a.action === "USER_ACCOUNT_UPDATED" && a.metadataJson?.updated_via === "THAID") {
+    return "แก้ชื่อตาม ThaID หลังยืนยันตัวตน";
+  }
+  return AUDIT_ACTION_LABELS[a.action] ?? a.action;
+}
+
+/**
+ * ใครทำ — ต่อท้าย "โดย" ไม่มีช่องว่างกลาง ("โดยระบบ", "โดย นาย …" ได้ช่องว่างจากตรงนี้)
+ *
+ * "ระบบ" เฉพาะสองกรณีที่รู้แน่: แถวของ ThaID และแถวที่มาจาก admin token (ไม่ใช่คน) แถวอื่นที่ไม่มีชื่อผู้ทำ เช่น ผู้ใช้
+ * ตั้งรหัสผ่านใหม่จากลิงก์เอง ไม่ใช่ระบบ จึงเว้นไว้ตามเดิมแทนการเดา
+ */
+function auditActor(a: AdminAuditRow): string | null {
+  const name = typeof a.metadataJson?.actor_name === "string" ? a.metadataJson.actor_name : null;
+  if (name) return ` ${name}`;
+  if (a.metadataJson?.updated_via === "THAID" || typeof a.metadataJson?.admin_token_fp === "string") return "ระบบ";
+  return null;
+}
+
+/** ช่องที่เปลี่ยน — เลขบัตรมาจาก API แบบปิดแล้ว (`{ masked }`) ช่องที่ไม่รู้จักบอกแค่ว่าเปลี่ยน */
+function auditChanges(a: AdminAuditRow): { key: string; label: string; before?: string; after?: string }[] {
+  if (!a.afterSummaryJson) return [];
+  const before = a.beforeSummaryJson ?? {};
+  return Object.keys(a.afterSummaryJson)
+    .map((key) => {
+      const label = ACCOUNT_FIELD_LABELS[key];
+      if (!label) return { key, label: key };
+      return { key, label, before: shown(before[key]), after: shown(a.afterSummaryJson?.[key]) };
+    })
+    // ทุกจุดเขียนเฉพาะช่องที่ต่างจริง แต่ถ้าแถวไหนมีช่องที่ค่าเท่าเดิม บรรทัด "ก → ก" ไม่บอกอะไร
+    .filter((c) => c.before === undefined || c.before !== c.after);
+}
+
+function shown(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "(ว่าง)";
+  if (typeof value === "object" && typeof (value as { masked?: unknown }).masked === "string") {
+    return (value as { masked: string }).masked;
+  }
+  return String(value);
 }

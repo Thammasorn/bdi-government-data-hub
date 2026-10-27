@@ -72,6 +72,9 @@ export interface AdminAuditRow {
   action: string;
   occurredAt: string;
   actorId: string | null;
+  /** ช่องที่เปลี่ยน ก่อน/หลัง — เลขบัตรปิดมาจาก API แล้ว (`{ masked, changed }`) */
+  beforeSummaryJson: Record<string, unknown> | null;
+  afterSummaryJson: Record<string, unknown> | null;
   metadataJson: Record<string, unknown> | null;
 }
 
@@ -200,6 +203,23 @@ export const BDI_ROLE_CODES: Role[] = [
   "BDI_LEGAL_OFFICER",
   "SYSTEM_ADMINISTRATOR",
 ];
+
+/**
+ * ชื่อช่องของบัญชีที่แถว "แก้ข้อมูลบัญชี" เก็บค่าก่อน/หลังไว้ — ช่องที่ไม่อยู่ในตารางนี้แสดงแค่ "มีการเปลี่ยนแปลง"
+ * ไม่แสดงค่าดิบ เพราะไม่รู้ว่าค่านั้นควรอยู่บนจอหรือไม่
+ */
+export const ACCOUNT_FIELD_LABELS: Record<string, string> = {
+  prefixTh: "คำนำหน้า",
+  firstnameTh: "ชื่อ",
+  lastnameTh: "นามสกุล",
+  displayName: "ชื่อที่แสดง",
+  email: "อีเมล",
+  cid: "เลขบัตรประชาชน",
+  phoneNumber: "เบอร์โทรศัพท์",
+  phoneNumberExtension: "เบอร์ต่อ",
+  positionTh: "ตำแหน่ง",
+  departmentTh: "ฝ่าย/แผนก",
+};
 
 /** ข้อความของแถวประวัติบัญชี — action ที่ไม่มีในตารางนี้แสดงรหัสตรง ๆ ดีกว่าเดาความหมาย */
 export const AUDIT_ACTION_LABELS: Record<string, string> = {
