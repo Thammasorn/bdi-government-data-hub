@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { ActionDialog } from "@/components/console/ActionDialog";
@@ -41,6 +41,8 @@ export default function ConsoleLegalDocumentPage() {
   const [uploading, setUploading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [toggling, setToggling] = useState(false);
+  const [deletingDoc, setDeletingDoc] = useState(false);
+  const router = useRouter();
   const [previewing, setPreviewing] = useState<PreviewTarget | null>(null);
   const [related, setRelated] = useState<RelatedRequestsTarget | null>(null);
   const [downloading, setDownloading] = useState<RelatedRequestsTarget | null>(null);
@@ -81,6 +83,17 @@ export default function ConsoleLegalDocumentPage() {
       ? null
       : "เปิดใช้ไม่ได้ — ยังไม่มีเวอร์ชันที่เผยแพร่";
 
+  /** เหตุผลที่ลบทั้งฉบับไม่ได้ — ข้อความเดียวกับที่ `DELETE …/legal-documents/:code` ตอบ 409 */
+  const cannotDelete = doc.isSeeded
+    ? "ลบไม่ได้ — A0–A4 เป็นเอกสารตั้งต้นของระบบ ใช้การปิดใช้แทน"
+    : doc.isActive
+      ? "ลบไม่ได้ — เอกสารยังเปิดใช้อยู่ ปิดใช้ก่อน"
+      : doc.usageCount > 0
+        ? `ลบไม่ได้ — มี ${doc.usageCount.toLocaleString("th-TH")} คำขอใช้เอกสารนี้อยู่`
+        : doc.acceptanceCount > 0
+          ? "ลบไม่ได้ — มีหลักฐานการยอมรับเอกสารนี้"
+          : null;
+
   return (
     <div>
       <PageHeader
@@ -105,16 +118,20 @@ export default function ConsoleLegalDocumentPage() {
           // มีคำอธิบายก็ต่อเมื่อปุ่มถูกปิด — บอกเหตุผลที่ทำไม่ได้ ไม่ใช่อธิบายสถานะ
           description={cannotDeactivate ?? cannotActivate ?? undefined}
           actions={
-            <Button
-              size="sm"
-              variant={doc.isActive ? "secondary" : "primary"}
-              // ลูกตาชุดเดียวกับหน้าเอกสารดาวน์โหลดและช่องรหัสผ่าน: ไอคอนคือสถานะตอนนี้ ข้อความคือสิ่งที่กดแล้วจะเกิด
-              icon={doc.isActive ? <EyeIcon className="h-4 w-4" /> : <EyeSlashIcon className="h-4 w-4" />}
-              disabled={Boolean(cannotDeactivate ?? cannotActivate)}
-              onClick={() => setToggling(true)}
-            >
-              {doc.isActive ? "ปิดใช้เอกสารนี้" : "เปิดใช้เอกสารนี้"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant={doc.isActive ? "secondary" : "primary"}
+                // ลูกตาชุดเดียวกับหน้าเอกสารดาวน์โหลดและช่องรหัสผ่าน: ไอคอนคือสถานะตอนนี้ ข้อความคือสิ่งที่กดแล้วจะเกิด
+                icon={doc.isActive ? <EyeIcon className="h-4 w-4" /> : <EyeSlashIcon className="h-4 w-4" />}
+                disabled={Boolean(cannotDeactivate ?? cannotActivate)}
+                onClick={() => setToggling(true)}
+              >
+                {doc.isActive ? "ปิดใช้เอกสารนี้" : "เปิดใช้เอกสารนี้"}
+              </Button>
+              {/* ปุ่มเดียวกับลบเวอร์ชัน — ลบได้เฉพาะเอกสารที่ปิดใช้และไม่เคยมีใครใช้ จึงไม่มีหลักฐานให้เสีย ยืนยันครั้งเดียวพอ */}
+              <DeleteButton reason={cannotDelete} onClick={() => setDeletingDoc(true)} />
+            </div>
           }
           compact
         />
@@ -174,6 +191,25 @@ export default function ConsoleLegalDocumentPage() {
           });
           show({ tone: "success", title: res.message });
           reload();
+        }}
+      />
+      <ActionDialog
+        open={deletingDoc}
+        onClose={() => setDeletingDoc(false)}
+        title={`ลบเอกสาร ${doc.code} ถาวร`}
+        description={
+          `เอกสารนี้และทุกเวอร์ชัน (${doc.versionCount.toLocaleString("th-TH")} เวอร์ชัน) รวมไฟล์ต้นฉบับและ PDF จะถูกลบออกจากระบบ ย้อนกลับไม่ได้` +
+          (doc.requestFileCount > 0
+            ? ` · PDF ที่สร้างไว้ในคำขอฉบับร่าง ${doc.requestFileCount.toLocaleString("th-TH")} รายการจะถูกลบด้วย`
+            : "")
+        }
+        confirmLabel="ลบถาวร"
+        tone="danger"
+        reason={false}
+        onConfirm={async () => {
+          const res = await api.remove<{ message: string }>(`/api/admin/legal-documents/${doc.code}`);
+          show({ tone: "success", title: res.message });
+          router.push("/console/legal-documents");
         }}
       />
     </div>

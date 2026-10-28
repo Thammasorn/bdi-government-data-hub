@@ -36,6 +36,7 @@ import {
 } from "../lib/document-render.js";
 import {
   LEGAL_SCOPES,
+  SEEDED_DOCUMENT_CODES,
   activateVersion,
   publishVersion,
   templateAttachment,
@@ -217,6 +218,32 @@ async function usageCounts(versionIds: string[]): Promise<Map<string, number>> {
   return new Map(rows.map((r) => [r.id, Number(r.n)]));
 }
 
+/**
+ * สิ่งที่ผูกเอกสารทั้งฉบับไว้ (ทุกเวอร์ชันรวมกัน) — ตัวตัดสินว่าลบทั้งฉบับได้ไหม ตรงกับด่านของ `DELETE …/legal-documents/:code`
+ *
+ * `requests` นับคำขอไม่ซ้ำ (คำขอที่นำส่งใหม่ด้วยเวอร์ชันถัดไปนับครั้งเดียว) · `acceptances` หลักฐานการยอมรับ ·
+ * `requestFiles` PDF ที่ระบบสร้างไว้ในคำขอ — เมื่อสองอย่างแรกเป็นศูนย์ ไฟล์เหล่านี้เป็นของคำขอฉบับร่างเท่านั้น และถูกลบไปพร้อมเอกสาร
+ */
+async function documentUsage(db: Prisma.TransactionClient | typeof prisma, documentIds: string[]) {
+  const usage = new Map<string, { requests: number; acceptances: number; requestFiles: number }>();
+  if (documentIds.length === 0) return usage;
+  const rows = await db.$queryRaw<{ id: string; requests: bigint; acceptances: bigint; files: bigint }[]>`
+    SELECT d.id::text AS id,
+      (SELECT COUNT(DISTINCT s.subject_id) FROM legal.request_document_snapshot s
+         JOIN legal.legal_document_version v ON v.id = s.legal_document_version_id WHERE v.legal_document_id = d.id) AS requests,
+      (SELECT COUNT(*) FROM legal.legal_acceptance a
+         JOIN legal.legal_document_version v ON v.id = a.legal_document_version_id WHERE v.legal_document_id = d.id) AS acceptances,
+      (SELECT COUNT(*) FROM attachment.attachment f
+         JOIN legal.legal_document_version v ON v.id = f.legal_document_version_id
+         WHERE v.legal_document_id = d.id AND f.owner_type <> 'LEGAL_DOCUMENT_VERSION') AS files
+    FROM legal.legal_document d
+    WHERE d.id::text IN (${Prisma.join(documentIds)})`;
+  for (const r of rows) {
+    usage.set(r.id, { requests: Number(r.requests), acceptances: Number(r.acceptances), requestFiles: Number(r.files) });
+  }
+  return usage;
+}
+
 adminLegalDocumentRouter.get("/legal-documents", async (_req, res) => {
   const documents = await prisma.legalDocument.findMany({
     orderBy: [{ applicationScope: "asc" }, { displayOrder: "asc" }],
@@ -224,6 +251,7 @@ adminLegalDocumentRouter.get("/legal-documents", async (_req, res) => {
   });
   const names = await personNames(documents.flatMap((d) => d.versions.map((v) => v.publishedBy)));
   const usage = await usageCounts(documents.flatMap((d) => d.versions.map((v) => v.id)));
+  const documentUse = await documentUsage(prisma, documents.map((d) => d.id));
 
   res.json({
     variableGroups: variableCatalogue(),
@@ -245,6 +273,12 @@ adminLegalDocumentRouter.get("/legal-documents", async (_req, res) => {
           : null,
         draftVersionCount: doc.versions.filter((v) => v.status === LegalDocumentVersionStatus.DRAFT).length,
         versionCount: doc.versions.length,
+        /** ทั้งฉบับ ทุกเวอร์ชันรวมกัน — หน้าแก้ไขใช้บอกเหตุผลที่ลบไม่ได้ และจำนวนไฟล์ในกล่องยืนยัน */
+        usageCount: documentUse.get(doc.id)?.requests ?? 0,
+        acceptanceCount: documentUse.get(doc.id)?.acceptances ?? 0,
+        requestFileCount: documentUse.get(doc.id)?.requestFiles ?? 0,
+        /** สร้างโดย seed:masters — ลบไม่ได้ เพราะรันครั้งถัดไปจะสร้างกลับ */
+        isSeeded: SEEDED_DOCUMENT_CODES.has(doc.documentCode),
         versions: doc.versions.map((v) => ({
           id: v.id,
           versionNumber: v.versionNumber,
@@ -763,6 +797,130 @@ adminLegalDocumentRouter.patch("/legal-documents/:code", async (req, res) => {
   });
 });
 
+// ------------------------------------------------------------------ ลบถาวร
+
+type StoredFile = { id: string; storageBucket: string; storageKey: string };
+
+/**
+ * แถวไฟล์ของเวอร์ชันเหล่านี้: template .docx (`attachment_id`) กับ PDF ที่แปลงไว้ (owner = เวอร์ชัน)
+ * `withRequestFiles` รวม PDF ที่ระบบสร้างไว้ในคำขอจากเวอร์ชันเหล่านี้ด้วย (ผูกด้วย `legal_document_version_id` ไม่มี FK)
+ */
+async function versionFiles(
+  tx: Prisma.TransactionClient,
+  versions: Array<{ id: string; attachmentId: string }>,
+  withRequestFiles: boolean,
+): Promise<StoredFile[]> {
+  const ids = versions.map((v) => v.id);
+  return tx.attachment.findMany({
+    where: {
+      OR: [
+        { id: { in: versions.map((v) => v.attachmentId) } },
+        { ownerType: AttachmentOwnerType.LEGAL_DOCUMENT_VERSION, ownerId: { in: ids } },
+        ...(withRequestFiles ? [{ legalDocumentVersionId: { in: ids } }] : []),
+      ],
+    },
+    select: { id: true, storageBucket: true, storageKey: true },
+  });
+}
+
+/** ลบไฟล์หลังบันทึกฐานข้อมูลสำเร็จ — ลบไม่ได้ก็ไม่ย้อนการลบ (blob ที่ค้างไม่มีแถวอ้างถึง ไม่กระทบใคร) */
+async function removeStoredFiles(files: StoredFile[]) {
+  await Promise.allSettled(files.map((f) => deleteObject(f.storageBucket, f.storageKey)));
+}
+
+/**
+ * ลบเอกสารทั้งฉบับถาวร (card "Delete unused legal document", 2026-10-28) — กติกาเดียวกับลบเวอร์ชัน ยกขึ้นมาระดับเอกสาร:
+ * ต้องปิดใช้แล้ว (เทียบกับ "ลบฉบับที่ใช้อยู่ไม่ได้") ไม่มีคำขอใดเคยผูกเวอร์ชันไหนของมันไว้ และไม่มีหลักฐานการยอมรับ
+ * เอกสารที่ไม่เคยมีใครใช้ไม่มีหลักฐานให้เสีย จึงยืนยันครั้งเดียวเหมือนลบเวอร์ชัน ไม่ต้องพิมพ์ชื่อหรือรหัสผ่าน
+ *
+ * PDF ที่คำขอฉบับร่างสร้างไว้จากเอกสารนี้ถูกลบไปด้วย ไม่งั้นเหลือแถวที่ชี้เวอร์ชันที่ไม่มีแล้ว — ฉบับร่างนั้นแค่ไม่เห็นเอกสารนี้อีก เหมือนตอนปิดใช้
+ * ลบแล้วรหัสและชื่อสั้นว่างให้ใช้ใหม่ได้ ไม่มีอะไรอ้างถึงเอกสารนี้นอกจากแถว audit ที่เก็บ id และรหัสเดิมไว้
+ * A0–A4 ลบไม่ได้: `seed:masters` จะสร้างกลับ
+ */
+adminLegalDocumentRouter.delete("/legal-documents/:code", async (req, res) => {
+  const code = String(req.params.code ?? "").toUpperCase();
+  const document = await prisma.legalDocument.findUnique({ where: { documentCode: code }, select: documentSelect });
+  if (!document) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบเอกสารรหัสนี้" });
+    return;
+  }
+  if (SEEDED_DOCUMENT_CODES.has(code)) {
+    res.status(409).json({
+      error: "seeded_document",
+      message: `ลบ ${code} ไม่ได้ — A0–A4 เป็นเอกสารตั้งต้นของระบบ ใช้การปิดใช้แทน`,
+    });
+    return;
+  }
+
+  const blockedMessage = {
+    document_active: `ลบ ${code} ไม่ได้ — เอกสารยังเปิดใช้อยู่ ปิดใช้ก่อนแล้วจึงลบ`,
+    document_in_use: `ลบ ${code} ไม่ได้ — มีคำขอใช้เอกสารนี้อยู่ ใช้การปิดใช้แทน`,
+    document_accepted: `ลบ ${code} ไม่ได้ — มีหลักฐานการยอมรับเอกสารนี้เก็บไว้`,
+  } as const;
+
+  let deleted;
+  try {
+    deleted = await prisma.$transaction(async (tx) => {
+      // ล็อกเดียวกับที่เปิด/ปิดใช้ถือ — การเปิดใช้ที่เกิดพร้อมกันต้องรอ ไม่งั้นเอกสารที่เพิ่งเปิดใช้อาจถูกลบใต้มือ
+      await lockScope(tx, document.applicationScope);
+      const current = await tx.legalDocument.findUnique({
+        where: { id: document.id },
+        select: { status: true, versions: { select: { id: true, versionNumber: true, attachmentId: true } } },
+      });
+      if (!current) return { blocked: "not_found" as const };
+      if (current.status === LegalDocumentStatus.ACTIVE) return { blocked: "document_active" as const };
+      const use = (await documentUsage(tx, [document.id])).get(document.id);
+      if (use && use.requests > 0) return { blocked: "document_in_use" as const };
+      if (use && use.acceptances > 0) return { blocked: "document_accepted" as const };
+
+      const files = await versionFiles(tx, current.versions, true);
+      await tx.legalDocumentVersion.deleteMany({ where: { legalDocumentId: document.id } });
+      await tx.legalDocument.delete({ where: { id: document.id } });
+      await tx.attachment.deleteMany({ where: { id: { in: files.map((f) => f.id) } } });
+      return {
+        blocked: null,
+        files,
+        versionNumbers: current.versions.map((v) => v.versionNumber).sort((a, b) => a - b),
+        requestFiles: use?.requestFiles ?? 0,
+      };
+    });
+  } catch (error) {
+    // คำขอที่นำส่งพร้อมกันเขียน snapshot ชี้เวอร์ชันนี้ไว้ก่อนเราลบ — FK ของ request_document_snapshot / legal_acceptance กันไว้
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
+      res.status(409).json({ error: "document_in_use", message: blockedMessage.document_in_use });
+      return;
+    }
+    throw error;
+  }
+
+  if (deleted.blocked === "not_found") {
+    res.status(404).json({ error: "not_found", message: "ไม่พบเอกสารรหัสนี้" });
+    return;
+  }
+  if (deleted.blocked) {
+    res.status(409).json({ error: deleted.blocked, message: blockedMessage[deleted.blocked] });
+    return;
+  }
+
+  await removeStoredFiles(deleted.files);
+
+  await logAudit({
+    action: AuditAction.LEGAL_DOCUMENT_CHANGED,
+    subjectType: AuditSubject.LEGAL_DOCUMENT,
+    subjectId: document.id,
+    before: documentShape(document),
+    metadata: {
+      operation: "DELETE",
+      document_code: code,
+      version_numbers: deleted.versionNumbers,
+      file_count: deleted.files.length,
+      request_file_count: deleted.requestFiles,
+    },
+  });
+
+  res.json({ documentCode: code, message: `ลบเอกสาร ${code} แล้ว` });
+});
+
 // ------------------------------------------------------------------ เวอร์ชัน
 
 /** เวอร์ชันของเอกสารตามรหัส — null ถ้า id ไม่ใช่ uuid หรือไม่ใช่ของเอกสารนี้ */
@@ -1098,15 +1256,7 @@ adminLegalDocumentRouter.delete("/legal-documents/:code/versions/:versionId", as
     if (requests > 0) return { blocked: "version_in_use" as const };
     if (acceptances > 0) return { blocked: "version_accepted" as const };
 
-    const files = await tx.attachment.findMany({
-      where: {
-        OR: [
-          { id: version.attachmentId },
-          { ownerType: AttachmentOwnerType.LEGAL_DOCUMENT_VERSION, ownerId: version.id },
-        ],
-      },
-      select: { id: true, storageBucket: true, storageKey: true },
-    });
+    const files = await versionFiles(tx, [version], false);
     await tx.legalDocumentVersion.delete({ where: { id: version.id } });
     await tx.attachment.deleteMany({ where: { id: { in: files.map((f) => f.id) } } });
     return { blocked: null, files };
@@ -1123,8 +1273,7 @@ adminLegalDocumentRouter.delete("/legal-documents/:code/versions/:versionId", as
     return;
   }
 
-  // ลบไฟล์หลังบันทึกฐานข้อมูลสำเร็จ — ลบไม่ได้ก็ไม่ย้อนการลบเวอร์ชัน (blob ที่ค้างไม่มีแถวอ้างถึง ไม่กระทบใคร)
-  await Promise.allSettled(deleted.files.map((f) => deleteObject(f.storageBucket, f.storageKey)));
+  await removeStoredFiles(deleted.files);
 
   await logAudit({
     action: AuditAction.LEGAL_DOCUMENT_CHANGED,
