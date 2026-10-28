@@ -18,7 +18,7 @@ import { AccountType, LegalDocumentStatus, OrganizationStatus, UserAccountStatus
 
 import { DATASET_CHOICE_DEFAULTS } from "../lib/dataset-choices-defaults.js";
 import { refreshChoices } from "../lib/dataset-choices.js";
-import { publishVersion } from "../lib/legal.js";
+import { SEEDED_DOCUMENT_CODES, publishVersion } from "../lib/legal.js";
 import {
   BDI_ORGANIZATION_CODE,
   BDI_ORGANIZATION_ID,
@@ -131,6 +131,11 @@ const LEGAL_DOCUMENTS = [
 const TEMPLATE_DIR = new URL("../assets/legal-templates/", import.meta.url);
 
 async function seedLegalDocuments() {
+  // หน้า /console ห้ามลบรหัสใน SEEDED_DOCUMENT_CODES เพราะ upsert ข้างล่างจะสร้างกลับ — สองรายการต้องตรงกัน
+  const codes = LEGAL_DOCUMENTS.map((d) => d.code);
+  if (codes.length !== SEEDED_DOCUMENT_CODES.size || codes.some((c) => !SEEDED_DOCUMENT_CODES.has(c))) {
+    throw new Error(`LEGAL_DOCUMENTS (${codes.join(", ")}) ไม่ตรงกับ SEEDED_DOCUMENT_CODES ใน lib/legal.ts`);
+  }
   for (const doc of LEGAL_DOCUMENTS) {
     await prisma.legalDocument.upsert({
       where: { documentCode: doc.code },

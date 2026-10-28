@@ -1341,6 +1341,11 @@ locks the scope's rows, answering 409 `last_active_document` / `no_required_docu
 reason. `publishVersion()` no longer activates a document as a side effect (an inactive document can publish a version and
 stay inactive), takes `status: "DRAFT"` for "apply now" unticked, and `activateVersion()` publishes a draft. `seed:masters`
 no longer overwrites `name_th` / `shortname` / `legal_notice` / `display_order` on a re-run — they belong to the console now.
+**Only what nobody used can be deleted**, a version or a whole document (card "Delete unused legal document", 2026-10-28):
+no `request_document_snapshot` and no `legal_acceptance` row on it, not the live version / not an active document, and never
+A0–A4 (`SEEDED_DOCUMENT_CODES` — `seed:masters` upserts them back). Both use one confirm dialog; the extra friction asked
+for at first was dropped because there is no evidence to lose. Deleting a document also deletes the PDFs draft requests
+generated from it (`attachment.legal_document_version_id` has no FK). `docs/22` §6.
 The "after render" preview fills the template with the fixed formal-Thai sample in `lib/legal-preview.ts` and highlights the
 filled text yellow (`fillTemplate(…, { highlight: true })` wraps each value in private-use sentinels, then splits the runs).
 

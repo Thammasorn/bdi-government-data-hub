@@ -92,11 +92,34 @@ docker compose exec backend npm run backfill:document-snapshots:prod -- --write 
 | `POST …/legal-documents/inspect` · `…/preview` | ตรวจ / ดูตัวอย่างไฟล์ที่เพิ่งเลือก (ยังไม่เก็บ) — multipart `file` `scope` (`mode`) |
 | `GET /api/admin/template-variables` | รายการตัวแปรจัดกลุ่ม พร้อม scope ที่ใช้ได้ |
 
-audit: การสร้าง/แก้/เปิด-ปิดใช้/ใช้ฉบับร่าง เขียน `LEGAL_DOCUMENT_CHANGED` (`metadata.operation` = CREATE · UPDATE · ACTIVATE · DEACTIVATE · VERSION_ACTIVATED)
+| `DELETE …/versions/:versionId` | ลบเวอร์ชันถาวร — ไม่ใช่ฉบับที่ใช้อยู่ ไม่มีคำขอผูก (`request_document_snapshot`) ไม่มีหลักฐานการยอมรับ (`legal_acceptance`) ไม่งั้น 409 `version_active` · `version_in_use` · `version_accepted` |
+| `DELETE …/legal-documents/:code` | ลบเอกสารทั้งฉบับถาวร (§6) |
+
+audit: การสร้าง/แก้/เปิด-ปิดใช้/ใช้ฉบับร่าง/ลบ เขียน `LEGAL_DOCUMENT_CHANGED` (`metadata.operation` = CREATE · UPDATE · ACTIVATE · DEACTIVATE · VERSION_ACTIVATED · VERSION_DELETED · DELETE)
 การอัปโหลดยังเป็น `LEGAL_DOCUMENT_PUBLISHED`
 
 ## 5 · ที่ยังไม่ได้ทำ
 
 - `DATASET_REQUEST` (คำขอใช้ข้อมูล) ยังไม่มีเส้นทาง — `request_document_snapshot` รองรับ `subject_type` นั้นแล้ว แต่ `documentsForRequest()` รู้จักแค่สองเส้นทางที่มีอยู่
-- ยังไม่มีปุ่มจัดลำดับเอกสาร (ต่อท้ายเสมอ) และยังไม่มีการลบเอกสาร/เวอร์ชัน — ปิดใช้หรือถูกแทนที่เท่านั้น
+- ยังไม่มีปุ่มจัดลำดับเอกสาร (ต่อท้ายเสมอ) · ลบได้เฉพาะเวอร์ชัน/เอกสารที่ไม่เคยมีใครใช้ (§6) — ที่ใช้แล้วปิดใช้หรือถูกแทนที่เท่านั้น
 - Postman collection (`L1`–`L4`) ยังไม่มีคำขอของ endpoint ใหม่
+
+## 6 · ลบเอกสารที่ไม่เคยมีใครใช้
+
+การ์ด **Delete unused legal document** (2026-10-28) — ปุ่ม **ลบ** ในกล่อง "สถานะการใช้งาน" ของหน้าแก้ไข ข้างปุ่มเปิด/ปิดใช้ ใช้ปุ่มและกล่องยืนยันชุดเดียวกับลบเวอร์ชัน
+(ยืนยันครั้งเดียว ไม่ต้องพิมพ์ชื่อหรือรหัสผ่าน) เพราะกติกาเดียวกัน: ของที่ไม่เคยมีใครใช้ไม่มีหลักฐานให้เสีย ลบไม่ได้ปุ่มก็ยังเห็น จาง และ tooltip บอกเหตุผล
+
+`DELETE /api/admin/legal-documents/:code` (`requireDocumentAdmin` — ผู้ดูแลระบบและ `BDI_LEGAL_OFFICER` เหมือนลบเวอร์ชัน) ลบได้เมื่อ**ทุกข้อ**จริง ไม่งั้น 409:
+
+| `error` | เมื่อไร |
+|---|---|
+| `seeded_document` | A0–A4 (`SEEDED_DOCUMENT_CODES` ใน `lib/legal.ts`) — `seed:masters` upsert ทุกรอบ ลบแล้วจะถูกสร้างกลับ seed ตรวจว่ารายการตรงกัน |
+| `document_active` | ยังเปิดใช้อยู่ — คู่กับ "ลบฉบับที่ใช้อยู่ไม่ได้" ของเวอร์ชัน ปิดใช้ (ซึ่งตรวจกติกาต่อหมวดไว้แล้ว) ก่อน |
+| `document_in_use` | เวอร์ชันไหนก็ได้ของเอกสารมีแถวใน `request_document_snapshot` = คำขอเคยนำส่งพร้อมเอกสารนี้ (สถานะใดก็ได้ รวม RETURNED) |
+| `document_accepted` | เวอร์ชันไหนก็ได้มีแถวใน `legal_acceptance` |
+
+- ตรวจและลบใน transaction เดียวที่ `lockScope()` (ล็อกเดียวกับเปิด/ปิดใช้) ลบเวอร์ชัน → เอกสาร → แถวไฟล์ แล้วจึงลบ blob (ลบ blob ไม่ได้ไม่ย้อน)
+- คำขอที่นำส่งพร้อมกันแล้วเขียน snapshot ทัน: การลบเวอร์ชันรอ lock ของ FK แล้วชน `request_document_snapshot_legal_document_version_id_fkey` → ตอบ 409 `document_in_use` ไม่มี snapshot ชี้เวอร์ชันที่หายไป (ทดสอบแล้วด้วย transaction ค้าง)
+- **PDF ที่คำขอฉบับร่างสร้างไว้** (`attachment.legal_document_version_id` ชี้เวอร์ชันของเอกสารนี้ ไม่มี FK) ถูกลบไปด้วย ฉบับร่างนั้นแค่ไม่เห็นเอกสารนี้อีก เหมือนตอนปิดใช้
+- ลบแล้วรหัสและชื่อสั้นว่างให้ใช้ใหม่ได้ audit `LEGAL_DOCUMENT_CHANGED` `operation = DELETE` เก็บ id รหัส เลขเวอร์ชัน และจำนวนไฟล์
+- `GET /api/admin/legal-documents` เพิ่ม `usageCount` (คำขอไม่ซ้ำ ทุกเวอร์ชันรวม) `acceptanceCount` `requestFileCount` `isSeeded` ต่อเอกสาร — หน้าแก้ไขใช้บอกเหตุผลและจำนวนไฟล์ในกล่องยืนยัน

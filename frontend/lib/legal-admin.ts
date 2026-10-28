@@ -31,6 +31,14 @@ export interface LegalDocument {
   activeVersion: LegalVersionSummary | null;
   draftVersionCount: number;
   versionCount: number;
+  /** คำขอที่ผูกเอกสารนี้ไว้ ทุกเวอร์ชันรวมกัน (นับคำขอไม่ซ้ำ) */
+  usageCount: number;
+  /** หลักฐานการยอมรับ ทุกเวอร์ชันรวมกัน */
+  acceptanceCount: number;
+  /** PDF ที่ระบบสร้างไว้ในคำขอจากเอกสารนี้ — ถ้าลบได้ คือไฟล์ของคำขอฉบับร่าง ถูกลบไปด้วย */
+  requestFileCount: number;
+  /** A0–A4 ที่ seed:masters สร้าง — ลบไม่ได้ */
+  isSeeded: boolean;
 }
 
 export interface LegalVersionRow {

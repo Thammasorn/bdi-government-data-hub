@@ -67,6 +67,12 @@ export const LEGAL_SCOPES = {
 
 export type LegalScope = (typeof LEGAL_SCOPES)[keyof typeof LEGAL_SCOPES];
 
+/**
+ * เอกสารที่ `seed:masters` สร้างด้วย upsert ทุกครั้งที่รัน — ลบทิ้งก็จะถูกสร้างกลับในการรันครั้งถัดไป
+ * `DELETE /api/admin/legal-documents/:code` จึงปฏิเสธรหัสเหล่านี้ (ปิดใช้แทน) seed ตรวจว่ารายการของมันตรงกับชุดนี้
+ */
+export const SEEDED_DOCUMENT_CODES: ReadonlySet<string> = new Set(["A0", "A1", "A2", "A3", "A4"]);
+
 /** application_scope ของเอกสาร -> scope ที่ใช้ตรวจชื่อตัวแปร */
 export function variableScopeOf(scope: string): VariableScope {
   return scope === LEGAL_SCOPES.DATASET_REGISTRATION ? "dataset" : "organization";
