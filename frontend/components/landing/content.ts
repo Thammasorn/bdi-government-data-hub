@@ -291,8 +291,6 @@ export const LEGAL_PRIMARY: LegalItem & { code: string } = {
   file: "/documents/A[0] ข้อตกลง_version_01_25691005.pdf",
 };
 
-export const LEGAL_ANNEX_LABEL = "เอกสารภาคผนวก";
-
 export const LEGAL_ANNEXES: (LegalItem & { code: string })[] = [
   {
     code: "A1",
