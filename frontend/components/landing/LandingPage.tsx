@@ -48,6 +48,7 @@ import {
   HERO,
   HOW_IT_WORKS,
   LEGAL_ANNEXES,
+  LEGAL_ANNEX_LABEL,
   LEGAL_PRIMARY,
   LEGAL_REGULATIONS,
   MORE_INFO_EYEBROW,
@@ -1090,28 +1091,52 @@ function Legal() {
       </h3>
 
       {/*
-        แถวเดียวกับ "กฎหมายที่เกี่ยวข้อง" ข้างบน — กล่องเดียว เส้นคั่นระหว่างแถว (feedback 2026-10-28)
-        เดิม A0 เป็นการ์ดของตัวเองและภาคผนวกอยู่อีกกล่องที่มีเส้นนำทาง สองหัวข้อติดกันจึงหน้าตาคนละแบบ
-        ป้ายรหัสยังอยู่ A0 สีเข้ม ภาคผนวกสีอ่อน ลำดับชั้นจึงยังอ่านออกโดยไม่ต้องมีกล่องแยก
+        ข้อตกลงหลักทุกฉบับอยู่ในกล่องเดียว เส้นคั่นระหว่างแถว แบบเดียวกับ "กฎหมายที่เกี่ยวข้อง" (feedback 2026-10-28)
+        เดิมฉบับละการ์ด พอผู้ดูแลเพิ่มฉบับที่สองก็กลายเป็นการ์ดเรียงกันที่ไม่เข้ากับหัวข้อข้างบน
         ข้อความตัดบรรทัดเฉพาะจอแคบ ป้ายรหัสจึงชิดบนที่นั่น ส่วนจอกว้างเป็นบรรทัดเดียว จัดกึ่งกลางถูกกว่า
       */}
       <ul className="reveal mt-3 rounded-2xl bg-white px-6 py-1.5 shadow-card">
-        {[...primary.map((doc) => ({ doc, muted: false })), ...annexes.map((doc) => ({ doc, muted: true }))].map(
-          ({ doc, muted }) => (
+        {primary.map((doc) => (
+          <li
+            key={doc.code ?? doc.title}
+            className="flex items-start gap-4 border-t border-line py-3.5 first:border-t-0 sm:items-center"
+          >
+            {doc.code ? <DocCode code={doc.code} /> : null}
+            <span className="min-w-0 flex-1 text-[16px] leading-[1.7] text-ink">
+              {doc.title}
+              <VersionLabel item={doc} />
+            </span>
+            <DownloadButton item={doc} />
+          </li>
+        ))}
+      </ul>
+
+      {/*
+        ภาคผนวกอยู่ในกล่องเดียวที่มีหัวข้อกำกับและเส้นนำทางด้านซ้าย
+        ก่อนหน้านี้เยื้องทีละใบด้วย ml เฉย ๆ ซึ่งทำให้การ์ดสั้นลงโดยขอบขวายังชนที่เดิม
+        และไม่มีอะไรบอกว่าเยื้องเพราะอะไร — อ่านเหมือนเรนเดอร์พลาดมากกว่าลำดับชั้น
+      */}
+      <div className="reveal mt-4 rounded-2xl bg-white p-5 shadow-card sm:p-6">
+        <p className="font-heading text-[14px] font-semibold text-ink-muted">
+          {LEGAL_ANNEX_LABEL}
+          <span className="ml-2 font-sans font-normal text-ink-subtle">แนบท้าย A0</span>
+        </p>
+        <ul className="mt-3 border-l-2 border-navy-100 pl-5 sm:pl-6">
+          {annexes.map((doc) => (
             <li
               key={doc.code ?? doc.title}
-              className="flex items-start gap-4 border-t border-line py-3.5 first:border-t-0 sm:items-center"
+              className="flex items-start gap-4 border-t border-line py-3.5 first:border-t-0 first:pt-0 last:pb-0 sm:items-center"
             >
-              {doc.code ? <DocCode code={doc.code} muted={muted} /> : null}
-              <span className="min-w-0 flex-1 text-[16px] leading-[1.85] text-ink">
+              {doc.code ? <DocCode code={doc.code} muted /> : null}
+              <span className="min-w-0 flex-1 text-[15px] leading-[1.7] text-ink">
                 {doc.title}
                 <VersionLabel item={doc} />
               </span>
               <DownloadButton item={doc} />
             </li>
-          ),
-        )}
-      </ul>
+          ))}
+        </ul>
+      </div>
     </Section>
   );
 }
