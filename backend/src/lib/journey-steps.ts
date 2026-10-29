@@ -308,11 +308,30 @@ function latestBySlot(tasks: JourneyTaskRow[], plan: StepPlan[]) {
  * ที่ทำไปในรอบนั้น และหน่วยงานนำส่งใหม่แล้วคำขอเดินใหม่ตั้งแต่ด่านแรกเสมอ แถวที่เกิด
  * หลังการส่งกลับจึงเป็นของรอบใหม่ ส่วนแถวที่เกิดก่อนหรือคือตัวส่งกลับเองเป็นของรอบเก่า
  * null = ยังไม่เคยถูกส่งกลับ ทุกแถวยังนับ
+ *
+ * นับแถว `CANCELLED` ด้วย ไม่ใช่แค่ `RETURNED` — reset ของผู้ดูแลระบบ, การยกเลิกคำขอชุดข้อมูล
+ * และ `revertStrandedWork()` ปิดด่านที่เปิดอยู่ด้วย `cancelActiveTask()` ซึ่งล้างรอบเหมือนกัน
+ * แต่ไม่ทิ้งแถว `RETURNED` ไว้เลย กฎเดียวกับ `skippedDocumentCodes()` ใน lib/legal.ts
+ * ก่อน 2026-10-29 ที่นี่นับแค่ `RETURNED` แล้วพึ่ง `phase === "DRAFT"` แทน ซึ่งจริงแค่ระหว่างที่
+ * คำขอยังเป็นร่าง พอหน่วยงานนำส่งใหม่ ด่านลงนามที่ผ่านในรอบที่ถูก reset ก็กลับมาขึ้นเขียว
+ * "เสร็จสิ้น" ทั้งที่คำขออยู่ขั้นที่ 2 (การ์ด "ขั้นตอนการอนุมัติสลับ")
+ *
+ * ยกเว้นแถวเดียว: คำขอที่**ยังปิดอยู่**ในสถานะยกเลิก แถว CANCELLED ล่าสุดของมันคือตัวปิดเรื่อง
+ * ไม่ใช่ตัวล้างรอบ — ไม่มีใครนำส่งใหม่ ด่านที่ผ่านไปก่อนยกเลิกจึงยังผ่านจริง และ "ส่งกลับแก้ไข"
+ * บนคำขอที่ปิดไปแล้วไม่จริง เมื่อผู้ดูแลระบบ reset คำขอนั้นกลับมาเป็นร่าง phase ก็ไม่ใช่
+ * `CANCELLED` แล้ว แถวเดียวกันจึงกลับมาล้างรอบตามปกติ
  */
-function lastReturnSequence(tasks: JourneyTaskRow[]): number | null {
+function lastReturnSequence(tasks: JourneyTaskRow[], phase: JourneyPhase): number | null {
+  const closing =
+    phase === "CANCELLED" && tasks.length > 0
+      ? Math.max(...tasks.map((t) => t.sequenceNumber))
+      : null;
   let last: number | null = null;
   for (const task of tasks) {
-    if (task.status === ReviewTaskStatus.COMPLETED && task.result === ReviewResult.RETURNED) {
+    if (
+      (task.status === ReviewTaskStatus.COMPLETED && task.result === ReviewResult.RETURNED) ||
+      (task.status === ReviewTaskStatus.CANCELLED && task.sequenceNumber !== closing)
+    ) {
       if (last === null || task.sequenceNumber > last) last = task.sequenceNumber;
     }
   }
@@ -362,7 +381,7 @@ export function buildJourneyProgress(params: {
   const { latest, slotOfTaskId } = latestBySlot(params.tasks, plan);
   const activeSlot = params.active ? (slotOfTaskId.get(params.active.id) ?? null) : null;
   const phase = phaseFor(params.status);
-  const lastReturn = lastReturnSequence(params.tasks);
+  const lastReturn = lastReturnSequence(params.tasks, phase);
 
   /**
    * ขั้นที่ไม่ใช่ด่านยังไม่จบก็ต่อเมื่อคำขอยัง "ไม่ได้อยู่ในมือใคร" — ร่างอยู่ หรือถูกส่ง
@@ -419,6 +438,11 @@ export function buildJourneyProgress(params: {
        * `WAITING_REVISION` ด่านที่ผ่านไปแล้วจึงค้างเขียว "เสร็จสิ้น" อยู่บนคำขอที่
        * ยังไม่ได้นำส่งด้วยซ้ำ คำขอที่เป็นร่างแปลว่า**ยังไม่มีรอบไหนนับเลย**เสมอ
        * (ร่างที่ไม่เคยนำส่งไม่มีแถวให้ตัดสินอยู่แล้ว เงื่อนไขนี้จึงไม่เปลี่ยนคำตอบของมัน)
+       *
+       * แต่การถาม `phase === "DRAFT"` ผิดซ้ำแบบเดียวกับข้อ 2: จริงแค่ระหว่างที่ยังเป็นร่าง
+       * พอหน่วยงานนำส่งใหม่ ด่านลงนามของรอบที่ถูก reset ก็กลับมาเขียวขณะคำขออยู่ขั้นที่ 2
+       * (การ์ด "ขั้นตอนการอนุมัติสลับ", 2026-10-29) ตั้งแต่วันนั้น `lastReturnSequence()`
+       * นับแถว `CANCELLED` เป็นตัวล้างรอบด้วย การเทียบ phase จึงเหลือเป็นตาข่ายชั้นสองเท่านั้น
        */
     } else if (
       task &&

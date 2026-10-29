@@ -267,8 +267,9 @@ as a task; the one-active-task index would start colliding with real gates.
 **A gate whose round was thrown away is `RETURNED`, not `DONE` and not `UPCOMING`.** `StepState`
 has a fifth value, shown as a grey "ส่งกลับแก้ไข" beside "ยังไม่เริ่ม". A step earns it when its
 own task closed with `RETURNED`, or when its latest row has a `sequence_number` **at or below the
-most recent `RETURNED` row** (`lastReturnSequence()`) — every row up to a return belongs to the
-round that return voided, and every row after it belongs to the round the resubmission opened.
+most recent row that voided a round** (`lastReturnSequence()`): a `RETURNED` result, **or** a
+`CANCELLED` task — every row up to it belongs to the round it voided, and every row after it
+belongs to the round the resubmission opened.
 A gate that passed cleanly cannot tell from its own row that the round it belongs to has since
 been voided, which is how a recalled request showed a green "เสร็จสิ้น" on the officer's step
 while sitting back with the organisation (reported from production 2026-09-10). The first fix
@@ -277,8 +278,21 @@ still with the organisation: as soon as it was resubmitted the phase went back t
 and the signatory's step turned green again while the request sat at step 2 (card "BUG
 registration step", 2026-09-18, both journeys). The phase test remains as a second net for a
 `RETURNED` status that did not come from a `RETURNED` row, and a third clause treats
-`phase === "DRAFT"` the same way, for the admin reset that closes its gate `CANCELLED` and leaves
-no `RETURNED` row at all (see `/api/admin/registrations` under **Auth**). Steps never reached keep "ยังไม่เริ่ม",
+`phase === "DRAFT"` the same way.
+
+**Then the same mistake was made a second time, for the admin reset.** Reset (and
+`revertStrandedWork()`, and cancelling a dataset request) closes the open gate `CANCELLED` and
+leaves no `RETURNED` row at all (see `/api/admin/registrations` under **Auth**), and the
+2026-09-20 fix caught it with that `phase === "DRAFT"` clause — true only while the request is
+still a draft. Once the organisation resubmitted, the signatory's step from the reset round was
+green again beside step 2 "รอดำเนินการ" (card "ขั้นตอนการอนุมัติสลับ", 2026-10-29, seen on
+production). `lastReturnSequence()` therefore counts `CANCELLED` rows too, which is the rule
+`skippedDocumentCodes()` in `lib/legal.ts` had used all along while claiming to be "the same
+rule". One row is exempt: the latest `CANCELLED` row of a request whose phase is still
+`CANCELLED` is what closed it, not a void — nothing was resubmitted, so the gates passed before
+it did pass, and "ส่งกลับแก้ไข" on a closed request would be untrue. Reset that request to draft
+and the same row voids its round as usual. **Ask "which row voided the round?", never "what
+phase is it in now?"** — the phase answers only until the next submit. Steps never reached keep "ยังไม่เริ่ม",
 and no date is printed on a `RETURNED` step because `completedAt` belongs to the discarded round.
 
 `currentStep` is still found by `state === "CURRENT"` alone, so `currentOrder`, `nextStep`, the
@@ -893,10 +907,12 @@ field name must get a 400, not a 200 that changed nothing.
 
 **A request reset to `DRAFT` shows step 1 again**, which took a third clause in
 `lib/journey-steps.ts`: a cleared round is recognised by a `RETURNED` row, by
-`phase === "WAITING_REVISION"`, and now by `phase === "DRAFT"`. A reset leaves no `RETURNED` row
+`phase === "WAITING_REVISION"`, and by `phase === "DRAFT"`. A reset leaves no `RETURNED` row
 (the gate is `CANCELLED`) and the phase is `DRAFT`, so gates that had passed stayed green on a
 request that had not even been submitted. A draft has no counted round by definition, so the
-clause cannot be wrong for an ordinary draft, which has no rows to judge.
+clause cannot be wrong for an ordinary draft, which has no rows to judge. It was not enough on
+its own, though: after the resubmission the phase is `IN_PROGRESS` again, so since 2026-10-29
+the `CANCELLED` row itself counts as the void (see "A gate whose round was thrown away" above).
 
 `Invitation` is replaced by `iam.activation_key`, following the lifecycle in that sheet: create
 the `user_account` as `PENDING` first, then issue a key for (account, organisation, role).
