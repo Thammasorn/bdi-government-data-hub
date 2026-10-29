@@ -105,9 +105,9 @@ import { captureError } from "../lib/error-capture.js";
 import { LEGAL_SCOPES, documentsAwaitingRender, pinRequestDocuments, requestDocuments } from "../lib/legal.js";
 import { NAME_FIELDS, accountNameTh, fullNameTh } from "../lib/person-name.js";
 import {
-  MAX_ADDRESS_LINE,
   changedOnlyInForm,
   organizationDraftSchema as draftSchema,
+  organizationRegistryRules,
   toRequestData,
 } from "../lib/organization-form.js";
 import { nextOrganizationRequestNumber } from "../lib/request-number.js";
@@ -128,7 +128,6 @@ import {
   isUuid,
   nationalIdSchema,
   normaliseThaiPhone,
-  organizationNameSchema,
   phoneExtensionSchema,
   phoneSchema,
   positionSchema,
@@ -200,22 +199,7 @@ const upload = multer({
 const submitSchema = z
   .object({
   organizationCode: z.string().trim().min(1, "กรุณากรอกรหัสหน่วยงาน").max(64),
-  name: organizationNameSchema,
-  addressLine: z
-    .string()
-    .trim()
-    .min(1, "กรุณากรอกที่อยู่")
-    .max(MAX_ADDRESS_LINE, `ที่อยู่ต้องไม่เกิน ${MAX_ADDRESS_LINE} ตัวอักษร`),
-  /**
-   * ถนนไม่บังคับ — ที่อยู่ราชการหลายแห่งไม่มีชื่อถนน (ใช้หมู่ที่แทน) บังคับกรอกจะกลายเป็น
-   * การให้ผู้ใช้กรอกข้อมูลที่ไม่มีอยู่จริง ช่อง "ถนน" ในเอกสาร A0 จะว่างไว้ตามความจริง
-   */
-  road: z.string().trim().max(255).optional(),
-  province: z.string().trim().min(1, "กรุณาเลือกจังหวัด"),
-  district: z.string().trim().min(1, "กรุณาเลือกอำเภอ/เขต"),
-  subdistrict: z.string().trim().min(1, "กรุณาเลือกตำบล/แขวง"),
-  postalCode: z.string().trim().regex(/^\d{5}$/, "รหัสไปรษณีย์ต้องเป็นตัวเลข 5 หลัก"),
-  email: emailSchema,
+  ...organizationRegistryRules,
 
   /**
    * "ระบุ" ไม่ใช่ "เลือก" — ตัวเลือกของผู้มีอำนาจกระทำการแทนเหลือ นาย/นาง/นางสาว/อื่น ๆ

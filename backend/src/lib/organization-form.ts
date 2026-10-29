@@ -15,7 +15,13 @@ import { z } from "zod";
 
 import { prisma } from "../db.js";
 import { lookupZipcode, resolveAddressCodes } from "./address.js";
-import { draftEmailSchema, normaliseThaiPhone, phoneExtensionSchema } from "./validation.js";
+import {
+  draftEmailSchema,
+  emailSchema,
+  normaliseThaiPhone,
+  organizationNameSchema,
+  phoneExtensionSchema,
+} from "./validation.js";
 
 /**
  * ความยาวสูงสุดของช่องที่อยู่
@@ -27,6 +33,32 @@ import { draftEmailSchema, normaliseThaiPhone, phoneExtensionSchema } from "./va
  * ค่านี้ถูกคัดลอกไว้ที่ frontend/lib/organization-form.ts ด้วย — แก้พร้อมกันเสมอ
  */
 export const MAX_ADDRESS_LINE = 2000;
+
+/**
+ * กฎของช่องข้อมูลหน่วยงานตอน "ต้องครบ" — ใช้ร่วมกันสองทาง: นำส่งคำขอ (`submitSchema`) และผู้ดูแลระบบแก้ทะเบียน
+ * ของหน่วยงานที่เปิดใช้งานแล้ว (`PATCH /api/admin/organizations/:id`, การ์ด 20261026-01)
+ *
+ * อยู่ที่เดียวเพราะข้อมูลที่แก้ในเมนูหน่วยงานต้องเข้มเท่ากับที่ผู้ประสานงานกรอกในใบคำขอ — สองชุดที่เขียนแยกกัน
+ * จะเดินคนละทางตั้งแต่กฎถัดไปที่ถูกแก้ ชื่อฟิลด์ตาม API ของฟอร์ม (`name` ไม่ใช่ `nameTh`)
+ */
+export const organizationRegistryRules = {
+  name: organizationNameSchema,
+  addressLine: z
+    .string()
+    .trim()
+    .min(1, "กรุณากรอกที่อยู่")
+    .max(MAX_ADDRESS_LINE, `ที่อยู่ต้องไม่เกิน ${MAX_ADDRESS_LINE} ตัวอักษร`),
+  /**
+   * ถนนไม่บังคับ — ที่อยู่ราชการหลายแห่งไม่มีชื่อถนน (ใช้หมู่ที่แทน) บังคับกรอกจะกลายเป็น
+   * การให้ผู้ใช้กรอกข้อมูลที่ไม่มีอยู่จริง ช่อง "ถนน" ในเอกสาร A0 จะว่างไว้ตามความจริง
+   */
+  road: z.string().trim().max(255).optional(),
+  province: z.string().trim().min(1, "กรุณาเลือกจังหวัด"),
+  district: z.string().trim().min(1, "กรุณาเลือกอำเภอ/เขต"),
+  subdistrict: z.string().trim().min(1, "กรุณาเลือกตำบล/แขวง"),
+  postalCode: z.string().trim().regex(/^\d{5}$/, "รหัสไปรษณีย์ต้องเป็นตัวเลข 5 หลัก"),
+  email: emailSchema,
+};
 
 /**
  * ตอนบันทึกร่างยอมให้ว่างได้ ตอนนำส่งต้องครบ — จึงแยกเป็นสองชุด

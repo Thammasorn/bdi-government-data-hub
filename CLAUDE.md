@@ -1483,6 +1483,20 @@ counts can link to a filtered list). The registration screens reuse `Organizatio
 `DatasetRequestTable` and both `DetailView`s read-only under `RegistrationAdminPanel`;
 `SnapshotEditor` sends only changed keys to the `.strict()` admin `PUT`.
 
+**The console edits an organisation's data in one place at a time** (card 20261026-01, 2026-10-29). While an
+organisation has a registration request and has never been activated, the request is the only copy that
+matters — the coordinator fills it, the officer and the signatory work from it, and final approval copies it
+over `organization.organization`. The console therefore offers no "แก้เนื้อคำขอ" on an *organisation* request
+(datasets keep it) and no "แก้ไข" on `/console/organizations/[id]` for such an organisation; the administrator
+changes only its status (reset to draft, cancel). Editing the registry opens at activation, or earlier while no
+request exists at all (the pre-fill step). `activatedAt` plus `registrationRequests.length` is the whole test,
+made in the page. **This is a screen rule, not an API rule**: `PATCH /api/admin/organizations/:id` and
+`PUT /api/admin/registrations/organizations/:id` still answer on the admin token, and the `registration_in_progress`
+warning the PATCH used to attach is gone. What the PATCH *does* enforce for an activated organisation is the
+submit-time field rules on the merged row (`organizationRegistryRules` in `lib/organization-form.ts`, shared with
+`submitSchema`; the screen calls `validateOrganizationRegistry()`). Card 20261025-04's idea — copy a registry edit
+into the open request — was not built and must not be: it keeps two copies alive, which is what this rule removes.
+
 **สถิติ — one set of numbers, two screens** (feedback "features 1 full" row 15, 2026-10-27). BDI officers and approvers get a
 "สถิติ" menu item to `/admin/statistics`; the system administrator gets the same per-organisation table as a section of the
 `/console` overview instead of a page of its own. Both read `routes/statistics.ts` (`/api/statistics/*`, `requireAuth` +

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
@@ -51,10 +52,7 @@ export function RegistrationAdminPanel({
   const { data, reload } = useAdminData<{ organization?: RequestValues; request?: RequestValues }>(detailPath);
   const values = data ? (kind === "organizations" ? data.organization : data.request) : undefined;
   const { choices } = useDatasetChoices();
-  const sections = useMemo(
-    () => (kind === "organizations" ? ORGANIZATION_SECTIONS : datasetSections(choices)),
-    [kind, choices],
-  );
+  const sections = useMemo(() => datasetSections(choices), [choices]);
   const [dialog, setDialog] = useState<"edit" | "reset" | "cancel" | "delete" | null>(null);
   const [removeApprover, setRemoveApprover] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -83,9 +81,11 @@ export function RegistrationAdminPanel({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="secondary" onClick={() => setDialog("edit")}>
-            แก้เนื้อคำขอ
-          </Button>
+          {kind === "datasets" ? (
+            <Button size="sm" variant="secondary" onClick={() => setDialog("edit")}>
+              แก้เนื้อคำขอ
+            </Button>
+          ) : null}
           {canReset ? (
             <Button size="sm" variant="secondary" onClick={() => setDialog("reset")}>
               ปรับกลับเป็นฉบับร่าง
@@ -103,10 +103,26 @@ export function RegistrationAdminPanel({
           ) : null}
         </div>
       </div>
+      {kind === "organizations" ? (
+        <p className="mt-3 text-[13px] text-navy-100">
+          เนื้อคำขอหน่วยงานผู้ประสานงานเป็นคนกรอก — ผู้ดูแลระบบปรับได้แค่สถานะ
+          {status === "APPROVED" && typeof values.organizationId === "string" ? (
+            <>
+              {" "}
+              ข้อมูลของหน่วยงานแก้ได้ที่{" "}
+              <Link href={`/console/organizations/${values.organizationId}`} className="font-medium text-white underline">
+                เมนูหน่วยงาน
+              </Link>
+            </>
+          ) : (
+            " ข้อมูลหน่วยงานแก้ในเมนูหน่วยงานได้หลังอนุมัติและเปิดใช้งานแล้ว"
+          )}
+        </p>
+      ) : null}
       <WarningList warnings={warnings} className="mt-3 text-ink" />
 
       <SnapshotEditor
-        open={dialog === "edit"}
+        open={kind === "datasets" && dialog === "edit"}
         onClose={close}
         title={`แก้เนื้อคำขอ ${values.requestNumber}`}
         sections={sections}
@@ -185,57 +201,6 @@ export function RegistrationAdminPanel({
     </section>
   );
 }
-
-const ORGANIZATION_SECTIONS: SnapshotSection[] = [
-  {
-    title: "ข้อมูลหน่วยงาน",
-    fields: [
-      { key: "organizationCode", label: "รหัสหน่วยงาน", type: "text" },
-      { key: "organizationType", label: "ประเภทหน่วยงาน", type: "text" },
-      { key: "name", label: "ชื่อหน่วยงาน", type: "text", wide: true },
-      { key: "nameEn", label: "ชื่อหน่วยงาน (อังกฤษ)", type: "text", wide: true },
-      { key: "addressLine", label: "ที่อยู่ (เลขที่ / อาคาร / ซอย)", type: "text" },
-      { key: "road", label: "ถนน", type: "text" },
-      { key: "province", label: "จังหวัด", type: "text" },
-      { key: "district", label: "อำเภอ/เขต", type: "text" },
-      { key: "subdistrict", label: "ตำบล/แขวง", type: "text" },
-      { key: "postalCode", label: "รหัสไปรษณีย์", type: "text" },
-      { key: "phone", label: "เบอร์โทรศัพท์", type: "text" },
-      { key: "phoneExtension", label: "ต่อ", type: "text" },
-      { key: "email", label: "อีเมลหน่วยงาน", type: "text" },
-      { key: "websiteUrl", label: "เว็บไซต์", type: "text" },
-    ],
-  },
-  {
-    title: "ผู้มีอำนาจอนุมัติของหน่วยงาน",
-    note: "ถ้าผู้มีอำนาจฯ เปิดใช้งานบัญชีแล้ว การเปลี่ยนอีเมลหรือเลขบัตรที่นี่ไม่เปลี่ยนตัวคนที่ลงนาม — ให้ปรับกลับเป็นฉบับร่างพร้อมถอดผู้มีอำนาจฯ แทน",
-    fields: [
-      { key: "signatoryPrefix", label: "คำนำหน้า", type: "text" },
-      { key: "signatoryFirstName", label: "ชื่อ", type: "text" },
-      { key: "signatoryLastName", label: "นามสกุล", type: "text" },
-      { key: "signatoryPosition", label: "ตำแหน่ง", type: "text" },
-      { key: "signatoryDepartment", label: "ฝ่าย/กอง/สำนัก", type: "text" },
-      { key: "signatoryEmail", label: "อีเมล", type: "text" },
-      { key: "signatoryNationalId", label: "เลขบัตรประชาชน", type: "text" },
-      { key: "signatoryPhone", label: "เบอร์โทรศัพท์", type: "text" },
-      { key: "signatoryPhoneExtension", label: "ต่อ", type: "text" },
-    ],
-  },
-  {
-    title: "ผู้ประสานงานของหน่วยงาน",
-    fields: [
-      { key: "contactPrefix", label: "คำนำหน้า", type: "text" },
-      { key: "contactFirstName", label: "ชื่อ", type: "text" },
-      { key: "contactLastName", label: "นามสกุล", type: "text" },
-      { key: "contactPosition", label: "ตำแหน่ง", type: "text" },
-      { key: "contactDepartment", label: "ฝ่าย/กอง/สำนัก", type: "text" },
-      { key: "contactEmail", label: "อีเมล", type: "text" },
-      { key: "contactNationalId", label: "เลขบัตรประชาชน", type: "text" },
-      { key: "contactPhone", label: "เบอร์โทรศัพท์", type: "text" },
-      { key: "contactPhoneExtension", label: "ต่อ", type: "text" },
-    ],
-  },
-];
 
 /** ช่องของแบบฟอร์มชุดข้อมูล — ชื่อตรงกับ `datasetDraftSchema` (backend/src/lib/dataset.ts) ป้ายตามหน้าฟอร์มของหน่วยงาน */
 function datasetSections(choices: Record<ChoiceFieldKey, Array<{ code: string; label: string }>>): SnapshotSection[] {

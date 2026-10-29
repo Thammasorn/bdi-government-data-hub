@@ -4,9 +4,10 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
 import { SelectField, TextField } from "@/components/ui/Field";
-import type { AdminOrganization, AdminOrganizationSaveWarning } from "@/lib/admin";
+import type { AdminOrganization } from "@/lib/admin";
 import { adminErrorView, type AdminErrorView } from "@/lib/admin-errors";
 import { api } from "@/lib/api";
+import { validateOrganizationRegistry } from "@/lib/organization-form";
 
 import { ErrorNotice } from "./ui";
 
@@ -51,7 +52,7 @@ export function OrganizationForm({
   onCancel,
 }: {
   organization: AdminOrganization | null;
-  onSaved: (org: AdminOrganization, warning?: AdminOrganizationSaveWarning) => void;
+  onSaved: (org: AdminOrganization) => void;
   onCancel: () => void;
 }) {
   const [form, setForm] = useState<Values>(() => valuesOf(organization));
@@ -60,6 +61,9 @@ export function OrganizationForm({
   const [subdistricts, setSubdistricts] = useState<Array<{ name: string; zipcode: string }>>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<AdminErrorView | null>(null);
+  // หน่วยงานที่เปิดใช้งานแล้วต้องครบเท่าใบคำขอ — ขั้น ① (สร้างล่วงหน้า) ไม่บังคับ
+  const mustBeComplete = Boolean(organization?.activatedAt);
+  const [clientErrors, setClientErrors] = useState<Partial<Record<Key, string>>>({});
 
   useEffect(() => {
     api
@@ -96,6 +100,16 @@ export function OrganizationForm({
   };
 
   const save = async () => {
+    // เฉพาะหน่วยงานที่เปิดใช้งานแล้ว — ขั้น ① ที่ admin สร้างล่วงหน้ายังไม่ครบได้ ผู้ประสานงานจะกรอกต่อเอง
+    if (organization?.activatedAt) {
+      // ช่องต้องผ่านกฎเดียวกับที่ผู้ประสานงานเจอในฟอร์มคำขอ
+      const invalid = validateOrganizationRegistry(form);
+      if (Object.keys(invalid).length > 0) {
+        setClientErrors(invalid);
+        return;
+      }
+    }
+    setClientErrors({});
     setSaving(true);
     setError(null);
     try {
@@ -108,11 +122,11 @@ export function OrganizationForm({
           onCancel();
           return;
         }
-        const res = await api.patch<{ organization: AdminOrganization; warning?: AdminOrganizationSaveWarning }>(
+        const res = await api.patch<{ organization: AdminOrganization }>(
           `/api/admin/organizations/${organization.id}`,
           changed,
         );
-        onSaved(res.organization, res.warning);
+        onSaved(res.organization);
       } else {
         const body = Object.fromEntries(FIELDS.filter((k) => form[k].trim()).map((k) => [k, form[k].trim()]));
         const res = await api.post<{ organization: AdminOrganization }>("/api/admin/organizations", body);
@@ -130,13 +144,14 @@ export function OrganizationForm({
       label={label}
       value={form[key]}
       onChange={(e) => set(key, e.target.value)}
-      error={error?.fields[key]}
+      error={clientErrors[key] ?? error?.fields[key]}
       {...extra}
     />
   );
 
   return (
     <form
+      noValidate
       className="space-y-5"
       onSubmit={(e) => {
         e.preventDefault();
@@ -156,9 +171,9 @@ export function OrganizationForm({
 
       <fieldset className="grid gap-4 sm:grid-cols-2">
         <legend className="mb-2 text-[14px] font-semibold text-navy-800">ที่อยู่</legend>
-        {field("addressLine", "เลขที่ / อาคาร")}
+        {field("addressLine", "เลขที่ / อาคาร", { required: mustBeComplete })}
         {field("road", "ถนน")}
-        <SelectField label="จังหวัด" value={form.province} onChange={(e) => set("province", e.target.value)} error={error?.fields.province}>
+        <SelectField required={mustBeComplete} label="จังหวัด" value={form.province} onChange={(e) => set("province", e.target.value)} error={clientErrors.province ?? error?.fields.province}>
           <option value="">เลือกจังหวัด</option>
           {withCurrent(provinces, form.province).map((p) => (
             <option key={p} value={p}>
@@ -168,10 +183,11 @@ export function OrganizationForm({
         </SelectField>
         <SelectField
           label="อำเภอ / เขต"
+          required={mustBeComplete}
           value={form.district}
           onChange={(e) => set("district", e.target.value)}
           disabled={!form.province}
-          error={error?.fields.district}
+          error={clientErrors.district ?? error?.fields.district}
         >
           <option value="">เลือกอำเภอ</option>
           {withCurrent(amphoes, form.district).map((a) => (
@@ -182,10 +198,11 @@ export function OrganizationForm({
         </SelectField>
         <SelectField
           label="ตำบล / แขวง"
+          required={mustBeComplete}
           value={form.subdistrict}
           onChange={(e) => set("subdistrict", e.target.value)}
           disabled={!form.district}
-          error={error?.fields.subdistrict}
+          error={clientErrors.subdistrict ?? error?.fields.subdistrict}
         >
           <option value="">เลือกตำบล</option>
           {withCurrent(
@@ -197,14 +214,14 @@ export function OrganizationForm({
             </option>
           ))}
         </SelectField>
-        {field("postalCode", "รหัสไปรษณีย์", { inputMode: "numeric", maxLength: 5 })}
+        {field("postalCode", "รหัสไปรษณีย์", { inputMode: "numeric", maxLength: 5, required: mustBeComplete })}
       </fieldset>
 
       <fieldset className="grid gap-4 sm:grid-cols-2">
         <legend className="mb-2 text-[14px] font-semibold text-navy-800">ช่องทางติดต่อ</legend>
         {field("phone", "เบอร์โทรศัพท์", { inputMode: "numeric" })}
         {field("phoneExtension", "เบอร์ต่อ", { inputMode: "numeric", maxLength: 10 })}
-        {field("email", "อีเมลหน่วยงาน", { type: "email" })}
+        {field("email", "อีเมลหน่วยงาน", { type: "email", required: mustBeComplete })}
         {field("websiteUrl", "เว็บไซต์")}
       </fieldset>
 

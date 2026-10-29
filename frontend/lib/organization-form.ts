@@ -279,3 +279,80 @@ export function validateOrganizationForm(
   }
   return errors;
 }
+
+/** ช่องของทะเบียนหน่วยงาน (คอนโซล › หน่วยงาน) — ชื่อตาม `OrganizationForm` ไม่ใช่ชื่อในฟอร์มคำขอ */
+export interface OrganizationRegistryValues {
+  nameTh: string;
+  nameEn: string;
+  addressLine: string;
+  road: string;
+  province: string;
+  district: string;
+  subdistrict: string;
+  postalCode: string;
+  email: string;
+  phone: string;
+  phoneExtension: string;
+  websiteUrl: string;
+}
+
+/**
+ * ตรวจทะเบียนหน่วยงานด้วยกฎเดียวกับส่วน "ข้อมูลหน่วยงาน" ของฟอร์มคำขอ (การ์ด 20261026-01)
+ *
+ * ผู้ดูแลระบบแก้ข้อมูลหน่วยงานได้หลังอนุมัติเท่านั้น และช่องที่แก้ต้องเข้มเท่ากับที่ผู้ประสานงานกรอก
+ * จึงเรียก `validateOrganizationField()` ตัวเดียวกัน ไม่คัดลอกกฎ — ส่วนผู้มีอำนาจกับผู้ประสานงานไม่อยู่ที่นี่
+ * (เป็นบัญชีที่ถือบทบาท จัดการในเมนูสมาชิก) เบอร์โทร เลขต่อ และเว็บไซต์ฟอร์มคำขอไม่มีช่อง จึงใช้กฎ
+ * ของฝั่ง API (`organizationDraftSchema`) เท่านั้น และไม่บังคับกรอก
+ */
+export function validateOrganizationRegistry(
+  values: OrganizationRegistryValues,
+): Partial<Record<keyof OrganizationRegistryValues, string>> {
+  const form: OrganizationFormValues = {
+    organizationCode: "",
+    name: values.nameTh,
+    addressLine: values.addressLine,
+    road: values.road,
+    province: values.province,
+    district: values.district,
+    subdistrict: values.subdistrict,
+    postalCode: values.postalCode,
+    email: values.email,
+    signatoryPrefix: "",
+    signatoryFirstName: "",
+    signatoryLastName: "",
+    signatoryPosition: "",
+    signatoryEmail: "",
+    signatoryNationalId: "",
+    signatoryPhone: "",
+    signatoryPhoneExtension: "",
+    contactPrefix: "",
+    contactFirstName: "",
+    contactLastName: "",
+    contactPosition: "",
+    contactDepartment: "",
+    contactEmail: "",
+    contactPhone: "",
+    contactPhoneExtension: "",
+  };
+  const errors: Partial<Record<keyof OrganizationRegistryValues, string>> = {};
+  const check = (key: keyof OrganizationRegistryValues, field: OrganizationFormField) => {
+    const message = validateOrganizationField(field, form);
+    if (message) errors[key] = message;
+  };
+  check("nameTh", "name");
+  check("addressLine", "addressLine");
+  check("road", "road");
+  check("province", "province");
+  check("district", "district");
+  check("subdistrict", "subdistrict");
+  check("postalCode", "postalCode");
+  check("email", "email");
+
+  const phone = values.phone.trim();
+  if (phone && !isValidThaiPhone(phone)) errors.phone = PHONE_MESSAGE;
+  const extension = values.phoneExtension.trim();
+  if (extension && !isValidPhoneExtension(extension)) errors.phoneExtension = PHONE_EXTENSION_MESSAGE;
+  if (values.nameEn.trim().length > 200) errors.nameEn = "ชื่อภาษาอังกฤษต้องไม่เกิน 200 ตัวอักษร";
+  if (values.websiteUrl.trim().length > 500) errors.websiteUrl = "เว็บไซต์ต้องไม่เกิน 500 ตัวอักษร";
+  return errors;
+}

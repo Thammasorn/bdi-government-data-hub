@@ -40,6 +40,7 @@ import {
   roleSeatTaken,
 } from "../lib/iam.js";
 import { sendInvitationEmail } from "../lib/mail.js";
+import { organizationRegistryRules } from "../lib/organization-form.js";
 import { ORGANIZATION_STATUS_LABELS, ROLE_LABELS } from "../lib/roles.js";
 import {
   BDI_ORGANIZATION_ID,
@@ -503,6 +504,35 @@ adminRouter.patch("/organizations/:id", async (req, res) => {
         : before.postalCode;
 
   /**
+   * หน่วยงานที่เปิดใช้งานแล้ว: ข้อมูลหลังแก้ต้องผ่านกฎเดียวกับที่ผู้ประสานงานเจอตอนนำส่งคำขอ (การ์ด 20261026-01)
+   *
+   * ตรวจจาก **สถานะหลังรวมค่า** ไม่ใช่เฉพาะช่องที่ส่งมา — แก้ช่องเดียวแล้วทิ้งแถวให้ไม่ครบไม่ได้ ส่วนหน่วยงานที่
+   * ยังไม่เคยเปิดใช้งาน (ขั้น ① admin สร้างล่วงหน้า) ยังไม่ครบได้ เพราะผู้ประสานงานจะกรอกต่อในคำขอเอง
+   */
+  if (before.activatedAt) {
+    const checked = z.object(organizationRegistryRules).safeParse({
+      name: input.nameTh ?? before.nameTh,
+      addressLine: input.addressLine !== undefined ? (input.addressLine ?? "") : (before.addressLine ?? ""),
+      road: (input.road !== undefined ? input.road : before.road) ?? undefined,
+      province: merged.province ?? "",
+      district: merged.district ?? "",
+      subdistrict: merged.subdistrict ?? "",
+      postalCode: postalCode ?? "",
+      email: (input.email !== undefined ? input.email : before.email) ?? "",
+    });
+    if (!checked.success) {
+      const fields = formatZodError(checked.error);
+      // ฟอร์มคำขอเรียกชื่อว่า `name` ส่วนทะเบียนเรียก `nameTh`
+      if (fields.name) {
+        fields.nameTh = fields.name;
+        delete fields.name;
+      }
+      res.status(400).json({ error: "validation", fields });
+      return;
+    }
+  }
+
+  /**
    * ค่าที่เขียนลงจริง — diff ของ audit เทียบกับตัวนี้ ไม่ใช่กับ body: body ส่งที่อยู่มาเป็นชื่อ แต่แถว
    * เก็บเป็นรหัส และรหัสไปรษณีย์ถูกหาให้ใหม่ได้แม้ไม่ได้ส่งมา
    */
@@ -555,32 +585,7 @@ adminRouter.patch("/organizations/:id", async (req, res) => {
     },
   });
 
-  /**
-   * ฟอร์มของผู้ใช้คัดลอกข้อมูลไปตั้งแต่ตอนเปิดคำขอ การแก้ที่นี่จึงไปไม่ถึงคำขอที่เปิดแล้ว
-   * บอกกลับไปตรง ๆ ดีกว่าให้ admin เข้าใจว่าแก้แล้วผู้ใช้จะเห็น
-   */
-  const openRequest = await prisma.organizationRegistrationRequest.findFirst({
-    where: {
-      organizationId: organization.id,
-      status: { notIn: [RequestStatus.APPROVED, RequestStatus.REJECTED, RequestStatus.CANCELLED] },
-    },
-    select: { id: true, requestNumber: true, status: true },
-  });
-
-  res.json({
-    organization: await toAdminOrganizationShape(organization),
-    ...(openRequest
-      ? {
-          warning: {
-            code: "registration_in_progress",
-            message:
-              "หน่วยงานนี้มีคำขอจดทะเบียนที่เปิดอยู่แล้ว การแก้ตรงนี้จะไม่ไปปรากฏในฟอร์มของผู้ใช้ " +
-              "เพราะคำขอคัดลอกข้อมูลไปตั้งแต่ตอนเปิด ต้องให้ผู้ใช้แก้ในฟอร์มเอง",
-            request: openRequest,
-          },
-        }
-      : {}),
-  });
+  res.json({ organization: await toAdminOrganizationShape(organization) });
 });
 
 /**

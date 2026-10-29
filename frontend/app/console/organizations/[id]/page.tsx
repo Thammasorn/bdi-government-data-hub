@@ -28,7 +28,6 @@ import {
   invitationState,
   type AdminOrganization,
   type AdminOrganizationDetail,
-  type AdminOrganizationSaveWarning,
   type AdminUserListItem,
 } from "@/lib/admin";
 import { adminErrorView } from "@/lib/admin-errors";
@@ -101,6 +100,9 @@ export default function ConsoleOrganizationPage() {
   const currentMembers = allMembers.filter((m) => !membershipOf(m, org.id).former);
   const formerCount = allMembers.length - currentMembers.length;
   const openInvitations = data.invitations.filter((inv) => invitationState(inv) === "ISSUED");
+  // ระหว่างที่หน่วยงานอยู่ในคำขอ เนื้อข้อมูลเป็นของผู้ประสานงาน (การ์ด 20261026-01) — แก้ได้เมื่อเปิดใช้งานแล้ว
+  // หรือเมื่อยังไม่มีคำขอสักใบ (ขั้น ① ที่ admin เพิ่งสร้างหน่วยงานล่วงหน้า)
+  const lockedRequest = org.activatedAt ? null : (data.registrationRequests[0] ?? null);
 
   return (
     <div>
@@ -154,23 +156,35 @@ export default function ConsoleOrganizationPage() {
       <div className="space-y-5">
         <Panel
           title="ทะเบียนหน่วยงาน"
-          description="ข้อมูลนี้ถูกคัดลอกลงคำขอลงทะเบียนตอนหน่วยงานเปิดคำขอ — แก้ที่นี่ไม่เปลี่ยนคำขอที่เปิดไปแล้ว"
+          description={
+            lockedRequest
+              ? "หน่วยงานนี้ยังอยู่ระหว่างลงทะเบียน ข้อมูลอยู่ในคำขอของผู้ประสานงาน — แก้ที่นี่ได้หลังอนุมัติและเปิดใช้งานแล้วเท่านั้น"
+              : org.activatedAt
+                ? "แก้ได้ทุกช่องเหมือนในใบคำขอ และตรวจข้อมูลด้วยกฎเดียวกับฟอร์มของหน่วยงาน"
+                : "ข้อมูลที่กรอกล่วงหน้า — ผู้ประสานงานเห็นในฟอร์มคำขอตอนเปิดคำขอครั้งแรก และกรอกส่วนที่เหลือเอง แก้ที่นี่ได้จนกว่าจะมีคำขอ"
+          }
           actions={
-            editing ? null : (
+            editing || lockedRequest ? null : (
               <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
                 แก้ไข
               </Button>
             )
           }
         >
+          {lockedRequest ? (
+            <p className="mb-4 rounded-xl bg-navy-50 px-4 py-3 text-[14px] text-ink">
+              ระหว่างนี้ผู้ดูแลระบบปรับได้แค่สถานะของคำขอ (ปรับกลับเป็นฉบับร่าง หรือยกเลิก) ที่{" "}
+              <Link href={`/console/registrations/organizations/${lockedRequest.id}`} className="font-medium text-navy-700 underline">
+                คำขอ {lockedRequest.requestNumber}
+              </Link>
+            </p>
+          ) : null}
           {editing ? (
             <OrganizationForm
               organization={org}
               onCancel={() => setEditing(false)}
-              onSaved={(_org: AdminOrganization, warning?: AdminOrganizationSaveWarning) => {
+              onSaved={(_org: AdminOrganization) => {
                 setEditing(false);
-                // API ส่งคำเตือนมาเป็น object — แสดงข้อความพร้อมเลขที่คำขอ ไม่ใช่โยนทั้งก้อนลง WarningList
-                setWarnings(warning ? [`${warning.message} (คำขอ ${warning.request.requestNumber})`] : []);
                 show({ tone: "success", title: "บันทึกทะเบียนหน่วยงานแล้ว" });
                 reload();
               }}
