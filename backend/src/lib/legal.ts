@@ -483,7 +483,8 @@ async function skippedDocumentCodes(db: Db, subject: DocumentSubject): Promise<S
    *
    * นับ `CANCELLED` ด้วย ไม่ใช่แค่ `RETURNED` เพราะ reset ของแอดมิน
    * (`/api/admin/registrations/.../reset`) กับ `revertStrandedWork()` ปิดด่านแบบนั้นและไม่ทิ้งแถว
-   * `RETURNED` ไว้เลย — รอบก็ถูกยกเลิกเหมือนกัน การ recall ของเจ้าหน้าที่ BDI ปิดแบบนั้นเช่นกัน
+   * `RETURNED` ไว้เลย — รอบก็ถูกยกเลิกเหมือนกัน (`lastReturnSequence()` นับแบบนี้ด้วยตั้งแต่
+   * 2026-10-29; ก่อนหน้านั้นนับแค่ RETURNED และสองที่นี้ตอบไม่ตรงกัน) การ recall ของเจ้าหน้าที่ BDI ปิดแบบนั้นเช่นกัน
    * แต่ `recallRefusal()` ยอมเฉพาะตอน task ยัง `PENDING` ซึ่งยังไม่มีใบลงนามให้ยกเลิกอยู่แล้ว
    */
   const lastVoid = await db.reviewTask.findFirst({
