@@ -139,6 +139,13 @@ import {
   taskOpeners,
 } from "../lib/workflow.js";
 import { requireAuth } from "../middleware/auth.js";
+import {
+  assertOrganizationOperable,
+  frozenOrganizationMessage,
+  isOrganizationFrozen,
+  organizationFrozenError,
+  refuseIfOrganizationFrozen,
+} from "../lib/organization-freeze.js";
 import { NAME_FIELDS, accountNameTh, fullNameTh } from "../lib/person-name.js";
 
 export const datasetRequestRouter = Router();
@@ -245,6 +252,8 @@ async function prerequisiteError(session: Session): Promise<string | null> {
     select: { status: true },
   });
   if (!org) return "ไม่พบหน่วยงานของคุณ";
+  // ถูกระงับหรือยุติ — บอกเหตุผลจริง ไม่ใช่ "ต้องผ่านการอนุมัติก่อน" ซึ่งอ่านเหมือนหน่วยงานไม่เคยได้รับอนุมัติ
+  if (isOrganizationFrozen(org.status)) return frozenOrganizationMessage(org.status);
   if (org.status !== OrganizationStatus.ACTIVE) {
     return "หน่วยงานของคุณต้องผ่านการอนุมัติและเปิดใช้งานก่อนจึงจะลงทะเบียนชุดข้อมูลได้";
   }
@@ -307,7 +316,12 @@ function toApiShape(request: RequestRow, extra?: Record<string, unknown>) {
     requestNumber: request.requestNumber,
     status: request.status,
     organizationId: request.organizationId,
-    organization: { id: request.organization.id, name: request.organization.nameTh },
+    // status — หน้าจอใช้แสดง banner ของหน่วยงานที่ถูกระงับและซ่อนทุกปุ่มที่เปลี่ยนคำขอ
+    organization: {
+      id: request.organization.id,
+      name: request.organization.nameTh,
+      status: request.organization.status,
+    },
     createdById: request.createdBy,
     createdDatasetId: request.createdDatasetId,
     submittedAt: request.submittedAt,
@@ -644,7 +658,7 @@ datasetRequestRouter.get("/:id/state", async (req, res) => {
   // AND ไม่ใช่ spread — เหตุผลเดียวกับใน GET /:id ตัวกรองของผู้เชี่ยวชาญมี `id` ของตัวเอง
   const request = await prisma.datasetRegistrationRequest.findFirst({
     where: { AND: [{ id: req.params.id }, await visibilityFilter(session)] },
-    select: { id: true, status: true, updatedAt: true },
+    select: { id: true, status: true, updatedAt: true, organization: { select: { status: true } } },
   });
   if (!request) {
     res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
@@ -666,7 +680,9 @@ datasetRequestRouter.get("/:id/state", async (req, res) => {
     state: {
       status: request.status,
       currentTaskType: active?.taskType ?? null,
-      stateVersion: stateVersionOf(request.updatedAt, tasks._max.updatedAt),
+      stateVersion: stateVersionOf(request.updatedAt, tasks._max.updatedAt, request.organization.status),
+      // ให้หน้าจอบอกได้ว่าที่เปลี่ยนคือหน่วยงานถูกระงับ ไม่ใช่มีใครกดอะไร (`describeState()`)
+      organizationStatus: request.organization.status,
     },
   });
 });
@@ -749,7 +765,7 @@ datasetRequestRouter.get("/:id", async (req, res) => {
       currentTaskType: active?.taskType ?? null,
       currentRound: active?.roundNumber ?? null,
       // ค่าเดียวกับที่ GET /:id/state คืน — หน้าจอเทียบสองค่านี้เพื่อรู้ว่าที่ถืออยู่เก่าหรือยัง
-      stateVersion: stateVersionOf(request.updatedAt, latestTaskTouch(tasks)),
+      stateVersion: stateVersionOf(request.updatedAt, latestTaskTouch(tasks), request.organization.status),
       // เส้นทางทั้งเส้น ไม่ใช่แค่ด่านที่ค้างอยู่ — ดู lib/journey-steps.ts
       progress: buildJourneyProgress({
         subjectType: SUBJECT,
@@ -807,6 +823,7 @@ datasetRequestRouter.patch("/:id", async (req, res) => {
     res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
     return;
   }
+  if (await refuseIfOrganizationFrozen(res, request.organizationId)) return;
   if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
     res.status(409).json({ error: "locked", message: editLockedMessage(request.status) });
     return;
@@ -944,6 +961,7 @@ datasetRequestRouter.delete("/:id", async (req, res, next) => {
     res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
     return;
   }
+  if (await refuseIfOrganizationFrozen(res, request.organizationId)) return;
   // 403 ไม่ใช่ 404 ตรงนี้ และไม่ขัดกับบรรทัดบน: คนนอกหน่วยงานถูกตัดไปตั้งแต่ด่านแรกแล้ว
   // คนที่มาถึงบรรทัดนี้เห็นคำขอใบนี้อยู่ในรายการของตัวเอง การบอกว่า "ไม่พบ" จึงเป็นคำโกหก
   // ไม่ใช่การปกปิด — และไม่บอกด้วยว่าต้องเป็นใครถึงจะยกเลิกได้
@@ -1049,6 +1067,7 @@ datasetRequestRouter.post("/:id/attachments", upload.single("file"), async (req,
     res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
     return;
   }
+  if (await refuseIfOrganizationFrozen(res, request.organizationId)) return;
   /**
    * เงื่อนไขเดียวกับ PATCH /:id และ DELETE /:id/attachments/:attachmentId
    *
@@ -1155,6 +1174,7 @@ datasetRequestRouter.delete("/:id/attachments/:attachmentId", async (req, res) =
     res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
     return;
   }
+  if (await refuseIfOrganizationFrozen(res, request.organizationId)) return;
   // เงื่อนไขเดียวกับ PATCH /:id — นำส่งไปแล้วห้ามถอนไฟล์ออกจากคำขอที่ผู้ตรวจกำลังอ่าน
   if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
     res.status(409).json({ error: "locked", message: editLockedMessage(request.status) });
@@ -1241,6 +1261,7 @@ datasetRequestRouter.post("/:id/generate-form", async (req, res) => {
     res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
     return;
   }
+  if (await refuseIfOrganizationFrozen(res, request.organizationId)) return;
 
   const shape = toApiShape(request);
   const parsed = parseRequestSnapshot(datasetSubmitSchema, shape);
@@ -1351,6 +1372,7 @@ datasetRequestRouter.post("/:id/submit", async (req, res) => {
     res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
     return;
   }
+  if (await refuseIfOrganizationFrozen(res, request.organizationId)) return;
   if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
     res.status(409).json({
       error: "locked",
@@ -1402,6 +1424,8 @@ datasetRequestRouter.post("/:id/submit", async (req, res) => {
   }
 
   await prisma.$transaction(async (tx) => {
+    // หน่วยงานถูกระงับระหว่างที่ผู้ใช้กดนำส่ง — 409 จากตัวจัดการท้าย index.ts
+    await assertOrganizationOperable(tx, request.organizationId);
     await tx.datasetRegistrationRequest.update({
       where: { id: request.id },
       data: { submittedAt: new Date(), updatedBy: session.sub },
@@ -1490,6 +1514,9 @@ datasetRequestRouter.post("/:id/assign", async (req, res, next) => {
     if (!request) {
       res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
       return;
+    }
+    if (isOrganizationFrozen(request.organization.status)) {
+      throw organizationFrozenError(request.organization.status);
     }
 
     /**
@@ -1840,6 +1867,10 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
       res.status(404).json({ error: "not_found", message: "ไม่พบคำขอนี้" });
       return;
     }
+    // หน่วยงานที่ถูกระงับหรือยุติ — ทุกด่านและความเห็นของผู้เชี่ยวชาญ ตรวจซ้ำใน transaction อีกชั้น (`lib/organization-freeze.ts`)
+    if (isOrganizationFrozen(request.organization.status)) {
+      throw organizationFrozenError(request.organization.status);
+    }
 
     const task = await activeTask(prisma, SUBJECT, request.id);
     if (!task) {
@@ -1894,6 +1925,7 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
        * เพราะกติกา "ทุกทางที่เขียน review_task จบด้วย syncStatus()" มีข้อยกเว้นแล้วจะพังเงียบ
        */
       await prisma.$transaction(async (tx) => {
+        await assertOrganizationOperable(tx, request.organizationId);
         await recordAdvisoryNote(tx, {
           subjectType: SUBJECT,
           subjectId: request.id,
@@ -2053,6 +2085,8 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
     let materialised = null as MaterialisedDataset | null;
 
     await prisma.$transaction(async (tx) => {
+      // FOR SHARE — การระงับที่เข้ามาระหว่างนี้ต้องรอ transaction นี้ commit ก่อน
+      await assertOrganizationOperable(tx, request.organizationId);
       await startTask(tx, task.id, session.sub);
       await completeTask(tx, {
         taskId: task.id,
@@ -2300,6 +2334,8 @@ async function materialiseDataset(
   request: RequestRow,
   actorId: string,
 ): Promise<MaterialisedDataset> {
+  // ชุดข้อมูลใหม่ของหน่วยงานที่ถูกระงับหรือยุติต้องไม่เกิด — ผู้เรียกตอนนี้ตรวจไว้แล้วใน transaction เดียวกัน
+  await assertOrganizationOperable(tx, request.organizationId);
   await tx.datasetRegistrationRequest.update({
     where: { id: request.id },
     data: { approvedAt: new Date(), updatedBy: actorId },

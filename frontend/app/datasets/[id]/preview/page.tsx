@@ -10,6 +10,7 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import { isOrganizationFrozen } from "@/lib/status";
 import { stashSubmitErrors } from "@/lib/submit-errors";
 import { useRequireAuth } from "@/lib/require-auth";
 import {
@@ -40,9 +41,21 @@ export default function DatasetPreviewPage() {
     if (!ready) return;
     api
       .get<{ request: DatasetRequest }>(`/api/dataset-requests/${id}`)
-      .then((d) => setRequest(d.request))
+      .then((d) => {
+        // หน่วยงานถูกระงับหรือยุติ — นำส่งไม่ได้ (409) ไปหน้ารายละเอียดที่บอกเหตุผล
+        if (isOrganizationFrozen(d.request.organization.status)) {
+          show({
+            tone: "info",
+            title: "หน่วยงานถูกระงับการใช้งาน จึงแก้ไขคำขอไม่ได้",
+            detail: "คำขอหยุดอยู่ที่ขั้นเดิม กรุณาติดต่อผู้ดูแลระบบสำหรับข้อมูลเพิ่มเติม",
+          });
+          router.replace(`/datasets/${d.request.id}`);
+          return;
+        }
+        setRequest(d.request);
+      })
       .catch(() => show({ tone: "error", title: "โหลดข้อมูลไม่สำเร็จ" }));
-  }, [id, show, ready]);
+  }, [id, show, ready, router]);
 
   if (!request) return <Spinner />;
 

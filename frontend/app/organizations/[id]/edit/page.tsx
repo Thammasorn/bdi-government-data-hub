@@ -21,7 +21,7 @@ import {
   type OrganizationFormValues,
 } from "@/lib/organization-form";
 import { useRequireAuth } from "@/lib/require-auth";
-import { PREFIXES } from "@/lib/status";
+import { PREFIXES, isOrganizationFrozen } from "@/lib/status";
 import type { Attachment } from "@/lib/types";
 
 /**
@@ -282,6 +282,16 @@ export default function EditOrganizationPage() {
         `/api/organizations/${orgId}`,
       )
       .then(({ organization }) => {
+        // หน่วยงานถูกระงับหรือยุติ — PATCH / นำส่งตอบ 409 อยู่แล้ว พาไปหน้ารายละเอียดที่มี banner แทนฟอร์มที่บันทึกไม่ได้
+        if (isOrganizationFrozen(String(organization.organizationStatus))) {
+          show({
+            tone: "info",
+            title: "หน่วยงานถูกระงับการใช้งาน จึงแก้ไขคำขอไม่ได้",
+            detail: "คำขอหยุดอยู่ที่ขั้นเดิม กรุณาติดต่อผู้ดูแลระบบสำหรับข้อมูลเพิ่มเติม",
+          });
+          router.replace(`/organizations/${String(organization.id)}`);
+          return;
+        }
         if (!EDITABLE_STATUSES.has(String(organization.status))) {
           show({
             tone: "info",

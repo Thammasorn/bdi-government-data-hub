@@ -14,7 +14,7 @@
  * - "Sensitive Token หรือ Credential ห้ามเก็บในรูป Plain Text" → เก็บแค่ title/message
  *   ของ notification ไม่เก็บ payload ที่มีความลับ
  */
-import { DeliveryStatus, PrismaClient } from "@prisma/client";
+import { DeliveryStatus, OrganizationStatus, PrismaClient, SubjectType } from "@prisma/client";
 
 import { runWithContext } from "../lib/context.js";
 import {
@@ -26,6 +26,7 @@ import {
   recordRuntimeEvent,
 } from "../lib/error-capture.js";
 import { closeLogStore, startLogStore } from "../lib/log-store.js";
+import { isOrganizationFrozen } from "../lib/organization-freeze.js";
 import { startErrorAlerts, stopErrorAlerts } from "./error-alerts.js";
 import { startLogRelay, stopLogRelay } from "./log-relay.js";
 import { startLogUpkeep, stopLogUpkeep } from "./log-upkeep.js";
@@ -85,6 +86,33 @@ function smtpCode(err: unknown): string | null {
   return null;
 }
 
+/**
+ * จดหมายที่เข้าคิวก่อนหน่วยงานของคำขอถูกระงับหรือยุติ — ยกเลิก ไม่ส่ง (การ์ด "ระงับหน่วยงาน" 2026-10-31)
+ *
+ * เช่น "รอคุณลงนาม" ที่ตั้งเวลาไว้หนึ่งนาทีหลังคำเชิญ แล้วผู้ดูแลระบบระงับหน่วยงานในนาทีนั้น — ผู้รับจะกดลิงก์
+ * ไปเจอ banner แทนปุ่มที่จดหมายบอกให้กด จดหมายที่เกิด**หลัง**การระงับยังส่งตามปกติ เพราะส่วนใหญ่คือผลของงานผู้ดูแลระบบ
+ * (ปรับกลับเป็นฉบับร่าง ยกเลิกคำขอ) ที่หน่วยงานต้องรู้ จึงเทียบเวลา ไม่ใช่ดูแค่สถานะ
+ */
+async function queuedBeforeFreeze(n: {
+  subjectType: string | null;
+  subjectId: string | null;
+  createdAt: Date;
+}): Promise<boolean> {
+  if (!n.subjectId) return false;
+  const select = { organization: { select: { status: true, suspendedAt: true, deactivatedAt: true } } };
+  const request =
+    n.subjectType === SubjectType.ORGANIZATION_REGISTRATION_REQUEST
+      ? await prisma.organizationRegistrationRequest.findUnique({ where: { id: n.subjectId }, select })
+      : n.subjectType === SubjectType.DATASET_REGISTRATION_REQUEST
+        ? await prisma.datasetRegistrationRequest.findUnique({ where: { id: n.subjectId }, select })
+        : null;
+  const organization = request?.organization;
+  if (!organization || !isOrganizationFrozen(organization.status)) return false;
+  const frozenAt =
+    organization.status === OrganizationStatus.SUSPENDED ? organization.suspendedAt : organization.deactivatedAt;
+  return frozenAt !== null && n.createdAt < frozenAt;
+}
+
 async function deliver(row: Claimed) {
   const attempt = row.attempt_count + 1;
   let notificationType: string | null = null;
@@ -93,6 +121,7 @@ async function deliver(row: Claimed) {
     const notification = await prisma.notification.findUniqueOrThrow({
       where: { id: row.notification_id },
       select: {
+        createdAt: true,
         notificationType: true,
         title: true,
         message: true,
@@ -102,6 +131,20 @@ async function deliver(row: Claimed) {
     });
 
     notificationType = notification.notificationType;
+
+    if (await queuedBeforeFreeze(notification)) {
+      await prisma.notificationDelivery.update({
+        where: { id: row.id },
+        data: {
+          status: DeliveryStatus.CANCELLED,
+          lastAttemptAt: new Date(),
+          nextRetryAt: null,
+          lastErrorCode: "ORGANIZATION_FROZEN",
+          lastErrorMessage: "หน่วยงานถูกระงับหรือยุติหลังจดหมายฉบับนี้เข้าคิว จึงยกเลิกไม่ส่ง",
+        },
+      });
+      return;
+    }
 
     // เนื้ออีเมลถูกประกอบตอนนี้ ไม่ได้เก็บไว้ในตาราง — ดู workers/render.ts
     await renderAndSend(prisma, row.destination, notification);

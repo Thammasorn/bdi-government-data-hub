@@ -10,7 +10,8 @@ import { Spinner } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
 import { useDatasetRegistration } from "@/lib/use-dataset-registration";
 import { useRequireAuth } from "@/lib/require-auth";
-import { isBdiStaff } from "@/lib/status";
+import { OrganizationFrozenNotice } from "@/components/review/OrganizationFrozenNotice";
+import { isBdiStaff, isOrganizationFrozen, type OrganizationStatus } from "@/lib/status";
 
 export default function DatasetsPage() {
   // ตารางอ่านสถานะของตัวเองจาก query string ผ่าน useSearchParams จึงต้องมี Suspense ครอบ
@@ -47,6 +48,7 @@ function DatasetList() {
   if (loading || !user) return <Spinner />;
 
   const canCreate = user.roles.includes("ORGANIZATION_USER");
+  const organizationStatus = user.organization?.status as OrganizationStatus | undefined;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
@@ -59,7 +61,11 @@ function DatasetList() {
 
       {/* ปุ่มยังอยู่แม้กดไม่ได้ พร้อมบอกว่าติดอะไร — ซ่อนปุ่มแล้วผู้ใช้จะไม่รู้ว่าต้องทำอะไรต่อ
           แต่ผู้มีอำนาจกระทำการแทนไม่ได้เป็นคนยื่นอยู่แล้ว จึงไม่ต้องเห็นทั้งปุ่มและคำเตือน */}
-      {canCreate && eligibility && !eligibility.eligible ? (
+      {/* ระงับหรือยุติ — banner เดียวกับหน้ารายละเอียด ทุกคนในหน่วยงานเห็น ไม่ใช่แค่ผู้ประสานงาน
+          (eligibility ก็ตอบเหตุผลเดียวกัน แต่กล่องเหลืองเขียนว่า "ยัง" ซึ่งไม่ใช่เรื่องที่รอได้เอง) */}
+      {organizationStatus && isOrganizationFrozen(organizationStatus) ? (
+        <OrganizationFrozenNotice status={organizationStatus} />
+      ) : canCreate && eligibility && !eligibility.eligible ? (
         <div className="mb-6 rounded-xl border-l-[3px] border-warning bg-warning-bg p-5">
           <p className="text-[13px] font-semibold text-warning">ยังลงทะเบียนชุดข้อมูลไม่ได้</p>
           <p className="mt-1.5 text-[15px] leading-relaxed text-ink">{eligibility.reason}</p>

@@ -103,6 +103,13 @@ import {
 import { DocumentRenderError } from "../lib/document-render.js";
 import { captureError } from "../lib/error-capture.js";
 import { LEGAL_SCOPES, documentsAwaitingRender, pinRequestDocuments, requestDocuments } from "../lib/legal.js";
+import {
+  FROZEN_ORGANIZATION_STATUSES,
+  assertOrganizationOperable,
+  isOrganizationFrozen,
+  organizationFrozenError,
+  refuseIfOrganizationFrozen,
+} from "../lib/organization-freeze.js";
 import { NAME_FIELDS, accountNameTh, fullNameTh } from "../lib/person-name.js";
 import {
   changedOnlyInForm,
@@ -1152,6 +1159,7 @@ organizationRouter.get("/:id/state", async (req, res) => {
       createdBy: true,
       organizationId: true,
       approverEmail: true,
+      organization: { select: { status: true } },
     },
   });
   if (!request || !canView(session, request)) {
@@ -1174,7 +1182,9 @@ organizationRouter.get("/:id/state", async (req, res) => {
     state: {
       status: request.status,
       currentTaskType: active?.taskType ?? null,
-      stateVersion: stateVersionOf(request.updatedAt, tasks._max.updatedAt),
+      stateVersion: stateVersionOf(request.updatedAt, tasks._max.updatedAt, request.organization.status),
+      // ให้หน้าจอบอกได้ว่าที่เปลี่ยนคือหน่วยงานถูกระงับ ไม่ใช่มีใครกดอะไร (`describeState()`)
+      organizationStatus: request.organization.status,
     },
   });
 });
@@ -1242,7 +1252,7 @@ organizationRouter.get("/:id", async (req, res) => {
       currentRound: active?.roundNumber ?? null,
       recallBlockedReason,
       // ค่าเดียวกับที่ GET /:id/state คืน — หน้าจอเทียบสองค่านี้เพื่อรู้ว่าที่ถืออยู่เก่าหรือยัง
-      stateVersion: stateVersionOf(request.updatedAt, latestTaskTouch(tasks)),
+      stateVersion: stateVersionOf(request.updatedAt, latestTaskTouch(tasks), request.organization.status),
       // เส้นทางทั้งเส้น ไม่ใช่แค่ด่านที่ค้างอยู่ — หน้าจอต้องบอกได้ว่ามีกี่ขั้น
       // ตอนนี้ขั้นไหน และขั้นต่อไปเป็นหน้าที่ของบทบาทใด
       progress: buildJourneyProgress({
@@ -1318,6 +1328,7 @@ organizationRouter.patch("/:id", async (req, res) => {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
+  if (await refuseIfOrganizationFrozen(res, request.organizationId)) return;
   if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
     res.status(409).json({ error: "locked", message: "คำขออยู่ระหว่างการตรวจสอบ แก้ไขไม่ได้" });
     return;
@@ -1511,6 +1522,7 @@ organizationRouter.post("/:id/attachments", upload.single("file"), async (req, r
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
+  if (await refuseIfOrganizationFrozen(res, request.organizationId)) return;
   /**
    * เงื่อนไขเดียวกับ PATCH /:id และ DELETE /:id/attachments/:attachmentId
    *
@@ -1614,6 +1626,7 @@ organizationRouter.delete("/:id/attachments/:attachmentId", async (req, res) => 
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
+  if (await refuseIfOrganizationFrozen(res, request.organizationId)) return;
   // เงื่อนไขเดียวกับ PATCH /:id — นำส่งไปแล้วห้ามถอนไฟล์ออกจากคำขอที่ผู้ตรวจกำลังอ่าน
   if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
     res.status(409).json({ error: "locked", message: "คำขออยู่ระหว่างการตรวจสอบ แก้ไขไม่ได้" });
@@ -1704,6 +1717,7 @@ organizationRouter.post("/:id/generate-form", async (req, res) => {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
+  if (await refuseIfOrganizationFrozen(res, request.organizationId)) return;
 
   const shape = await toApiShape(request);
   const parsed = parseRequestSnapshot(submitSchema, shape);
@@ -2103,6 +2117,7 @@ organizationRouter.post("/:id/submit", async (req, res) => {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
+  if (await refuseIfOrganizationFrozen(res, request.organizationId)) return;
   if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
     res.status(409).json({ error: "locked", message: "คำขอนี้นำส่งไปแล้ว" });
     return;
@@ -2191,6 +2206,8 @@ organizationRouter.post("/:id/submit", async (req, res) => {
   }
 
   const updated = await prisma.$transaction(async (tx) => {
+    // หน่วยงานถูกระงับระหว่างที่ผู้ใช้กดนำส่ง — 409 จากตัวจัดการท้าย index.ts
+    await assertOrganizationOperable(tx, request.organizationId);
     await tx.organizationRegistrationRequest.update({
       where: { id: request.id },
       data: { submittedAt: new Date(), updatedBy: session.sub },
@@ -2330,6 +2347,10 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
     if (!request) {
       res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
       return;
+    }
+    // หน่วยงานที่ถูกระงับหรือยุติ — ทุกด่าน ทุกผล recall ด้วย ตรวจซ้ำใน transaction อีกชั้น (`lib/organization-freeze.ts`)
+    if (isOrganizationFrozen(request.organization.status)) {
+      throw organizationFrozenError(request.organization.status);
     }
 
     const task = await activeTask(prisma, SUBJECT, request.id);
@@ -2509,6 +2530,8 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
     let activatedMaster: Partial<RequestRow["organization"]> | null = null;
 
     const outcome = await prisma.$transaction(async (tx) => {
+      // FOR SHARE — การระงับที่เข้ามาระหว่างนี้ต้องรอ transaction นี้ commit ก่อน
+      await assertOrganizationOperable(tx, request.organizationId);
       /**
        * recall ไม่เรียก `startTask()` — ด่านนี้ไม่เคยมีใครเปิด การประทับ `started_at`
        * ให้มันตอนที่ผู้ประสานงานของ BDI กดยกเลิก จะทำให้ timeline เล่าว่าผู้มีอำนาจฯ เคยเปิดอ่าน
@@ -2686,8 +2709,13 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
           email: request.organizationEmail,
           websiteUrl: request.organizationWebsite,
         };
-        await tx.organization.update({
-          where: { id: request.organizationId },
+        /**
+         * เขียนแบบมีเงื่อนไข ไม่ใช่ update ตรง ๆ — หน่วยงานที่ถูกระงับหรือยุติต้องไม่กลับเป็น ACTIVE เพราะคำขอที่ค้างอยู่
+         * ผ่านด่านสุดท้าย (ข้อสังเกต P-03) ด่านที่หัว handler กับใน transaction กันไว้แล้ว ตรงนี้คือตาข่ายชั้นสุดท้าย:
+         * ไม่มีแถวไหนถูกเขียน = ทั้งการอนุมัติ rollback
+         */
+        const activated = await tx.organization.updateMany({
+          where: { id: request.organizationId, status: { notIn: [...FROZEN_ORGANIZATION_STATUSES] } },
           data: {
             ...master,
             activatedAt: new Date(),
@@ -2695,6 +2723,13 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
             updatedBy: session.sub,
           },
         });
+        if (activated.count === 0) {
+          const current = await tx.organization.findUniqueOrThrow({
+            where: { id: request.organizationId },
+            select: { status: true },
+          });
+          throw organizationFrozenError(current.status);
+        }
         activatedMaster = master;
       }
 

@@ -10,7 +10,14 @@ import { NotificationBell } from "@/components/NotificationBell";
 import { SessionChangedDialog } from "@/components/SessionChangedDialog";
 import { announceSignOut, sessionUserName, useSession } from "@/components/SessionProvider";
 import { api } from "@/lib/api";
-import { ROLE_LABELS, isBdiStaff, isDocumentAdmin, isSpecialistOnly, type Role } from "@/lib/status";
+import {
+  ROLE_LABELS,
+  isBdiStaff,
+  isDocumentAdmin,
+  isOrganizationFrozen,
+  isSpecialistOnly,
+  type Role,
+} from "@/lib/status";
 
 /** หน้าที่ไม่ต้องมี header/footer — เต็มจอเพื่อให้โฟกัสกับงานตรงหน้า */
 const BARE_ROUTES = ["/login", "/register"];
@@ -127,7 +134,12 @@ function roleNavItems(
    * แล้วพาไปหน้าที่ทำอะไรไม่ได้ — ทางที่ตรงกว่าคือให้เห็นว่ามีเมนูนี้อยู่ แต่ยังกดไม่ได้
    * และบอกว่าทำไม
    */
-  const datasetsLocked = organizationStatus !== "ACTIVE";
+  const frozen = isOrganizationFrozen(organizationStatus);
+  /**
+   * ระงับหรือยุติไม่ล็อกเมนู — หน่วยงานที่เคยเปิดใช้งานมีคำขอชุดข้อมูลอยู่ และสมาชิกยังต้องเข้าไปดูได้
+   * (การ์ด "ระงับหน่วยงาน": เข้าระบบได้แบบดูอย่างเดียว) หน้า /datasets บอกเหตุผลด้วย banner และปุ่มสร้างกดไม่ได้เอง
+   */
+  const datasetsLocked = organizationStatus !== "ACTIVE" && !frozen;
 
   // สเปก: ผู้ใช้ที่ยังไม่มีหน่วยงานเห็นได้แค่ปุ่มสร้างหน่วยงานกลางจอ ไม่มีช่องของเส้นทางไหนเลย
   // (ยังเหลือ "ข้อมูลโครงการ" ที่ navItems ต่อท้ายให้ทุกคน ซึ่งไม่ใช่เส้นทางของงาน)

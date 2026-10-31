@@ -41,6 +41,7 @@ import {
 } from "../lib/iam.js";
 import { sendInvitationEmail } from "../lib/mail.js";
 import { organizationRegistryRules } from "../lib/organization-form.js";
+import { ORGANIZATION_FROZEN, isOrganizationFrozen } from "../lib/organization-freeze.js";
 import { ORGANIZATION_STATUS_LABELS, ROLE_LABELS } from "../lib/roles.js";
 import {
   BDI_ORGANIZATION_ID,
@@ -664,10 +665,12 @@ const STATUS_CHANGE_AUDIT = {
  * ("ถ้าต้องเลิกใช้หน่วยงานหนึ่ง ทางที่ตรงกว่าคือเพิ่มสถานะ INACTIVE ให้ตั้งได้") ซึ่งแทนการลบ: หน่วยงานที่มีคำเชิญ
  * คำขอ หรือชุดข้อมูลผูกอยู่ลบทิ้งไม่ได้ และประวัติต้องอ่านย้อนได้
  *
- * **เปลี่ยนแค่สถานะของหน่วยงาน ไม่ลากอะไรไปด้วย** — บัญชีของสมาชิกยังเข้าระบบได้ คำขอที่ค้างอยู่ยังอยู่ที่ด่านเดิม
- * สิ่งที่หยุดเองคือของที่ถามสถานะนี้อยู่แล้ว: ยื่นคำขอชุดข้อมูลใหม่ต้อง ACTIVE และยื่นคำขอจดทะเบียนต้อง
- * PENDING_REGISTRATION คำตอบบอก `warnings` ว่ายังมีใครและอะไรค้างอยู่ ให้ผู้ดูแลตัดสินเองว่าจะระงับบัญชีหรือยกเลิก
- * คำขอต่อหรือไม่ — ทำให้เองจะเปลี่ยนงานของคนในหน่วยงานโดยไม่มีใครเห็นว่าใครสั่ง
+ * **ระงับหรือยุติ = แช่แข็งหน่วยงาน** (การ์ด "ระงับหน่วยงาน" 2026-10-31, `lib/organization-freeze.ts`) — คำขอที่ค้างอยู่
+ * หยุดที่ด่านเดิม: ไม่มีใครแก้ นำส่ง พิจารณา ลงนาม หรืออนุมัติได้ ทั้งฝั่งหน่วยงานและฝั่ง BDI สร้างคำขอใหม่ไม่ได้ และรับคนเพิ่ม
+ * ไม่ได้ (คำเชิญ การเปิดใช้บัญชี การมอบ role) การอนุมัติขั้นสุดท้ายจึงไม่พลิกหน่วยงานกลับเป็น ACTIVE เองอีก (ข้อสังเกต P-03)
+ * ส่วนที่ไม่แตะ: ไม่มีคำขอไหนถูกถอยหรือปิด สมาชิกยังเข้าระบบมาดูได้ และชุดข้อมูลที่อนุมัติไปแล้วอยู่ตามเดิม
+ * คำตอบบอก `warnings` ว่ายังมีใครและอะไรค้างอยู่ ให้ผู้ดูแลตัดสินเองว่าจะระงับบัญชีหรือยกเลิกคำขอต่อหรือไม่ — ทางออกพวกนั้น
+ * (`/api/admin/registrations/*`, `/api/admin/users/*`) ไม่ถูกแช่แข็ง ทำให้เองจะเปลี่ยนงานของคนในหน่วยงานโดยไม่มีใครเห็นว่าใครสั่ง
  *
  * เปิดใช้อีกครั้งได้ ACTIVE ถ้าหน่วยงานเคยผ่านการจดทะเบียน (มีคำขอที่ APPROVED) ไม่งั้นกลับไป PENDING_REGISTRATION
  * — ตั้ง ACTIVE ให้หน่วยงานที่ไม่เคยผ่านด่านสุดท้ายเท่ากับข้ามทั้ง Journey B
@@ -772,8 +775,12 @@ async function organizationLeftovers(organizationId: string): Promise<string[]> 
       `ยังมีบัญชีที่ใช้งานอยู่ในหน่วยงานนี้ ${members} บัญชี — ระงับบัญชีแยกต่างหากถ้าไม่ต้องการให้เข้าระบบ`,
     );
   }
-  if (orgRequests > 0) warnings.push(`มีคำขอจดทะเบียนหน่วยงานที่อยู่ระหว่างพิจารณา ${orgRequests} ใบ`);
-  if (datasetRequests > 0) warnings.push(`มีคำขอลงทะเบียนชุดข้อมูลที่อยู่ระหว่างพิจารณา ${datasetRequests} ใบ`);
+  if (orgRequests > 0) {
+    warnings.push(`มีคำขอจดทะเบียนหน่วยงานค้างอยู่ ${orgRequests} ใบ — หยุดอยู่ที่ขั้นเดิมจนกว่าจะเปิดใช้หน่วยงานอีกครั้ง`);
+  }
+  if (datasetRequests > 0) {
+    warnings.push(`มีคำขอลงทะเบียนชุดข้อมูลค้างอยู่ ${datasetRequests} ใบ — หยุดอยู่ที่ขั้นเดิมจนกว่าจะเปิดใช้หน่วยงานอีกครั้ง`);
+  }
   return warnings;
 }
 
@@ -889,6 +896,20 @@ adminRouter.post("/invitations", async (req, res) => {
   });
   if (!organization) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานที่ระบุ" });
+    return;
+  }
+  /**
+   * หน่วยงานที่ระงับหรือยุติไว้รับคนใหม่ไม่ได้ ทุก role (การ์ด "ระงับหน่วยงาน" 2026-10-31) — เดิมกั้นได้แค่ผู้มีอำนาจฯ
+   * โดยบังเอิญจากด่าน `organization_not_active` ข้างล่าง ผู้ดำเนินการยังเชิญเข้าได้ ข้อความบอกทางออกของผู้ดูแลระบบ
+   */
+  if (isOrganizationFrozen(organization.status)) {
+    res.status(409).json({
+      error: ORGANIZATION_FROZEN,
+      message:
+        `หน่วยงานนี้อยู่สถานะ "${ORGANIZATION_STATUS_LABELS[organization.status]}" จึงเชิญผู้ใช้เข้าไม่ได้ — ` +
+        `เปิดใช้หน่วยงานอีกครั้งก่อน แล้วจึงเชิญ`,
+      organizationStatus: organization.status,
+    });
     return;
   }
 
@@ -1206,11 +1227,22 @@ adminRouter.post("/invitations/:id/resend", async (req, res) => {
     include: {
       userAccount: { select: { id: true, email: true, status: true } },
       role: { select: { code: true } },
-      organization: { select: { nameTh: true } },
+      organization: { select: { nameTh: true, status: true } },
     },
   });
   if (!key) {
     res.status(404).json({ error: "not_found", message: "ไม่พบคำเชิญที่ระบุ" });
+    return;
+  }
+  // กฎเดียวกับ `POST /invitations` — ลิงก์ใหม่เข้าหน่วยงานที่ระงับไว้ก็ใช้ไม่ได้อยู่ดี (`refuseFrozenInvitation()` ใน auth.ts)
+  if (isOrganizationFrozen(key.organization.status)) {
+    res.status(409).json({
+      error: ORGANIZATION_FROZEN,
+      message:
+        `หน่วยงานนี้อยู่สถานะ "${ORGANIZATION_STATUS_LABELS[key.organization.status]}" จึงส่งคำเชิญซ้ำไม่ได้ — ` +
+        `เปิดใช้หน่วยงานอีกครั้งก่อน แล้วจึงส่งคำเชิญ`,
+      organizationStatus: key.organization.status,
+    });
     return;
   }
 

@@ -1,4 +1,4 @@
-import type { RequestStatus, ReviewTaskType, ReviewResult } from "./status";
+import type { OrganizationStatus, RequestStatus, ReviewTaskType, ReviewResult } from "./status";
 
 export interface Attachment {
   id: string;
@@ -108,6 +108,8 @@ export interface Organization {
   id: string;
   /** id ของ **หน่วยงาน** ตัวที่ตรงกับ `user.organizationId` */
   organizationId: string;
+  /** สถานะของ**หน่วยงาน** ไม่ใช่ของคำขอ — ระงับหรือยุติ = คำขอถูกแช่แข็ง ดู `isOrganizationFrozen()` */
+  organizationStatus: OrganizationStatus;
   status: RequestStatus;
   currentTaskType: ReviewTaskType | null;
   /**
@@ -395,7 +397,8 @@ export interface DatasetRequest {
   assignedAt: string | null;
   createdAt: string;
 
-  organization: { id: string; name: string; signatoryEmail: string | null };
+  /** `status` — หน่วยงานถูกระงับหรือยุติ = คำขอถูกแช่แข็ง ดู `isOrganizationFrozen()` ใน lib/status.ts */
+  organization: { id: string; name: string; status: OrganizationStatus; signatoryEmail: string | null };
   /** null ได้ ถ้าหาบัญชีผู้ยื่นไม่เจอ — หน้าจอต้องรับมือ ไม่ใช่ deref ตรง ๆ */
   createdBy: {
     id: string;
@@ -428,7 +431,7 @@ export interface DatasetRequestListItem {
   createdAt: string;
   /** เวลาที่แถวนี้ถูกแก้ล่าสุด — หน้าแรกแสดงคู่กับวันที่นำข้อมูลเข้ามา */
   updatedAt: string;
-  organization: { id: string; name: string };
+  organization: { id: string; name: string; status: OrganizationStatus };
   createdBy: { firstName: string | null; lastName: string | null; email: string };
   assignedSpecialist: {
     id: string;

@@ -8,6 +8,7 @@ import { LegalDocumentsCard, useLegalDocuments } from "@/components/organization
 import { SigningDialog } from "@/components/organization/SigningDialog";
 import { Timeline } from "@/components/organization/Timeline";
 import { ApprovalSteps } from "@/components/review/ApprovalSteps";
+import { OrganizationFrozenNotice } from "@/components/review/OrganizationFrozenNotice";
 import { RequestMovedNotice } from "@/components/review/RequestMovedNotice";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader, StatusBadge } from "@/components/ui/Card";
@@ -17,7 +18,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
 import { useRequireAuth } from "@/lib/require-auth";
-import { formatThaiDate } from "@/lib/status";
+import { formatThaiDate, isOrganizationFrozen } from "@/lib/status";
 import { useOrganizationRegistration } from "@/lib/use-organization-registration";
 import { describeState, movedMessage, useRequestWatch } from "@/lib/use-request-watch";
 import {
@@ -258,7 +259,12 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
 
   if (!org || !user) return <Spinner />;
 
-  const ability = decideAbility(org, user.roles);
+  /**
+   * หน่วยงานถูกระงับหรือยุติ — คำขอแช่แข็งที่ขั้นเดิม ไม่มีปุ่มไหนเปลี่ยนมันได้ (backend ตอบ 409 อยู่แล้ว)
+   * ซ่อนทุกปุ่มแทนที่จะปล่อยให้กดแล้วเจอ error แล้วบอกเหตุผลด้วย banner ข้อความเดียวกับที่ API ตอบ
+   */
+  const frozen = isOrganizationFrozen(org.organizationStatus);
+  const ability: Ability = frozen ? { can: false } : decideAbility(org, user.roles);
   const supporting = sortAttachments(org.attachments.filter((a) => a.kind !== "GENERATED_FORM"));
   const isOwner = org.createdBy?.id === user.id;
   // เทียบกับ `org.organizationId` ไม่ใช่ `org.id` — `org.id` คือ id ของคำขอ การ์ด
@@ -355,7 +361,9 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
 
       {/* ฉบับร่างที่ยังไม่ได้นำส่ง — หน้านี้เคยไม่มีทางกลับเข้าฟอร์มเลย ผู้ใช้ที่ปิดแท็บไป
           แล้วกดเมนู "หน่วยงานของฉัน" จึงเห็นข้อมูลค้างอยู่โดยไม่มีปุ่มให้ทำต่อ */}
-      {org.status === "DRAFT" && isOwner ? (
+      {frozen ? <OrganizationFrozenNotice status={org.organizationStatus} /> : null}
+
+      {org.status === "DRAFT" && isOwner && !frozen ? (
         <Card className="mb-6 border-l-[3px] border-l-coral-500">
           <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -387,7 +395,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
               {formatThaiDate(lastRevision.completedAt ?? lastRevision.createdAt)}
             </p>
           ) : null}
-          {isOwner ? (
+          {isOwner && !frozen ? (
             <Button size="sm" className="mt-4" onClick={() => router.push(`/organizations/${org.id}/edit`)}>
               แก้ไขข้อมูล
             </Button>

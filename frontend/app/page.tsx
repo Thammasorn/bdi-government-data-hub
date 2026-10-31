@@ -9,6 +9,7 @@ import { BdiHome } from "@/components/home/BdiHome";
 import { DatasetSection } from "@/components/home/DatasetSection";
 import { LandingPage } from "@/components/landing/LandingPage";
 import { ApprovalStepsCompact } from "@/components/review/ApprovalSteps";
+import { OrganizationFrozenNotice } from "@/components/review/OrganizationFrozenNotice";
 import { useSession, type SessionUser } from "@/components/SessionProvider";
 import { Button } from "@/components/ui/Button";
 import { Card, DotDecoration, OrganizationStatusBadge } from "@/components/ui/Card";
@@ -21,6 +22,7 @@ import {
   formatThaiDate,
   isBdiStaff,
   isDocumentAdmin,
+  isOrganizationFrozen,
   isOrganizationScopedRole,
   type OrganizationStatus,
 } from "@/lib/status";
@@ -249,6 +251,11 @@ function OrganizationHome({
    * เรื่องเดียวกันอยู่แล้วพร้อมปุ่มลงทะเบียนหน่วยงาน ประโยคซ้ำใต้การ์ดจึงไม่ต้องมี
    */
   const organizationActive = organization?.status === "ACTIVE";
+  /**
+   * หน่วยงานถูกระงับหรือยุติ — คำขอทุกใบหยุดที่ขั้นเดิม การ์ดที่ชวนให้ลงนาม พิจารณา หรือเริ่มคำขอใหม่จึงไม่ขึ้น
+   * (backend ปฏิเสธอยู่แล้ว) banner บนหัวหน้าบอกเหตุผลแทน รายการคำขอยังแสดงให้ดูได้ตามเดิม
+   */
+  const frozen = isOrganizationFrozen(organization?.status);
   const datasetHalfIsEmpty = !organizationActive && summary !== null && summary.total === 0;
 
   return (
@@ -270,7 +277,7 @@ function OrganizationHome({
 
       {/* ยกขึ้นก่อนทุกอย่าง รวมถึงก่อน spinner ของรายการชุดข้อมูล — งานที่ค้างรอคนนี้อยู่
           ต้องเห็นทันทีที่เปิดหน้า ไม่ใช่หลังจากรอรายการอื่นโหลดเสร็จ */}
-      {awaitingSignature ? (
+      {awaitingSignature && !frozen ? (
         <Card className="mb-8 border-l-[3px] border-l-coral-500">
           <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
             {/* ไม่ต้องเอ่ยชื่อหน่วยงานซ้ำ — เป็นหัวเรื่องของหน้านี้อยู่แล้ว */}
@@ -306,11 +313,11 @@ function OrganizationHome({
         <Spinner className="min-h-[40vh]" />
       ) : datasetHalfIsEmpty ? null : (
         <>
-          <StatTiles summary={summary} />
+          <StatTiles summary={summary} frozen={frozen} />
 
           {/* ผู้มีอำนาจกระทำการแทนคือคนเดียวที่กดต่อได้เมื่อคำขอค้างที่ด่านนี้
               จึงยกขึ้นมาเป็นการ์ดแยก ไม่ให้จมอยู่ในรายการรวม */}
-          {isApprover && awaitingMe && awaitingMe.rows.length > 0 ? (
+          {isApprover && !frozen && awaitingMe && awaitingMe.rows.length > 0 ? (
             <Card className="mb-8 border-l-[3px] border-l-coral-500">
               <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
                 <div>
@@ -436,7 +443,10 @@ function HomeHeader({
          * พร้อมปุ่มเปิดฟอร์มใบใหม่ ซึ่งกับคนที่ยื่นไปแล้วและถูกส่งกลับมาแก้ มันทั้งผิด
          * (ยื่นไปแล้ว) และซ่อนสิ่งเดียวที่เขาต้องรู้ คือมีข้อความจากผู้ตรวจรออ่านอยู่
          */}
-        {returnedRegistration ? (
+        {/* ระงับหรือยุติ — แทนทั้งกล่องส่งกลับแก้ไขและกล่องเหลือง: ทั้งสองชวนให้แก้หรือกรอกฟอร์ม ซึ่งทำไม่ได้แล้ว */}
+        {status && isOrganizationFrozen(status) ? (
+          <OrganizationFrozenNotice status={status} className="mt-5" />
+        ) : returnedRegistration ? (
           <RegistrationReturnedNotice request={returnedRegistration} />
         ) : status &&
           status !== "ACTIVE" &&
@@ -561,10 +571,10 @@ function RegistrationReturnedNotice({ request }: { request: Organization }) {
  * ORGANIZATION_APPROVAL ให้ผู้มีอำนาจกระทำการแทน ซึ่งตรงกับที่การ์ดสั่งไว้พอดี ถ้าวันหนึ่ง
  * ด่านย้ายมือ กล่องที่เด่นจะย้ายตาม โดยไม่ต้องแก้ไฟล์นี้
  */
-function StatTiles({ summary }: { summary: ListSummary }) {
+function StatTiles({ summary, frozen = false }: { summary: ListSummary; frozen?: boolean }) {
   const { start: startDataset, starting: startingDataset } = useDatasetRegistration();
 
-  const tiles = useMemo(() => {
+  const computed = useMemo(() => {
     const nodeOf = (key: NodeKey) => summary.nodes.find((n) => n.key === key) ?? null;
     /**
      * ด่านของเส้นทาง (ไม่นับปลายทาง) แยกเป็นของหน่วยงานกับของ BDI ด้วย roleCode —
@@ -644,6 +654,11 @@ function StatTiles({ summary }: { summary: ListSummary }) {
       },
     ];
   }, [summary]);
+  /**
+   * หน่วยงานถูกระงับหรือยุติ — ไม่มีกล่องไหนเป็น "รอคุณดำเนินการ" อีก เพราะไม่มีอะไรให้ทำได้ (backend ตอบ 409)
+   * ตัวเลขยังอยู่ให้ดูได้ ส่วนสีส้มกับคำชวนให้ทำถูกถอดออก banner บนหัวหน้าบอกเหตุผลแล้ว
+   */
+  const tiles = frozen ? computed.map((t) => ({ ...t, mine: false })) : computed;
 
   const hasOwn = tiles.some((t) => t.mine);
 

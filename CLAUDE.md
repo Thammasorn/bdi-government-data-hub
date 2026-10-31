@@ -1016,6 +1016,32 @@ Activation does **not** touch `organization.status`. An organisation goes `ACTIV
 its registration request clears `BDI_FINAL_APPROVAL` (Journey B). The Notion card §2.5 says
 otherwise; that was raised and settled on 2026-08-13 in favour of Journey B.
 
+**A `SUSPENDED` or `INACTIVE` organisation is frozen** (Admin Action Effect › Issue "ระงับหน่วยงาน",
+2026-10-31; `lib/organization-freeze.ts`). Until then suspend changed the status and nothing else, so a
+request already in flight walked every gate and the final approval set the organisation back to `ACTIVE`
+with no administrator involved (observation P-03). Now every user-facing route that moves or edits a
+request of that organisation answers 409 `organization_frozen` with the banner's sentence: PATCH,
+attachments, generate-form, submit, every `review` action (recall and the specialist's comment
+included), assign, the organisation's own cancel, invitation and activation (`GET /invitation`,
+`thaid/start`, `activate` — the key is **not** revoked, so the link works again after reactivation),
+and admin invitation/resend/role grant/transfer *into* it. Nothing is reverted or closed when the
+status changes; reactivating resumes every request at the gate it was at. **The administrator's way
+out is deliberately not frozen**: `/api/admin/registrations/*` reset/cancel/PUT/DELETE, suspending or
+deactivating members, and the status routes. That is why the guard sits in each route and not in
+`openTask()` / `completeTask()` / `cancelActiveTask()`, which `revertStrandedWork()` and the reset share.
+Inside a transaction `assertOrganizationOperable()` reads the row `FOR SHARE`, so a concurrent suspend
+waits for the approval to commit; the final approval also writes `ACTIVE` with an `updateMany` that
+excludes frozen statuses, and `materialiseDataset()` checks again. `index.ts` maps that one
+`WorkflowError` code to 409 so the two submit handlers need no try/catch of their own. `stateVersionOf()`
+takes the organisation's status as a **required** third argument (a caller that left it out would
+compute a different version from its twin forever), so an open detail page reloads when a suspension
+lands, and `/state` returns `organizationStatus` so the notice can say what happened. The delivery worker
+cancels (`DeliveryStatus.CANCELLED`, `ORGANIZATION_FROZEN`) mail queued **before** the freeze and still
+sends what came after it, which is mostly the administrator's own clean-up. The frontend mirrors it with
+`isOrganizationFrozen()` in `lib/status.ts` and `OrganizationFrozenNotice`: no action buttons, edit and
+preview pages redirect to the detail page, and the datasets menu stays **open** so members can still read
+their requests. Approved datasets are untouched.
+
 ### One person, one name — `lib/person-name.ts`
 
 **Nothing reads `iam.user_account.display_name` to put a name on a screen any more.**
