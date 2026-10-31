@@ -8,6 +8,7 @@ import { DatasetSigningDialog } from "@/components/dataset/DatasetSigningDialog"
 import { LegalDocumentsCard, useLegalDocuments } from "@/components/organization/LegalDocuments";
 import { Timeline } from "@/components/organization/Timeline";
 import { ApprovalSteps } from "@/components/review/ApprovalSteps";
+import { OrganizationFrozenNotice } from "@/components/review/OrganizationFrozenNotice";
 import { RequestMovedNotice } from "@/components/review/RequestMovedNotice";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader, DatasetStatusBadge } from "@/components/ui/Card";
@@ -18,7 +19,7 @@ import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
 import { CLOSE_ACTION } from "@/lib/dataset-close-action";
 import { useRequireAuth } from "@/lib/require-auth";
-import { ROLE_LABELS, taskEventLabel, formatThaiDate } from "@/lib/status";
+import { ROLE_LABELS, taskEventLabel, formatThaiDate, isOrganizationFrozen } from "@/lib/status";
 import { describeState, movedMessage, useRequestWatch } from "@/lib/use-request-watch";
 import { labelOf, useDatasetChoices } from "@/lib/dataset-choices";
 import {
@@ -280,7 +281,12 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
 
   if (!request || !user) return <Spinner />;
 
-  const ability = decideAbility(request, user.roles, user.id);
+  /**
+   * หน่วยงานถูกระงับหรือยุติ — คำขอแช่แข็งที่ขั้นเดิม ไม่มีปุ่มไหนเปลี่ยนมันได้ (backend ตอบ 409 อยู่แล้ว)
+   * ทุกด่านรวมทั้งความเห็นของผู้เชี่ยวชาญและการมอบหมาย และฝั่งหน่วยงานแก้ไขหรือยกเลิกไม่ได้ banner บอกเหตุผลแทน
+   */
+  const frozen = isOrganizationFrozen(request.organization.status);
+  const ability = frozen ? null : decideAbility(request, user.roles, user.id);
   // ชีท conditions ตัดสินว่าช่องไหนถูกถามจริง — หน้ารายละเอียดจึงไม่ขึ้นหัวข้อที่ระบบไม่ได้ถาม
   // (เช่น รายละเอียดข้อมูลส่วนบุคคล เมื่อชุดข้อมูลตอบว่าไม่มีข้อมูลส่วนบุคคล)
   const rules = formRules(toFormState(request as unknown as Record<string, unknown>));
@@ -290,6 +296,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
   const editable = request.status === "DRAFT" || request.status === "RETURNED";
   const mayEdit =
     editable &&
+    !frozen &&
     (request.createdBy?.id === user.id ||
       (user.roles.includes("ORGANIZATION_USER") && user.organizationId === request.organization.id));
 
@@ -507,6 +514,8 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
       {movedNotice ? (
         <RequestMovedNotice message={movedNotice} onDismiss={() => setMovedNotice(null)} />
       ) : null}
+
+      {frozen ? <OrganizationFrozenNotice status={request.organization.status} /> : null}
 
       {/*
         กล่องนี้ไม่ผูกกับการมีข้อความส่งกลับอีกแล้ว — มันเป็นที่อยู่ของปุ่ม "ยกเลิกคำขอ" ด้วย

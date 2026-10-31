@@ -37,6 +37,7 @@ import {
   SessionRevokeReason,
   SubjectType,
   UserAccountStatus,
+  type OrganizationStatus,
 } from "@prisma/client";
 
 import { prisma } from "../db.js";
@@ -60,7 +61,8 @@ import {
 import { sendPasswordResetEmail } from "../lib/mail.js";
 import { NotificationType, notifyUsers } from "../lib/notify.js";
 import { PASSWORD_RESET_VIA_ADMIN, issuePasswordResetToken } from "../lib/password-reset.js";
-import { ROLE_LABELS } from "../lib/roles.js";
+import { ORGANIZATION_FROZEN, isOrganizationFrozen } from "../lib/organization-freeze.js";
+import { ORGANIZATION_STATUS_LABELS, ROLE_LABELS } from "../lib/roles.js";
 import { activeSessionsFor, revokeSessionsFor } from "../lib/session.js";
 import { ACTIVE_STATUSES, cancelActiveTask } from "../lib/workflow.js";
 import {
@@ -287,6 +289,25 @@ function refuseSelfAction(res: import("express").Response, accountId: string): b
   res.status(409).json({
     error: "self_action",
     message: "ทำกับบัญชีของตัวเองไม่ได้ — ให้ผู้ดูแลระบบอีกคนดำเนินการแทน",
+  });
+  return true;
+}
+
+/**
+ * หน่วยงานที่ระงับหรือยุติไว้รับคนเพิ่มไม่ได้ — มอบ role หรือย้ายเข้าไม่ได้ (การ์ด "ระงับหน่วยงาน" 2026-10-31)
+ * กฎเดียวกับ `POST /api/admin/invitations` ส่วนการระงับ ยุติ และถอน role ของคนที่อยู่ในนั้นแล้วยังทำได้ — นั่นคือทางออก
+ */
+function refuseFrozenTarget(
+  res: import("express").Response,
+  organization: { nameTh: string; status: OrganizationStatus },
+): boolean {
+  if (!isOrganizationFrozen(organization.status)) return false;
+  res.status(409).json({
+    error: ORGANIZATION_FROZEN,
+    message:
+      `หน่วยงาน "${organization.nameTh}" อยู่สถานะ "${ORGANIZATION_STATUS_LABELS[organization.status]}" ` +
+      `จึงมอบบทบาทหรือย้ายผู้ใช้เข้าไม่ได้ — เปิดใช้หน่วยงานอีกครั้งก่อน`,
+    organizationStatus: organization.status,
   });
   return true;
 }
@@ -1219,12 +1240,13 @@ adminUserRouter.post("/:id/roles", async (req, res) => {
 
   const organization = await prisma.organization.findUnique({
     where: { id: organizationId! },
-    select: { id: true, nameTh: true },
+    select: { id: true, nameTh: true, status: true },
   });
   if (!organization) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานที่ระบุ" });
     return;
   }
+  if (refuseFrozenTarget(res, organization)) return;
 
   const clash = await organizationClash(prisma, account.id, organization.id);
   if (clash) {
@@ -1412,12 +1434,13 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
 
   const target = await prisma.organization.findUnique({
     where: { id: organizationId },
-    select: { id: true, nameTh: true },
+    select: { id: true, nameTh: true, status: true },
   });
   if (!target) {
     res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานปลายทางที่ระบุ" });
     return;
   }
+  if (refuseFrozenTarget(res, target)) return;
 
   const current = await activeOrgAssignments(prisma, account.id);
   const sourceIds = [...new Set(current.map((a) => a.organizationId))].filter(

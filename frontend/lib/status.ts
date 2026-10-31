@@ -69,6 +69,22 @@ export const ORGANIZATION_STATUS_META: Record<
 };
 
 /**
+ * หน่วยงานที่ผู้ดูแลระบบระงับหรือยุติไว้ — คำขอทุกใบของหน่วยงานถูกแช่แข็งที่ขั้นเดิม (การ์ด "ระงับหน่วยงาน" 2026-10-31)
+ *
+ * backend เป็นผู้ตัดสิน (`backend/src/lib/organization-freeze.ts` ตอบ 409 `organization_frozen` ทุก route ที่เปลี่ยนคำขอ)
+ * หน้าจอใช้ตัวนี้แค่ซ่อนปุ่มที่กดไปก็ถูกปฏิเสธ และแสดง banner แทน — ข้อความต้องตรงกับฝั่ง backend
+ */
+export function isOrganizationFrozen(status: string | null | undefined): boolean {
+  return status === "SUSPENDED" || status === "INACTIVE";
+}
+
+export function frozenOrganizationMessage(status: string | null | undefined): string {
+  return status === "INACTIVE"
+    ? "หน่วยงานถูกยุติการใช้งานแล้ว กรุณาติดต่อผู้ดูแลระบบสำหรับข้อมูลเพิ่มเติม"
+    : "หน่วยงานถูกระงับการใช้งานอยู่ กรุณาติดต่อผู้ดูแลระบบสำหรับข้อมูลเพิ่มเติม";
+}
+
+/**
  * คำขอที่ยัง "เดินอยู่ในสายพาน" — ยังไม่จบ และไม่ได้ค้างอยู่ที่หน่วยงาน
  * หน้าแรกใช้ชุดนี้แยก section บนออกจากรายการชุดข้อมูลทั้งหมด
  *

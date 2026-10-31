@@ -3,8 +3,8 @@
 import { useEffect, useRef } from "react";
 
 import { ApiError, api } from "./api";
-import { stageMeta } from "./status";
-import type { RequestStatus, ReviewTaskType } from "./status";
+import { ORGANIZATION_STATUS_META, isOrganizationFrozen, stageMeta } from "./status";
+import type { OrganizationStatus, RequestStatus, ReviewTaskType } from "./status";
 
 /**
  * ทุกด่านเปิดให้ทุกคนที่ถือ role นั้นกดได้ — ผู้ประสานงานของ BDI หลายคนเปิดคำขอใบเดียวกันพร้อมกัน
@@ -23,8 +23,13 @@ const TERMINAL: RequestStatus[] = ["APPROVED", "REJECTED", "CANCELLED"];
 export interface RequestState {
   status: RequestStatus;
   currentTaskType: ReviewTaskType | null;
-  /** ค่าที่ backend คิดจาก updated_at ของคำขอกับ review_task — ดู stateVersionOf() */
+  /** ค่าที่ backend คิดจาก updated_at ของคำขอกับ review_task และสถานะของหน่วยงาน — ดู stateVersionOf() */
   stateVersion: string;
+  /**
+   * สถานะของ**หน่วยงาน** — `/state` ส่งมาเสมอ หน้าจอที่ส่ง `current` เข้ามาไม่ต้องใส่ (เทียบกันแค่ `stateVersion`)
+   * มีไว้ให้ `describeState()` บอกได้ว่าที่เปลี่ยนคือหน่วยงานถูกระงับ ไม่ใช่มีใครกดอะไร
+   */
+  organizationStatus?: OrganizationStatus;
 }
 
 /**
@@ -34,8 +39,15 @@ export interface RequestState {
  * - `invalid_state`     ไม่มีด่านค้างอยู่เลย (ถูกส่งกลับให้แก้ไข หรือจบไปแล้ว)
  * - `task_closed`       แพ้การแข่งกันเขียนแบบเสี้ยววินาที — สองคนกดพร้อมกันจริง ๆ
  * - `active_task_exists` เหมือนกัน แต่ชนตอนเปิดด่านถัดไป
+ * - `organization_frozen` ผู้ดูแลระบบระงับหรือยุติหน่วยงานระหว่างนั้น — โหลดใหม่แล้วปุ่มหายไปเพราะ banner ขึ้นแทน
  */
-const MOVED_CODES = ["stage_completed", "invalid_state", "task_closed", "active_task_exists"];
+const MOVED_CODES = [
+  "stage_completed",
+  "invalid_state",
+  "task_closed",
+  "active_task_exists",
+  "organization_frozen",
+];
 
 /**
  * ข้อผิดพลาดนี้แปลว่าคำขอเดินไปแล้วหรือเปล่า — คืนข้อความที่เอาไปแสดงได้เลย
@@ -55,6 +67,10 @@ export function movedMessage(err: unknown): string | null {
  * ด่านเดียวกันด้วยชื่อเดียวกันเสมอ
  */
 export function describeState(state: RequestState): string {
+  // ที่เปลี่ยนคือหน่วยงาน ไม่ใช่คำขอ — "มีผู้ใช้ท่านอื่นดำเนินการ" จะไม่จริง
+  if (isOrganizationFrozen(state.organizationStatus)) {
+    return `ผู้ดูแลระบบเปลี่ยนสถานะหน่วยงานเป็น "${ORGANIZATION_STATUS_META[state.organizationStatus!].label}" ระหว่างที่คุณเปิดหน้านี้ — คำขอหยุดอยู่ที่ขั้นเดิม หน้าจอนี้อัปเดตให้แล้ว`;
+  }
   const { label } = stageMeta(state.status, state.currentTaskType);
   return `มีผู้ใช้ท่านอื่นดำเนินการกับคำขอนี้ ตอนนี้คำขออยู่ที่ "${label}" — หน้าจอนี้อัปเดตให้แล้ว`;
 }

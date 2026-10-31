@@ -7,7 +7,9 @@ import {
   SessionRevokeReason,
   UserAccountStatus,
   type IntegrationOperation,
+  type OrganizationStatus,
 } from "@prisma/client";
+import type { Response } from "express";
 
 import { prisma } from "../db.js";
 import { fullNameTh } from "../lib/person-name.js";
@@ -33,6 +35,12 @@ import {
 } from "../lib/iam.js";
 import { captureError } from "../lib/error-capture.js";
 import { announceRoleReplacement } from "../lib/notify.js";
+import {
+  ORGANIZATION_FROZEN,
+  assertOrganizationOperable,
+  frozenOrganizationMessage,
+  isOrganizationFrozen,
+} from "../lib/organization-freeze.js";
 import { sendOtpEmail } from "../lib/mail.js";
 import {
   findUsablePasswordResetToken,
@@ -148,6 +156,19 @@ function lockedProfile(account: {
   };
 }
 
+/**
+ * หน่วยงานของคำเชิญถูกระงับหรือยุติ — เปิดใช้บัญชีเข้าหน่วยงานนั้นไม่ได้ (การ์ด "ระงับหน่วยงาน" 2026-10-31)
+ *
+ * 409 ไม่ใช่ 410 และไม่ revoke คีย์ — เหตุผลเดียวกับ `role_occupied`: ลิงก์ไม่ได้เสีย พอผู้ดูแลระบบเปิดใช้หน่วยงาน
+ * อีกครั้งแล้วกดลิงก์เดิมได้เลย เรียกหลังพบคีย์ที่ใช้ได้ทุกครั้ง (เปิดลิงก์ · เริ่ม ThaID · ตั้งรหัสผ่าน) และ
+ * `POST /activate` ตรวจซ้ำใน transaction ด้วย `assertOrganizationOperable()`
+ */
+function refuseFrozenInvitation(res: Response, status: OrganizationStatus): boolean {
+  if (!isOrganizationFrozen(status)) return false;
+  res.status(409).json({ error: ORGANIZATION_FROZEN, message: frozenOrganizationMessage(status) });
+  return true;
+}
+
 // ---------------------------------------------------------------- ตรวจลิงก์เชิญ
 
 authRouter.get("/invitation", async (req, res) => {
@@ -161,6 +182,7 @@ authRouter.get("/invitation", async (req, res) => {
     res.status(410).json({ error: reason, message: ACTIVATION_FAILURE_MESSAGES[reason!] });
     return;
   }
+  if (refuseFrozenInvitation(res, key.organization.status)) return;
 
   /**
    * ที่นั่งของ role นี้ต้องยังว่างอยู่ — บอกตั้งแต่เปิดลิงก์ ไม่ใช่หลังยืนยัน ThaID เสร็จ
@@ -266,6 +288,7 @@ authRouter.post("/thaid/start", async (req, res) => {
       res.status(410).json({ error: reason, message: ACTIVATION_FAILURE_MESSAGES[reason!] });
       return;
     }
+    if (refuseFrozenInvitation(res, key.organization.status)) return;
     // ไม่มีเลขบัตรบันทึกไว้ = ไม่มีอะไรให้เทียบ ปิดทางตั้งแต่ต้นดีกว่าปล่อยให้ผู้ใช้
     // เสียเวลาไปยืนยันกับ ThaID แล้วค่อยล้มตอนกลับมา
     if (!key.userAccount.cid) {
@@ -682,6 +705,7 @@ authRouter.post("/activate", async (req, res) => {
     res.status(410).json({ error: reason, message: ACTIVATION_FAILURE_MESSAGES[reason!] });
     return;
   }
+  if (refuseFrozenInvitation(res, key.organization.status)) return;
   if (key.userAccount.status === UserAccountStatus.ACTIVE) {
     res.status(409).json({ error: "exists", message: "อีเมลนี้มีบัญชีอยู่แล้ว กรุณาเข้าสู่ระบบ" });
     return;
@@ -728,6 +752,8 @@ authRouter.post("/activate", async (req, res) => {
 
   try {
     activation = await prisma.$transaction(async (tx) => {
+      // หน่วยงานถูกระงับระหว่างที่ผู้ใช้ยืนยัน ThaID — 409 จากตัวจัดการท้าย index.ts คีย์ไม่ถูกแตะ
+      await assertOrganizationOperable(tx, key.organizationId);
       await tx.userAccount.update({
         where: { id: key.userAccountId },
         data: {

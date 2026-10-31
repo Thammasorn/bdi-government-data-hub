@@ -22,6 +22,8 @@ import {
   recordRuntimeEvent,
 } from "./lib/error-capture.js";
 import { closeLogStore, startLogStore } from "./lib/log-store.js";
+import { ORGANIZATION_FROZEN } from "./lib/organization-freeze.js";
+import { WorkflowError } from "./lib/workflow.js";
 import { flushTokenRejections } from "./lib/token-rejection.js";
 import { LOG_API_PATH, adminLogRouter } from "./routes/admin-logs.js";
 import { adminRegistrationRouter } from "./routes/admin-registrations.js";
@@ -322,6 +324,16 @@ app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
     const message =
       err.code === "LIMIT_FILE_SIZE" ? "ไฟล์มีขนาดเกิน 10 MB" : "อัปโหลดไฟล์ไม่สำเร็จ";
     res.status(400).json({ error: "upload", message });
+    return;
+  }
+
+  /**
+   * หน่วยงานถูกระงับหรือยุติ (`assertOrganizationOperable()` ใน transaction ของ route ที่ไม่ได้ครอบ `WorkflowError`
+   * ไว้เอง เช่นการนำส่งทั้งสอง journey) — ไม่ใช่ความผิดของระบบ ตอบ 409 ด้วยข้อความเดียวกับ banner
+   * เฉพาะรหัสนี้: `WorkflowError` ตัวอื่นที่หลุดมาถึงที่นี่ยังเป็น 500 ตามเดิม เพราะแปลว่า route ลืมดักเคสของตัวเอง
+   */
+  if (err instanceof WorkflowError && err.code === ORGANIZATION_FROZEN) {
+    res.status(err.status).json({ error: err.code, message: err.message });
     return;
   }
 

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
+import { isOrganizationFrozen } from "@/lib/status";
 import { stashSubmitErrors } from "@/lib/submit-errors";
 import { useRequireAuth } from "@/lib/require-auth";
 import type { Organization } from "@/lib/types";
@@ -47,6 +48,16 @@ export default function PreviewPage() {
     api
       .get<{ organization: Organization }>(`/api/organizations/${id}`)
       .then((d) => {
+        // หน่วยงานถูกระงับหรือยุติ — นำส่งไม่ได้ (409) ไปหน้ารายละเอียดที่บอกเหตุผล
+        if (isOrganizationFrozen(d.organization.organizationStatus)) {
+          show({
+            tone: "info",
+            title: "หน่วยงานถูกระงับการใช้งาน จึงแก้ไขคำขอไม่ได้",
+            detail: "คำขอหยุดอยู่ที่ขั้นเดิม กรุณาติดต่อผู้ดูแลระบบสำหรับข้อมูลเพิ่มเติม",
+          });
+          router.replace(`/organizations/${d.organization.id}`);
+          return;
+        }
         // ปุ่มนำส่งอยู่หน้านี้ — คำขอที่นำส่งแล้วต้องไม่มีทางกดซ้ำได้
         if (!EDITABLE_STATUSES.has(d.organization.status)) {
           show({

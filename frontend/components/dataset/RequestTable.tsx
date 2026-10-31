@@ -21,7 +21,7 @@ import { SkeletonRows } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { ApiError, api } from "@/lib/api";
 import { CLOSE_ACTION, CLOSEABLE_STATUSES } from "@/lib/dataset-close-action";
-import { isBdiStaff } from "@/lib/status";
+import { isBdiStaff, isOrganizationFrozen } from "@/lib/status";
 import { hasOwnQueue } from "@/lib/stage";
 import { datasetTitle, fullName, type DatasetRequestListItem } from "@/lib/types";
 import { useRequestList } from "@/lib/use-request-list";
@@ -282,7 +282,10 @@ export function DatasetRequestTable({
                     <DateTimeCell value={row.submittedAt} label="วันที่นำส่ง" />
                     <DateTimeCell value={row.updatedAt} label="อัปเดตล่าสุด" />
                   </button>
-                  {canDelete && CLOSEABLE_STATUSES.includes(row.status) ? (
+                  {/* หน่วยงานถูกระงับหรือยุติ — ยกเลิกเองไม่ได้ (409) แถวยังแสดงอยู่ตามเดิม */}
+                  {canDelete &&
+                  CLOSEABLE_STATUSES.includes(row.status) &&
+                  !isOrganizationFrozen(row.organization.status) ? (
                     /* บนจอแคบแถวเรียงลงเป็นชั้น ปุ่มจึงเกาะบรรทัดบนสุดแทนกึ่งกลางแถว */
                     <button
                       type="button"

@@ -30,6 +30,7 @@ import {
   type FormField,
   type FormState,
 } from "@/lib/dataset-form";
+import { isOrganizationFrozen } from "@/lib/status";
 import type { DatasetRequest } from "@/lib/types";
 
 /** ผูกปุ่มที่กดไม่ได้เข้ากับกล่องที่บอกว่าทำไม โปรแกรมอ่านหน้าจอจึงอ่านเหตุผลได้ด้วย */
@@ -186,6 +187,16 @@ export default function EditDatasetRequestPage() {
     api
       .get<{ request: DatasetRequest }>(`/api/dataset-requests/${id}`)
       .then(({ request }) => {
+        // หน่วยงานถูกระงับหรือยุติ — PATCH / นำส่งตอบ 409 อยู่แล้ว พาไปหน้ารายละเอียดที่มี banner แทนฟอร์มที่บันทึกไม่ได้
+        if (isOrganizationFrozen(request.organization.status)) {
+          show({
+            tone: "info",
+            title: "หน่วยงานถูกระงับการใช้งาน จึงแก้ไขคำขอไม่ได้",
+            detail: "คำขอหยุดอยู่ที่ขั้นเดิม กรุณาติดต่อผู้ดูแลระบบสำหรับข้อมูลเพิ่มเติม",
+          });
+          router.replace(`/datasets/${request.id}`);
+          return;
+        }
         const next = toFormState(request as unknown as Partial<Record<FormField, unknown>>);
         setForm(next);
         // ช่องที่มีคำตอบอยู่แล้วนับว่าแตะแล้ว — เหตุผลเต็มอยู่ใน lib/submit-errors.ts
@@ -209,7 +220,7 @@ export default function EditDatasetRequestPage() {
       })
       .catch(() => show({ tone: "error", title: "โหลดข้อมูลไม่สำเร็จ" }))
       .finally(() => setLoading(false));
-  }, [id, show, ready]);
+  }, [id, show, ready, router]);
 
   /**
    * ทุกการเปลี่ยนค่าเดินผ่าน applyRules() — เลือกหมวดหมู่ "ข้อมูลสาธารณะ" แล้วระดับชั้น

@@ -15,6 +15,7 @@
 import {
   AssignmentSource,
   CommentVisibility,
+  OrganizationStatus,
   Prisma,
   PrismaClient,
   RequestStatus,
@@ -214,13 +215,20 @@ export async function taskOpeners(db: Db, tasks: { id: string; createdBy: string
  * เอาค่ามากสุดของแถวคำขอกับ review_task ของมัน — `syncStatus()` เขียนแถวคำขอทุกครั้งที่มี
  * transition ก็จริง แต่ความเห็นของผู้เชี่ยวชาญ (`recordAdvisoryNote()`) เขียนแค่ review_task
  * ถ้าดูแค่แถวคำขอ ไทม์ไลน์จะขยับโดยที่ไม่มีใครรู้
+ *
+ * ต่อท้ายด้วยสถานะของหน่วยงาน — การระงับไม่แตะแถวคำขอหรือ task เลย หน้าที่เปิดค้างไว้จึงจะยังโชว์ปุ่มอนุมัติ
+ * จนกว่าจะกดแล้วได้ 409 ไม่ใช่ optional เพราะผู้เรียกที่ลืมส่งจะคำนวณได้ค่าต่างจากอีกฝั่งตลอดไป
  */
-export function stateVersionOf(requestUpdatedAt: Date, latestTaskUpdatedAt: Date | null): string {
+export function stateVersionOf(
+  requestUpdatedAt: Date,
+  latestTaskUpdatedAt: Date | null,
+  organizationStatus: OrganizationStatus,
+): string {
   const latest =
     latestTaskUpdatedAt && latestTaskUpdatedAt > requestUpdatedAt
       ? latestTaskUpdatedAt
       : requestUpdatedAt;
-  return latest.toISOString();
+  return `${latest.toISOString()}|${organizationStatus}`;
 }
 
 /** เวลาที่ task ล่าสุดของชุดนี้ถูกแตะ — null เมื่อยังไม่มี task เลย */
