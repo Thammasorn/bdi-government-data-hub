@@ -900,7 +900,7 @@
         "method": "GET",
         "header": [],
         "url": {
-          "raw": "{{baseUrl}}/api/admin/users?q=&cid=&status=&role=&organizationId=&includeFormer=1",
+          "raw": "{{baseUrl}}/api/admin/users?q=&cid=&status=&role=&organizationId=&includeFormer=1&includeInvited=1",
           "host": [
             "{{baseUrl}}"
           ],
@@ -939,10 +939,15 @@
               "key": "includeFormer",
               "value": "1",
               "disabled": true
+            },
+            {
+              "key": "includeInvited",
+              "value": "1",
+              "disabled": true
             }
           ]
         },
-        "description": "ค้นหาบัญชี — `q` ค้นบางส่วนของอีเมลหรือชื่อ · `cid` ต้องตรงตัวเต็ม 13 หลัก (กันการไล่เดาเลขบัตร) · กรองด้วย `status` `role` `organizationId` ได้ และแบ่งหน้าด้วย `page`/`pageSize`\n\n`includeFormer=1` ร่วมกับ `organizationId` รวม**อดีตสมาชิก**ของหน่วยงานนั้นด้วย (บัญชีที่เคยถือบทบาทที่นั่นแต่ถูกถอนแล้ว — ยุติการใช้งาน ถอนบทบาท หรือย้ายหน่วยงาน) แถว `roleAssignments` ของหน่วยงานนั้นจะมี `status: \"REVOKED\"` พร้อม `revokedAt` และ `revocationReason` ส่วนหน่วยงานอื่นยังส่งเฉพาะที่ใช้งานอยู่ — หน้า \"สมาชิก\" ของหน่วยงานใน /console ใช้ตัวนี้"
+        "description": "ค้นหาบัญชี — `q` ค้นบางส่วนของอีเมลหรือชื่อ · `cid` ต้องตรงตัวเต็ม 13 หลัก (กันการไล่เดาเลขบัตร) · กรองด้วย `status` `role` `organizationId` ได้ และแบ่งหน้าด้วย `page`/`pageSize`\n\n`includeFormer=1` ร่วมกับ `organizationId` รวม**อดีตสมาชิก**ของหน่วยงานนั้นด้วย (บัญชีที่เคยถือบทบาทที่นั่นแต่ถูกถอนแล้ว — ยุติการใช้งาน ถอนบทบาท หรือย้ายหน่วยงาน) แถว `roleAssignments` ของหน่วยงานนั้นจะมี `status: \"REVOKED\"` พร้อม `revokedAt` และ `revocationReason` ส่วนหน่วยงานอื่นยังส่งเฉพาะที่ใช้งานอยู่ \n\n`includeInvited=1` ร่วมกับ `organizationId` รวม**ผู้ได้รับเชิญ**เข้าหน่วยงานนั้นด้วย (บัญชีที่มีคำเชิญเข้าที่นั่น ไม่ว่าคำเชิญจะยังใช้ได้ ใช้แล้ว หมดอายุ หรือถูกยกเลิก) และแต่ละแถวมี `activationKeys` เป็นคำเชิญล่าสุดเข้าหน่วยงานนั้นใบเดียว — ผู้ได้รับเชิญที่ยังไม่เปิดใช้งานยังไม่มีบทบาท ไม่มีตัวนี้จึงไม่ขึ้นในรายการเลย หน้า \"สมาชิกและคำเชิญ\" ของหน่วยงานใน /console ส่งทั้งสองตัว"
       },
       "response": [],
       "event": [

@@ -19,10 +19,14 @@ const FILTERS = ["q", "status", "new", "pageSize"] as const;
 const CID = /^\d{13}$/;
 
 /**
- * สมาชิกของหน่วยงานหนึ่งแห่ง — หน้าย่อยของ `/console/organizations/[id]`
+ * สมาชิกและคำเชิญของหน่วยงานหนึ่งแห่ง — หน้าย่อยของ `/console/organizations/[id]`
  *
- * แทนที่ลิงก์ "ดูในรายชื่อผู้ใช้" ที่พาออกไปหน้าผู้ใช้รวมแล้วกรองด้วยหน่วยงาน ซึ่งไม่มีทางกลับและซ่อนอดีตสมาชิกไว้ (การ์ด Issue
- * 2026-10-25) หน้านี้อยู่ใต้หน่วยงาน มีลิงก์กลับ รวมอดีตสมาชิก (`includeFormer=1`) และกล่องเชิญเปิดในหน้าโดยล็อกหน่วยงานไว้
+ * หน้าเดียวที่ตอบว่า "ใครอยู่ ใครกำลังจะเข้า ใครเคยอยู่": สมาชิกที่ใช้งานอยู่ คนที่ได้รับเชิญและรอเปิดใช้งาน คนที่คำเชิญหมดอายุ
+ * หรือถูกยกเลิก และอดีตสมาชิก (`includeFormer=1&includeInvited=1`) หนึ่งแถวคือหนึ่งคน คำสั่งของคำเชิญอยู่ในแถวของคนนั้น
+ *
+ * เดิมคำเชิญมีหน้าแยก (`/invitations`, ตอนนี้พามาที่นี่) และผู้ได้รับเชิญยังไม่มีบทบาทจนกว่าจะเปิดใช้งาน จึงไม่ขึ้นในตาราง
+ * สมาชิกเลย ผู้ดูแลเห็น "ไม่มีสมาชิก" ทั้งที่ส่งคำเชิญถึงผู้ประสานงานไปแล้ว (การ์ด Issue 20261031-04) หน้านี้แทนลิงก์
+ * "ดูในรายชื่อผู้ใช้" ที่พาออกไปหน้าผู้ใช้รวมแล้วไม่มีทางกลับ (การ์ด Issue 2026-10-25) และกล่องเชิญเปิดในหน้าโดยล็อกหน่วยงานไว้
  */
 export default function OrganizationMembersPage() {
   const { id } = useParams<{ id: string }>();
@@ -35,6 +39,7 @@ export default function OrganizationMembersPage() {
     `/api/admin/users${qs({
       organizationId: id,
       includeFormer: "1",
+      includeInvited: "1",
       ...(CID.test(query) ? { cid: query } : { q: values.q }),
       status: values.status,
       page,
@@ -57,8 +62,8 @@ export default function OrganizationMembersPage() {
       <PageHeader
         back={scope.back ?? undefined}
         eyebrow={org ? `${org.nameTh} · ${org.organizationCode}` : "หน่วยงาน"}
-        title="สมาชิก"
-        description="ทุกบัญชีที่สังกัดหน่วยงานนี้ รวมบัญชีที่รอเปิดใช้งานจากคำเชิญ และอดีตสมาชิกที่ถูกถอนบทบาทไปแล้ว — กดแถวเพื่อดูหรือแก้บัญชี"
+        title="สมาชิกและคำเชิญ"
+        description="ทุกคนที่เกี่ยวกับหน่วยงานนี้ในตารางเดียว — สมาชิกที่ใช้งานอยู่ คนที่ได้รับเชิญและรอเปิดใช้งาน คนที่คำเชิญหมดอายุหรือถูกยกเลิก และอดีตสมาชิก ส่งคำเชิญใหม่ ยกเลิก หรือลบได้จากแถวของคนนั้น กดแถวเพื่อดูบัญชีและประวัติคำเชิญทุกใบ"
         actions={
           <Button size="sm" onClick={() => set({ new: "1" })} disabled={!org}>
             เชิญเข้าหน่วยงานนี้
@@ -94,11 +99,12 @@ export default function OrganizationMembersPage() {
           pageSize={pageSize}
           onPage={(p) => set({ page: String(p) })}
           onPageSize={(s) => set({ pageSize: String(s) })}
+          onChanged={reload}
           empty={
             values.q || values.status ? (
               <EmptyState title="ไม่พบบัญชีที่ตรงกับตัวกรอง">ลองล้างตัวกรองหรือค้นด้วยคำอื่น</EmptyState>
             ) : (
-              <EmptyState title="ยังไม่มีสมาชิก">เชิญผู้ประสานงานของหน่วยงานเพื่อให้เริ่มยื่นคำขอลงทะเบียนได้</EmptyState>
+              <EmptyState title="ยังไม่มีสมาชิกหรือคำเชิญ">เชิญผู้ประสานงานของหน่วยงานเพื่อให้เริ่มยื่นคำขอลงทะเบียนได้</EmptyState>
             )
           }
         />

@@ -44,6 +44,27 @@ export interface AdminUserListItem extends AdminUser {
     role: { code: Role };
     organization: { id: string; nameTh: string } | null;
   }>;
+  /**
+   * มาเฉพาะเมื่อขอ `?organizationId=…&includeInvited=1` — คำเชิญล่าสุดเข้า**หน่วยงานนั้น**ใบเดียว (หรือว่างถ้าไม่เคยได้รับเชิญ
+   * เข้าที่นั่น เช่น คนที่ย้ายเข้ามา) ผู้ได้รับเชิญที่ยังไม่เปิดใช้งานไม่มีบทบาท ช่องนี้จึงเป็นสิ่งเดียวที่บอกว่าเขารออยู่
+   */
+  activationKeys?: Array<{
+    id: string;
+    status: ActivationKeyStatus;
+    issuedAt: string;
+    expiresAt: string;
+    usedAt: string | null;
+    revokedAt: string | null;
+    role: { code: Role; nameTh: string };
+  }>;
+}
+
+/**
+ * อีเมลที่ "ถอดอีเมลออก" (`POST /api/admin/users/:id/release-identity`) ใส่แทนของเดิม — ล็อกอินไม่ได้และไม่ใช่ที่อยู่ของใคร
+ * หน้าจอบอกว่าถอดแล้วแทนการพิมพ์ `released+<uuid>@invalid.local` ซึ่งอ่านเหมือนอีเมลจริงของคนหนึ่ง
+ */
+export function isReleasedEmail(email: string): boolean {
+  return email.endsWith("@invalid.local");
 }
 
 export interface AdminRoleAssignment {

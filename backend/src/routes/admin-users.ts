@@ -381,6 +381,14 @@ const listQuerySchema = z.object({
    * ไม่ขึ้นว่าง ๆ เหมือนไม่เคยมีใคร (การ์ด Issue 2026-10-25) ไม่มี organizationId → ไม่มีผล
    */
   includeFormer: z.enum(["1", "true"]).optional(),
+  /**
+   * `includeInvited=1` ร่วมกับ `organizationId` — รวมบัญชีที่มีคำเชิญเข้าหน่วยงานนั้น ไม่ว่าคำเชิญจะยังใช้ได้ ใช้แล้ว
+   * หมดอายุ หรือถูกยกเลิก และส่งคำเชิญล่าสุดของหน่วยงานนั้นมาในแถว (`activationKeys`)
+   *
+   * คนที่ได้รับเชิญแต่ยังไม่เปิดใช้งานยังไม่มีบทบาท (บทบาทเกิดตอนเปิดใช้งาน) รายชื่อที่กรองด้วยบทบาทอย่างเดียวจึงไม่มีทาง
+   * เห็นเขา หน้าหน่วยงานเคยบอก "ไม่มีสมาชิก" ทั้งที่ผู้ประสานงานได้รับเชิญไปแล้ว (การ์ด Issue 20261031-04)
+   */
+  includeInvited: z.enum(["1", "true"]).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(50),
 });
@@ -462,8 +470,9 @@ adminUserRouter.get("/", async (req, res) => {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;
   }
-  const { q, cid, status, role, organizationId, includeFormer, page, pageSize } = parsed.data;
+  const { q, cid, status, role, organizationId, includeFormer, includeInvited, page, pageSize } = parsed.data;
   const withFormer = Boolean(organizationId && includeFormer);
+  const withInvited = Boolean(organizationId && includeInvited);
 
   const assignmentFilter =
     role || organizationId
@@ -488,18 +497,26 @@ adminUserRouter.get("/", async (req, res) => {
     ? { OR: [activeAssignmentWhere(), { organizationId }] }
     : activeAssignmentWhere();
 
+  // ผู้ได้รับเชิญเข้าหน่วยงานนี้ไม่มีแถว assignment ให้ assignmentFilter จับ — จึงเป็น "หรือ" กับคำเชิญของหน่วยงานนี้
+  const membershipFilter: Prisma.UserAccountWhereInput = withInvited
+    ? { OR: [assignmentFilter, { activationKeys: { some: { organizationId } } }] }
+    : assignmentFilter;
+
+  // AND ไม่ใช่ spread: ทั้งตัวกรองสมาชิกและช่องค้นหามี OR ของตัวเอง spread สองตัวลงอ็อบเจกต์เดียว ตัวหลังทับตัวแรกเงียบ ๆ
   const where: Prisma.UserAccountWhereInput = {
     ...(cid ? { cid } : {}),
     ...(status ? { status: status as UserAccountStatus } : {}),
-    ...assignmentFilter,
-    ...(q
-      ? {
-          OR: [
-            { email: { contains: q, mode: "insensitive" as const } },
-            { displayName: { contains: q, mode: "insensitive" as const } },
-          ],
-        }
-      : {}),
+    AND: [
+      membershipFilter,
+      q
+        ? {
+            OR: [
+              { email: { contains: q, mode: "insensitive" as const } },
+              { displayName: { contains: q, mode: "insensitive" as const } },
+            ],
+          }
+        : {},
+    ],
   };
 
   const [total, users] = await prisma.$transaction([
@@ -523,6 +540,25 @@ adminUserRouter.get("/", async (req, res) => {
             organization: { select: { id: true, nameTh: true } },
           },
         },
+        // คำเชิญล่าสุดเข้าหน่วยงานนี้ใบเดียว — พอบอกได้ว่ารอเปิดใช้งานอยู่หรือคำเชิญตกไปแล้ว ประวัติทุกใบอยู่ที่หน้าผู้ใช้
+        ...(withInvited
+          ? {
+              activationKeys: {
+                where: { organizationId },
+                orderBy: { createdAt: "desc" as const },
+                take: 1,
+                select: {
+                  id: true,
+                  status: true,
+                  issuedAt: true,
+                  expiresAt: true,
+                  usedAt: true,
+                  revokedAt: true,
+                  role: { select: { code: true, nameTh: true } },
+                },
+              },
+            }
+          : {}),
       },
     }),
   ]);

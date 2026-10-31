@@ -1572,19 +1572,40 @@ the whole CSV in 0.36 s. The CSV streams in batches of 500, starts with a UTF-8 
 code page and Thai turns to mojibake), and prefixes a name starting with `= + - @` with `'` so Excel does not run it as a formula.
 `Tile` and `StatRow` moved out of `app/console/page.tsx` into `components/console/ui.tsx` for this.
 
-**An organisation has its own members and invitations pages** (`/console/organizations/[id]/members`,
-`…/invitations`, card "flow หน่วยงาน → เชิญผู้ใช้ → กลับไม่ได้", 2026-10-25). Until then every "invite" button
-was a `ButtonLink` to the global `/console/invitations?new=1`, so an administrator who had drilled into an
-organisation lost it on the way, and the users list filtered by `?organizationId=` said only "เฉพาะหน่วยงานที่
-เลือก" with no way back. `InviteDialog`, `InvitationsTable` and `MembersTable` in `components/console/` are
-shared by the global pages and the per-organisation ones; `InviteDialog` takes `lockedOrganization` (no picker,
-organisation roles only) and every page opens it in place. `useOrganizationScope()` (`OrganizationScope.tsx`)
+**An organisation has one page for its people: สมาชิกและคำเชิญ** (`/console/organizations/[id]/members`).
+It began as two sub-pages, members and invitations (card "flow หน่วยงาน → เชิญผู้ใช้ → กลับไม่ได้", 2026-10-25,
+which replaced invite buttons that were `ButtonLink`s to the global `/console/invitations?new=1` and lost the
+organisation on the way). They were merged on 2026-10-31 (Admin Action Effect › Issue 20261031-04) because **an
+invitee has no role assignment** — the role is granted at activation — so a members list built on roles can never
+answer "does this organisation have its coordinator yet?": the detail page said "ไม่มีสมาชิกที่ยังใช้งานอยู่" while
+the coordinator's invitation sat in the panel below. The page now asks `GET /api/admin/users?organizationId=…
+&includeFormer=1&includeInvited=1`, and **one row is one person**, in one of four states decided by
+`membershipOf()` in `MembersTable.tsx`, in this order: `current` (an active role here — a suspended account keeps
+its role and stays here), `pending` (the latest key for this organisation is `ISSUED` and unexpired; it outranks
+`former` so a former member invited back reads as waiting), `former` (assignments here, all `REVOKED`; greyed as
+"อดีตสมาชิก" with `revokedAt` and `revocationReason`), and `lapsed` (invited here, never activated, key expired or
+revoked). `includeFormer` adds the revoked assignment rows **for that organisation**; `includeInvited` ORs in
+accounts holding any key for it and adds `activationKeys` — the latest key for that organisation only. The `OR`
+sits inside an `AND` with the `q` search's own `OR`, because spreading both into one object let the second
+silently replace the first. Without either flag the list is active-only, which is what the global users page asks
+for. Resend, revoke and delete sit on the `pending`/`lapsed` rows through `useInvitationActions()`
+(`InvitationsTable.tsx`), the same hook the global invitations page uses, so the dialog wording has one copy;
+the history of every key stays on the user's own page. The organisation detail page shows `current` and `pending`
+people in one panel and counts `former` and `lapsed` under it. `/…/invitations` is now a redirect to `/members`
+(`?email=` becomes `?q=`) because links to it were already shared. `InviteDialog` takes `lockedOrganization` (no
+picker, organisation roles only) and every page opens it in place; `useOrganizationScope()` (`OrganizationScope.tsx`)
 gives any page in an organisation's context the `back` link and the chip label with the organisation's name.
-The members page asks `GET /api/admin/users?organizationId=…&includeFormer=1`, which also returns accounts
-whose assignment **to that organisation** is `REVOKED` (deactivated, role removed, transferred — a suspended
-account keeps its role and was never hidden); those rows carry `status`, `revokedAt` and `revocationReason`
-and are shown greyed as "อดีตสมาชิก". Without the flag the list is active-only as before, which is what the
-global users page still asks for.
+
+**A key's `USED` says the link was used, not that the account is active.** The global invitations table showed a
+deactivated, released account as a green "เปิดใช้งานแล้ว" next to `released+<uuid>@invalid.local`. A `USED` key
+whose account is no longer `ACTIVE` now shows the account's badge ("ยุติการใช้งาน", "เปิดใช้งานเมื่อ …"), and
+`isReleasedEmail()` (`lib/admin.ts`) makes every console screen print "อีเมลถูกถอดออกแล้ว" instead of that address.
+The key stores no e-mail of its own; the address it was sent to survives only in `audit_event`.
+
+**The BDI organisation has no console page.** Its fixed id `00000000-0000-0000-0000-0000000000b0` is not an
+RFC 4122 UUID (version digit 0), and zod's `.uuid()` rejects it, so `GET /api/admin/organizations/:id` answers
+404 and the users list filtered by it answers 400. Found 2026-10-31 and not fixed with the merge; `z.guid()`
+accepts it.
 
 Design tokens in `frontend/app/globals.css` under Tailwind 4's `@theme`. The colors were
 sampled from the `.ai` files in `assets/theme_ci_design/`, not chosen by eye —

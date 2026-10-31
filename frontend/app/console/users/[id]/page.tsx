@@ -31,6 +31,7 @@ import {
   ORGANIZATION_ROLES,
   USER_STATUS_META,
   invitationState,
+  isReleasedEmail,
   type AdminAuditRow,
   type AdminRoleAssignment,
   type AdminUser,
@@ -473,7 +474,7 @@ function StatusActions({
           <Button size="sm" onClick={() => open("reinvite")}>
             เชิญกลับเข้ามา
           </Button>
-          {user.email.endsWith("@invalid.local") || pendingInvitation ? null : (
+          {isReleasedEmail(user.email) || pendingInvitation ? null : (
             <>
               <Button size="sm" onClick={() => open("reactivate")}>
                 เปิดใช้อีกครั้ง

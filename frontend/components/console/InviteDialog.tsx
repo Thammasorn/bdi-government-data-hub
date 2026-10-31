@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { ActionDialog } from "@/components/console/ActionDialog";
 import { OrganizationPicker } from "@/components/console/OrganizationPicker";
 import { SelectField, TextField } from "@/components/ui/Field";
-import { BDI_ROLE_CODES, ORGANIZATION_ROLES } from "@/lib/admin";
+import { BDI_ROLE_CODES, ORGANIZATION_ROLES, isReleasedEmail } from "@/lib/admin";
 import { ApiError, api } from "@/lib/api";
 import { PREFIXES, ROLE_LABELS, formatThaiDate, type Role } from "@/lib/status";
 
@@ -239,7 +239,7 @@ export function InviteDialog({
 
 /** ใครคือเจ้าของเลขบัตรนี้ — ผู้ดูแลต้องเห็นก่อนตัดสินว่าเป็นคนเดิมจริง */
 function ReinvitePanel({ account }: { account: ReinviteAccount }) {
-  const released = account.currentEmail.endsWith("@invalid.local");
+  const released = isReleasedEmail(account.currentEmail);
   return (
     <div className="rounded-xl bg-warning-bg px-4 py-3 text-[14px] text-ink">
       <p className="font-semibold">เลขบัตรนี้เป็นของบัญชีที่ยุติการใช้งานแล้ว</p>

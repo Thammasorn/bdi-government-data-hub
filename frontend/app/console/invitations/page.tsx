@@ -17,8 +17,9 @@ const FILTERS = ["email", "status", "state", "organizationId", "pageSize", "new"
 /**
  * คำเชิญ (activation key) ทั้งระบบ — Journey A ขั้นที่ 2 ที่เคยเป็น `POST /api/admin/invitations` ใน Postman
  *
- * ตารางและคำสั่งต่อแถวอยู่ใน `InvitationsTable` และกล่องเชิญใน `InviteDialog` เพราะหน้าคำเชิญของหน่วยงานหนึ่งแห่ง
- * (`/console/organizations/[id]/invitations`) ใช้ตัวเดียวกัน หน้านี้เหลือหน้าที่ประกอบตัวกรองกับ URL
+ * ตารางอยู่ใน `InvitationsTable` และกล่องเชิญใน `InviteDialog` หน้านี้เหลือหน้าที่ประกอบตัวกรองกับ URL คำสั่งต่อแถวของคำเชิญ
+ * (`useInvitationActions`) ใช้ร่วมกับหน้า "สมาชิกและคำเชิญ" ของหน่วยงาน (`/console/organizations/[id]/members`) ซึ่งแทน
+ * หน้าคำเชิญของหน่วยงานที่เคยมีแยก (การ์ด Issue 20261031-04)
  *
  * `?organizationId=` กรองได้เหมือนเดิม (ลิงก์เก่าและ `lib/admin-errors.ts` ยังชี้มา) และตอนนี้**บอก**ว่ากำลังกรองอยู่ พร้อม
  * ลิงก์กลับหน่วยงานนั้น — ก่อนหน้านี้กรองเงียบ ๆ ไม่มีอะไรบนจอบอกเลย

@@ -4,7 +4,7 @@ import type { AdminOrganizationDetail } from "@/lib/admin";
 import { useAdminData } from "@/lib/use-admin";
 
 /**
- * บริบท "หน้านี้กำลังพูดถึงหน่วยงานไหน" — ใช้ทั้งหน้าย่อยของหน่วยงาน (`/console/organizations/[id]/members|invitations`)
+ * บริบท "หน้านี้กำลังพูดถึงหน่วยงานไหน" — ใช้ทั้งหน้าย่อยของหน่วยงาน (`/console/organizations/[id]/members`)
  * และหน้ารายการรวมที่ถูกกรองด้วย `?organizationId=`
  *
  * มีขึ้นเพราะหน้ารายการรวมเคยกรองด้วยหน่วยงานโดยบอกแค่ "เฉพาะหน่วยงานที่เลือก" (หรือไม่บอกเลย) และไม่มีลิงก์กลับ — ผู้ดูแลที่มา

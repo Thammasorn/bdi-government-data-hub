@@ -7,120 +7,62 @@ import { ActionDialog } from "@/components/console/ActionDialog";
 import { DataTable, type Column } from "@/components/console/DataTable";
 import { Badge, EmptyState, Tag } from "@/components/console/ui";
 import { useToast } from "@/components/ui/Toast";
-import { INVITATION_STATUS_META, invitationState, type AdminInvitation } from "@/lib/admin";
+import {
+  INVITATION_STATUS_META,
+  USER_STATUS_META,
+  invitationState,
+  isReleasedEmail,
+  type AdminInvitation,
+} from "@/lib/admin";
 import { api } from "@/lib/api";
 import { ROLE_LABELS, formatThaiDate } from "@/lib/status";
 
-type RowAction = { kind: "resend" | "revoke" | "delete"; invitation: AdminInvitation } | null;
+type InvitationTarget = Pick<AdminInvitation, "id" | "status" | "expiresAt" | "userAccount">;
+type RowAction = { kind: "resend" | "revoke" | "delete"; invitation: InvitationTarget } | null;
 
 /**
- * ตารางคำเชิญ (activation key) พร้อมสามคำสั่งต่อแถว — ใช้ทั้งหน้าคำเชิญรวมและหน้าคำเชิญของหน่วยงานหนึ่งแห่ง
+ * คำสั่งสามอย่างของคำเชิญหนึ่งใบ — ส่งใหม่ ยกเลิก ลบ — พร้อมกล่องยืนยันของแต่ละคำสั่ง
  *
- * คำเชิญหนึ่งใบสร้างบัญชี PENDING ก่อนแล้วจึงออกคีย์ (CLAUDE.md, Auth) แถวหนึ่งในตารางนี้จึงเป็นทั้งคำเชิญและบัญชีที่รอ
- * เปิดใช้งาน สามคำสั่งต่อแถวไม่ใช่ตัวเลือกที่ใกล้กัน: **ส่งใหม่** ออกคีย์ใบใหม่ให้บัญชีเดิม **ยกเลิก** ทำให้ลิงก์ใช้ไม่ได้แต่บัญชี
- * และเลขบัตรยังผูกอยู่ **ลบ** เอาคำเชิญออก — และบัญชีด้วยถ้ามันเกิดมาเพราะคำเชิญนี้อย่างเดียว ซึ่งเป็นทางเดียวที่ปลดอีเมล
- * กับเลขบัตรที่กรอกผิดคืน กล่องยืนยันของแต่ละคำสั่งบอกความต่างนี้ตรง ๆ
+ * ตารางคำเชิญรวมกับตารางสมาชิกของหน่วยงานใช้ชุดเดียวกัน คำอธิบายในกล่องยืนยันจึงมีที่เดียว คำเชิญหนึ่งใบสร้างบัญชี PENDING
+ * ก่อนแล้วจึงออกคีย์ (CLAUDE.md, Auth) และสามคำสั่งไม่ใช่ตัวเลือกที่ใกล้กัน: **ส่งใหม่** ออกคีย์ใบใหม่ให้บัญชีเดิม **ยกเลิก**
+ * ทำให้ลิงก์ใช้ไม่ได้แต่บัญชีและเลขบัตรยังผูกอยู่ **ลบ** เอาคำเชิญออก — และบัญชีด้วยถ้ามันเกิดมาเพราะคำเชิญนี้อย่างเดียว
+ * ซึ่งเป็นทางเดียวที่ปลดอีเมลกับเลขบัตรที่กรอกผิดคืน กล่องยืนยันของแต่ละคำสั่งบอกความต่างนี้ตรง ๆ
  *
- * `hideOrganization` — บนหน้าของหน่วยงานทุกแถวเป็นหน่วยงานเดียวกัน ไม่ต้องพิมพ์ชื่อซ้ำทุกบรรทัด
+ * `buttons(inv)` วางในแถว `dialogs` วางครั้งเดียวในหน้า
  */
-export function InvitationsTable({
-  invitations,
-  total,
-  loading,
-  page,
-  pageSize,
-  onPage,
-  onPageSize,
-  onChanged,
-  hideOrganization = false,
-  empty = <EmptyState title="ไม่พบคำเชิญที่ตรงกับตัวกรอง" />,
-}: {
-  invitations: AdminInvitation[] | null;
-  total: number | undefined;
-  loading: boolean;
-  page: number;
-  pageSize: number;
-  onPage: (page: number) => void;
-  onPageSize: (size: number) => void;
-  /** คำสั่งใดสำเร็จ — หน้าโหลดรายการใหม่ */
-  onChanged: () => void;
-  hideOrganization?: boolean;
-  empty?: React.ReactNode;
-}) {
+export function useInvitationActions(onChanged: () => void) {
   const { show } = useToast();
   const [action, setAction] = useState<RowAction>(null);
-
-  const columns: Column<AdminInvitation>[] = [
-    {
-      key: "who",
-      header: "ผู้รับคำเชิญ",
-      cell: (inv) => (
-        <div className="min-w-0">
-          <Link
-            href={`/console/users/${inv.userAccount.id}`}
-            onClick={(e) => e.stopPropagation()}
-            className="font-medium text-navy-800 hover:underline"
-          >
-            {inv.userAccount.email}
-          </Link>
-          <p className="text-[13px] text-ink-muted">เลขบัตร {inv.userAccount.cid ?? "—"}</p>
-        </div>
-      ),
-    },
-    {
-      key: "role",
-      header: hideOrganization ? "บทบาท" : "บทบาท / หน่วยงาน",
-      cell: (inv) => (
-        <div>
-          <Tag>{ROLE_LABELS[inv.role.code] ?? inv.role.nameTh}</Tag>
-          {!hideOrganization && inv.organization ? (
-            <p className="mt-0.5 text-[13px] text-ink-muted">{inv.organization.nameTh}</p>
-          ) : null}
-        </div>
-      ),
-    },
-    {
-      key: "status",
-      header: "สถานะ",
-      cell: (inv) => (
-        <div>
-          <Badge meta={INVITATION_STATUS_META[invitationState(inv)]} />
-          <p className="mt-1 text-[12.5px] text-ink-muted">
-            {inv.usedAt
-              ? `ใช้เมื่อ ${formatThaiDate(inv.usedAt)}`
-              : inv.revokedAt
-                ? `ยกเลิกเมื่อ ${formatThaiDate(inv.revokedAt)}`
-                : `หมดอายุ ${formatThaiDate(inv.expiresAt)}`}
-          </p>
-        </div>
-      ),
-    },
-    {
-      key: "actions",
-      header: "",
-      className: "text-right",
-      cell: (inv) => <RowActions invitation={inv} onAction={setAction} />,
-    },
-  ];
-
   const close = () => setAction(null);
   const inv = action?.invitation;
 
-  return (
-    <>
-      <DataTable
-        columns={columns}
-        rows={invitations}
-        rowKey={(i) => i.id}
-        loading={loading}
-        empty={empty}
-        page={page}
-        pageSize={pageSize}
-        total={total}
-        onPage={onPage}
-        onPageSize={onPageSize}
-      />
+  const buttons = (invitation: InvitationTarget) => {
+    const state = invitationState(invitation);
+    const accountActive = invitation.userAccount.status === "ACTIVE";
+    const btn = (kind: "resend" | "revoke" | "delete", label: string) => (
+      <button
+        key={kind}
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setAction({ kind, invitation });
+        }}
+        className="rounded-full px-2.5 py-1 text-[13px] font-medium text-navy-700 hover:bg-navy-50"
+      >
+        {label}
+      </button>
+    );
+    const shown = [
+      !accountActive && state !== "USED" ? btn("resend", "ส่งใหม่") : null,
+      invitation.status === "ISSUED" && state === "ISSUED" ? btn("revoke", "ยกเลิก") : null,
+      !accountActive ? btn("delete", "ลบ") : null,
+    ].filter(Boolean);
+    if (shown.length === 0) return null;
+    return <div className="flex flex-wrap justify-end gap-1">{shown}</div>;
+  };
 
+  const dialogs = (
+    <>
       <ActionDialog
         open={action?.kind === "resend"}
         onClose={close}
@@ -171,28 +113,113 @@ export function InvitationsTable({
       />
     </>
   );
+
+  return { buttons, dialogs };
 }
 
-function RowActions({ invitation, onAction }: { invitation: AdminInvitation; onAction: (a: RowAction) => void }) {
-  const state = invitationState(invitation);
-  const accountActive = invitation.userAccount.status === "ACTIVE";
-  const btn = (kind: "resend" | "revoke" | "delete", label: string) => (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        onAction({ kind, invitation });
-      }}
-      className="rounded-full px-2.5 py-1 text-[13px] font-medium text-navy-700 hover:bg-navy-50"
-    >
-      {label}
-    </button>
-  );
+/**
+ * ตารางคำเชิญ (activation key) ทั้งระบบ — หน้าคำเชิญรวม `/console/invitations`
+ *
+ * หน่วยงานหนึ่งแห่งไม่มีตารางนี้แล้ว คำเชิญของหน่วยงานอยู่ในแถวของคนในหน้า "สมาชิกและคำเชิญ" (`MembersTable`, การ์ด Issue
+ * 20261031-04) เพราะคำถามที่ผู้ดูแลถามที่นั่นคือ "ใครอยู่ ใครกำลังจะเข้า" ไม่ใช่ "ลิงก์ใบไหนถูกใช้"
+ *
+ * สถานะของแถวคือสถานะของ**ลิงก์** `USED` แปลว่าลิงก์ถูกใช้เปิดบัญชีแล้วเท่านั้น ถ้าบัญชีถูกระงับหรือยุติภายหลัง ตารางแสดง
+ * สถานะของบัญชีแทน ไม่งั้นบัญชีที่ยุติไปแล้วยังขึ้น "เปิดใช้งานแล้ว" สีเขียว
+ */
+export function InvitationsTable({
+  invitations,
+  total,
+  loading,
+  page,
+  pageSize,
+  onPage,
+  onPageSize,
+  onChanged,
+  empty = <EmptyState title="ไม่พบคำเชิญที่ตรงกับตัวกรอง" />,
+}: {
+  invitations: AdminInvitation[] | null;
+  total: number | undefined;
+  loading: boolean;
+  page: number;
+  pageSize: number;
+  onPage: (page: number) => void;
+  onPageSize: (size: number) => void;
+  /** คำสั่งใดสำเร็จ — หน้าโหลดรายการใหม่ */
+  onChanged: () => void;
+  empty?: React.ReactNode;
+}) {
+  const actions = useInvitationActions(onChanged);
+
+  const columns: Column<AdminInvitation>[] = [
+    {
+      key: "who",
+      header: "ผู้รับคำเชิญ",
+      cell: (inv) => (
+        <div className="min-w-0">
+          <Link
+            href={`/console/users/${inv.userAccount.id}`}
+            onClick={(e) => e.stopPropagation()}
+            className="font-medium text-navy-800 hover:underline"
+          >
+            {isReleasedEmail(inv.userAccount.email) ? <span className="text-ink-muted">อีเมลถูกถอดออกแล้ว</span> : inv.userAccount.email}
+          </Link>
+          <p className="text-[13px] text-ink-muted">เลขบัตร {inv.userAccount.cid ?? "—"}</p>
+        </div>
+      ),
+    },
+    {
+      key: "role",
+      header: "บทบาท / หน่วยงาน",
+      cell: (inv) => (
+        <div>
+          <Tag>{ROLE_LABELS[inv.role.code] ?? inv.role.nameTh}</Tag>
+          {inv.organization ? <p className="mt-0.5 text-[13px] text-ink-muted">{inv.organization.nameTh}</p> : null}
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      header: "สถานะ",
+      cell: (inv) => {
+        const state = invitationState(inv);
+        const accountGone = state === "USED" && inv.userAccount.status !== "ACTIVE";
+        return (
+          <div>
+            <Badge meta={accountGone ? USER_STATUS_META[inv.userAccount.status] : INVITATION_STATUS_META[state]} />
+            <p className="mt-1 text-[12.5px] text-ink-muted">
+              {inv.usedAt
+                ? `${accountGone ? "เปิดใช้งานเมื่อ" : "ใช้เมื่อ"} ${formatThaiDate(inv.usedAt)}`
+                : inv.revokedAt
+                  ? `ยกเลิกเมื่อ ${formatThaiDate(inv.revokedAt)}`
+                  : `หมดอายุ ${formatThaiDate(inv.expiresAt)}`}
+            </p>
+          </div>
+        );
+      },
+    },
+    {
+      key: "actions",
+      header: "",
+      className: "text-right",
+      cell: (inv) => actions.buttons(inv),
+    },
+  ];
+
   return (
-    <div className="flex flex-wrap justify-end gap-1">
-      {!accountActive && state !== "USED" ? btn("resend", "ส่งใหม่") : null}
-      {invitation.status === "ISSUED" && state === "ISSUED" ? btn("revoke", "ยกเลิก") : null}
-      {!accountActive ? btn("delete", "ลบ") : null}
-    </div>
+    <>
+      <DataTable
+        columns={columns}
+        rows={invitations}
+        rowKey={(i) => i.id}
+        loading={loading}
+        empty={empty}
+        page={page}
+        pageSize={pageSize}
+        total={total}
+        onPage={onPage}
+        onPageSize={onPageSize}
+      />
+      {actions.dialogs}
+    </>
   );
 }
