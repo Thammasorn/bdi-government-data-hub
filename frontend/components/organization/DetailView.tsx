@@ -266,11 +266,22 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
   const frozen = isOrganizationFrozen(org.organizationStatus);
   const ability: Ability = frozen ? { can: false } : decideAbility(org, user.roles);
   const supporting = sortAttachments(org.attachments.filter((a) => a.kind !== "GENERATED_FORM"));
-  const isOwner = org.createdBy?.id === user.id;
-  // เทียบกับ `org.organizationId` ไม่ใช่ `org.id` — `org.id` คือ id ของคำขอ การ์ด
-  // "ลงทะเบียนชุดข้อมูล" จึงไม่เคยขึ้นให้ผู้ใช้หน่วยงานเห็นเลย
+  /**
+   * ผู้ประสานงานของหน่วยงานเจ้าของคำขอ — คนที่แก้และนำส่งคำขอใบนี้ได้ และเห็นการ์ดชุดข้อมูล
+   *
+   * เป็นสำเนาของ `canEdit()` ใน `backend/src/routes/organizations.ts`: **คำขอเป็นของหน่วยงาน
+   * ไม่ใช่ของคนที่กดสร้าง** ปุ่มเข้าฟอร์มเคยเทียบ `org.createdBy` กับผู้ใช้ ผู้ประสานงานที่
+   * ไม่ได้เป็นคนเปิดฉบับร่าง (เช่นคนที่รับช่วงต่อจากคนเดิม) จึงแก้ได้ตาม API แต่ไม่มีปุ่มให้กด
+   * — เข้าฟอร์มได้ทางเดียวคือปุ่มบนหน้าแรก (การ์ด "เพิ่มปุ่มกรอกแบบฟอร์มลงทะเบียนหน่วยงาน
+   * ในเมนูคำขอลงทะเบียนหน่วยงาน", 2026-10-31)
+   *
+   * เทียบกับ `org.organizationId` ไม่ใช่ `org.id` — `org.id` คือ id ของคำขอ การ์ด
+   * "ลงทะเบียนชุดข้อมูล" จึงเคยไม่ขึ้นให้ผู้ใช้หน่วยงานเห็นเลย
+   */
   const isMember =
     user.roles.includes("ORGANIZATION_USER") && user.organizationId === org.organizationId;
+  /** ฉบับร่างที่ผู้ใช้คนนี้กรอกต่อได้ — ทั้งปุ่มบนหัวหน้าและการ์ดฉบับร่างขึ้นตามค่านี้ */
+  const draftEditable = org.status === "DRAFT" && isMember && !frozen;
   /**
    * การ์ด "ลงทะเบียนชุดข้อมูล" ขึ้นเฉพาะเมื่อหน่วยงานเปิดใช้งานแล้ว
    *
@@ -352,29 +363,33 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         <div className="min-w-0">
           <h1 className="break-words text-[26px] font-semibold text-navy-800">{org.name}</h1>
         </div>
-        <StatusBadge
-          status={org.status}
-          currentTaskType={org.currentTaskType}
-          waitingLabel={org.progress?.currentStep?.waitingLabel}
-        />
+        <div className="flex flex-wrap items-center gap-3">
+          <StatusBadge
+            status={org.status}
+            currentTaskType={org.currentTaskType}
+            waitingLabel={org.progress?.currentStep?.waitingLabel}
+          />
+          {/* ปุ่มเดียวกับบนหน้าแรก ชื่อเดียวกัน วางข้าง badge "ฉบับร่าง" ตามที่การ์ดขอ
+              — `org.id` ไม่ใช่ `id` บน URL เพราะเมนูส่ง id ของหน่วยงานมา (ดู act() ข้างบน) */}
+          {draftEditable ? (
+            <Button size="sm" onClick={() => router.push(`/organizations/${org.id}/edit`)}>
+              กรอกแบบฟอร์มลงทะเบียนหน่วยงาน
+            </Button>
+          ) : null}
+        </div>
       </header>
 
-      {/* ฉบับร่างที่ยังไม่ได้นำส่ง — หน้านี้เคยไม่มีทางกลับเข้าฟอร์มเลย ผู้ใช้ที่ปิดแท็บไป
-          แล้วกดเมนู "หน่วยงานของฉัน" จึงเห็นข้อมูลค้างอยู่โดยไม่มีปุ่มให้ทำต่อ */}
       {frozen ? <OrganizationFrozenNotice status={org.organizationStatus} /> : null}
 
-      {org.status === "DRAFT" && isOwner && !frozen ? (
+      {/* ฉบับร่างที่ยังไม่ได้นำส่ง — บอกว่าต้องทำอะไรต่อ ส่วนปุ่มเข้าฟอร์มอยู่บนหัวหน้า
+          ข้าง badge แล้ว การ์ดนี้จึงไม่มีปุ่มของตัวเอง ให้มีทางเข้าทางเดียว */}
+      {draftEditable ? (
         <Card className="mb-6 border-l-[3px] border-l-coral-500">
-          <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="font-medium text-navy-800">ฉบับร่าง — ยังไม่ได้นำส่ง</p>
-              <p className="mt-0.5 text-sm text-ink-muted">
-                กรอกให้ครบแล้วกด &ldquo;ตรวจสอบข้อมูล&rdquo; เพื่อนำส่งให้ BDI ตรวจสอบ
-              </p>
-            </div>
-            <Button className="shrink-0" onClick={() => router.push(`/organizations/${org.id}/edit`)}>
-              กรอกข้อมูลต่อ
-            </Button>
+          <div className="p-6">
+            <p className="font-medium text-navy-800">ฉบับร่าง — ยังไม่ได้นำส่ง</p>
+            <p className="mt-0.5 text-sm text-ink-muted">
+              กรอกให้ครบแล้วกด &ldquo;ตรวจสอบข้อมูล&rdquo; เพื่อนำส่งให้ BDI ตรวจสอบ
+            </p>
           </div>
         </Card>
       ) : null}
@@ -395,7 +410,7 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
               {formatThaiDate(lastRevision.completedAt ?? lastRevision.createdAt)}
             </p>
           ) : null}
-          {isOwner && !frozen ? (
+          {isMember && !frozen ? (
             <Button size="sm" className="mt-4" onClick={() => router.push(`/organizations/${org.id}/edit`)}>
               แก้ไขข้อมูล
             </Button>

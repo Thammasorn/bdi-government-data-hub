@@ -517,8 +517,10 @@ function RegistrationReturnedNotice({ request }: { request: Organization }) {
   const { user } = useSession();
   // "ขอให้ปรับปรุง" = review_task ที่ปิดด้วย result = RETURNED — สำนวนเดียวกับ DetailView
   const lastRevision = [...request.events].reverse().find((e) => e.result === "RETURNED");
-  // ปุ่มพาเข้าฟอร์ม ซึ่งเปิดได้เฉพาะเจ้าของคำขอ — กติกาเดียวกับหน้ารายละเอียด
-  const isOwner = request.createdBy?.id === user?.id;
+  // ปุ่มพาเข้าฟอร์ม ซึ่งเปิดได้เฉพาะผู้ประสานงานของหน่วยงานเจ้าของคำขอ ไม่ใช่เฉพาะคนที่สร้าง
+  // — กติกาเดียวกับ `canEdit()` ของ API และ `isMember` บนหน้ารายละเอียด
+  const canEdit =
+    !!user?.roles.includes("ORGANIZATION_USER") && user.organizationId === request.organizationId;
 
   return (
     <div className="mt-5 rounded-xl border-l-[3px] border-danger bg-danger-bg p-5">
@@ -541,10 +543,10 @@ function RegistrationReturnedNotice({ request }: { request: Organization }) {
         </p>
       ) : null}
       <Link
-        href={isOwner ? `/organizations/${request.id}/edit` : `/organizations/${request.id}`}
+        href={canEdit ? `/organizations/${request.id}/edit` : `/organizations/${request.id}`}
         className="mt-4 inline-block"
       >
-        <Button size="sm">{isOwner ? "แก้ไขข้อมูล" : "ดูคำขอลงทะเบียนหน่วยงาน"}</Button>
+        <Button size="sm">{canEdit ? "แก้ไขข้อมูล" : "ดูคำขอลงทะเบียนหน่วยงาน"}</Button>
       </Link>
     </div>
   );
