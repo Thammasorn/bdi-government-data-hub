@@ -1596,6 +1596,15 @@ people in one panel and counts `former` and `lapsed` under it. `/…/invitations
 picker, organisation roles only) and every page opens it in place; `useOrganizationScope()` (`OrganizationScope.tsx`)
 gives any page in an organisation's context the `back` link and the chip label with the organisation's name.
 
+**An organisation's datasets and dataset requests are one table on its detail page** (Admin Action Effect › Issue
+261031-06, 2026-10-31). `GET /api/admin/organizations/:id` returns `datasetRequests`, newest `updated_at` first, and **one
+row is one request**: every `dataset` row comes from exactly one request (`source_dataset_registration_request_id` is NOT
+NULL and `Restrict`; the admin `DELETE` removes both), so an approved request carries its dataset's code and status in
+`dataset`, and two tables would list every dataset twice. The join goes through that FK (`sourcedDatasets`), not
+`created_dataset_id`, which is `SetNull`. `currentTaskType` comes from one extra query for the active `review_task`s, so the
+badge names the gate the way the dataset list does. The page shows ten rows and expands in place; there is no sub-page and
+no paging, because one organisation's requests are counted in tens.
+
 **A key's `USED` says the link was used, not that the account is active.** The global invitations table showed a
 deactivated, released account as a green "เปิดใช้งานแล้ว" next to `released+<uuid>@invalid.local`. A `USED` key
 whose account is no longer `ACTIVE` now shows the account's badge ("ยุติการใช้งาน", "เปิดใช้งานเมื่อ …"), and

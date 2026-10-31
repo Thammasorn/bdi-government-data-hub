@@ -7,6 +7,8 @@ import {
   OrganizationStatus,
   Prisma,
   RequestStatus,
+  ReviewTaskStatus,
+  SubjectType,
   UserAccountStatus,
 } from "@prisma/client";
 
@@ -592,7 +594,7 @@ adminRouter.patch("/organizations/:id", async (req, res) => {
 
 /**
  * รายละเอียดหน่วยงานหนึ่งแห่ง พร้อมสิ่งที่ admin ต้องดูเพื่อรู้ว่าเรื่องไปถึงไหนแล้ว:
- * คำขอจดทะเบียนที่ยังเปิดอยู่ และคำเชิญที่ออกให้หน่วยงานนี้
+ * คำขอจดทะเบียนที่ยังเปิดอยู่ คำเชิญที่ออกให้หน่วยงานนี้ และชุดข้อมูลกับคำขอส่งชุดข้อมูลของหน่วยงาน
  */
 adminRouter.get("/organizations/:id", async (req, res) => {
   const parsedId = z.string().uuid().safeParse(req.params.id);
@@ -624,9 +626,72 @@ adminRouter.get("/organizations/:id", async (req, res) => {
     },
   });
 
+  /**
+   * ชุดข้อมูลกับคำขอส่งชุดข้อมูลเป็นตารางเดียว (Admin Action Effect › Issue 261031-06) — หนึ่งแถวคือหนึ่งคำขอ
+   * ชุดข้อมูลทุกชุดเกิดจากคำขอใบเดียว (`source_dataset_registration_request_id` ไม่ว่างและ Restrict — ลบคำขอได้ทางเดียวคือ
+   * DELETE ของ admin ซึ่งลบชุดข้อมูลไปด้วย) และการอนุมัติสร้างชุดเดียวต่อคำขอ แถวของคำขอที่อนุมัติแล้วจึงพกรหัสและสถานะของ
+   * ชุดข้อมูลมาด้วย ไม่มีชุดข้อมูลไหนตกหล่นจากตาราง อ่านผ่าน FK ฝั่งชุดข้อมูล ไม่ใช่ `created_dataset_id` ซึ่ง SetNull ได้
+   * ชื่อที่แสดงอ่านจาก metadata ของชุดข้อมูลก่อน เพราะเป็นฉบับที่อนุมัติแล้ว
+   */
+  const datasetRequestRows = await prisma.datasetRegistrationRequest.findMany({
+    where: { organizationId: organization.id },
+    orderBy: { updatedAt: "desc" },
+    select: {
+      id: true,
+      requestNumber: true,
+      status: true,
+      proposedTitle: true,
+      submittedAt: true,
+      approvedAt: true,
+      createdAt: true,
+      updatedAt: true,
+      metadata: { select: { title: true } },
+      sourcedDatasets: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: {
+          id: true,
+          datasetCode: true,
+          status: true,
+          activatedAt: true,
+          deactivatedAt: true,
+          metadata: { select: { title: true } },
+        },
+      },
+    },
+  });
+  // ด่านที่คำขอค้างอยู่ — ป้ายสถานะบอกว่ารอใคร ไม่ใช่แค่ "อยู่ระหว่างพิจารณา"
+  const activeTasks = await prisma.reviewTask.findMany({
+    where: {
+      subjectType: SubjectType.DATASET_REGISTRATION_REQUEST,
+      subjectId: { in: datasetRequestRows.map((r) => r.id) },
+      status: { in: [ReviewTaskStatus.PENDING, ReviewTaskStatus.IN_PROGRESS] },
+    },
+    select: { subjectId: true, taskType: true },
+  });
+  const taskBySubject = new Map(activeTasks.map((t) => [t.subjectId, t.taskType]));
+  const datasetRequests = datasetRequestRows.map(({ metadata, sourcedDatasets, proposedTitle, ...r }) => {
+    const dataset = sourcedDatasets[0] ?? null;
+    return {
+      ...r,
+      title: dataset?.metadata?.title ?? metadata?.title ?? proposedTitle ?? null,
+      currentTaskType: taskBySubject.get(r.id) ?? null,
+      dataset: dataset
+        ? {
+            id: dataset.id,
+            datasetCode: dataset.datasetCode,
+            status: dataset.status,
+            activatedAt: dataset.activatedAt,
+            deactivatedAt: dataset.deactivatedAt,
+          }
+        : null,
+    };
+  });
+
   res.json({
     organization: await toAdminOrganizationShape(organization),
     registrationRequests: requests,
+    datasetRequests,
     invitations,
   });
 });

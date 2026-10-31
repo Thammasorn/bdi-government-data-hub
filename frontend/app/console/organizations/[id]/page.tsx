@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useState } from "react";
 
 import { ActionDialog } from "@/components/console/ActionDialog";
+import { DataTable, type Column } from "@/components/console/DataTable";
 import { InviteDialog } from "@/components/console/InviteDialog";
 import { MembershipBadge, PersonCell, membershipOf } from "@/components/console/MembersTable";
 import { OrganizationForm } from "@/components/console/OrganizationForm";
@@ -18,18 +19,20 @@ import {
   WarningList,
 } from "@/components/console/ui";
 import { Button } from "@/components/ui/Button";
-import { OrganizationStatusBadge, StatusBadge } from "@/components/ui/Card";
+import { DateTimeCell } from "@/components/list/DateTimeCell";
+import { DatasetStatusBadge, OrganizationStatusBadge, StatusBadge } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import {
   type AdminOrganization,
+  type AdminOrganizationDatasetRow,
   type AdminOrganizationDetail,
   type AdminUserListItem,
 } from "@/lib/admin";
 import { adminErrorView } from "@/lib/admin-errors";
 import { api } from "@/lib/api";
 import { ROLE_LABELS, formatThaiDate } from "@/lib/status";
-import { phoneWithExtension } from "@/lib/types";
+import { datasetTitle, phoneWithExtension } from "@/lib/types";
 import { useAdminData } from "@/lib/use-admin";
 
 type StatusChange = "suspend" | "deactivate" | "reactivate";
@@ -61,8 +64,66 @@ const STATUS_COPY: Record<StatusChange, { title: string; description: string; co
 /** กรอบสรุปบนหน้านี้แสดงกี่แถวก่อนส่งต่อไปหน้าย่อย */
 const PREVIEW_ROWS = 6;
 
+/** ตารางชุดข้อมูลแสดงกี่แถวก่อนกด "แสดงทั้งหมด" — ไม่มีหน้าย่อยให้ส่งต่อ จึงขยายในที่ */
+const DATASET_PREVIEW_ROWS = 10;
+
+/** คำขอที่ยังไม่จบ — ปิดแล้วคืออนุมัติ ไม่อนุมัติ หรือยกเลิก */
+const CLOSED_REQUEST_STATUSES = new Set(["APPROVED", "REJECTED", "CANCELLED"]);
+
+const DATASET_COLUMNS: Column<AdminOrganizationDatasetRow>[] = [
+  {
+    key: "title",
+    header: "ชื่อชุดข้อมูล",
+    cell: (r) => (
+      <div className="min-w-0">
+        <Link
+          href={`/console/registrations/datasets/${r.id}`}
+          onClick={(e) => e.stopPropagation()}
+          className="font-medium text-navy-800 hover:underline"
+        >
+          {datasetTitle(r)}
+        </Link>
+        <span className="block text-[12.5px] text-ink-muted">คำขอ {r.requestNumber}</span>
+      </div>
+    ),
+  },
+  {
+    key: "dataset",
+    header: "ชุดข้อมูล",
+    className: "w-[11rem]",
+    cell: (r) =>
+      r.dataset ? (
+        <div>
+          <span className="font-mono text-[13px] text-navy-800">{r.dataset.datasetCode}</span>
+          <span className="block text-[12.5px] text-ink-muted">
+            {r.dataset.status === "ACTIVE"
+              ? `เปิดใช้เมื่อ ${formatThaiDate(r.dataset.activatedAt ?? r.approvedAt)}`
+              : `ปิดใช้เมื่อ ${formatThaiDate(r.dataset.deactivatedAt)}`}
+          </span>
+        </div>
+      ) : (
+        <span className="text-[13px] text-ink-subtle">ยังไม่เป็นชุดข้อมูล</span>
+      ),
+  },
+  {
+    key: "status",
+    header: "สถานะคำขอ",
+    className: "w-[13rem]",
+    cell: (r) => <DatasetStatusBadge status={r.status} currentTaskType={r.currentTaskType} />,
+  },
+  {
+    key: "updated",
+    header: "อัปเดตล่าสุด",
+    className: "w-[8rem]",
+    cell: (r) => <DateTimeCell value={r.updatedAt} label="อัปเดตล่าสุด" />,
+  },
+];
+
 /**
- * หน่วยงานหนึ่งแห่ง — ทะเบียน สถานะ สมาชิกและคำเชิญ และคำขอลงทะเบียนของหน่วยงานนั้น
+ * หน่วยงานหนึ่งแห่ง — ทะเบียน สถานะ สมาชิกและคำเชิญ คำขอลงทะเบียน และชุดข้อมูลกับคำขอส่งชุดข้อมูลของหน่วยงานนั้น
+ *
+ * ชุดข้อมูลกับคำขอส่งชุดข้อมูลเป็นตารางเดียว (การ์ด Issue 261031-06): ชุดข้อมูลทุกชุดเกิดจากคำขอใบเดียว หนึ่งแถวจึงเป็นคำขอหนึ่งใบ
+ * และใบที่อนุมัติแล้วบอกรหัสชุดข้อมูลในคอลัมน์ของมัน แยกเป็นสองตารางจะได้ชุดข้อมูลที่ซ้ำกับแถว "อนุมัติแล้ว" ของอีกตาราง
  *
  * สมาชิกกับคำเชิญเป็นกรอบเดียว (การ์ด Issue 20261031-04): คนที่ได้รับเชิญยังไม่มีบทบาทจนกว่าจะเปิดใช้งาน กรอบสมาชิกที่แยกจาก
  * กรอบคำเชิญจึงบอก "ไม่มีสมาชิก" ขณะที่คำเชิญถึงผู้ประสานงานรออยู่กรอบถัดไป ผู้ดูแลตอบไม่ได้ว่าหน่วยงานมีผู้ประสานงานแล้ว
@@ -82,6 +143,7 @@ export default function ConsoleOrganizationPage() {
   const [change, setChange] = useState<StatusChange | null>(null);
   const [inviting, setInviting] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [allDatasets, setAllDatasets] = useState(false);
 
   if (loading && !data) return <Spinner />;
   if (error && !data) {
@@ -107,6 +169,9 @@ export default function ConsoleOrganizationPage() {
   // ระหว่างที่หน่วยงานอยู่ในคำขอ เนื้อข้อมูลเป็นของผู้ประสานงาน (การ์ด 20261026-01) — แก้ได้เมื่อเปิดใช้งานแล้ว
   // หรือเมื่อยังไม่มีคำขอสักใบ (ขั้น ① ที่ admin เพิ่งสร้างหน่วยงานล่วงหน้า)
   const lockedRequest = org.activatedAt ? null : (data.registrationRequests[0] ?? null);
+  const datasetRows = data.datasetRequests;
+  const datasetCount = datasetRows.filter((r) => r.dataset !== null).length;
+  const openRequestCount = datasetRows.filter((r) => !CLOSED_REQUEST_STATUSES.has(r.status)).length;
 
   return (
     <div>
@@ -298,6 +363,38 @@ export default function ConsoleOrganizationPage() {
               ))}
             </ul>
           )}
+        </Panel>
+
+        <Panel
+          title="ชุดข้อมูลและคำขอส่งชุดข้อมูล"
+          description={
+            datasetRows.length === 0
+              ? "หนึ่งแถวคือคำขอหนึ่งใบ — คำขอที่อนุมัติแล้วกลายเป็นชุดข้อมูลของหน่วยงาน"
+              : `ชุดข้อมูล ${datasetCount} ชุด · คำขอที่ยังไม่ปิด ${openRequestCount} ใบ · ทั้งหมด ${datasetRows.length} ใบ — หนึ่งแถวคือคำขอหนึ่งใบ คำขอที่อนุมัติแล้วมีรหัสชุดข้อมูลกำกับ`
+          }
+          flush
+        >
+          <DataTable
+            columns={DATASET_COLUMNS}
+            rows={allDatasets ? datasetRows : datasetRows.slice(0, DATASET_PREVIEW_ROWS)}
+            rowKey={(r) => r.id}
+            rowHref={(r) => `/console/registrations/datasets/${r.id}`}
+            loading={false}
+            empty={<EmptyState title="ยังไม่มีชุดข้อมูลและไม่มีคำขอส่งชุดข้อมูล" />}
+          />
+          {datasetRows.length > DATASET_PREVIEW_ROWS ? (
+            <div className="border-t border-line px-5 py-2.5 text-[13px] text-ink-muted">
+              {allDatasets ? `แสดงทั้งหมด ${datasetRows.length} ใบ` : `แสดง ${DATASET_PREVIEW_ROWS} จาก ${datasetRows.length} ใบ`}{" "}
+              —{" "}
+              <button
+                type="button"
+                onClick={() => setAllDatasets((v) => !v)}
+                className="font-medium text-navy-700 underline"
+              >
+                {allDatasets ? "แสดงเฉพาะล่าสุด" : "แสดงทั้งหมด"}
+              </button>
+            </div>
+          ) : null}
         </Panel>
       </div>
 

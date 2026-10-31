@@ -4,7 +4,7 @@
  * แยกจาก lib/types.ts เพราะเป็นอีกชุด API: ของผู้ดูแลระบบ ซึ่งคืนค่าที่หน้าอื่นไม่เคยเห็น (เลขบัตรเต็ม สถานะบัญชี คำเชิญ)
  * ชื่อช่องตรงกับ `accountSelect` ใน backend/src/routes/admin-users.ts และ `toAdminOrganizationShape()` ใน routes/admin.ts
  */
-import type { OrganizationStatus, RequestStatus, Role } from "./status";
+import type { OrganizationStatus, RequestStatus, ReviewTaskType, Role } from "./status";
 
 export type UserAccountStatus = "PENDING" | "ACTIVE" | "SUSPENDED" | "DEACTIVATED";
 export type ActivationKeyStatus = "ISSUED" | "USED" | "EXPIRED" | "REVOKED";
@@ -160,6 +160,8 @@ export interface AdminOrganizationDetail {
     submittedAt: string | null;
     createdAt: string;
   }>;
+  /** คำขอส่งชุดข้อมูลของหน่วยงาน ใหม่สุดก่อน — ใบที่อนุมัติแล้วพกชุดข้อมูลที่มันสร้างมาใน `dataset` */
+  datasetRequests: AdminOrganizationDatasetRow[];
   invitations: Array<{
     id: string;
     status: ActivationKeyStatus;
@@ -167,6 +169,27 @@ export interface AdminOrganizationDetail {
     userAccount: { email: string; status: UserAccountStatus };
     role: { code: Role };
   }>;
+}
+
+/** แถวของตารางชุดข้อมูลและคำขอในหน้าหน่วยงาน — หนึ่งแถวคือคำขอหนึ่งใบ (`GET /api/admin/organizations/:id`) */
+export interface AdminOrganizationDatasetRow {
+  id: string;
+  requestNumber: string;
+  /** ชื่อชุดข้อมูลภาษาไทย — ของชุดข้อมูลถ้าอนุมัติแล้ว ไม่งั้นของคำขอ ร่างที่ยังไม่ตั้งชื่อเป็น null */
+  title: string | null;
+  status: RequestStatus;
+  currentTaskType: ReviewTaskType | null;
+  submittedAt: string | null;
+  approvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  dataset: {
+    id: string;
+    datasetCode: string;
+    status: "ACTIVE" | "INACTIVE";
+    activatedAt: string | null;
+    deactivatedAt: string | null;
+  } | null;
 }
 
 export interface AdminSummary {
