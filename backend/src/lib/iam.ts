@@ -684,12 +684,21 @@ export async function completeActivation(
     );
   }
 
+  /**
+   * ล้างร่องรอยการยุติและการระงับด้วย — บัญชีที่ยุติแล้วกลับมาทางนี้ได้เมื่อถูกเชิญกลับ
+   * (`POST /api/admin/users/:id/reinvite`) ถ้าไม่ล้าง หน้าบัญชีจะขึ้น "ยุติการใช้งานเมื่อ…" บนบัญชีที่ใช้งานอยู่
+   * `activatedAt` เป็นวันที่เปิดใช้ครั้งล่าสุด ครั้งแรกยังอยู่ใน `USER_ACCOUNT_ACTIVATED` แถวเดิม
+   */
   await db.userAccount.update({
     where: { id: params.userAccountId },
     data: {
       status: UserAccountStatus.ACTIVE,
       activatedAt: new Date(),
       lastLoginAt: new Date(),
+      deactivatedAt: null,
+      suspendedAt: null,
+      suspendedBy: null,
+      suspensionReason: null,
       updatedBy: params.userAccountId,
     },
   });

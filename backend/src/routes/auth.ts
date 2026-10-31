@@ -815,7 +815,8 @@ authRouter.post("/activate", async (req, res) => {
     subjectId: key.userAccountId,
     actorId: key.userAccountId,
     organizationId: key.organizationId,
-    metadata: { method: "THAID", activation_key_id: key.id },
+    // `DEACTIVATED` = คนเดิมที่ถูกเชิญกลับเข้ามาในบัญชีเดิม (`POST /api/admin/users/:id/reinvite`) ไม่ใช่บัญชีใหม่
+    metadata: { method: "THAID", activation_key_id: key.id, previous_status: key.userAccount.status },
   });
   // คีย์กับ role เปลี่ยนใน transaction เดียวกับบัญชี — บันทึกแยกแถวเพราะคนละ subject:
   // ประวัติของคีย์ใบนี้ต้องจบที่ USED และ assignment ต้องมีแถวเกิดของตัวเอง

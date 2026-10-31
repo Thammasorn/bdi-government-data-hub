@@ -83,6 +83,7 @@ const CATEGORY_BY_ACTION: Record<AuditActionCode, ActivityCategory> = {
   USER_ACCOUNT_DEACTIVATED: "account",
   USER_ACCOUNT_REACTIVATED: "account",
   USER_IDENTITY_RELEASED: "account",
+  USER_ACCOUNT_REINVITED: "account",
 
   ROLE_ASSIGNED: "role",
   ROLE_REVOKED: "role",

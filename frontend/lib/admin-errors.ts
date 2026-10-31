@@ -25,6 +25,10 @@ const TITLES: Record<string, string> = {
   role_occupied: "ตำแหน่งนี้มีผู้ถืออยู่แล้ว",
   invitation_pending: "มีคำเชิญตำแหน่งนี้ค้างอยู่",
   cid_exists: "เลขบัตรประชาชนนี้มีบัญชีอยู่แล้ว",
+  cid_deactivated: "เลขบัตรนี้เป็นของบัญชีที่ยุติการใช้งานแล้ว",
+  account_deactivated: "บัญชีนี้ยุติการใช้งานแล้ว",
+  reinvite_pending: "มีคำเชิญกลับรอเจ้าตัวเปิดใช้งานอยู่",
+  exists: "อีเมลนี้มีบัญชีอยู่แล้ว",
   email_exists: "อีเมลนี้มีบัญชีอยู่แล้ว",
   code_exists: "รหัสนี้ถูกใช้แล้ว",
   organization_not_active: "หน่วยงานยังไม่เปิดใช้งาน",
@@ -79,6 +83,9 @@ export function adminErrorView(err: unknown): AdminErrorView {
       break;
     }
     case "cid_exists":
+    case "cid_deactivated":
+    case "account_deactivated":
+    case "exists":
     case "email_exists": {
       const id = str(d.userAccountId);
       if (id) view.next = { label: "ไปที่บัญชีนั้น", href: `/console/users/${id}` };

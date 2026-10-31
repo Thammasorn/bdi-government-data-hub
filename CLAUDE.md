@@ -72,7 +72,7 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   error capture, the log read API, the alert digest, the admin's runbook, and the PDPA pack for
   BDI's DPO. Read it before adding an `AuditAction` code or anything that writes to the log store
 - `docs/bdi-admin-portal.postman_collection.json` — Journey A as a runnable collection,
-  plus `/api/admin/users` (**U1–U15**), the legal documents (**L1–L4**: L1 writes `shortname` /
+  plus `/api/admin/users` (**U1–U16**), the legal documents (**L1–L4**: L1 writes `shortname` /
   `legalNotice` / `isRequired`, L2 clears the first two, L3 lists everything plus the variable
   catalogue, L4 publishes a new `.docx`) and the registration requests (**R1–R5**), with three
   `*.postman_environment.json` files beside it (dev checkout / main / public). The admin token
@@ -965,6 +965,27 @@ account answers 409 — deleting a working account is not "removing an invitatio
 `INVITATION_DELETED` audit event carries the email, CID and role, because after the delete it
 is the only record that the invitation ever existed. `docs/09-auth-tokens.md` §2.1 has the
 table.
+
+**A deactivated person who comes back is invited back into the same account, through ThaID**
+(Admin Action Effect › Issue "เชิญคนที่เคยยุติไปแล้วกลับมา", 2026-10-31). The case: an officer moves
+agency, the old agency's account is deactivated and its shared mailbox released to the new hire,
+and the CID is still on the old account — so `POST /api/admin/invitations` answers 409
+`cid_deactivated` (name, former organisation, `userAccountId`) instead of the old `cid_exists`
+advice to resend or delete, neither of which applies to a deactivated account. It reads the e-mail
+**and** the CID before answering: the person's own unreleased e-mail used to report "อีเมลนี้มี
+คำเชิญค้างอยู่แล้ว". `POST /api/admin/users/:id/reinvite` `{email, role, organizationId?, reason}`
+sets the new e-mail and `account_type`, revokes every usable key of the account, and issues a key
+for the new (organisation, role) — the account **stays `DEACTIVATED`**, so neither login nor a
+password reset opens it. The normal link does: ThaID must match the old CID, `POST
+/api/auth/activate` takes non-ACTIVE accounts, and `completeActivation()` now clears
+`deactivated_at` and the suspension columns. `reactivate` (which asks nobody) stays for a mistaken
+deactivation, but answers 409 `reinvite_pending`, as does `release-identity`, while an invite-back
+is waiting; `resend` refuses a key issued before `deactivated_at` (`account_deactivated`); and
+`DELETE /api/admin/invitations/:id` never deletes an account that was ever activated. The
+destination checks live in `invitationTarget()` (`lib/invitation-target.ts`), shared by both
+routes. In the console, `InviteDialog` turns the 409 into a second step (`ActionDialog`'s
+`onConfirm` may return `false` to stay open), and a deactivated account's page has "เชิญกลับเข้ามา".
+`docs/09` §2.2.
 
 **The activation form starts from what is already known, and the name is not the user's to
 type.** `GET /api/auth/invitation` returns a `profile` (prefix, first name, last name, phone)

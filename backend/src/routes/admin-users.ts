@@ -31,6 +31,8 @@
 import { Router } from "../lib/async-route.js";
 import { z } from "zod";
 import {
+  AccountType,
+  ActivationKeyStatus,
   Prisma,
   RequestStatus,
   RoleAssignmentStatus,
@@ -50,6 +52,7 @@ import {
   activeAssignmentWhere,
   assignRole,
   derivedAssignmentStatus,
+  issueActivationKey,
   logKeysRevoked,
   pendingInvitationFor,
   revokeIssuedKeys,
@@ -58,7 +61,8 @@ import {
   roleSeatTaken,
   type Db,
 } from "../lib/iam.js";
-import { sendPasswordResetEmail } from "../lib/mail.js";
+import { invitationTarget } from "../lib/invitation-target.js";
+import { sendInvitationEmail, sendPasswordResetEmail } from "../lib/mail.js";
 import { NotificationType, notifyUsers } from "../lib/notify.js";
 import { PASSWORD_RESET_VIA_ADMIN, issuePasswordResetToken } from "../lib/password-reset.js";
 import { ORGANIZATION_FROZEN, isOrganizationFrozen } from "../lib/organization-freeze.js";
@@ -133,6 +137,29 @@ async function findAccount(id: string) {
 
 function notFound(res: import("express").Response) {
   res.status(404).json({ error: "not_found", message: "ไม่พบบัญชีที่ระบุ" });
+}
+
+/**
+ * บัญชีที่ยุติแล้วซึ่งมีคำเชิญกลับรออยู่ (`POST /:id/reinvite`) — `reactivate` และ `release-identity` ต้องรอ
+ *
+ * คำเชิญกลับสัญญาว่าบัญชีจะเปิดได้ก็ต่อเมื่อเจ้าตัวยืนยัน ThaID ที่ลิงก์ ถ้า `reactivate` ยังกดได้ บัญชีก็เปิดด้วยอีเมลใหม่
+ * โดยไม่มีใครยืนยันตัวตน ส่วน `release-identity` ระหว่างนั้นทิ้งลิงก์ที่ยังใช้ได้ไว้บนบัญชีที่ไม่มีอีเมลใช้งานได้ ทางออกคือ
+ * ให้เจ้าตัวเปิดใช้ทางลิงก์ หรือเพิกถอน / ลบคำเชิญก่อน
+ */
+async function refusePendingReinvite(res: import("express").Response, accountId: string, action: string): Promise<boolean> {
+  const pending = await prisma.activationKey.findFirst({
+    where: { userAccountId: accountId, status: ActivationKeyStatus.ISSUED, expiresAt: { gt: new Date() } },
+    select: { id: true },
+  });
+  if (!pending) return false;
+  res.status(409).json({
+    error: "reinvite_pending",
+    message:
+      `บัญชีนี้มีคำเชิญกลับรอเจ้าตัวเปิดใช้งานอยู่ จึง${action}ไม่ได้ — ให้เจ้าตัวยืนยันตัวตนด้วย ThaID ทางลิงก์ในอีเมล ` +
+      `หรือเพิกถอนคำเชิญนั้นก่อน (POST /api/admin/invitations/${pending.id}/revoke)`,
+    activationKeyId: pending.id,
+  });
+  return true;
 }
 
 /** role ระดับหน่วยงานที่ยังใช้งานได้ของบัญชีนี้ พร้อมชื่อหน่วยงาน */
@@ -769,6 +796,8 @@ adminUserRouter.post("/:id/release-identity", async (req, res) => {
     return;
   }
 
+  if (await refusePendingReinvite(res, account.id, "ถอดอีเมลออก")) return;
+
   const released = `released+${account.id}@invalid.local`;
   const updated = await prisma.userAccount.update({
     where: { id: account.id },
@@ -1000,6 +1029,7 @@ adminUserRouter.post("/:id/reactivate", async (req, res) => {
     });
     return;
   }
+  if (await refusePendingReinvite(res, account.id, "เปิดใช้งานตรง ๆ")) return;
 
   const updated = await prisma.userAccount.update({
     where: { id: account.id },
@@ -1024,6 +1054,171 @@ adminUserRouter.post("/:id/reactivate", async (req, res) => {
     user: updated,
     message:
       "เปิดใช้งานบัญชีกลับมาแล้ว — ยังไม่มีสิทธิ์ใด ๆ ต้องมอบ role ด้วย POST /api/admin/users/:id/roles",
+  });
+});
+
+const reinviteSchema = z
+  .object({
+    email: emailSchema,
+    role: roleEnum,
+    organizationId: uuidSchema("organizationId ต้องเป็น UUID ของหน่วยงานที่มีอยู่แล้ว").optional(),
+    reason: reasonSchema,
+  })
+  .superRefine((value, ctx) => {
+    if (ORGANIZATION_SCOPED_ROLES.includes(value.role) && !value.organizationId) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["organizationId"],
+        message: `role "${value.role}" เป็น role ระดับหน่วยงาน จึงต้องระบุ organizationId`,
+      });
+    }
+    // ค่าที่ release-identity เขียนไว้ — ล็อกอินไม่ได้ และเป็นของบัญชีนี้เท่านั้น
+    if (value.email.endsWith("@invalid.local")) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["email"],
+        message: "กรุณาระบุอีเมลจริงที่เจ้าตัวใช้อยู่ตอนนี้ — ลิงก์เปิดใช้งานจะส่งไปที่อีเมลนี้",
+      });
+    }
+  });
+
+/**
+ * เชิญคนเดิมที่ถูกยุติการใช้งานไปแล้วกลับเข้ามา **ในบัญชีเดิม** (การ์ด Admin Action Effect › Issue
+ * "เชิญคนที่เคยยุติไปแล้วกลับมา" 2026-10-31)
+ *
+ * เคสจริง: เจ้าหน้าที่ย้ายจากหน่วยงานเก่าไปหน่วยงานใหม่ บัญชีที่หน่วยงานเก่าถูกยุติ และอีเมลกลางของหน่วยงานถูกถอด
+ * ไปให้คนใหม่ใช้ เลขบัตรยังผูกกับบัญชีเดิม (หนึ่งเลขบัตรหนึ่งบัญชี และประวัติลงนาม/พิจารณาชี้บัญชีนี้) จึงเชิญด้วย
+ * `POST /api/admin/invitations` ไม่ได้ — ตรงนั้นตอบ 409 `cid_deactivated` แล้วชี้มาที่นี่
+ *
+ * **ต่างจาก `reactivate` ตรงที่ต้องยืนยัน ThaID อีกครั้ง** — `reactivate` + `identity` ก็พาบัญชีกลับมาได้ แต่คนที่ถือ
+ * กล่องจดหมายใหม่จะได้บัญชีของอีกคนไปทั้งบัญชีถ้าผู้ดูแลระบบพิมพ์อีเมลผิด ที่นี่บัญชี **ยัง DEACTIVATED** หลังเชิญ
+ * (ล็อกอินไม่ได้ ตั้งรหัสผ่านใหม่ไม่ได้) จนเจ้าตัวกดลิงก์ ยืนยัน ThaID ให้ตรงเลขบัตรเดิม แล้วตั้งรหัสผ่านใหม่ —
+ * `POST /api/auth/activate` ตัวเดียวกับคำเชิญปกติ ซึ่งพลิกเป็น ACTIVE และมอบบทบาทใน transaction เดียว
+ *
+ * ด่านหน่วยงานปลายทางเหมือนคำเชิญปกติทุกข้อ (`invitationTarget()` + `seatConflict()`) คำเชิญใบอื่นของบัญชีนี้ที่ยัง
+ * ใช้ได้ถูกเพิกถอนทั้งหมด เพื่อไม่ให้มีลิงก์สองใบพาไปคนละหน่วยงาน
+ */
+adminUserRouter.post("/:id/reinvite", async (req, res) => {
+  const account = await findAccount(req.params.id);
+  if (!account) {
+    notFound(res);
+    return;
+  }
+  const parsed = reinviteSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+    return;
+  }
+  const { email, role, reason } = parsed.data;
+
+  if (account.status !== UserAccountStatus.DEACTIVATED) {
+    res.status(409).json({
+      error: "invalid_state",
+      message:
+        `เชิญกลับได้เฉพาะบัญชีที่ยุติการใช้งานแล้ว — บัญชีนี้อยู่สถานะ ${account.status} ` +
+        (account.status === UserAccountStatus.PENDING
+          ? `ถ้าต้องการส่งลิงก์ใหม่ ใช้ส่งคำเชิญซ้ำ (POST /api/admin/invitations/:id/resend)`
+          : `ถ้าต้องการย้ายหน่วยงาน ใช้ POST /api/admin/users/:id/transfer`),
+      accountStatus: account.status,
+    });
+    return;
+  }
+
+  if (email !== account.email) {
+    const taken = await prisma.userAccount.findUnique({ where: { email }, select: { id: true, status: true } });
+    if (taken) {
+      res.status(409).json({
+        error: "email_exists",
+        message:
+          taken.status === UserAccountStatus.DEACTIVATED
+            ? `อีเมล ${email} ยังผูกกับบัญชีอื่นที่ยุติการใช้งานแล้ว — ถอดอีเมลออกจากบัญชีนั้นก่อน แล้วจึงเชิญกลับ`
+            : `อีเมล ${email} เป็นของบัญชีอื่นอยู่แล้ว`,
+        userAccountId: taken.id,
+      });
+      return;
+    }
+  }
+
+  const isOrgScoped = ORGANIZATION_SCOPED_ROLES.includes(role);
+  const organizationId = isOrgScoped ? parsed.data.organizationId! : BDI_ORGANIZATION_ID;
+  const target = await invitationTarget(prisma, { role, organizationId });
+  if (target.refusal) {
+    res.status(target.refusal.status).json(target.refusal.body);
+    return;
+  }
+  const { organization } = target;
+
+  const seat = await seatConflict(prisma, { userAccountId: account.id, roleCode: role, organizationId });
+  if (seat) {
+    res.status(409).json(seat);
+    return;
+  }
+
+  const accountType = isOrgScoped ? AccountType.ORGANIZATION : AccountType.BDI;
+  const result = await prisma.$transaction(async (tx) => {
+    // คำเชิญเก่าทุกใบของบัญชีนี้ — `issueActivationKey()` เพิกถอนเฉพาะใบของหน่วยงานและบทบาทเดียวกัน
+    const replaced = await revokeIssuedKeys(
+      tx,
+      { userAccountId: account.id },
+      { actorId: adminActorId(), reason: "เชิญกลับเข้าระบบด้วยคำเชิญใบใหม่" },
+    );
+    // สถานะไม่แตะ — ยัง DEACTIVATED จนกว่าเจ้าตัวจะยืนยัน ThaID ที่ลิงก์
+    const row = await tx.userAccount.update({
+      where: { id: account.id },
+      data: { email, accountType, updatedBy: adminActorId() },
+      select: accountSelect,
+    });
+    const issued = await issueActivationKey(tx, {
+      userAccountId: account.id,
+      organizationId,
+      roleCode: role,
+      actorId: adminActorId(),
+    });
+    return { row, key: issued.key, record: issued.record, revokedKeys: [...replaced, ...issued.revokedKeys] };
+  });
+
+  // audit ก่อนอีเมลที่ส่ง inline และ throw ได้ — เหตุผลเดียวกับ `POST /api/admin/invitations`
+  await logAudit({
+    action: AuditAction.USER_ACCOUNT_REINVITED,
+    subjectType: AuditSubject.USER_ACCOUNT,
+    subjectId: account.id,
+    organizationId,
+    before: sanitizeState({ email: account.email, accountType: account.accountType, status: account.status }),
+    after: sanitizeState({ email, accountType, role, organizationId }),
+    metadata: { reason, reinvited_via: "ADMIN_API", activation_key_id: result.record.id },
+  });
+  await logKeysRevoked(result.revokedKeys, { revokedVia: "ADMIN_API", replacedByKeyId: result.record.id });
+  await logAudit({
+    action: AuditAction.ACTIVATION_KEY_ISSUED,
+    subjectType: AuditSubject.USER_ACTIVATION_KEY,
+    subjectId: result.record.id,
+    organizationId,
+    // site ใหม่ของ code เดิม จึงผ่าน `sanitizeState()` (CLAUDE.md → Audit log)
+    after: sanitizeState({ email, cid: account.cid, role, name: account.displayName, userAccountId: account.id }),
+    metadata: { issued_via: "ADMIN_API", reason: "REINVITE" },
+  });
+
+  await sendInvitationEmail(email, result.key, {
+    roleLabel: ROLE_LABELS[role],
+    organizationName: organization.nameTh,
+    expiresAt: result.record.expiresAt,
+    internal: organizationId === BDI_ORGANIZATION_ID,
+  });
+
+  res.status(201).json({
+    reinvited: true,
+    user: result.row,
+    activationKeyId: result.record.id,
+    userAccountId: account.id,
+    email,
+    previousEmail: account.email,
+    role,
+    roleLabel: ROLE_LABELS[role],
+    organizationId,
+    expiresAt: result.record.expiresAt,
+    message:
+      `ส่งคำเชิญกลับเข้าระบบไปที่ ${email} แล้ว — บัญชียังปิดอยู่จนกว่าเจ้าตัวจะกดลิงก์ ` +
+      `ยืนยันตัวตนด้วย ThaID ให้ตรงเลขบัตรเดิม และตั้งรหัสผ่านใหม่`,
   });
 });
 

@@ -39,6 +39,7 @@ import {
   roleIdByCode,
   roleSeatTaken,
 } from "../lib/iam.js";
+import { formerOrganizationOf, invitationTarget } from "../lib/invitation-target.js";
 import { sendInvitationEmail } from "../lib/mail.js";
 import { organizationRegistryRules } from "../lib/organization-form.js";
 import { ORGANIZATION_FROZEN, isOrganizationFrozen } from "../lib/organization-freeze.js";
@@ -889,29 +890,16 @@ adminRouter.post("/invitations", async (req, res) => {
   // superRefine ข้างบนบังคับแล้วว่า role ระดับหน่วยงานต้องส่ง organizationId มา
   const organizationId = isOrgScoped ? parsed.data.organizationId! : BDI_ORGANIZATION_ID;
 
-  const organization = await prisma.organization.findUnique({
-    where: { id: organizationId },
-    // ชื่อหน่วยงานขึ้นหัวจดหมายในอีเมลคำเชิญ ("เรียน ผู้ใช้งาน <หน่วยงาน>")
-    select: { id: true, nameTh: true, status: true },
-  });
-  if (!organization) {
-    res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานที่ระบุ" });
-    return;
-  }
   /**
-   * หน่วยงานที่ระงับหรือยุติไว้รับคนใหม่ไม่ได้ ทุก role (การ์ด "ระงับหน่วยงาน" 2026-10-31) — เดิมกั้นได้แค่ผู้มีอำนาจฯ
-   * โดยบังเอิญจากด่าน `organization_not_active` ข้างล่าง ผู้ดำเนินการยังเชิญเข้าได้ ข้อความบอกทางออกของผู้ดูแลระบบ
+   * หน่วยงานปลายทางรับคนเข้าได้หรือไม่ — ไม่พบ · ถูกระงับหรือยุติ (การ์ด "ระงับหน่วยงาน" 2026-10-31) · ผู้มีอำนาจฯ
+   * เข้าหน่วยงานที่ยังไม่ ACTIVE ด่านเดียวกับ `POST /api/admin/users/:id/reinvite` จึงอยู่ใน `invitationTarget()`
    */
-  if (isOrganizationFrozen(organization.status)) {
-    res.status(409).json({
-      error: ORGANIZATION_FROZEN,
-      message:
-        `หน่วยงานนี้อยู่สถานะ "${ORGANIZATION_STATUS_LABELS[organization.status]}" จึงเชิญผู้ใช้เข้าไม่ได้ — ` +
-        `เปิดใช้หน่วยงานอีกครั้งก่อน แล้วจึงเชิญ`,
-      organizationStatus: organization.status,
-    });
+  const target = await invitationTarget(prisma, { role, organizationId });
+  if (target.refusal) {
+    res.status(target.refusal.status).json(target.refusal.body);
     return;
   }
+  const { organization } = target;
 
   /**
    * หนึ่งหน่วยงานมีผู้ดำเนินการหนึ่งคนและผู้มีอำนาจอนุมัติหนึ่งคน — **ที่นั่งไม่ว่างก็เชิญ
@@ -922,28 +910,12 @@ adminRouter.post("/invitations", async (req, res) => {
    * หน่วยงานได้ทั้งคน ตอนนี้ตอบ 409 ตั้งแต่ตอนเชิญ พร้อมบอกว่าใครนั่งอยู่ (ฝั่ง admin
    * ไม่ mask — คนเรียกคือผู้ประสานงานของ BDI) และต้องระงับหรือยุติบัญชีคนนั้นก่อน
    *
-   * สามด่านตามลำดับ:
-   *   1. ผู้มีอำนาจอนุมัติเชิญได้เฉพาะหน่วยงานที่ ACTIVE แล้ว — ก่อนหน้านั้นผู้มีอำนาจฯ
-   *      ต้องมาจากคำขอจดทะเบียน (Journey B) ซึ่งเป็นคนที่ถูกกรอกชื่อไว้บนเอกสาร A0
-   *      การเชิญตรงจะได้คนที่ไม่ตรงกับเอกสารที่หน่วยงานกำลังจะลงนาม
-   *   2. มีคนถือ role นี้และบัญชียังใช้งานอยู่ → 409 `role_occupied`
-   *   3. มีคำเชิญ role นี้ค้างอยู่ → 409 `invitation_pending` — ที่นั่งถูกจองตั้งแต่ตอน
+   * ด่านผู้มีอำนาจฯ เข้าหน่วยงานที่ยังไม่ ACTIVE อยู่ใน `invitationTarget()` ข้างบนแล้ว ที่เหลือคือที่นั่ง:
+   *   1. มีคนถือ role นี้และบัญชียังใช้งานอยู่ → 409 `role_occupied`
+   *   2. มีคำเชิญ role นี้ค้างอยู่ → 409 `invitation_pending` — ที่นั่งถูกจองตั้งแต่ตอน
    *      เชิญ ไม่งั้นคนที่กดลิงก์ทีหลังจะเจอ error ตอนเปิดใช้งานที่ตัวเองแก้ไม่ได้
    */
   if (isOrgScoped) {
-    if (role === ROLE_CODES.ORGANIZATION_APPROVER && organization.status !== OrganizationStatus.ACTIVE) {
-      res.status(409).json({
-        error: "organization_not_active",
-        message:
-          `หน่วยงานนี้ยังไม่เปิดใช้งาน (สถานะ ${organization.status}) จึงยังเชิญผู้มีอำนาจอนุมัติตรง ๆ ไม่ได้ — ` +
-          `ผู้มีอำนาจอนุมัติคนแรกมาจากคำขอจดทะเบียนหน่วยงาน (ผู้ดำเนินการกรอกชื่อไว้ในฟอร์ม ` +
-          `ระบบส่งคำเชิญให้เองเมื่อผู้ประสานงานของ BDI ตรวจสอบผ่าน) ` +
-          `เชิญตรงได้เฉพาะเมื่อหน่วยงานเปิดใช้งานแล้วและที่นั่งว่าง`,
-        organizationStatus: organization.status,
-      });
-      return;
-    }
-
     const roleId = await roleIdByCode(prisma, role);
     const holder = await roleSeatTaken(prisma, { organizationId, roleId });
     if (holder) {
@@ -991,22 +963,69 @@ adminRouter.post("/invitations", async (req, res) => {
    *
    * ส่วน "ลิงก์หาย/หมดอายุ แต่ข้อมูลถูกหมดแล้ว" ใช้ `POST /invitations/:id/resend`
    * ซึ่งไม่รับ payload จึงไม่มีอะไรให้กรอกผิด
+   *
+   * อ่านทั้งอีเมลและเลขบัตรก่อนตอบ เพราะคำตอบขึ้นกับทั้งคู่ — คนเดิมที่ถูกยุติแล้วอาจถูกเชิญกลับด้วยอีเมลเดิมของ
+   * บัญชีตัวเอง ถ้าตอบจากอีเมลก่อนเหมือนเดิม เขาจะได้ "อีเมลนี้มีคำเชิญค้างอยู่แล้ว" ซึ่งไม่จริง
    */
-  const existing = await prisma.userAccount.findUnique({
-    where: { email },
-    select: { id: true, status: true, activationKeys: { select: { id: true }, take: 1 } },
-  });
+  const accountSelect = {
+    id: true,
+    email: true,
+    status: true,
+    prefixTh: true,
+    firstnameTh: true,
+    lastnameTh: true,
+    deactivatedAt: true,
+    activationKeys: { select: { id: true }, take: 1 },
+  } as const;
+  const [existing, sameCid] = await Promise.all([
+    prisma.userAccount.findUnique({ where: { email }, select: accountSelect }),
+    prisma.userAccount.findUnique({ where: { cid }, select: accountSelect }),
+  ]);
+
+  /**
+   * เลขบัตรนี้เป็นของบัญชีที่ยุติการใช้งานแล้ว = คนเดิมกำลังจะกลับมา (การ์ด "เชิญคนที่เคยยุติไปแล้วกลับมา" 2026-10-31)
+   *
+   * ไม่สร้างบัญชีใหม่ (หนึ่งเลขบัตรหนึ่งบัญชี และประวัติเดิมทั้งหมดชี้บัญชีนี้) และไม่ใช้บัญชีเดิมให้เองเงียบ ๆ — ตอบ 409
+   * พร้อมบอกว่าเป็นใคร เคยอยู่ที่ไหน ให้ผู้ดูแลระบบยืนยันด้วย `POST /api/admin/users/:id/reinvite` พร้อมเหตุผล
+   * ซึ่งเปลี่ยนอีเมลของบัญชีนั้น ส่วนเจ้าตัวยังต้องยืนยัน ThaID ให้ตรงเลขบัตรเดิมก่อนบัญชีจะกลับมาใช้ได้
+   */
+  if (sameCid?.status === UserAccountStatus.DEACTIVATED && (!existing || existing.id === sameCid.id)) {
+    const former = await formerOrganizationOf(sameCid.id);
+    const name = fullNameTh(sameCid);
+    res.status(409).json({
+      error: "cid_deactivated",
+      message:
+        `เลขบัตรประชาชนนี้เป็นของ${name ? ` ${name}` : "บัญชี"} ซึ่งยุติการใช้งานไปแล้ว` +
+        `${former ? ` (เคยอยู่ ${former.nameTh})` : ""} — หนึ่งเลขบัตรมีได้หนึ่งบัญชี จึงสร้างบัญชีใหม่ไม่ได้ ` +
+        `ถ้าเป็นคนเดิมที่กลับมา ให้เชิญกลับเข้ามาในบัญชีเดิมด้วย POST /api/admin/users/${sameCid.id}/reinvite ` +
+        `ประวัติเดิมจะอยู่ครบ และเจ้าตัวต้องยืนยันตัวตนด้วย ThaID อีกครั้งก่อนใช้งาน`,
+      userAccountId: sameCid.id,
+      displayName: name,
+      currentEmail: sameCid.email,
+      deactivatedAt: sameCid.deactivatedAt,
+      formerOrganizationId: former?.id ?? null,
+      formerOrganizationName: former?.nameTh ?? null,
+    });
+    return;
+  }
+
   if (existing) {
     res.status(409).json({
       error: "exists",
       message:
         existing.status === UserAccountStatus.ACTIVE
           ? `อีเมลนี้มีบัญชีที่เปิดใช้งานแล้วในระบบ — เชิญซ้ำไม่ได้`
-          : `อีเมลนี้มีคำเชิญค้างอยู่แล้ว — ระบบไม่มีการเชิญซ้ำ ` +
-            `ถ้าต้องการส่งลิงก์ใหม่ให้คนเดิมโดยไม่แก้ข้อมูล ใช้ POST /api/admin/invitations/:id/resend ` +
-            `ถ้าข้อมูลที่เชิญไว้ผิด ให้ลบด้วย DELETE /api/admin/invitations/:id แล้วเชิญใหม่ ` +
-            `(ค้นหาใบเดิมได้ที่ GET /api/admin/invitations?email=...)`,
+          : existing.status === UserAccountStatus.DEACTIVATED
+            ? `อีเมลนี้ยังผูกกับบัญชีที่ยุติการใช้งานแล้วของคนอื่น — ถ้ากล่องจดหมายนี้เปลี่ยนมือแล้ว ` +
+              `ให้ถอดอีเมลออกจากบัญชีนั้นก่อน (POST /api/admin/users/${existing.id}/release-identity) แล้วจึงเชิญ`
+            : existing.status === UserAccountStatus.SUSPENDED
+              ? `อีเมลนี้เป็นของบัญชีที่ถูกระงับอยู่ — เชิญซ้ำไม่ได้ ถ้าเป็นคนเดิม ให้ยกเลิกการระงับที่หน้าบัญชีนั้นแทน`
+              : `อีเมลนี้มีคำเชิญค้างอยู่แล้ว — ระบบไม่มีการเชิญซ้ำ ` +
+                `ถ้าต้องการส่งลิงก์ใหม่ให้คนเดิมโดยไม่แก้ข้อมูล ใช้ POST /api/admin/invitations/:id/resend ` +
+                `ถ้าข้อมูลที่เชิญไว้ผิด ให้ลบด้วย DELETE /api/admin/invitations/:id แล้วเชิญใหม่ ` +
+                `(ค้นหาใบเดิมได้ที่ GET /api/admin/invitations?email=...)`,
       userAccountId: existing.id,
+      accountStatus: existing.status,
       activationKeyId: existing.activationKeys[0]?.id ?? null,
     });
     return;
@@ -1019,19 +1038,24 @@ adminRouter.post("/invitations", async (req, res) => {
    * ความหมายจริงคือ "เลขบัตรนี้มีบัญชีอยู่แล้ว" — บอกไปด้วยว่าเป็นบัญชีอีเมลใด เพราะ
    * คนเรียก endpoint นี้คือเจ้าหน้าที่ที่ถือ admin token ไม่ใช่คนนอก จึงไม่ต้อง mask
    * (ตรงข้ามกับฝั่งฟอร์มจดทะเบียนที่ mask เพราะคนกรอกเป็นใครก็ได้)
+   *
+   * ทางออกขึ้นกับสถานะของบัญชีนั้น — คำแนะนำเดิมชี้ resend / DELETE ทุกกรณี ซึ่งใช้ได้กับคำเชิญที่ยังไม่เปิดใช้เท่านั้น
+   * (บัญชีที่ยุติแล้วตอบ `cid_deactivated` ข้างบนไปแล้ว)
    */
-  const sameCid = await prisma.userAccount.findUnique({
-    where: { cid },
-    select: { id: true, email: true, activationKeys: { select: { id: true }, take: 1 } },
-  });
   if (sameCid) {
     res.status(409).json({
       error: "cid_exists",
       message:
         `เลขบัตรประชาชนนี้เป็นของบัญชี ${sameCid.email} อยู่แล้ว — หนึ่งเลขบัตรมีได้หนึ่งบัญชี ` +
-        `ถ้าเป็นคนเดียวกันและแค่อยากส่งลิงก์ใหม่ ใช้ POST /api/admin/invitations/:id/resend ` +
-        `ถ้าเชิญผิด ให้ลบคำเชิญใบเดิมด้วย DELETE /api/admin/invitations/:id แล้วเชิญใหม่`,
+        (sameCid.status === UserAccountStatus.ACTIVE
+          ? `บัญชีนั้นใช้งานอยู่ ถ้าคนนี้ย้ายหน่วยงานหรือเปลี่ยนบทบาท ให้ใช้ "ย้ายหน่วยงาน" ที่หน้าบัญชีนั้น ` +
+            `(POST /api/admin/users/${sameCid.id}/transfer) ไม่ใช่เชิญใหม่`
+          : sameCid.status === UserAccountStatus.SUSPENDED
+            ? `บัญชีนั้นถูกระงับอยู่ ถ้าเป็นคนเดิม ให้ยกเลิกการระงับก่อน แล้วจึงย้ายหน่วยงานที่หน้าบัญชีนั้น`
+            : `ถ้าเป็นคนเดียวกันและแค่อยากส่งลิงก์ใหม่ ใช้ POST /api/admin/invitations/:id/resend ` +
+              `ถ้าเชิญผิด ให้ลบคำเชิญใบเดิมด้วย DELETE /api/admin/invitations/:id แล้วเชิญใหม่`),
       userAccountId: sameCid.id,
+      accountStatus: sameCid.status,
       activationKeyId: sameCid.activationKeys[0]?.id ?? null,
     });
     return;
@@ -1225,7 +1249,7 @@ adminRouter.post("/invitations/:id/resend", async (req, res) => {
   const key = await prisma.activationKey.findUnique({
     where: { id: parsedId.data },
     include: {
-      userAccount: { select: { id: true, email: true, status: true } },
+      userAccount: { select: { id: true, email: true, status: true, deactivatedAt: true } },
       role: { select: { code: true } },
       organization: { select: { nameTh: true, status: true } },
     },
@@ -1252,6 +1276,25 @@ adminRouter.post("/invitations/:id/resend", async (req, res) => {
       message:
         `บัญชี ${key.userAccount.email} เปิดใช้งานแล้ว จึงไม่ต้องส่งคำเชิญซ้ำ — ` +
         `ถ้าเขาเข้าระบบไม่ได้ เป็นเรื่องของการล็อกอิน ไม่ใช่คำเชิญ`,
+    });
+    return;
+  }
+
+  /**
+   * บัญชีที่ยุติแล้วส่งซ้ำได้เฉพาะคำเชิญกลับ (ออกหลังวันที่ยุติ) — คำเชิญเก่าจากก่อนยุติถูกเพิกถอนไปพร้อมการยุติแล้ว
+   * ถ้าส่งใบนั้นซ้ำ บัญชีจะกลับมาใช้ได้ทางลิงก์โดยไม่ผ่าน `POST /api/admin/users/:id/reinvite` ซึ่งเป็นทางที่บังคับ
+   * เหตุผลและบันทึกว่าใครพาคนนี้กลับมา
+   */
+  if (
+    key.userAccount.status === UserAccountStatus.DEACTIVATED &&
+    (!key.userAccount.deactivatedAt || key.createdAt <= key.userAccount.deactivatedAt)
+  ) {
+    res.status(409).json({
+      error: "account_deactivated",
+      message:
+        `บัญชี ${key.userAccount.email} ยุติการใช้งานแล้ว จึงส่งคำเชิญเดิมซ้ำไม่ได้ — ` +
+        `ถ้าเป็นคนเดิมที่กลับมา ให้เชิญกลับเข้ามาในบัญชีเดิมด้วย POST /api/admin/users/${key.userAccountId}/reinvite`,
+      userAccountId: key.userAccountId,
     });
     return;
   }
@@ -1378,6 +1421,7 @@ adminRouter.delete("/invitations/:id", async (req, res) => {
           email: true,
           cid: true,
           status: true,
+          activatedAt: true,
           _count: {
             select: {
               /**
@@ -1418,8 +1462,15 @@ adminRouter.delete("/invitations/:id", async (req, res) => {
   }
 
   const counts = account._count;
+  /**
+   * บัญชีที่เคยเปิดใช้งานแล้วไม่ถูกลบไปกับคำเชิญเด็ดขาด — คำเชิญกลับ (`POST /api/admin/users/:id/reinvite`) ผูกกับบัญชี
+   * DEACTIVATED ที่มีประวัติลงนามและพิจารณาอยู่ ข้อ role ข้างล่างกันได้เกือบทุกกรณีเพราะ assignment ที่ถูกถอนยังนับ
+   * แต่ไม่ใช่ทุกกรณี จึงต้องพูดตรง ๆ
+   */
   const keepAccountBecause =
-    counts.activationKeys > 0
+    account.activatedAt || account.status === UserAccountStatus.DEACTIVATED
+      ? "บัญชีนี้เคยเปิดใช้งานแล้ว มีประวัติผูกอยู่ — อีเมลยังอยู่กับบัญชีนี้ ถ้าต้องให้คนอื่นใช้ ให้ถอดอีเมลออกที่หน้าบัญชี"
+      : counts.activationKeys > 0
       ? "บัญชีนี้ยังมีคำเชิญใบอื่นที่ใช้ได้อยู่"
       : counts.roleAssignments > 0
         ? "บัญชีนี้มีสิทธิ์ (role) ผูกอยู่แล้ว"
