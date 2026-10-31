@@ -218,6 +218,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   USER_ACCOUNT_DEACTIVATED: "ยุติการใช้งานบัญชี",
   USER_ACCOUNT_REACTIVATED: "เปิดใช้บัญชีอีกครั้ง",
   USER_IDENTITY_RELEASED: "ถอดอีเมลออกจากบัญชี เพื่อเชิญคนใหม่",
+  USER_ACCOUNT_REINVITED: "เชิญกลับเข้าระบบ",
   PASSWORD_RESET_REQUESTED: "ส่งลิงก์ตั้งรหัสผ่านใหม่",
   PASSWORD_RESET_COMPLETED: "ตั้งรหัสผ่านใหม่",
   SESSION_REVOKED: "ออกจากระบบทุกอุปกรณ์",

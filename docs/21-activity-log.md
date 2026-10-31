@@ -394,7 +394,7 @@ SET TIME ZONE 'Asia/Bangkok';              -- ให้ occurred_at แสดง
 | `before.userAccountId` | `ROLE_REVOKED` รูปแบบ A และ C |
 | `before` / `after.assignedSpecialistId` | `REQUEST_ASSIGNED` |
 | `metadata.filters.person` · `cidAccountId` · `emailAccountId` · `actorId` · `subjectId` (เมื่อ `subjectType = USER_ACCOUNT`) | `AUDIT_LOG_READ` — มีคนอ่านประวัติของเขา (4.12) |
-| อีเมล: `metadata.email` · `before`/`after.email` | `LOGIN_FAILED` (ที่พิมพ์) · `PASSWORD_RESET_REQUESTED` · `USER_ACCOUNT_CREATED` · `ACTIVATION_KEY_ISSUED` ทุกแบบ (resend มี**แค่**อีเมล) · `INVITATION_DELETED` · `APPROVER_INVITATION_RECALLED` · `USER_ACCOUNT_DEACTIVATED` · `USER_IDENTITY_RELEASED` · `USER_ACCOUNT_UPDATED` แบบอีเมล/เลขบัตร |
+| อีเมล: `metadata.email` · `before`/`after.email` | `LOGIN_FAILED` (ที่พิมพ์) · `PASSWORD_RESET_REQUESTED` · `USER_ACCOUNT_CREATED` · `ACTIVATION_KEY_ISSUED` ทุกแบบ (resend มี**แค่**อีเมล) · `INVITATION_DELETED` · `APPROVER_INVITATION_RECALLED` · `USER_ACCOUNT_DEACTIVATED` · `USER_IDENTITY_RELEASED` · `USER_ACCOUNT_REINVITED` · `USER_ACCOUNT_UPDATED` แบบอีเมล/เลขบัตร |
 
 ```sql
 \set uid   '5c3e0a4b-…'                -- id ของบัญชี
@@ -672,7 +672,7 @@ category ตัดสินจาก `action` ไม่ใช่ `source_compone
 |---|---|
 | `auth` | `LOGIN_SUCCEEDED` · `LOGIN_FAILED` · `LOGIN_OTP_ISSUED` · `PASSWORD_RESET_REQUESTED` · `PASSWORD_RESET_COMPLETED` · `IDENTITY_VERIFICATION_STARTED` · `IDENTITY_VERIFIED` · `IDENTITY_VERIFICATION_FAILED` |
 | `session` | `SESSION_REVOKED` |
-| `account` | `USER_ACCOUNT_CREATED` · `USER_ACCOUNT_ACTIVATED` · `USER_ACCOUNT_UPDATED` · `USER_ACCOUNT_SUSPENDED` · `USER_ACCOUNT_REINSTATED` · `USER_ACCOUNT_DEACTIVATED` · `USER_ACCOUNT_REACTIVATED` · `USER_IDENTITY_RELEASED` |
+| `account` | `USER_ACCOUNT_CREATED` · `USER_ACCOUNT_ACTIVATED` · `USER_ACCOUNT_UPDATED` · `USER_ACCOUNT_SUSPENDED` · `USER_ACCOUNT_REINSTATED` · `USER_ACCOUNT_DEACTIVATED` · `USER_ACCOUNT_REACTIVATED` · `USER_IDENTITY_RELEASED` · `USER_ACCOUNT_REINVITED` |
 | `role` | `ROLE_ASSIGNED` · `ROLE_REVOKED` |
 | `invitation` | `ACTIVATION_KEY_ISSUED` · `ACTIVATION_KEY_USED` · `ACTIVATION_KEY_REVOKED` · `ACTIVATION_KEY_EXPIRED` · `INVITATION_DELETED` · `APPROVER_INVITATION_RECALLED` |
 | `organization` | `ORGANIZATION_CREATED` · `ORGANIZATION_UPDATED` · `ORGANIZATION_ACTIVATED` |
@@ -1300,7 +1300,7 @@ reconcile ไม่นับเพี้ยน · เส้นตาย 2 วิ
 
 | ที่อยู่ | เป็นรหัส | เป็นข้อความที่คนพิมพ์ |
 |---|---|---|
-| `metadata.reason` | `SESSION_REVOKED` (`SessionRevokeReason`) · `ROLE_REVOKED` รูปแบบ B (`REPLACED_BY_NEW_HOLDER`) · `ACTIVATION_KEY_ISSUED` (`INVITATION` `RESEND` `APPROVER_INVITATION`) | admin: `USER_ACCOUNT_SUSPENDED` `REACTIVATED` `DEACTIVATED` `UPDATED` (อีเมล/เลขบัตร) · `USER_IDENTITY_RELEASED` · `ROLE_ASSIGNED` ของ admin · `ROLE_REVOKED` A และ C (A ของการแทนที่ที่นั่งเป็นข้อความคงที่ `"มีผู้รับผิดชอบคนใหม่แทน"`) · `ACTIVATION_KEY_REVOKED` (ข้อความของ admin, `note` ของ recall หรือข้อความคงที่ภาษาไทยของโค้ด) · `REQUEST_UPDATED` `RESET_TO_DRAFT` `CANCELLED` (admin) `DELETED` · `APPROVER_INVITATION_RECALLED` (admin reset) · ผู้อ่าน log: `AUDIT_LOG_READ` (จาก `x-log-reason`) · `ERROR_ISSUE_STATUS_CHANGED` (จาก body — ซ้ำใน `after.statusReason`) — ในสำเนาทั้งสองก็ถูกยกขึ้น `reason` ชั้นบนเหมือนแถวอื่น |
+| `metadata.reason` | `SESSION_REVOKED` (`SessionRevokeReason`) · `ROLE_REVOKED` รูปแบบ B (`REPLACED_BY_NEW_HOLDER`) · `ACTIVATION_KEY_ISSUED` (`INVITATION` `RESEND` `APPROVER_INVITATION` `REINVITE`) | admin: `USER_ACCOUNT_SUSPENDED` `REACTIVATED` `DEACTIVATED` `UPDATED` (อีเมล/เลขบัตร) · `USER_IDENTITY_RELEASED` · `ROLE_ASSIGNED` ของ admin · `ROLE_REVOKED` A และ C (A ของการแทนที่ที่นั่งเป็นข้อความคงที่ `"มีผู้รับผิดชอบคนใหม่แทน"`) · `ACTIVATION_KEY_REVOKED` (ข้อความของ admin, `note` ของ recall หรือข้อความคงที่ภาษาไทยของโค้ด) · `REQUEST_UPDATED` `RESET_TO_DRAFT` `CANCELLED` (admin) `DELETED` · `APPROVER_INVITATION_RECALLED` (admin reset) · ผู้อ่าน log: `AUDIT_LOG_READ` (จาก `x-log-reason`) · `ERROR_ISSUE_STATUS_CHANGED` (จาก body — ซ้ำใน `after.statusReason`) — ในสำเนาทั้งสองก็ถูกยกขึ้น `reason` ชั้นบนเหมือนแถวอื่น |
 | `metadata.admin_reason` | — | `SESSION_REVOKED` ของ `DELETE /api/admin/users/:id/sessions` (ที่นั่น `reason` = `LOGOUT_ALL`) |
 | `metadata.note` | — | `APPROVER_INVITATION_RECALLED` ขา recall |
 | `after.note` | — | ผลการตรวจทุกรหัส (4.9) · `SPECIALIST_COMMENT_RECORDED` |
@@ -1749,7 +1749,38 @@ operation คงรหัสเดิมไว้ ข้อความอิส
 
 - **ข้อมูลส่วนบุคคล** อีเมลเดิม (ไม่ปิด) · `reason`
 - ไม่มีตัวกันการปล่อยซ้ำ: ปล่อยบัญชีที่ปล่อยแล้วได้แถวที่ `before.email` เท่ากับ `after.email`
+- ปฏิเสธ 409 `reinvite_pending` ระหว่างที่บัญชีมีคำเชิญกลับรออยู่ (ดู `USER_ACCOUNT_REINVITED`)
 - **โค้ด** `routes/admin-users.ts:685`
+
+#### `USER_ACCOUNT_REINVITED` — เชิญคนเดิมที่ถูกยุติไปแล้วกลับเข้ามาในบัญชีเดิม
+
+การ์ด Admin Action Effect › Issue "เชิญคนที่เคยยุติไปแล้วกลับมา" (2026-10-31) เคสจริงคือเจ้าหน้าที่ย้ายหน่วยงาน บัญชีที่หน่วยงานเก่า
+ถูกยุติและอีเมลกลางถูกถอดไปให้คนใหม่ เลขบัตรยังผูกกับบัญชีเดิม (หนึ่งเลขบัตรหนึ่งบัญชี) `POST /api/admin/invitations` จึงตอบ
+409 `cid_deactivated` แล้วชี้มาที่นี่ แถวนี้บอกว่า**ใคร**พาคนนี้กลับมาและ**ทำไม** บัญชียัง `DEACTIVATED` หลังแถวนี้ — กลับมา
+ใช้งานได้เมื่อเจ้าตัวยืนยัน ThaID ที่ลิงก์เท่านั้น ซึ่งเขียน `USER_ACCOUNT_ACTIVATED` ที่มี `metadata.previous_status: "DEACTIVATED"`
+
+**เกิดเมื่อ**
+- `POST /api/admin/users/:id/reinvite` `{email, role, organizationId?, reason}` — บัญชี `DEACTIVATED` และหน่วยงานปลายทางผ่าน
+  ด่านเดียวกับคำเชิญปกติ (`invitationTarget()` + `seatConflict()`)
+
+| ช่อง | ค่า |
+|---|---|
+| actor | **แถว admin** |
+| subject | UA · บัญชีนั้น |
+| organization_id | หน่วยงานปลายทาง |
+| result | `SUCCESS` |
+| before / after | `{email: <เดิม>, accountType, status: "DEACTIVATED"}` / `{email: <ใหม่>, accountType, role, organizationId}` ผ่าน `sanitizeState()` |
+
+| metadata | ความหมาย | ตัวอย่าง |
+|---|---|---|
+| `reinvited_via` | ช่องทาง | `"ADMIN_API"` |
+| `reason` | เหตุผลที่ admin พิมพ์ (10–500 ตัว) | `"ย้ายมาจากหน่วยงานเดิม เป็นผู้ประสานงานที่นี่"` |
+| `activation_key_id` | คีย์ใบใหม่ | `"3f1c…"` |
+
+- ตามด้วย `ACTIVATION_KEY_REVOKED` ของคำเชิญใบเก่าทุกใบของบัญชีนั้นที่ยังใช้ได้ และ `ACTIVATION_KEY_ISSUED` ที่ `metadata.reason: "REINVITE"`
+  — site ใหม่ของรหัสเดิม เลขบัตรใน `after` จึงถูกปิดแล้ว ต่างจาก `INVITATION` / `RESEND`
+- **ข้อมูลส่วนบุคคล** อีเมลเดิมและใหม่ (ไม่ปิด) · `reason`
+- **โค้ด** `routes/admin-users.ts` (`POST /:id/reinvite`)
 
 #### `USER_ACCOUNT_SUSPENDED` · `USER_ACCOUNT_REINSTATED` · `USER_ACCOUNT_REACTIVATED` — ระงับ · คืนสถานะ · เปิดบัญชีที่ยุติกลับมา
 

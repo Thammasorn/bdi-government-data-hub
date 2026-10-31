@@ -49,7 +49,11 @@ export function ActionDialog({
   children?: ReactNode;
   /** ช่องเพิ่มเติมยังไม่ครบ — ปิดปุ่มไว้ */
   canSubmit?: boolean;
-  onConfirm: (reason: string) => Promise<void>;
+  /**
+   * คืน `false` = ยังไม่จบ กล่องเปิดค้างไว้โดยไม่มีข้อผิดพลาด — สำหรับคำสั่งที่คำตอบของ API เปลี่ยนคำถาม (กล่องเชิญ
+   * ที่พบว่าเลขบัตรเป็นของคนเดิมที่ถูกยุติไปแล้ว จึงถามต่อว่าจะเชิญกลับหรือไม่) ไม่คืนอะไร = สำเร็จ ปิดกล่อง
+   */
+  onConfirm: (reason: string) => Promise<void | false>;
 }) {
   const [text, setText] = useState("");
   const [phrase, setPhrase] = useState("");
@@ -71,8 +75,7 @@ export function ActionDialog({
     setBusy(true);
     setError(null);
     try {
-      await onConfirm(text.trim());
-      onClose();
+      if ((await onConfirm(text.trim())) !== false) onClose();
     } catch (err) {
       setError(adminErrorView(err));
     } finally {

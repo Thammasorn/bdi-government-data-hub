@@ -56,6 +56,11 @@ export const AuditAction = {
    * **เลขบัตรไม่มีทางถูกปล่อย** เลขบัตรคือคน ไม่ใช่ตำแหน่ง
    */
   USER_IDENTITY_RELEASED: "USER_IDENTITY_RELEASED",
+  /**
+   * เชิญคนเดิมกลับเข้ามาในบัญชีเดิม (`POST /api/admin/users/:id/reinvite`) — บัญชีที่ยุติแล้วได้อีเมลใหม่และคำเชิญ
+   * ใบใหม่ แต่ยัง DEACTIVATED จนเจ้าตัวยืนยัน ThaID ที่ลิงก์ `before` เก็บอีเมลเดิมไว้ เพราะแถวบัญชีถูกเขียนทับ
+   */
+  USER_ACCOUNT_REINVITED: "USER_ACCOUNT_REINVITED",
 
   ACTIVATION_KEY_ISSUED: "ACTIVATION_KEY_ISSUED",
   /**

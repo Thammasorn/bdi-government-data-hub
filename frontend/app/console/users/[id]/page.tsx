@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 
 import { useSession } from "@/components/SessionProvider";
 import { ActionDialog } from "@/components/console/ActionDialog";
+import { InviteDialog } from "@/components/console/InviteDialog";
 import { OrganizationPicker } from "@/components/console/OrganizationPicker";
 import {
   Badge,
@@ -50,6 +51,7 @@ type Dialog =
   | "deactivate"
   | "reactivate"
   | "release"
+  | "reinvite"
   | "password"
   | "sessions"
   | "identity"
@@ -108,10 +110,17 @@ export default function ConsoleUserPage() {
           </span>
         }
         description={u.email}
-        actions={<StatusActions user={u} isSelf={isSelf} open={setDialog} />}
+        actions={
+          <StatusActions
+            user={u}
+            isSelf={isSelf}
+            pendingInvitation={data.activationKeys.some((k) => invitationState(k) === "ISSUED")}
+            open={setDialog}
+          />
+        }
       />
 
-      <StatusBanner user={u} />
+      <StatusBanner user={u} pendingInvitation={data.activationKeys.some((k) => invitationState(k) === "ISSUED")} />
       <WarningList warnings={warnings} className="mb-5" />
 
       <Tabs
@@ -332,7 +341,7 @@ export default function ConsoleUserPage() {
         open={dialog === "release"}
         onClose={close}
         title="ถอดอีเมลออกจากบัญชี เพื่อเชิญคนใหม่ด้วยอีเมลนี้"
-        description={`ใช้เมื่อต้องการเชิญคนใหม่ด้วยอีเมล ${u.email} เช่น อีเมลกลางของหน่วยงานที่ส่งต่อให้เจ้าหน้าที่คนใหม่ — บัญชีนี้และประวัติยังอยู่ แต่จะเปิดใช้อีกครั้งไม่ได้`}
+        description={`ใช้เมื่อต้องการเชิญคนใหม่ด้วยอีเมล ${u.email} เช่น อีเมลกลางของหน่วยงานที่ส่งต่อให้เจ้าหน้าที่คนใหม่ — บัญชีนี้และประวัติยังอยู่ ถ้าเจ้าของบัญชีกลับมาภายหลัง ให้ "เชิญกลับเข้ามา" ด้วยอีเมลที่เขาใช้อยู่ตอนนั้น`}
         confirmLabel="ถอดอีเมลออก"
         tone="danger"
         confirmPhrase={u.email}
@@ -340,6 +349,19 @@ export default function ConsoleUserPage() {
           await post("/release-identity", { releaseEmail: true, reason });
           done("ถอดอีเมลออกจากบัญชีแล้ว", `ส่งคำเชิญถึงคนใหม่ด้วย ${u.email} ได้แล้ว`);
         }}
+      />
+      <InviteDialog
+        open={dialog === "reinvite"}
+        reinviteAccount={{
+          userAccountId: u.id,
+          displayName: accountName(u),
+          cid: u.cid ?? "",
+          currentEmail: u.email,
+          deactivatedAt: u.deactivatedAt,
+          formerOrganizationName: formerOrganization(data.roleAssignments),
+        }}
+        onClose={close}
+        onDone={(email) => done("ส่งคำเชิญกลับเข้าระบบแล้ว", `บัญชียังปิดอยู่จน ${email} กดลิงก์และยืนยันตัวตนด้วย ThaID`)}
       />
       <ActionDialog
         open={dialog === "password"}
@@ -413,10 +435,13 @@ export default function ConsoleUserPage() {
 function StatusActions({
   user,
   isSelf,
+  pendingInvitation,
   open,
 }: {
   user: AdminUser;
   isSelf: boolean;
+  /** คำเชิญกลับรออยู่ — เปิดใช้ตรง ๆ หรือถอดอีเมลไม่ได้จนเจ้าตัวยืนยัน ThaID หรือคำเชิญถูกเพิกถอน (API ตอบ `reinvite_pending`) */
+  pendingInvitation: boolean;
   open: (d: Dialog) => void;
 }) {
   if (isSelf) return null;
@@ -444,7 +469,11 @@ function StatusActions({
       ) : null}
       {user.status === "DEACTIVATED" ? (
         <>
-          {user.email.endsWith("@invalid.local") ? null : (
+          {/* คนเดิมกลับมา (เช่น ย้ายไปหน่วยงานอื่น) — ต้องยืนยัน ThaID ใหม่ ต่างจาก "เปิดใช้อีกครั้ง" ที่ไม่ถาม */}
+          <Button size="sm" onClick={() => open("reinvite")}>
+            เชิญกลับเข้ามา
+          </Button>
+          {user.email.endsWith("@invalid.local") || pendingInvitation ? null : (
             <>
               <Button size="sm" onClick={() => open("reactivate")}>
                 เปิดใช้อีกครั้ง
@@ -460,7 +489,15 @@ function StatusActions({
   );
 }
 
-function StatusBanner({ user }: { user: AdminUser }) {
+/** หน่วยงานสุดท้ายที่บัญชีนี้เคยอยู่ — บัญชีที่ยุติแล้วไม่มีบทบาทที่ใช้งานอยู่ ใบที่ถูกถอนล่าสุดคือที่เดิมของเขา */
+function formerOrganization(assignments: AdminRoleAssignment[]): string | null {
+  const latest = [...assignments]
+    .filter((a) => a.organization)
+    .sort((a, b) => (b.revokedAt ?? b.effectiveFrom ?? "").localeCompare(a.revokedAt ?? a.effectiveFrom ?? ""))[0];
+  return latest?.organization?.nameTh ?? null;
+}
+
+function StatusBanner({ user, pendingInvitation }: { user: AdminUser; pendingInvitation: boolean }) {
   if (user.status === "SUSPENDED") {
     return (
       <div className="mb-5 rounded-xl bg-danger-bg px-4 py-3 text-[14px]">
@@ -472,7 +509,12 @@ function StatusBanner({ user }: { user: AdminUser }) {
   if (user.status === "DEACTIVATED") {
     return (
       <div className="mb-5 rounded-xl bg-navy-50 px-4 py-3 text-[14px] text-ink">
-        บัญชียุติการใช้งานเมื่อ {formatThaiDate(user.deactivatedAt)} — เข้าระบบไม่ได้และไม่มีบทบาท
+        <p>บัญชียุติการใช้งานเมื่อ {formatThaiDate(user.deactivatedAt)} — เข้าระบบไม่ได้และไม่มีบทบาท</p>
+        <p className="mt-1 text-ink-muted">
+          {pendingInvitation
+            ? "มีคำเชิญกลับรอเจ้าตัวเปิดใช้งาน — บัญชีจะกลับมาใช้ได้เมื่อเขายืนยันตัวตนด้วย ThaID และตั้งรหัสผ่านใหม่ ดูหรือส่งซ้ำได้ที่แท็บการเข้าใช้งาน"
+            : "ถ้าคนนี้กลับมา เช่น ย้ายไปอยู่หน่วยงานอื่น ให้กด \"เชิญกลับเข้ามา\" — ใช้บัญชีและเลขบัตรเดิม ประวัติอยู่ครบ และเจ้าตัวต้องยืนยันตัวตนด้วย ThaID อีกครั้ง"}
+        </p>
       </div>
     );
   }
