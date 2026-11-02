@@ -352,7 +352,8 @@ const CONTACT_ACCOUNT_SELECT = {
 } as const;
 
 /**
- * ตัวตนของ "ผู้ประสานงานของหน่วยงาน" (ส่วนที่ 3) เป็นของบัญชีที่เปิดคำขอใบนี้ ไม่ใช่ของฟอร์ม
+ * ตัวตนของ "ผู้ประสานงานของหน่วยงาน" (ส่วนที่ 3) เป็นของบัญชีผู้ประสานงานคนปัจจุบัน ไม่ใช่ของฟอร์ม
+ * (ใครคือคนนั้น — ดู `contactAccount()`)
  *
  * ผู้กรอกคือคนที่ล็อกอินอยู่ ระบบรู้จักเขาอยู่แล้ว — คำนำหน้า ชื่อ นามสกุลผ่าน ThaID
  * และคำเชิญ ส่วนอีเมลคือตัวบัญชีเอง ให้กรอกใหม่ในฟอร์มมีแต่ทางเสีย: ได้ชื่อที่ไม่ตรงกับ
@@ -390,10 +391,36 @@ function contactFromAccount(account: ContactAccount | null) {
   };
 }
 
-/** บัญชีของคนที่เปิดคำขอใบนี้ — ผู้ประสานงานของหน่วยงานคือคนนั้นเสมอ */
-function contactAccount(request: { createdBy: string }) {
-  return prisma.userAccount.findUnique({
-    where: { id: request.createdBy },
+/**
+ * บัญชีของผู้ประสานงานคนปัจจุบันของหน่วยงานเจ้าของคำขอ — `null` เมื่อคำขอไม่ได้อยู่ในมือหน่วยงาน
+ * หรือที่นั่งว่าง
+ *
+ * เดิมอ่านจาก `request.createdBy` ซึ่งเป็นคนที่กดสร้างคำขอและเปลี่ยนไม่ได้อีก พอผู้ดูแลระบบ
+ * เปลี่ยนตัวผู้ประสานงาน (ยุติบัญชีคนเดิม ปล่อยอีเมล เชิญคนใหม่) คนใหม่แก้คำขอได้ตาม `canEdit()`
+ * แต่ส่วนที่ 3 ยังขึ้นชื่อคนเดิมกับอีเมล `released+…@invalid.local` ล็อกไว้แก้ไม่ได้ และการ
+ * บันทึกร่างก็เขียนคนเดิมกลับลง snapshot ไปถึง A0 (Issue 261101-01) — คำขอเป็นของหน่วยงาน
+ * ผู้ประสานงานจึงต้องเป็นคนที่นั่งที่นั่ง `ORGANIZATION_USER` ของหน่วยงานนั้นอยู่ตอนนี้ ซึ่งเป็น
+ * คนเดียวกับที่ `canEdit()` ปล่อยให้แก้ (หนึ่งหน่วยงานมีได้คนเดียว — ดู `roleSeatTaken()`)
+ *
+ * **ไม่ถอยไปหา `createdBy`** เมื่อที่นั่งว่าง (คนเดิมถูกระงับ หรือยุติแล้วยังไม่มีคนใหม่) —
+ * ถอยไปก็ได้อีเมลที่ถูกปล่อยกลับมาอีก `null` ทำให้ไม่มีช่องไหนถูกล็อกและหน้าจอแสดง snapshot
+ *
+ * อ่านเฉพาะตอนคำขอยังอยู่ในมือหน่วยงาน (DRAFT / RETURNED) คำขอที่นำส่งแล้วแสดง snapshot
+ * ซึ่งคือสิ่งที่นำส่งจริงและพิมพ์ลง A0 แล้ว — ถ้าอ่านบัญชีต่อ การเปลี่ยนตัวระหว่างรอตรวจจะทำให้
+ * หน้ารายละเอียดและ A0 ที่ render ใหม่ทุกครั้งที่เปิดอ่านเปลี่ยนชื่อผู้ยื่นไปเองทั้งที่ไม่มีใครแก้คำขอ
+ */
+async function contactAccount(request: { organizationId: string; status: RequestStatus }) {
+  if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
+    return null;
+  }
+  const roleId = await roleIdByCode(prisma, ROLE_CODES.ORGANIZATION_USER);
+  return prisma.userAccount.findFirst({
+    where: {
+      status: UserAccountStatus.ACTIVE,
+      roleAssignments: {
+        some: { roleId, organizationId: request.organizationId, ...activeAssignmentWhere() },
+      },
+    },
     select: CONTACT_ACCOUNT_SELECT,
   });
 }

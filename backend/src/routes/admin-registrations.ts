@@ -51,7 +51,7 @@ import {
 } from "../lib/iam.js";
 import { adminActorId } from "../lib/context.js";
 import { buildJourneyProgress, summariseProgress } from "../lib/journey-steps.js";
-import { NotificationType, notifyUsers, organizationMemberIds } from "../lib/notify.js";
+import { NotificationType, notifyUsers, organizationMemberIds, submitterIfMember } from "../lib/notify.js";
 import { organizationDraftSchema, toRequestData } from "../lib/organization-form.js";
 import { revokeSessionsFor } from "../lib/session.js";
 import { ROLE_CODES } from "../lib/system.js";
@@ -734,7 +734,7 @@ adminRegistrationRouter.post("/organizations/:id/cancel", async (req, res) => {
   await logKeysRevoked(seat?.revokedKeys ?? [], { revokedVia: "ADMIN_CANCEL_API" });
 
   const members = await organizationMemberIds(request.organizationId);
-  await notifyUsers([...members.users, request.createdBy], {
+  await notifyUsers([...members.users, submitterIfMember(request.createdBy, members)], {
     type: NotificationType.REQUEST_CANCELLED,
     title: "คำขอลงทะเบียนหน่วยงานถูกยกเลิก",
     message: `ผู้ดูแลระบบยกเลิกคำขอ ${request.requestNumber} เหตุผล: ${reason}`,
@@ -1389,7 +1389,7 @@ async function announceReset(params: {
   reason: string;
 }) {
   const members = await organizationMemberIds(params.organizationId);
-  await notifyUsers([...members.users, params.createdBy], {
+  await notifyUsers([...members.users, submitterIfMember(params.createdBy, members)], {
     type: NotificationType.REQUEST_RETURNED,
     title: params.title,
     message: `ผู้ดูแลระบบปรับคำขอกลับเป็นฉบับร่าง เหตุผล: ${params.reason}`,

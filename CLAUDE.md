@@ -1714,8 +1714,9 @@ answer 400 when a body carries a *different* code (an equal one passes, so a sta
 saves). Fixing a wrong code is `PATCH /api/admin/organizations/:id`, an admin route.
 `docs/10-admin-prefill-organization.md` §4.1 has the reasoning.
 
-**Neither is "ผู้ประสานงานของหน่วยงาน" (section 3 of that form).** The person filling it in is the account
-that opened the request, so prefix, first name, last name, e-mail and telephone come off
+**Neither is "ผู้ประสานงานของหน่วยงาน" (section 3 of that form).** The person filling it in is the
+organisation's **current** coordinator — the ACTIVE account in its `ORGANIZATION_USER` seat, found by
+`contactAccount()` — so prefix, first name, last name, e-mail and telephone come off
 `iam.user_account` and the form only displays them — the same arrangement `/activate` uses, and
 enforced the same way: `toApiShape()` prefers the **account** over the request snapshot (as the
 organisation name prefers master), and `POST /api/organizations` / `PATCH /:id` write the account's
@@ -1724,6 +1725,16 @@ values over whatever the body carried, silently, so a direct API call with a for
 map it feeds into the response is what greys the inputs — the page holds no copy of the rule. A field
 the **account** has no value for stays editable and required, which is the ordinary case for the
 prefix, since ThaID sends no `title` claim. Position, division and national ID are still typed in.
+
+**It is not `request.createdBy`**, which is what it read until 2026-11-02 (Admin Action Effect › Issue
+261101-01). The creator is fixed for good, so once an administrator replaced the coordinator (deactivate,
+release the e-mail, invite someone else) the newcomer could edit the request through `canEdit()` but saw
+the old coordinator's name and `released+…@invalid.local` greyed out in section 3, and every save wrote
+the old coordinator back into the snapshot. The account is read **only while the request is `DRAFT` or
+`RETURNED`**; a submitted request shows its snapshot, which is what was submitted and what A0 prints. A0
+is rendered from `toApiShape()` on every read, so reading the account there too would let a change of
+coordinator rewrite an agreement under review. An empty seat answers `null` and the snapshot shows,
+unlocked; it never falls back to the creator, whose e-mail may be the released placeholder.
 
 **Never split `formatThaiDate()`'s output on spaces to get one half of it.** Both list tables
 did (`.split(" ").slice(0, 3)`) while they wanted the date alone, and it worked only by accident:
