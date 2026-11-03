@@ -447,6 +447,12 @@ function summaryTable(rows: Array<[string, string]>): string {
 // ------------------------------------------------------------------ อีเมลแต่ละชนิด
 
 /**
+ * หัวข้อของอีเมลคำเชิญ — อีเมลเตือน (`sendInvitationReminderEmail`) พิมพ์หัวข้อนี้ให้ผู้รับใช้ค้นหาอีเมลฉบับเดิมในกล่องจดหมาย
+ * สองฉบับจึงต้องอ่านค่าเดียวกัน แก้ที่นี่ที่เดียว
+ */
+export const INVITATION_EMAIL_SUBJECT = "คำเชิญเข้าใช้งานระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)";
+
+/**
  * คำเชิญเข้าใช้งานระบบ — ฉบับเดียวที่ถือ Activation Key ตัวจริง
  *
  * เขียนใหม่ตามการ์ด "แก้เนื้อหา invitation email" ให้เป็นหนังสือนำส่งอย่างที่หน่วยงานรัฐ
@@ -491,7 +497,7 @@ export async function sendInvitationEmail(
 
   await send(
     to,
-    "คำเชิญเข้าใช้งานระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)",
+    INVITATION_EMAIL_SUBJECT,
     layout({
       title: "ขอนำส่ง Activation Key สำหรับเข้าใช้งานระบบ",
       intro: info.internal
@@ -535,6 +541,77 @@ export async function sendInvitationEmail(
            ขอแสดงความนับถือ<br>
            <span style="color:${TEXT};">สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)</span>
          </p>`,
+      contact: false,
+    }),
+  );
+}
+
+/**
+ * เตือนว่าคำเชิญใกล้หมดอายุ — ส่งครั้งเดียวต่อคีย์ N วันก่อนหมดอายุ (`invitation_reminder_days`, การ์ด "อีเมลเตือนก่อนคำเชิญหมดอายุ" 2026-11-03)
+ *
+ * **ไม่มีลิงก์และไม่มี Activation Key** ตาม requirement: ระบบเก็บแค่ HMAC ของคีย์ จึงสร้างลิงก์เดิมซ้ำไม่ได้ และการออกคีย์ใหม่จะยืดอายุคำเชิญ
+ * ไปเงียบ ๆ อีเมลจึงบอกสิ่งที่ผู้รับใช้หาอีเมลคำเชิญฉบับเดิมได้ — หัวข้อ (`INVITATION_EMAIL_SUBJECT`) และวันเวลาที่ส่ง — พร้อมวันหมดอายุ
+ * และช่องทางขอคีย์ใหม่ ส่วนที่เหลือเขียนเป็นหนังสือนำส่งแบบเดียวกับอีเมลคำเชิญ (คำขึ้นต้น ตารางสรุป คำเตือน คำลงท้าย) เพราะผู้รับจะอ่านสองฉบับคู่กัน
+ *
+ * `issuedAt` คือวันที่ของคีย์ใบที่ยังใช้ได้ — คำเชิญที่ถูกส่งซ้ำ (resend) ได้คีย์ใบใหม่ อีเมลฉบับที่ต้องหาจึงเป็นฉบับล่าสุด ไม่ใช่ฉบับแรก
+ */
+export async function sendInvitationReminderEmail(
+  to: string,
+  info: { roleLabel: string; organizationName: string; issuedAt: Date; expiresAt: Date; internal: boolean },
+) {
+  const organizationName = escapeHtml(info.organizationName);
+  const dateTime = new Intl.DateTimeFormat("th-TH", { dateStyle: "long", timeStyle: "short", timeZone: "Asia/Bangkok" });
+  const sentAt = `${dateTime.format(info.issuedAt)} น.`;
+  const expiresAt = `${dateTime.format(info.expiresAt)} น.`;
+
+  const paragraph = (html: string) =>
+    `<p style="margin:0 0 16px;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">${html}</p>`;
+
+  await send(
+    to,
+    `Activation Key ของท่านใกล้หมดอายุ — ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)`,
+    layout({
+      title: "แจ้งเตือน Activation Key ใกล้หมดอายุ",
+      intro: info.internal ? `เรียน เจ้าหน้าที่${organizationName}` : `เรียน ผู้ใช้งาน ${organizationName}`,
+      body: [
+        paragraph(
+          `ตามที่สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) (สขญ) ได้นำส่ง Activation Key สำหรับใช้ในการลงทะเบียนเข้าใช้งาน` +
+            `ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2) ให้แก่ท่านทางอีเมลนั้น ขณะนี้ท่านยังมิได้ลงทะเบียน ` +
+            `และ <strong style="color:${TEXT};">Activation Key ดังกล่าวจะหมดอายุในวันที่ ${expiresAt}</strong>`,
+        ),
+        summaryTable([
+          ["หน่วยงาน", info.organizationName],
+          ["บทบาทในระบบ", info.roleLabel],
+          ["หัวข้ออีเมลคำเชิญ", INVITATION_EMAIL_SUBJECT],
+          ["วันที่ส่งอีเมลคำเชิญ", sentAt],
+          ["ใช้ได้ถึง", expiresAt],
+        ]),
+        `<p style="margin:20px 0 16px;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
+           กรุณาค้นหาอีเมลที่มีหัวข้อและวันที่ส่งตามตารางข้างต้นในกล่องจดหมายของท่าน (รวมถึงโฟลเดอร์จดหมายขยะ)
+           แล้วลงทะเบียนตามขั้นตอนในอีเมลฉบับนั้นก่อนวันหมดอายุ
+         </p>`,
+        `<div style="margin-bottom:16px;background:#F6F7FB;border:1px solid ${BORDER};border-radius:12px;padding:16px;">
+           <div style="font:400 14px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};">
+             อีเมลฉบับนี้เป็นการแจ้งเตือนเท่านั้น จึงไม่มี Activation Key และไม่มีลิงก์สำหรับลงทะเบียน
+           </div>
+         </div>`,
+        paragraph(
+          `หากไม่พบอีเมลคำเชิญ หรือ Activation Key หมดอายุแล้ว ` +
+            `${contactLine("โปรดติดต่อสถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) ที่")} เพื่อขอ Activation Key ฉบับใหม่`,
+        ),
+        `<div style="background:${WARNING_BG};border-left:3px solid ${WARNING};border-radius:8px;padding:16px;">
+           <div style="font:400 14px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};">
+             หากท่านไม่ได้คาดหมายว่าจะได้รับคำเชิญนี้ กรุณาเพิกเฉยต่ออีเมลฉบับนี้
+             และโปรดแจ้งสถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) ตามช่องทางข้างต้น
+           </div>
+         </div>`,
+      ].join(""),
+      closing: `<p style="margin:0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
+           จึงเรียนมาเพื่อโปรดดำเนินการ<br><br>
+           ขอแสดงความนับถือ<br>
+           <span style="color:${TEXT};">สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)</span>
+         </p>`,
+      // ช่องทางติดต่ออยู่ในเนื้อจดหมายแล้ว (ย่อหน้าขอคีย์ใหม่) — เหมือนอีเมลคำเชิญ ท้ายอีเมลจึงไม่พิมพ์ซ้ำ
       contact: false,
     }),
   );

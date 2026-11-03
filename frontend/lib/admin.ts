@@ -274,4 +274,5 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   ACTIVATION_KEY_USED: "ใช้คำเชิญเปิดบัญชี",
   ACTIVATION_KEY_REVOKED: "ยกเลิกคำเชิญ",
   ACTIVATION_KEY_EXPIRED: "คำเชิญหมดอายุ",
+  ACTIVATION_KEY_REMINDER_QUEUED: "ส่งอีเมลเตือนคำเชิญใกล้หมดอายุ",
 };

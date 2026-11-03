@@ -987,6 +987,21 @@ routes. In the console, `InviteDialog` turns the 409 into a second step (`Action
 `onConfirm` may return `false` to stay open), and a deactivated account's page has "เชิญกลับเข้ามา".
 `docs/09` §2.2.
 
+**An invitation about to expire gets one reminder, with no link in it** (card "อีเมลเตือนก่อนคำเชิญหมดอายุ (ตั้งจำนวนวันได้ใน
+admin)", 2026-11-03). `workers/invitation-reminders.ts` is a loop in the delivery-worker, every 15 minutes: it claims `ISSUED` keys
+expiring within `invitation_reminder_days` with one `UPDATE … WHERE reminded_at IS NULL … SKIP LOCKED RETURNING`, skips keys whose
+whole life is shorter than N (they would be reminded the moment they were issued) and keys of a frozen organisation (left unclaimed,
+so reactivation before expiry still gets them a reminder), and queues the mail through `notifyUsers()` — **not inline**: the mail
+holds no secret, so it gets the outbox's retry for free, and `render.ts` rebuilds it from the key at send time and returns
+`{ cancelled }` (delivery `CANCELLED`) when the key is no longer pending. The mail cannot carry a link — only the key's HMAC is
+stored — and issuing a new key would extend the invitation silently, so it prints the invitation's subject
+(`INVITATION_EMAIL_SUBJECT`, the constant `sendInvitationEmail` itself uses) and its send time for the recipient to search by. The
+in-app row is written `READ` (`notifyUsers({ read: true })`): it exists to carry the outbox for someone who cannot log in yet. N is
+the first **system setting**: `administration.system_setting` (key/JSON value, a row only once someone sets it), declared with its
+range and default in `SYSTEM_SETTINGS` in `lib/system-settings.ts` — add a setting there and `/console/settings` (the new
+"ตั้งค่าระบบ" nav group, `requireAdmin`, not the legal officer) draws it with no frontend change. Read on every use, no cache, so a
+change reaches the worker on its next round. `docs/09` §2.3.
+
 **The activation form starts from what is already known, and the name is not the user's to
 type.** `GET /api/auth/invitation` returns a `profile` (prefix, first name, last name, phone)
 read off the `iam.user_account` row the invitation points at, plus a `profileLocked` flag per

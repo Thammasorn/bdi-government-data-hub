@@ -167,6 +167,26 @@ session หนึ่งใบ = แถวหนึ่งแถวใน `iam.ses
 `ACTIVATION_KEY_SECRET` ต้องตั้งเองบน production — backend โยน error ตอนบูตถ้าไม่มี
 แทนที่จะ fallback เป็นค่า dev เงียบ ๆ
 
+### 2.3 อีเมลเตือนก่อนคีย์หมดอายุ — บอกทางไปหาอีเมลเดิม ไม่ใช่คีย์ใหม่
+
+การ์ด "อีเมลเตือนก่อนคำเชิญหมดอายุ (ตั้งจำนวนวันได้ใน admin)" (2026-11-03) ตัวเฝ้า `workers/invitation-reminders.ts` ในลูปของ delivery-worker
+ทุก 15 นาที (`INVITATION_REMINDER_POLL_MS`) จองคีย์ที่
+
+- `ISSUED` ยังไม่หมดอายุ และหมดอายุภายใน N วัน — N คือค่าตั้งระบบ `invitation_reminder_days` (`administration.system_setting`,
+  หน้า /console → ตั้งค่าระบบ, `GET/PUT /api/admin/settings`) ค่าเริ่มต้น 1 · 0 = ปิด · เพดานคืออายุคำเชิญลบหนึ่งวัน
+- อายุทั้งหมดของคีย์ใบนั้นเกิน N วัน (`issued_at < expires_at - N`) — ไม่งั้นจะเตือนทันทีที่ออก
+- หน่วยงานไม่ถูกระงับหรือยุติ — คีย์ไม่ถูกจอง จึงยังเตือนได้ถ้าเปิดหน่วยงานกลับก่อนหมดอายุ
+
+ด้วย `UPDATE … SET reminded_at = now() WHERE reminded_at IS NULL … FOR UPDATE SKIP LOCKED RETURNING` คำสั่งเดียว — หนึ่งคีย์เตือนครั้งเดียว
+worker สองตัวไม่ส่งซ้ำ (ทดสอบแล้วด้วยสอง replica) แล้วเข้าคิวอีเมลผ่าน `notifyUsers()` (`INVITATION_REMINDER`, subject = คีย์, แถวในระบบเป็นอ่านแล้ว)
+และเขียน `ACTIVATION_KEY_REMINDER_QUEUED` เข้าคิวไม่ได้ก็คืน `reminded_at` ให้รอบหน้า
+
+**อีเมลไม่มีลิงก์และไม่มีคีย์** — ทำไม่ได้และไม่ควรทำ: คีย์ดิบไม่ถูกเก็บ (§2) ส่วนการออกคีย์ใหม่ (ทาง resend) จะยืดอายุคำเชิญโดยไม่มีใครตัดสินใจ
+อีเมลจึงพิมพ์หัวข้อของอีเมลคำเชิญ (`INVITATION_EMAIL_SUBJECT` ค่าเดียวกับที่ `sendInvitationEmail` ใช้) วันเวลาที่ส่ง (`issued_at` ของใบที่ยังใช้ได้
+— resend ได้ใบใหม่ที่ยังไม่เคยเตือน และอีเมลชี้ไปที่ฉบับล่าสุด) วันหมดอายุ และช่องทางขอคีย์ใหม่ เพราะเดินทาง outbox `workers/render.ts`
+จึงประกอบจากคีย์ตอนส่ง คีย์ที่ถูกใช้/เพิกถอน/หมดอายุ หรือหน่วยงานที่ถูกระงับระหว่างรอ → delivery `CANCELLED`
+(`INVITATION_NOT_PENDING` / `ORGANIZATION_FROZEN`) ไม่ส่ง
+
 ### 2.1 ยกเลิก (revoke) กับ ลบ (delete) คำเชิญ — คนละเรื่องกัน
 
 | อยากได้อะไร | ใช้อะไร | เหลืออะไรไว้ |

@@ -91,6 +91,13 @@ export const AuditAction = {
    * เฉพาะครั้งที่สถานะเปลี่ยนจริง การเปิดลิงก์เดิมซ้ำไม่เพิ่มแถว
    */
   ACTIVATION_KEY_EXPIRED: "ACTIVATION_KEY_EXPIRED",
+  /**
+   * เข้าคิวอีเมลเตือนว่าคีย์ใกล้หมดอายุแล้ว (`workers/invitation-reminders.ts`, การ์ด "อีเมลเตือนก่อนคำเชิญหมดอายุ" 2026-11-03) — subject คือคีย์
+   *
+   * "เข้าคิว" ไม่ใช่ "ส่ง": อีเมลออกทาง outbox ผลการส่งอยู่ที่แถว `notification_delivery` ของมัน และ worker ยกเลิกเองได้ถ้าคีย์ถูกใช้หรือเพิกถอน
+   * ระหว่างรอ หนึ่งคีย์มีแถวนี้ไม่เกินหนึ่งแถว (`reminded_at`) metadata เก็บ `expires_at` `issued_at` และ `reminder_days` ที่ใช้ตัดสิน
+   */
+  ACTIVATION_KEY_REMINDER_QUEUED: "ACTIVATION_KEY_REMINDER_QUEUED",
 
   /**
    * คำเชิญถูกลบทิ้ง (`DELETE /api/admin/invitations/:id`) — เพิ่มจากรายการใน sheet
@@ -460,6 +467,11 @@ export const AuditAction = {
    * โดยไม่ใช่การอัปโหลดไฟล์ (อันนั้นคือ LEGAL_DOCUMENT_PUBLISHED) `metadata.operation` = CREATE · UPDATE · ACTIVATE · DEACTIVATE · VERSION_ACTIVATED
    */
   LEGAL_DOCUMENT_CHANGED: "LEGAL_DOCUMENT_CHANGED",
+  /**
+   * ผู้ดูแลระบบเปลี่ยนค่าตั้งระบบ (`PUT /api/admin/settings/:key`, หน้า /console → ตั้งค่าระบบ) — subject_id ว่างเพราะ key เป็นข้อความ
+   * ไม่ใช่ UUID (เหมือน `ADDRESS_MASTER`) metadata `key` บอกว่าค่าไหน before/after คือค่าเดิม/ค่าใหม่ (`value`, `is_default`)
+   */
+  SYSTEM_SETTING_UPDATED: "SYSTEM_SETTING_UPDATED",
 
   /** ลงนามอิเล็กทรอนิกส์บนเอกสารข้อตกลง (signature.signature_confirmation) */
   DOCUMENT_SIGNED: "DOCUMENT_SIGNED",
@@ -528,6 +540,8 @@ export const AuditSubject = {
   ADDRESS_MASTER: "ADDRESS_MASTER",
   /** เอกสารดาวน์โหลดหนึ่งแถวบนหน้าแรก — ไม่มีใน sheet */
   PUBLIC_DOCUMENT: "PUBLIC_DOCUMENT",
+  /** ค่าตั้งระบบหนึ่งตัวใน `administration.system_setting` — ไม่มีใน sheet subject_id ว่าง key อยู่ใน metadata */
+  SYSTEM_SETTING: "SYSTEM_SETTING",
   NOTIFICATION: "NOTIFICATION",
   INTEGRATION_JOB: "INTEGRATION_JOB",
   /**
