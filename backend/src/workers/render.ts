@@ -14,6 +14,7 @@
  * ส่งอีเมลคำเชิญเองทันทีเพราะ raw key มีอยู่แค่ในหน่วยความจำ ณ ตอนสร้าง
  */
 import {
+  ActivationKeyStatus,
   PrismaClient,
   RequestStatus,
   ReviewTaskStatus,
@@ -25,6 +26,7 @@ import {
 import {
   sendActivated,
   sendFinalApprovalRequest,
+  sendInvitationReminderEmail,
   sendRevisionRequested,
   sendSubmittedToOfficers,
   sendDatasetApproved,
@@ -41,9 +43,10 @@ import {
 } from "../lib/mail.js";
 import { buildJourneyProgress, type JourneyProgress } from "../lib/journey-steps.js";
 import { NotificationType, linkFor } from "../lib/notify.js";
+import { isOrganizationFrozen } from "../lib/organization-freeze.js";
 import { NAME_FIELDS, fullNameTh } from "../lib/person-name.js";
 import { ROLE_LABELS } from "../lib/roles.js";
-import { type RoleCode } from "../lib/system.js";
+import { BDI_ORGANIZATION_ID, type RoleCode } from "../lib/system.js";
 
 export interface DeliverableNotification {
   notificationType: string;
@@ -113,6 +116,53 @@ async function datasetInfo(prisma: PrismaClient, subjectId: string) {
   };
 }
 
+/** ผลของการส่ง — `cancelled` = ไม่ส่งโดยตั้งใจ เพราะสิ่งที่อีเมลพูดถึงไม่เป็นจริงแล้วตอนถึงคิว (`delivery.ts` บันทึกเป็น CANCELLED) */
+export type RenderOutcome = void | { cancelled: { code: string; message: string } };
+
+/**
+ * อีเมลเตือนคำเชิญใกล้หมดอายุ — ประกอบจากคีย์ตอนส่ง ไม่ใช่ตอนเข้าคิว
+ *
+ * คีย์ที่ถูกใช้ เพิกถอน (resend ออกใบใหม่) หรือหมดอายุไประหว่างรอคิว ไม่ได้รออยู่แล้ว อีเมลที่บอกให้ไปลงทะเบียนจึงไม่จริง — ยกเลิก
+ * หน่วยงานที่ถูกระงับหรือยุติก็ยกเลิกเช่นกัน เพราะหน้าเปิดบัญชีตอบ 409 `organization_frozen` (ตัวเฝ้าข้ามหน่วยงานเหล่านี้ตั้งแต่ต้น นี่คือ
+ * กรณีที่ถูกระงับหลังเข้าคิว)
+ */
+async function sendInvitationReminder(prisma: PrismaClient, destination: string, keyId: string): Promise<RenderOutcome> {
+  const key = await prisma.activationKey.findUnique({
+    where: { id: keyId },
+    select: {
+      status: true,
+      issuedAt: true,
+      expiresAt: true,
+      organizationId: true,
+      organization: { select: { nameTh: true, status: true } },
+      role: { select: { code: true } },
+    },
+  });
+  if (!key || key.status !== ActivationKeyStatus.ISSUED || key.expiresAt <= new Date()) {
+    return {
+      cancelled: {
+        code: "INVITATION_NOT_PENDING",
+        message: "คำเชิญถูกใช้ ถูกเพิกถอน หรือหมดอายุไปแล้วก่อนถึงคิวส่ง จึงยกเลิกอีเมลเตือน",
+      },
+    };
+  }
+  if (isOrganizationFrozen(key.organization.status)) {
+    return {
+      cancelled: {
+        code: "ORGANIZATION_FROZEN",
+        message: "หน่วยงานถูกระงับหรือยุติหลังอีเมลเตือนเข้าคิว เปิดบัญชีไม่ได้ จึงยกเลิกไม่ส่ง",
+      },
+    };
+  }
+  await sendInvitationReminderEmail(destination, {
+    roleLabel: ROLE_LABELS[key.role.code as RoleCode] ?? key.role.code,
+    organizationName: key.organization.nameTh,
+    issuedAt: key.issuedAt,
+    expiresAt: key.expiresAt,
+    internal: key.organizationId === BDI_ORGANIZATION_ID,
+  });
+}
+
 /**
  * ส่งอีเมลหนึ่งฉบับ โดยเลือก template จากชนิดของ notification
  * ชนิดที่ยังไม่มี template เฉพาะจะตกมาที่ sendRaw ซึ่งใช้ layout กลางกับ title/message
@@ -121,8 +171,12 @@ export async function renderAndSend(
   prisma: PrismaClient,
   destination: string,
   n: DeliverableNotification,
-): Promise<void> {
+): Promise<RenderOutcome> {
   const to = [destination];
+
+  if (n.notificationType === NotificationType.INVITATION_REMINDER && n.subjectId) {
+    return sendInvitationReminder(prisma, destination, n.subjectId);
+  }
 
   if (n.subjectType === SubjectType.DATASET_REGISTRATION_REQUEST && n.subjectId) {
     const info = await datasetInfo(prisma, n.subjectId);

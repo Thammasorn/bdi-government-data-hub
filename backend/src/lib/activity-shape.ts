@@ -92,6 +92,7 @@ const CATEGORY_BY_ACTION: Record<AuditActionCode, ActivityCategory> = {
   ACTIVATION_KEY_USED: "invitation",
   ACTIVATION_KEY_REVOKED: "invitation",
   ACTIVATION_KEY_EXPIRED: "invitation",
+  ACTIVATION_KEY_REMINDER_QUEUED: "invitation",
   INVITATION_DELETED: "invitation",
   APPROVER_INVITATION_RECALLED: "invitation",
 
@@ -127,6 +128,7 @@ const CATEGORY_BY_ACTION: Record<AuditActionCode, ActivityCategory> = {
 
   LEGAL_DOCUMENT_PUBLISHED: "config",
   LEGAL_DOCUMENT_CHANGED: "config",
+  SYSTEM_SETTING_UPDATED: "config",
   DATASET_CHOICE_CHANGED: "config",
   ADDRESS_MASTER_CHANGED: "config",
   PUBLIC_DOCUMENT_CHANGED: "config",

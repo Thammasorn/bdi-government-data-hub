@@ -28,6 +28,7 @@ import {
 import { closeLogStore, startLogStore } from "../lib/log-store.js";
 import { isOrganizationFrozen } from "../lib/organization-freeze.js";
 import { startErrorAlerts, stopErrorAlerts } from "./error-alerts.js";
+import { startInvitationReminders, stopInvitationReminders } from "./invitation-reminders.js";
 import { startLogRelay, stopLogRelay } from "./log-relay.js";
 import { startLogUpkeep, stopLogUpkeep } from "./log-upkeep.js";
 import { renderAndSend } from "./render.js";
@@ -147,7 +148,20 @@ async function deliver(row: Claimed) {
     }
 
     // เนื้ออีเมลถูกประกอบตอนนี้ ไม่ได้เก็บไว้ในตาราง — ดู workers/render.ts
-    await renderAndSend(prisma, row.destination, notification);
+    const outcome = await renderAndSend(prisma, row.destination, notification);
+    if (outcome?.cancelled) {
+      await prisma.notificationDelivery.update({
+        where: { id: row.id },
+        data: {
+          status: DeliveryStatus.CANCELLED,
+          lastAttemptAt: new Date(),
+          nextRetryAt: null,
+          lastErrorCode: outcome.cancelled.code,
+          lastErrorMessage: outcome.cancelled.message,
+        },
+      });
+      return;
+    }
 
     await prisma.notificationDelivery.update({
       where: { id: row.id },
@@ -247,6 +261,8 @@ async function main() {
   // อีเมลสรุป error — ลูปของตัวเอง ไม่อยู่ใน tick() ข้างล่าง: ส่งทีละฉบับผ่าน sendRaw เพดาน 30 วินาทีต่อฉบับ SMTP ที่ช้าจึงไม่รั้ง
   // outbox ไว้ ปิดอยู่จนกว่าจะตั้ง ERROR_ALERT_EMAILS (workers/error-alerts.ts)
   startErrorAlerts();
+  // อีเมลเตือนคำเชิญใกล้หมดอายุ — ลูปของตัวเองที่แค่เข้าคิว อีเมลออกทาง tick() ข้างล่างเหมือนฉบับอื่น (workers/invitation-reminders.ts)
+  startInvitationReminders(prisma);
   recordRuntimeEvent("start", { node: process.version });
 
   let running = true;
@@ -255,6 +271,7 @@ async function main() {
     running = false;
     stopLogUpkeep();
     stopErrorAlerts();
+    stopInvitationReminders();
     // รอบของ relay ที่กำลังเขียนไม่เกิน 1.5 วินาที — ที่ค้างอ่านซ้ำตอนเริ่มใหม่ได้
     await stopLogRelay();
     // เข้าคิว และเขียนป้าย "ปิดตามปกติ" ลงไฟล์ใน container — บันทึกในคิวหายได้ถ้า Mongo หยุดพร้อมกัน ป้ายไม่หาย (lib/error-capture.ts)

@@ -66,6 +66,11 @@ export const NotificationType = {
    */
   SPECIALIST_COMMENTED: "SPECIALIST_COMMENTED",
   SLA_REMINDER: "SLA_REMINDER",
+  /**
+   * คำเชิญใกล้หมดอายุ (`workers/invitation-reminders.ts`, การ์ด "อีเมลเตือนก่อนคำเชิญหมดอายุ" 2026-11-03) — subject คือคีย์
+   * (`subject_type = ACTIVATION_KEY`) `workers/render.ts` ประกอบอีเมลจากคีย์ตอนส่ง และยกเลิกถ้าคีย์ไม่ได้รออยู่แล้ว
+   */
+  INVITATION_REMINDER: "INVITATION_REMINDER",
   LEGAL_DOCUMENT_UPDATED: "LEGAL_DOCUMENT_UPDATED",
 } as const;
 
@@ -95,6 +100,13 @@ interface NotifyInput {
    * มีผลกับ delivery ทางอีเมลเท่านั้น notification ในระบบขึ้นทันทีเหมือนเดิม
    */
   scheduledAt?: Date;
+  /**
+   * เขียน notification ในระบบเป็นอ่านแล้ว (ค่าเริ่มต้น: ยังไม่อ่าน)
+   *
+   * สำหรับข้อความที่แถว notification มีไว้ถือ outbox เท่านั้น — อีเมลเตือนคำเชิญไปถึงคนที่ยังเข้าระบบไม่ได้ พอเขาเปิดบัญชีแล้ว
+   * กระดิ่งไม่ควรมี "คำเชิญของท่านใกล้หมดอายุ" ค้างเป็นรายการใหม่
+   */
+  read?: boolean;
 }
 
 /**
@@ -141,7 +153,8 @@ async function writeNotifications(
           subjectType: input.subjectType ?? null,
           subjectId: input.subjectId ?? null,
           organizationId: input.organizationId ?? null,
-          status: NotificationStatus.UNREAD,
+          status: input.read ? NotificationStatus.READ : NotificationStatus.UNREAD,
+          readAt: input.read ? new Date() : null,
           correlationId: correlation,
         },
       });

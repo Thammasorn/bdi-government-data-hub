@@ -197,6 +197,9 @@ model ActivationKey {
   revokedAt     DateTime? @map("revoked_at") @db.Timestamptz(6)
   revokedBy     String?   @map("revoked_by") @db.Uuid
   revokedReason String?   @map("revoked_reason")
+  /// เบี่ยงจากดีไซน์: ไม่มีใน sheet — เวลาที่ระบบเข้าคิวอีเมลเตือนว่าคีย์ใบนี้ใกล้หมดอายุ (การ์ด "อีเมลเตือนก่อนคำเชิญหมดอายุ"
+  /// 2026-11-03) หนึ่งคีย์เตือนครั้งเดียว ตัวเฝ้า (`workers/invitation-reminders.ts`) จองด้วย `UPDATE … WHERE reminded_at IS NULL`
+  remindedAt    DateTime? @map("reminded_at") @db.Timestamptz(6)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   createdBy String   @map("created_by") @db.Uuid
@@ -1836,5 +1839,22 @@ model PublicDocument {
 
   @@index([section, isActive, displayOrder])
   @@map("public_document")
+  @@schema("administration")
+}
+
+/// ค่าตั้งระบบที่ผู้ดูแลระบบแก้จากหน้า /console → ตั้งค่าระบบ — ไม่มีใน sheet
+///
+/// เบี่ยงจากดีไซน์: เพิ่มพร้อมการ์ด "อีเมลเตือนก่อนคำเชิญหมดอายุ (ตั้งจำนวนวันได้ใน admin)" (2026-11-03) ซึ่งเป็นค่าแรก
+/// (`invitation_reminder_days`) ก่อนหน้านี้ค่าทุกตัวเป็น env แก้ได้ด้วยการ restart เท่านั้น
+///
+/// รายการค่าที่มีได้ ชนิด ช่วง และค่าเริ่มต้นอยู่ที่ `SYSTEM_SETTINGS` ใน `lib/system-settings.ts` ไม่ใช่ที่ตารางนี้ — แถวเกิดเมื่อมีคนตั้งค่า
+/// ครั้งแรก ไม่มีแถว = ใช้ค่าเริ่มต้น
+model SystemSetting {
+  key       String   @id @db.VarChar(64)
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  @@map("system_setting")
   @@schema("administration")
 }
