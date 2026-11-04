@@ -72,6 +72,11 @@ export const NotificationType = {
    */
   INVITATION_REMINDER: "INVITATION_REMINDER",
   LEGAL_DOCUMENT_UPDATED: "LEGAL_DOCUMENT_UPDATED",
+  REPRESENTATIVE_CHANGE_SUBMITTED: "REPRESENTATIVE_CHANGE_SUBMITTED",
+  REPRESENTATIVE_CHANGE_RETURNED: "REPRESENTATIVE_CHANGE_RETURNED",
+  REPRESENTATIVE_CHANGE_REJECTED: "REPRESENTATIVE_CHANGE_REJECTED",
+  REPRESENTATIVE_CHANGE_COMPLETED: "REPRESENTATIVE_CHANGE_COMPLETED",
+  REPRESENTATIVE_CHANGE_FAILED: "REPRESENTATIVE_CHANGE_FAILED",
 } as const;
 
 export type NotificationTypeCode = (typeof NotificationType)[keyof typeof NotificationType];
@@ -395,6 +400,8 @@ export function linkFor(subjectType: string | null, subjectId: string | null): s
       return `/datasets/${subjectId}`;
     case "DATASET":
       return `/datasets/${subjectId}`;
+    case "REPRESENTATIVE_CHANGE_REQUEST":
+      return `/representatives/requests/${subjectId}`;
     default:
       return null;
   }

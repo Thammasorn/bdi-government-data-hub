@@ -64,6 +64,17 @@ export async function nextDatasetRequestNumber(db: Db): Promise<string> {
 }
 
 /** dataset_code — sheet `dataset` เรียกว่า "Unique business identifier" */
+/** ORG-REP-<ปี ค.ศ.>-<ลำดับ 4 หลัก> — คำขอเปลี่ยนแปลงผู้แทนหน่วยงาน */
+export async function nextRepresentativeChangeNumber(db: Db): Promise<string> {
+  const prefix = `ORG-REP-${year()}-`;
+  const highest = await db.representativeChangeRequest.findFirst({
+    where: { requestNumber: { startsWith: prefix } },
+    orderBy: { requestNumber: "desc" },
+    select: { requestNumber: true },
+  });
+  return nextSerialFrom(prefix, highest?.requestNumber);
+}
+
 export async function nextDatasetCode(db: Db): Promise<string> {
   const prefix = `DS-${year()}-`;
   const highest = await db.dataset.findFirst({

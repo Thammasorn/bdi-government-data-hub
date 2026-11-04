@@ -164,6 +164,7 @@ model Role {
 
   activationKeys  ActivationKey[]
   roleAssignments UserRoleAssignment[]
+  representativeChangeAdditions RepresentativeChangeAddition[]
 
   @@map("role")
   @@schema("iam")
@@ -206,6 +207,9 @@ model ActivationKey {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   updatedBy String   @map("updated_by") @db.Uuid
 
+  representativeChangeRemovals  RepresentativeChangeRemoval[]
+  representativeChangeAdditions RepresentativeChangeAddition[]
+
   /// uq_active_activation_key — one usable key per user, organization, and role
   /// partial index (WHERE status = 'ISSUED') เพิ่มมือใน migration
   @@index([keyHash])
@@ -244,6 +248,8 @@ model UserRoleAssignment {
   createdBy String   @map("created_by") @db.Uuid
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   updatedBy String   @map("updated_by") @db.Uuid
+
+  representativeChangeRemovals RepresentativeChangeRemoval[]
 
   @@index([userAccountId, status])
   @@index([organizationId, roleId, status])
@@ -419,6 +425,8 @@ model Organization {
   maxOrganizationUserCount     Int @default(3) @map("max_organization_user_count")
   maxOrganizationApproverCount Int @default(1) @map("max_organization_approver_count")
 
+  representativeChangeRequests RepresentativeChangeRequest[]
+
   activatedAt      DateTime? @map("activated_at") @db.Timestamptz(6)
   activatedBy      String?   @map("activated_by") @db.Uuid
   suspendedAt      DateTime? @map("suspended_at") @db.Timestamptz(6)
@@ -460,6 +468,7 @@ enum SubjectType {
   ORGANIZATION_REGISTRATION_REQUEST
   DATASET_REGISTRATION_REQUEST
   DATASET_REQUEST
+  REPRESENTATIVE_CHANGE_REQUEST
 
   @@schema("review")
 }
@@ -631,6 +640,156 @@ model ReviewTask {
 
 // ═══════════════════════════════════════════════════ organization request
 
+/// sheet `representative_change_request` — สถานะของคำขอเปลี่ยนแปลงผู้แทน
+/// ใช้ `RequestStatus` ที่แชร์อยู่ไม่ได้ เพราะคำขอนี้มีช่วงที่ระบบดำเนินการหลัง BDI ยืนยัน
+enum RepresentativeChangeStatus {
+  DRAFT /// Organization User กำลังกรอกคำขอ ยังไม่ส่ง
+  SUBMITTED /// ส่งแล้ว รอ BDI Officer เปิดตรวจ
+  UNDER_REVIEW /// BDI Officer เปิดตรวจแล้ว
+  RETURNED /// ส่งกลับให้ Organization User แก้ไข
+  CONFIRMED /// ผ่านการตรวจสอบ
+  PROCESSING /// กำลังยกเลิกผู้แทนเดิมและส่งคำเชิญผู้แทนใหม่
+  COMPLETED /// ดำเนินการสำเร็จทุกรายการ
+  PROCESSING_FAILED /// มีรายการที่ดำเนินการไม่สำเร็จ
+  /// เบี่ยงจากดีไซน์: Excel มีแค่ในตารางความหมาย ไม่อยู่ในรายการค่าของคอลัมน์
+  REJECTED /// ถูกปฏิเสธและ workflow สิ้นสุด
+  CANCELLED /// Organization User ยกเลิกก่อน workflow สิ้นสุด
+
+  @@schema("organization")
+}
+
+/// sheet `representative_change_removal`
+enum RepresentativeRemovalStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+
+  @@schema("organization")
+}
+
+/// sheet `representative_change_addition`
+enum RepresentativeAdditionStatus {
+  PENDING
+  PROCESSING
+  INVITED
+  FAILED
+  CANCELLED
+
+  @@schema("organization")
+}
+
+/// sheet `representative_change_request`
+///
+/// เบี่ยงจากดีไซน์: ไม่มีคอลัมน์ `representative_change_request_attachment_id` เอกสารแนบใช้
+/// `attachment.owner_type/owner_id` เหมือนไฟล์อื่น และบังคับตอนนำส่ง ไม่ใช่ตอนสร้าง เพราะร่างยังไม่มีไฟล์
+model RepresentativeChangeRequest {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// ORG-REP-<ปี ค.ศ.>-<ลำดับ 4 หลัก>
+  requestNumber String @unique @map("request_number") @db.VarChar(64)
+
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  status RepresentativeChangeStatus @default(DRAFT)
+
+  additionalDetailJson Json? @map("additional_detail_json")
+
+  submittedAt        DateTime? @map("submitted_at") @db.Timestamptz(6)
+  confirmedAt        DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  confirmedBy        String?   @map("confirmed_by") @db.Uuid
+  rejectedAt         DateTime? @map("rejected_at") @db.Timestamptz(6)
+  rejectedBy         String?   @map("rejected_by") @db.Uuid
+  cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancelledBy        String?   @map("cancelled_by") @db.Uuid
+  cancellationReason String?   @map("cancellation_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  removals  RepresentativeChangeRemoval[]
+  additions RepresentativeChangeAddition[]
+
+  @@index([organizationId, status])
+  @@index([status])
+  @@map("representative_change_request")
+  @@schema("organization")
+}
+
+/// sheet `representative_change_removal`
+///
+/// เบี่ยงจากดีไซน์: `user_role_assignment_id` เป็น nullable และเพิ่ม `activation_key_id` เพราะยกเลิก
+/// ผู้ที่มีคำเชิญค้างได้ด้วย คนเหล่านั้นยังไม่มี role assignment หนึ่งแถวชี้อย่างใดอย่างหนึ่ง
+model RepresentativeChangeRemoval {
+  id String @id @default(uuid()) @db.Uuid
+
+  changeRequestId String                      @map("change_request_id") @db.Uuid
+  changeRequest   RepresentativeChangeRequest @relation(fields: [changeRequestId], references: [id], onDelete: Cascade)
+
+  userRoleAssignmentId String?             @map("user_role_assignment_id") @db.Uuid
+  userRoleAssignment   UserRoleAssignment? @relation(fields: [userRoleAssignmentId], references: [id], onDelete: Restrict)
+
+  activationKeyId String?        @map("activation_key_id") @db.Uuid
+  activationKey   ActivationKey? @relation(fields: [activationKeyId], references: [id], onDelete: SetNull)
+
+  status        RepresentativeRemovalStatus @default(PENDING)
+  deactivatedAt DateTime?                   @map("deactivated_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  @@index([changeRequestId])
+  @@index([userRoleAssignmentId])
+  @@index([activationKeyId])
+  @@map("representative_change_removal")
+  @@schema("organization")
+}
+
+/// sheet `representative_change_addition` — ช่อง `user_*` ว่างได้ตอนเป็นร่าง บังคับตอนนำส่ง
+model RepresentativeChangeAddition {
+  id String @id @default(uuid()) @db.Uuid
+
+  changeRequestId String                      @map("change_request_id") @db.Uuid
+  changeRequest   RepresentativeChangeRequest @relation(fields: [changeRequestId], references: [id], onDelete: Cascade)
+
+  roleId String @map("role_id") @db.Uuid
+  role   Role   @relation(fields: [roleId], references: [id])
+
+  status RepresentativeAdditionStatus @default(PENDING)
+
+  activationKeyId String?        @map("activation_key_id") @db.Uuid
+  activationKey   ActivationKey? @relation(fields: [activationKeyId], references: [id], onDelete: SetNull)
+
+  userCid                  String? @map("user_cid") @db.VarChar(13)
+  userPrefixTh             String? @map("user_prefix_th") @db.VarChar(64)
+  userFirstnameTh          String? @map("user_firstname_th") @db.VarChar(255)
+  userLastnameTh           String? @map("user_lastname_th") @db.VarChar(255)
+  userEmail                String? @map("user_email") @db.VarChar(255)
+  userPhoneNumber          String? @map("user_phone_number") @db.VarChar(32)
+  userPhoneNumberExtension String? @map("user_phone_number_extension") @db.VarChar(16)
+  userDepartmentTh         String? @map("user_department_th") @db.VarChar(255)
+  userPositionTh           String? @map("user_position_th") @db.VarChar(255)
+
+  additionalDetailJson Json? @map("additional_detail_json")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  @@index([changeRequestId])
+  @@index([activationKeyId])
+  @@index([userCid])
+  @@map("representative_change_addition")
+  @@schema("organization")
+}
+
 /// คำขอลงทะเบียนหน่วยงานหนึ่งฉบับ — sheet `org_registration_request`
 ///
 /// ทุกฟิลด์ snapshot เป็น optional ในระดับฐานข้อมูล เพราะร่างต้องบันทึกได้ทั้งที่ยังกรอกไม่ครบ
@@ -728,6 +887,7 @@ enum AttachmentOwnerType {
   ORGANIZATION_REGISTRATION_REQUEST
   DATASET_REGISTRATION_REQUEST
   DATASET_REQUEST
+  REPRESENTATIVE_CHANGE_REQUEST
   /// เบี่ยงจากดีไซน์: เพิ่มเพราะ legal_document_version.attachment_id ชี้มาที่ตารางนี้
   /// แต่ Excel ไม่ได้ลิสต์ owner_type สำหรับไฟล์เอกสารกฎหมาย
   LEGAL_DOCUMENT_VERSION
@@ -742,6 +902,7 @@ enum AttachmentOwnerType {
 /// sheet `attachment` — คอลัมน์ attachment_type
 enum AttachmentType {
   AUTHORIZED_REPRESENTATIVE_APPOINTMENT_ORDER /// คำสั่งแต่งตั้งผู้มีอำนาจกระทำการแทนหน่วยงาน
+  REPRESENTATIVE_CHANGE_REQUEST_LETTER /// หนังสือนำและฟอร์มแจ้งรายละเอียดผู้มีอำนาจและผู้ประสานงานของหน่วยงานที่ขอเปลี่ยนแปลง
   POWER_OF_ATTORNEY /// คำสั่งมอบอำนาจ
   DATA_DICTIONARY /// พจนานุกรมข้อมูล
   EXAMPLE_DATA /// ตัวอย่างข้อมูล
