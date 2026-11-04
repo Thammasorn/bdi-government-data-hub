@@ -50,7 +50,6 @@ type Dialog =
   | "suspend"
   | "reinstate"
   | "deactivate"
-  | "reactivate"
   | "release"
   | "reinvite"
   | "password"
@@ -318,24 +317,13 @@ export default function ConsoleUserPage() {
         open={dialog === "deactivate"}
         onClose={close}
         title="ยุติการใช้งานบัญชี"
-        description="ถอนทุกบทบาท ปิดทุก session และยกเลิกคำเชิญที่ยังใช้ได้ บัญชียังอยู่ในระบบเพื่อให้ประวัติอ่านย้อนได้ — เปิดใช้อีกครั้งได้ แต่บทบาทไม่กลับมาเอง"
+        description="ถอนทุกบทบาท ปิดทุก session และยกเลิกคำเชิญที่ยังใช้ได้ บัญชียังอยู่ในระบบเพื่อให้ประวัติอ่านย้อนได้ — ถ้าคนเดิมกลับมา ให้เชิญกลับเข้ามาและยืนยันตัวตนด้วย ThaID"
         confirmLabel="ยุติการใช้งาน"
         tone="danger"
         confirmPhrase={u.email}
         onConfirm={async (reason) => {
           await post("/deactivate", { reason });
           done("ยุติการใช้งานบัญชีแล้ว");
-        }}
-      />
-      <ActionDialog
-        open={dialog === "reactivate"}
-        onClose={close}
-        title="เปิดใช้บัญชีอีกครั้ง"
-        description="บัญชีเข้าระบบได้อีกครั้ง แต่ยังไม่มีบทบาท — มอบบทบาทต่อที่แท็บบทบาทและหน่วยงาน"
-        confirmLabel="เปิดใช้บัญชี"
-        onConfirm={async (reason) => {
-          await post("/reactivate", { reason });
-          done("เปิดใช้บัญชีแล้ว", "มอบบทบาทให้บัญชีนี้ต่อที่แท็บบทบาทและหน่วยงาน");
         }}
       />
       <ActionDialog
@@ -475,14 +463,9 @@ function StatusActions({
             เชิญกลับเข้ามา
           </Button>
           {isReleasedEmail(user.email) || pendingInvitation ? null : (
-            <>
-              <Button size="sm" onClick={() => open("reactivate")}>
-                เปิดใช้อีกครั้ง
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => open("release")}>
-                ถอดอีเมลออก เพื่อเชิญคนใหม่
-              </Button>
-            </>
+            <Button size="sm" variant="secondary" onClick={() => open("release")}>
+              ถอดอีเมลออก เพื่อเชิญคนใหม่
+            </Button>
           )}
         </>
       ) : null}
