@@ -3193,6 +3193,26 @@ async function ensureApproverAccount(
     throw new WorkflowError("approver_conflict", conflict.reason, 409);
   }
 
+  /**
+   * ผู้มีอำนาจที่ถูกระงับอยู่ — หยุดที่ด่านนี้ ไม่ออกคีย์ให้
+   *
+   * คีย์ใบนั้นใช้ไม่ได้ (`refuseSuspendedInvitation()` ใน routes/auth.ts) และหลัง `reinstate`
+   * ก็ยังใช้ไม่ได้เพราะบัญชี ACTIVE แล้ว คำขอจะค้างรอลงนามโดยไม่มีใครถือ role ตอบที่นี่
+   * ทรานแซกชันจึงย้อนกลับ คำขออยู่ที่ด่านเดิม เจ้าหน้าที่คุยกับผู้ดูแลระบบ แล้วกดผ่านอีกครั้ง
+   * หรือส่งกลับให้หน่วยงานระบุคนใหม่
+   *
+   * ไม่ใส่ใน `approverConflict()` เพราะตัวนั้นตอบหน่วยงานตอนนำส่งด้วย สถานะบัญชีของคนอื่น
+   * ไม่ใช่เรื่องที่ผู้กรอกฟอร์มควรรู้
+   */
+  if (existing?.status === UserAccountStatus.SUSPENDED) {
+    throw new WorkflowError(
+      "approver_suspended",
+      `บัญชีผู้มีอำนาจ (${email}) ถูกระงับอยู่ กรุณาติดต่อผู้ดูแลระบบ ` +
+        `หรือส่งกลับให้หน่วยงานระบุคนใหม่`,
+      409,
+    );
+  }
+
   const account =
     existing ??
     (await tx.userAccount.create({

@@ -993,8 +993,11 @@ the invite-back needs, so until 2026-11-04 a link was enough to lift one: `resen
 used ones included, and activation refused only `ACTIVE`. The person completed ThaID and came back
 `ACTIVE`, with the key's role even if it had been removed. Reproduced on a dev checkout. `resend` now
 refuses `SUSPENDED` (`account_suspended`), and `refuseSuspendedInvitation()` in `routes/auth.ts` refuses
-it at `GET /invitation`, `thaid/start` and `activate`, because `ensureApproverAccount()` issues keys to
-any non-`ACTIVE` account too. The key is not revoked.
+it at `GET /invitation`, `thaid/start` and `activate` as the last net, for keys already issued and any
+path added later. The key is not revoked. A signatory who is suspended stops at the officer's gate (409
+`approver_suspended` from `ensureApproverAccount()`, the transaction rolls back): a key would be useless,
+and useless again after `reinstate`. Once reinstated, pressing the button again grants the role directly. It is deliberately not in `approverConflict()`, which
+also answers the organisation at submit, and another person's account status is not theirs to read.
 
 **An invitation about to expire gets one reminder, with no link in it** (card "อีเมลเตือนก่อนคำเชิญหมดอายุ (ตั้งจำนวนวันได้ใน
 admin)", 2026-11-03). `workers/invitation-reminders.ts` is a loop in the delivery-worker, every 15 minutes: it claims `ISSUED` keys
