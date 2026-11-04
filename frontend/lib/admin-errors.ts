@@ -27,6 +27,7 @@ const TITLES: Record<string, string> = {
   cid_exists: "เลขบัตรประชาชนนี้มีบัญชีอยู่แล้ว",
   cid_deactivated: "เลขบัตรนี้เป็นของบัญชีที่ยุติการใช้งานแล้ว",
   account_deactivated: "บัญชีนี้ยุติการใช้งานแล้ว",
+  account_suspended: "บัญชีนี้ถูกระงับอยู่",
   reinvite_pending: "มีคำเชิญกลับรอเจ้าตัวเปิดใช้งานอยู่",
   exists: "อีเมลนี้มีบัญชีอยู่แล้ว",
   email_exists: "อีเมลนี้มีบัญชีอยู่แล้ว",
@@ -85,6 +86,7 @@ export function adminErrorView(err: unknown): AdminErrorView {
     case "cid_exists":
     case "cid_deactivated":
     case "account_deactivated":
+    case "account_suspended":
     case "exists":
     case "email_exists": {
       const id = str(d.userAccountId);
