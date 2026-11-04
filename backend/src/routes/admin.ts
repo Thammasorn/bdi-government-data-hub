@@ -1346,6 +1346,21 @@ adminRouter.post("/invitations/:id/resend", async (req, res) => {
   }
 
   /**
+   * บัญชีที่ถูกระงับไม่มีคำเชิญให้ส่งซ้ำ — ลิงก์ใบใหม่จะพาเจ้าตัวไปปลดการระงับเองได้
+   * ทางที่ถูกคือ `POST /api/admin/users/:id/reinstate` ดู `refuseSuspendedInvitation()` ใน routes/auth.ts
+   */
+  if (key.userAccount.status === UserAccountStatus.SUSPENDED) {
+    res.status(409).json({
+      error: "account_suspended",
+      message:
+        `บัญชี ${key.userAccount.email} ถูกระงับอยู่ จึงส่งคำเชิญซ้ำไม่ได้ — ` +
+        `ถ้าต้องการให้กลับมาใช้งาน ให้คืนสถานะด้วย POST /api/admin/users/${key.userAccountId}/reinstate`,
+      userAccountId: key.userAccountId,
+    });
+    return;
+  }
+
+  /**
    * บัญชีที่ยุติแล้วส่งซ้ำได้เฉพาะคำเชิญกลับ (ออกหลังวันที่ยุติ) — คำเชิญเก่าจากก่อนยุติถูกเพิกถอนไปพร้อมการยุติแล้ว
    * ถ้าส่งใบนั้นซ้ำ บัญชีจะกลับมาใช้ได้ทางลิงก์โดยไม่ผ่าน `POST /api/admin/users/:id/reinvite` ซึ่งเป็นทางที่บังคับ
    * เหตุผลและบันทึกว่าใครพาคนนี้กลับมา

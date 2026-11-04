@@ -980,12 +980,21 @@ password reset opens it. The normal link does: ThaID must match the old CID, `PO
 /api/auth/activate` takes non-ACTIVE accounts, and `completeActivation()` now clears
 `deactivated_at` and the suspension columns. `reactivate` (which asks nobody) stays for a mistaken
 deactivation, but answers 409 `reinvite_pending`, as does `release-identity`, while an invite-back
-is waiting; `resend` refuses a key issued before `deactivated_at` (`account_deactivated`); and
+is waiting; `resend` refuses a key issued before `deactivated_at` (`account_deactivated`) and any key of a
+`SUSPENDED` account (`account_suspended`); and
 `DELETE /api/admin/invitations/:id` never deletes an account that was ever activated. The
 destination checks live in `invitationTarget()` (`lib/invitation-target.ts`), shared by both
 routes. In the console, `InviteDialog` turns the 409 into a second step (`ActionDialog`'s
 `onConfirm` may return `false` to stay open), and a deactivated account's page has "เชิญกลับเข้ามา".
 `docs/09` §2.2.
+
+**Only `reinstate` lifts a suspension.** `completeActivation()` clears the suspension columns, which
+the invite-back needs, so until 2026-11-04 a link was enough to lift one: `resend` works on any key,
+used ones included, and activation refused only `ACTIVE`. The person completed ThaID and came back
+`ACTIVE`, with the key's role even if it had been removed. Reproduced on a dev checkout. `resend` now
+refuses `SUSPENDED` (`account_suspended`), and `refuseSuspendedInvitation()` in `routes/auth.ts` refuses
+it at `GET /invitation`, `thaid/start` and `activate`, because `ensureApproverAccount()` issues keys to
+any non-`ACTIVE` account too. The key is not revoked.
 
 **An invitation about to expire gets one reminder, with no link in it** (card "อีเมลเตือนก่อนคำเชิญหมดอายุ (ตั้งจำนวนวันได้ใน
 admin)", 2026-11-03). `workers/invitation-reminders.ts` is a loop in the delivery-worker, every 15 minutes: it claims `ISSUED` keys

@@ -169,6 +169,25 @@ function refuseFrozenInvitation(res: Response, status: OrganizationStatus): bool
   return true;
 }
 
+/**
+ * บัญชีที่ถูกระงับเปิดใช้งานด้วยลิงก์คำเชิญไม่ได้ — ทางเดียวที่ปลดการระงับคือ `reinstate`
+ *
+ * `completeActivation()` ล้างค่าการระงับเพื่อให้การเชิญกลับพาบัญชีที่ `DEACTIVATED` กลับมาได้
+ * ถ้าปล่อยให้บัญชี `SUSPENDED` เดินทางนี้ เจ้าตัวก็ปลดการระงับของตัวเองได้โดยไม่มีผู้ดูแลระบบสั่ง
+ * และได้ role ตามคีย์ด้วย แม้ก่อนหน้านั้นจะถูกถอน role ไปแล้ว ตรวจที่นี่ไม่ใช่แค่ใน `resend`
+ * เพราะ `ensureApproverAccount()` ก็ออกคีย์ให้บัญชีที่ถูกระงับได้เหมือนกัน
+ *
+ * คีย์ไม่ถูกเพิกถอน เหมือน `refuseFrozenInvitation()` ข้างบน
+ */
+function refuseSuspendedInvitation(res: Response, status: UserAccountStatus): boolean {
+  if (status !== UserAccountStatus.SUSPENDED) return false;
+  res.status(409).json({
+    error: "account_suspended",
+    message: "บัญชีนี้ถูกระงับการใช้งานอยู่ จึงใช้ลิงก์คำเชิญนี้ไม่ได้ กรุณาติดต่อผู้ดูแลระบบ",
+  });
+  return true;
+}
+
 // ---------------------------------------------------------------- ตรวจลิงก์เชิญ
 
 authRouter.get("/invitation", async (req, res) => {
@@ -183,6 +202,7 @@ authRouter.get("/invitation", async (req, res) => {
     return;
   }
   if (refuseFrozenInvitation(res, key.organization.status)) return;
+  if (refuseSuspendedInvitation(res, key.userAccount.status)) return;
 
   /**
    * ที่นั่งของ role นี้ต้องยังว่างอยู่ — บอกตั้งแต่เปิดลิงก์ ไม่ใช่หลังยืนยัน ThaID เสร็จ
@@ -289,6 +309,7 @@ authRouter.post("/thaid/start", async (req, res) => {
       return;
     }
     if (refuseFrozenInvitation(res, key.organization.status)) return;
+    if (refuseSuspendedInvitation(res, key.userAccount.status)) return;
     // ไม่มีเลขบัตรบันทึกไว้ = ไม่มีอะไรให้เทียบ ปิดทางตั้งแต่ต้นดีกว่าปล่อยให้ผู้ใช้
     // เสียเวลาไปยืนยันกับ ThaID แล้วค่อยล้มตอนกลับมา
     if (!key.userAccount.cid) {
@@ -706,6 +727,7 @@ authRouter.post("/activate", async (req, res) => {
     return;
   }
   if (refuseFrozenInvitation(res, key.organization.status)) return;
+  if (refuseSuspendedInvitation(res, key.userAccount.status)) return;
   if (key.userAccount.status === UserAccountStatus.ACTIVE) {
     res.status(409).json({ error: "exists", message: "อีเมลนี้มีบัญชีอยู่แล้ว กรุณาเข้าสู่ระบบ" });
     return;
