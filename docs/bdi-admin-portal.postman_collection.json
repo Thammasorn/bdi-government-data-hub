@@ -2510,6 +2510,141 @@
         "description": "The API keeps every address in memory. **M6–M11 reload it themselves** — this is for after a change made around the API: editing `administration.province/district/sub_district` in psql or DBeaver, or running `seed:masters` (which only adds rows that are missing). It answers with the row counts now loaded, the same numbers `/health/ready` shows under `checks.addresses`."
       },
       "response": []
+    },
+    {
+      "name": "Representative change requests",
+      "description": "ผู้ดูแลระบบทำทุกอย่างที่ BDI Officer ทำได้กับคำขอเปลี่ยนแปลงผู้แทนหน่วยงาน ใช้ตรรกะเดียวกับ `/api/representative-changes`",
+      "item": [
+        {
+          "name": "C1 · Set representative limits",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/organizations/{{organizationId}}/representative-limits",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "organizations",
+                "{{organizationId}}",
+                "representative-limits"
+              ]
+            },
+            "description": "ลดต่ำกว่าจำนวนที่มีอยู่ได้ ไม่มีใครถูกถอดออก",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"maxOrganizationUserCount\": 3,\n  \"maxOrganizationApproverCount\": 1,\n  \"reason\": \"ตั้งจำนวนผู้แทนตามคำขอของหน่วยงาน\"\n}"
+            }
+          }
+        },
+        {
+          "name": "C2 · List requests",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/representative-changes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "representative-changes"
+              ]
+            },
+            "description": "`?organizationId=` `?status=SUBMITTED,UNDER_REVIEW` `?q=`"
+          }
+        },
+        {
+          "name": "C3 · One request",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/representative-changes/{{changeRequestId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "representative-changes",
+                "{{changeRequestId}}"
+              ]
+            },
+            "description": "`review` คือสถานะบัญชีของคนที่เพิ่ม จำนวนก่อน/หลัง และเหตุผลที่ยืนยันไม่ได้"
+          }
+        },
+        {
+          "name": "C4 · Review",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/representative-changes/{{changeRequestId}}/review",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "representative-changes",
+                "{{changeRequestId}}",
+                "review"
+              ]
+            },
+            "description": "`action`: confirm · return · reject — return/reject ต้องมี `note` อย่างน้อย 10 ตัวอักษร ยืนยันไม่ได้ตอบ 409 `change_request_blocked` พร้อม `blockers`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"confirm\",\n  \"note\": \"\"\n}"
+            }
+          }
+        },
+        {
+          "name": "C5 · Retry failed invitations",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/representative-changes/{{changeRequestId}}/retry",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "representative-changes",
+                "{{changeRequestId}}",
+                "retry"
+              ]
+            },
+            "description": "ทำเฉพาะรายการที่ค้าง ออกคีย์ใหม่และเพิกถอนใบเดิม",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        }
+      ]
     }
   ]
 }

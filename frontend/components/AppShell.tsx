@@ -53,6 +53,7 @@ export function AppShell({ children }: { children: ReactNode }) {
  * คำเดียวกันทุก role รวมถึงช่องที่เคยชื่อ "หน่วยงานของฉัน" ของผู้ใช้ฝั่งหน่วยงาน
  */
 const ORGANIZATION_LABEL = "คำขอลงทะเบียนหน่วยงาน";
+const REPRESENTATIVE_LABEL = "ผู้แทนหน่วยงาน";
 const DATASET_LABEL = "คำขอส่งชุดข้อมูล";
 
 /** เมนูหนึ่งช่อง — `disabledReason` ไม่ null = เห็นได้แต่กดไม่ได้ พร้อมเหตุผล */
@@ -112,6 +113,7 @@ function roleNavItems(
       { href: "/", label: "หน้าแรก" },
       { href: "/admin/organizations", label: ORGANIZATION_LABEL },
       { href: "/admin/datasets", label: DATASET_LABEL },
+      { href: "/representatives", label: REPRESENTATIVE_LABEL },
       // ผู้ประสานงานและผู้มีอำนาจอนุมัติของ BDI (feedback "features 1 full" แถว 15) — ไม่ใช่ "ภาพรวม" เพราะจะอ่านซ้ำกับ
       // "หน้าแรก" ที่อยู่ติดกัน ผู้ดูแลระบบเห็นตัวเลขชุดเดียวกันบนหน้า ภาพรวม ของ /console แทน
       { href: "/admin/statistics", label: "สถิติ" },
@@ -154,6 +156,10 @@ function roleNavItems(
             ? { disabledReason: "ใช้งานได้เมื่อหน่วยงานของคุณได้รับอนุมัติแล้ว" }
             : {}),
         },
+        // คำขอเปลี่ยนแปลงผู้แทนมีได้เฉพาะหน่วยงานที่ลงทะเบียนเสร็จแล้ว
+        ...(organizationStatus === "ACTIVE" || frozen
+          ? [{ href: "/representatives", label: REPRESENTATIVE_LABEL }]
+          : []),
       ]
     : [];
 }
@@ -165,6 +171,7 @@ function isActive(pathname: string, href: string): boolean {
   return (
     pathname === path ||
     (path === "/console" && pathname.startsWith("/console/")) ||
+    (path === "/representatives" && pathname.startsWith("/representatives/")) ||
     (path.startsWith("/console/") && pathname.startsWith(`${path}/`))
   );
 }

@@ -9,6 +9,7 @@ import { DataTable, type Column } from "@/components/console/DataTable";
 import { InviteDialog } from "@/components/console/InviteDialog";
 import { MembershipBadge, PersonCell, membershipOf } from "@/components/console/MembersTable";
 import { OrganizationForm } from "@/components/console/OrganizationForm";
+import { RepresentativePanel } from "@/components/console/RepresentativePanel";
 import {
   DetailList,
   EmptyState,
@@ -339,6 +340,13 @@ export default function ConsoleOrganizationPage() {
             </p>
           ) : null}
         </Panel>
+
+        <RepresentativePanel
+          organizationId={org.id}
+          maxUsers={org.maxOrganizationUserCount}
+          maxApprovers={org.maxOrganizationApproverCount}
+          onChanged={reload}
+        />
 
         <Panel title="คำขอลงทะเบียนหน่วยงาน" flush>
           {data.registrationRequests.length === 0 ? (

@@ -259,7 +259,14 @@ const reviewable = (status: RepresentativeChangeStatus) =>
 const pageSchema = z.object({
   page: z.coerce.number().int().min(1).catch(1),
   pageSize: z.coerce.number().int().min(1).max(100).catch(20),
-  status: z.nativeEnum(RepresentativeChangeStatus).optional().catch(undefined),
+  /** หลายสถานะคั่นด้วยจุลภาคได้ — กล่อง review ของหน้ารายการคลุมสองสถานะ */
+  status: z
+    .string()
+    .optional()
+    .catch(undefined)
+    .transform((raw) =>
+      (raw ?? "").split(",").filter((s): s is RepresentativeChangeStatus => s in RepresentativeChangeStatus),
+    ),
   organizationId: z.string().uuid().optional().catch(undefined),
   q: z.string().trim().max(100).optional().catch(undefined),
 });
@@ -276,7 +283,7 @@ async function listRequests(scope: { organizationId?: string }, query: z.infer<t
         }
       : {}),
   };
-  const where = { ...visible, ...(query.status ? { status: query.status } : {}) };
+  const where = { ...visible, ...(query.status.length ? { status: { in: query.status } } : {}) };
   const [rows, total, grouped] = await Promise.all([
     prisma.representativeChangeRequest.findMany({
       where,
@@ -678,6 +685,43 @@ representativeChangeRouter.post("/:id/attachments", upload.single("file"), async
     after: { attachmentType: LETTER, filename: attachment.originalFileName },
   });
   res.status(201).json({ attachment: publicAttachment(attachment) });
+});
+
+representativeChangeRouter.delete("/:id/attachments/:attachmentId", async (req, res) => {
+  const session = req.session!;
+  const parsedId = z.string().uuid().safeParse(req.params.id);
+  const request = parsedId.success
+    ? await prisma.representativeChangeRequest.findUnique({ where: { id: parsedId.data } })
+    : null;
+  if (!request || !canEdit(session, request.organizationId)) {
+    notFound(res);
+    return;
+  }
+  if (await refuseIfOrganizationFrozen(res, request.organizationId)) return;
+  if (!editable(request.status)) {
+    res.status(409).json({ error: "locked", message: "คำขออยู่ระหว่างการดำเนินการ จึงแก้ไขไม่ได้" });
+    return;
+  }
+  const { count } = await prisma.attachment.updateMany({
+    where: { id: req.params.attachmentId, ownerType: OWNER, ownerId: request.id, status: AttachmentStatus.ACTIVE },
+    data: {
+      status: AttachmentStatus.DELETED,
+      deletedAt: new Date(),
+      deletedBy: session.sub,
+      deletionReason: "ผู้กรอกลบไฟล์ออกจากร่าง",
+    },
+  });
+  if (count === 0) {
+    notFound(res);
+    return;
+  }
+  await logAudit({
+    action: AuditAction.ATTACHMENT_DELETED,
+    subjectType: AuditSubject.ATTACHMENT,
+    subjectId: req.params.attachmentId,
+    organizationId: request.organizationId,
+  });
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------- นำส่ง · ยกเลิก
