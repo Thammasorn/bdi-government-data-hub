@@ -248,10 +248,8 @@ async function seatConflict(
     return {
       error: "role_occupied",
       message:
-        `หน่วยงานนี้มี "${label}" ที่ใช้งานอยู่แล้ว (${holder.userAccount.email}) — ` +
-        `หนึ่งหน่วยงานมีได้คนเดียว ระบบไม่เปลี่ยนตัวให้เอง ` +
-        `ต้องระงับ (POST /api/admin/users/:id/suspend) หรือยุติบัญชี ` +
-        `(POST /api/admin/users/:id/deactivate) คนนั้นก่อน`,
+        `หน่วยงานนี้มี "${label}" ครบตามจำนวนที่กำหนดแล้ว (เช่น ${holder.userAccount.email}) — ` +
+        `ระบบไม่เปลี่ยนตัวให้เอง ต้องยุติบัญชีคนเดิมก่อน (POST /api/admin/users/:id/deactivate)`,
       holderUserAccountId: holder.userAccountId,
       holderEmail: holder.userAccount.email,
     };
@@ -1520,7 +1518,7 @@ adminUserRouter.post("/:id/roles", async (req, res) => {
     return;
   }
 
-  const { replaced } = await prisma.$transaction((tx) =>
+  await prisma.$transaction((tx) =>
     assignRole(tx, {
       userAccountId: account.id,
       roleCode: role,
@@ -1535,7 +1533,7 @@ adminUserRouter.post("/:id/roles", async (req, res) => {
     subjectId: account.id,
     organizationId: organization.id,
     after: { role, organizationId: organization.id },
-    metadata: { reason, assigned_via: "ADMIN_API", replaced: replaced.length },
+    metadata: { reason, assigned_via: "ADMIN_API" },
   });
 
   await notifyUsers([account.id], {
@@ -1549,7 +1547,6 @@ adminUserRouter.post("/:id/roles", async (req, res) => {
     role,
     roleLabel: ROLE_LABELS[role],
     organization,
-    replacedUserAccountIds: replaced.map((r) => r.userAccountId),
   });
 });
 
@@ -1730,7 +1727,7 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
       reason,
     });
 
-    const { replaced } = await assignRole(tx, {
+    await assignRole(tx, {
       userAccountId: account.id,
       roleCode: role,
       organizationId: target.id,
@@ -1743,7 +1740,7 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
       reason: SessionRevokeReason.ROTATED,
     });
 
-    return { reverted, replaced };
+    return { reverted };
   });
 
   await logAudit({
@@ -1757,7 +1754,6 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
       reason,
       transferred_via: "ADMIN_API",
       requests_reverted_to_draft: outcome.reverted.map((r) => r.requestNumber),
-      replaced: outcome.replaced.length,
     },
   });
 
@@ -1836,7 +1832,6 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
       requestNumber,
       approverCleared,
     })),
-    replacedUserAccountIds: outcome.replaced.map((r) => r.userAccountId),
     organizationsLeftWithoutStaff: vacancies,
     message:
       // เหตุผลเดียวกับ title ของ notification ข้างบน — ไม่มีหน่วยงานต้นทางคือเปลี่ยนบทบาทอยู่กับที่

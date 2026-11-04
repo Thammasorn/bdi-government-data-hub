@@ -414,6 +414,11 @@ model Organization {
   email           String? @db.VarChar(255)
   websiteUrl      String? @map("website_url") @db.VarChar(500)
 
+  /// เบี่ยงจากดีไซน์: ไม่มีใน Excel — จำนวนผู้แทนสูงสุดของหน่วยงานที่ ACTIVE แล้ว ผู้ดูแลระบบตั้งต่อหน่วยงานได้
+  /// ก่อน ACTIVE ใช้ 1/1 เสมอไม่ว่าค่านี้จะเป็นเท่าไร — ดู `roleSeatLimit()` ใน lib/iam.ts
+  maxOrganizationUserCount     Int @default(3) @map("max_organization_user_count")
+  maxOrganizationApproverCount Int @default(1) @map("max_organization_approver_count")
+
   activatedAt      DateTime? @map("activated_at") @db.Timestamptz(6)
   activatedBy      String?   @map("activated_by") @db.Uuid
   suspendedAt      DateTime? @map("suspended_at") @db.Timestamptz(6)

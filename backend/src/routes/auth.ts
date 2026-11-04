@@ -34,7 +34,6 @@ import {
   usableActivationKeyById,
 } from "../lib/iam.js";
 import { captureError } from "../lib/error-capture.js";
-import { announceRoleReplacement } from "../lib/notify.js";
 import {
   ORGANIZATION_FROZEN,
   assertOrganizationOperable,
@@ -865,13 +864,9 @@ authRouter.post("/activate", async (req, res) => {
       metadata: {
         assigned_via: "ACTIVATION",
         activation_key_id: key.id,
-        replaced: activation.replaced.length,
       },
     });
   }
-
-  // ประกาศหลัง commit เท่านั้น — ดู announceRoleReplacement()
-  await announceRoleReplacement(activation.replaced);
 
   await issueSession(req, res, key.userAccountId);
 });

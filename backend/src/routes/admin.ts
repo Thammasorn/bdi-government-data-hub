@@ -173,6 +173,8 @@ async function toAdminOrganizationShape(org: {
   phoneExtension: string | null;
   email: string | null;
   websiteUrl: string | null;
+  maxOrganizationUserCount: number;
+  maxOrganizationApproverCount: number;
   parentOrganizationId: string | null;
   activatedAt: Date | null;
   suspendedAt: Date | null;
@@ -202,6 +204,8 @@ async function toAdminOrganizationShape(org: {
     phoneExtension: org.phoneExtension,
     email: org.email,
     websiteUrl: org.websiteUrl,
+    maxOrganizationUserCount: org.maxOrganizationUserCount,
+    maxOrganizationApproverCount: org.maxOrganizationApproverCount,
     parentOrganizationId: org.parentOrganizationId,
     activatedAt: org.activatedAt,
     suspendedAt: org.suspendedAt,
@@ -850,6 +854,54 @@ async function organizationLeftovers(organizationId: string): Promise<string[]> 
   return warnings;
 }
 
+const representativeLimit = (label: string) =>
+  z.number({ error: `กรุณาระบุจำนวน${label}สูงสุด` }).int(`จำนวน${label}ต้องเป็นจำนวนเต็ม`).min(1, `จำนวน${label}ต้องอย่างน้อย 1 คน`).max(100, `จำนวน${label}ต้องไม่เกิน 100 คน`);
+
+const representativeLimitsSchema = adminReasonSchema.extend({
+  maxOrganizationUserCount: representativeLimit("ผู้ประสานงาน"),
+  maxOrganizationApproverCount: representativeLimit("ผู้มีอำนาจ"),
+});
+
+/**
+ * ตั้งจำนวนผู้แทนสูงสุดของหน่วยงาน
+ *
+ * ลดต่ำกว่าจำนวนที่มีอยู่ได้ และไม่มีใครถูกถอดออก ค่าใหม่มีผลกับการเชิญและคำขอเปลี่ยนแปลงผู้แทน
+ * ที่ยืนยันหลังจากนี้เท่านั้น
+ */
+adminRouter.put("/organizations/:id/representative-limits", async (req, res) => {
+  const parsedId = z.string().uuid().safeParse(req.params.id);
+  const before = parsedId.success
+    ? await prisma.organization.findUnique({ where: { id: parsedId.data } })
+    : null;
+  if (!before) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานที่ระบุ" });
+    return;
+  }
+  const parsed = representativeLimitsSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+    return;
+  }
+  const { maxOrganizationUserCount, maxOrganizationApproverCount, reason } = parsed.data;
+  const organization = await prisma.organization.update({
+    where: { id: before.id },
+    data: { maxOrganizationUserCount, maxOrganizationApproverCount, updatedBy: adminActorId() },
+  });
+  await logAudit({
+    action: AuditAction.ORGANIZATION_REPRESENTATIVE_LIMITS_CHANGED,
+    subjectType: AuditSubject.ORGANIZATION,
+    subjectId: before.id,
+    organizationId: before.id,
+    before: {
+      maxOrganizationUserCount: before.maxOrganizationUserCount,
+      maxOrganizationApproverCount: before.maxOrganizationApproverCount,
+    },
+    after: { maxOrganizationUserCount, maxOrganizationApproverCount },
+    metadata: { reason },
+  });
+  res.json({ organization: await toAdminOrganizationShape(organization) });
+});
+
 adminRouter.post("/organizations/:id/suspend", organizationStatusRoute("suspend"));
 adminRouter.post("/organizations/:id/deactivate", organizationStatusRoute("deactivate"));
 adminRouter.post("/organizations/:id/reactivate", organizationStatusRoute("reactivate"));
@@ -987,10 +1039,9 @@ adminRouter.post("/invitations", async (req, res) => {
       res.status(409).json({
         error: "role_occupied",
         message:
-          `หน่วยงานนี้มี "${ROLE_LABELS[role]}" ที่ใช้งานอยู่แล้ว (${holder.userAccount.email}) — ` +
-          `หนึ่งหน่วยงานมีได้คนเดียว ระบบไม่เปลี่ยนตัวให้เอง ` +
-          `ถ้าต้องการเปลี่ยนคน ให้ระงับด้วย POST /api/admin/users/:id/suspend ` +
-          `หรือยุติบัญชีด้วย POST /api/admin/users/:id/deactivate ก่อน แล้วค่อยเชิญใหม่`,
+          `หน่วยงานนี้มี "${ROLE_LABELS[role]}" ครบตามจำนวนที่กำหนดแล้ว (เช่น ${holder.userAccount.email}) — ` +
+          `ระบบไม่เปลี่ยนตัวให้เอง ถ้าต้องการเปลี่ยนคน ให้ยุติบัญชีคนเดิม ` +
+          `ด้วย POST /api/admin/users/:id/deactivate ก่อน แล้วค่อยเชิญใหม่`,
         holderUserAccountId: holder.userAccountId,
         holderEmail: holder.userAccount.email,
       });
@@ -1401,8 +1452,8 @@ adminRouter.post("/invitations/:id/resend", async (req, res) => {
       res.status(409).json({
         error: "role_occupied",
         message:
-          `หน่วยงานนี้มี "${ROLE_LABELS[roleCode]}" ที่ใช้งานอยู่แล้ว (${holder.userAccount.email}) — ` +
-          `ส่งคำเชิญใบนี้ซ้ำไม่ได้จนกว่าจะระงับหรือยุติบัญชีคนนั้นก่อน`,
+          `หน่วยงานนี้มี "${ROLE_LABELS[roleCode]}" ครบตามจำนวนที่กำหนดแล้ว (เช่น ${holder.userAccount.email}) — ` +
+          `ส่งคำเชิญใบนี้ซ้ำไม่ได้จนกว่าจะยุติบัญชีคนเดิมก่อน`,
         holderUserAccountId: holder.userAccountId,
         holderEmail: holder.userAccount.email,
       });

@@ -72,7 +72,6 @@ import {
   roleIdByCode,
   roleSeatTaken,
   type Db,
-  type RevokedAssignment,
   type RevokedKey,
 } from "../lib/iam.js";
 import {
@@ -85,7 +84,6 @@ import {
 import {
   NotificationType,
   announceProgress,
-  announceRoleReplacement,
   bdiApproverIds,
   bdiOfficerIds,
   emailsOf,
@@ -2546,7 +2544,6 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
     }
 
     /** ผู้ถือ role เดิมที่เสียสิทธิ์ตอนผูกผู้มีอำนาจ — ประกาศหลัง commit */
-    let replacedHolders: RevokedAssignment[] = [];
     /** ที่นั่งผู้มีอำนาจฯ ที่ recall ปล่อยคืน — เขียน audit หลัง commit */
     let releasedSeat: ReleasedSeat | null = null;
     /** ผู้มีอำนาจฯ ที่ด่านถัดไปเปิดให้ และเพิ่งได้รับคำเชิญหรือไม่ — ใช้จัดลำดับอีเมลหลัง commit */
@@ -2681,7 +2678,6 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
 
       if (result === ReviewResult.PASSED && task.taskType === ReviewTaskType.BDI_OFFICER_REVIEW) {
         const approver = await ensureApproverAccount(tx, request);
-        replacedHolders = approver.replaced;
         approverToNotify = { id: approver.id, invited: approver.invited };
         approverAccount = approver;
         await openTask(tx, {
@@ -2882,7 +2878,6 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
           metadata: {
             assigned_via: "REVIEW_API",
             request_number: request.requestNumber,
-            replaced: approver.replaced.length,
           },
         });
       }
@@ -2907,8 +2902,6 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
       // บัญชีที่ลบไม่ได้ถูกเพิกถอนคำเชิญแทน — บัญชีที่ถูกลบไม่มีรายการนี้ (คีย์หายไปพร้อมบัญชี)
       await logKeysRevoked(seat.revokedKeys, { revokedVia: "REVIEW_API" });
     }
-
-    await announceRoleReplacement(replacedHolders);
 
     await dispatchReviewNotifications(request, task.taskType, result, note, approverToNotify);
 
@@ -3039,7 +3032,7 @@ async function approverConflict(
   if (seatHolder) {
     return conflictOf(
       "หน่วยงานนี้มีผู้มีอำนาจอนุมัติที่ใช้งานอยู่แล้ว ระบบไม่เปลี่ยนตัวผ่านคำขอจดทะเบียน — " +
-        "การเปลี่ยนตัวต้องระงับหรือยุติบัญชีคนเดิมก่อน",
+        "การเปลี่ยนตัวต้องยุติบัญชีคนเดิมก่อน",
       {
         signatoryEmail: "หน่วยงานนี้มีผู้มีอำนาจอนุมัติที่ใช้งานอยู่แล้ว กรอกเป็นคนอื่นไม่ได้",
         signatoryNationalId: "หน่วยงานนี้มีผู้มีอำนาจอนุมัติที่ใช้งานอยู่แล้ว กรอกเป็นคนอื่นไม่ได้",
@@ -3124,7 +3117,6 @@ async function approverConflict(
  */
 interface ApproverAccountOutcome {
   id: string;
-  replaced: RevokedAssignment[];
   invited: boolean;
   /** บัญชีของผู้มีอำนาจฯ ตามที่อยู่ในฐานข้อมูลตอนจบ transaction — ค่าที่แถว audit เก็บ */
   account: {
@@ -3234,7 +3226,6 @@ async function ensureApproverAccount(
       },
     }));
 
-  let replaced: RevokedAssignment[] = [];
   /** ออกคำเชิญให้ในรอบนี้หรือไม่ — ผู้เรียกใช้ตัดสินว่าต้องหน่วงอีเมลฉบับถัดไป */
   let invited = false;
   let activationKeyId: string | null = null;
@@ -3250,7 +3241,6 @@ async function ensureApproverAccount(
       organizationId: request.organizationId,
       actorId: SYSTEM_USER_ID,
     });
-    replaced = assignment.replaced;
     if (assignment.created) roleAssignmentId = assignment.id;
   } else {
     // ยังไม่มีบัญชีใช้งานได้ — ออก activation key ให้ไปสมัคร
@@ -3285,7 +3275,6 @@ async function ensureApproverAccount(
 
   return {
     id: account.id,
-    replaced,
     invited,
     account: {
       email: account.email,

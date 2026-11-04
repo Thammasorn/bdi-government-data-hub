@@ -143,6 +143,8 @@ export const AuditAction = {
    * `REQUEST_CREATED`
    */
   ORGANIZATION_UPDATED: "ORGANIZATION_UPDATED",
+  /** ผู้ดูแลระบบตั้งจำนวนผู้แทนสูงสุดของหน่วยงาน */
+  ORGANIZATION_REPRESENTATIVE_LIMITS_CHANGED: "ORGANIZATION_REPRESENTATIVE_LIMITS_CHANGED",
   /**
    * หน่วยงานเปิดใช้งาน — BDI อนุมัติขั้นสุดท้ายของคำขอจดทะเบียน (`POST /api/organizations/:id/review`)
    *

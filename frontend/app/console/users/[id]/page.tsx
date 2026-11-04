@@ -766,16 +766,12 @@ function GrantDialog({
       reasonHint="เจ้าของบัญชีเห็นเหตุผลนี้"
       canSubmit={role !== "" && (!scoped || org !== "")}
       onConfirm={async (reason) => {
-        const res = await api.post<{ replacedUserAccountIds?: string[] }>(`/api/admin/users/${user.id}/roles`, {
+        await api.post(`/api/admin/users/${user.id}/roles`, {
           role,
           ...(scoped ? { organizationId: org } : {}),
           reason,
         });
-        onDone(
-          res.replacedUserAccountIds && res.replacedUserAccountIds.length > 0
-            ? [`ผู้ถือตำแหน่งเดิม ${res.replacedUserAccountIds.length} บัญชีถูกถอนบทบาทเพราะบัญชีของเขาไม่ได้ใช้งานอยู่`]
-            : [],
-        );
+        onDone([]);
       }}
     >
       <RoleSelect value={role} onChange={setRole} roles={[...ORGANIZATION_ROLES, ...BDI_ROLE_CODES]} />
