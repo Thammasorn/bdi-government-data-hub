@@ -2263,8 +2263,6 @@ async function nextStageAfter(
   actorId: string,
 ): Promise<MaterialisedDataset | null> {
   const open = async (taskType: ReviewTaskType, roleCode: RoleCode, orgScope?: string | null) => {
-    // ไม่ระบุ orgScope = ด่านฝั่ง BDI ซึ่งอยู่ในหน่วยงาน BDI
-    const isBdiStage = orgScope === undefined;
     const holder = await roleHolderId(tx, roleCode, orgScope ?? BDI_ORGANIZATION_ID);
     if (!holder) {
       throw new WorkflowError(
@@ -2278,11 +2276,11 @@ async function nextStageAfter(
       subjectId: request.id,
       taskType,
       /**
-       * ด่านฝั่ง BDI ไม่มีเจ้าของ — ใครถือ role นั้นก็ทำได้ และทุกคนได้อีเมลแจ้ง
-       * ด่านของหน่วยงานมีเจ้าของจริง: `assignRole()` บังคับว่าหนึ่งหน่วยงานมีผู้มีอำนาจ
-       * ลงนามที่ ACTIVE ได้คนเดียว และชื่อคนนั้นคือชื่อที่ไปพิมพ์บนเอกสาร
+       * ไม่มีด่านไหนมีเจ้าของ — ใครถือ role นั้นก็ทำได้ และทุกคนได้อีเมลแจ้ง ด่านของหน่วยงานเคยผูกกับ
+       * ผู้มีอำนาจคนเดียว แต่ตั้งแต่หน่วยงานมีผู้มีอำนาจได้หลายคน คนใดคนหนึ่งลงนามก็ปิดด่านได้
+       * ชื่อบนเอกสารและไทม์ไลน์มาจากคนที่ลงนามจริง (`completed_by`) `holder` ใช้เช็คว่ามีคนทำได้อยู่จริง
        */
-      assignedUserId: isBdiStage ? null : holder,
+      assignedUserId: null,
       assignedRole: roleCode,
       assignedById: actorId,
       actorId,
