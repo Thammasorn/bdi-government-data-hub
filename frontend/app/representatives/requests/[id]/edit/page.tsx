@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { SelectField, TextField } from "@/components/ui/Field";
 import { FileUpload, type UploadedFile } from "@/components/ui/FileUpload";
-import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
@@ -44,7 +43,6 @@ export default function ChangeRequestFormPage() {
   const [saving, setSaving] = useState(false);
   const [showErrors, setShowErrors] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const [previewing, setPreviewing] = useState(false);
 
   useEffect(() => {
     if (loading || !user) return;
@@ -157,7 +155,7 @@ export default function ChangeRequestFormPage() {
     setSaving(true);
     try {
       await save();
-      setPreviewing(true);
+      router.push(`/representatives/requests/${id}/preview`);
     } catch (err) {
       show({ tone: "error", title: "บันทึกไม่สำเร็จ", detail: err instanceof ApiError ? err.message : undefined });
     } finally {
@@ -175,7 +173,6 @@ export default function ChangeRequestFormPage() {
       show({ tone: "success", title: "นำส่งคำขอแล้ว" });
       router.push(`/representatives/requests/${id}`);
     } catch (err) {
-      setPreviewing(false);
       const fields = err instanceof ApiError ? Object.values(err.fields) : [];
       show({
         tone: "error",
@@ -364,50 +361,6 @@ export default function ChangeRequestFormPage() {
         </div>
       </div>
 
-      <Modal open={previewing} onClose={() => setPreviewing(false)} title="ตรวจสอบก่อนนำส่ง" size="lg">
-        <div className="space-y-4 text-sm">
-          <section>
-            <h3 className="mb-1 font-semibold">ส่วนที่ 1 ยกเลิกรายชื่อผู้แทนเดิม</h3>
-            {chosen.length ? (
-              <ol className="list-decimal pl-5">
-                {chosen.map((p) => (
-                  <li key={keyOf(p)}>
-                    {p.name} · {p.roleLabel}
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <p className="text-ink-muted">ไม่มี</p>
-            )}
-          </section>
-          <section>
-            <h3 className="mb-1 font-semibold">ส่วนที่ 2 เพิ่มรายชื่อผู้แทนใหม่</h3>
-            {additions.length ? (
-              <ol className="list-decimal pl-5">
-                {additions.map((a, i) => (
-                  <li key={a.id ?? i}>
-                    {a.prefixTh} {a.firstnameTh} {a.lastnameTh} · {ROLE_OPTIONS.find((o) => o.value === a.roleCode)?.label} · {a.email}
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <p className="text-ink-muted">ไม่มี</p>
-            )}
-          </section>
-          <section>
-            <h3 className="mb-1 font-semibold">ส่วนที่ 3 เอกสารแนบ</h3>
-            <p>{file?.filename}</p>
-          </section>
-          <div className="flex justify-between gap-3 pt-2">
-            <Button variant="ghost" onClick={() => setPreviewing(false)}>
-              Close
-            </Button>
-            <Button onClick={submit} loading={saving}>
-              Submit
-            </Button>
-          </div>
-        </div>
-      </Modal>
     </RepresentativeShell>
   );
 }
