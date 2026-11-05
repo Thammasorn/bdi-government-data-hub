@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 
 import { RepresentativeShell } from "@/components/representatives/Shell";
+import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
 import type { Representative, SeatSummary } from "@/lib/representatives";
@@ -15,10 +17,52 @@ function statusOf(person: Representative) {
   return person.accountStatus === "SUSPENDED" ? "ถูกระงับ" : "ใช้งานอยู่";
 }
 
+/** ข้อมูลของผู้แทนหนึ่งคน — ไม่แสดงเลขประจำตัวประชาชน และ API ของรายชื่อนี้ก็ไม่ส่งมา */
+function PersonDialog({ person, onClose }: { person: Representative | null; onClose: () => void }) {
+  const phone = person?.phoneNumber
+    ? [person.phoneNumber, person.phoneNumberExtension && `ต่อ ${person.phoneNumberExtension}`].filter(Boolean).join(" ")
+    : null;
+  const rows: [string, string | null | undefined][] = person
+    ? [
+        ["หน่วยงาน", person.organization?.nameTh],
+        ["คำนำหน้า", person.prefixTh],
+        ["ชื่อ", person.firstnameTh],
+        ["นามสกุล", person.lastnameTh],
+        ["บทบาท", person.roleLabel],
+        ["สถานะ", statusOf(person)],
+        ["ตำแหน่ง", person.positionTh],
+        ["ฝ่าย/กอง/สำนัก", person.departmentTh],
+        ["อีเมล", person.email],
+        ["เบอร์โทรศัพท์", phone],
+      ]
+    : [];
+  return (
+    <Modal open={person !== null} onClose={onClose} title="รายละเอียดผู้แทน">
+      <dl className="grid grid-cols-[9rem_1fr] gap-x-4 gap-y-2 text-sm">
+        {rows.map(([label, value]) => (
+          <Fragment key={label}>
+            <dt className="text-ink-muted">{label}</dt>
+            <dd className="break-words text-ink">{value || "–"}</dd>
+          </Fragment>
+        ))}
+      </dl>
+      {person?.openRequests.length ? (
+        <p className="mt-4 text-sm text-coral-700">อยู่ในคำขอ {person.openRequests.join(", ")} ที่ยังไม่จบ</p>
+      ) : null}
+      <div className="mt-6 flex justify-end">
+        <Button variant="secondary" onClick={onClose}>
+          ปิด
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
 export default function RepresentativesPage() {
   const { user, loading } = useRequireAuth();
   const [data, setData] = useState<{ summary: SeatSummary[]; representatives: Representative[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [viewing, setViewing] = useState<Representative | null>(null);
 
   useEffect(() => {
     if (loading || !user) return;
@@ -72,11 +116,10 @@ export default function RepresentativesPage() {
                     <td className="px-4 py-3">{person.lastnameTh}</td>
                     <td className="px-4 py-3">{person.roleLabel}</td>
                     <td className="px-4 py-3">{statusOf(person)}</td>
-                    <td className="px-4 py-3 text-ink-muted">
-                      {[person.positionTh, person.departmentTh].filter(Boolean).join(" · ") || "–"}
-                      {person.openRequests.length ? (
-                        <p className="text-[13px]">อยู่ในคำขอ {person.openRequests.join(", ")}</p>
-                      ) : null}
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <button type="button" className="text-navy-700 underline" onClick={() => setViewing(person)}>
+                        view detail
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -90,6 +133,7 @@ export default function RepresentativesPage() {
               </tbody>
             </table>
           </Card>
+          <PersonDialog person={viewing} onClose={() => setViewing(null)} />
         </>
       ) : null}
     </RepresentativeShell>

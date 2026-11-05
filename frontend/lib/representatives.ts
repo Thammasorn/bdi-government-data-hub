@@ -52,6 +52,9 @@ export interface Representative {
   name: string;
   positionTh: string | null;
   departmentTh: string | null;
+  email: string | null;
+  phoneNumber: string | null;
+  phoneNumberExtension: string | null;
   roleCode: string;
   roleLabel: string;
   openRequests: string[];

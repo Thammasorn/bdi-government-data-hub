@@ -49,6 +49,8 @@ const PERSON = {
   lastnameTh: true,
   positionTh: true,
   departmentTh: true,
+  phoneNumber: true,
+  phoneNumberExtension: true,
 } as const;
 
 export const CHANGE_REQUEST_INCLUDE = {
@@ -471,6 +473,9 @@ export async function listRepresentatives(db: Db, organizationId: string) {
     name: fullNameTh(person),
     positionTh: person.positionTh,
     departmentTh: person.departmentTh,
+    email: person.email,
+    phoneNumber: person.phoneNumber,
+    phoneNumberExtension: person.phoneNumberExtension,
     roleCode,
     roleLabel: ROLE_LABELS[roleCode as RoleCode] ?? roleCode,
   });
