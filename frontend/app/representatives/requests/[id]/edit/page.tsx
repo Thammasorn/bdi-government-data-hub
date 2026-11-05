@@ -150,9 +150,11 @@ export default function ChangeRequestFormPage() {
         ]),
   ];
   const additionsValid = invalid.every((errors) => Object.keys(errors).length === 0);
+  // ส่วนที่ 1 กับ 2 ไม่บังคับทีละส่วน มีส่วนใดส่วนหนึ่งก็ครบ แต่คนใหม่ที่กรอกค้างไว้ยังนับว่าไม่ครบ
+  const itemsDone = hasItems && additionsValid;
   const completion = {
-    [SECTIONS[0].id]: selected.length > 0,
-    [SECTIONS[1].id]: additions.length > 0 && additionsValid,
+    [SECTIONS[0].id]: itemsDone,
+    [SECTIONS[1].id]: itemsDone,
     [SECTIONS[2].id]: file !== null,
   };
   const revisionNote =
