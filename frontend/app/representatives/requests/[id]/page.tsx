@@ -134,7 +134,8 @@ export default function ChangeRequestDetailPage() {
   };
 
   const openNote = (next: "return" | "reject" | "cancel") => {
-    setNote("");
+    // ส่งกลับเพราะไม่ผ่านการตรวจ — เติมเหตุผลให้ เจ้าหน้าที่แก้ก่อนส่งได้ เพราะหน่วยงานจะอ่านข้อความนี้
+    setNote(next === "return" ? blockers.join("\n") : "");
     setNoteError(null);
     setModal(next);
   };
@@ -309,6 +310,11 @@ export default function ChangeRequestDetailPage() {
         <TextAreaField
           label={modal === "return" ? "รายละเอียดที่ต้องแก้ไข" : "เหตุผล"}
           required
+          hint={
+            modal === "return" && blockers.length > 0
+              ? "ระบบเติมเหตุผลที่ตรวจไม่ผ่านให้ แก้ไขได้ก่อนส่ง หน่วยงานจะเห็นข้อความนี้"
+              : undefined
+          }
           value={note}
           error={noteError ?? undefined}
           onChange={(e) => {
