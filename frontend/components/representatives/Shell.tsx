@@ -6,7 +6,8 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { ListPageHeader } from "@/components/list/ListPageHeader";
-import { changeStatusTone, CHANGE_STATUS_LABELS, type ChangeStatus, type HeadcountRow } from "@/lib/representatives";
+import { CHANGE_STATUS_META,
+  type ChangeStatus, type HeadcountRow } from "@/lib/representatives";
 
 const MENU = [
   { href: "/representatives", label: "รายชื่อผู้แทนหน่วยงาน" },
@@ -57,9 +58,16 @@ export function RepresentativeShell({
 }
 
 export function ChangeStatusBadge({ status }: { status: ChangeStatus }) {
+  const meta = CHANGE_STATUS_META[status];
   return (
-    <span className={clsx("inline-flex rounded-full px-3 py-1 text-[13px] font-medium", changeStatusTone(status))}>
-      {CHANGE_STATUS_LABELS[status]}
+    <span
+      className={clsx(
+        "inline-flex items-start gap-1.5 rounded-2xl px-3 py-1 text-[13px] font-medium leading-snug",
+        meta.className,
+      )}
+    >
+      <span className="mt-[6px] h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" aria-hidden="true" />
+      <span>{meta.label}</span>
     </span>
   );
 }

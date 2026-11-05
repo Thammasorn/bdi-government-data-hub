@@ -9,6 +9,7 @@
  * และคำขอใบอื่นของหน่วยงานเดียวกันอาจถูกยืนยันไปแล้ว
  */
 import {
+  OrganizationStatus,
   ActivationKeyStatus,
   type Prisma,
   type PrismaClient,
@@ -22,7 +23,7 @@ import {
 import { activeAssignmentWhere, roleIdByCode, roleSeatUsage } from "./iam.js";
 import { fullNameTh } from "./person-name.js";
 import { ROLE_LABELS } from "./roles.js";
-import { ROLE_CODES, type RoleCode } from "./system.js";
+import { BDI_ORGANIZATION_ID, ROLE_CODES, type RoleCode } from "./system.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -430,33 +431,43 @@ export async function evaluateChangeRequest(db: Db, request: ChangeRequestRow): 
 }
 
 /** รายชื่อผู้แทนของหน่วยงาน — ผู้ถือ role (รวมคนที่ถูกระงับ) และคนที่มีคำเชิญค้าง */
-export async function listRepresentatives(db: Db, organizationId: string) {
+/** ไม่ระบุหน่วยงาน = ทุกหน่วยงานที่ผ่านการลงทะเบียน ยกเว้น BDI เอง */
+export async function listRepresentatives(db: Db, organizationId?: string) {
+  const scope = organizationId
+    ? { organizationId }
+    : {
+        organization: {
+          status: { not: OrganizationStatus.PENDING_REGISTRATION },
+          id: { not: BDI_ORGANIZATION_ID },
+        },
+      };
+  const organization = { select: { id: true, nameTh: true, status: true } };
   const roleIds = await Promise.all(REPRESENTATIVE_ROLES.map((code) => roleIdByCode(db, code)));
   const [assignments, keys, openRemovals] = await Promise.all([
     db.userRoleAssignment.findMany({
       where: {
-        organizationId,
+        ...scope,
         roleId: { in: roleIds },
         userAccount: { status: { in: [UserAccountStatus.ACTIVE, UserAccountStatus.SUSPENDED] } },
         ...activeAssignmentWhere(),
       },
-      select: { id: true, role: { select: { code: true } }, userAccount: { select: PERSON } },
+      select: { id: true, role: { select: { code: true } }, userAccount: { select: PERSON }, organization },
       orderBy: { createdAt: "asc" },
     }),
     db.activationKey.findMany({
       where: {
-        organizationId,
+        ...scope,
         roleId: { in: roleIds },
         status: ActivationKeyStatus.ISSUED,
         expiresAt: { gt: new Date() },
       },
-      select: { id: true, role: { select: { code: true } }, userAccount: { select: PERSON } },
+      select: { id: true, role: { select: { code: true } }, userAccount: { select: PERSON }, organization },
       orderBy: { createdAt: "asc" },
     }),
     db.representativeChangeRemoval.findMany({
       where: {
         status: RepresentativeRemovalStatus.PENDING,
-        changeRequest: { organizationId, status: { in: OPEN_CHANGE_STATUSES } },
+        changeRequest: { ...(organizationId ? { organizationId } : {}), status: { in: OPEN_CHANGE_STATUSES } },
       },
       select: {
         userRoleAssignmentId: true,
@@ -482,6 +493,7 @@ export async function listRepresentatives(db: Db, organizationId: string) {
   return [
     ...assignments.map((a) => ({
       ...shape(a.userAccount, a.role.code),
+      organization: a.organization,
       kind: "HOLDER" as const,
       accountStatus: a.userAccount.status,
       userRoleAssignmentId: a.id,
@@ -493,6 +505,7 @@ export async function listRepresentatives(db: Db, organizationId: string) {
     })),
     ...keys.map((k) => ({
       ...shape(k.userAccount, k.role.code),
+      organization: k.organization,
       kind: "INVITED" as const,
       accountStatus: k.userAccount.status,
       userRoleAssignmentId: null,
@@ -525,11 +538,11 @@ export async function representativeSummary(db: Db, organizationId: string) {
  */
 export const CHANGE_NODES = [
   { key: "DRAFT", lane: "main", order: 1, label: "ฉบับร่าง", tone: "neutral", role: ROLE_CODES.ORGANIZATION_USER, statuses: [RepresentativeChangeStatus.DRAFT] },
-  { key: "OFFICER_REVIEW", lane: "main", order: 2, label: "ผู้ประสานงานของ BDI ตรวจสอบ", short: "BDI ตรวจสอบ", tone: "review", role: ROLE_CODES.BDI_OFFICER, statuses: [RepresentativeChangeStatus.SUBMITTED, RepresentativeChangeStatus.UNDER_REVIEW] },
+  { key: "OFFICER_REVIEW", lane: "main", order: 2, label: "BDI ตรวจสอบคำขอ", short: "BDI ตรวจสอบคำขอ", tone: "review", role: ROLE_CODES.BDI_OFFICER, statuses: [RepresentativeChangeStatus.SUBMITTED, RepresentativeChangeStatus.UNDER_REVIEW] },
   { key: "COMPLETED", lane: "main", order: null, label: "ดำเนินการเสร็จสิ้น", tone: "success", role: null, statuses: [RepresentativeChangeStatus.COMPLETED] },
   { key: "RETURNED", lane: "revision", order: null, label: "รอการแก้ไข", tone: "danger", role: ROLE_CODES.ORGANIZATION_USER, statuses: [RepresentativeChangeStatus.RETURNED] },
   { key: "PROCESSING_FAILED", lane: "closed", order: null, label: "ดำเนินการไม่สำเร็จ", tone: "danger", role: ROLE_CODES.BDI_OFFICER, statuses: [RepresentativeChangeStatus.CONFIRMED, RepresentativeChangeStatus.PROCESSING, RepresentativeChangeStatus.PROCESSING_FAILED] },
-  { key: "REJECTED", lane: "closed", order: null, label: "ปฏิเสธคำขอ", tone: "danger", role: null, statuses: [RepresentativeChangeStatus.REJECTED] },
+  { key: "REJECTED", lane: "closed", order: null, label: "ไม่อนุมัติ", tone: "danger", role: null, statuses: [RepresentativeChangeStatus.REJECTED] },
   { key: "CANCELLED", lane: "closed", order: null, label: "ยกเลิกแล้ว", tone: "neutral", role: null, statuses: [RepresentativeChangeStatus.CANCELLED] },
 ] as const;
 
@@ -539,6 +552,59 @@ const CHANGE_EDGES = [
   { from: "OFFICER_REVIEW", to: "RETURNED", kind: "return" },
   { from: "RETURNED", to: "OFFICER_REVIEW", kind: "resubmit" },
 ];
+
+/** ความคืบหน้าในรูปเดียวกับ `journeyProgress()` — คำขอนี้มีด่านเดียว จึงไม่ต้องไล่ลำดับด่าน */
+export function changeProgress(
+  status: RepresentativeChangeStatus,
+  lastTask: { result: string | null; completedAt: Date | null; roundNumber: number } | null,
+) {
+  const S = RepresentativeChangeStatus;
+  const phase =
+    status === S.DRAFT
+      ? "DRAFT"
+      : status === S.RETURNED
+        ? "WAITING_REVISION"
+        : status === S.COMPLETED
+          ? "APPROVED"
+          : status === S.REJECTED
+            ? "REJECTED"
+            : status === S.CANCELLED
+              ? "CANCELLED"
+              : "IN_PROGRESS";
+  const reviewing = status === S.SUBMITTED || status === S.UNDER_REVIEW;
+  const state = reviewing
+    ? "CURRENT"
+    : status === S.RETURNED
+      ? "RETURNED"
+      : status === S.REJECTED
+        ? "REJECTED"
+        : status === S.DRAFT || status === S.CANCELLED
+          ? "UPCOMING"
+          : "DONE";
+  const step = {
+    key: "OFFICER_REVIEW",
+    taskType: "BDI_OFFICER_REVIEW",
+    order: 1,
+    optional: false,
+    label: "BDI ตรวจสอบคำขอ",
+    shortLabel: "BDI ตรวจสอบคำขอ",
+    waitingLabel: `รอ${ROLE_LABELS[ROLE_CODES.BDI_OFFICER]}ตรวจสอบคำขอ`,
+    roleCode: ROLE_CODES.BDI_OFFICER,
+    roleLabel: ROLE_LABELS[ROLE_CODES.BDI_OFFICER],
+    state,
+    result: reviewing ? null : (lastTask?.result ?? null),
+    completedAt: reviewing ? null : (lastTask?.completedAt ?? null),
+    roundNumber: lastTask?.roundNumber ?? null,
+  };
+  return {
+    steps: [step],
+    totalSteps: 1,
+    currentOrder: reviewing ? 1 : null,
+    currentStep: reviewing ? step : null,
+    nextStep: null,
+    phase,
+  };
+}
 
 /** สถานะของโหนดหนึ่ง — คีย์ที่ไม่รู้จักตอบ `null` ผู้เรียกจึงไม่กรอง */
 export function statusesOfNode(key: string | undefined): RepresentativeChangeStatus[] | null {

@@ -1,7 +1,9 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, Suspense, useEffect, useState } from "react";
 
+import { DataTable, EmptyState, type Column } from "@/components/console/DataTable";
+import { FilterSelect, Panel, SearchBox } from "@/components/console/ui";
 import { RepresentativeShell } from "@/components/representatives/Shell";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -10,7 +12,8 @@ import { Spinner } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
 import type { Representative, SeatSummary } from "@/lib/representatives";
 import { useRequireAuth } from "@/lib/require-auth";
-import { isBdiStaff } from "@/lib/status";
+import { ROLE_LABELS, isBdiStaff } from "@/lib/status";
+import { qs, useUrlFilters } from "@/lib/use-admin";
 
 function statusOf(person: Representative) {
   if (person.kind === "INVITED") return "รอเปิดใช้งาน";
@@ -86,84 +89,133 @@ function PersonDialog({ person, onClose }: { person: Representative | null; onCl
   );
 }
 
+const FILTERS = ["q", "status", "role", "organizationId", "pageSize"] as const;
+
+const ROLE_FILTER = [
+  { value: "ORGANIZATION_USER", label: ROLE_LABELS.ORGANIZATION_USER },
+  { value: "ORGANIZATION_APPROVER", label: ROLE_LABELS.ORGANIZATION_APPROVER },
+];
+
+const STATUS_FILTER = [
+  { value: "ACTIVE", label: "ใช้งานอยู่" },
+  { value: "SUSPENDED", label: "ถูกระงับ" },
+  { value: "INVITED", label: "รอเปิดใช้งาน" },
+];
+
+interface Roster {
+  summary: SeatSummary[];
+  representatives: Representative[];
+  organizations: { id: string; nameTh: string }[];
+  total: number;
+}
+
 export default function RepresentativesPage() {
+  // ตัวกรองอ่านจาก query string ผ่าน useSearchParams — ต้องอยู่ใน Suspense ไม่งั้น next build ล้ม
+  return (
+    <Suspense fallback={<Spinner />}>
+      <RepresentativeRoster />
+    </Suspense>
+  );
+}
+
+function RepresentativeRoster() {
   const { user, loading } = useRequireAuth();
-  const [data, setData] = useState<{ summary: SeatSummary[]; representatives: Representative[] } | null>(null);
+  const { values, set, page } = useUrlFilters(FILTERS);
+  const [data, setData] = useState<Roster | null>(null);
+  const [fetching, setFetching] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [viewing, setViewing] = useState<Representative | null>(null);
+  const pageSize = Number(values.pageSize) || 20;
 
   useEffect(() => {
     if (loading || !user) return;
+    setFetching(true);
     api
-      .get<{ summary: SeatSummary[]; representatives: Representative[] }>("/api/representative-changes/representatives")
+      .get<Roster>(`/api/representative-changes/representatives${qs({ ...values, page, pageSize })}`)
       .then(setData)
-      .catch((err: Error) => setError(err.message));
-  }, [user, loading]);
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setFetching(false));
+  }, [user, loading, values, page, pageSize]);
 
   if (loading || !user) return <Spinner />;
-  const showOrganization = isBdiStaff(user.roles);
+  const bdi = isBdiStaff(user.roles);
+
+  const columns: Column<Representative>[] = [
+    ...(bdi
+      ? [{ key: "organization", header: "หน่วยงาน", cell: (p: Representative) => p.organization?.nameTh ?? "—" }]
+      : []),
+    { key: "prefix", header: "คำนำหน้า", cell: (p) => p.prefixTh ?? "—" },
+    { key: "first", header: "ชื่อ", cell: (p) => p.firstnameTh ?? "—" },
+    { key: "last", header: "นามสกุล", cell: (p) => p.lastnameTh ?? "—" },
+    { key: "role", header: "บทบาท", cell: (p) => p.roleLabel },
+    {
+      key: "status",
+      header: "สถานะ",
+      cell: (p) => (
+        <span className={`inline-flex rounded-full px-3 py-1 text-[13px] font-medium ${statusTone(p)}`}>{statusOf(p)}</span>
+      ),
+    },
+    {
+      key: "details",
+      header: "details",
+      cell: (p) => (
+        <button type="button" className="whitespace-nowrap text-navy-700 underline" onClick={() => setViewing(p)}>
+          view detail
+        </button>
+      ),
+    },
+  ];
 
   return (
     <RepresentativeShell title="รายชื่อผู้แทนหน่วยงาน" description="ผู้มีอำนาจและผู้ประสานงานที่ถือบทบาทหรือมีคำเชิญค้างอยู่">
-      {error ? <p className="text-sm text-danger">{error}</p> : null}
-      {!data && !error ? <Spinner /> : null}
-      {data ? (
-        <>
-          {data.summary.length ? (
-            <div className="mb-4 grid gap-3 sm:grid-cols-2">
-              {data.summary.map((seat) => (
-                <Card key={seat.roleCode} className="px-5 py-4">
-                  <p className="text-sm text-ink-muted">{seat.roleLabel}</p>
-                  <p className={seat.over ? "text-2xl font-semibold text-danger" : "text-2xl font-semibold text-navy-800"}>
-                    {seat.current} / {seat.max}
-                  </p>
-                  {seat.over ? <p className="text-[13px] text-danger">เกินจำนวนที่กำหนด {seat.current - seat.max} คน</p> : null}
-                </Card>
-              ))}
-            </div>
-          ) : null}
-          <Card className="overflow-x-auto">
-            <table className="w-full min-w-[40rem] text-sm">
-              <thead>
-                <tr className="border-b border-line text-left text-ink-muted">
-                  {showOrganization ? <th className="px-4 py-3 font-medium">หน่วยงาน</th> : null}
-                  <th className="px-4 py-3 font-medium">คำนำหน้า</th>
-                  <th className="px-4 py-3 font-medium">ชื่อ</th>
-                  <th className="px-4 py-3 font-medium">นามสกุล</th>
-                  <th className="px-4 py-3 font-medium">บทบาท</th>
-                  <th className="px-4 py-3 font-medium">สถานะ</th>
-                  <th className="px-4 py-3 font-medium">details</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.representatives.map((person) => (
-                  <tr key={person.userRoleAssignmentId ?? person.activationKeyId} className="border-b border-line last:border-0">
-                    {showOrganization ? <td className="px-4 py-3">{person.organization?.nameTh}</td> : null}
-                    <td className="px-4 py-3">{person.prefixTh}</td>
-                    <td className="px-4 py-3">{person.firstnameTh}</td>
-                    <td className="px-4 py-3">{person.lastnameTh}</td>
-                    <td className="px-4 py-3">{person.roleLabel}</td>
-                    <td className="px-4 py-3">{statusOf(person)}</td>
-                    <td className="whitespace-nowrap px-4 py-3">
-                      <button type="button" className="text-navy-700 underline" onClick={() => setViewing(person)}>
-                        view detail
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {data.representatives.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-ink-muted">
-                      ยังไม่มีผู้แทน
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </Card>
-          <PersonDialog person={viewing} onClose={() => setViewing(null)} />
-        </>
+      {error ? <p className="mb-4 text-sm text-danger">{error}</p> : null}
+      {data?.summary.length ? (
+        <div className="mb-4 grid gap-3 sm:grid-cols-2">
+          {data.summary.map((seat) => (
+            <Card key={seat.roleCode} className="px-5 py-4">
+              <p className="text-sm text-ink-muted">{seat.roleLabel}</p>
+              <p className={seat.over ? "text-2xl font-semibold text-danger" : "text-2xl font-semibold text-navy-800"}>
+                {seat.current} / {seat.max}
+              </p>
+              {seat.over ? <p className="text-[13px] text-danger">เกินจำนวนที่กำหนด {seat.current - seat.max} คน</p> : null}
+            </Card>
+          ))}
+        </div>
       ) : null}
+      <Panel flush>
+        {bdi ? (
+          <div className="flex flex-wrap items-center gap-3 border-b border-line p-4">
+            <div className="min-w-[240px] flex-1">
+              <SearchBox
+                value={values.q}
+                onCommit={(v) => set({ q: v })}
+                placeholder="ค้นหาด้วยชื่อ อีเมล หรือชื่อหน่วยงาน"
+              />
+            </div>
+            <FilterSelect
+              label="หน่วยงาน"
+              value={values.organizationId}
+              onChange={(v) => set({ organizationId: v })}
+              options={(data?.organizations ?? []).map((o) => ({ value: o.id, label: o.nameTh }))}
+            />
+            <FilterSelect label="สถานะ" value={values.status} onChange={(v) => set({ status: v })} options={STATUS_FILTER} />
+            <FilterSelect label="บทบาท" value={values.role} onChange={(v) => set({ role: v })} options={ROLE_FILTER} />
+          </div>
+        ) : null}
+        <DataTable
+          columns={columns}
+          rows={data?.representatives ?? null}
+          rowKey={(p) => p.userRoleAssignmentId ?? p.activationKeyId ?? p.userAccountId}
+          loading={fetching}
+          empty={<EmptyState title="ไม่พบผู้แทนที่ตรงกับตัวกรอง">ลองล้างตัวกรองหรือเปลี่ยนคำค้นหา</EmptyState>}
+          page={page}
+          pageSize={pageSize}
+          total={data?.total}
+          onPage={(p) => set({ page: String(p) })}
+          onPageSize={(size) => set({ pageSize: String(size) })}
+        />
+      </Panel>
+      <PersonDialog person={viewing} onClose={() => setViewing(null)} />
     </RepresentativeShell>
   );
 }

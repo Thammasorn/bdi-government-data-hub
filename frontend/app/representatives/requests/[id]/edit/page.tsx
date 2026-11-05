@@ -4,12 +4,13 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { RepresentativePicker } from "@/components/representatives/RepresentativePicker";
-import { RepresentativeShell } from "@/components/representatives/Shell";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Button } from "@/components/ui/Button";
-import { Card } from "@/components/ui/Card";
+import { Card, CardHeader } from "@/components/ui/Card";
 import { SelectField, TextField } from "@/components/ui/Field";
 import { FileUpload, type UploadedFile } from "@/components/ui/FileUpload";
+import { FormStepper } from "@/components/ui/FormStepper";
+import { IncompleteGate, type IncompleteItem } from "@/components/ui/IncompleteGate";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
@@ -21,8 +22,17 @@ import {
   type ChangeDetail,
   type Representative,
 } from "@/lib/representatives";
+import { MAX_PHONE_EXTENSION } from "@/lib/organization-form";
 import { useRequireAuth } from "@/lib/require-auth";
 import { PREFIXES } from "@/lib/status";
+
+const SECTIONS = [
+  { id: "section-1", tag: "ส่วนที่ 1", title: "ยกเลิกรายชื่อผู้แทนเดิม" },
+  { id: "section-2", tag: "ส่วนที่ 2", title: "เพิ่มรายชื่อผู้แทนใหม่" },
+  { id: "section-3", tag: "ส่วนที่ 3", title: "เอกสารแนบ" },
+];
+
+const INCOMPLETE_HINT_ID = "representative-change-incomplete";
 
 const keyOf = (p: { userRoleAssignmentId: string | null; activationKeyId: string | null }) =>
   p.userRoleAssignmentId ?? p.activationKeyId ?? "";
@@ -41,7 +51,7 @@ export default function ChangeRequestFormPage() {
   const [uploading, setUploading] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [showErrors, setShowErrors] = useState(false);
+  const [touched, setTouched] = useState<Set<number>>(new Set());
   const [problem, setProblem] = useState<string | null>(null);
 
   useEffect(() => {
@@ -109,7 +119,46 @@ export default function ChangeRequestFormPage() {
   const chosen = selected.flatMap((key) => people.filter((p) => keyOf(p) === key));
   const invalid = additions.map(validateAddition);
   const hasItems = selected.length > 0 || additions.length > 0;
-  const formValid = hasItems && file !== null && invalid.every((e) => Object.keys(e).length === 0);
+  const missing: IncompleteItem[] = [
+    ...(hasItems
+      ? []
+      : [
+          {
+            key: "items",
+            section: "ส่วนที่ 1–2",
+            label: "ผู้แทน",
+            message: "กรุณาระบุผู้แทนที่ต้องการยกเลิกหรือเพิ่มอย่างน้อย 1 รายการ",
+          },
+        ]),
+    ...invalid.flatMap((errors, index) =>
+      Object.entries(errors).map(([field, message]) => ({
+        key: `addition-${index}-${field}`,
+        section: "ส่วนที่ 2",
+        label: `ผู้แทนลำดับที่ ${index + 1}`,
+        message: message as string,
+      })),
+    ),
+    ...(file
+      ? []
+      : [
+          {
+            key: "letter",
+            section: "ส่วนที่ 3",
+            label: "เอกสารแนบ",
+            message: "กรุณาแนบหนังสือนำและฟอร์มแจ้งรายละเอียด",
+          },
+        ]),
+  ];
+  const additionsValid = invalid.every((errors) => Object.keys(errors).length === 0);
+  const completion = {
+    [SECTIONS[0].id]: selected.length > 0,
+    [SECTIONS[1].id]: additions.length > 0 && additionsValid,
+    [SECTIONS[2].id]: file !== null,
+  };
+  const revisionNote =
+    request.status === "RETURNED"
+      ? [...request.timeline].reverse().find((t) => t.result === "RETURNED")?.note
+      : null;
 
   const update = (index: number, patch: Partial<AdditionForm>) =>
     setAdditions((rows) => rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
@@ -150,36 +199,13 @@ export default function ChangeRequestFormPage() {
   };
 
   const openPreview = async () => {
-    setShowErrors(true);
-    if (!formValid) return;
+    if (missing.length > 0) return;
     setSaving(true);
     try {
       await save();
       router.push(`/representatives/requests/${id}/preview`);
     } catch (err) {
       show({ tone: "error", title: "บันทึกไม่สำเร็จ", detail: err instanceof ApiError ? err.message : undefined });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const submit = async () => {
-    setShowErrors(true);
-    if (!formValid) return;
-    setSaving(true);
-    try {
-      await save();
-      await api.post(`/api/representative-changes/${id}/submit`, {});
-      show({ tone: "success", title: "นำส่งคำขอแล้ว" });
-      router.push(`/representatives/requests/${id}`);
-    } catch (err) {
-      const fields = err instanceof ApiError ? Object.values(err.fields) : [];
-      show({
-        tone: "error",
-        title: "นำส่งไม่สำเร็จ",
-        detail: fields[0] ?? (err instanceof ApiError ? err.message : undefined),
-      });
-    } finally {
       setSaving(false);
     }
   };
@@ -215,35 +241,41 @@ export default function ChangeRequestFormPage() {
   };
 
   return (
-    <RepresentativeShell title={`คำขอ ${request.requestNumber}`} description="กรอกรายการยกเลิกและเพิ่มผู้แทน แล้วแนบหนังสือนำ"
-      breadcrumb={
-        <Breadcrumb
-          items={[
-            { label: "ผู้แทนหน่วยงาน", href: "/representatives" },
-            { label: "ฟอร์มเปลี่ยนแปลงผู้แทนหน่วยงาน", href: "/representatives/requests" },
-            { label: request.requestNumber, href: `/representatives/requests/${id}` },
-            { label: "แก้ไขคำขอ" },
-          ]}
-        />
-      }
-    >
-      {request.status === "RETURNED" ? (
-        <Card className="mb-4 bg-warning-bg px-5 py-4">
-          <p className="text-sm font-medium text-ink">BDI ส่งกลับให้แก้ไข</p>
-          <p className="text-sm text-ink">
-            {[...request.timeline].reverse().find((t) => t.result === "RETURNED")?.note}
-          </p>
-        </Card>
+    <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+      <Breadcrumb
+        items={[
+          { label: "ผู้แทนหน่วยงาน", href: "/representatives" },
+          { label: "ฟอร์มเปลี่ยนแปลงผู้แทนหน่วยงาน", href: "/representatives/requests" },
+          { label: request.requestNumber, href: `/representatives/requests/${id}` },
+          { label: "แก้ไขคำขอ" },
+        ]}
+      />
+
+      <header className="mb-8 mt-4">
+        <h1 className="text-[26px] font-semibold text-navy-800">คำขอเปลี่ยนแปลงผู้แทนหน่วยงาน</h1>
+        <p className="mt-1.5 text-[15px] text-ink-muted">กรอกรายการยกเลิกและเพิ่มผู้แทน แล้วแนบหนังสือนำ</p>
+      </header>
+
+      {revisionNote ? (
+        <div className="mb-7 rounded-xl border-l-[3px] border-danger bg-danger-bg p-5">
+          <p className="text-[13px] font-semibold text-danger">สิ่งที่ต้องแก้ไขตามที่ BDI แจ้ง</p>
+          <p className="mt-1.5 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-ink">{revisionNote}</p>
+        </div>
       ) : null}
 
-      <Card className="mb-4 px-5 py-5">
-        <h2 className="mb-3 font-semibold text-navy-800">ส่วนที่ 1 ยกเลิกรายชื่อผู้แทนเดิม</h2>
-        <RepresentativePicker
-          options={available}
-          onPick={(person) => setSelected((current) => [...current, keyOf(person)])}
-        />
-        {chosen.length ? (
-          <ol className="mt-4 space-y-2">
+      <div className="grid gap-8 lg:grid-cols-[220px_minmax(0,1fr)]">
+        <FormStepper sections={SECTIONS} completion={completion} />
+
+        <div className="flex flex-col gap-6">
+          <Card id={SECTIONS[0].id} className="scroll-mt-24">
+            <CardHeader tag={SECTIONS[0].tag} title={SECTIONS[0].title} description="เลือกผู้แทนเดิมที่ต้องการยกเลิก (ถ้ามี)" />
+            <div className="grid gap-4 p-6">
+              <RepresentativePicker
+                options={available}
+                onPick={(person) => setSelected((current) => [...current, keyOf(person)])}
+              />
+              {chosen.length ? (
+          <ol className="space-y-2">
             {chosen.map((person, index) => (
               <li key={keyOf(person)} className="flex items-start justify-between gap-3 rounded-xl bg-navy-50 px-4 py-3 text-sm">
                 <span>
@@ -264,28 +296,32 @@ export default function ChangeRequestFormPage() {
             ))}
           </ol>
         ) : null}
-      </Card>
+            </div>
+          </Card>
 
-      <Card className="mb-4 px-5 py-5">
-        <h2 className="mb-3 font-semibold text-navy-800">ส่วนที่ 2 เพิ่มรายชื่อผู้แทนใหม่</h2>
-        {additions.map((row, index) => {
-          const errors = showErrors ? invalid[index] : {};
-          return (
-            <div key={row.id ?? `new-${index}`} className="mb-4 rounded-xl p-4 ring-1 ring-line">
-              <div className="mb-3 flex items-center justify-between">
-                <p className="text-sm font-medium">ผู้แทนลำดับที่ {index + 1}</p>
-                <Button size="sm" variant="ghost" onClick={() => setAdditions((r) => r.filter((_, i) => i !== index))}>
-                  เอาออก
-                </Button>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <SelectField
+          <Card id={SECTIONS[1].id} className="scroll-mt-24">
+            <CardHeader tag={SECTIONS[1].tag} title={SECTIONS[1].title} description="เพิ่มผู้แทนใหม่ของหน่วยงาน (ถ้ามี)" />
+            <div className="grid gap-6 p-6">
+              {additions.map((row, index) => {
+                const errors = touched.has(index) ? invalid[index] : {};
+                return (
+                  <div
+                    key={row.id ?? `new-${index}`}
+                    onBlur={() => setTouched((rows) => new Set(rows).add(index))}
+                    className="grid gap-5 rounded-xl p-5 ring-1 ring-line"
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-semibold text-navy-800">ผู้แทนลำดับที่ {index + 1}</p>
+                      <Button size="sm" variant="ghost" onClick={() => setAdditions((r) => r.filter((_, i) => i !== index))}>
+                        เอาออก
+                      </Button>
+                    </div>
+                    <SelectField
                   label="บทบาท"
                   required
                   value={row.roleCode}
                   error={errors.roleCode}
                   onChange={(e) => update(index, { roleCode: e.target.value })}
-                  className="sm:col-span-2"
                 >
                   <option value="">เลือกบทบาท</option>
                   {ROLE_OPTIONS.map((o) => (
@@ -294,13 +330,13 @@ export default function ChangeRequestFormPage() {
                     </option>
                   ))}
                 </SelectField>
-                <SelectField
+                    <div className="grid gap-5 sm:grid-cols-[10rem_minmax(0,1fr)_minmax(0,1fr)]">
+                      <SelectField
                   label="คำนำหน้า"
                   required
                   value={row.prefixTh}
                   error={errors.prefixTh}
                   onChange={(e) => update(index, { prefixTh: e.target.value })}
-                  className="sm:col-span-2"
                 >
                   <option value="">เลือกคำนำหน้า</option>
                   {PREFIXES.map((p) => (
@@ -309,58 +345,69 @@ export default function ChangeRequestFormPage() {
                     </option>
                   ))}
                 </SelectField>
-                <TextField label="ชื่อ" required value={row.firstnameTh} error={errors.firstnameTh} onChange={(e) => update(index, { firstnameTh: e.target.value })} />
-                <TextField label="นามสกุล" required value={row.lastnameTh} error={errors.lastnameTh} onChange={(e) => update(index, { lastnameTh: e.target.value })} />
-                <TextField label="เลขประจำตัวประชาชน" required inputMode="numeric" maxLength={13} value={row.cid} error={errors.cid} onChange={(e) => update(index, { cid: e.target.value.replace(/\D/g, "") })} />
-                <TextField label="ตำแหน่ง" required value={row.positionTh} error={errors.positionTh} onChange={(e) => update(index, { positionTh: e.target.value })} />
-                <TextField label="ฝ่าย/กอง/สำนัก" required value={row.departmentTh} error={errors.departmentTh} onChange={(e) => update(index, { departmentTh: e.target.value })} />
-                <TextField label="email" required type="email" value={row.email} error={errors.email} onChange={(e) => update(index, { email: e.target.value })} />
-                <TextField label="เบอร์โทรศัพท์" required inputMode="numeric" value={row.phoneNumber} error={errors.phoneNumber} onChange={(e) => update(index, { phoneNumber: e.target.value })} />
-                <TextField label="ต่อ" inputMode="numeric" value={row.phoneNumberExtension} onChange={(e) => update(index, { phoneNumberExtension: e.target.value.replace(/\D/g, "") })} />
+                      <TextField label="ชื่อ" required value={row.firstnameTh} error={errors.firstnameTh} onChange={(e) => update(index, { firstnameTh: e.target.value })} />
+                      <TextField label="นามสกุล" required value={row.lastnameTh} error={errors.lastnameTh} onChange={(e) => update(index, { lastnameTh: e.target.value })} />
+                    </div>
+                    <TextField label="เลขประจำตัวประชาชน" required inputMode="numeric" maxLength={13} value={row.cid} error={errors.cid} onChange={(e) => update(index, { cid: e.target.value.replace(/\D/g, "") })} />
+                    <div className="grid gap-5 sm:grid-cols-2">
+                      <TextField label="ตำแหน่ง" required value={row.positionTh} error={errors.positionTh} onChange={(e) => update(index, { positionTh: e.target.value })} />
+                      <TextField label="ฝ่าย/กอง/สำนัก" required value={row.departmentTh} error={errors.departmentTh} onChange={(e) => update(index, { departmentTh: e.target.value })} />
+                    </div>
+                    <div className="grid gap-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_8rem]">
+                      <TextField label="อีเมล" required type="email" value={row.email} error={errors.email} onChange={(e) => update(index, { email: e.target.value })} />
+                      <TextField label="เบอร์โทรศัพท์" required inputMode="tel" value={row.phoneNumber} error={errors.phoneNumber} onChange={(e) => update(index, { phoneNumber: e.target.value })} />
+                      <TextField label="ต่อ" inputMode="numeric" maxLength={MAX_PHONE_EXTENSION} value={row.phoneNumberExtension} onChange={(e) => update(index, { phoneNumberExtension: e.target.value.replace(/\D/g, "") })} />
+                    </div>
+                  </div>
+                );
+              })}
+              <div>
+                <Button variant="secondary" onClick={() => setAdditions((r) => [...r, emptyAddition()])}>
+                  + เพิ่มผู้แทน
+                </Button>
               </div>
             </div>
-          );
-        })}
-        <Button variant="secondary" onClick={() => setAdditions((r) => [...r, emptyAddition()])}>
-          + เพิ่มผู้แทน
-        </Button>
-      </Card>
+          </Card>
 
-      <Card className="mb-4 px-5 py-5">
-        <h2 className="mb-3 font-semibold text-navy-800">ส่วนที่ 3 เอกสารแนบ</h2>
-        <FileUpload
+          <Card id={SECTIONS[2].id} className="scroll-mt-24">
+            <CardHeader tag={SECTIONS[2].tag} title={SECTIONS[2].title} />
+            <div className="p-6">
+              <FileUpload
           label="แนบหนังสือนำและฟอร์มแจ้งรายละเอียดผู้มีอำนาจและผู้ประสานงานของหน่วยงานที่ขอเปลี่ยนแปลง"
           required
           value={file}
           uploading={uploading}
           removing={removing}
-          error={showErrors && !file ? "กรุณาแนบหนังสือนำและฟอร์มแจ้งรายละเอียด" : undefined}
           onSelect={upload}
           onRemove={removeFile}
         />
-      </Card>
+            </div>
+          </Card>
 
-      {showErrors && !hasItems ? (
-        <p className="mb-3 text-sm text-danger">กรุณาระบุผู้แทนที่ต้องการยกเลิกหรือเพิ่มอย่างน้อยหนึ่งรายการ</p>
-      ) : null}
-
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Button variant="ghost" onClick={() => router.push("/representatives/requests")}>
-          Close
-        </Button>
-        <div className="flex flex-wrap gap-3">
-          <Button variant="secondary" onClick={saveDraft} loading={saving}>
-            Save Draft
-          </Button>
-          <Button variant="secondary" onClick={openPreview} loading={saving}>
-            Preview
-          </Button>
-          <Button onClick={submit} loading={saving}>
-            Submit
-          </Button>
+          <div className="sticky bottom-0 -mx-4 rounded-t-2xl border-t border-line bg-white px-4 py-4 shadow-[0_-4px_16px_rgb(20_26_51_/_0.06)] sm:mx-0 sm:px-6">
+            <IncompleteGate
+              items={missing}
+              actionLabel="ตรวจสอบข้อมูล"
+              hintId={INCOMPLETE_HINT_ID}
+              secondaryAction={
+                <Button type="button" variant="secondary" loading={saving} onClick={saveDraft}>
+                  บันทึกแบบร่าง
+                </Button>
+              }
+            >
+              <Button
+                type="button"
+                loading={saving}
+                disabled={missing.length > 0}
+                aria-describedby={missing.length > 0 ? INCOMPLETE_HINT_ID : undefined}
+                onClick={openPreview}
+              >
+                ตรวจสอบข้อมูล
+              </Button>
+            </IncompleteGate>
+          </div>
         </div>
       </div>
-
-    </RepresentativeShell>
+    </div>
   );
 }

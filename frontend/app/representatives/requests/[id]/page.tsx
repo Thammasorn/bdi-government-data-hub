@@ -4,6 +4,8 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Timeline } from "@/components/organization/Timeline";
+import { ApprovalSteps } from "@/components/review/ApprovalSteps";
+import { OrganizationFrozenNotice } from "@/components/review/OrganizationFrozenNotice";
 import { ChangeRequestSections } from "@/components/representatives/RequestSections";
 import { ChangeStatusBadge, HeadcountTable } from "@/components/representatives/Shell";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
@@ -16,7 +18,7 @@ import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
 import type { ChangeDetail } from "@/lib/representatives";
 import { useRequireAuth } from "@/lib/require-auth";
-import { formatThaiDate } from "@/lib/status";
+import { formatThaiDate, isOrganizationFrozen } from "@/lib/status";
 
 export default function ChangeRequestDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -25,7 +27,7 @@ export default function ChangeRequestDetailPage() {
   const { user, loading } = useRequireAuth();
   const [request, setRequest] = useState<ChangeDetail | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
-  const [reviewing, setReviewing] = useState(false);
+  const [modal, setModal] = useState<"confirm" | "return" | "reject" | "cancel" | null>(null);
   const [note, setNote] = useState("");
   const [noteError, setNoteError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -61,6 +63,8 @@ export default function ChangeRequestDetailPage() {
 
   const blockers = request.review?.blockers ?? [];
   const lastReturned = [...request.timeline].reverse().find((t) => t.result === "RETURNED");
+  const lastRejected = [...request.timeline].reverse().find((t) => t.result === "REJECTED");
+  const frozen = isOrganizationFrozen(request.organization.status);
 
   const act = async (action: "confirm" | "return" | "reject") => {
     if (action !== "confirm" && note.trim().length < 10) {
@@ -73,7 +77,7 @@ export default function ChangeRequestDetailPage() {
         `${base}/${id}/review`,
         { action, note: note.trim() || undefined },
       );
-      setReviewing(false);
+      setModal(null);
       setNote("");
       await load();
       if (action === "confirm") {
@@ -110,6 +114,31 @@ export default function ChangeRequestDetailPage() {
     }
   };
 
+  const cancelRequest = async () => {
+    if (note.trim().length < 10) {
+      setNoteError("กรุณาระบุเหตุผลอย่างน้อย 10 ตัวอักษร");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.post(`/api/representative-changes/${id}/cancel`, { reason: note.trim() });
+      setModal(null);
+      setNote("");
+      await load();
+      show({ tone: "success", title: "ยกเลิกคำขอแล้ว" });
+    } catch (err) {
+      show({ tone: "error", title: "ยกเลิกคำขอไม่สำเร็จ", detail: err instanceof ApiError ? err.message : undefined });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openNote = (next: "return" | "reject" | "cancel") => {
+    setNote("");
+    setNoteError(null);
+    setModal(next);
+  };
+
   const showRetry = request.canRetry && (isAdmin || user.roles.includes("BDI_OFFICER"));
 
   return (
@@ -133,19 +162,24 @@ export default function ChangeRequestDetailPage() {
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <ChangeStatusBadge status={request.status} />
-          {request.canEdit && request.status === "DRAFT" ? (
-            <Button size="sm" onClick={() => router.push(`/representatives/requests/${id}/edit`)}>
-              แก้ไขคำขอ
-            </Button>
-          ) : null}
         </div>
       </header>
 
-      {request.status === "DRAFT" ? (
+      {frozen ? <OrganizationFrozenNotice status={request.organization.status} /> : null}
+
+      {request.status === "DRAFT" && request.canEdit ? (
         <Card className="mb-6 border-l-[3px] border-l-coral-500">
-          <div className="p-6">
-            <p className="font-medium text-navy-800">ฉบับร่าง — ยังไม่ได้นำส่ง</p>
-            <p className="mt-0.5 text-sm text-ink-muted">กรอกให้ครบแล้วกด Submit เพื่อนำส่งให้ BDI ตรวจสอบ</p>
+          <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-medium text-navy-800">คำขอนี้ยังเป็นฉบับร่าง</p>
+              <p className="mt-0.5 text-sm text-ink-muted">กรอกข้อมูลให้ครบแล้วตรวจสอบก่อนนำส่งให้ BDI</p>
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-3">
+              <Button variant="secondary" onClick={() => openNote("cancel")}>
+                ยกเลิกคำขอ
+              </Button>
+              <Button onClick={() => router.push(`/representatives/requests/${id}/edit`)}>กรอกข้อมูลต่อ</Button>
+            </div>
           </div>
         </Card>
       ) : null}
@@ -159,10 +193,26 @@ export default function ChangeRequestDetailPage() {
             {formatThaiDate(lastReturned.completedAt ?? lastReturned.createdAt)}
           </p>
           {request.canEdit ? (
-            <Button size="sm" className="mt-4" onClick={() => router.push(`/representatives/requests/${id}/edit`)}>
-              แก้ไขข้อมูล
-            </Button>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <Button size="sm" onClick={() => router.push(`/representatives/requests/${id}/edit`)}>
+                แก้ไขข้อมูล
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => openNote("cancel")}>
+                ยกเลิกคำขอ
+              </Button>
+            </div>
           ) : null}
+        </div>
+      ) : null}
+
+      {request.status === "REJECTED" && lastRejected?.note ? (
+        <div className="mb-6 rounded-xl border-l-[3px] border-danger bg-danger-bg p-5">
+          <p className="text-[13px] font-semibold text-danger">เหตุผลที่ไม่อนุมัติ</p>
+          <p className="mt-1.5 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-ink">{lastRejected.note}</p>
+          <p className="mt-2 text-[13px] text-ink-muted">
+            โดย {lastRejected.actor ? lastRejected.actor.name : "ระบบ"} ·{" "}
+            {formatThaiDate(lastRejected.completedAt ?? lastRejected.createdAt)}
+          </p>
         </div>
       ) : null}
 
@@ -170,12 +220,25 @@ export default function ChangeRequestDetailPage() {
         <Card className="mb-6 border-l-[3px] border-l-coral-500">
           <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="font-medium text-navy-800">รอการตรวจสอบของคุณ</p>
+              <p className="font-medium text-navy-800">รอการพิจารณาของคุณ</p>
               <p className="mt-0.5 text-sm text-ink-muted">ตรวจสอบรายชื่อและเอกสารแนบ แล้วบันทึกผลการตรวจสอบ</p>
+              {blockers.map((b) => (
+                <p key={b} className="mt-1 text-sm text-danger">
+                  {b}
+                </p>
+              ))}
             </div>
-            <Button className="shrink-0" onClick={() => setReviewing(true)}>
-              Submit Review
-            </Button>
+            <div className="flex shrink-0 flex-wrap gap-3">
+              <Button variant="secondary" onClick={() => openNote("reject")}>
+                ปฏิเสธคำขอ
+              </Button>
+              <Button variant="secondary" onClick={() => openNote("return")}>
+                ส่งกลับแก้ไข
+              </Button>
+              <Button disabled={blockers.length > 0} onClick={() => setModal("confirm")}>
+                ผ่านการตรวจสอบ
+              </Button>
+            </div>
           </div>
         </Card>
       ) : null}
@@ -217,6 +280,11 @@ export default function ChangeRequestDetailPage() {
         <ChangeRequestSections request={request} />
 
         <Card>
+          <CardHeader title="ขั้นตอนการอนุมัติ" />
+          <ApprovalSteps progress={request.progress} />
+        </Card>
+
+        <Card>
           <CardHeader title="ประวัติการดำเนินการ" />
           <Timeline
             events={request.timeline}
@@ -226,44 +294,58 @@ export default function ChangeRequestDetailPage() {
         </Card>
       </div>
 
-      <Modal open={reviewing} onClose={() => setReviewing(false)} title="ผลการตรวจสอบ">
-        <div className="space-y-3">
-          {blockers.length ? (
-            <div className="rounded-xl bg-danger-bg p-3 text-sm text-danger">
-              <p className="font-medium">ผ่านการตรวจสอบไม่ได้</p>
-              <ul className="list-disc pl-5">
-                {blockers.map((b) => (
-                  <li key={b}>{b}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          <TextAreaField
-            label="กรอก รายละเอียดการส่งกลับแก้ไข"
-            hint="บังคับกรอกกรณีส่งกลับแก้ไขหรือปฏิเสธคำขอ"
-            value={note}
-            error={noteError ?? undefined}
-            onChange={(e) => {
-              setNote(e.target.value);
-              setNoteError(null);
-            }}
-          />
-          <div className="flex flex-wrap justify-between gap-2">
-            <Button variant="ghost" onClick={() => setReviewing(false)}>
-              Close
-            </Button>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="danger" onClick={() => act("reject")} loading={busy}>
-                ปฏิเสธคำขอ
-              </Button>
-              <Button variant="secondary" onClick={() => act("return")} loading={busy}>
-                ส่งกลับแก้ไข
-              </Button>
-              <Button onClick={() => act("confirm")} loading={busy} disabled={blockers.length > 0}>
-                ผ่านการตรวจสอบ
-              </Button>
-            </div>
-          </div>
+      <Modal
+        open={modal === "return" || modal === "reject" || modal === "cancel"}
+        onClose={() => setModal(null)}
+        title={modal === "return" ? "ส่งกลับแก้ไข" : modal === "reject" ? "ปฏิเสธคำขอ" : "ยกเลิกคำขอ"}
+        description={
+          modal === "return"
+            ? "ระบุสิ่งที่ต้องการให้หน่วยงานแก้ไข"
+            : modal === "reject"
+              ? "คำขอที่ถูกปฏิเสธจะจบทันทีและแก้ไขต่อไม่ได้"
+              : "คำขอที่ยกเลิกแล้วจะแก้ไขหรือนำส่งไม่ได้อีก"
+        }
+      >
+        <TextAreaField
+          label={modal === "return" ? "รายละเอียดที่ต้องแก้ไข" : "เหตุผล"}
+          required
+          value={note}
+          error={noteError ?? undefined}
+          onChange={(e) => {
+            setNote(e.target.value);
+            setNoteError(null);
+          }}
+        />
+        <div className="mt-6 flex justify-end gap-3">
+          <Button variant="secondary" onClick={() => setModal(null)}>
+            ย้อนกลับ
+          </Button>
+          <Button
+            variant="danger"
+            loading={busy}
+            onClick={() => (modal === "cancel" ? cancelRequest() : act(modal === "return" ? "return" : "reject"))}
+          >
+            {modal === "return" ? "ยืนยันส่งกลับแก้ไข" : modal === "reject" ? "ยืนยันปฏิเสธคำขอ" : "ยืนยันยกเลิกคำขอ"}
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={modal === "confirm"}
+        onClose={() => setModal(null)}
+        title="ผ่านการตรวจสอบ"
+        description="ยืนยันว่าคุณตรวจสอบข้อมูลและเอกสารแล้ว"
+      >
+        <p className="text-[15px] leading-relaxed text-ink-muted">
+          ระบบจะยกเลิกผู้แทนเดิมและส่งคำเชิญให้ผู้แทนใหม่ทันที และจะบันทึกผลการดำเนินการนี้
+        </p>
+        <div className="mt-6 flex justify-end gap-3">
+          <Button variant="secondary" onClick={() => setModal(null)}>
+            ย้อนกลับ
+          </Button>
+          <Button loading={busy} onClick={() => act("confirm")}>
+            ผ่านการตรวจสอบ
+          </Button>
         </div>
       </Modal>
 

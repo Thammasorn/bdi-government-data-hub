@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { DateTimeCell } from "@/components/list/DateTimeCell";
 import { JourneyFlow } from "@/components/list/JourneyFlow";
@@ -18,6 +18,7 @@ import { useRequestList } from "@/lib/use-request-list";
 
 /** ตารางคำขอเปลี่ยนแปลงผู้แทน — ใช้ชิ้นส่วนใน components/list ชุดเดียวกับสองรายการคำขอเดิม */
 export function ChangeRequestTable() {
+  const router = useRouter();
   const { user } = useSession();
   const roles = user?.roles ?? [];
   const list = useRequestList<ChangeRow>({
@@ -27,8 +28,6 @@ export function ChangeRequestTable() {
   });
   const showQueue = list.summary?.nodes.some((n) => n.mine) ?? false;
   const bdi = isBdiStaff(roles);
-  const canEdit = roles.includes("ORGANIZATION_USER");
-  const canReview = roles.includes("BDI_OFFICER");
 
   return (
     <>
@@ -61,51 +60,45 @@ export function ChangeRequestTable() {
         />
       </div>
 
-      <Card className="overflow-x-auto">
+      <Card className="overflow-hidden">
         {list.loading ? (
           <SkeletonRows />
         ) : list.rows.length === 0 ? (
-          <p className="px-6 py-16 text-center text-sm text-ink-muted">
-            {list.hasFilter ? "ไม่พบรายการที่ตรงกับเงื่อนไข" : "ยังไม่มีคำขอ"}
-          </p>
+          <EmptyState hasFilter={list.hasFilter} onQueueTab={list.tab === "mine"} />
         ) : (
-          <table className="w-full min-w-[44rem] text-sm">
-            <thead>
-              <tr className="border-b border-line text-left text-ink-muted">
-                {bdi ? <th className="px-4 py-3 font-medium">หน่วยงาน</th> : null}
-                <th className="px-4 py-3 font-medium">เลขที่คำขอ</th>
-                <th className="px-4 py-3 font-medium">สถานะ</th>
-                <th className="px-4 py-3 font-medium">วัน-เวลา</th>
-                <th className="px-4 py-3 font-medium">ชื่อเอกสาร</th>
-                <th className="px-4 py-3 font-medium" />
-              </tr>
-            </thead>
-            <tbody>
+          <>
+            <div className="hidden grid-cols-[minmax(0,1.4fr)_minmax(0,1.1fr)_13rem_7rem_7rem] gap-4 border-b border-line px-6 py-3 text-[12px] font-semibold uppercase tracking-wide text-ink-subtle md:grid">
+              <span>เลขที่คำขอ</span>
+              <span>ชื่อเอกสาร</span>
+              <span>สถานะ</span>
+              <span className="text-right">วันที่นำส่ง</span>
+              <span className="text-right">อัปเดตล่าสุด</span>
+            </div>
+            <ul className="divide-y divide-line">
               {list.rows.map((row) => (
-                <tr key={row.id} className="border-b border-line last:border-0">
-                  {bdi ? <td className="px-4 py-3">{row.organization.nameTh}</td> : null}
-                  <td className="px-4 py-3 font-medium text-navy-800">{row.requestNumber}</td>
-                  <td className="px-4 py-3">
-                    <ChangeStatusBadge status={row.status} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <DateTimeCell value={row.updatedAt} label="วัน-เวลา" />
-                  </td>
-                  <td className="px-4 py-3 text-ink-muted">{row.documentName ?? "–"}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right">
-                    <Link className="text-navy-700 underline" href={`/representatives/requests/${row.id}`}>
-                      {canReview && (row.status === "SUBMITTED" || row.status === "UNDER_REVIEW") ? "review" : "view"}
-                    </Link>
-                    {canEdit && (row.status === "DRAFT" || row.status === "RETURNED") ? (
-                      <Link className="ml-3 text-navy-700 underline" href={`/representatives/requests/${row.id}/edit`}>
-                        edit
-                      </Link>
-                    ) : null}
-                  </td>
-                </tr>
+                <li key={row.id}>
+                  <button
+                    type="button"
+                    onClick={() => router.push(`/representatives/requests/${row.id}`)}
+                    className="grid w-full grid-cols-1 items-center gap-2 px-6 py-4 text-left transition-colors hover:bg-navy-50/60 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1.1fr)_13rem_7rem_7rem] md:gap-4"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-ink">{row.requestNumber}</span>
+                      {bdi ? (
+                        <span className="block truncate text-[13px] text-ink-muted">{row.organization.nameTh}</span>
+                      ) : null}
+                    </span>
+                    <span className="block min-w-0 truncate text-sm text-ink-muted">{row.documentName ?? "—"}</span>
+                    <span className="min-w-0 justify-self-start">
+                      <ChangeStatusBadge status={row.status} />
+                    </span>
+                    <DateTimeCell value={row.submittedAt} label="วันที่นำส่ง" />
+                    <DateTimeCell value={row.updatedAt} label="อัปเดตล่าสุด" />
+                  </button>
+                </li>
               ))}
-            </tbody>
-          </table>
+            </ul>
+          </>
         )}
       </Card>
 
@@ -116,5 +109,26 @@ export function ChangeRequestTable() {
         onPageSize={list.setPageSize}
       />
     </>
+  );
+}
+
+function EmptyState({ hasFilter, onQueueTab }: { hasFilter: boolean; onQueueTab: boolean }) {
+  return (
+    <div className="px-6 py-20 text-center">
+      <p className="font-medium text-ink">
+        {hasFilter
+          ? "ไม่พบรายการที่ตรงกับเงื่อนไข"
+          : onQueueTab
+            ? "ไม่มีคำขอที่รอคุณดำเนินการ"
+            : "ยังไม่มีคำขอเปลี่ยนแปลงผู้แทน"}
+      </p>
+      <p className="mt-1 text-sm text-ink-muted">
+        {hasFilter
+          ? "ลองล้างตัวกรองหรือเปลี่ยนคำค้นหา"
+          : onQueueTab
+            ? 'กดแท็บ "ทั้งหมด" เพื่อดูคำขอที่อยู่ในขั้นตอนอื่น'
+            : "เมื่อมีคำขอเข้ามา รายการจะแสดงที่นี่"}
+      </p>
+    </div>
   );
 }

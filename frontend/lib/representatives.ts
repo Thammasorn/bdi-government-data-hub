@@ -1,5 +1,7 @@
 import type { OrgEvent, TimelineCreator } from "@/components/organization/Timeline";
 import { isValidThaiNationalId } from "./organization-form";
+import { REQUEST_STATUS_META, TASK_TYPE_META, type OrganizationStatus } from "./status";
+import type { JourneyProgress } from "./types";
 
 /** คำขอเปลี่ยนแปลงผู้แทนหน่วยงาน — รูปข้อมูลของ `routes/representative-changes.ts` */
 export type ChangeStatus =
@@ -14,32 +16,19 @@ export type ChangeStatus =
   | "REJECTED"
   | "CANCELLED";
 
-export const CHANGE_STATUS_LABELS: Record<ChangeStatus, string> = {
-  DRAFT: "ฉบับร่าง",
-  SUBMITTED: "นำส่งแล้ว",
-  UNDER_REVIEW: "อยู่ระหว่างการตรวจสอบ",
-  RETURNED: "ส่งกลับแก้ไข",
-  CONFIRMED: "ผ่านการตรวจสอบ",
-  PROCESSING: "กำลังดำเนินการ",
-  COMPLETED: "ดำเนินการเสร็จสิ้น",
-  PROCESSING_FAILED: "ดำเนินการไม่สำเร็จ",
-  REJECTED: "ปฏิเสธคำขอ",
-  CANCELLED: "ยกเลิก",
+/** คำและสีชุดเดียวกับคำขออื่น — สถานะที่คำขออื่นไม่มีเท่านั้นที่ตั้งเอง */
+export const CHANGE_STATUS_META: Record<ChangeStatus, { label: string; className: string }> = {
+  DRAFT: REQUEST_STATUS_META.DRAFT,
+  SUBMITTED: TASK_TYPE_META.BDI_OFFICER_REVIEW,
+  UNDER_REVIEW: TASK_TYPE_META.BDI_OFFICER_REVIEW,
+  RETURNED: REQUEST_STATUS_META.RETURNED,
+  CONFIRMED: { label: "กำลังดำเนินการ", className: "bg-navy-100 text-navy-600" },
+  PROCESSING: { label: "กำลังดำเนินการ", className: "bg-navy-100 text-navy-600" },
+  COMPLETED: { label: "ดำเนินการเสร็จสิ้น", className: "bg-success-bg text-success" },
+  PROCESSING_FAILED: { label: "ดำเนินการไม่สำเร็จ", className: "bg-danger-bg text-danger" },
+  REJECTED: REQUEST_STATUS_META.REJECTED,
+  CANCELLED: REQUEST_STATUS_META.CANCELLED,
 };
-
-const TONE: Record<ChangeStatus, string> = {
-  DRAFT: "bg-navy-50 text-navy-700",
-  SUBMITTED: "bg-warning-bg text-ink",
-  UNDER_REVIEW: "bg-warning-bg text-ink",
-  RETURNED: "bg-coral-50 text-coral-700",
-  CONFIRMED: "bg-navy-50 text-navy-700",
-  PROCESSING: "bg-navy-50 text-navy-700",
-  COMPLETED: "bg-success-bg text-success",
-  PROCESSING_FAILED: "bg-danger-bg text-danger",
-  REJECTED: "bg-danger-bg text-danger",
-  CANCELLED: "bg-navy-50 text-ink-muted",
-};
-export const changeStatusTone = (status: ChangeStatus) => TONE[status];
 
 export interface Representative {
   kind: "HOLDER" | "INVITED";
@@ -132,7 +121,7 @@ export interface ChangeDetail {
   id: string;
   requestNumber: string;
   status: ChangeStatus;
-  organization: { id: string; nameTh: string };
+  organization: { id: string; nameTh: string; status: OrganizationStatus };
   submittedAt: string | null;
   updatedAt: string;
   cancellationReason: string | null;
@@ -140,6 +129,7 @@ export interface ChangeDetail {
   additions: AdditionItem[];
   attachment: { id: string; filename: string; sizeBytes: number } | null;
   timeline: OrgEvent[];
+  progress: JourneyProgress;
   createdBy: TimelineCreator | null;
   createdAt: string;
   /** null = ฝั่งหน่วยงาน ซึ่งไม่เห็นจำนวนหลังดำเนินการ */

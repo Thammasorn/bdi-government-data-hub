@@ -58,6 +58,7 @@ import {
 } from "../lib/organization-freeze.js";
 import { fullNameTh } from "../lib/person-name.js";
 import {
+  changeProgress,
   changeRequestSummary,
   evaluateChangeRequest,
   listRepresentatives,
@@ -243,6 +244,7 @@ async function detailOf(request: ChangeRequestRow, options: { bdiView: boolean; 
     ...toItems(request, showFullCid),
     attachment: letter ? publicAttachment(letter) : null,
     timeline,
+    progress: changeProgress(request.status, timeline.at(-1) ?? null),
     // จำนวนหลังดำเนินการเป็นข้อมูลให้ BDI ตัดสิน ฝั่งหน่วยงานไม่ได้รับ
     headcount: evaluation?.headcount ?? null,
     review: evaluation
@@ -359,42 +361,70 @@ async function listRequests(
   };
 }
 
+const rosterSchema = z.object({
+  organizationId: z.string().uuid().optional().catch(undefined),
+  q: z.string().trim().max(100).optional().catch(undefined),
+  role: z.string().optional().catch(undefined),
+  status: z.enum(["ACTIVE", "SUSPENDED", "INVITED"]).optional().catch(undefined),
+  page: z.coerce.number().int().min(1).catch(1),
+  /** ไม่ส่ง = ทั้งหมด — ฟอร์มต้องได้ทุกคนมาให้เลือก */
+  pageSize: z.coerce.number().int().min(1).max(100).optional().catch(undefined),
+});
+
 representativeChangeRouter.get("/representatives", async (req, res) => {
   const session = req.session!;
-  const organizationId = seesAllOrganizations(session)
-    ? (z.string().uuid().optional().catch(undefined).parse(req.query.organizationId) ?? undefined)
-    : (session.organizationId ?? undefined);
+  const seesAll = seesAllOrganizations(session);
+  const query = rosterSchema.parse(req.query);
+  const organizationId = seesAll ? query.organizationId : (session.organizationId ?? undefined);
 
-  if (!seesAllOrganizations(session) && !(organizationId && belongsTo(session, organizationId))) {
+  if (!seesAll && !(organizationId && belongsTo(session, organizationId))) {
     res.status(403).json({ error: "forbidden", message: "คุณไม่มีสิทธิ์ดูข้อมูลนี้" });
     return;
   }
-  if (organizationId) {
-    const [organization, representatives, summary] = await Promise.all([
-      prisma.organization.findUnique({ where: { id: organizationId }, select: { id: true, nameTh: true, status: true } }),
-      listRepresentatives(prisma, organizationId),
-      representativeSummary(prisma, organizationId),
-    ]);
-    if (!organization) {
-      res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
-      return;
-    }
-    res.json({ organization, summary, representatives: representatives.map((r) => ({ ...r, organization })) });
+  const organization = organizationId
+    ? await prisma.organization.findUnique({ where: { id: organizationId }, select: { id: true, nameTh: true, status: true } })
+    : null;
+  if (organizationId && !organization) {
+    res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานนี้" });
     return;
   }
-  // ฝั่ง BDI ไม่เลือกหน่วยงาน — ทุกหน่วยงานที่เปิดใช้งาน เรียงตามชื่อ
-  const organizations = await prisma.organization.findMany({
-    where: { status: { not: OrganizationStatus.PENDING_REGISTRATION }, id: { not: BDI_ORGANIZATION_ID } },
-    orderBy: { nameTh: "asc" },
-    select: { id: true, nameTh: true, status: true },
-    take: 200,
+  const [everyone, summary, organizations] = await Promise.all([
+    listRepresentatives(prisma, organizationId),
+    organizationId ? representativeSummary(prisma, organizationId) : [],
+    seesAll
+      ? prisma.organization.findMany({
+          where: { status: { not: OrganizationStatus.PENDING_REGISTRATION }, id: { not: BDI_ORGANIZATION_ID } },
+          orderBy: { nameTh: "asc" },
+          select: { id: true, nameTh: true },
+        })
+      : [],
+  ]);
+
+  // ค้นจากชื่อ อีเมล และชื่อหน่วยงาน — ไม่ค้นจากเลขประจำตัวประชาชน
+  const needle = query.q?.toLowerCase();
+  const rows = everyone
+    .flatMap((r) => (r.organization ? [{ ...r, organization: r.organization }] : []))
+    .filter((r) => !query.role || r.roleCode === query.role)
+    .filter((r) => {
+      if (!query.status) return true;
+      if (query.status === "INVITED") return r.kind === "INVITED";
+      return r.kind === "HOLDER" && r.accountStatus === query.status;
+    })
+    .filter(
+      (r) =>
+        !needle ||
+        [r.name, r.email, r.organization.nameTh].some((text) => text?.toLowerCase().includes(needle)),
+    )
+    .sort((a, b) => a.organization.nameTh.localeCompare(b.organization.nameTh, "th") || a.name.localeCompare(b.name, "th"));
+
+  const start = (query.page - 1) * (query.pageSize ?? rows.length);
+  res.json({
+    organization,
+    summary,
+    organizations,
+    total: rows.length,
+    representatives: query.pageSize ? rows.slice(start, start + query.pageSize) : rows,
   });
-  const representatives = [];
-  for (const organization of organizations) {
-    const rows = await listRepresentatives(prisma, organization.id);
-    representatives.push(...rows.map((r) => ({ ...r, organization })));
-  }
-  res.json({ organization: null, summary: [], representatives });
 });
 
 /** องค์กรที่ผู้อ่านคนนี้เห็น — `undefined` = ทุกหน่วยงาน, `null` = ไม่มีสิทธิ์ */
