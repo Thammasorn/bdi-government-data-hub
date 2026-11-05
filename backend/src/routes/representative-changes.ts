@@ -1373,7 +1373,7 @@ async function returnOrReject(
     title:
       action === "return"
         ? `คำขอ ${request.requestNumber} ถูกส่งกลับแก้ไข`
-        : `คำขอ ${request.requestNumber} ถูกปฏิเสธ`,
+        : `คำขอ ${request.requestNumber} ไม่ได้รับอนุมัติ`,
     message: note,
     subjectType: SUBJECT,
     subjectId: requestId,

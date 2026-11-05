@@ -87,7 +87,7 @@ export default function ChangeRequestDetailPage() {
             : "ได้ทำการ Deactivate ผู้แทนเดิม และนำส่ง activation key ไปยังผู้แทนใหม่ เรียบร้อยแล้ว",
         );
       } else {
-        show({ tone: "success", title: action === "return" ? "ส่งกลับแก้ไขแล้ว" : "ปฏิเสธคำขอแล้ว" });
+        show({ tone: "success", title: action === "return" ? "ส่งกลับแก้ไขแล้ว" : "ไม่อนุมัติคำขอแล้ว" });
       }
     } catch (err) {
       await load().catch(() => undefined);
@@ -230,7 +230,7 @@ export default function ChangeRequestDetailPage() {
             </div>
             <div className="flex shrink-0 flex-wrap gap-3">
               <Button variant="secondary" onClick={() => openNote("reject")}>
-                ปฏิเสธคำขอ
+                ไม่อนุมัติ
               </Button>
               <Button variant="secondary" onClick={() => openNote("return")}>
                 ส่งกลับแก้ไข
@@ -297,12 +297,12 @@ export default function ChangeRequestDetailPage() {
       <Modal
         open={modal === "return" || modal === "reject" || modal === "cancel"}
         onClose={() => setModal(null)}
-        title={modal === "return" ? "ส่งกลับแก้ไข" : modal === "reject" ? "ปฏิเสธคำขอ" : "ยกเลิกคำขอ"}
+        title={modal === "return" ? "ส่งกลับแก้ไข" : modal === "reject" ? "ไม่อนุมัติ" : "ยกเลิกคำขอ"}
         description={
           modal === "return"
             ? "ระบุสิ่งที่ต้องการให้หน่วยงานแก้ไข"
             : modal === "reject"
-              ? "คำขอที่ถูกปฏิเสธจะจบทันทีและแก้ไขต่อไม่ได้"
+              ? "คำขอที่ไม่อนุมัติจะจบทันทีและแก้ไขต่อไม่ได้"
               : "คำขอที่ยกเลิกแล้วจะแก้ไขหรือนำส่งไม่ได้อีก"
         }
       >
@@ -325,7 +325,7 @@ export default function ChangeRequestDetailPage() {
             loading={busy}
             onClick={() => (modal === "cancel" ? cancelRequest() : act(modal === "return" ? "return" : "reject"))}
           >
-            {modal === "return" ? "ยืนยันส่งกลับแก้ไข" : modal === "reject" ? "ยืนยันปฏิเสธคำขอ" : "ยืนยันยกเลิกคำขอ"}
+            {modal === "return" ? "ยืนยันส่งกลับแก้ไข" : modal === "reject" ? "ยืนยันไม่อนุมัติ" : "ยืนยันยกเลิกคำขอ"}
           </Button>
         </div>
       </Modal>
