@@ -41,6 +41,7 @@ import { datasetRequestRouter } from "./routes/dataset-requests.js";
 import { healthRouter } from "./routes/health.js";
 import { notificationRouter } from "./routes/notifications.js";
 import { organizationRouter } from "./routes/organizations.js";
+import { adminRepresentativeChangeRouter, representativeChangeRouter } from "./routes/representative-changes.js";
 import { statisticsRouter } from "./routes/statistics.js";
 import { ensureContainer } from "./storage.js";
 
@@ -198,6 +199,7 @@ app.use(LOG_API_PATH, markLogApiRequest, adminLogRouter);
 app.use("/api/admin/users", adminUserRouter);
 // ต้องมาก่อน adminRouter ที่จับ /api/admin ทั้งก้อน ไม่งั้น /registrations/* ตกไปที่ 404 ของมัน
 app.use("/api/admin/registrations", adminRegistrationRouter);
+app.use("/api/admin/representative-changes", adminRepresentativeChangeRouter);
 app.use("/api/admin/addresses", adminAddressRouter);
 app.use("/api/admin/public-documents", adminPublicDocumentRouter);
 app.use("/api/admin/settings", adminSettingRouter);
@@ -208,6 +210,7 @@ app.use("/api/address", addressRouter);
 app.use("/api/public-documents", publicDocumentRouter);
 app.use("/api/dataset-choices", datasetChoiceRouter);
 app.use("/api/organizations", organizationRouter);
+app.use("/api/representative-changes", representativeChangeRouter);
 app.use("/api/dataset-requests", datasetRequestRouter);
 app.use("/api/notifications", notificationRouter);
 app.use("/api/statistics", statisticsRouter);

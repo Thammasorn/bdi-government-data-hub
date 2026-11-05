@@ -198,7 +198,8 @@ every model and enum, and a `schemas` list in the datasource.
 ### Each workflow is one state machine in one file
 
 `backend/src/routes/organizations.ts` holds the whole organization approval flow, and
-`backend/src/routes/dataset-requests.ts` the whole dataset registration flow. In both,
+`backend/src/routes/dataset-requests.ts` the whole dataset registration flow, and
+`backend/src/routes/representative-changes.ts` the representative change request. In the first two,
 `POST /:id/review` is a single endpoint for every approval stage. Keep it that way; splitting
 it scatters the state machine.
 
@@ -350,9 +351,11 @@ shown on production as `นางสุดารัตน์ อนุมัต�
 actually closed the gate, and every screen reads that. `pickAssignee()` is replaced by
 `roleHolderId()` in `lib/workflow.ts`, which both routes use two ways: as an existence check
 before opening a BDI gate (503 `no_reviewer` when nobody holds the role), and to resolve the
-real person for `ORGANIZATION_APPROVAL`, which **keeps its assignee** — that gate belongs to the
-one signatory the organisation named in its form, whose name is printed on A0, and
-`revertStrandedWork()` in `admin-users.ts` finds stranded work through that column.
+real person for `ORGANIZATION_APPROVAL` **on Journey B**, which keeps its assignee — that gate belongs
+to the one signatory the organisation named in its form, whose name is printed on A0, and
+`revertStrandedWork()` in `admin-users.ts` finds stranded work through that column. On Journey C the
+same gate has no assignee since 2026-11-04: an organisation can have several approvers and any one of
+them signs, so `roleHolderId()` there is only the existence check, and a transfer strands nothing.
 
 **Two people pressing the same button at the same moment is now expected, not exceptional.**
 Every write in `lib/workflow.ts` that closes or moves a task is a conditional `updateMany` with
@@ -710,9 +713,11 @@ organisation row, the same one their activation key has always pointed at. It wa
 2026-08-16, which meant the database could not answer "which organisation is this person in?"
 for BDI staff.
 
-The Excel's rule that one organisation has at most one active `ORGANIZATION_USER` and one
-active `ORGANIZATION_APPROVER` (this contradicts `docs/01-user-journey.md` §1; the Excel wins)
-is now enforced in `assignRole`, not by a database index. `uq_active_org_scoped_role_assignment`
+The number of active `ORGANIZATION_USER` and `ORGANIZATION_APPROVER` an organisation may have is
+enforced in `assignRole`, not by a database index: one of each before it is `ACTIVE` (the Excel's
+rule), and after that whatever `maxOrganizationUserCount` / `maxOrganizationApproverCount` say
+(defaults 3 and 1, `PUT /api/admin/organizations/:id/representative-limits`, `roleSeatLimit()` in
+`lib/iam.ts`). `uq_active_org_scoped_role_assignment`
 covered *every* role rather than those two, and only missed BDI staff because their
 organisation was NULL and Postgres counts NULLs as distinct; giving them a real organisation
 would have capped BDI at one officer in total. A partial index cannot express "these two roles"
@@ -725,22 +730,19 @@ paths that exist.
 invite org user เพิ่ม"). Until then `assignRole` revoked the previous holder, so inviting a second
 officer into an organisation silently ejected the first when the second activated — an admin who
 invited the wrong person had changed who runs the organisation without meaning to. Now
-`roleSeatTaken()` in `lib/iam.ts` answers "who holds this (organisation, role) seat with an
-ACTIVE account", `assignRole` throws `RoleOccupiedError` when someone does, and every granting
-path checks first so it can answer 409 with the holder's email and the way out: `POST
-/api/admin/invitations` (`role_occupied`), `resend`, `POST /users/:id/roles`, `transfer` (all
-via `seatConflict()` in `admin-users.ts`), Journey B's `approverConflict()`, and `GET
-/api/auth/invitation` / `POST /api/auth/activate` (the link is **not** revoked — once BDI
-suspends the holder the same link works). A **pending invitation (ISSUED, unexpired) occupies
-the seat too** (`pendingInvitationFor()`, 409 `invitation_pending` carrying the key id): the
-alternative was a second invitee failing at activation, days away from the admin who could fix
-it. Suspension does not revoke roles, so the seat is judged by **account status**, not by the
-assignment alone: a suspended or deactivated holder leaves the seat free, and when the newcomer
-activates the old assignment is revoked with `ROLE_REPLACED_REASON` — the one surviving use of
-that path — so reinstating the old account cannot produce two officers. `revokeRoleAssignments()`
-returns those rows and `announceRoleReplacement()` (in `lib/notify.ts`) writes the `ROLE_REVOKED`
-audit event and notifies the person, **always after the transaction commits**, because both write
-through the main `prisma` client rather than the `tx`. `/api/auth/me` carries
+`roleSeatUsage()` in `lib/iam.ts` counts the people in an (organisation, role) — holders plus valid
+invitations, once per person — and `roleSeatTaken()` / `pendingInvitationFor()` answer only when that
+reaches the limit, so callers still ask the same two questions in the same order. `assignRole` throws
+`RoleOccupiedError` when full, and every granting path checks first so it can answer 409 with a
+holder's email and the way out: `POST /api/admin/invitations` (`role_occupied`), `resend`, `POST
+/users/:id/roles`, `transfer` (all via `seatConflict()` in `admin-users.ts`), Journey B's
+`approverConflict()`, and `GET /api/auth/invitation` / `POST /api/auth/activate` (the link is **not**
+revoked — once a seat frees the same link works). A **pending invitation (ISSUED, unexpired) occupies
+a seat too** (409 `invitation_pending` carrying the key id): the alternative was an invitee failing at
+activation, days away from the admin who could fix it. **A suspended holder keeps the role and counts**
+(2026-11-04). They used to leave the seat free and lose the role to whoever activated next, which
+turned a temporary suspension into a removal nobody asked for, so `assignRole` replaces no one and
+`announceRoleReplacement()` is gone; `ROLE_REPLACED_REASON` stays only to read old rows. `/api/auth/me` carries
 `removedFromOrganization` so the home page can say what happened instead of inviting a
 duplicate registration. `ORGANIZATION_APPROVER` cannot be invited directly until the organisation
 is `ACTIVE` (409 `organization_not_active`): the first approver comes from Journey B, where the
@@ -876,8 +878,8 @@ officer's "ยกเลิกผลการตรวจสอบ") revokes the 
 pinning `email` and `cid`. Activated + default → **untouched**, so `activatedApprover()` still
 answers and the form keeps both fields greyed, which is the card's "disable email and cid".
 Activated + `is_remove_approver` → role revoked, sessions and keys revoked, account
-`DEACTIVATED`; the seat frees itself because `roleSeatTaken()` judges by account status, and
-`POST /api/admin/users/:id/reactivate` is the way back from a mistaken call. The e-mail and CID
+`DEACTIVATED`; the seat frees itself, and `POST /api/admin/users/:id/reinvite` is the way back from a
+mistaken call. The e-mail and CID
 stay bound to the deactivated account on purpose — history has to stay readable. **The snapshot's
 approver fields are never cleared** in any of the three: the card says enable the field, and
 whoever fills it in next needs to see who it was.
@@ -978,15 +980,37 @@ sets the new e-mail and `account_type`, revokes every usable key of the account,
 for the new (organisation, role) — the account **stays `DEACTIVATED`**, so neither login nor a
 password reset opens it. The normal link does: ThaID must match the old CID, `POST
 /api/auth/activate` takes non-ACTIVE accounts, and `completeActivation()` now clears
-`deactivated_at` and the suspension columns. `reactivate` (which asks nobody) stays for a mistaken
-deactivation, but answers 409 `reinvite_pending`, as does `release-identity`, while an invite-back
-is waiting; `resend` refuses a key issued before `deactivated_at` (`account_deactivated`) and any key of a
+`deactivated_at` and the suspension columns. **It is the only way back**: `reactivate`, which asked
+nobody, was removed on 2026-11-04 for every account, BDI staff included. `release-identity` answers
+409 `reinvite_pending` while an invite-back is waiting; `resend` refuses a key issued before `deactivated_at` (`account_deactivated`) and any key of a
 `SUSPENDED` account (`account_suspended`); and
 `DELETE /api/admin/invitations/:id` never deletes an account that was ever activated. The
 destination checks live in `invitationTarget()` (`lib/invitation-target.ts`), shared by both
 routes. In the console, `InviteDialog` turns the 409 into a second step (`ActionDialog`'s
 `onConfirm` may return `false` to stay open), and a deactivated account's page has "เชิญกลับเข้ามา".
 `docs/09` §2.2.
+
+**An organisation changes its own representatives through a change request** (card "คำขอเปลี่ยนแปลงผู้แทนหน่วยงาน",
+2026-11-04; `routes/representative-changes.ts`, `lib/representative-change.ts`, screens under `/representatives`). One request
+removes and adds coordinators and approvers, one `BDI_OFFICER_REVIEW` gate decides it, and the system does the rest. It has its
+own status enum (`RepresentativeChangeStatus`) because `RequestStatus` has no `PROCESSING`, and the transition writes it beside the
+`review_task` rather than through `deriveRequestStatus()`. **Headcounts and account states are checked once, when the officer
+confirms**, by `evaluateChangeRequest()` — the same function the review page shows, so the screen and the server cannot disagree —
+inside the transaction that does the work, with the organisation row `FOR UPDATE`. That lock is why an organisation may have several
+open requests: each confirmation counts live data, so two pressed together cannot both pass on one number. The organisation can
+submit an out-of-range request; only roles the request changes are checked, and a role already over a lowered limit may move closer
+while still over. **The form never looks an account up by national ID**, so a coordinator cannot learn whether someone has an
+account or is suspended; `review` in the detail payload exists only for BDI, and added people's national IDs are masked to the
+organisation after submit. A removal deactivates the account (same effect as `POST /:id/deactivate`), or revokes the key of someone
+still invited. Every addition ends in an invitation through ThaID, in one of three shapes: a new `PENDING` account, a `PENDING`
+account with a dead invitation reused and overwritten from the request, or the invite-back of a `DEACTIVATED` one. Anything else
+(`ACTIVE`, `SUSPENDED`, a valid invitation, a clashing e-mail) blocks confirmation with the reason. Mail goes inline after commit, so
+a failure leaves `PROCESSING_FAILED` and `POST /:id/retry` redoes only those items; a request stuck in `PROCESSING` over two minutes
+can be retried too. `isChangeRequestKey()` makes activation skip the seat check for those keys, because the count was already made
+and an administrator may lower the limit afterwards. Administrators act through `/api/admin/representative-changes`, the same
+handlers with `adminActorId()`; `seed:demo` must delete these tables first, because a removal row points at `user_role_assignment`
+with `Restrict`. Replacing the only person in a role when the successor uses the same e-mail cannot be done here, because the old
+person still holds the address at confirmation and removing them first would leave zero: an administrator does it in the console.
 
 **Only `reinstate` lifts a suspension.** `completeActivation()` clears the suspension columns, which
 the invite-back needs, so until 2026-11-04 a link was enough to lift one: `resend` works on any key,

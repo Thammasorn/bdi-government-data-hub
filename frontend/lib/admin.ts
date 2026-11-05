@@ -128,6 +128,8 @@ export interface AdminInvitation {
 
 export interface AdminOrganization {
   id: string;
+  maxOrganizationUserCount: number;
+  maxOrganizationApproverCount: number;
   organizationCode: string;
   organizationType: string | null;
   nameTh: string;

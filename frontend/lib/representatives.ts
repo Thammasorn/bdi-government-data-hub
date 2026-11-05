@@ -1,0 +1,191 @@
+import type { OrgEvent, TimelineCreator } from "@/components/organization/Timeline";
+import { isValidThaiNationalId } from "./organization-form";
+import { REQUEST_STATUS_META, TASK_TYPE_META, type OrganizationStatus } from "./status";
+import type { JourneyProgress } from "./types";
+
+/** คำขอเปลี่ยนแปลงผู้แทนหน่วยงาน — รูปข้อมูลของ `routes/representative-changes.ts` */
+export type ChangeStatus =
+  | "DRAFT"
+  | "SUBMITTED"
+  | "UNDER_REVIEW"
+  | "RETURNED"
+  | "CONFIRMED"
+  | "PROCESSING"
+  | "COMPLETED"
+  | "PROCESSING_FAILED"
+  | "REJECTED"
+  | "CANCELLED";
+
+/** คำและสีชุดเดียวกับคำขออื่น — สถานะที่คำขออื่นไม่มีเท่านั้นที่ตั้งเอง */
+export const CHANGE_STATUS_META: Record<ChangeStatus, { label: string; className: string }> = {
+  DRAFT: REQUEST_STATUS_META.DRAFT,
+  SUBMITTED: TASK_TYPE_META.BDI_OFFICER_REVIEW,
+  UNDER_REVIEW: TASK_TYPE_META.BDI_OFFICER_REVIEW,
+  RETURNED: REQUEST_STATUS_META.RETURNED,
+  CONFIRMED: { label: "กำลังดำเนินการ", className: "bg-navy-100 text-navy-600" },
+  PROCESSING: { label: "กำลังดำเนินการ", className: "bg-navy-100 text-navy-600" },
+  COMPLETED: { label: "ดำเนินการเสร็จสิ้น", className: "bg-success-bg text-success" },
+  PROCESSING_FAILED: { label: "ดำเนินการไม่สำเร็จ", className: "bg-danger-bg text-danger" },
+  REJECTED: REQUEST_STATUS_META.REJECTED,
+  CANCELLED: REQUEST_STATUS_META.CANCELLED,
+};
+
+/** ข้อความหลังผ่านการตรวจสอบ — พูดถึงเฉพาะสิ่งที่คำขอใบนี้ทำจริง */
+export function confirmMessage(removals: number, additions: number, failedEmails: string[]): string {
+  const removed = "ได้ทำการ Deactivate ผู้แทนเดิม";
+  const sent = "นำส่ง activation key ไปยังผู้แทนใหม่";
+  if (failedEmails.length > 0) {
+    const failed = `ส่ง activation key ไปยัง ${failedEmails.join(", ")} ไม่สำเร็จ กรุณากดลองใหม่`;
+    return removals > 0 ? `${removed}แล้ว แต่${failed}` : failed;
+  }
+  if (removals > 0 && additions > 0) return `${removed} และ${sent} เรียบร้อยแล้ว`;
+  return removals > 0 ? `${removed} เรียบร้อยแล้ว` : `ได้${sent} เรียบร้อยแล้ว`;
+}
+
+export interface Representative {
+  kind: "HOLDER" | "INVITED";
+  accountStatus: string;
+  userRoleAssignmentId: string | null;
+  activationKeyId: string | null;
+  userAccountId: string;
+  prefixTh: string | null;
+  firstnameTh: string | null;
+  lastnameTh: string | null;
+  name: string;
+  positionTh: string | null;
+  departmentTh: string | null;
+  email: string | null;
+  phoneNumber: string | null;
+  phoneNumberExtension: string | null;
+  roleCode: string;
+  roleLabel: string;
+  openRequests: string[];
+  organization?: { id: string; nameTh: string };
+}
+
+export interface SeatSummary {
+  roleCode: string;
+  roleLabel: string;
+  current: number;
+  max: number;
+  over: boolean;
+}
+
+export interface ChangeRow {
+  id: string;
+  requestNumber: string;
+  status: ChangeStatus;
+  submittedAt: string | null;
+  updatedAt: string;
+  organization: { id: string; nameTh: string };
+  removalCount: number;
+  additionCount: number;
+  documentName: string | null;
+}
+
+export interface HeadcountRow {
+  roleCode: string;
+  roleLabel: string;
+  current: number;
+  removed: number;
+  added: number;
+  after: number;
+  min: number;
+  max: number;
+  changed: boolean;
+  problem: string | null;
+}
+
+export interface RemovalItem {
+  id: string;
+  status: string;
+  userRoleAssignmentId: string | null;
+  activationKeyId: string | null;
+  pendingInvitee: boolean;
+  name: string;
+  positionTh: string | null;
+  departmentTh: string | null;
+  roleCode: string | null;
+  roleLabel: string | null;
+}
+
+export interface AdditionForm {
+  id?: string;
+  roleCode: string;
+  prefixTh: string;
+  firstnameTh: string;
+  lastnameTh: string;
+  cid: string;
+  email: string;
+  phoneNumber: string;
+  phoneNumberExtension: string;
+  positionTh: string;
+  departmentTh: string;
+}
+
+export interface AdditionItem extends Omit<AdditionForm, "id"> {
+  id: string;
+  status: string;
+  roleLabel: string;
+}
+
+export interface ChangeDetail {
+  id: string;
+  requestNumber: string;
+  status: ChangeStatus;
+  organization: { id: string; nameTh: string; status: OrganizationStatus };
+  submittedAt: string | null;
+  updatedAt: string;
+  cancellationReason: string | null;
+  removals: RemovalItem[];
+  additions: AdditionItem[];
+  attachment: { id: string; filename: string; sizeBytes: number } | null;
+  timeline: OrgEvent[];
+  progress: JourneyProgress;
+  createdBy: TimelineCreator | null;
+  createdAt: string;
+  /** null = ฝั่งหน่วยงาน ซึ่งไม่เห็นจำนวนหลังดำเนินการ */
+  headcount: HeadcountRow[] | null;
+  review: {
+    accountChecks: { additionId: string; name: string; state: string; ok: boolean; message: string }[];
+    overlaps: { name: string; requestNumber: string }[];
+    blockers: string[];
+    returnReasons: string[];
+  } | null;
+  canEdit: boolean;
+  canReview: boolean;
+  canRetry: boolean;
+}
+
+export const ROLE_OPTIONS = [
+  { value: "ORGANIZATION_APPROVER", label: "ผู้มีอำนาจของหน่วยงาน" },
+  { value: "ORGANIZATION_USER", label: "ผู้ประสานงานของหน่วยงาน" },
+];
+
+export const emptyAddition = (): AdditionForm => ({
+  roleCode: "",
+  prefixTh: "",
+  firstnameTh: "",
+  lastnameTh: "",
+  cid: "",
+  email: "",
+  phoneNumber: "",
+  phoneNumberExtension: "",
+  positionTh: "",
+  departmentTh: "",
+});
+
+/** สำเนาของ `additionSubmitSchema` — ฟอร์มบอกได้ก่อนกดส่ง backend ตัดสินจริง */
+export function validateAddition(a: AdditionForm): Partial<Record<keyof AdditionForm, string>> {
+  const errors: Partial<Record<keyof AdditionForm, string>> = {};
+  if (!a.roleCode) errors.roleCode = "กรุณาเลือกบทบาท";
+  if (!a.prefixTh) errors.prefixTh = "กรุณาเลือกคำนำหน้า";
+  if (!a.firstnameTh.trim()) errors.firstnameTh = "กรุณากรอกชื่อ";
+  if (!a.lastnameTh.trim()) errors.lastnameTh = "กรุณากรอกนามสกุล";
+  if (!isValidThaiNationalId(a.cid.trim())) errors.cid = "เลขบัตรประชาชนไม่ถูกต้อง";
+  if (!a.positionTh.trim()) errors.positionTh = "กรุณากรอกตำแหน่ง";
+  if (!a.departmentTh.trim()) errors.departmentTh = "กรุณากรอกฝ่าย/กอง/สำนัก";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.email.trim())) errors.email = "กรุณากรอกอีเมลให้ถูกต้อง";
+  if (!/^\d{9,10}$/.test(a.phoneNumber.replace(/\D/g, ""))) errors.phoneNumber = "กรุณากรอกเบอร์โทรศัพท์ 9–10 หลัก";
+  return errors;
+}

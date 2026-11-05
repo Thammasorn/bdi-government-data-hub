@@ -226,6 +226,8 @@ async function main() {
   await prisma.datasetRegistrationMetadata.deleteMany();
   await prisma.datasetRegistrationRequest.deleteMany();
   await prisma.organizationRegistrationRequest.deleteMany();
+  // รายการยกเลิกชี้ role assignment แบบ Restrict ต้องลบก่อนแถวของ iam ข้างล่าง
+  await prisma.representativeChangeRequest.deleteMany();
   /**
    * ไฟล์แนบทั้งหมด **ยกเว้น** template เอกสารกฎหมาย
    *

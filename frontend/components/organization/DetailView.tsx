@@ -707,7 +707,7 @@ function DatasetEntryCard() {
 }
 
 /** ป้ายกับค่าคนละขนาดตัวอักษร ต้องจัดตามเส้นฐาน ไม่งั้นค่าจะดูต่ำกว่าป้ายเล็กน้อยทุกแถว */
-function Rows({ rows }: { rows: Array<[string, string | null | undefined]> }) {
+export function Rows({ rows }: { rows: Array<[string, string | null | undefined]> }) {
   return (
     <dl className="divide-y divide-line">
       {rows.map(([label, value]) => (

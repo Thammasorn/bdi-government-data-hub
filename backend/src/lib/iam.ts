@@ -9,6 +9,7 @@
  */
 import {
   ActivationKeyStatus,
+  OrganizationStatus,
   Prisma,
   PrismaClient,
   RoleAssignmentStatus,
@@ -119,13 +120,12 @@ export function derivedAssignmentStatus(assignment: {
  * อยู่แล้ว (เดิมตรงนี้เป็น null ทำให้ตอบจากฐานข้อมูลไม่ได้ว่าเจ้าหน้าที่ BDI อยู่หน่วยงานไหน
  * ทั้งที่ activation_key ของเขาชี้มาที่ BDI มาตลอด — เปลี่ยนเมื่อ 2026-08-16)
  *
- * กติกา "หนึ่งหน่วยงานมี ORGANIZATION_USER / ORGANIZATION_APPROVER ที่ ACTIVE ได้อย่างละคน"
- * บังคับที่นี่ ไม่ใช่ที่ฐานข้อมูลอีกแล้ว — `uq_active_org_scoped_role_assignment` ถูกลบไป
- * เพราะมันคลุมทุก role ไม่ใช่แค่สองตัวนี้ พอเจ้าหน้าที่ BDI มีหน่วยงานจริงก็ชนกันเอง
- * และเขียน index ให้แยก role ไม่ได้ (role.id สุ่มใหม่ทุกฐานข้อมูล)
+ * กติกาจำนวนผู้ถือ `ORGANIZATION_USER` / `ORGANIZATION_APPROVER` ต่อหน่วยงาน (ก่อน ACTIVE อย่างละคน
+ * หลังจากนั้นตามที่ผู้ดูแลระบบตั้ง ดู `roleSeatLimit()`) บังคับที่นี่ ไม่ใช่ที่ฐานข้อมูลอีกแล้ว —
+ * `uq_active_org_scoped_role_assignment` ถูกลบไป เพราะมันคลุมทุก role ไม่ใช่แค่สองตัวนี้ พอเจ้าหน้าที่ BDI
+ * มีหน่วยงานจริงก็ชนกันเอง และเขียน index ให้แยก role ไม่ได้ (role.id สุ่มใหม่ทุกฐานข้อมูล)
  *
- * **ตั้งแต่ 2026-09-13 กติกานี้ปฏิเสธคนใหม่ ไม่ใช่เตะคนเดิมออก** — ดู `roleSeatTaken()`
- * และคอมเมนต์ในตัวฟังก์ชัน ที่นั่งจะว่างให้คนใหม่ก็ต่อเมื่อคนเดิมถูกระงับหรือยุติบัญชีแล้ว
+ * **กติกานี้ปฏิเสธคนใหม่ ไม่เตะใครออก** — ดู `roleSeatTaken()` และคอมเมนต์ในตัวฟังก์ชัน
  *
  * **หน่วยงาน BDI ยกเว้นจากกติกานี้** มีเจ้าหน้าที่กี่คนต่อ role ก็ได้
  *
@@ -141,6 +141,7 @@ export async function assignRole(
     organizationId?: string | null;
     actorId: string;
     effectiveFrom?: Date;
+    skipSeatCheck?: boolean;
   },
 ) {
   const { userAccountId, roleCode, actorId } = params;
@@ -195,42 +196,28 @@ export async function assignRole(
   }
 
   /**
-   * หนึ่ง role หนึ่งคนต่อหนึ่งหน่วยงาน — **ปฏิเสธคนใหม่** เมื่อคนเดิมยังใช้งานอยู่
-   * (การ์ด "แก้เรื่อง invite org user เพิ่ม" 2026-09-13)
+   * จำนวนผู้ถือ role ของหน่วยงานต้องไม่เกินที่กำหนด — **ปฏิเสธคนใหม่** เมื่อเต็ม ไม่เตะใครออก
    *
-   * ของเดิมเพิกถอนคนเดิมเงียบ ๆ ให้คนใหม่ ตั้งแต่สมัยที่ยังมี unique index คอยรับอยู่
-   * ผลคือ "เชิญ → เปิดใช้งาน → คนเก่าโดนเตะออก" โดยไม่มีใครตั้งใจสั่ง — ผู้ประสานงานของ
-   * BDI ที่เชิญผิดคนเปลี่ยนตัวผู้รับผิดชอบของหน่วยงานได้โดยไม่รู้ตัว ตอนนี้ที่นั่งจะว่าง
-   * ก็ต่อเมื่อคนเดิมถูก **ระงับ** หรือ **ยุติบัญชี** ไปก่อนแล้วเท่านั้น
+   * ที่นั่งเต็มนับรวมคนที่ถูกระงับ เพราะการระงับคือชั่วคราว เขาคืนสถานะได้ทุกเมื่อและกลับมาทำงานต่อได้
+   * จนถึง 2026-11-04 คนที่ถูกระงับไม่นับ และเสีย role ให้คนใหม่ตอนเปิดใช้งาน ทำให้การระงับกลายเป็นการถอด
+   * ถาวรโดยที่ไม่มีใครสั่ง ที่นั่งจะว่างก็ต่อเมื่อมีคนถอดเขาออกจริง ๆ เท่านั้น
    *
-   * "ยังใช้งานอยู่" วัดจากสถานะบัญชี ไม่ใช่แค่ assignment: การระงับบัญชีไม่ถอน role
-   * (จะได้คืนสถานะได้ทั้งชุด) ถ้านับ assignment อย่างเดียว การระงับก็ไม่ทำให้ที่นั่งว่าง
-   * และการ์ดบอกไว้ว่าต้อง "deactivate/suspend ก่อน ถึงจะเชิญเพิ่มได้" คนที่ถูกระงับแล้วมี
-   * คนใหม่มานั่งแทนจึงเสีย assignment ตรงนี้ พร้อมเหตุผล `ROLE_REPLACED_REASON` — ไม่งั้น
-   * การคืนสถานะบัญชีเขาจะทำให้หน่วยงานมีผู้ดำเนินการสองคนพร้อมกัน ผู้เรียกยังต้อง
-   * ประกาศให้เขารู้หลัง commit เหมือนเดิม (`announceRoleReplacement()`)
+   * `skipSeatCheck` คือคีย์ที่มาจากคำขอเปลี่ยนแปลงผู้แทน — จำนวนถูกตรวจไปแล้วตอน BDI ยืนยัน และผู้ถูกเชิญ
+   * ต้องเปิดใช้งานได้แม้ผู้ดูแลระบบลดเพดานลงทีหลัง
    *
    * ไม่ใช้กับหน่วยงาน BDI เพราะเจ้าหน้าที่ BDI มีหลายคนต่อ role เป็นเรื่องปกติ
    */
-  let replaced: RevokedAssignment[] = [];
-  if (isOrgScoped && organizationId && organizationId !== BDI_ORGANIZATION_ID) {
+  if (isOrgScoped && organizationId && organizationId !== BDI_ORGANIZATION_ID && !params.skipSeatCheck) {
     const holder = await roleSeatTaken(db, { organizationId, roleId, exceptUserAccountId: userAccountId });
     if (holder) {
       throw new RoleOccupiedError(
         roleCode,
         organizationId,
         holder.userAccountId,
-        `หน่วยงานนี้มี "${ROLE_LABELS[roleCode]}" ที่ใช้งานอยู่แล้ว — หนึ่งหน่วยงานมีได้คนเดียว ` +
-          `ต้องระงับหรือยุติบัญชีคนเดิมก่อนจึงจะมอบบทบาทนี้ให้คนใหม่ได้`,
+        `หน่วยงานนี้มี "${ROLE_LABELS[roleCode]}" ครบตามจำนวนที่กำหนดแล้ว — ` +
+          `ต้องยุติบัญชีคนเดิมก่อนจึงจะมอบบทบาทนี้ให้คนใหม่ได้`,
       );
     }
-    replaced = await revokeRoleAssignments(db, {
-      organizationId,
-      roleId,
-      actorId,
-      reason: ROLE_REPLACED_REASON,
-      exceptUserAccountId: userAccountId,
-    });
   }
 
   // `created` บอกผู้เรียกว่ามีการมอบจริงหรือเป็น no-op — `ROLE_ASSIGNED` ต้องไม่ถูกเขียน
@@ -239,7 +226,7 @@ export async function assignRole(
     where: { userAccountId, roleId, organizationId, ...activeAssignmentWhere() },
     select: { id: true },
   });
-  if (existing) return { id: existing.id, created: false, replaced };
+  if (existing) return { id: existing.id, created: false };
 
   const created = await db.userRoleAssignment.create({
     data: {
@@ -252,7 +239,7 @@ export async function assignRole(
     },
     select: { id: true },
   });
-  return { id: created.id, created: true, replaced };
+  return { id: created.id, created: true };
 }
 
 /**
@@ -267,11 +254,79 @@ export interface RevokedAssignment {
 }
 
 /**
- * ใครนั่งที่นั่ง (หน่วยงาน, role) นี้อยู่และ **ยังใช้งานได้** — `null` ถ้าที่นั่งว่าง
+ * เพดานจำนวนผู้ถือ role หนึ่งของหน่วยงานหนึ่ง
  *
- * "ว่าง" นับสองแบบ: ไม่มี assignment ที่ ACTIVE เลย หรือมีแต่บัญชีของเจ้าของถูกระงับ /
- * ยุติไปแล้ว (บัญชีที่ SUSPENDED ยังถือ assignment อยู่ — ดู `POST /:id/suspend`) กรณีหลัง
- * `assignRole()` จะถอน assignment นั้นให้ตอนคนใหม่มานั่งแทน
+ * หน่วยงานที่ยังไม่ผ่าน Journey B มีได้อย่างละคน ส่วนหน่วยงานที่เปิดใช้งานแล้วใช้ค่าที่ผู้ดูแลระบบตั้งไว้
+ * หน่วยงาน BDI และ role ที่ไม่ใช่ระดับหน่วยงานไม่มีเพดาน
+ */
+export async function roleSeatLimit(
+  db: Db,
+  params: { organizationId: string; roleId: string },
+): Promise<number> {
+  if (params.organizationId === BDI_ORGANIZATION_ID) return Number.POSITIVE_INFINITY;
+  const [organization, role] = await Promise.all([
+    db.organization.findUnique({
+      where: { id: params.organizationId },
+      select: { status: true, maxOrganizationUserCount: true, maxOrganizationApproverCount: true },
+    }),
+    db.role.findUnique({ where: { id: params.roleId }, select: { code: true } }),
+  ]);
+  if (!organization || !role) return Number.POSITIVE_INFINITY;
+  if (!ORGANIZATION_SCOPED_ROLES.includes(role.code as RoleCode)) return Number.POSITIVE_INFINITY;
+  if (organization.status === OrganizationStatus.PENDING_REGISTRATION) return 1;
+  return role.code === ROLE_CODES.ORGANIZATION_APPROVER
+    ? organization.maxOrganizationApproverCount
+    : organization.maxOrganizationUserCount;
+}
+
+/** ผู้ถือ role ที่ยังนับเป็นคนของหน่วยงาน — บัญชีที่ถูกระงับยังนับ เพราะเขาคืนสถานะได้ */
+const SEAT_HOLDER_ACCOUNT = {
+  status: { in: [UserAccountStatus.ACTIVE, UserAccountStatus.SUSPENDED] },
+};
+
+/**
+ * ที่นั่งของ (หน่วยงาน, role) ถูกใช้ไปกี่คน — ผู้ถือ role รวมคนที่ถูกระงับ + คำเชิญที่ยังใช้ได้
+ *
+ * นับเป็นรายคน คนหนึ่งที่มีทั้ง role และคำเชิญค้างนับครั้งเดียว ต้องนับคำเชิญด้วย ไม่งั้นคนที่ยังไม่เปิดใช้งาน
+ * ทำให้เกินเพดานได้ตอนเขากดลิงก์ ซึ่งห่างจากคนที่เชิญหลายวัน
+ */
+export async function roleSeatUsage(
+  db: Db,
+  params: { organizationId: string; roleId: string; exceptUserAccountId?: string },
+) {
+  const except = params.exceptUserAccountId ? { userAccountId: { not: params.exceptUserAccountId } } : {};
+  const [limit, holders, invited] = await Promise.all([
+    roleSeatLimit(db, params),
+    db.userRoleAssignment.findMany({
+      where: {
+        organizationId: params.organizationId,
+        roleId: params.roleId,
+        ...except,
+        userAccount: SEAT_HOLDER_ACCOUNT,
+        ...activeAssignmentWhere(),
+      },
+      select: { userAccountId: true },
+    }),
+    db.activationKey.findMany({
+      where: {
+        organizationId: params.organizationId,
+        roleId: params.roleId,
+        status: ActivationKeyStatus.ISSUED,
+        expiresAt: { gt: new Date() },
+        ...except,
+      },
+      select: { userAccountId: true },
+    }),
+  ]);
+  const used = new Set([...holders, ...invited].map((row) => row.userAccountId)).size;
+  return { limit, used, full: used >= limit };
+}
+
+/**
+ * ที่นั่งของ (หน่วยงาน, role) เต็มแล้วเพราะมีผู้ถือ role — คืนผู้ถือคนหนึ่งไว้บอกในข้อความ, `null` ถ้ายังรับได้
+ *
+ * เต็มเพราะคำเชิญล้วน ๆ ตอบ `null` ที่นี่ และ `pendingInvitationFor()` เป็นคนตอบแทน ผู้เรียกจึงถามสองตัวนี้
+ * ตามลำดับได้เหมือนเดิม
  *
  * `POST /api/admin/invitations` · `POST /api/admin/users/:id/roles` · `transfer` และ
  * `approverConflict()` ใน routes/organizations.ts ใช้ตัวนี้ตอบ 409 ล่วงหน้าพร้อมบอก
@@ -281,12 +336,13 @@ export async function roleSeatTaken(
   db: Db,
   params: { organizationId: string; roleId: string; exceptUserAccountId?: string },
 ) {
+  if (!(await roleSeatUsage(db, params)).full) return null;
   return db.userRoleAssignment.findFirst({
     where: {
       organizationId: params.organizationId,
       roleId: params.roleId,
       ...(params.exceptUserAccountId ? { userAccountId: { not: params.exceptUserAccountId } } : {}),
-      userAccount: { status: UserAccountStatus.ACTIVE },
+      userAccount: SEAT_HOLDER_ACCOUNT,
       ...activeAssignmentWhere(),
     },
     select: {
@@ -298,17 +354,17 @@ export async function roleSeatTaken(
 }
 
 /**
- * คำเชิญที่ยังค้างอยู่ (ISSUED ยังไม่หมดอายุ) ของที่นั่ง (หน่วยงาน, role) นี้ — `null` ถ้าไม่มี
+ * ที่นั่งเต็มแล้ว และมีคำเชิญที่ยังใช้ได้อยู่ในนั้น — คืนใบล่าสุด, `null` ถ้ายังรับได้
  *
- * นับเป็น "จองที่นั่งแล้ว" ตั้งแต่ตอนเชิญ (ตัดสินใจ 2026-09-13) ไม่ใช่รอให้ activate ก่อน:
- * ถ้าเชิญซ้อนได้ คนที่กดลิงก์ทีหลังจะเจอ `RoleOccupiedError` ตอนเปิดใช้งาน ซึ่งเป็น
- * error ที่เขาแก้เองไม่ได้และห่างจากคนที่เชิญผิดหลายวัน ผู้ประสานงานของ BDI ที่จะเปลี่ยน
- * ตัวจึงต้องยกเลิกคำเชิญใบเดิมก่อน (`DELETE /api/admin/invitations/:id`)
+ * นับเป็น "จองที่นั่งแล้ว" ตั้งแต่ตอนเชิญ ถ้าเชิญเกินได้ คนที่กดลิงก์ทีหลังจะเจอ `RoleOccupiedError`
+ * ซึ่งเป็น error ที่เขาแก้เองไม่ได้และห่างจากคนที่เชิญหลายวัน ผู้ดูแลระบบจึงต้องยกเลิกคำเชิญใบเดิมก่อน
+ * (`DELETE /api/admin/invitations/:id`)
  */
 export async function pendingInvitationFor(
   db: Db,
   params: { organizationId: string; roleId: string; exceptUserAccountId?: string },
 ) {
+  if (!(await roleSeatUsage(db, params)).full) return null;
   return db.activationKey.findFirst({
     where: {
       organizationId: params.organizationId,
@@ -650,7 +706,13 @@ export class ActivationKeyUnusableError extends Error {
  */
 export async function completeActivation(
   db: Db,
-  params: { activationKeyId: string; userAccountId: string; roleCode: RoleCode; organizationId: string },
+  params: {
+    activationKeyId: string;
+    userAccountId: string;
+    roleCode: RoleCode;
+    organizationId: string;
+    skipSeatCheck?: boolean;
+  },
 ) {
   /**
    * ขั้นที่ 8 ทำก่อน และเงื่อนไข `ISSUED` อยู่ใน WHERE ของคำสั่งที่เขียน — กับดัก read-then-write
@@ -708,17 +770,13 @@ export async function completeActivation(
     roleCode: params.roleCode,
     organizationId: params.organizationId,
     actorId: params.userAccountId,
+    skipSeatCheck: params.skipSeatCheck,
   });
 
-  /**
-   * ส่งกลับให้ผู้เรียกทำต่อหลัง commit ทั้งสองอย่าง — ที่นี่อยู่ใน transaction และทั้ง audit
-   * กับอีเมลเขียนผ่าน prisma ตัวหลัก: `replaced` คือคนที่ถูกแทนที่ซึ่งต้องได้รู้ตัว ส่วน id ของ
-   * assignment คือ subject ของ `ROLE_ASSIGNED` (ถ้า `assignRole()` มอบใหม่จริง ไม่ใช่ no-op)
-   */
+  // assignment คือ subject ของ `ROLE_ASSIGNED` (ถ้า `assignRole()` มอบให้จริง)
   return {
     roleAssignmentId: assignment.id,
     roleAssignmentCreated: assignment.created,
-    replaced: assignment.replaced,
   };
 }
 

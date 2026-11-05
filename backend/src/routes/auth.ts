@@ -33,8 +33,8 @@ import {
   roleSeatTaken,
   usableActivationKeyById,
 } from "../lib/iam.js";
+import { isChangeRequestKey } from "../lib/representative-change.js";
 import { captureError } from "../lib/error-capture.js";
-import { announceRoleReplacement } from "../lib/notify.js";
 import {
   ORGANIZATION_FROZEN,
   assertOrganizationOperable,
@@ -214,7 +214,11 @@ authRouter.get("/invitation", async (req, res) => {
    * กดลิงก์เดิมซ้ำได้เลย
    */
   const roleCode = key.role.code as RoleCode;
-  if (ORGANIZATION_SCOPED_ROLES.includes(roleCode) && key.organizationId !== BDI_ORGANIZATION_ID) {
+  if (
+    ORGANIZATION_SCOPED_ROLES.includes(roleCode) &&
+    key.organizationId !== BDI_ORGANIZATION_ID &&
+    !(await isChangeRequestKey(prisma, key.id))
+  ) {
     const holder = await roleSeatTaken(prisma, {
       organizationId: key.organizationId,
       roleId: key.roleId,
@@ -797,6 +801,8 @@ authRouter.post("/activate", async (req, res) => {
         userAccountId: key.userAccountId,
         roleCode: key.role.code as RoleCode,
         organizationId: key.organizationId,
+        // จำนวนถูกตรวจแล้วตอน BDI ยืนยันคำขอ ผู้ถูกเชิญต้องเปิดใช้งานได้แม้ผู้ดูแลระบบลดเพดานทีหลัง
+        skipSeatCheck: await isChangeRequestKey(tx, key.id),
       });
     });
   } catch (err) {
@@ -865,13 +871,9 @@ authRouter.post("/activate", async (req, res) => {
       metadata: {
         assigned_via: "ACTIVATION",
         activation_key_id: key.id,
-        replaced: activation.replaced.length,
       },
     });
   }
-
-  // ประกาศหลัง commit เท่านั้น — ดู announceRoleReplacement()
-  await announceRoleReplacement(activation.replaced);
 
   await issueSession(req, res, key.userAccountId);
 });

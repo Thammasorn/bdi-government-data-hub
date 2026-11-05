@@ -19,7 +19,7 @@
  * คนใหม่) จึงปล่อยคืนได้ แต่ต้องเป็นคำสั่งที่ตั้งใจเรียก ไม่ใช่ผลข้างเคียงของการปิดบัญชี
  *
  * ผลคือ "สร้างบัญชีใหม่ด้วยเลขบัตรเดิม" ไม่มีอยู่ในระบบ — คนเดิมที่กลับเข้ามาใช้
- * `reactivate` แถวเดิม เพราะ `legal_acceptance` กับ `signature` ชี้มาที่บัญชี ถ้าแตกคนคนเดียว
+ * `reinvite` แถวเดิม เพราะ `legal_acceptance` กับ `signature` ชี้มาที่บัญชี ถ้าแตกคนคนเดียว
  * เป็นสองแถว ระบบจะตอบไม่ได้ว่าใครลงนามเอกสาร A0–A3 ฉบับนั้น
  *
  * ### ไม่ mask ข้อมูล
@@ -140,10 +140,9 @@ function notFound(res: import("express").Response) {
 }
 
 /**
- * บัญชีที่ยุติแล้วซึ่งมีคำเชิญกลับรออยู่ (`POST /:id/reinvite`) — `reactivate` และ `release-identity` ต้องรอ
+ * บัญชีที่ยุติแล้วซึ่งมีคำเชิญกลับรออยู่ (`POST /:id/reinvite`) — `release-identity` ต้องรอ
  *
- * คำเชิญกลับสัญญาว่าบัญชีจะเปิดได้ก็ต่อเมื่อเจ้าตัวยืนยัน ThaID ที่ลิงก์ ถ้า `reactivate` ยังกดได้ บัญชีก็เปิดด้วยอีเมลใหม่
- * โดยไม่มีใครยืนยันตัวตน ส่วน `release-identity` ระหว่างนั้นทิ้งลิงก์ที่ยังใช้ได้ไว้บนบัญชีที่ไม่มีอีเมลใช้งานได้ ทางออกคือ
+ * ระหว่างนั้น `release-identity` จะทิ้งลิงก์ที่ยังใช้ได้ไว้บนบัญชีที่ไม่มีอีเมลใช้งานได้ ทางออกคือ
  * ให้เจ้าตัวเปิดใช้ทางลิงก์ หรือเพิกถอน / ลบคำเชิญก่อน
  */
 async function refusePendingReinvite(res: import("express").Response, accountId: string, action: string): Promise<boolean> {
@@ -248,10 +247,8 @@ async function seatConflict(
     return {
       error: "role_occupied",
       message:
-        `หน่วยงานนี้มี "${label}" ที่ใช้งานอยู่แล้ว (${holder.userAccount.email}) — ` +
-        `หนึ่งหน่วยงานมีได้คนเดียว ระบบไม่เปลี่ยนตัวให้เอง ` +
-        `ต้องระงับ (POST /api/admin/users/:id/suspend) หรือยุติบัญชี ` +
-        `(POST /api/admin/users/:id/deactivate) คนนั้นก่อน`,
+        `หน่วยงานนี้มี "${label}" ครบตามจำนวนที่กำหนดแล้ว (เช่น ${holder.userAccount.email}) — ` +
+        `ระบบไม่เปลี่ยนตัวให้เอง ต้องยุติบัญชีคนเดิมก่อน (POST /api/admin/users/:id/deactivate)`,
       holderUserAccountId: holder.userAccountId,
       holderEmail: holder.userAccount.email,
     };
@@ -432,7 +429,7 @@ adminUserRouter.post("/password-reset", async (req, res) => {
         ? "บัญชียังไม่ได้เปิดใช้งาน จึงยังไม่มีรหัสผ่านให้ตั้งใหม่ — ส่งลิงก์คำเชิญซ้ำด้วย POST /api/admin/invitations/:id/resend แทน"
         : account.status === UserAccountStatus.SUSPENDED
           ? "บัญชีถูกระงับอยู่ ตั้งรหัสผ่านใหม่ไปก็เข้าระบบไม่ได้ — คืนสถานะด้วย POST /api/admin/users/:id/reinstate ก่อน"
-          : "บัญชีถูกยุติการใช้งานแล้ว — เปิดใช้งานอีกครั้งด้วย POST /api/admin/users/:id/reactivate ก่อน";
+          : "บัญชีถูกยุติการใช้งานแล้ว — เชิญกลับด้วย POST /api/admin/users/:id/reinvite ก่อน";
     res.status(409).json({ error: "invalid_state", message: wayOut, status: account.status });
     return;
   }
@@ -925,7 +922,7 @@ adminUserRouter.post("/:id/reinstate", async (req, res) => {
       error: "invalid_state",
       message:
         account.status === UserAccountStatus.DEACTIVATED
-          ? "บัญชีนี้ยุติการใช้งานไปแล้ว ไม่ใช่ถูกระงับ — ใช้ POST /api/admin/users/:id/reactivate แทน"
+          ? "บัญชีนี้ยุติการใช้งานไปแล้ว ไม่ใช่ถูกระงับ — ใช้ POST /api/admin/users/:id/reinvite แทน"
           : `คืนสถานะได้เฉพาะบัญชีที่ถูกระงับ — บัญชีนี้อยู่สถานะ ${account.status}`,
     });
     return;
@@ -1028,68 +1025,7 @@ adminUserRouter.post("/:id/deactivate", async (req, res) => {
     rolesRevoked: result.revoked.length,
     message:
       "ยุติการใช้งานบัญชีแล้ว — อีเมลและเลขบัตรประชาชนยังผูกกับบัญชีนี้ไว้เพื่อให้ประวัติอ่านกลับได้ " +
-      "ถ้าคนเดิมกลับเข้ามาใหม่ ให้ใช้ reactivate ไม่ใช่สร้างบัญชีใหม่",
-  });
-});
-
-/**
- * เปิดใช้งานบัญชีที่ยุติไปแล้วกลับมา — สำหรับคนเดิมที่กลับเข้ามา
- *
- * **ไม่คืน role ให้เอง** ต้องมอบใหม่ผ่าน `POST /:id/roles` เพราะเขาอาจกลับมาที่หน่วยงาน
- * อื่นหรือบทบาทอื่น และเพราะ role ที่ถูกถอนตอนปิดบัญชีนั้นถูกถอนด้วยเหตุผลของมันเอง
- */
-adminUserRouter.post("/:id/reactivate", async (req, res) => {
-  const account = await findAccount(req.params.id);
-  if (!account) {
-    notFound(res);
-    return;
-  }
-  const parsed = z.object({ reason: reasonSchema }).safeParse(req.body ?? {});
-  if (!parsed.success) {
-    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
-    return;
-  }
-  if (account.status !== UserAccountStatus.DEACTIVATED) {
-    res.status(409).json({
-      error: "invalid_state",
-      message: `เปิดใช้งานใหม่ได้เฉพาะบัญชีที่ยุติการใช้งานแล้ว — บัญชีนี้อยู่สถานะ ${account.status}`,
-    });
-    return;
-  }
-  if (account.email.endsWith("@invalid.local")) {
-    res.status(409).json({
-      error: "identity_released",
-      message:
-        "อีเมลของบัญชีนี้ถูกถอดออกไปเชิญคนใหม่แล้ว จึงเปิดใช้งานกลับมาไม่ได้จนกว่าจะตั้งอีเมลใหม่ — " +
-        "ใช้ POST /api/admin/users/:id/identity ตั้งอีเมลก่อน",
-    });
-    return;
-  }
-  if (await refusePendingReinvite(res, account.id, "เปิดใช้งานตรง ๆ")) return;
-
-  const updated = await prisma.userAccount.update({
-    where: { id: account.id },
-    data: {
-      status: UserAccountStatus.ACTIVE,
-      deactivatedAt: null,
-      updatedBy: adminActorId(),
-    },
-    select: accountSelect,
-  });
-
-  await logAudit({
-    action: AuditAction.USER_ACCOUNT_REACTIVATED,
-    subjectType: AuditSubject.USER_ACCOUNT,
-    subjectId: account.id,
-    before: { status: account.status },
-    after: { status: UserAccountStatus.ACTIVE },
-    metadata: { reason: parsed.data.reason, reactivated_via: "ADMIN_API" },
-  });
-
-  res.json({
-    user: updated,
-    message:
-      "เปิดใช้งานบัญชีกลับมาแล้ว — ยังไม่มีสิทธิ์ใด ๆ ต้องมอบ role ด้วย POST /api/admin/users/:id/roles",
+      "ถ้าคนเดิมกลับเข้ามาใหม่ ให้ใช้ reinvite ไม่ใช่สร้างบัญชีใหม่",
   });
 });
 
@@ -1126,8 +1062,8 @@ const reinviteSchema = z
  * ไปให้คนใหม่ใช้ เลขบัตรยังผูกกับบัญชีเดิม (หนึ่งเลขบัตรหนึ่งบัญชี และประวัติลงนาม/พิจารณาชี้บัญชีนี้) จึงเชิญด้วย
  * `POST /api/admin/invitations` ไม่ได้ — ตรงนั้นตอบ 409 `cid_deactivated` แล้วชี้มาที่นี่
  *
- * **ต่างจาก `reactivate` ตรงที่ต้องยืนยัน ThaID อีกครั้ง** — `reactivate` + `identity` ก็พาบัญชีกลับมาได้ แต่คนที่ถือ
- * กล่องจดหมายใหม่จะได้บัญชีของอีกคนไปทั้งบัญชีถ้าผู้ดูแลระบบพิมพ์อีเมลผิด ที่นี่บัญชี **ยัง DEACTIVATED** หลังเชิญ
+ * **เป็นทางเดียวที่พาบัญชีที่ยุติแล้วกลับมา** (`reactivate` ถูกลบเมื่อ 2026-11-04 เพราะพาบัญชีกลับมาโดยไม่ยืนยันตัวตน)
+ * บัญชี **ยัง DEACTIVATED** หลังเชิญ
  * (ล็อกอินไม่ได้ ตั้งรหัสผ่านใหม่ไม่ได้) จนเจ้าตัวกดลิงก์ ยืนยัน ThaID ให้ตรงเลขบัตรเดิม แล้วตั้งรหัสผ่านใหม่ —
  * `POST /api/auth/activate` ตัวเดียวกับคำเชิญปกติ ซึ่งพลิกเป็น ACTIVE และมอบบทบาทใน transaction เดียว
  *
@@ -1520,7 +1456,7 @@ adminUserRouter.post("/:id/roles", async (req, res) => {
     return;
   }
 
-  const { replaced } = await prisma.$transaction((tx) =>
+  await prisma.$transaction((tx) =>
     assignRole(tx, {
       userAccountId: account.id,
       roleCode: role,
@@ -1535,7 +1471,7 @@ adminUserRouter.post("/:id/roles", async (req, res) => {
     subjectId: account.id,
     organizationId: organization.id,
     after: { role, organizationId: organization.id },
-    metadata: { reason, assigned_via: "ADMIN_API", replaced: replaced.length },
+    metadata: { reason, assigned_via: "ADMIN_API" },
   });
 
   await notifyUsers([account.id], {
@@ -1549,7 +1485,6 @@ adminUserRouter.post("/:id/roles", async (req, res) => {
     role,
     roleLabel: ROLE_LABELS[role],
     organization,
-    replacedUserAccountIds: replaced.map((r) => r.userAccountId),
   });
 });
 
@@ -1730,7 +1665,7 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
       reason,
     });
 
-    const { replaced } = await assignRole(tx, {
+    await assignRole(tx, {
       userAccountId: account.id,
       roleCode: role,
       organizationId: target.id,
@@ -1743,7 +1678,7 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
       reason: SessionRevokeReason.ROTATED,
     });
 
-    return { reverted, replaced };
+    return { reverted };
   });
 
   await logAudit({
@@ -1757,7 +1692,6 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
       reason,
       transferred_via: "ADMIN_API",
       requests_reverted_to_draft: outcome.reverted.map((r) => r.requestNumber),
-      replaced: outcome.replaced.length,
     },
   });
 
@@ -1836,7 +1770,6 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
       requestNumber,
       approverCleared,
     })),
-    replacedUserAccountIds: outcome.replaced.map((r) => r.userAccountId),
     organizationsLeftWithoutStaff: vacancies,
     message:
       // เหตุผลเดียวกับ title ของ notification ข้างบน — ไม่มีหน่วยงานต้นทางคือเปลี่ยนบทบาทอยู่กับที่
