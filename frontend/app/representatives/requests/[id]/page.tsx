@@ -16,7 +16,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
-import type { ChangeDetail } from "@/lib/representatives";
+import { confirmMessage, type ChangeDetail } from "@/lib/representatives";
 import { useRequireAuth } from "@/lib/require-auth";
 import { formatThaiDate, isOrganizationFrozen } from "@/lib/status";
 
@@ -81,11 +81,7 @@ export default function ChangeRequestDetailPage() {
       setNote("");
       await load();
       if (action === "confirm") {
-        setDone(
-          result.failedEmails?.length
-            ? `ได้ทำการ Deactivate ผู้แทนเดิมแล้ว แต่ส่ง activation key ไม่สำเร็จ: ${result.failedEmails.join(", ")}`
-            : "ได้ทำการ Deactivate ผู้แทนเดิม และนำส่ง activation key ไปยังผู้แทนใหม่ เรียบร้อยแล้ว",
-        );
+        setDone(confirmMessage(request.removals.length, request.additions.length, result.failedEmails ?? []));
       } else {
         show({ tone: "success", title: action === "return" ? "ส่งกลับแก้ไขแล้ว" : "ไม่อนุมัติคำขอแล้ว" });
       }

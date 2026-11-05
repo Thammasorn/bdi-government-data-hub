@@ -30,6 +30,18 @@ export const CHANGE_STATUS_META: Record<ChangeStatus, { label: string; className
   CANCELLED: REQUEST_STATUS_META.CANCELLED,
 };
 
+/** ข้อความหลังผ่านการตรวจสอบ — พูดถึงเฉพาะสิ่งที่คำขอใบนี้ทำจริง */
+export function confirmMessage(removals: number, additions: number, failedEmails: string[]): string {
+  const removed = "ได้ทำการ Deactivate ผู้แทนเดิม";
+  const sent = "นำส่ง activation key ไปยังผู้แทนใหม่";
+  if (failedEmails.length > 0) {
+    const failed = `ส่ง activation key ไปยัง ${failedEmails.join(", ")} ไม่สำเร็จ กรุณากดลองใหม่`;
+    return removals > 0 ? `${removed}แล้ว แต่${failed}` : failed;
+  }
+  if (removals > 0 && additions > 0) return `${removed} และ${sent} เรียบร้อยแล้ว`;
+  return removals > 0 ? `${removed} เรียบร้อยแล้ว` : `ได้${sent} เรียบร้อยแล้ว`;
+}
+
 export interface Representative {
   kind: "HOLDER" | "INVITED";
   accountStatus: string;
