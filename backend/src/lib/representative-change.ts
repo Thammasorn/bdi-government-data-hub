@@ -511,6 +511,73 @@ export async function representativeSummary(db: Db, organizationId: string) {
   return rows;
 }
 
+/**
+ * โหนดของแผนภาพ "Flow จำนวน" — หนึ่งโหนดคลุมได้หลายสถานะ
+ *
+ * ส่งรูปเดียวกับ `journeyGraph()` เพื่อให้ `JourneyFlow` กับ `useRequestList` ของหน้าเว็บใช้ซ้ำได้โดยไม่แก้
+ * แต่ไม่ได้ลงทะเบียนใน journey-steps.ts / queue.ts เพราะสองไฟล์นั้นผูกกับ `RequestStatus` และลำดับด่าน
+ * ส่วนคำขอนี้มีด่านเดียวและมีสถานะของตัวเอง
+ */
+export const CHANGE_NODES = [
+  { key: "DRAFT", lane: "main", order: 1, label: "ฉบับร่าง", tone: "neutral", role: ROLE_CODES.ORGANIZATION_USER, statuses: [RepresentativeChangeStatus.DRAFT] },
+  { key: "OFFICER_REVIEW", lane: "main", order: 2, label: "ผู้ประสานงานของ BDI ตรวจสอบ", short: "BDI ตรวจสอบ", tone: "review", role: ROLE_CODES.BDI_OFFICER, statuses: [RepresentativeChangeStatus.SUBMITTED, RepresentativeChangeStatus.UNDER_REVIEW] },
+  { key: "COMPLETED", lane: "main", order: null, label: "ดำเนินการเสร็จสิ้น", tone: "success", role: null, statuses: [RepresentativeChangeStatus.COMPLETED] },
+  { key: "RETURNED", lane: "revision", order: null, label: "รอการแก้ไข", tone: "danger", role: ROLE_CODES.ORGANIZATION_USER, statuses: [RepresentativeChangeStatus.RETURNED] },
+  { key: "PROCESSING_FAILED", lane: "closed", order: null, label: "ดำเนินการไม่สำเร็จ", tone: "danger", role: ROLE_CODES.BDI_OFFICER, statuses: [RepresentativeChangeStatus.CONFIRMED, RepresentativeChangeStatus.PROCESSING, RepresentativeChangeStatus.PROCESSING_FAILED] },
+  { key: "REJECTED", lane: "closed", order: null, label: "ปฏิเสธคำขอ", tone: "danger", role: null, statuses: [RepresentativeChangeStatus.REJECTED] },
+  { key: "CANCELLED", lane: "closed", order: null, label: "ยกเลิกแล้ว", tone: "neutral", role: null, statuses: [RepresentativeChangeStatus.CANCELLED] },
+] as const;
+
+const CHANGE_EDGES = [
+  { from: "DRAFT", to: "OFFICER_REVIEW", kind: "chain" },
+  { from: "OFFICER_REVIEW", to: "COMPLETED", kind: "chain" },
+  { from: "OFFICER_REVIEW", to: "RETURNED", kind: "return" },
+  { from: "RETURNED", to: "OFFICER_REVIEW", kind: "resubmit" },
+];
+
+/** สถานะของโหนดหนึ่ง — คีย์ที่ไม่รู้จักตอบ `null` ผู้เรียกจึงไม่กรอง */
+export function statusesOfNode(key: string | undefined): RepresentativeChangeStatus[] | null {
+  const node = CHANGE_NODES.find((n) => n.key === key);
+  return node ? [...node.statuses] : null;
+}
+
+/** สถานะที่เป็นงานของตำแหน่งผู้ใช้คนนี้ — แท็บ "ที่ต้องดำเนินการ" */
+export function statusesOfRoles(roles: string[]): RepresentativeChangeStatus[] {
+  return CHANGE_NODES.filter((n) => n.role && roles.includes(n.role)).flatMap((n) => [...n.statuses]);
+}
+
+/** คำตอบของ `GET /summary` — รูปเดียวกับ `ListSummary` ของหน้าเว็บ */
+export function changeRequestSummary(
+  counts: Partial<Record<RepresentativeChangeStatus, number>>,
+  roles: string[],
+) {
+  const count = (statuses: readonly RepresentativeChangeStatus[]) =>
+    statuses.reduce((sum, status) => sum + (counts[status] ?? 0), 0);
+  const nodes = CHANGE_NODES.map((node) => ({
+    key: node.key,
+    lane: node.lane,
+    anchor: null,
+    order: node.order,
+    optional: false,
+    terminal: node.key !== "RETURNED",
+    label: node.label,
+    short: "short" in node ? node.short : node.label,
+    waitingLabel: null,
+    roleCode: node.role,
+    roleLabel: node.role ? ROLE_LABELS[node.role] : null,
+    tone: node.tone,
+    count: count(node.statuses),
+    mine: Boolean(node.role && roles.includes(node.role)),
+  }));
+  return {
+    total: Object.values(counts).reduce((sum, n) => sum + (n ?? 0), 0),
+    mine: nodes.filter((n) => n.mine).reduce((sum, n) => sum + n.count, 0),
+    unit: "คำขอ",
+    nodes,
+    edges: CHANGE_EDGES,
+  };
+}
+
 /** คีย์ใบนี้ออกจากคำขอเปลี่ยนแปลงผู้แทนหรือไม่ — จำนวนถูกตรวจแล้วตอน BDI ยืนยัน ตอนเปิดใช้งานจึงไม่ตรวจซ้ำ */
 export async function isChangeRequestKey(db: Db, activationKeyId: string): Promise<boolean> {
   const addition = await db.representativeChangeAddition.findFirst({

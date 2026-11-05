@@ -58,6 +58,7 @@ import {
 } from "../lib/organization-freeze.js";
 import { fullNameTh } from "../lib/person-name.js";
 import {
+  changeRequestSummary,
   evaluateChangeRequest,
   listRepresentatives,
   loadChangeRequest,
@@ -65,6 +66,8 @@ import {
   REPRESENTATIVE_ROLES,
   removalTarget,
   representativeSummary,
+  statusesOfNode,
+  statusesOfRoles,
   computeHeadcount,
   type ChangeRequestRow,
 } from "../lib/representative-change.js";
@@ -256,38 +259,54 @@ const reviewable = (status: RepresentativeChangeStatus) =>
 
 // ---------------------------------------------------------------- อ่าน
 
+const SORTS = ["date_desc", "date_asc", "updated_desc", "updated_asc"] as const;
+
+/** คำศัพท์เดียวกับสองรายการคำขอเดิม เพื่อให้ `useRequestList` ของหน้าเว็บใช้ซ้ำได้ */
 const pageSchema = z.object({
   page: z.coerce.number().int().min(1).catch(1),
   pageSize: z.coerce.number().int().min(1).max(100).catch(20),
-  /** หลายสถานะคั่นด้วยจุลภาคได้ — กล่อง review ของหน้ารายการคลุมสองสถานะ */
-  status: z
-    .string()
-    .optional()
-    .catch(undefined)
-    .transform((raw) =>
-      (raw ?? "").split(",").filter((s): s is RepresentativeChangeStatus => s in RepresentativeChangeStatus),
-    ),
+  stage: z.string().optional().catch(undefined),
+  scope: z.string().optional().catch(undefined),
+  sort: z.enum(SORTS).catch("date_desc"),
   organizationId: z.string().uuid().optional().catch(undefined),
   q: z.string().trim().max(100).optional().catch(undefined),
 });
 
-async function listRequests(scope: { organizationId?: string }, query: z.infer<typeof pageSchema>) {
-  const visible: Prisma.RepresentativeChangeRequestWhereInput = {
-    ...(scope.organizationId ? { organizationId: scope.organizationId } : {}),
-    ...(query.q
+/** ขอบเขตที่ผู้อ่านเห็น บวกคำค้น — จำนวนบนแผนภาพใช้ขอบเขตนี้ ไม่ขยับตามโหนดที่กด */
+function visibleWhere(organizationId: string | undefined, q: string | undefined): Prisma.RepresentativeChangeRequestWhereInput {
+  return {
+    ...(organizationId ? { organizationId } : {}),
+    ...(q
       ? {
           OR: [
-            { requestNumber: { contains: query.q, mode: "insensitive" } },
-            { organization: { nameTh: { contains: query.q, mode: "insensitive" } } },
+            { requestNumber: { contains: q, mode: "insensitive" } },
+            { organization: { nameTh: { contains: q, mode: "insensitive" } } },
           ],
         }
       : {}),
   };
-  const where = { ...visible, ...(query.status.length ? { status: { in: query.status } } : {}) };
-  const [rows, total, grouped] = await Promise.all([
+}
+
+async function listRequests(
+  scope: { organizationId?: string; roles: string[] },
+  query: z.infer<typeof pageSchema>,
+) {
+  const [field, direction] = query.sort.split("_") as ["date" | "updated", "asc" | "desc"];
+  const where: Prisma.RepresentativeChangeRequestWhereInput = {
+    AND: [
+      visibleWhere(scope.organizationId, query.q),
+      ...(statusesOfNode(query.stage) ? [{ status: { in: statusesOfNode(query.stage)! } }] : []),
+      ...(query.scope === "mine" ? [{ status: { in: statusesOfRoles(scope.roles) } }] : []),
+    ],
+  };
+  const [rows, total] = await Promise.all([
     prisma.representativeChangeRequest.findMany({
       where,
-      orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
+      orderBy: [
+        field === "date" ? { submittedAt: { sort: direction, nulls: "last" } } : { updatedAt: direction },
+        // แถวที่วันที่เท่ากันต้องมีลำดับตายตัว ไม่งั้นแถวหนึ่งโผล่สองหน้าและอีกแถวหาย
+        { id: "asc" },
+      ],
       skip: (query.page - 1) * query.pageSize,
       take: query.pageSize,
       select: {
@@ -297,17 +316,10 @@ async function listRequests(scope: { organizationId?: string }, query: z.infer<t
         submittedAt: true,
         updatedAt: true,
         organization: { select: { id: true, nameTh: true } },
-        _count: {
-          select: {
-            removals: true,
-            additions: true,
-          },
-        },
+        _count: { select: { removals: true, additions: true } },
       },
     }),
     prisma.representativeChangeRequest.count({ where }),
-    // จำนวนต่อสถานะไม่ขยับตามตัวกรองสถานะ เหมือน `GET /summary` ของสอง journey
-    prisma.representativeChangeRequest.groupBy({ by: ["status"], where: visible, _count: { _all: true } }),
   ]);
   const letters = await prisma.attachment.findMany({
     where: {
@@ -326,10 +338,12 @@ async function listRequests(scope: { organizationId?: string }, query: z.infer<t
       additionCount: _count.additions,
       documentName: letterName.get(row.id) ?? null,
     })),
-    total,
-    page: query.page,
-    pageSize: query.pageSize,
-    counts: Object.fromEntries(grouped.map((g) => [g.status, g._count._all])),
+    page: {
+      page: query.page,
+      pageSize: query.pageSize,
+      total,
+      pageCount: Math.max(1, Math.ceil(total / query.pageSize)),
+    },
   };
 }
 
@@ -371,18 +385,42 @@ representativeChangeRouter.get("/representatives", async (req, res) => {
   res.json({ organization: null, summary: [], representatives });
 });
 
+/** องค์กรที่ผู้อ่านคนนี้เห็น — `undefined` = ทุกหน่วยงาน, `null` = ไม่มีสิทธิ์ */
+function listScope(session: Session, requested: string | undefined): string | undefined | null {
+  if (seesAllOrganizations(session)) return requested;
+  return session.organizationId && belongsTo(session, session.organizationId) ? session.organizationId : null;
+}
+
 representativeChangeRouter.get("/", async (req, res) => {
   const session = req.session!;
   const query = pageSchema.parse(req.query);
-  if (seesAllOrganizations(session)) {
-    res.json(await listRequests({ organizationId: query.organizationId }, query));
-    return;
-  }
-  if (!session.organizationId || !belongsTo(session, session.organizationId)) {
+  const organizationId = listScope(session, query.organizationId);
+  if (organizationId === null) {
     res.status(403).json({ error: "forbidden", message: "คุณไม่มีสิทธิ์ดูข้อมูลนี้" });
     return;
   }
-  res.json(await listRequests({ organizationId: session.organizationId }, query));
+  res.json(await listRequests({ organizationId, roles: session.roles }, query));
+});
+
+representativeChangeRouter.get("/summary", async (req, res) => {
+  const session = req.session!;
+  const query = pageSchema.parse(req.query);
+  const organizationId = listScope(session, query.organizationId);
+  if (organizationId === null) {
+    res.status(403).json({ error: "forbidden", message: "คุณไม่มีสิทธิ์ดูข้อมูลนี้" });
+    return;
+  }
+  const grouped = await prisma.representativeChangeRequest.groupBy({
+    by: ["status"],
+    where: visibleWhere(organizationId, query.q),
+    _count: { _all: true },
+  });
+  res.json(
+    changeRequestSummary(
+      Object.fromEntries(grouped.map((g) => [g.status, g._count._all])),
+      session.roles,
+    ),
+  );
 });
 
 representativeChangeRouter.get("/:id", async (req, res) => {
@@ -1429,7 +1467,7 @@ representativeChangeRouter.post("/:id/retry", async (req, res) => {
 
 adminRepresentativeChangeRouter.get("/", async (req, res) => {
   const query = pageSchema.parse(req.query);
-  res.json(await listRequests({ organizationId: query.organizationId }, query));
+  res.json(await listRequests({ organizationId: query.organizationId, roles: [] }, query));
 });
 
 adminRepresentativeChangeRouter.get("/:id", async (req, res) => {

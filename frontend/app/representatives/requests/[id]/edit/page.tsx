@@ -1,8 +1,9 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
+import { RepresentativePicker } from "@/components/representatives/RepresentativePicker";
 import { HeadcountTable, RepresentativeShell } from "@/components/representatives/Shell";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -37,7 +38,6 @@ export default function ChangeRequestFormPage() {
   const [selected, setSelected] = useState<string[]>([]);
   const [additions, setAdditions] = useState<AdditionForm[]>([]);
   const [file, setFile] = useState<UploadedFile | null>(null);
-  const [search, setSearch] = useState("");
   const [uploading, setUploading] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -99,15 +99,11 @@ export default function ChangeRequestFormPage() {
       .catch((err: Error) => setProblem(err.message));
   }, [id, loading, user, router]);
 
-  const matches = useMemo(() => {
-    const term = search.trim();
-    return people.filter((p) => !selected.includes(keyOf(p)) && (!term || p.name.includes(term)));
-  }, [people, search, selected]);
-
   if (loading || !user) return <Spinner />;
   if (problem) return <p className="p-10 text-center text-danger">{problem}</p>;
   if (!request) return <Spinner />;
 
+  const available = people.filter((p) => !selected.includes(keyOf(p)));
   const chosen = selected.flatMap((key) => people.filter((p) => keyOf(p) === key));
   const invalid = additions.map(validateAddition);
   const hasItems = selected.length > 0 || additions.length > 0;
@@ -230,34 +226,10 @@ export default function ChangeRequestFormPage() {
 
       <Card className="mb-4 px-5 py-5">
         <h2 className="mb-3 font-semibold text-navy-800">ส่วนที่ 1 ยกเลิกรายชื่อผู้แทนเดิม</h2>
-        <TextField
-          label="ค้นหาจากชื่อ"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="พิมพ์ชื่อหรือนามสกุล"
+        <RepresentativePicker
+          options={available}
+          onPick={(person) => setSelected((current) => [...current, keyOf(person)])}
         />
-        {matches.length ? (
-          <ul className="mt-2 max-h-56 overflow-y-auto rounded-xl ring-1 ring-line">
-            {matches.map((person) => (
-              <li key={keyOf(person)} className="border-b border-line last:border-0">
-                <button
-                  type="button"
-                  onClick={() => setSelected((s) => [...s, keyOf(person)])}
-                  className="w-full px-4 py-2 text-left text-sm hover:bg-navy-50"
-                >
-                  {person.name}
-                  {person.kind === "INVITED" ? " (รอเปิดใช้งาน)" : ""}
-                  <span className="text-ink-muted"> · {person.roleLabel}</span>
-                  {person.openRequests.length ? (
-                    <span className="block text-[13px] text-coral-700">
-                      อยู่ในคำขอ {person.openRequests.join(", ")} ที่ยังไม่จบ
-                    </span>
-                  ) : null}
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
         {chosen.length ? (
           <ol className="mt-4 space-y-2">
             {chosen.map((person, index) => (

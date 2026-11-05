@@ -40,17 +40,6 @@ const TONE: Record<ChangeStatus, string> = {
 };
 export const changeStatusTone = (status: ChangeStatus) => TONE[status];
 
-/** กล่องบน "Flow จำนวน" ตาม wireframe — กล่อง review คลุมสองสถานะ */
-export const FLOW_NODES: { key: string; label: string; statuses: ChangeStatus[] }[] = [
-  { key: "draft", label: "ร่าง", statuses: ["DRAFT"] },
-  { key: "returned", label: "แก้ไข", statuses: ["RETURNED"] },
-  { key: "review", label: "review", statuses: ["SUBMITTED", "UNDER_REVIEW"] },
-  { key: "done", label: "ดำเนินการเสร็จสิ้น", statuses: ["COMPLETED"] },
-  { key: "failed", label: "ดำเนินการไม่สำเร็จ", statuses: ["PROCESSING", "PROCESSING_FAILED"] },
-  { key: "rejected", label: "ปฏิเสธ", statuses: ["REJECTED"] },
-  { key: "cancelled", label: "ยกเลิก", statuses: ["CANCELLED"] },
-];
-
 export interface Representative {
   kind: "HOLDER" | "INVITED";
   accountStatus: string;
