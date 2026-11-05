@@ -715,6 +715,10 @@ representativeChangeRouter.post("/:id/attachments", upload.single("file"), async
     file: uploadedFile(req.file),
     uploadedBy: session.sub,
   });
+  await prisma.representativeChangeRequest.update({
+    where: { id: request.id },
+    data: { representativeChangeRequestAttachmentId: attachment.id, updatedBy: session.sub },
+  });
   await logAudit({
     action: attachment.replacedAttachmentId ? AuditAction.ATTACHMENT_REPLACED : AuditAction.ATTACHMENT_UPLOADED,
     subjectType: AuditSubject.ATTACHMENT,
@@ -740,14 +744,22 @@ representativeChangeRouter.delete("/:id/attachments/:attachmentId", async (req, 
     res.status(409).json({ error: "locked", message: "คำขออยู่ระหว่างการดำเนินการ จึงแก้ไขไม่ได้" });
     return;
   }
-  const { count } = await prisma.attachment.updateMany({
-    where: { id: req.params.attachmentId, ownerType: OWNER, ownerId: request.id, status: AttachmentStatus.ACTIVE },
-    data: {
-      status: AttachmentStatus.DELETED,
-      deletedAt: new Date(),
-      deletedBy: session.sub,
-      deletionReason: "ผู้กรอกลบไฟล์ออกจากร่าง",
-    },
+  const count = await prisma.$transaction(async (tx) => {
+    const deleted = await tx.attachment.updateMany({
+      where: { id: req.params.attachmentId, ownerType: OWNER, ownerId: request.id, status: AttachmentStatus.ACTIVE },
+      data: {
+        status: AttachmentStatus.DELETED,
+        deletedAt: new Date(),
+        deletedBy: session.sub,
+        deletionReason: "ผู้กรอกลบไฟล์ออกจากร่าง",
+      },
+    });
+    // "ยังชี้ไฟล์ใบนี้อยู่" อยู่ใน WHERE เพราะอาจมีการอัปโหลดทับเข้ามาระหว่างนี้
+    await tx.representativeChangeRequest.updateMany({
+      where: { id: request.id, representativeChangeRequestAttachmentId: req.params.attachmentId },
+      data: { representativeChangeRequestAttachmentId: null, updatedBy: session.sub },
+    });
+    return deleted.count;
   });
   if (count === 0) {
     notFound(res);

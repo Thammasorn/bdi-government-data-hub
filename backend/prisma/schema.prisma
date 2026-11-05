@@ -682,8 +682,8 @@ enum RepresentativeAdditionStatus {
 
 /// sheet `representative_change_request`
 ///
-/// เบี่ยงจากดีไซน์: ไม่มีคอลัมน์ `representative_change_request_attachment_id` เอกสารแนบใช้
-/// `attachment.owner_type/owner_id` เหมือนไฟล์อื่น และบังคับตอนนำส่ง ไม่ใช่ตอนสร้าง เพราะร่างยังไม่มีไฟล์
+/// เบี่ยงจากดีไซน์: `representative_change_request_attachment_id` เป็น nullable เพราะร่างยังไม่มีไฟล์
+/// ได้ บังคับตอนนำส่ง ไม่ใช่ตอนสร้าง
 model RepresentativeChangeRequest {
   id String @id @default(uuid()) @db.Uuid
 
@@ -694,6 +694,10 @@ model RepresentativeChangeRequest {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   status RepresentativeChangeStatus @default(DRAFT)
+
+  /// หนังสือนำฉบับปัจจุบัน — ชี้ไฟล์ล่าสุด เปลี่ยนตามตอนอัปโหลดทับและว่างตอนลบ
+  representativeChangeRequestAttachmentId String?     @map("representative_change_request_attachment_id") @db.Uuid
+  representativeChangeRequestAttachment   Attachment? @relation("RepresentativeChangeRequestLetter", fields: [representativeChangeRequestAttachmentId], references: [id], onDelete: SetNull)
 
   additionalDetailJson Json? @map("additional_detail_json")
 
@@ -998,6 +1002,7 @@ model Attachment {
 
   orgRequestsAsAppointmentOrder OrganizationRegistrationRequest[] @relation("OrgRequestAppointmentOrder")
   orgRequestsAsPowerOfAttorney  OrganizationRegistrationRequest[] @relation("OrgRequestPowerOfAttorney")
+  representativeChangeLetters   RepresentativeChangeRequest[]     @relation("RepresentativeChangeRequestLetter")
   datasetRequestsAsDictionary   DatasetRegistrationRequest[]      @relation("DatasetRequestDictionary")
   datasetRequestsAsExampleData  DatasetRegistrationRequest[]      @relation("DatasetRequestExampleData")
   datasetsAsDictionary          Dataset[]                         @relation("DatasetDictionary")
