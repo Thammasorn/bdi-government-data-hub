@@ -56,12 +56,26 @@ const ORGANIZATION_LABEL = "คำขอลงทะเบียนหน่ว�
 const REPRESENTATIVE_LABEL = "ผู้แทนหน่วยงาน";
 const DATASET_LABEL = "คำขอส่งชุดข้อมูล";
 
+/** หัวข้อบนแถบเมนู — กดแล้วกางเมนูย่อยที่ใช้ชื่อตามคิวของคำขอข้างบน */
+const ORGANIZATION_GROUP = "หน่วยงาน";
+const DATASET_GROUP = "ชุดข้อมูล";
+
 /** เมนูหนึ่งช่อง — `disabledReason` ไม่ null = เห็นได้แต่กดไม่ได้ พร้อมเหตุผล */
 interface NavItem {
   href: string;
   label: string;
   disabledReason?: string;
 }
+
+/** หัวข้อที่กางเป็นเมนูย่อย — ไม่มีหน้าของตัวเอง */
+interface NavGroup {
+  label: string;
+  children: NavItem[];
+}
+
+type NavEntry = NavItem | NavGroup;
+
+const isGroup = (entry: NavEntry): entry is NavGroup => "children" in entry;
 
 /**
  * ข้อมูลโครงการ — หน้าแนะนำ D2 ชุดเดียวกับที่คนนอกเห็นก่อนล็อกอิน
@@ -76,7 +90,7 @@ function navItems(
   roles: string[],
   organizationId: string | null,
   organizationStatus: string | null,
-): NavItem[] {
+): NavEntry[] {
   return [...roleNavItems(roles, organizationId, organizationStatus), PROJECT_INFO_ITEM];
 }
 
@@ -84,7 +98,7 @@ function roleNavItems(
   roles: string[],
   organizationId: string | null,
   organizationStatus: string | null,
-): NavItem[] {
+): NavEntry[] {
   const hasOrganization = Boolean(organizationId);
   /**
    * ผู้ดูแลระบบและผู้เชี่ยวชาญด้านกฎหมายของ BDI มีงานอยู่ที่ /console ที่เดียว — เมนูของหน้านั้นอยู่ในหน้าเอง (ConsoleShell) แถบหัวจึงมีช่องเดียว
@@ -102,7 +116,7 @@ function roleNavItems(
     if (isSpecialistOnly(roles)) {
       return [
         { href: "/", label: "หน้าแรก" },
-        { href: "/admin/datasets", label: DATASET_LABEL },
+        { label: DATASET_GROUP, children: [{ href: "/admin/datasets", label: DATASET_LABEL }] },
       ];
     }
 
@@ -111,9 +125,14 @@ function roleNavItems(
     // "ที่ต้องดำเนินการ" ของตำแหน่งผู้ใช้เองอยู่แล้ว เมนูนั้นจึงพาไปที่เดิมกับเมนูแรก
     return [
       { href: "/", label: "หน้าแรก" },
-      { href: "/admin/organizations", label: ORGANIZATION_LABEL },
-      { href: "/admin/datasets", label: DATASET_LABEL },
-      { href: "/representatives", label: REPRESENTATIVE_LABEL },
+      {
+        label: ORGANIZATION_GROUP,
+        children: [
+          { href: "/admin/organizations", label: ORGANIZATION_LABEL },
+          { href: "/representatives", label: REPRESENTATIVE_LABEL },
+        ],
+      },
+      { label: DATASET_GROUP, children: [{ href: "/admin/datasets", label: DATASET_LABEL }] },
       // ผู้ประสานงานและผู้มีอำนาจอนุมัติของ BDI (feedback "features 1 full" แถว 15) — ไม่ใช่ "ภาพรวม" เพราะจะอ่านซ้ำกับ
       // "หน้าแรก" ที่อยู่ติดกัน ผู้ดูแลระบบเห็นตัวเลขชุดเดียวกันบนหน้า ภาพรวม ของ /console แทน
       { href: "/admin/statistics", label: "สถิติ" },
@@ -124,7 +143,7 @@ function roleNavItems(
   if (roles.includes("ORGANIZATION_APPROVER") && !hasOrganization) {
     return [
       { href: "/", label: "หน้าแรก" },
-      { href: "/datasets", label: DATASET_LABEL },
+      { label: DATASET_GROUP, children: [{ href: "/datasets", label: DATASET_LABEL }] },
     ];
   }
 
@@ -148,18 +167,28 @@ function roleNavItems(
   return hasOrganization
     ? [
         { href: "/", label: "หน้าแรก" },
-        { href: `/organizations/${organizationId}`, label: ORGANIZATION_LABEL },
         {
-          href: "/datasets",
-          label: DATASET_LABEL,
-          ...(datasetsLocked
-            ? { disabledReason: "ใช้งานได้เมื่อหน่วยงานของคุณได้รับอนุมัติแล้ว" }
-            : {}),
+          label: ORGANIZATION_GROUP,
+          children: [
+            { href: `/organizations/${organizationId}`, label: ORGANIZATION_LABEL },
+            // คำขอเปลี่ยนแปลงผู้แทนมีได้เฉพาะหน่วยงานที่ลงทะเบียนเสร็จแล้ว
+            ...(organizationStatus === "ACTIVE" || frozen
+              ? [{ href: "/representatives", label: REPRESENTATIVE_LABEL }]
+              : []),
+          ],
         },
-        // คำขอเปลี่ยนแปลงผู้แทนมีได้เฉพาะหน่วยงานที่ลงทะเบียนเสร็จแล้ว
-        ...(organizationStatus === "ACTIVE" || frozen
-          ? [{ href: "/representatives", label: REPRESENTATIVE_LABEL }]
-          : []),
+        {
+          label: DATASET_GROUP,
+          children: [
+            {
+              href: "/datasets",
+              label: DATASET_LABEL,
+              ...(datasetsLocked
+                ? { disabledReason: "ใช้งานได้เมื่อหน่วยงานของคุณได้รับอนุมัติแล้ว" }
+                : {}),
+            },
+          ],
+        },
       ]
     : [];
 }
@@ -260,6 +289,7 @@ function Header() {
 
           <nav aria-label="เมนูหลัก" className="hidden flex-1 items-center gap-1 md:flex">
             {items.map((item) => {
+              if (isGroup(item)) return <NavDropdown key={item.label} group={item} pathname={pathname} />;
               const active = isActive(pathname, item.href);
               if (item.disabledReason) {
                 return (
@@ -331,43 +361,136 @@ function Header() {
           className="animate-in-up absolute inset-x-0 top-full max-h-[calc(100vh-5rem)] overflow-y-auto border-b border-line bg-white shadow-pop md:hidden"
         >
           <ul className="mx-auto max-w-6xl px-4 py-2 sm:px-6">
-            {items.map((item) => {
-              const active = isActive(pathname, item.href);
-              if (item.disabledReason) {
-                return (
-                  <li key={item.href}>
-                    <span
-                      aria-disabled="true"
-                      className="block cursor-not-allowed rounded-xl px-4 py-2.5 text-[15px] text-ink-subtle"
-                    >
-                      {item.label}
-                      <span className="mt-0.5 block text-[13px]">{item.disabledReason}</span>
-                    </span>
-                  </li>
-                );
-              }
-              return (
-                <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    aria-current={active ? "page" : undefined}
-                    onClick={() => setMenuOpen(false)}
-                    className={clsx(
-                      "block rounded-xl px-4 py-2.5 text-[15px] transition-colors",
-                      active
-                        ? "bg-navy-50 font-medium text-navy-800"
-                        : "text-ink hover:bg-navy-50 hover:text-navy-800",
-                    )}
-                  >
-                    {item.label}
-                  </Link>
+            {items.map((item) =>
+              isGroup(item) ? (
+                <li key={item.label}>
+                  <p className="px-4 pb-1 pt-3 text-[13px] font-semibold text-ink-muted">{item.label}</p>
+                  <ul className="pl-3">
+                    {item.children.map((child) => (
+                      <MobileNavItem key={child.href} item={child} pathname={pathname} onNavigate={() => setMenuOpen(false)} />
+                    ))}
+                  </ul>
                 </li>
-              );
-            })}
+              ) : (
+                <MobileNavItem key={item.href} item={item} pathname={pathname} onNavigate={() => setMenuOpen(false)} />
+              ),
+            )}
           </ul>
         </nav>
       ) : null}
     </header>
+  );
+}
+
+/** หัวข้อบนแถบเมนูจอกว้าง — กดเพื่อกางเมนูย่อย ไม่ใช่ลิงก์ เพราะหัวข้อไม่มีหน้าของตัวเอง */
+function NavDropdown({ group, pathname }: { group: NavGroup; pathname: string }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const active = group.children.some((child) => isActive(pathname, child.href));
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    const onClick = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onClick);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onClick);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className={clsx(
+          "flex items-center gap-1 rounded-full px-3.5 py-2 text-sm font-medium transition-colors",
+          active ? "bg-navy-50 text-navy-800" : "text-ink-muted hover:bg-navy-50/70 hover:text-navy-700",
+        )}
+      >
+        {group.label}
+        <svg
+          viewBox="0 0 20 20"
+          className={clsx("h-4 w-4 transition-transform", open && "rotate-180")}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          aria-hidden="true"
+        >
+          <path d="m5 8 5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open ? (
+        <ul className="animate-in-up absolute left-0 mt-2 w-64 overflow-hidden rounded-xl bg-white py-1 shadow-pop ring-1 ring-line">
+          {group.children.map((child) => (
+            <li key={child.href}>
+              {child.disabledReason ? (
+                <span aria-disabled="true" className="block cursor-not-allowed px-4 py-2.5 text-sm text-ink-subtle">
+                  {child.label}
+                  <span className="mt-0.5 block text-[13px]">{child.disabledReason}</span>
+                </span>
+              ) : (
+                <Link
+                  href={child.href}
+                  aria-current={isActive(pathname, child.href) ? "page" : undefined}
+                  onClick={() => setOpen(false)}
+                  className={clsx(
+                    "block px-4 py-2.5 text-sm transition-colors hover:bg-navy-50 hover:text-navy-800",
+                    isActive(pathname, child.href) ? "bg-navy-50 font-medium text-navy-800" : "text-ink",
+                  )}
+                >
+                  {child.label}
+                </Link>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+function MobileNavItem({
+  item,
+  pathname,
+  onNavigate,
+}: {
+  item: NavItem;
+  pathname: string;
+  onNavigate: () => void;
+}) {
+  const active = isActive(pathname, item.href);
+  if (item.disabledReason) {
+    return (
+      <li>
+        <span aria-disabled="true" className="block cursor-not-allowed rounded-xl px-4 py-2.5 text-[15px] text-ink-subtle">
+          {item.label}
+          <span className="mt-0.5 block text-[13px]">{item.disabledReason}</span>
+        </span>
+      </li>
+    );
+  }
+  return (
+    <li>
+      <Link
+        href={item.href}
+        aria-current={active ? "page" : undefined}
+        onClick={onNavigate}
+        className={clsx(
+          "block rounded-xl px-4 py-2.5 text-[15px] transition-colors",
+          active ? "bg-navy-50 font-medium text-navy-800" : "text-ink hover:bg-navy-50 hover:text-navy-800",
+        )}
+      >
+        {item.label}
+      </Link>
+    </li>
   );
 }
 
