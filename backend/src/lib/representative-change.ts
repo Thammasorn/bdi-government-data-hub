@@ -409,6 +409,27 @@ export interface ChangeEvaluation {
   overlaps: OverlapWarning[];
   /** เหตุผลที่ยืนยันไม่ได้ ว่าง = ยืนยันได้ */
   blockers: string[];
+  /** เหตุผลชุดเดียวกันในคำที่หน่วยงานอ่านได้ — ค่าตั้งต้นของช่องส่งกลับแก้ไข */
+  returnReasons: string[];
+}
+
+/**
+ * ข้อความของบัญชีที่ตรวจไม่ผ่าน สำหรับหน่วยงาน
+ *
+ * `AccountCheck.message` เขียนให้ BDI อ่าน มีอีเมลของบัญชีอื่นและบอกว่าใครถูกระงับหรือถือบทบาทที่ไหน
+ * ส่วนสถานะบัญชีต้องอยู่กับ BDI เท่านั้น หน่วยงานจึงได้แค่สิ่งที่ต้องแก้ในคำขอของตัวเอง
+ */
+function organizationMessage(state: AccountState): string {
+  switch (state) {
+    case "IDENTITY_CONFLICT":
+      return "เลขบัตรประชาชนและอีเมลตรงกับคนละบัญชี กรุณาตรวจสอบ";
+    case "EMAIL_CONFLICT":
+      return "อีเมลนี้ใช้ไม่ได้ กรุณาตรวจสอบหรือใช้อีเมลอื่น";
+    case "INCOMPLETE":
+      return "ข้อมูลของผู้แทนรายนี้ไม่ครบ กรุณาตรวจสอบ";
+    default:
+      return "ไม่สามารถเพิ่มผู้แทนรายนี้ได้ กรุณาตรวจสอบข้อมูลหรือติดต่อ BDI";
+  }
 }
 
 /** ถ้ายืนยันใบนี้ตอนนี้ได้ไหม และเพราะอะไร */
@@ -427,7 +448,12 @@ export async function evaluateChangeRequest(db: Db, request: ChangeRequestRow): 
     ...accountChecks.filter((c) => !c.ok).map((c) => `${c.name}: ${c.message}`),
     ...staleRemovals,
   ];
-  return { headcount, accountChecks, overlaps: await findOverlaps(db, request), blockers };
+  const returnReasons = [
+    ...headcount.flatMap((row) => (row.problem ? [row.problem] : [])),
+    ...accountChecks.filter((c) => !c.ok).map((c) => `${c.name}: ${organizationMessage(c.state)}`),
+    ...staleRemovals,
+  ];
+  return { headcount, accountChecks, overlaps: await findOverlaps(db, request), blockers, returnReasons };
 }
 
 /** รายชื่อผู้แทนของหน่วยงาน — ผู้ถือ role (รวมคนที่ถูกระงับ) และคนที่มีคำเชิญค้าง */

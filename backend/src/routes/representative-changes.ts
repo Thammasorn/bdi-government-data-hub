@@ -252,6 +252,7 @@ async function detailOf(request: ChangeRequestRow, options: { bdiView: boolean; 
           accountChecks: evaluation.accountChecks,
           overlaps: evaluation.overlaps,
           blockers: evaluation.blockers,
+          returnReasons: evaluation.returnReasons,
         }
       : null,
     canEdit: options.canEdit && editable(request.status),

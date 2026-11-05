@@ -135,7 +135,7 @@ export default function ChangeRequestDetailPage() {
 
   const openNote = (next: "return" | "reject" | "cancel") => {
     // ส่งกลับเพราะไม่ผ่านการตรวจ — เติมเหตุผลให้ เจ้าหน้าที่แก้ก่อนส่งได้ เพราะหน่วยงานจะอ่านข้อความนี้
-    setNote(next === "return" ? blockers.join("\n") : "");
+    setNote(next === "return" ? (request.review?.returnReasons ?? []).join("\n") : "");
     setNoteError(null);
     setModal(next);
   };

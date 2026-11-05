@@ -138,6 +138,7 @@ export interface ChangeDetail {
     accountChecks: { additionId: string; name: string; state: string; ok: boolean; message: string }[];
     overlaps: { name: string; requestNumber: string }[];
     blockers: string[];
+    returnReasons: string[];
   } | null;
   canEdit: boolean;
   canReview: boolean;
