@@ -17,28 +17,16 @@ function statusOf(person: Representative) {
   return person.accountStatus === "SUSPENDED" ? "ถูกระงับ" : "ใช้งานอยู่";
 }
 
-/** ข้อมูลของผู้แทนหนึ่งคน — ไม่แสดงเลขประจำตัวประชาชน และ API ของรายชื่อนี้ก็ไม่ส่งมา */
-function PersonDialog({ person, onClose }: { person: Representative | null; onClose: () => void }) {
-  const phone = person?.phoneNumber
-    ? [person.phoneNumber, person.phoneNumberExtension && `ต่อ ${person.phoneNumberExtension}`].filter(Boolean).join(" ")
-    : null;
-  const rows: [string, string | null | undefined][] = person
-    ? [
-        ["หน่วยงาน", person.organization?.nameTh],
-        ["คำนำหน้า", person.prefixTh],
-        ["ชื่อ", person.firstnameTh],
-        ["นามสกุล", person.lastnameTh],
-        ["บทบาท", person.roleLabel],
-        ["สถานะ", statusOf(person)],
-        ["ตำแหน่ง", person.positionTh],
-        ["ฝ่าย/กอง/สำนัก", person.departmentTh],
-        ["อีเมล", person.email],
-        ["เบอร์โทรศัพท์", phone],
-      ]
-    : [];
+function statusTone(person: Representative) {
+  if (person.kind === "INVITED") return "bg-warning-bg text-warning";
+  return person.accountStatus === "SUSPENDED" ? "bg-danger-bg text-danger" : "bg-success-bg text-success";
+}
+
+function DetailGroup({ title, rows }: { title: string; rows: [string, string | null | undefined][] }) {
   return (
-    <Modal open={person !== null} onClose={onClose} title="รายละเอียดผู้แทน">
-      <dl className="grid grid-cols-[9rem_1fr] gap-x-4 gap-y-2 text-sm">
+    <section>
+      <h3 className="mb-2 text-sm font-semibold text-navy-800">{title}</h3>
+      <dl className="grid grid-cols-[8.5rem_1fr] gap-x-4 gap-y-2 text-sm">
         {rows.map(([label, value]) => (
           <Fragment key={label}>
             <dt className="text-ink-muted">{label}</dt>
@@ -46,8 +34,48 @@ function PersonDialog({ person, onClose }: { person: Representative | null; onCl
           </Fragment>
         ))}
       </dl>
-      {person?.openRequests.length ? (
-        <p className="mt-4 text-sm text-coral-700">อยู่ในคำขอ {person.openRequests.join(", ")} ที่ยังไม่จบ</p>
+    </section>
+  );
+}
+
+/** ข้อมูลของผู้แทนหนึ่งคน — ไม่แสดงเลขประจำตัวประชาชน และ API ของรายชื่อนี้ก็ไม่ส่งมา */
+function PersonDialog({ person, onClose }: { person: Representative | null; onClose: () => void }) {
+  const phone = person?.phoneNumber
+    ? [person.phoneNumber, person.phoneNumberExtension && `ต่อ ${person.phoneNumberExtension}`].filter(Boolean).join(" ")
+    : null;
+  return (
+    <Modal open={person !== null} onClose={onClose} title={person?.name ?? ""}>
+      {person ? (
+        <>
+          <div className="flex items-start justify-between gap-3 border-b border-line pb-4">
+            <div className="min-w-0 text-sm">
+              <p className="text-ink">{person.roleLabel}</p>
+              {person.organization ? <p className="text-ink-muted">{person.organization.nameTh}</p> : null}
+            </div>
+            <span className={`inline-flex shrink-0 rounded-full px-3 py-1 text-[13px] font-medium ${statusTone(person)}`}>
+              {statusOf(person)}
+            </span>
+          </div>
+          <div className="mt-4 space-y-5">
+            <DetailGroup
+              title="ข้อมูลการทำงาน"
+              rows={[
+                ["ตำแหน่ง", person.positionTh],
+                ["ฝ่าย/กอง/สำนัก", person.departmentTh],
+              ]}
+            />
+            <DetailGroup
+              title="ข้อมูลติดต่อ"
+              rows={[
+                ["อีเมล", person.email],
+                ["เบอร์โทรศัพท์", phone],
+              ]}
+            />
+          </div>
+          {person.openRequests.length ? (
+            <p className="mt-5 text-sm text-coral-700">อยู่ในคำขอ {person.openRequests.join(", ")} ที่ยังไม่จบ</p>
+          ) : null}
+        </>
       ) : null}
       <div className="mt-6 flex justify-end">
         <Button variant="secondary" onClick={onClose}>
