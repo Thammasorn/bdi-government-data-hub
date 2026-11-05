@@ -1,3 +1,4 @@
+import type { OrgEvent, TimelineCreator } from "@/components/organization/Timeline";
 import { isValidThaiNationalId } from "./organization-form";
 
 /** คำขอเปลี่ยนแปลงผู้แทนหน่วยงาน — รูปข้อมูลของ `routes/representative-changes.ts` */
@@ -138,16 +139,11 @@ export interface ChangeDetail {
   removals: RemovalItem[];
   additions: AdditionItem[];
   attachment: { id: string; filename: string; sizeBytes: number } | null;
-  timeline: {
-    id: string;
-    taskType: string;
-    status: string;
-    result: string | null;
-    comment: string | null;
-    completedAt: string | null;
-    completedBy: { name: string } | null;
-  }[];
-  headcount: HeadcountRow[];
+  timeline: OrgEvent[];
+  createdBy: TimelineCreator | null;
+  createdAt: string;
+  /** null = ฝั่งหน่วยงาน ซึ่งไม่เห็นจำนวนหลังดำเนินการ */
+  headcount: HeadcountRow[] | null;
   review: {
     accountChecks: { additionId: string; name: string; state: string; ok: boolean; message: string }[];
     overlaps: { name: string; requestNumber: string }[];

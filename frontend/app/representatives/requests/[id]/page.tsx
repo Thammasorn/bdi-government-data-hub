@@ -1,12 +1,14 @@
 "use client";
 
-import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ChangeStatusBadge, HeadcountTable, RepresentativeShell } from "@/components/representatives/Shell";
+import { Rows } from "@/components/organization/DetailView";
+import { Timeline } from "@/components/organization/Timeline";
+import { ChangeStatusBadge, HeadcountTable } from "@/components/representatives/Shell";
+import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Button } from "@/components/ui/Button";
-import { Card } from "@/components/ui/Card";
+import { Card, CardHeader } from "@/components/ui/Card";
 import { TextAreaField } from "@/components/ui/Field";
 import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
@@ -15,15 +17,11 @@ import { api, ApiError } from "@/lib/api";
 import type { ChangeDetail } from "@/lib/representatives";
 import { useRequireAuth } from "@/lib/require-auth";
 import { formatThaiDate } from "@/lib/status";
-
-const RESULT_LABEL: Record<string, string> = {
-  CONFIRMED: "ผ่านการตรวจสอบ",
-  RETURNED: "ส่งกลับแก้ไข",
-  REJECTED: "ปฏิเสธคำขอ",
-};
+import { fullName, phoneWithExtension } from "@/lib/types";
 
 export default function ChangeRequestDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const { show } = useToast();
   const { user, loading } = useRequireAuth();
   const [request, setRequest] = useState<ChangeDetail | null>(null);
@@ -63,6 +61,7 @@ export default function ChangeRequestDetailPage() {
   if (!request) return <Spinner />;
 
   const blockers = request.review?.blockers ?? [];
+  const lastReturned = [...request.timeline].reverse().find((t) => t.result === "RETURNED");
 
   const act = async (action: "confirm" | "return" | "reject") => {
     if (action !== "confirm" && note.trim().length < 10) {
@@ -115,125 +114,195 @@ export default function ChangeRequestDetailPage() {
   const showRetry = request.canRetry && (isAdmin || user.roles.includes("BDI_OFFICER"));
 
   return (
-    <RepresentativeShell title={`คำขอ ${request.requestNumber}`} description={request.organization.nameTh}>
-      <Card className="mb-4 flex flex-wrap items-center justify-between gap-3 px-5 py-4">
-        <ChangeStatusBadge status={request.status} />
-        <div className="flex flex-wrap gap-3">
-          {request.canEdit ? (
-            <Link className="text-sm text-navy-700 underline" href={`/representatives/requests/${id}/edit`}>
+    <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6">
+      <Breadcrumb
+        items={
+          isAdmin
+            ? [{ label: "ระบบจัดการ", href: "/console" }, { label: request.requestNumber }]
+            : [
+                { label: "ผู้แทนหน่วยงาน", href: "/representatives" },
+                { label: "ฟอร์มเปลี่ยนแปลงผู้แทนหน่วยงาน", href: "/representatives/requests" },
+                { label: request.requestNumber },
+              ]
+        }
+      />
+
+      <header className="mb-7 mt-4 flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="break-words text-[26px] font-semibold text-navy-800">{request.requestNumber}</h1>
+          <p className="mt-1 text-sm text-ink-muted">{request.organization.nameTh}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <ChangeStatusBadge status={request.status} />
+          {request.canEdit && request.status === "DRAFT" ? (
+            <Button size="sm" onClick={() => router.push(`/representatives/requests/${id}/edit`)}>
               แก้ไขคำขอ
-            </Link>
-          ) : null}
-          {showRetry ? (
-            <Button size="sm" onClick={retry} loading={busy}>
-              ลองใหม่
             </Button>
           ) : null}
-          {request.canReview ? <Button onClick={() => setReviewing(true)}>Submit Review</Button> : null}
         </div>
-      </Card>
+      </header>
+
+      {request.status === "DRAFT" ? (
+        <Card className="mb-6 border-l-[3px] border-l-coral-500">
+          <div className="p-6">
+            <p className="font-medium text-navy-800">ฉบับร่าง — ยังไม่ได้นำส่ง</p>
+            <p className="mt-0.5 text-sm text-ink-muted">กรอกให้ครบแล้วกด Submit เพื่อนำส่งให้ BDI ตรวจสอบ</p>
+          </div>
+        </Card>
+      ) : null}
+
+      {request.status === "RETURNED" && lastReturned?.note ? (
+        <div className="mb-6 rounded-xl border-l-[3px] border-danger bg-danger-bg p-5">
+          <p className="text-[13px] font-semibold text-danger">สิ่งที่ต้องแก้ไข</p>
+          <p className="mt-1.5 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-ink">{lastReturned.note}</p>
+          <p className="mt-2 text-[13px] text-ink-muted">
+            โดย {lastReturned.actor ? lastReturned.actor.name : "ระบบ"} ·{" "}
+            {formatThaiDate(lastReturned.completedAt ?? lastReturned.createdAt)}
+          </p>
+          {request.canEdit ? (
+            <Button size="sm" className="mt-4" onClick={() => router.push(`/representatives/requests/${id}/edit`)}>
+              แก้ไขข้อมูล
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {request.canReview ? (
+        <Card className="mb-6 border-l-[3px] border-l-coral-500">
+          <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-medium text-navy-800">รอการตรวจสอบของคุณ</p>
+              <p className="mt-0.5 text-sm text-ink-muted">ตรวจสอบรายชื่อและเอกสารแนบ แล้วบันทึกผลการตรวจสอบ</p>
+            </div>
+            <Button className="shrink-0" onClick={() => setReviewing(true)}>
+              Submit Review
+            </Button>
+          </div>
+        </Card>
+      ) : null}
+
+      {showRetry ? (
+        <Card className="mb-6 border-l-[3px] border-l-coral-500">
+          <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-medium text-navy-800">ดำเนินการไม่สำเร็จ</p>
+              <p className="mt-0.5 text-sm text-ink-muted">ระบบจะทำซ้ำเฉพาะรายการที่ยังไม่สำเร็จ</p>
+            </div>
+            <Button className="shrink-0" onClick={retry} loading={busy}>
+              ลองใหม่
+            </Button>
+          </div>
+        </Card>
+      ) : null}
 
       {request.review?.overlaps.length ? (
-        <Card className="mb-4 bg-warning-bg px-5 py-4 text-sm">
+        <div className="mb-6 rounded-xl border-l-[3px] border-warning bg-warning-bg p-5 text-sm text-ink">
           {request.review.overlaps.map((o) => (
             <p key={`${o.name}-${o.requestNumber}`}>
               {o.name} อยู่ในคำขอ {o.requestNumber} ที่ยังไม่จบด้วย
             </p>
           ))}
-        </Card>
+        </div>
       ) : null}
 
-      <Card className="mb-4 px-5 py-5">
-        <h2 className="mb-3 font-semibold text-navy-800">จำนวนหลังดำเนินการ</h2>
-        <HeadcountTable rows={request.headcount} />
-      </Card>
+      <div className="flex flex-col gap-6">
+        {request.headcount ? (
+          <Card>
+            <CardHeader title="จำนวนหลังดำเนินการ" />
+            <div className="px-6 py-4">
+              <HeadcountTable rows={request.headcount} />
+            </div>
+          </Card>
+        ) : null}
 
-      <Card className="mb-4 px-5 py-5">
-        <h2 className="mb-3 font-semibold text-navy-800">ส่วนที่ 1 ยกเลิกรายชื่อผู้แทนเดิม</h2>
-        {request.removals.length ? (
-          <ol className="list-decimal space-y-1 pl-5 text-sm">
-            {request.removals.map((r) => (
-              <li key={r.id}>
-                {r.name}
-                {r.pendingInvitee ? " (รอเปิดใช้งาน)" : ""} · {[r.positionTh, r.departmentTh].filter(Boolean).join(" / ") || "–"} · {r.roleLabel}
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <p className="text-sm text-ink-muted">ไม่มี</p>
-        )}
-      </Card>
-
-      <Card className="mb-4 px-5 py-5">
-        <h2 className="mb-3 font-semibold text-navy-800">ส่วนที่ 2 เพิ่มรายชื่อผู้แทนใหม่</h2>
-        {request.additions.length ? (
-          <ol className="space-y-3 text-sm">
-            {request.additions.map((a, index) => {
-              const check = request.review?.accountChecks.find((c) => c.additionId === a.id);
-              return (
-                <li key={a.id} className="rounded-xl p-4 ring-1 ring-line">
-                  <p className="font-medium">
-                    ผู้แทนลำดับที่ {index + 1} · {a.roleLabel}
+        <Card>
+          <CardHeader tag="ส่วนที่ 1" title="ยกเลิกรายชื่อผู้แทนเดิม" />
+          {request.removals.length ? (
+            <ul className="divide-y divide-line">
+              {request.removals.map((r) => (
+                <li key={r.id} className="px-6 py-3.5">
+                  <p className="text-[15px] text-ink">
+                    {r.name}
+                    {r.pendingInvitee ? " (รอเปิดใช้งาน)" : ""}
                   </p>
-                  <p>
-                    {a.prefixTh} {a.firstnameTh} {a.lastnameTh}
+                  <p className="mt-0.5 text-[13px] text-ink-muted">
+                    {[r.roleLabel, r.positionTh, r.departmentTh].filter(Boolean).join(" · ")}
                   </p>
-                  <p className="text-ink-muted">เลขประจำตัวประชาชน {a.cid}</p>
-                  <p className="text-ink-muted">
-                    {a.positionTh} · {a.departmentTh}
-                  </p>
-                  <p className="text-ink-muted">
-                    {a.email} · {a.phoneNumber}
-                    {a.phoneNumberExtension ? ` ต่อ ${a.phoneNumberExtension}` : ""}
-                  </p>
-                  {check ? (
-                    <p className={check.ok ? "mt-1 text-[13px] text-success" : "mt-1 text-[13px] text-danger"}>
-                      {check.ok ? "ตรวจบัญชีผ่าน: " : "ตรวจบัญชีไม่ผ่าน: "}
-                      {check.message}
-                    </p>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ol>
-        ) : (
-          <p className="text-sm text-ink-muted">ไม่มี</p>
-        )}
-      </Card>
-
-      <Card className="mb-4 px-5 py-5">
-        <h2 className="mb-3 font-semibold text-navy-800">ส่วนที่ 3 เอกสารแนบ</h2>
-        {request.attachment ? (
-          <a
-            className="text-sm text-navy-700 underline"
-            href={api.fileUrl(`/api/representative-changes/${id}/attachments/${request.attachment.id}`)}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {request.attachment.filename}
-          </a>
-        ) : (
-          <p className="text-sm text-ink-muted">ยังไม่มีไฟล์แนบ</p>
-        )}
-      </Card>
-
-      {request.timeline.some((t) => t.result) ? (
-        <Card className="mb-4 px-5 py-5">
-          <h2 className="mb-3 font-semibold text-navy-800">ประวัติการตรวจสอบ</h2>
-          <ul className="space-y-2 text-sm">
-            {request.timeline
-              .filter((t) => t.result)
-              .map((t) => (
-                <li key={t.id}>
-                  <span className="font-medium">{RESULT_LABEL[t.result!] ?? t.result}</span>
-                  {t.completedBy ? ` โดย ${t.completedBy.name}` : ""}
-                  {t.completedAt ? ` · ${formatThaiDate(t.completedAt)}` : ""}
-                  {t.comment ? <p className="text-ink-muted">{t.comment}</p> : null}
                 </li>
               ))}
-          </ul>
+            </ul>
+          ) : (
+            <p className="px-6 py-5 text-sm text-ink-muted">ไม่มี</p>
+          )}
         </Card>
-      ) : null}
+
+        <Card>
+          <CardHeader tag="ส่วนที่ 2" title="เพิ่มรายชื่อผู้แทนใหม่" />
+          {request.additions.length ? (
+            <div className="divide-y divide-line">
+              {request.additions.map((a, index) => {
+                const check = request.review?.accountChecks.find((c) => c.additionId === a.id);
+                return (
+                  <div key={a.id}>
+                    <p className="px-6 pt-4 text-sm font-semibold text-navy-800">
+                      ผู้แทนลำดับที่ {index + 1} · {a.roleLabel}
+                    </p>
+                    {check ? (
+                      <p className={check.ok ? "px-6 pt-1 text-[13px] text-success" : "px-6 pt-1 text-[13px] text-danger"}>
+                        {check.ok ? "ตรวจบัญชีผ่าน: " : "ตรวจบัญชีไม่ผ่าน: "}
+                        {check.message}
+                      </p>
+                    ) : null}
+                    <Rows
+                      rows={[
+                        ["ชื่อ-นามสกุล", fullName(a.prefixTh, a.firstnameTh, a.lastnameTh)],
+                        ["เลขประจำตัวประชาชน", a.cid],
+                        ["ตำแหน่ง", a.positionTh],
+                        ["ฝ่าย/กอง/สำนัก", a.departmentTh],
+                        ["อีเมล", a.email],
+                        ["เบอร์โทรศัพท์", phoneWithExtension(a.phoneNumber, a.phoneNumberExtension)],
+                      ]}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="px-6 py-5 text-sm text-ink-muted">ไม่มี</p>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader tag="ส่วนที่ 3" title="เอกสารแนบ" />
+          {request.attachment ? (
+            <div className="flex items-center gap-3 px-6 py-3.5">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-ink">หนังสือนำและฟอร์มแจ้งรายละเอียด</p>
+                <p className="truncate text-[13px] text-ink-muted">{request.attachment.filename}</p>
+              </div>
+              <a
+                href={api.fileUrl(`/api/representative-changes/${id}/attachments/${request.attachment.id}`)}
+                target="_blank"
+                rel="noreferrer"
+                className="shrink-0 rounded-full border border-line px-3.5 py-1.5 text-[13px] font-medium text-navy-800 transition-colors hover:bg-navy-50"
+              >
+                เปิดดู
+              </a>
+            </div>
+          ) : (
+            <p className="px-6 py-5 text-sm text-ink-muted">ยังไม่มีไฟล์แนบ</p>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader title="ประวัติการดำเนินการ" />
+          <Timeline
+            events={request.timeline}
+            created={{ at: request.createdAt, by: request.createdBy }}
+            submittedAt={request.submittedAt}
+          />
+        </Card>
+      </div>
 
       <Modal open={reviewing} onClose={() => setReviewing(false)} title="ผลการตรวจสอบ">
         <div className="space-y-3">
@@ -284,6 +353,6 @@ export default function ChangeRequestDetailPage() {
           </Button>
         </div>
       </Modal>
-    </RepresentativeShell>
+    </div>
   );
 }

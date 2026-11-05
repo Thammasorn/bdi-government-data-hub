@@ -68,7 +68,6 @@ import {
   representativeSummary,
   statusesOfNode,
   statusesOfRoles,
-  computeHeadcount,
   type ChangeRequestRow,
 } from "../lib/representative-change.js";
 import { nextRepresentativeChangeNumber } from "../lib/request-number.js";
@@ -89,6 +88,7 @@ import {
   openTask,
   startTask,
   taskHistory,
+  taskOpeners,
   taskPerson,
   WorkflowError,
 } from "../lib/workflow.js";
@@ -194,27 +194,35 @@ function toItems(request: ChangeRequestRow, showFullCid: boolean) {
   };
 }
 
+/** รูปเดียวกับ `OrgEvent` ของหน้าเว็บ เพื่อให้ใช้ `Timeline` ตัวเดียวกับคำขออื่น */
 async function timelineOf(requestId: string) {
   const tasks = await taskHistory(prisma, SUBJECT, requestId);
-  const actors = await prisma.userAccount.findMany({
-    where: { id: { in: tasks.flatMap((t) => (t.completedBy ? [t.completedBy] : [])) } },
-    select: { id: true, email: true, prefixTh: true, firstnameTh: true, lastnameTh: true },
-  });
-  const byId = new Map(actors.map((a) => [a.id, a]));
+  const openers = await taskOpeners(prisma, tasks);
   return tasks.map((task) => ({
     id: task.id,
     taskType: task.taskType,
     status: task.status,
     result: task.result,
-    comment: task.resultComment,
+    roundNumber: task.roundNumber,
+    note: task.resultComment,
+    assignedAt: task.assignedAt,
+    createdAt: task.createdAt,
     completedAt: task.completedAt,
-    completedBy: task.completedBy ? taskPerson(byId.get(task.completedBy)) : null,
+    actor: taskPerson(task.completedByUser),
+    openedBy: openers.get(task.id) ?? null,
   }));
 }
 
 /** รายละเอียดหนึ่งใบ — `bdiView` เท่านั้นที่ได้สถานะบัญชีและเลขบัตรเต็มเสมอ */
 async function detailOf(request: ChangeRequestRow, options: { bdiView: boolean; canEdit: boolean; canReview: boolean }) {
-  const [letter, timeline] = await Promise.all([currentLetter(request.id), timelineOf(request.id)]);
+  const [letter, timeline, creator] = await Promise.all([
+    currentLetter(request.id),
+    timelineOf(request.id),
+    prisma.userAccount.findUnique({
+      where: { id: request.createdBy },
+      select: { prefixTh: true, firstnameTh: true, lastnameTh: true, email: true },
+    }),
+  ]);
   const showFullCid = options.bdiView || (options.canEdit && editable(request.status));
   const evaluation = options.bdiView ? await evaluateChangeRequest(prisma, request) : null;
   return {
@@ -228,11 +236,15 @@ async function detailOf(request: ChangeRequestRow, options: { bdiView: boolean; 
     cancelledAt: request.cancelledAt,
     cancellationReason: request.cancellationReason,
     createdAt: request.createdAt,
+    createdBy: creator
+      ? { prefix: creator.prefixTh, firstName: creator.firstnameTh, lastName: creator.lastnameTh, email: creator.email }
+      : null,
     updatedAt: request.updatedAt,
     ...toItems(request, showFullCid),
     attachment: letter ? publicAttachment(letter) : null,
     timeline,
-    headcount: evaluation?.headcount ?? (await computeHeadcount(prisma, request)),
+    // จำนวนหลังดำเนินการเป็นข้อมูลให้ BDI ตัดสิน ฝั่งหน่วยงานไม่ได้รับ
+    headcount: evaluation?.headcount ?? null,
     review: evaluation
       ? {
           accountChecks: evaluation.accountChecks,

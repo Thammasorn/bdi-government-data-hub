@@ -14,10 +14,21 @@ const MENU = [
 ];
 
 /** เมนูซ้ายของ "ผู้แทนหน่วยงาน" ตาม wireframe */
-export function RepresentativeShell({ title, description, children }: { title: string; description: string; children: ReactNode }) {
+export function RepresentativeShell({
+  title,
+  description,
+  breadcrumb,
+  children,
+}: {
+  title: string;
+  description: string;
+  breadcrumb?: ReactNode;
+  children: ReactNode;
+}) {
   const pathname = usePathname();
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+      {breadcrumb ? <div className="mb-5">{breadcrumb}</div> : null}
       <ListPageHeader tone="organization" eyebrow="ผู้แทนหน่วยงาน" title={title} description={description} />
       <div className="mt-6 grid gap-6 md:grid-cols-[15rem_1fr]">
         <nav aria-label="เมนูผู้แทนหน่วยงาน" className="flex flex-col gap-2">

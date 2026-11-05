@@ -4,7 +4,8 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { RepresentativePicker } from "@/components/representatives/RepresentativePicker";
-import { HeadcountTable, RepresentativeShell } from "@/components/representatives/Shell";
+import { RepresentativeShell } from "@/components/representatives/Shell";
+import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { SelectField, TextField } from "@/components/ui/Field";
@@ -217,12 +218,23 @@ export default function ChangeRequestFormPage() {
   };
 
   return (
-    <RepresentativeShell title={`คำขอ ${request.requestNumber}`} description="กรอกรายการยกเลิกและเพิ่มผู้แทน แล้วแนบหนังสือนำ">
+    <RepresentativeShell title={`คำขอ ${request.requestNumber}`} description="กรอกรายการยกเลิกและเพิ่มผู้แทน แล้วแนบหนังสือนำ"
+      breadcrumb={
+        <Breadcrumb
+          items={[
+            { label: "ผู้แทนหน่วยงาน", href: "/representatives" },
+            { label: "ฟอร์มเปลี่ยนแปลงผู้แทนหน่วยงาน", href: "/representatives/requests" },
+            { label: request.requestNumber, href: `/representatives/requests/${id}` },
+            { label: "แก้ไขคำขอ" },
+          ]}
+        />
+      }
+    >
       {request.status === "RETURNED" ? (
         <Card className="mb-4 bg-warning-bg px-5 py-4">
           <p className="text-sm font-medium text-ink">BDI ส่งกลับให้แก้ไข</p>
           <p className="text-sm text-ink">
-            {[...request.timeline].reverse().find((t) => t.result === "RETURNED")?.comment}
+            {[...request.timeline].reverse().find((t) => t.result === "RETURNED")?.note}
           </p>
         </Card>
       ) : null}
@@ -385,10 +397,6 @@ export default function ChangeRequestFormPage() {
           <section>
             <h3 className="mb-1 font-semibold">ส่วนที่ 3 เอกสารแนบ</h3>
             <p>{file?.filename}</p>
-          </section>
-          <section>
-            <h3 className="mb-1 font-semibold">จำนวนหลังดำเนินการ (ข้อมูลเท่านั้น)</h3>
-            <HeadcountTable rows={request.headcount} />
           </section>
           <div className="flex justify-between gap-3 pt-2">
             <Button variant="ghost" onClick={() => setPreviewing(false)}>
