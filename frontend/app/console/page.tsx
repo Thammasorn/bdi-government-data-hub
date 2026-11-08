@@ -59,9 +59,10 @@ export default function ConsoleHomePage() {
           tone="warn"
         />
         <Tile
+          href="/console/email-deliveries?state=failed"
           value={data.deadLetters}
           label="อีเมลที่ส่งไม่สำเร็จ"
-          hint="เกินจำนวนครั้งที่ลองส่งใหม่ ตรวจได้จากบันทึกของระบบ"
+          hint="ดูเหตุผล ใครต้องแก้ และส่งอีกครั้ง"
           tone="alert"
         />
       </div>

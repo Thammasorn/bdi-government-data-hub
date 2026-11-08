@@ -3,10 +3,11 @@
  *
  * ```
  * GET  /             รายการ กรองตามสถานะ ชนิด และอีเมลผู้รับ
- * GET  /summary      จำนวนที่ส่งไม่สำเร็จ (tile บนหน้าภาพรวม)
  * GET  /:id          สถานะของฉบับเดียว — กล่อง/การ์ดติดตามหลังกดเชิญ ส่งลิงก์ หรือส่งทดสอบ
  * POST /:id/resend   เข้าคิวใหม่ (เฉพาะอีเมลที่ไม่พก secret — คำเชิญกับลิงก์ตั้งรหัสผ่านต้องออกคีย์/ลิงก์ใหม่ผ่านปุ่มของมัน)
  * ```
+ *
+ * จำนวนที่ส่งไม่สำเร็จบนหน้าภาพรวมมาจาก `deadLetters` ของ `GET /api/admin/summary` ซึ่งนับแบบเดียวกับตัวกรอง `state=failed` ที่นี่
  *
  * ผู้ดูแลระบบเท่านั้น — รายการมีอีเมลของบุคคล การอ่านทุกครั้งลง `ADMIN_API_REQUEST` อยู่แล้ว (lib/admin-access.ts)
  */
@@ -62,16 +63,6 @@ adminDeliveryRouter.get("/", async (req, res) => {
     prisma.notificationDelivery.count({ where }),
   ]);
   res.json({ items: rows.map(viewOf), total, page, pageSize, types: DELIVERY_TYPE_OPTIONS });
-});
-
-/** เลิกส่ง (DEAD_LETTER) ใน 7 วันล่าสุด กับที่กำลังลองใหม่ — สองตัวเลขที่ผู้ดูแลต้องสนใจ */
-adminDeliveryRouter.get("/summary", async (_req, res) => {
-  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const [failed, retrying] = await Promise.all([
-    prisma.notificationDelivery.count({ where: { status: DeliveryStatus.DEAD_LETTER, createdAt: { gte: since } } }),
-    prisma.notificationDelivery.count({ where: { status: DeliveryStatus.FAILED } }),
-  ]);
-  res.json({ failedLast7Days: failed, retrying });
 });
 
 adminDeliveryRouter.get("/:id", async (req, res) => {

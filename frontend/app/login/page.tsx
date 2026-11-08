@@ -23,11 +23,25 @@ import type { SessionUser } from "@/components/SessionProvider";
 export default function LoginPage() {
   const [step, setStep] = useState<"credentials" | "otp">("credentials");
   const [email, setEmail] = useState("");
+  // แถว outbox ของอีเมล OTP — หน้าขั้นที่สองถามสถานะการส่งจากตัวนี้ (การ์ด "Send every email through the delivery worker")
+  const [otpDeliveryId, setOtpDeliveryId] = useState<string | null>(null);
 
   return step === "credentials" ? (
-    <CredentialsStep email={email} setEmail={setEmail} onSent={() => setStep("otp")} />
+    <CredentialsStep
+      email={email}
+      setEmail={setEmail}
+      onSent={(id) => {
+        setOtpDeliveryId(id);
+        setStep("otp");
+      }}
+    />
   ) : (
-    <OtpStep email={email} onBack={() => setStep("credentials")} />
+    <OtpStep
+      email={email}
+      deliveryId={otpDeliveryId}
+      onResent={setOtpDeliveryId}
+      onBack={() => setStep("credentials")}
+    />
   );
 }
 
@@ -38,7 +52,7 @@ function CredentialsStep({
 }: {
   email: string;
   setEmail: (v: string) => void;
-  onSent: () => void;
+  onSent: (otpDeliveryId: string | null) => void;
 }) {
   const { show } = useToast();
   const [password, setPassword] = useState("");
@@ -49,9 +63,9 @@ function CredentialsStep({
     setSubmitting(true);
     setFields({});
     try {
-      await api.post("/api/auth/login", { email, password });
+      const res = await api.post<{ otpDeliveryId?: string | null }>("/api/auth/login", { email, password });
       show({ tone: "success", title: "ส่งรหัสยืนยันแล้ว", detail: `ตรวจสอบอีเมล ${email}` });
-      onSent();
+      onSent(res.otpDeliveryId ?? null);
     } catch (err) {
       if (err instanceof ApiError) {
         setFields(err.fields);
@@ -122,7 +136,51 @@ function CredentialsStep({
 
 // ---------------------------------------------------------------- OTP (2FA)
 
-function OtpStep({ email, onBack }: { email: string; onBack: () => void }) {
+type OtpDeliveryState = "queued" | "sent" | "retrying" | "failed" | "cancelled";
+
+/**
+ * อีเมล OTP ส่งโดย delivery-worker แล้ว คำตอบของ /login จึงบอกแค่ "เข้าคิว" — ถามสถานะทุกวินาทีจนส่งถึงหรือครบ 30 วินาที
+ * ถ้าส่งไม่สำเร็จ หน้าจอบอกผู้ใช้และเปิดปุ่มขอรหัสใหม่ทันที แทนให้รอรหัสที่ไม่มีวันมา (การ์ดข้อ 3.5) — API ตอบแค่สถานะ ไม่มีอะไรอื่น
+ */
+function useOtpDelivery(id: string | null): OtpDeliveryState | null {
+  const [state, setState] = useState<OtpDeliveryState | null>(null);
+  useEffect(() => {
+    setState(null);
+    if (!id) return;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const started = Date.now();
+    const tick = async () => {
+      try {
+        const res = await api.get<{ state: OtpDeliveryState }>(`/api/auth/otp-delivery/${id}`, { background: true });
+        if (!alive) return;
+        setState(res.state);
+        if (res.state === "sent" || res.state === "failed" || res.state === "cancelled") return;
+      } catch {
+        // เงียบ — ไม่ใช่สิ่งที่ผู้ใช้ต้องรู้ถ้าเราถามสถานะไม่ได้
+      }
+      if (alive && Date.now() - started < 30_000) timer = setTimeout(() => void tick(), 1_000);
+    };
+    void tick();
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [id]);
+  return state;
+}
+
+function OtpStep({
+  email,
+  deliveryId,
+  onResent,
+  onBack,
+}: {
+  email: string;
+  deliveryId: string | null;
+  onResent: (id: string | null) => void;
+  onBack: () => void;
+}) {
   const router = useRouter();
   const { setUser } = useSession();
   const { show } = useToast();
@@ -131,6 +189,12 @@ function OtpStep({ email, onBack }: { email: string; onBack: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [cooldown, setCooldown] = useState(60);
+  const delivery = useOtpDelivery(deliveryId);
+  const deliveryFailed = delivery === "failed" || delivery === "cancelled";
+  // ส่งไม่สำเร็จ = ไม่ต้องรอนับถอยหลัง ให้ขอรหัสใหม่ได้เลย
+  useEffect(() => {
+    if (deliveryFailed) setCooldown(0);
+  }, [deliveryFailed]);
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -185,7 +249,8 @@ function OtpStep({ email, onBack }: { email: string; onBack: () => void }) {
 
   const resend = async () => {
     try {
-      await api.post("/api/auth/login/resend-otp", { email });
+      const res = await api.post<{ otpDeliveryId?: string | null }>("/api/auth/login/resend-otp", { email });
+      onResent(res.otpDeliveryId ?? null);
       setCooldown(60);
       setError(null);
       show({ tone: "success", title: "ส่งรหัสใหม่แล้ว" });
@@ -214,6 +279,16 @@ function OtpStep({ email, onBack }: { email: string; onBack: () => void }) {
         {error ? (
           <p className="text-center text-[13px] text-danger" role="alert">
             {error}
+          </p>
+        ) : null}
+
+        {deliveryFailed ? (
+          <p className="rounded-xl bg-danger-bg px-4 py-3 text-center text-[13.5px] text-danger" role="alert">
+            ส่งรหัสไม่สำเร็จ กรุณากดส่งรหัสอีกครั้ง — ถ้ายังไม่ได้รับ โปรดติดต่อผู้ดูแลระบบ
+          </p>
+        ) : delivery === "retrying" ? (
+          <p className="text-center text-[13px] text-warning" role="status">
+            เซิร์ฟเวอร์อีเมลตอบช้า ระบบกำลังส่งรหัสอีกครั้ง…
           </p>
         ) : null}
 

@@ -6,7 +6,9 @@ import { useState } from "react";
 import { ActionDialog } from "@/components/console/ActionDialog";
 import { DataTable, type Column } from "@/components/console/DataTable";
 import { Badge, EmptyState, Tag } from "@/components/console/ui";
+import { DeliveryChip } from "@/components/console/DeliveryChip";
 import { useToast } from "@/components/ui/Toast";
+import { useDeliveryTracker } from "@/components/console/DeliveryTracker";
 import {
   INVITATION_STATUS_META,
   USER_STATUS_META,
@@ -32,6 +34,7 @@ type RowAction = { kind: "resend" | "revoke" | "delete"; invitation: InvitationT
  */
 export function useInvitationActions(onChanged: () => void) {
   const { show } = useToast();
+  const { track } = useDeliveryTracker();
   const [action, setAction] = useState<RowAction>(null);
   const close = () => setAction(null);
   const inv = action?.invitation;
@@ -72,8 +75,8 @@ export function useInvitationActions(onChanged: () => void) {
         reason={false}
         onConfirm={async () => {
           if (!inv) return;
-          await api.post(`/api/admin/invitations/${inv.id}/resend`);
-          show({ tone: "success", title: "ส่งคำเชิญใหม่แล้ว", detail: inv.userAccount.email });
+          const res = await api.post<{ deliveryId?: string }>(`/api/admin/invitations/${inv.id}/resend`);
+          track(res.deliveryId, `คำเชิญใหม่ถึง ${inv.userAccount.email}`);
           onChanged();
         }}
       />
@@ -193,6 +196,11 @@ export function InvitationsTable({
                   ? `ยกเลิกเมื่อ ${formatThaiDate(inv.revokedAt)}`
                   : `หมดอายุ ${formatThaiDate(inv.expiresAt)}`}
             </p>
+            {inv.emailDelivery ? (
+              <div className="mt-1">
+                <DeliveryChip delivery={inv.emailDelivery} />
+              </div>
+            ) : null}
           </div>
         );
       },

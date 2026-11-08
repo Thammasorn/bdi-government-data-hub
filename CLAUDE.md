@@ -34,6 +34,10 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
 - `docs/23-session.md` — how a session lives and dies, end to end: cookie, the two expiries
   (`SESSION_TTL_SECONDS` / `SESSION_IDLE_SECONDS`, **in seconds** since 2026-10-20 — the old
   `SESSION_TTL_DAYS` / `SESSION_IDLE_HOURS` are gone and ignored if set), every revoke reason
+- `docs/25-email-delivery.md` — **every account email goes through the delivery worker**: the encrypted secret
+  each invitation / reset link / OTP carries until sent (`OUTBOX_SECRET_KEY`), the `LISTEN/NOTIFY` wake-up,
+  permanent vs retried SMTP failures and their Thai reasons, the console's live tracker, row chips and
+  ประวัติการส่งอีเมล page, and the login page's "ส่งรหัสไม่สำเร็จ"
 - `docs/24-email-templates.md` — **every email the system sends is a template the administrator edits** at `/console` →
   ตั้งค่าระบบ → เทมเพลตอีเมล: the catalogue (`lib/email/catalogue.ts`, 23 templates, their variables, blocks and required
   blocks), the allowlist HTML is checked against, draft → publish → restore with version history, preview and test send, and
@@ -527,9 +531,9 @@ new form. Such keys go in `metadata.normalised_by_route`, decided by `changedOnl
 what was written? A new converter on a draft field must be reflected there, or its first save
 credits the officer again.
 
-**Audit rows come before any inline send.** Activation-key, password-reset and OTP mails go out
-inline and can throw; a row written after them vanishes with the SMTP failure while the key or
-token it describes is already committed. **Revoke activation keys with `revokeIssuedKeys()`**
+**Audit rows come before the mail is queued.** Activation-key, password-reset and OTP mails used to go out
+inline and could throw, taking a row written after them with the SMTP failure while the key or token it
+describes was already committed; they are queued now (see below), and the rows still come first. **Revoke activation keys with `revokeIssuedKeys()`**
 (`lib/iam.ts`), never a bare `updateMany`: it returns the keys its own `UPDATE … RETURNING`
 changed, so the caller can write one `ACTIVATION_KEY_REVOKED` per key with `logKeysRevoked()`
 after commit — every revoke path used to change the status silently. Returning what a `findMany`
@@ -584,8 +588,26 @@ plus a `notification_delivery` row (the outbox), and `src/workers/delivery.ts` s
 separate `delivery-worker` compose service, claiming rows with `FOR UPDATE SKIP LOCKED`, with
 retry/backoff and `DEAD_LETTER`. The delivery table has no body column on purpose: the worker
 rebuilds the email from `subject_type`/`subject_id` at send time (`src/workers/render.ts`), so
-no token or credential is ever stored in plain text. Activation-key emails are the exception —
-they are sent inline because the raw key only exists in memory at that moment.
+no token or credential is ever stored in plain text.
+
+**Every email to an account goes through the outbox now, secrets included** (card "[Enhance] Send every
+email through the delivery worker", 2026-11-08, `docs/25-email-delivery.md`). Invitations, password-reset
+links, login OTPs and the template editor's test emails used to be sent inline — one SMTP hiccup lost them,
+with no retry and no record. `lib/email-queue.ts` queues them; the raw key/token/code rides in
+`notification_delivery.secret_payload`, **AES-256-GCM encrypted with `OUTBOX_SECRET_KEY`** (not in the
+database; production must set it, in both backend and worker), and the worker erases it the moment the row
+is `SENT`, `CANCELLED` or `DEAD_LETTER`, or once `secret_expires_at` passes (swept every round, which also
+cancels the mail). `workers/render-system.ts` renders them and **cancels** any whose key, link or code is no
+longer usable rather than mailing something dead. `notifyUsers()` returns the delivery ids and
+`pg_notify('outbox_wakeup')`s on commit; the worker `LISTEN`s on its own `pg` connection (Prisma cannot), so an
+OTP arrives in under a second and the 15 s poll is only the safety net. A 5xx at `RCPT TO`/`DATA` dead-letters
+at once (`classifyDeliveryError()` in `lib/delivery-errors.ts`), and every failure is stored as a category
+that the screens turn into a Thai reason saying who fixes it. Those system rows (`SYSTEM_EMAIL_TYPES`) are
+written `READ` and kept out of the bell. **Anything that issues a key inside a transaction must queue its mail
+after commit** — `ensureApproverAccount()` returns the raw key for exactly that; it used to send from inside
+the transaction, even when the transaction then rolled back. The error digest is the one mail left outside
+the outbox (its recipients are not accounts, and it must work with the database down). In dry-run the OTP and
+links print in `docker compose logs delivery-worker`, no longer in `backend`.
 
 **The outbox is also how two e-mails from one click are kept in order.** When the BDI officer
 passes an organisation whose signatory has no active account, `ensureApproverAccount()` sends
@@ -1011,8 +1033,8 @@ account or is suspended; `review` in the detail payload exists only for BDI, and
 organisation after submit. A removal deactivates the account (same effect as `POST /:id/deactivate`), or revokes the key of someone
 still invited. Every addition ends in an invitation through ThaID, in one of three shapes: a new `PENDING` account, a `PENDING`
 account with a dead invitation reused and overwritten from the request, or the invite-back of a `DEACTIVATED` one. Anything else
-(`ACTIVE`, `SUSPENDED`, a valid invitation, a clashing e-mail) blocks confirmation with the reason. Mail goes inline after commit, so
-a failure leaves `PROCESSING_FAILED` and `POST /:id/retry` redoes only those items; a request stuck in `PROCESSING` over two minutes
+(`ACTIVE`, `SUSPENDED`, a valid invitation, a clashing e-mail) blocks confirmation with the reason. Invitations are queued after commit
+(the outbox retries the sending), so `PROCESSING_FAILED` now means queueing itself failed and `POST /:id/retry` redoes only those items; a request stuck in `PROCESSING` over two minutes
 can be retried too. `isChangeRequestKey()` makes activation skip the seat check for those keys, because the count was already made
 and an administrator may lower the limit afterwards. Administrators act through `/api/admin/representative-changes`, the same
 handlers with `adminActorId()`; `seed:demo` must delete these tables first, because a removal row points at `user_role_assignment`

@@ -4,6 +4,7 @@
  * แยกจาก lib/types.ts เพราะเป็นอีกชุด API: ของผู้ดูแลระบบ ซึ่งคืนค่าที่หน้าอื่นไม่เคยเห็น (เลขบัตรเต็ม สถานะบัญชี คำเชิญ)
  * ชื่อช่องตรงกับ `accountSelect` ใน backend/src/routes/admin-users.ts และ `toAdminOrganizationShape()` ใน routes/admin.ts
  */
+import type { DeliveryView } from "./deliveries";
 import type { OrganizationStatus, RequestStatus, ReviewTaskType, Role } from "./status";
 
 export type UserAccountStatus = "PENDING" | "ACTIVE" | "SUSPENDED" | "DEACTIVATED";
@@ -56,6 +57,8 @@ export interface AdminUserListItem extends AdminUser {
     usedAt: string | null;
     revokedAt: string | null;
     role: { code: Role; nameTh: string };
+    /** อีเมลคำเชิญฉบับล่าสุดของคีย์นี้ — การ์ด "Send every email through the delivery worker" */
+    emailDelivery?: DeliveryView | null;
   }>;
 }
 
@@ -108,7 +111,10 @@ export interface AdminUserDetail {
     issuedAt: string;
     expiresAt: string;
     usedAt: string | null;
+    emailDelivery?: DeliveryView | null;
   }>;
+  /** ลิงก์ตั้งรหัสผ่านใหม่ฉบับล่าสุดที่ส่งให้บัญชีนี้ */
+  passwordResetDelivery?: DeliveryView | null;
   sessions: AdminSession[];
   recentAudit: AdminAuditRow[];
 }
@@ -124,6 +130,7 @@ export interface AdminInvitation {
   userAccount: { id: string; email: string; cid: string | null; status: UserAccountStatus };
   role: { code: Role; nameTh: string };
   organization: { id: string; nameTh: string } | null;
+  emailDelivery?: DeliveryView | null;
 }
 
 export interface AdminOrganization {

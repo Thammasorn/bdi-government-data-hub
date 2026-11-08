@@ -23,6 +23,8 @@ import { Button } from "@/components/ui/Button";
 import { SelectField, TextField } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
+import { DeliveryChip } from "@/components/console/DeliveryChip";
+import { useDeliveryTracker } from "@/components/console/DeliveryTracker";
 import {
   ACCOUNT_FIELD_LABELS,
   AUDIT_ACTION_LABELS,
@@ -71,6 +73,7 @@ export default function ConsoleUserPage() {
   const { id } = useParams<{ id: string }>();
   const { user: me } = useSession();
   const { show } = useToast();
+  const { track } = useDeliveryTracker();
   const { data, error, loading, reload } = useAdminData<AdminUserDetail>(`/api/admin/users/${id}`);
   const [tab, setTab] = useState<TabKey>("profile");
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -121,6 +124,13 @@ export default function ConsoleUserPage() {
       />
 
       <StatusBanner user={u} pendingInvitation={data.activationKeys.some((k) => invitationState(k) === "ISSUED")} />
+      {data.passwordResetDelivery ? (
+        // ลิงก์ตั้งรหัสผ่านฉบับล่าสุด — ผู้ดูแลกลับมาดูได้ว่าส่งถึงแล้วหรือยัง (การ์ด "Send every email through the delivery worker")
+        <p className="mb-4 flex flex-wrap items-center gap-2 text-[13.5px] text-ink-muted">
+          ลิงก์ตั้งรหัสผ่านใหม่ล่าสุด ({formatThaiDate(data.passwordResetDelivery.createdAt)})
+          <DeliveryChip delivery={data.passwordResetDelivery} />
+        </p>
+      ) : null}
       <WarningList warnings={warnings} className="mb-5" />
 
       <Tabs
@@ -223,7 +233,10 @@ export default function ConsoleUserPage() {
                         ส่งเมื่อ {formatThaiDate(k.issuedAt)} · หมดอายุ {formatThaiDate(k.expiresAt)}
                         {k.usedAt ? ` · ใช้เมื่อ ${formatThaiDate(k.usedAt)}` : ""}
                       </span>
-                      <Badge meta={INVITATION_STATUS_META[invitationState(k)]} />
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <DeliveryChip delivery={k.emailDelivery} />
+                        <Badge meta={INVITATION_STATUS_META[invitationState(k)]} />
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -360,8 +373,9 @@ export default function ConsoleUserPage() {
         confirmLabel="ส่งลิงก์"
         reason={false}
         onConfirm={async () => {
-          await api.post("/api/admin/users/password-reset", { email: u.email });
-          done("ส่งลิงก์ตั้งรหัสผ่านใหม่แล้ว", u.email);
+          const res = await api.post<{ deliveryId?: string }>("/api/admin/users/password-reset", { email: u.email });
+          track(res.deliveryId, `ลิงก์ตั้งรหัสผ่านใหม่ถึง ${u.email}`);
+          reload();
         }}
       />
       <ActionDialog
