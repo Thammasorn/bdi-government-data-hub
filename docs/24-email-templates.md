@@ -26,7 +26,7 @@ mail.ts  send*(…)  ──►  *Context(…)  ──►  composeEmail(ctx)  ─
 | `routes/admin-email-templates.ts` | `/api/admin/email-templates/*` |
 | `lib/email/images.ts` · `routes/admin-email-images.ts` | รูปภาพในอีเมล (§3.1) |
 | `frontend/app/console/settings/email-templates/` | หน้ารายการ และหน้าแก้ (แก้ไข / ประวัติเวอร์ชัน) — คอลัมน์เดียว เนื้อหา → ตัวอย่าง → ปุ่ม ตัวแปรอยู่ใน popup |
-| `frontend/app/console/settings/email-images/` | หน้ารูปภาพในอีเมล |
+| `frontend/components/console/EmailImagesPanel.tsx` | แท็บรูปภาพ (การ์ดละแถว เต็มความกว้าง) |
 
 signature ของ `send*` ใน `mail.ts` ไม่เปลี่ยน ผู้เรียก (routes ทั้งหมด, `workers/render.ts`) จึงไม่ได้แก้
 
@@ -60,7 +60,7 @@ signature ของ `send*` ใน `mail.ts` ไม่เปลี่ยน ผ�
 
 ## 3.1 รูปภาพในอีเมล — `{{image.<code>}}`
 
-หน้า `/console` → ตั้งค่าระบบ → **รูปภาพในอีเมล** (`/console/settings/email-images`, `routes/admin-email-images.ts`, `lib/email/images.ts`)
+แท็บ **รูปภาพ** ของหน้า ตั้งค่าระบบ → เทมเพลตอีเมล (`/console/settings/email-templates?tab=images`, `components/console/EmailImagesPanel.tsx`, `routes/admin-email-images.ts`, `lib/email/images.ts`; ที่อยู่เดิม `/console/settings/email-images` redirect มาที่แท็บนี้)
 คือที่เดียวที่เปลี่ยนรูปที่อีเมลใช้ (feedback ระหว่างทดสอบ 2026-11-08) เปลี่ยนไฟล์แล้วอีเมลทุกฉบับที่อ้างรูปนั้นได้ไฟล์ใหม่ทันที
 
 - ไฟล์อยู่ใน `administration.email_image` (bytea) ไม่ใช่ blob storage — รูปเล็ก และ API กับ worker อ่านมันทุกครั้งที่ส่ง

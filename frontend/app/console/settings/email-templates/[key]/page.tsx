@@ -645,12 +645,12 @@ function PalettePopup({
           <div>
             <PaletteGroup title="รูปภาพ (แนบไปกับอีเมล)" items={images} onPick={(t) => onPick(t, true)} />
             <a
-              href="/console/settings/email-images"
+              href="/console/settings/email-templates?tab=images"
               target="_blank"
               rel="noreferrer"
               className="ml-2 text-[12.5px] text-navy-700 underline-offset-2 hover:underline"
             >
-              เพิ่มหรือเปลี่ยนรูปที่หน้า &quot;รูปภาพในอีเมล&quot; ↗
+              เพิ่มหรือเปลี่ยนรูปที่แท็บ &quot;รูปภาพ&quot; ↗
             </a>
           </div>
         ) : null}
