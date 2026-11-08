@@ -32,6 +32,7 @@ import { adminPublicDocumentRouter, publicDocumentRouter } from "./routes/public
 import { adminLegalDocumentRouter } from "./routes/admin-legal-documents.js";
 import { adminRouter } from "./routes/admin.js";
 import { adminUserRouter } from "./routes/admin-users.js";
+import { adminJiraRouter } from "./routes/admin-jira.js";
 import { adminSettingRouter } from "./routes/admin-settings.js";
 import { addressRouter } from "./routes/address.js";
 import { authRouter } from "./routes/auth.js";
@@ -202,6 +203,8 @@ app.use("/api/admin/registrations", adminRegistrationRouter);
 app.use("/api/admin/representative-changes", adminRepresentativeChangeRouter);
 app.use("/api/admin/addresses", adminAddressRouter);
 app.use("/api/admin/public-documents", adminPublicDocumentRouter);
+// ก่อน /api/admin/settings — `PUT /:key` ของ router นั้นจะกิน `/jira` ไปเป็น key ที่ไม่รู้จัก
+app.use("/api/admin/settings/jira", adminJiraRouter);
 app.use("/api/admin/settings", adminSettingRouter);
 // เอกสารกฎหมายและตัวแปร template อยู่ที่ไฟล์ของมันเอง และต้องมาก่อน adminRouter ที่ใช้ guard ของผู้ดูแลระบบอย่างเดียว
 app.use("/api/admin", adminLegalDocumentRouter);

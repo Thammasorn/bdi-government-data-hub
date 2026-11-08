@@ -28,6 +28,9 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   admin token, ThaID's tokens, OAuth `state`, OIDC `nonce`): where each lives, how it is
   hashed, when it expires. **There is no refresh token and no need for one**; §1.4 explains
   the session table that replaced the old JWT
+- `docs/24-jira-integration.md` — **the specialist's Jira card**: assigning a specialist creates a card, Done copies
+  its comments into the timeline, moving the request on archives it; the queue in `integration_operation`, the
+  retry/auth rules, the console page, and what was tested against the real D2S project
 - `docs/23-session.md` — how a session lives and dies, end to end: cookie, the two expiries
   (`SESSION_TTL_SECONDS` / `SESSION_IDLE_SECONDS`, **in seconds** since 2026-10-20 — the old
   `SESSION_TTL_DAYS` / `SESSION_IDLE_HOURS` are gone and ignored if set), every revoke reason
@@ -1113,6 +1116,29 @@ sends what came after it, which is mostly the administrator's own clean-up. The 
 `isOrganizationFrozen()` in `lib/status.ts` and `OrganizationFrozenNotice`: no action buttons, edit and
 preview pages redirect to the detail page, and the datasets menu stays **open** so members can still read
 their requests. Approved datasets are untouched.
+
+### The specialist's Jira card — `lib/jira*.ts`, `workers/jira.ts`
+
+Card "[Enhance] JIRA integration" (2026-11-08), `docs/24-jira-integration.md`. When Jira is switched on in
+`/console → ตั้งค่าระบบ → Jira`, assigning a specialist creates a card, changing the specialist reassigns it, the card
+reaching **Done** copies every comment into the timeline as one specialist opinion (`BDI_INTERNAL`, `SPECIALIST_COMMENTED`
+to the officers), and anything that moves the request away from the officer before Done — forward, return, reject,
+withdrawing the specialist, an admin reset/cancel/delete — comments on the card and moves it to **Archived**. The review
+stays advisory; the officer's three confirm dialogs and the withdraw dialog only *warn* while a card is open.
+
+**Routes never call Jira.** `jiraOnAssign()` / `endJiraLinks()` write rows in `integration.integration_operation`
+(`integration_type JIRA`, payload in `request_payload_json`, no secrets) inside the action's own transaction, and the
+delivery-worker sends them in order per request — the claim query only takes the first unfinished job of each request, so a
+`DEAD_LETTER` blocks the jobs behind it until the admin presses ลองอีกครั้ง. `integration.jira_issue_link` (one row per card)
+changes state **in our transaction**, never after Jira answers: the Done poller reads `OPEN` rows only, and both "Done"
+and "moved on" flip the row with a conditional `updateMany`, so a comment copied after the officer moved on cannot happen.
+
+Credentials live in the `jira_config` row of `administration.system_setting`, the token AES-256-GCM-encrypted under a key
+derived from `ACTIVATION_KEY_SECRET` (change that secret and the token must be re-entered); the API returns only
+`tokenSet`. **A wrong token is not always a 401** — Jira runs the call anonymously and answers 400 "project not found";
+`jira-client.ts` reads `x-seraph-loginreason: AUTHENTICATED_FAILED` first. Auth failures stop all Jira jobs
+(`jira_status.authFailedAt`) until new credentials are saved, which requeues them. The assignee is looked up with
+`user/assignable/search?project=` — `user/search` finds nobody by e-mail with the `jira-vela` account.
 
 ### One person, one name — `lib/person-name.ts`
 

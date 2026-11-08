@@ -29,6 +29,7 @@ import { closeLogStore, startLogStore } from "../lib/log-store.js";
 import { isOrganizationFrozen } from "../lib/organization-freeze.js";
 import { startErrorAlerts, stopErrorAlerts } from "./error-alerts.js";
 import { startInvitationReminders, stopInvitationReminders } from "./invitation-reminders.js";
+import { startJiraWorker, stopJiraWorker } from "./jira.js";
 import { startLogRelay, stopLogRelay } from "./log-relay.js";
 import { startLogUpkeep, stopLogUpkeep } from "./log-upkeep.js";
 import { renderAndSend } from "./render.js";
@@ -263,6 +264,8 @@ async function main() {
   startErrorAlerts();
   // อีเมลเตือนคำเชิญใกล้หมดอายุ — ลูปของตัวเองที่แค่เข้าคิว อีเมลออกทาง tick() ข้างล่างเหมือนฉบับอื่น (workers/invitation-reminders.ts)
   startInvitationReminders(prisma);
+  // การ์ด Jira ของผู้เชี่ยวชาญ — คิวงานส่ง Jira และตัวติดตาม Done เป็นลูปของตัวเอง ปิดการเชื่อมต่ออยู่ก็ไม่เรียก Jira (workers/jira.ts)
+  startJiraWorker(prisma);
   recordRuntimeEvent("start", { node: process.version });
 
   let running = true;
@@ -272,6 +275,7 @@ async function main() {
     stopLogUpkeep();
     stopErrorAlerts();
     stopInvitationReminders();
+    stopJiraWorker();
     // รอบของ relay ที่กำลังเขียนไม่เกิน 1.5 วินาที — ที่ค้างอ่านซ้ำตอนเริ่มใหม่ได้
     await stopLogRelay();
     // เข้าคิว และเขียนป้าย "ปิดตามปกติ" ลงไฟล์ใน container — บันทึกในคิวหายได้ถ้า Mongo หยุดพร้อมกัน ป้ายไม่หาย (lib/error-capture.ts)

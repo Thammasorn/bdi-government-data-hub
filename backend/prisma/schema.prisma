@@ -139,6 +139,7 @@ model UserAccount {
   signatures           SignatureConfirmation[]
   notifications        Notification[]
   datasetRequestsAsSpecialist DatasetRegistrationRequest[] @relation("DatasetRequestSpecialist")
+  jiraIssueLinks              JiraIssueLink[]
 
   @@index([status])
   @@index([accountType])
@@ -1085,6 +1086,7 @@ model DatasetRegistrationRequest {
 
   metadata        DatasetRegistrationMetadata?
   sourcedDatasets Dataset[]                    @relation("DatasetSourceRequest")
+  jiraIssueLinks  JiraIssueLink[]
 
   @@index([organizationId, status])
   @@index([status])
@@ -1858,6 +1860,12 @@ model IntegrationOperation {
   nextRetryAt   DateTime? @map("next_retry_at") @db.Timestamptz(6)
   lastAttemptAt DateTime? @map("last_attempt_at") @db.Timestamptz(6)
 
+  /// เบี่ยงจากดีไซน์: ไม่มีใน Excel
+  /// สิ่งที่งานนี้ต้องส่ง สำหรับงานที่สร้างใหม่จากแถวอื่นตอนส่งไม่ได้ — งาน Jira เก็บ id ของ
+  /// `jira_issue_link`, รหัสข้อความ comment, เลขคำขอ และเลขการ์ด (ใช้ตอนคำขอถูกลบไปแล้ว)
+  /// ห้ามมีความลับ: token อยู่ในค่าตั้งระบบที่เข้ารหัส ไม่ใช่ที่นี่ (หลักเดียวกับ notification_delivery)
+  requestPayloadJson Json? @map("request_payload_json")
+
   /// Reference ที่ระบบปลายทางส่งกลับมา
   externalReference String? @map("external_reference") @db.VarChar(255)
   lastErrorCode     String? @map("last_error_code") @db.VarChar(64)
@@ -1873,6 +1881,59 @@ model IntegrationOperation {
   @@index([status, scheduledAt])
   @@index([subjectType, subjectId])
   @@map("integration_operation")
+  @@schema("integration")
+}
+
+/// สถานะของการ์ด Jira หนึ่งใบในมุมของระบบนี้
+enum JiraIssueState {
+  /// สร้างแล้ว (หรือรอสร้าง) และระบบยังติดตามว่าเมื่อไร Done
+  OPEN
+  /// การ์ดถึง Done — comment ถูกคัดลอกเข้าไทม์ไลน์แล้ว ระบบเลิกติดตาม
+  DONE
+  /// ระบบเลิกติดตามก่อน Done — ผู้ประสานงานดำเนินการต่อ ถอนผู้เชี่ยวชาญ ผู้ดูแลระบบปิดคำขอ
+  /// หรือมีคนย้ายการ์ดไปเก็บเองใน Jira (`end_reason` บอกว่าอันไหน)
+  ENDED
+
+  @@schema("integration")
+}
+
+/// เบี่ยงจากดีไซน์: ไม่มีใน Excel (การ์ด "[Enhance] JIRA integration" 2026-11-08)
+/// การ์ด Jira หนึ่งใบต่อการขอความเห็นผู้เชี่ยวชาญหนึ่งครั้ง — เปลี่ยนตัวผู้เชี่ยวชาญใช้ใบเดิม,
+/// ขอใหม่หลังใบเดิมจบแล้ว (เช่น คำขอถูกส่งกลับแล้วนำส่งใหม่) ได้ใบใหม่
+///
+/// งานที่ต้องทำกับ Jira อยู่ใน `integration_operation` (คิว + บันทึก) ตารางนี้ตอบแค่ "คำขอใบนี้มี
+/// การ์ดใบไหน และระบบยังติดตามมันอยู่ไหม" — ตัวติดตามสถานะอ่านเฉพาะแถว OPEN ที่มีเลขการ์ดแล้ว
+/// จึงไม่มีทางอ่านการ์ดของระบบอื่น (dev กับ production ใช้ project เดียวกันได้)
+model JiraIssueLink {
+  id String @id @default(uuid()) @db.Uuid
+
+  datasetRegistrationRequestId String                     @map("dataset_registration_request_id") @db.Uuid
+  datasetRegistrationRequest   DatasetRegistrationRequest @relation(fields: [datasetRegistrationRequestId], references: [id], onDelete: Cascade)
+
+  /// ผู้เชี่ยวชาญที่การ์ดควรอยู่กับ ณ ตอนนี้ — เปลี่ยนตามการเปลี่ยนตัว
+  specialistId String?      @map("specialist_id") @db.Uuid
+  specialist   UserAccount? @relation(fields: [specialistId], references: [id], onDelete: SetNull)
+
+  /// เลขการ์ด เช่น D2S-11 — ว่างจนกว่างาน CREATE_ISSUE จะสำเร็จ
+  issueKey String? @map("issue_key") @db.VarChar(64)
+  issueId  String? @map("issue_id") @db.VarChar(64)
+
+  state     JiraIssueState @default(OPEN)
+  /// เหตุที่เลิกติดตาม (state = ENDED) — WITHDRAWN · FORWARDED · RETURNED · REJECTED ·
+  /// ADMIN_RESET · ADMIN_CANCELLED · ADMIN_DELETED · ARCHIVED_IN_JIRA
+  endReason String?        @map("end_reason") @db.VarChar(32)
+  /// หาผู้ใช้ Jira ที่อีเมลตรงกับผู้เชี่ยวชาญเจอไหม — null = ยังไม่ได้ลอง
+  assigneeFound Boolean? @map("assignee_found")
+
+  doneAt    DateTime? @map("done_at") @db.Timestamptz(6)
+  endedAt   DateTime? @map("ended_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String    @map("created_by") @db.Uuid
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([datasetRegistrationRequestId])
+  @@index([state])
+  @@map("jira_issue_link")
   @@schema("integration")
 }
 
