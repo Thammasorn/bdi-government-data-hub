@@ -333,6 +333,18 @@ export interface DatasetAttachment {
 }
 
 
+/** `jiraStatusForRequest()` ใน backend/src/lib/jira.ts */
+export interface DatasetJiraStatus {
+  issueKey: string | null;
+  url: string | null;
+  /** OPEN = ระบบยังติดตาม · DONE = ผู้เชี่ยวชาญตรวจเสร็จ (comment เข้าไทม์ไลน์แล้ว) · ENDED = เลิกติดตามก่อน Done */
+  state: "OPEN" | "DONE" | "ENDED";
+  endReason: string | null;
+  assigneeFound: boolean | null;
+  delivery: "sent" | "pending" | "failed";
+  doneAt: string | null;
+}
+
 export interface DatasetRequest {
   id: string;
   requestNumber: string;
@@ -395,6 +407,8 @@ export interface DatasetRequest {
   rejectedByName: string | null;
   rejectionReason: string | null;
   assignedAt: string | null;
+  /** การ์ด Jira ล่าสุดของการขอความเห็นผู้เชี่ยวชาญ — ฝั่ง BDI เท่านั้น ไม่เคยมี = null (ดู backend/src/lib/jira.ts) */
+  jira?: DatasetJiraStatus | null;
   createdAt: string;
 
   /** `status` — หน่วยงานถูกระงับหรือยุติ = คำขอถูกแช่แข็ง ดู `isOrganizationFrozen()` ใน lib/status.ts */

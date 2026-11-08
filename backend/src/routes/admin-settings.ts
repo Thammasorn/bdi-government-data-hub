@@ -92,6 +92,8 @@ adminSettingRouter.put("/:key", async (req, res) => {
         ? value === 0
           ? "บันทึกแล้ว — ปิดอีเมลเตือนคำเชิญ"
           : `บันทึกแล้ว — เตือนก่อนคำเชิญหมดอายุ ${value} วัน มีผลภายใน 15 นาที`
-        : "บันทึกแล้ว",
+        : key === "jira_sync_interval_seconds"
+          ? `บันทึกแล้ว — ตรวจสถานะการ์ด Jira ทุก ${value.toLocaleString("th-TH")} วินาที มีผลรอบถัดไป`
+          : "บันทึกแล้ว",
   });
 });

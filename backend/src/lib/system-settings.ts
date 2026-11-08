@@ -43,6 +43,22 @@ export const SYSTEM_SETTINGS = {
     min: 0,
     max: () => Math.max(0, Math.floor(env.auth.activationKeyTtlSeconds / DAY_SECONDS) - 1),
   },
+  /**
+   * ตรวจสถานะการ์ด Jira ทุกกี่วินาที (`workers/jira.ts`) — การ์ด "[Enhance] JIRA integration" (2026-11-08)
+   *
+   * หนึ่งรอบคือการค้นใน Jira หนึ่งครั้งต่อการ์ด 100 ใบ ไม่ว่าเปิดอยู่กี่ใบ ค่าเริ่มต้น 15 นาที (96 ครั้งต่อวัน) พื้นต่ำสุด 60 วินาทีกันพิมพ์ผิดเป็น
+   * ทุกวินาที เพดานหนึ่งวัน หน้าจอแสดงค่านี้ทั้งในหน้าตั้งค่าระบบและในหน้าตั้งค่า Jira
+   */
+  jira_sync_interval_seconds: {
+    label: "ตรวจสถานะการ์ด Jira ทุก",
+    description:
+      "ระบบถาม Jira เป็นระยะว่าการ์ดของผู้เชี่ยวชาญใบไหนถูกย้ายไป Done แล้ว เพื่อคัดลอก comment เข้าประวัติของคำขอ " +
+      "หนึ่งรอบใช้การค้นหนึ่งครั้ง ไม่ว่าการ์ดจะเปิดอยู่กี่ใบ",
+    unit: "วินาที",
+    defaultValue: 900,
+    min: 60,
+    max: () => DAY_SECONDS,
+  },
 } as const satisfies Record<string, IntegerSetting>;
 
 export type SystemSettingKey = keyof typeof SYSTEM_SETTINGS;

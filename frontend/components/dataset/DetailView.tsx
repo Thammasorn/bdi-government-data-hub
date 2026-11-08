@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { DatasetSigningDialog } from "@/components/dataset/DatasetSigningDialog";
 import { LegalDocumentsCard, useLegalDocuments } from "@/components/organization/LegalDocuments";
@@ -33,6 +33,7 @@ import {
   datasetTitle,
   fullName,
   sortDatasetAttachments,
+  type DatasetJiraStatus,
   type DatasetRequest,
   type SpecialistOption,
 } from "@/lib/types";
@@ -879,6 +880,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
                 ["ขอความเห็นเมื่อ", request.assignedAt ? formatThaiDate(request.assignedAt) : null],
               ]}
             />
+            {request.jira ? <JiraLine jira={request.jira} /> : null}
           </Card>
         ) : null}
 
@@ -906,6 +908,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         title="ส่งกลับแก้ไข"
         description="ระบุเนื้อหาหรือข้อความที่ต้องการให้ปรับปรุง ระบบจะแจ้งไปยังผู้ประสานงานของหน่วยงาน"
       >
+        <JiraOpenWarning jira={request.jira} />
         <TextAreaField
           label="รายละเอียดที่ต้องแก้ไข"
           required
@@ -933,6 +936,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         title="ไม่อนุมัติคำขอ"
         description="เมื่อยืนยันแล้วคำขอจะสิ้นสุดกระบวนการและแก้ไขต่อไม่ได้"
       >
+        <JiraOpenWarning jira={request.jira} />
         <TextAreaField
           label="เหตุผลที่ไม่อนุมัติ"
           required
@@ -1064,6 +1068,12 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
             </option>
           ))}
         </SelectField>
+        {/* ถอนผู้เชี่ยวชาญขณะการ์ดยังไม่ Done — ถามยืนยันเหมือนตอนกดดำเนินการต่อ */}
+        {specialistId === "" && request.assignedSpecialist ? (
+          <div className="mt-4">
+            <JiraOpenWarning jira={request.jira} withdraw />
+          </div>
+        ) : null}
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="secondary" onClick={closeModal}>
             ยกเลิก
@@ -1114,6 +1124,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         title="ยืนยัน"
         description="ยืนยันว่าคุณตรวจสอบข้อมูลและเอกสารทั้งหมดเรียบร้อยแล้ว"
       >
+        <JiraOpenWarning jira={request.jira} />
         <p className="text-[15px] leading-relaxed text-ink-muted">
           ระบบจะบันทึกกระบวนการนี้และแจ้งผู้เกี่ยวข้องในขั้นตอนถัดไป
         </p>
@@ -1172,3 +1183,67 @@ function personalDataPeriod(request: DatasetRequest): string | null {
 }
 
 const grant = (value: boolean | null) => (value === null ? null : value ? "อนุญาต" : "ไม่อนุญาต");
+
+/**
+ * การ์ด Jira ของผู้เชี่ยวชาญในกล่องผู้เชี่ยวชาญ (การ์ด "[Enhance] JIRA integration" 2026-11-08)
+ *
+ * ผู้ประสานงานไม่มีปุ่มลองใหม่ — งานที่ส่งไม่สำเร็จเป็นเรื่องของผู้ดูแลระบบ (/console → ตั้งค่าระบบ → Jira) ที่ได้อีเมลแจ้งเตือนแล้ว
+ */
+function JiraLine({ jira }: { jira: DatasetJiraStatus }) {
+  const link = jira.issueKey ? (
+    jira.url ? (
+      <a href={jira.url} target="_blank" rel="noreferrer" className="font-medium text-navy-700 hover:underline">
+        {jira.issueKey}
+      </a>
+    ) : (
+      <span className="font-medium">{jira.issueKey}</span>
+    )
+  ) : null;
+
+  let status: ReactNode;
+  if (jira.state === "DONE") {
+    status = <span className="rounded-full bg-success-bg px-2.5 py-0.5 text-[13px] font-medium text-success">ผู้เชี่ยวชาญตรวจเสร็จแล้ว</span>;
+  } else if (jira.delivery === "failed") {
+    status = <span className="text-[14px] text-danger">ส่งไป Jira ไม่สำเร็จ — แจ้งผู้ดูแลระบบแล้ว</span>;
+  } else if (jira.delivery === "pending") {
+    status = <span className="text-[14px] text-ink-muted">กำลังส่งไป Jira…</span>;
+  } else if (jira.state === "ENDED") {
+    status = <span className="text-[14px] text-ink-muted">เลิกติดตามแล้ว</span>;
+  } else {
+    status = <span className="text-[14px] text-ink-muted">รอผู้เชี่ยวชาญย้ายการ์ดไป Done</span>;
+  }
+
+  return (
+    <dl className="grid gap-1 border-t border-line px-6 py-3.5 sm:grid-cols-[13rem_minmax(0,1fr)] sm:items-baseline sm:gap-4">
+      <dt className="text-sm text-ink-muted">การ์ด Jira</dt>
+      <dd className="space-y-1 text-[15px] text-ink">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          {link}
+          {status}
+        </div>
+        {jira.issueKey && jira.assigneeFound === false && jira.state === "OPEN" ? (
+          <p className="text-[13px] text-warning">ไม่พบบัญชี Jira ของผู้เชี่ยวชาญ — การ์ดยังไม่มีผู้รับผิดชอบ</p>
+        ) : null}
+      </dd>
+    </dl>
+  );
+}
+
+/**
+ * ถามยืนยันเมื่อผู้ประสานงานจะดำเนินการต่อทั้งที่ผู้เชี่ยวชาญยังไม่ปิดการ์ด — อยู่ในกล่องยืนยันที่ทุกปุ่มมีอยู่แล้ว ปุ่มยืนยันของกล่องคือคำตอบ
+ * ไม่ห้าม: การขอความเห็นยังเป็นความเห็นประกอบ ไม่ใช่ด่าน (ตกลงกับ BDI 2026-11-08)
+ */
+function JiraOpenWarning({ jira, withdraw = false }: { jira?: DatasetJiraStatus | null; withdraw?: boolean }) {
+  if (!jira || jira.state !== "OPEN") return null;
+  return (
+    <div role="note" className="mb-4 rounded-xl bg-warning-bg px-4 py-3 text-[14px] leading-relaxed text-ink">
+      <p className="font-medium">
+        ผู้เชี่ยวชาญยังตรวจสอบไม่เสร็จ{jira.issueKey ? ` (${jira.issueKey})` : ""} ต้องการดำเนินการต่อหรือไม่?
+      </p>
+      <p className="mt-1 text-[13px] text-ink-muted">
+        {withdraw ? "เมื่อบันทึก" : "เมื่อยืนยัน"} ระบบจะเขียนบันทึกลงการ์ด Jira ย้ายการ์ดไป Archived และเลิกติดตาม
+        — comment ที่ผู้เชี่ยวชาญเขียนหลังจากนี้จะไม่ถูกคัดลอกเข้าประวัติ
+      </p>
+    </div>
+  );
+}
