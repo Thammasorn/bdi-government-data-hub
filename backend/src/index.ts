@@ -32,6 +32,7 @@ import { adminPublicDocumentRouter, publicDocumentRouter } from "./routes/public
 import { adminLegalDocumentRouter } from "./routes/admin-legal-documents.js";
 import { adminRouter } from "./routes/admin.js";
 import { adminUserRouter } from "./routes/admin-users.js";
+import { adminJiraRouter } from "./routes/admin-jira.js";
 import { adminSettingRouter } from "./routes/admin-settings.js";
 import { adminEmailTemplateRouter } from "./routes/admin-email-templates.js";
 import { adminEmailImageRouter } from "./routes/admin-email-images.js";
@@ -204,6 +205,8 @@ app.use("/api/admin/registrations", adminRegistrationRouter);
 app.use("/api/admin/representative-changes", adminRepresentativeChangeRouter);
 app.use("/api/admin/addresses", adminAddressRouter);
 app.use("/api/admin/public-documents", adminPublicDocumentRouter);
+// ก่อน /api/admin/settings — `PUT /:key` ของ router นั้นจะกิน `/jira` ไปเป็น key ที่ไม่รู้จัก
+app.use("/api/admin/settings/jira", adminJiraRouter);
 app.use("/api/admin/settings", adminSettingRouter);
 app.use("/api/admin/email-templates", adminEmailTemplateRouter);
 app.use("/api/admin/email-images", adminEmailImageRouter);

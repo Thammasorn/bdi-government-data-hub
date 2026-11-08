@@ -101,6 +101,7 @@ import {
 } from "../lib/legal.js";
 import { nextDatasetCode, nextDatasetRequestNumber } from "../lib/request-number.js";
 import { buildJourneyProgress, summariseMany } from "../lib/journey-steps.js";
+import { endJiraLinks, endReasonForOfficerResult, jiraOnAssign, jiraStatusForRequest } from "../lib/jira.js";
 import { REVIEW_TASK_TYPE_LABELS, isBdiStaff, isSpecialistOnly, seesAllRequests } from "../lib/roles.js";
 import {
   BDI_ORGANIZATION_ID,
@@ -715,6 +716,8 @@ datasetRequestRouter.get("/:id", async (req, res) => {
   const openers = await taskOpeners(prisma, tasks);
 
   const isOrgSide = !seesAllRequests(session.roles);
+  // การ์ด Jira ของผู้เชี่ยวชาญ — ฝั่ง BDI เท่านั้น เหมือนความเห็นของผู้เชี่ยวชาญที่หน่วยงานไม่เห็น
+  const jira = isOrgSide ? null : await jiraStatusForRequest(prisma, request.id);
 
   /**
    * เหตุผลที่ผู้ตรวจส่งกลับ — หน้าฟอร์มมีกล่องแดง "สิ่งที่ต้องแก้ไขตามที่ผู้ตรวจสอบระบุ"
@@ -764,6 +767,7 @@ datasetRequestRouter.get("/:id", async (req, res) => {
         : null,
       currentTaskType: active?.taskType ?? null,
       currentRound: active?.roundNumber ?? null,
+      jira,
       // ค่าเดียวกับที่ GET /:id/state คืน — หน้าจอเทียบสองค่านี้เพื่อรู้ว่าที่ถืออยู่เก่าหรือยัง
       stateVersion: stateVersionOf(request.updatedAt, latestTaskTouch(tasks), request.organization.status),
       // เส้นทางทั้งเส้น ไม่ใช่แค่ด่านที่ค้างอยู่ — ดู lib/journey-steps.ts
@@ -1556,14 +1560,27 @@ datasetRequestRouter.post("/:id/assign", async (req, res, next) => {
 
     const changed = (request.assignedSpecialistId ?? null) !== specialistId;
 
-    await prisma.datasetRegistrationRequest.update({
-      where: { id: request.id },
-      data: {
-        assignedSpecialistId: specialistId,
-        assignedSpecialistAt: specialistId ? new Date() : null,
-        assignedSpecialistById: specialistId ? session.sub : null,
-        updatedBy: session.sub,
-      },
+    /**
+     * การ์ด Jira เข้าคิวใน transaction เดียวกับการมอบหมาย (`lib/jira.ts`) — ไม่เรียก Jira ที่นี่ Jira ล่มจึงไม่ทำให้การมอบหมายล้ม
+     * บันทึกคนเดิมซ้ำไม่แตะการ์ด
+     */
+    await prisma.$transaction(async (tx) => {
+      await tx.datasetRegistrationRequest.update({
+        where: { id: request.id },
+        data: {
+          assignedSpecialistId: specialistId,
+          assignedSpecialistAt: specialistId ? new Date() : null,
+          assignedSpecialistById: specialistId ? session.sub : null,
+          updatedBy: session.sub,
+        },
+      });
+      if (changed) {
+        await jiraOnAssign(tx, {
+          request: { id: request.id, organizationId: request.organizationId, requestNumber: request.requestNumber },
+          specialistId,
+          actorId: session.sub,
+        });
+      }
     });
 
     // ก่อนแจ้งเตือนและก่อนอีเมล inline ข้างล่าง — SMTP ที่ throw ต้องไม่ทำให้การมอบหมาย
@@ -2095,6 +2112,18 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
         commentVisibility: CommentVisibility.ORGANIZATION,
         actorId: session.sub,
       });
+
+      /**
+       * คำขอออกจากมือผู้ประสานงานของ BDI — การ์ด Jira ของผู้เชี่ยวชาญที่ยังไม่ Done ถูกปิด (comment + Archived) และเลิกติดตาม
+       * หน้าจอถามยืนยันผู้ประสานงานไปแล้วก่อนกด (การ์ด "[Enhance] JIRA integration")
+       */
+      if (task.taskType === ReviewTaskType.BDI_OFFICER_REVIEW) {
+        await endJiraLinks(
+          tx,
+          { id: request.id, organizationId: request.organizationId, requestNumber: request.requestNumber },
+          endReasonForOfficerResult(result),
+        );
+      }
 
       /**
        * หลักฐานการลงนาม เขียนใน transaction เดียวกับการปิด task

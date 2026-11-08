@@ -98,6 +98,8 @@ export const CONSOLE_GROUPS: Group[] = [
         label: "เทมเพลตอีเมล",
         icon: icon("M3 5h14v10H3zM3 5l7 6 7-6"),
       },
+      // การ์ด "[Enhance] JIRA integration" (2026-11-08) — ค่าตั้งการเชื่อมต่อ + บันทึกการทำงานกับ Jira
+      { href: "/console/settings/jira", label: "Jira", icon: icon("M4 4h5v5H4zM11 4h5v5h-5zM4 11h5v5H4zM13.5 11v5M11 13.5h5") },
     ],
   },
 ];

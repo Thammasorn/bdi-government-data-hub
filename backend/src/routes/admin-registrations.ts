@@ -49,6 +49,7 @@ import {
   roleSeatTaken,
   type RevokedKey,
 } from "../lib/iam.js";
+import { endJiraLinks } from "../lib/jira.js";
 import { adminActorId } from "../lib/context.js";
 import { buildJourneyProgress, summariseProgress } from "../lib/journey-steps.js";
 import { NotificationType, notifyUsers, organizationMemberIds, submitterIfMember } from "../lib/notify.js";
@@ -982,6 +983,8 @@ adminRegistrationRouter.post("/datasets/:id/reset", async (req, res) => {
       actorId: adminActorId(),
       reason,
     });
+    // การ์ด Jira ของผู้เชี่ยวชาญที่ยังเปิดอยู่ — comment + Archived แล้วเลิกติดตาม (lib/jira.ts)
+    await endJiraLinks(tx, request, "ADMIN_RESET");
     await tx.datasetRegistrationRequest.update({
       where: { id: request.id },
       data: draftResetColumns(),
@@ -1103,6 +1106,7 @@ adminRegistrationRouter.post("/datasets/:id/cancel", async (req, res) => {
       actorId: adminActorId(),
       reason,
     });
+    await endJiraLinks(tx, request, "ADMIN_CANCELLED");
     await tx.datasetRegistrationRequest.update({
       where: { id: request.id },
       data: {
@@ -1291,6 +1295,12 @@ adminRegistrationRouter.delete("/datasets/:id", async (req, res) => {
         ],
       },
     });
+
+    /**
+     * 5b — การ์ด Jira ที่ยังเปิด: เข้าคิว comment + Archived **หลัง** ข้อ 5 (ไม่งั้นถูกลบทิ้งไปด้วย) และก่อนลบคำขอ (แถว link หายตาม
+     * cascade) งานพกเลขการ์ดและเลขคำขอไปเอง จึงส่งได้แม้คำขอไม่อยู่แล้ว
+     */
+    await endJiraLinks(tx, request, "ADMIN_DELETED");
 
     // 6 — attachment: ปิดแถว ไม่ลบ และไม่แตะ object ใน storage
     for (const file of attachments) {
