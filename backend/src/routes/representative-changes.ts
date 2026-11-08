@@ -48,7 +48,7 @@ import {
   roleIdByCode,
   type RevokedKey,
 } from "../lib/iam.js";
-import { sendInvitationEmail } from "../lib/mail.js";
+import { queueInvitationEmail } from "../lib/email-queue.js";
 import { NotificationType, bdiOfficerIds, notifyUsers, organizationMemberIds } from "../lib/notify.js";
 import {
   frozenOrganizationMessage,
@@ -1132,7 +1132,10 @@ async function applyAddition(
   };
 }
 
-/** ส่งคำเชิญแบบ inline แล้วสรุปสถานะคำขอ — raw key มีแค่ในหน่วยความจำ จึงส่งผ่าน outbox ไม่ได้ */
+/**
+ * เข้าคิวคำเชิญแล้วสรุปสถานะคำขอ — คีย์ดิบไปกับแถว outbox แบบเข้ารหัส (การ์ด "Send every email through the delivery worker")
+ * `INVITED` = เข้าคิวแล้ว delivery-worker ส่งพร้อม retry ความล้มเหลวที่เหลือตรงนี้คือเขียนฐานข้อมูลไม่ได้ ซึ่ง `POST /:id/retry` ยังรับต่อได้
+ */
 async function deliverInvitations(
   requestId: string,
   request: { requestNumber: string; organizationId: string; organization: { nameTh: string } },
@@ -1151,11 +1154,12 @@ async function deliverInvitations(
       metadata: { issued_via: "REPRESENTATIVE_CHANGE", request_number: request.requestNumber },
     });
     try {
-      await sendInvitationEmail(invitation.email, invitation.key, {
-        roleLabel: ROLE_LABELS[invitation.roleCode],
-        organizationName: request.organization.nameTh,
+      await queueInvitationEmail({
+        userAccountId: invitation.userAccountId,
+        activationKeyId: invitation.activationKeyId,
+        rawKey: invitation.key,
         expiresAt: invitation.expiresAt,
-        internal: false,
+        organizationId: request.organizationId,
       });
       await prisma.representativeChangeAddition.update({
         where: { id: invitation.additionId },

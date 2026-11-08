@@ -62,7 +62,8 @@ import {
   type Db,
 } from "../lib/iam.js";
 import { invitationTarget } from "../lib/invitation-target.js";
-import { sendInvitationEmail, sendPasswordResetEmail } from "../lib/mail.js";
+import { queueInvitationEmail, queuePasswordResetEmail } from "../lib/email-queue.js";
+import { DELIVERY_SELECT, latestBySubject, viewOf as deliveryViewOf } from "../lib/delivery-view.js";
 import { NotificationType, notifyUsers } from "../lib/notify.js";
 import { PASSWORD_RESET_VIA_ADMIN, issuePasswordResetToken } from "../lib/password-reset.js";
 import { ORGANIZATION_FROZEN, isOrganizationFrozen } from "../lib/organization-freeze.js";
@@ -448,16 +449,20 @@ adminUserRouter.post("/password-reset", async (req, res) => {
       requested_via: PASSWORD_RESET_VIA_ADMIN,
     },
   });
-  await sendPasswordResetEmail(account.email, token, {
-    displayName: fullNameTh(account) || null,
+  // เข้า outbox — worker ส่ง (มี retry) และหน้าจอติดตามสถานะด้วย deliveryId
+  const deliveryId = await queuePasswordResetEmail({
+    userAccountId: account.id,
+    tokenId: record.id,
+    rawToken: token,
     expiresAt: record.expiresAt,
   });
 
   res.status(202).json({
+    deliveryId,
     userAccountId: account.id,
     email: account.email,
     expiresAt: record.expiresAt,
-    message: `ส่งลิงก์ตั้งรหัสผ่านใหม่ไปที่ ${account.email} แล้ว ลิงก์ใช้ได้ ${thaiDuration(env.auth.passwordResetTtlSeconds)}`,
+    message: `เข้าคิวส่งลิงก์ตั้งรหัสผ่านใหม่ไปที่ ${account.email} แล้ว ลิงก์ใช้ได้ ${thaiDuration(env.auth.passwordResetTtlSeconds)}`,
   });
 });
 
@@ -560,7 +565,25 @@ adminUserRouter.get("/", async (req, res) => {
     }),
   ]);
 
-  res.json({ users, total, page, pageSize });
+  // ป้ายสถานะอีเมลคำเชิญของคีย์ที่แนบมากับแต่ละคน (หน้าสมาชิกและคำเชิญ, `includeInvited`)
+  const keyIds = users.flatMap((u) => ("activationKeys" in u ? (u.activationKeys as Array<{ id: string }>).map((k) => k.id) : []));
+  const deliveries = await latestBySubject(prisma, NotificationType.USER_ACTIVATION_INVITATION, keyIds);
+  res.json({
+    users: users.map((u) =>
+      "activationKeys" in u
+        ? {
+            ...u,
+            activationKeys: (u.activationKeys as Array<{ id: string }>).map((k) => ({
+              ...k,
+              emailDelivery: deliveries.get(k.id) ?? null,
+            })),
+          }
+        : u,
+    ),
+    total,
+    page,
+    pageSize,
+  });
 });
 
 adminUserRouter.get("/:id", async (req, res) => {
@@ -608,10 +631,21 @@ adminUserRouter.get("/:id", async (req, res) => {
     }),
   ]);
 
+  // สถานะอีเมลของคีย์แต่ละใบ และลิงก์ตั้งรหัสผ่านฉบับล่าสุด — ป้ายบนหน้าผู้ใช้ (การ์ด "Send every email through the delivery worker")
+  const [keyDeliveries, resetRow] = await Promise.all([
+    latestBySubject(prisma, NotificationType.USER_ACTIVATION_INVITATION, keys.map((k) => k.id)),
+    prisma.notificationDelivery.findFirst({
+      where: { notification: { notificationType: NotificationType.PASSWORD_RESET, recipientUserId: account.id } },
+      orderBy: { createdAt: "desc" },
+      select: DELIVERY_SELECT,
+    }),
+  ]);
+
   res.json({
     user: account,
     roleAssignments: assignments.map((a) => ({ ...a, derivedStatus: derivedAssignmentStatus(a) })),
-    activationKeys: keys,
+    activationKeys: keys.map((k) => ({ ...k, emailDelivery: keyDeliveries.get(k.id) ?? null })),
+    passwordResetDelivery: resetRow ? deliveryViewOf(resetRow) : null,
     sessions: sessions.map((s) => ({
       id: s.id,
       createdAt: s.createdAt,
@@ -1170,15 +1204,17 @@ adminUserRouter.post("/:id/reinvite", async (req, res) => {
     metadata: { issued_via: "ADMIN_API", reason: "REINVITE" },
   });
 
-  await sendInvitationEmail(email, result.key, {
-    roleLabel: ROLE_LABELS[role],
-    organizationName: organization.nameTh,
+  const deliveryId = await queueInvitationEmail({
+    userAccountId: account.id,
+    activationKeyId: result.record.id,
+    rawKey: result.key,
     expiresAt: result.record.expiresAt,
-    internal: organizationId === BDI_ORGANIZATION_ID,
+    organizationId,
   });
 
   res.status(201).json({
     reinvited: true,
+    deliveryId,
     user: result.row,
     activationKeyId: result.record.id,
     userAccountId: account.id,
@@ -1189,7 +1225,7 @@ adminUserRouter.post("/:id/reinvite", async (req, res) => {
     organizationId,
     expiresAt: result.record.expiresAt,
     message:
-      `ส่งคำเชิญกลับเข้าระบบไปที่ ${email} แล้ว — บัญชียังปิดอยู่จนกว่าเจ้าตัวจะกดลิงก์ ` +
+      `เข้าคิวส่งคำเชิญกลับเข้าระบบไปที่ ${email} แล้ว — บัญชียังปิดอยู่จนกว่าเจ้าตัวจะกดลิงก์ ` +
       `ยืนยันตัวตนด้วย ThaID ให้ตรงเลขบัตรเดิม และตั้งรหัสผ่านใหม่`,
   });
 });

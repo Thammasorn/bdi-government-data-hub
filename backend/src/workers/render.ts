@@ -34,6 +34,7 @@ import {
   sendDatasetPendingOrgApprover,
   sendDatasetRejected,
   sendDatasetRevisionRequested,
+  sendDatasetSpecialistAssigned,
   sendDatasetSpecialistCommented,
   sendDatasetSubmitted,
   sendRaw,
@@ -43,6 +44,7 @@ import {
 } from "../lib/mail.js";
 import { buildJourneyProgress, type JourneyProgress } from "../lib/journey-steps.js";
 import { NotificationType, linkFor } from "../lib/notify.js";
+import { isSystemEmail, renderSystemEmail } from "./render-system.js";
 import { isOrganizationFrozen } from "../lib/organization-freeze.js";
 import { NAME_FIELDS, fullNameTh } from "../lib/person-name.js";
 import { ROLE_LABELS } from "../lib/roles.js";
@@ -171,8 +173,14 @@ export async function renderAndSend(
   prisma: PrismaClient,
   destination: string,
   n: DeliverableNotification,
+  /** secret ที่ถอดรหัสแล้วจาก `notification_delivery.secret_payload` — มีเฉพาะอีเมลของระบบ (คำเชิญ ลิงก์ตั้งรหัสผ่าน OTP ทดสอบ) */
+  secret: Record<string, unknown> | null = null,
 ): Promise<RenderOutcome> {
   const to = [destination];
+
+  if (isSystemEmail(n.notificationType)) {
+    return renderSystemEmail(prisma, destination, n, secret);
+  }
 
   if (n.notificationType === NotificationType.INVITATION_REMINDER && n.subjectId) {
     return sendInvitationReminder(prisma, destination, n.subjectId);
@@ -242,6 +250,10 @@ export async function renderAndSend(
          * ชื่อคนเขียนอ่านสดตอนส่ง (เหมือนทุกอย่างในไฟล์นี้) จากแถวความเห็นล่าสุด — ชื่อคน
          * ไม่ใช่สิ่งที่แก้ไปมาระหว่างสองรอบ ต่างจากตัวข้อความ
          */
+        // การ์ด "Send every email through the delivery worker" — เคยส่ง inline จาก POST /:id/assign และมี `email: false` กันฉบับซ้ำ
+        case NotificationType.SPECIALIST_ASSIGNED:
+          await sendDatasetSpecialistAssigned(destination, info, progress);
+          return;
         case NotificationType.SPECIALIST_COMMENTED: {
           const latest = await prisma.reviewTask.findFirst({
             where: {

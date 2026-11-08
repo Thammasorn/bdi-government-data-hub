@@ -197,6 +197,13 @@ export const env = {
     ),
     activationKeyTtlSeconds: seconds("ACTIVATION_KEY_TTL_SECONDS", 7 * 24 * 60 * 60),
     /**
+     * กุญแจเข้ารหัส secret ที่รอส่งใน outbox (Activation Key, โทเคนตั้งรหัสผ่าน, OTP — `notification_delivery.secret_payload`)
+     * การ์ด "[Enhance] Send every email through the delivery worker" (2026-11-08) แยกจาก ACTIVATION_KEY_SECRET โดยตั้งใจ:
+     * ตัวนั้นทำ HMAC ของคีย์ที่เก็บถาวร ตัวนี้เข้ารหัสของที่อยู่ไม่กี่วินาที หมุนได้โดยไม่ทำให้คีย์ที่ออกไปแล้วใช้ไม่ได้
+     * (หมุนแล้วอีเมลที่ยังค้างคิวอยู่ถอดไม่ออก ถูกยกเลิก ต้องส่งคำเชิญซ้ำ) ข้อความอะไรก็ได้ ระบบแปลงเป็นกุญแจ 256 บิตด้วย SHA-256
+     */
+    outboxSecretKey: requiredInProduction("OUTBOX_SECRET_KEY", "dev-outbox-secret-key"),
+    /**
      * อายุลิงก์ตั้งรหัสผ่านใหม่ที่ผู้ดูแลระบบสั่งออก — สั้นกว่าคำเชิญมาก (นาที ไม่ใช่วัน)
      * เพราะแอดมินเพิ่งคุยกับเจ้าตัวอยู่ กดไม่ทันก็ขอใหม่ได้ทันที ลิงก์ที่ค้างอยู่ในกล่อง
      * จดหมายเป็นวัน ๆ มีแต่โอกาสถูกคนอื่นใช้ (hash ด้วย activationKeySecret ตัวเดียวกัน)
