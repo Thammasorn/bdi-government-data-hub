@@ -67,8 +67,8 @@ export type TemplateGroup = "layout" | "account" | "organization" | "dataset" | 
 export const GROUP_LABELS: Record<TemplateGroup, string> = {
   layout: "แม่แบบกลาง",
   account: "บัญชีผู้ใช้",
-  organization: "คำขอหน่วยงาน (Journey B)",
-  dataset: "คำขอชุดข้อมูล (Journey C)",
+  organization: "คำขอหน่วยงาน",
+  dataset: "คำขอชุดข้อมูล",
   general: "ทั่วไป",
 };
 

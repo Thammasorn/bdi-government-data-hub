@@ -6,9 +6,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ActionDialog } from "@/components/console/ActionDialog";
 import { EmailPreviewFrame } from "@/components/console/EmailPreviewFrame";
-import { Badge, ErrorNotice, PageHeader, Panel, Tabs, WarningList } from "@/components/console/ui";
+import {
+  Badge,
+  ErrorNotice,
+  PageHeader,
+  Panel,
+  Tabs,
+  WarningList,
+} from "@/components/console/ui";
 import { Button } from "@/components/ui/Button";
 import { TextField } from "@/components/ui/Field";
+import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
 import { adminErrorView, type AdminErrorView } from "@/lib/admin-errors";
@@ -30,7 +38,12 @@ import { useAdminData } from "@/lib/use-admin";
 type FieldName = keyof TemplateContent;
 type TabKey = "edit" | "history";
 
-const EMPTY: TemplateContent = { subject: "", bodyHtml: "", buttonLabel: null, footnoteHtml: null };
+const EMPTY: TemplateContent = {
+  subject: "",
+  bodyHtml: "",
+  buttonLabel: null,
+  footnoteHtml: null,
+};
 
 /**
  * แก้เทมเพลตอีเมลหนึ่งฉบับ (การ์ด "[New Feature] Admin Email Template Edit", 2026-11-08)
@@ -55,9 +68,13 @@ export default function EmailTemplateEditorPage() {
   const [serverIssues, setServerIssues] = useState<ContentIssue[]>([]);
   const [publishOpen, setPublishOpen] = useState(false);
 
-  const baseline = data ? contentOf(data.draft ?? data.live ?? data.versions[0]!) : EMPTY;
+  const baseline = data
+    ? contentOf(data.draft ?? data.live ?? data.versions[0]!)
+    : EMPTY;
   // โหลดเนื้อหาลงช่องเมื่อข้อมูลเปลี่ยนรุ่น (หลังบันทึก/เผยแพร่/นำกลับ) — ไม่ทับสิ่งที่กำลังพิมพ์ระหว่างการโหลดซ้ำแบบอื่น
-  const stamp = data ? `${data.draft?.versionNumber ?? "-"}:${data.draft?.updatedAt ?? ""}:${data.live?.versionNumber ?? 1}` : null;
+  const stamp = data
+    ? `${data.draft?.versionNumber ?? "-"}:${data.draft?.updatedAt ?? ""}:${data.live?.versionNumber ?? 1}`
+    : null;
   useEffect(() => {
     if (!data || stamp === loadedFor) return;
     setForm(baseline);
@@ -67,7 +84,8 @@ export default function EmailTemplateEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stamp]);
 
-  const dirty = data !== null && loadedFor !== null && !sameContent(form, baseline);
+  const dirty =
+    data !== null && loadedFor !== null && !sameContent(form, baseline);
 
   // เตือนก่อนปิดแท็บถ้ามีสิ่งที่ยังไม่บันทึก
   useEffect(() => {
@@ -84,8 +102,11 @@ export default function EmailTemplateEditorPage() {
   if (!data) return null;
 
   const { template, draft, live } = data;
-  const issues = serverIssues.length ? serverIssues : (preview.result?.issues ?? []);
-  const fieldError = (f: FieldName) => issues.filter((i) => i.field === f).map((i) => i.message)[0];
+  const issues = serverIssues.length
+    ? serverIssues
+    : (preview.result?.issues ?? []);
+  const fieldError = (f: FieldName) =>
+    issues.filter((i) => i.field === f).map((i) => i.message)[0];
 
   const fail = (err: unknown) => {
     const view = adminErrorView(err);
@@ -98,7 +119,10 @@ export default function EmailTemplateEditorPage() {
     setSaving(true);
     setActionError(null);
     try {
-      const res = await api.put<{ message: string; warnings: string[] }>(`${path}/draft`, form);
+      const res = await api.put<{ message: string; warnings: string[] }>(
+        `${path}/draft`,
+        form,
+      );
       show({ tone: "success", title: res.message });
       setServerIssues([]);
       reload();
@@ -113,7 +137,9 @@ export default function EmailTemplateEditorPage() {
     setTesting(true);
     setActionError(null);
     try {
-      const res = await api.post<{ message: string }>(`${path}/test-send`, { content: form });
+      const res = await api.post<{ message: string }>(`${path}/test-send`, {
+        content: form,
+      });
       show({ tone: "success", title: res.message });
     } catch (err) {
       fail(err);
@@ -129,7 +155,10 @@ export default function EmailTemplateEditorPage() {
   return (
     <div>
       <PageHeader
-        back={{ href: "/console/settings/email-templates", label: "เทมเพลตอีเมลทั้งหมด" }}
+        back={{
+          href: "/console/settings/email-templates",
+          label: "เทมเพลตอีเมลทั้งหมด",
+        }}
         eyebrow={template.groupLabel}
         title={template.label}
         description={template.description}
@@ -138,7 +167,11 @@ export default function EmailTemplateEditorPage() {
       <Tabs<TabKey>
         tabs={[
           { key: "edit", label: "แก้ไข" },
-          { key: "history", label: "ประวัติเวอร์ชัน", count: data.versions.length },
+          {
+            key: "history",
+            label: "ประวัติเวอร์ชัน",
+            count: data.versions.length,
+          },
         ]}
         active={tab}
         onChange={setTab}
@@ -148,45 +181,73 @@ export default function EmailTemplateEditorPage() {
         <div className="mt-6 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-navy-50 px-4 py-3 text-[14px]">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge meta={draft ? VERSION_STATUS.DRAFT : VERSION_STATUS.PUBLISHED} />
+              <Badge
+                meta={draft ? VERSION_STATUS.DRAFT : VERSION_STATUS.PUBLISHED}
+              />
               <span className="text-ink">{editingLabel}</span>
-              {dirty ? <span className="font-medium text-warning">· มีการแก้ไขที่ยังไม่บันทึก</span> : null}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={!dirty || saving}
-                onClick={() => {
-                  setForm(baseline);
-                  setServerIssues([]);
-                  setActionError(null);
-                }}
-              >
-                ยกเลิกการแก้ไข
-              </Button>
-              <Button size="sm" variant="secondary" loading={testing} onClick={() => void testSend()}>
-                ส่งอีเมลทดสอบถึงฉัน
-              </Button>
-              <Button size="sm" variant="secondary" loading={saving} disabled={!dirty} onClick={() => void save()}>
-                บันทึกฉบับร่าง
-              </Button>
-              <Button
-                size="sm"
-                disabled={!draft || dirty}
-                title={dirty ? "บันทึกฉบับร่างก่อนเผยแพร่" : !draft ? "ยังไม่มีฉบับร่าง" : undefined}
-                onClick={() => setPublishOpen(true)}
-              >
-                เผยแพร่
-              </Button>
+              {dirty ? (
+                <span className="font-medium text-warning">
+                  · มีการแก้ไขที่ยังไม่บันทึก
+                </span>
+              ) : null}
             </div>
           </div>
 
-          {actionError ? <ErrorNotice view={actionError} /> : null}
+          {/* แถวเดียว: เนื้อหาก่อน ตัวอย่างต่อท้าย — ตัวอย่างได้ความกว้างเต็ม เห็นอีเมลขนาดจริง */}
+          <ContentEditor
+            template={template}
+            form={form}
+            setForm={setForm}
+            fieldError={fieldError}
+          />
+          <PreviewPanel preview={preview} />
 
-          <div className="grid gap-6 xl:grid-cols-2">
-            <ContentEditor template={template} form={form} setForm={setForm} fieldError={fieldError} />
-            <PreviewPanel preview={preview} />
+          {/* ปุ่มอยู่ท้ายหน้า หลังตัวอย่าง — ผู้ดูแลแก้ ดูตัวอย่าง แล้วจึงตัดสินใจ ข้อผิดพลาดของปุ่มขึ้นเหนือปุ่ม */}
+          {actionError ? <ErrorNotice view={actionError} /> : null}
+          <div className="flex flex-wrap items-center justify-end gap-2 rounded-xl bg-navy-50 px-4 py-3">
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={!dirty || saving}
+              onClick={() => {
+                setForm(baseline);
+                setServerIssues([]);
+                setActionError(null);
+              }}
+            >
+              ยกเลิกการแก้ไข
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={testing}
+              onClick={() => void testSend()}
+            >
+              ส่งอีเมลทดสอบถึงฉัน
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={saving}
+              disabled={!dirty}
+              onClick={() => void save()}
+            >
+              บันทึกฉบับร่าง
+            </Button>
+            <Button
+              size="sm"
+              disabled={!draft || dirty}
+              title={
+                dirty
+                  ? "บันทึกฉบับร่างก่อนเผยแพร่"
+                  : !draft
+                    ? "ยังไม่มีฉบับร่าง"
+                    : undefined
+              }
+              onClick={() => setPublishOpen(true)}
+            >
+              เผยแพร่
+            </Button>
           </div>
         </div>
       ) : (
@@ -208,7 +269,9 @@ export default function EmailTemplateEditorPage() {
         confirmLabel="เผยแพร่"
         reasonHint="เหตุผลนี้แสดงในประวัติเวอร์ชันและถูกบันทึกไว้เป็นหลักฐาน"
         onConfirm={async (reason) => {
-          const res = await api.post<{ message: string }>(`${path}/publish`, { reason });
+          const res = await api.post<{ message: string }>(`${path}/publish`, {
+            reason,
+          });
           show({ tone: "success", title: res.message });
           reload();
         }}
@@ -231,7 +294,11 @@ function usePreview(path: string, form: TemplateContent, enabled: boolean) {
     const timer = setTimeout(() => {
       setBusy(true);
       api
-        .post<PreviewResult>(`${path}/preview`, { content: form }, { background: true })
+        .post<PreviewResult>(
+          `${path}/preview`,
+          { content: form },
+          { background: true },
+        )
         .then((r) => {
           if (mine === serial.current) {
             setResult(r);
@@ -254,28 +321,45 @@ function usePreview(path: string, form: TemplateContent, enabled: boolean) {
 function PreviewPanel({ preview }: { preview: ReturnType<typeof usePreview> }) {
   const { result, busy, error } = preview;
   return (
-    <div className="xl:sticky xl:top-4 xl:self-start">
+    <div>
       <Panel
         title="ตัวอย่าง"
         description="แสดงด้วยข้อมูลตัวอย่าง (ไม่ใช่ข้อมูลจริง) อัปเดตเมื่อหยุดพิมพ์"
-        actions={busy ? <span className="text-[12.5px] text-ink-subtle">กำลังสร้างตัวอย่าง…</span> : null}
+        actions={
+          busy ? (
+            <span className="text-[12.5px] text-ink-subtle">
+              กำลังสร้างตัวอย่าง…
+            </span>
+          ) : null
+        }
       >
         {error ? <ErrorNotice view={error} className="mb-3" /> : null}
         {result ? (
           <div className="space-y-3">
             {result.issues.length ? (
-              <div role="alert" className="rounded-xl bg-danger-bg px-4 py-3 text-[13.5px]">
-                <p className="font-semibold text-danger">บันทึกไม่ได้จนกว่าจะแก้ {result.issues.length} ข้อ</p>
+              <div
+                role="alert"
+                className="rounded-xl bg-danger-bg px-4 py-3 text-[13.5px]"
+              >
+                <p className="font-semibold text-danger">
+                  บันทึกไม่ได้จนกว่าจะแก้ {result.issues.length} ข้อ
+                </p>
                 <ul className="mt-1 list-disc pl-5 text-ink">
                   {result.issues.map((i, n) => (
                     <li key={n}>{i.message}</li>
                   ))}
                 </ul>
-                <p className="mt-1 text-[12.5px] text-ink-muted">ตัวอย่างด้านล่างแสดงผลหลังระบบตัดส่วนที่ไม่อนุญาตออกแล้ว</p>
+                <p className="mt-1 text-[12.5px] text-ink-muted">
+                  ตัวอย่างด้านล่างแสดงผลหลังระบบตัดส่วนที่ไม่อนุญาตออกแล้ว
+                </p>
               </div>
             ) : null}
             <WarningList warnings={result.warnings} />
-            <EmailPreviewFrame subject={result.subject} html={result.html} bytes={result.bytes} />
+            <EmailPreviewFrame
+              subject={result.subject}
+              html={result.html}
+              bytes={result.bytes}
+            />
           </div>
         ) : (
           <Spinner />
@@ -304,21 +388,60 @@ function ContentEditor({
     buttonLabel: useRef<HTMLInputElement>(null),
     footnoteHtml: useRef<HTMLTextAreaElement>(null),
   };
-  const lastField = useRef<FieldName>("bodyHtml");
+  /**
+   * ช่องและตำแหน่ง cursor ล่าสุด — จำไว้ทุกครั้งที่เลือก/พิมพ์ เพราะเปิด popup แล้วช่องเสียโฟกัส (popup โฟกัสช่องค้นหาของตัวเอง)
+   * ค่าเริ่มต้นคือท้ายเนื้อหา
+   */
+  const caret = useRef<{ field: FieldName; start: number; end: number } | null>(
+    null,
+  );
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
-  const set = (field: FieldName, value: string) => setForm({ ...form, [field]: value });
+  const set = (field: FieldName, value: string) =>
+    setForm({ ...form, [field]: value });
 
-  /** แทรก placeholder ที่ตำแหน่ง cursor ของช่องล่าสุดที่โฟกัส — บล็อกเข้าได้แค่ช่องเนื้อหา */
+  const remember =
+    (field: FieldName) =>
+    (e: { currentTarget: HTMLInputElement | HTMLTextAreaElement }) => {
+      caret.current = {
+        field,
+        start: e.currentTarget.selectionStart ?? 0,
+        end: e.currentTarget.selectionEnd ?? 0,
+      };
+    };
+  // onBlur คือตัวที่สำคัญที่สุด: กดปุ่มเปิด popup แล้วช่องเสียโฟกัส ตำแหน่ง ณ ตอนนั้นคือที่ที่ผู้ดูแลตั้งใจจะแทรก
+  const track = (field: FieldName) => ({
+    onSelect: remember(field),
+    onFocus: remember(field),
+    onKeyUp: remember(field),
+    onMouseUp: remember(field),
+    onBlur: remember(field),
+  });
+
+  /** แทรก placeholder ที่ตำแหน่ง cursor ที่จำไว้ — บล็อก (และช่องที่ใส่ตัวแปรไม่ได้) ลงช่องเนื้อหา */
   const insert = useCallback(
     (token: string, bodyOnly: boolean) => {
-      const field: FieldName = bodyOnly ? "bodyHtml" : lastField.current;
-      const el = refs[field].current;
+      const remembered = caret.current;
+      const field: FieldName =
+        !remembered || bodyOnly ? "bodyHtml" : remembered.field;
       const value = form[field] ?? "";
-      const start = el?.selectionStart ?? value.length;
-      const end = el?.selectionEnd ?? value.length;
+      const usePos = remembered && remembered.field === field;
+      const start = usePos
+        ? Math.min(remembered.start, value.length)
+        : value.length;
+      const end = usePos
+        ? Math.min(remembered.end, value.length)
+        : value.length;
       const next = value.slice(0, start) + token + value.slice(end);
       setForm({ ...form, [field]: next });
+      caret.current = {
+        field,
+        start: start + token.length,
+        end: start + token.length,
+      };
+      setPaletteOpen(false);
       requestAnimationFrame(() => {
+        const el = refs[field].current;
         if (!el) return;
         el.focus();
         el.setSelectionRange(start + token.length, start + token.length);
@@ -328,15 +451,25 @@ function ContentEditor({
     [form, setForm],
   );
 
-  const focus = (field: FieldName) => () => {
-    lastField.current = field;
-  };
-
-  const bodyLines = useMemo(() => Math.min(40, Math.max(16, form.bodyHtml.split("\n").length + 2)), [form.bodyHtml]);
+  const bodyLines = useMemo(
+    () => Math.min(40, Math.max(16, form.bodyHtml.split("\n").length + 2)),
+    [form.bodyHtml],
+  );
 
   return (
     <div className="space-y-4">
-      <Panel title="เนื้อหา">
+      <Panel
+        title="เนื้อหา"
+        actions={
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setPaletteOpen(true)}
+          >
+            แทรกตัวแปร / บล็อก
+          </Button>
+        }
+      >
         <div className="space-y-4">
           {template.isLayout ? null : (
             <TextField
@@ -344,13 +477,16 @@ function ContentEditor({
               label="หัวเรื่อง"
               value={form.subject}
               onChange={(e) => set("subject", e.target.value)}
-              onFocus={focus("subject")}
+              {...track("subject")}
               error={fieldError("subject")}
               hint="ข้อความล้วน ใช้ตัวแปรได้ (ไม่ใช้บล็อก)"
             />
           )}
           <div>
-            <label htmlFor="email-body" className="mb-1.5 block text-[14px] font-medium text-ink">
+            <label
+              htmlFor="email-body"
+              className="mb-1.5 block text-[14px] font-medium text-ink"
+            >
               {template.isLayout ? "แม่แบบกลาง (HTML)" : "เนื้อหา (HTML)"}
             </label>
             <textarea
@@ -358,19 +494,26 @@ function ContentEditor({
               ref={refs.bodyHtml}
               value={form.bodyHtml}
               onChange={(e) => set("bodyHtml", e.target.value)}
-              onFocus={focus("bodyHtml")}
+              {...track("bodyHtml")}
               rows={bodyLines}
               spellCheck={false}
               aria-invalid={fieldError("bodyHtml") ? true : undefined}
               className={clsx(
                 "w-full rounded-xl border bg-white px-3 py-2.5 font-mono text-[12.5px] leading-relaxed text-ink outline-none focus:ring-2",
-                fieldError("bodyHtml") ? "border-danger focus:ring-danger/30" : "border-line focus:ring-navy-200",
+                fieldError("bodyHtml")
+                  ? "border-danger focus:ring-danger/30"
+                  : "border-line focus:ring-navy-200",
               )}
             />
             <p className="mt-1 text-[12.5px] text-ink-subtle">
-              Gmail และ Outlook ตัด &lt;style&gt; ทิ้ง — ใส่สีและขนาดด้วย style="…" ในแต่ละแท็ก ลิงก์ต้องขึ้นต้นด้วย https:// หรือ mailto:
+              Gmail และ Outlook ตัด &lt;style&gt; ทิ้ง — ใส่สีและขนาดด้วย
+              style="…" ในแต่ละแท็ก ลิงก์ต้องขึ้นต้นด้วย https:// หรือ mailto:
             </p>
-            {fieldError("bodyHtml") ? <p className="mt-1 text-[13px] text-danger">{fieldError("bodyHtml")}</p> : null}
+            {fieldError("bodyHtml") ? (
+              <p className="mt-1 text-[13px] text-danger">
+                {fieldError("bodyHtml")}
+              </p>
+            ) : null}
           </div>
           {template.hasButton ? (
             <TextField
@@ -378,14 +521,17 @@ function ContentEditor({
               label="ข้อความบนปุ่ม"
               value={form.buttonLabel ?? ""}
               onChange={(e) => set("buttonLabel", e.target.value)}
-              onFocus={focus("buttonLabel")}
+              {...track("buttonLabel")}
               error={fieldError("buttonLabel")}
               hint="ลิงก์ของปุ่มมาจากระบบเสมอ แก้ได้แค่ข้อความ"
             />
           ) : null}
           {template.isLayout ? null : (
             <div>
-              <label htmlFor="email-footnote" className="mb-1.5 block text-[14px] font-medium text-ink">
+              <label
+                htmlFor="email-footnote"
+                className="mb-1.5 block text-[14px] font-medium text-ink"
+              >
                 หมายเหตุท้ายอีเมล (HTML)
               </label>
               <textarea
@@ -393,53 +539,121 @@ function ContentEditor({
                 ref={refs.footnoteHtml}
                 value={form.footnoteHtml ?? ""}
                 onChange={(e) => set("footnoteHtml", e.target.value)}
-                onFocus={focus("footnoteHtml")}
+                {...track("footnoteHtml")}
                 rows={3}
                 spellCheck={false}
                 className={clsx(
                   "w-full rounded-xl border bg-white px-3 py-2.5 font-mono text-[12.5px] leading-relaxed text-ink outline-none focus:ring-2",
-                  fieldError("footnoteHtml") ? "border-danger focus:ring-danger/30" : "border-line focus:ring-navy-200",
+                  fieldError("footnoteHtml")
+                    ? "border-danger focus:ring-danger/30"
+                    : "border-line focus:ring-navy-200",
                 )}
               />
-              <p className="mt-1 text-[12.5px] text-ink-subtle">แสดงในส่วนท้ายของแม่แบบกลาง ({"{{footnote}}"})</p>
+              <p className="mt-1 text-[12.5px] text-ink-subtle">
+                แสดงในส่วนท้ายของแม่แบบกลาง ({"{{footnote}}"})
+              </p>
               {fieldError("footnoteHtml") ? (
-                <p className="mt-1 text-[13px] text-danger">{fieldError("footnoteHtml")}</p>
+                <p className="mt-1 text-[13px] text-danger">
+                  {fieldError("footnoteHtml")}
+                </p>
               ) : null}
             </div>
           )}
         </div>
       </Panel>
 
-      <Panel title="ตัวแปรและบล็อก" description="กดเพื่อแทรกที่ตำแหน่ง cursor — บล็อกแทรกได้เฉพาะในเนื้อหา">
-        <div className="space-y-4">
-          {template.layoutPlaceholders.length ? (
-            <PaletteGroup
-              title="ตำแหน่งในแม่แบบกลาง"
-              items={template.layoutPlaceholders.map((p) => ({ token: `{{${p.name}}}`, label: p.label }))}
-              onPick={(t) => insert(t, true)}
-            />
-          ) : null}
-          {template.blocks.length ? (
-            <PaletteGroup
-              title="บล็อกของระบบ (วางตำแหน่งได้ แก้เนื้อในไม่ได้)"
-              items={template.blocks.map((b) => ({
-                token: `{{block.${b.name}}}`,
-                label: b.label,
-                required: b.required,
-              }))}
-              onPick={(t) => insert(t, true)}
-            />
-          ) : null}
-          {template.variables.length ? (
-            <PaletteGroup
-              title="ตัวแปร (ระบบ escape ให้ — แทรก HTML ผ่านตัวแปรไม่ได้)"
-              items={template.variables.map((v) => ({ token: `{{${v.name}}}`, label: v.label, sample: v.sample }))}
-              onPick={(t) => insert(t, false)}
-            />
-          ) : null}
-        </div>
-      </Panel>
+      <PalettePopup
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        template={template}
+        onPick={insert}
+      />
     </div>
+  );
+}
+
+/**
+ * popup ตัวแปรและบล็อก — กดหนึ่งรายการแล้วแทรกที่ตำแหน่ง cursor ที่จำไว้และปิด popup
+ * ช่องค้นหากรองทั้งชื่อตัวแปรและคำอธิบาย (เทมเพลตชุดข้อมูลมีตัวแปรสิบกว่าตัว)
+ */
+function PalettePopup({
+  open,
+  onClose,
+  template,
+  onPick,
+}: {
+  open: boolean;
+  onClose: () => void;
+  template: TemplateDetail["template"];
+  onPick: (token: string, bodyOnly: boolean) => void;
+}) {
+  const [q, setQ] = useState("");
+  useEffect(() => {
+    if (open) setQ("");
+  }, [open]);
+  const match = (item: { token: string; label: string }) =>
+    !q.trim() ||
+    `${item.token} ${item.label}`
+      .toLowerCase()
+      .includes(q.trim().toLowerCase());
+
+  const layout = template.layoutPlaceholders
+    .map((p) => ({ token: `{{${p.name}}}`, label: p.label }))
+    .filter(match);
+  const blocks = template.blocks
+    .map((b) => ({
+      token: `{{block.${b.name}}}`,
+      label: b.label,
+      required: b.required,
+    }))
+    .filter(match);
+  const vars = template.variables
+    .map((v) => ({ token: `{{${v.name}}}`, label: v.label, sample: v.sample }))
+    .filter(match);
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="แทรกตัวแปร / บล็อก"
+      description="กดเพื่อแทรกที่ตำแหน่ง cursor ล่าสุด — บล็อกแทรกได้เฉพาะในเนื้อหา"
+      size="lg"
+    >
+      <div className="space-y-4">
+        <TextField
+          label="ค้นหา"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="เช่น หน่วยงาน, request"
+        />
+        {layout.length ? (
+          <PaletteGroup
+            title="ตำแหน่งในแม่แบบกลาง"
+            items={layout}
+            onPick={(t) => onPick(t, true)}
+          />
+        ) : null}
+        {blocks.length ? (
+          <PaletteGroup
+            title="บล็อกของระบบ (วางตำแหน่งได้ แก้เนื้อในไม่ได้)"
+            items={blocks}
+            onPick={(t) => onPick(t, true)}
+          />
+        ) : null}
+        {vars.length ? (
+          <PaletteGroup
+            title="ตัวแปร (ระบบ escape ให้ — แทรก HTML ผ่านตัวแปรไม่ได้)"
+            items={vars}
+            onPick={(t) => onPick(t, false)}
+          />
+        ) : null}
+        {!layout.length && !blocks.length && !vars.length ? (
+          <p className="text-[14px] text-ink-muted">
+            ไม่พบรายการที่ตรงกับ "{q}"
+          </p>
+        ) : null}
+      </div>
+    </Modal>
   );
 }
 
@@ -449,12 +663,19 @@ function PaletteGroup({
   onPick,
 }: {
   title: string;
-  items: Array<{ token: string; label: string; sample?: string; required?: boolean }>;
+  items: Array<{
+    token: string;
+    label: string;
+    sample?: string;
+    required?: boolean;
+  }>;
   onPick: (token: string) => void;
 }) {
   return (
     <div>
-      <p className="mb-2 text-[12.5px] font-semibold text-ink-subtle">{title}</p>
+      <p className="mb-2 text-[12.5px] font-semibold text-ink-subtle">
+        {title}
+      </p>
       <ul className="space-y-1">
         {items.map((item) => (
           <li key={item.token}>
@@ -465,10 +686,20 @@ function PaletteGroup({
               onClick={() => onPick(item.token)}
               className="flex w-full flex-wrap items-baseline gap-x-2 rounded-lg px-2 py-1.5 text-left hover:bg-navy-50"
             >
-              <code className="rounded bg-navy-50 px-1.5 py-0.5 font-mono text-[12.5px] text-navy-700">{item.token}</code>
+              <code className="rounded bg-navy-50 px-1.5 py-0.5 font-mono text-[12.5px] text-navy-700">
+                {item.token}
+              </code>
               <span className="text-[13px] text-ink-muted">{item.label}</span>
-              {item.required ? <span className="text-[12px] font-semibold text-coral-600">ต้องมี</span> : null}
-              {item.sample ? <span className="text-[12px] text-ink-subtle">เช่น {item.sample}</span> : null}
+              {item.required ? (
+                <span className="text-[12px] font-semibold text-coral-600">
+                  ต้องมี
+                </span>
+              ) : null}
+              {item.sample ? (
+                <span className="text-[12px] text-ink-subtle">
+                  เช่น {item.sample}
+                </span>
+              ) : null}
             </button>
           </li>
         ))}
@@ -479,29 +710,60 @@ function PaletteGroup({
 
 // ------------------------------------------------------------------ ประวัติ
 
-function HistoryTab({ path, detail, onRestored }: { path: string; detail: TemplateDetail; onRestored: () => void }) {
+function HistoryTab({
+  path,
+  detail,
+  onRestored,
+}: {
+  path: string;
+  detail: TemplateDetail;
+  onRestored: () => void;
+}) {
   const { show } = useToast();
   const [compare, setCompare] = useState<TemplateVersion | null>(null);
-  const [restoreTarget, setRestoreTarget] = useState<TemplateVersion | null>(null);
+  const [restoreTarget, setRestoreTarget] = useState<TemplateVersion | null>(
+    null,
+  );
   const live = detail.live;
 
   return (
     <div className="mt-6 space-y-6">
-      <Panel title="ทุกเวอร์ชัน" description="ไม่มีการลบเวอร์ชัน — นำกลับมาใช้จะคัดลอกเป็นฉบับร่างใหม่ ประวัติเดิมไม่เปลี่ยน" flush>
+      <Panel
+        title="ทุกเวอร์ชัน"
+        description="ไม่มีการลบเวอร์ชัน — นำกลับมาใช้จะคัดลอกเป็นฉบับร่างใหม่ ประวัติเดิมไม่เปลี่ยน"
+        flush
+      >
         <ul className="divide-y divide-line">
           {detail.versions.map((v) => (
-            <li key={v.versionNumber} className="flex flex-col gap-3 px-5 py-4 lg:flex-row lg:items-start lg:justify-between">
+            <li
+              key={v.versionNumber}
+              className="flex flex-col gap-3 px-5 py-4 lg:flex-row lg:items-start lg:justify-between"
+            >
               <div className="min-w-0 space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[15px] font-semibold text-navy-800">เวอร์ชัน {v.versionNumber}</span>
+                  <span className="text-[15px] font-semibold text-navy-800">
+                    เวอร์ชัน {v.versionNumber}
+                  </span>
                   <Badge meta={VERSION_STATUS[v.status]} />
-                  {v.isDefault ? <span className="text-[12.5px] text-ink-subtle">เนื้อหาตั้งต้นของระบบ</span> : null}
+                  {v.isDefault ? (
+                    <span className="text-[12.5px] text-ink-subtle">
+                      เนื้อหาตั้งต้นของระบบ
+                    </span>
+                  ) : null}
                 </div>
                 <p className="text-[13px] text-ink-muted">
-                  {v.createdAt ? `บันทึก ${formatThaiDate(v.updatedAt ?? v.createdAt)} โดย ${v.updatedByName ?? "—"}` : "ยังไม่มีผู้แก้ไข"}
-                  {v.publishedAt ? ` · เผยแพร่ ${formatThaiDate(v.publishedAt)} โดย ${v.publishedByName ?? "—"}` : ""}
+                  {v.createdAt
+                    ? `บันทึก ${formatThaiDate(v.updatedAt ?? v.createdAt)} โดย ${v.updatedByName ?? "—"}`
+                    : "ยังไม่มีผู้แก้ไข"}
+                  {v.publishedAt
+                    ? ` · เผยแพร่ ${formatThaiDate(v.publishedAt)} โดย ${v.publishedByName ?? "—"}`
+                    : ""}
                 </p>
-                {v.publishReason ? <p className="text-[13.5px] text-ink">เหตุผล: {v.publishReason}</p> : null}
+                {v.publishReason ? (
+                  <p className="text-[13.5px] text-ink">
+                    เหตุผล: {v.publishReason}
+                  </p>
+                ) : null}
                 {v.restoredFromVersion ? (
                   <p className="text-[13.5px] text-ink">
                     คัดลอกจากเวอร์ชัน {v.restoredFromVersion}
@@ -510,11 +772,19 @@ function HistoryTab({ path, detail, onRestored }: { path: string; detail: Templa
                 ) : null}
               </div>
               <div className="flex shrink-0 flex-wrap gap-2">
-                <Button size="sm" variant="secondary" onClick={() => setCompare(v)}>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setCompare(v)}
+                >
                   {v.status === "PUBLISHED" ? "ดูตัวอย่าง" : "ดูและเปรียบเทียบ"}
                 </Button>
                 {v.status !== "DRAFT" && v.status !== "PUBLISHED" ? (
-                  <Button size="sm" variant="secondary" onClick={() => setRestoreTarget(v)}>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setRestoreTarget(v)}
+                  >
                     นำกลับมาใช้
                   </Button>
                 ) : null}
@@ -524,7 +794,14 @@ function HistoryTab({ path, detail, onRestored }: { path: string; detail: Templa
         </ul>
       </Panel>
 
-      {compare ? <CompareView path={path} selected={compare} live={live} onClose={() => setCompare(null)} /> : null}
+      {compare ? (
+        <CompareView
+          path={path}
+          selected={compare}
+          live={live}
+          onClose={() => setCompare(null)}
+        />
+      ) : null}
 
       <ActionDialog
         open={restoreTarget !== null}
@@ -538,7 +815,10 @@ function HistoryTab({ path, detail, onRestored }: { path: string; detail: Templa
         confirmLabel="คัดลอกเป็นฉบับร่าง"
         reasonHint="เหตุผลนี้แสดงในประวัติเวอร์ชันและถูกบันทึกไว้เป็นหลักฐาน"
         onConfirm={async (reason) => {
-          const res = await api.post<{ message: string }>(`${path}/versions/${restoreTarget!.versionNumber}/restore`, { reason });
+          const res = await api.post<{ message: string }>(
+            `${path}/versions/${restoreTarget!.versionNumber}/restore`,
+            { reason },
+          );
           show({ tone: "success", title: res.message });
           setCompare(null);
           onRestored();
@@ -584,11 +864,19 @@ function CompareView({
 
   return (
     <Panel
-      title={same ? `ตัวอย่างเวอร์ชัน ${selected.versionNumber}` : `เปรียบเทียบเวอร์ชัน ${selected.versionNumber} กับเวอร์ชันที่ใช้งานอยู่ (${live!.versionNumber})`}
+      title={
+        same
+          ? `ตัวอย่างเวอร์ชัน ${selected.versionNumber}`
+          : `เปรียบเทียบเวอร์ชัน ${selected.versionNumber} กับเวอร์ชันที่ใช้งานอยู่ (${live!.versionNumber})`
+      }
       actions={
         <div className="flex gap-2">
           {same ? null : (
-            <Button size="sm" variant="ghost" onClick={() => setMode(mode === "preview" ? "source" : "preview")}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setMode(mode === "preview" ? "source" : "preview")}
+            >
               {mode === "preview" ? "ดูความต่างของโค้ด" : "ดูตัวอย่าง"}
             </Button>
           )}
@@ -602,21 +890,39 @@ function CompareView({
         <SourceDiff before={live!} after={selected} />
       ) : (
         <div className={clsx("grid gap-6", same ? "" : "lg:grid-cols-2")}>
-          <PreviewColumn title={`เวอร์ชัน ${selected.versionNumber}`} state={left} />
-          {same ? null : <PreviewColumn title={`ใช้งานอยู่ (เวอร์ชัน ${live!.versionNumber})`} state={right} />}
+          <PreviewColumn
+            title={`เวอร์ชัน ${selected.versionNumber}`}
+            state={left}
+          />
+          {same ? null : (
+            <PreviewColumn
+              title={`ใช้งานอยู่ (เวอร์ชัน ${live!.versionNumber})`}
+              state={right}
+            />
+          )}
         </div>
       )}
     </Panel>
   );
 }
 
-function PreviewColumn({ title, state }: { title: string; state: ReturnType<typeof useVersionPreview> }) {
+function PreviewColumn({
+  title,
+  state,
+}: {
+  title: string;
+  state: ReturnType<typeof useVersionPreview>;
+}) {
   return (
     <div className="min-w-0">
       <p className="mb-2 text-[13px] font-semibold text-ink-muted">{title}</p>
       {state.error ? <ErrorNotice view={state.error} /> : null}
       {state.result ? (
-        <EmailPreviewFrame subject={state.result.subject} html={state.result.html} bytes={state.result.bytes} />
+        <EmailPreviewFrame
+          subject={state.result.subject}
+          html={state.result.html}
+          bytes={state.result.bytes}
+        />
       ) : state.error ? null : (
         <Spinner />
       )}
@@ -625,7 +931,13 @@ function PreviewColumn({ title, state }: { title: string; state: ReturnType<type
 }
 
 /** ความต่างทีละบรรทัด — ซ้าย/บนคือเวอร์ชันที่ใช้งานอยู่ (ลบ = แดง) เวอร์ชันที่เลือก (เพิ่ม = เขียว) */
-function SourceDiff({ before, after }: { before: TemplateContent; after: TemplateContent }) {
+function SourceDiff({
+  before,
+  after,
+}: {
+  before: TemplateContent;
+  after: TemplateContent;
+}) {
   const fields: Array<{ field: FieldName; label: string }> = [
     { field: "subject", label: "หัวเรื่อง" },
     { field: "bodyHtml", label: "เนื้อหา" },
@@ -635,8 +947,10 @@ function SourceDiff({ before, after }: { before: TemplateContent; after: Templat
   return (
     <div className="space-y-5">
       <p className="text-[13px] text-ink-muted">
-        <span className="rounded bg-danger-bg px-1 text-danger">− แดง</span> มีในเวอร์ชันที่ใช้งานอยู่ ·{" "}
-        <span className="rounded bg-success-bg px-1 text-success">+ เขียว</span> มีในเวอร์ชันที่เลือก
+        <span className="rounded bg-danger-bg px-1 text-danger">− แดง</span>{" "}
+        มีในเวอร์ชันที่ใช้งานอยู่ ·{" "}
+        <span className="rounded bg-success-bg px-1 text-success">+ เขียว</span>{" "}
+        มีในเวอร์ชันที่เลือก
       </p>
       {fields.map(({ field, label }) => {
         const a = before[field] ?? "";
@@ -645,7 +959,11 @@ function SourceDiff({ before, after }: { before: TemplateContent; after: Templat
           <div key={field}>
             <p className="mb-1.5 text-[13px] font-semibold text-ink-muted">
               {label}
-              {a === b ? <span className="ml-2 font-normal text-ink-subtle">ไม่ต่าง</span> : null}
+              {a === b ? (
+                <span className="ml-2 font-normal text-ink-subtle">
+                  ไม่ต่าง
+                </span>
+              ) : null}
             </p>
             {a === b ? null : (
               <pre className="max-h-[32rem] overflow-auto rounded-xl border border-line bg-white p-3 font-mono text-[12px] leading-relaxed">
@@ -659,7 +977,11 @@ function SourceDiff({ before, after }: { before: TemplateContent; after: Templat
                       line.kind === "same" && "text-ink-muted",
                     )}
                   >
-                    {line.kind === "added" ? "+ " : line.kind === "removed" ? "− " : "  "}
+                    {line.kind === "added"
+                      ? "+ "
+                      : line.kind === "removed"
+                        ? "− "
+                        : "  "}
                     {line.text}
                   </div>
                 ))}
