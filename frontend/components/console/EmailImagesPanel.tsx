@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ActionDialog } from "@/components/console/ActionDialog";
 import { ErrorNotice, Panel, Tag } from "@/components/console/ui";
@@ -217,6 +217,7 @@ function ImageDialog({
   const [altText, setAltText] = useState("");
   const [width, setWidth] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<AdminErrorView | null>(null);
@@ -307,16 +308,50 @@ function ImageDialog({
           required
         />
         <div>
-          <label htmlFor="email-image-file" className="mb-1.5 block text-[14px] font-medium text-ink">
+          <p className="mb-1.5 text-[14px] font-medium text-ink">
             {isNew ? "ไฟล์รูป" : "เปลี่ยนไฟล์ (ไม่เลือก = ใช้ไฟล์เดิม)"}
-          </label>
+          </p>
+          {/*
+            ปุ่มของ <input type="file"> เบราว์เซอร์วาดเอง และบางเครื่องออกมาเป็นข้อความธรรมดาที่ไม่ดูเป็นปุ่ม (feedback 2026-11-08)
+            จึงซ่อน input ไว้ (ยังอยู่ในฟอร์ม โปรแกรมอ่านจออ่านผ่าน aria-label ของปุ่ม) แล้วให้ Button ของระบบเปิดหน้าต่างเลือกไฟล์แทน
+          */}
           <input
+            ref={fileInput}
             id="email-image-file"
             type="file"
             accept="image/png,image/jpeg"
+            tabIndex={-1}
+            aria-hidden="true"
+            className="sr-only"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="block w-full text-[14px] text-ink file:mr-3 file:rounded-full file:border-0 file:bg-navy-50 file:px-4 file:py-2 file:text-navy-800"
           />
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              aria-label={isNew ? "เลือกไฟล์รูป" : "เลือกไฟล์ใหม่"}
+              onClick={() => fileInput.current?.click()}
+            >
+              {file ? "เลือกไฟล์อื่น" : "เลือกไฟล์"}
+            </Button>
+            <span className="min-w-0 break-all text-[13.5px] text-ink-muted">
+              {file ? `${file.name} · ${(file.size / 1024).toFixed(0)} KB` : isNew ? "ยังไม่ได้เลือกไฟล์" : "ใช้ไฟล์เดิม"}
+            </span>
+            {file ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setFile(null);
+                  if (fileInput.current) fileInput.current.value = "";
+                }}
+              >
+                ไม่ใช้ไฟล์นี้
+              </Button>
+            ) : null}
+          </div>
           {tooBig ? (
             <p className="mt-1 text-[13px] text-danger">
               ไฟล์ใหญ่ {(file!.size / 1024).toFixed(0)} KB — ต้องไม่เกิน {limits.maxBytes / 1024} KB
