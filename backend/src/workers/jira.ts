@@ -42,6 +42,7 @@ import {
   credentialsOf,
   findUserByEmail,
   getComments,
+  getMyself,
   issueStatuses,
   transitionTo,
 } from "../lib/jira-client.js";
@@ -459,7 +460,14 @@ async function copyCommentsToTimeline(
     return { cancelled: { code: "NOT_TRACKED", message: "ยกเลิก — ระบบเลิกติดตามการ์ดนี้ก่อนคัดลอก comment" } };
   }
 
-  const comments = await getComments(credentialsOf(config), issueKey);
+  /**
+   * comment ที่ระบบเขียนเองไม่ใช่ความเห็นของผู้เชี่ยวชาญ — "เปลี่ยนผู้เชี่ยวชาญจาก … เป็น …" และข้อความอื่นที่บัญชีเชื่อมต่อ (jira-vela) เขียน
+   * ถูกตัดออกด้วย accountId ของบัญชีนั้น พบเมื่อ 2026-11-08: การ์ดที่ผู้เชี่ยวชาญไม่ได้เขียนอะไรเลยถูกย้ายไป Done แล้วไทม์ไลน์ได้ comment
+   * ของระบบเองสามรายการในนามผู้เชี่ยวชาญ
+   */
+  const creds = credentialsOf(config);
+  const me = await getMyself(creds);
+  const comments = (await getComments(creds, issueKey)).filter((c) => c.authorAccountId !== me.accountId);
   const blocks = comments.map((c) => {
     const { text, hasMedia } = adfToText(c.body);
     return [

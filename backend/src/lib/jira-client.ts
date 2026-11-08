@@ -282,6 +282,7 @@ export async function issueStatuses(creds: Credentials, keys: string[]): Promise
 export interface JiraComment {
   id: string;
   author: string;
+  authorAccountId: string | null;
   created: string;
   body: unknown;
 }
@@ -292,14 +293,20 @@ export async function getComments(creds: Credentials, issueKey: string): Promise
   for (let startAt = 0; startAt < 5000; ) {
     const page = await call<{
       total: number;
-      comments: Array<{ id: string; created: string; body: unknown; author?: { displayName?: string } }>;
+      comments: Array<{ id: string; created: string; body: unknown; author?: { displayName?: string; accountId?: string } }>;
     }>(
       creds,
       "GET",
       `/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment?orderBy=created&startAt=${startAt}&maxResults=100`,
     );
     for (const c of page.comments) {
-      out.push({ id: c.id, author: c.author?.displayName ?? "ไม่ทราบชื่อ", created: c.created, body: c.body });
+      out.push({
+        id: c.id,
+        author: c.author?.displayName ?? "ไม่ทราบชื่อ",
+        authorAccountId: c.author?.accountId ?? null,
+        created: c.created,
+        body: c.body,
+      });
     }
     startAt += page.comments.length;
     if (page.comments.length === 0 || startAt >= page.total) break;

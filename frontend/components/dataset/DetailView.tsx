@@ -13,6 +13,7 @@ import { RequestMovedNotice } from "@/components/review/RequestMovedNotice";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader, DatasetStatusBadge } from "@/components/ui/Card";
 import { SelectField, TextAreaField } from "@/components/ui/Field";
+import { LinkifiedText } from "@/components/ui/LinkifiedText";
 import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
@@ -668,7 +669,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
             </p>
             <p className="mt-1 font-medium text-navy-800">ความเห็นล่าสุด</p>
             <p className="mt-2 whitespace-pre-wrap text-[15px] leading-relaxed text-ink">
-              {latestSpecialistNote.note}
+              <LinkifiedText text={latestSpecialistNote.note ?? ""} />
             </p>
             <p className="mt-3 text-[13px] text-ink-muted">
               {latestSpecialistNote.actor?.name || "—"}

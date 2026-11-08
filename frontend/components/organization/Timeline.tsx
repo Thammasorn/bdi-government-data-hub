@@ -6,6 +6,7 @@ import {
   type ReviewTaskType,
 } from "@/lib/status";
 import { fullName } from "@/lib/types";
+import { LinkifiedText } from "@/components/ui/LinkifiedText";
 
 /**
  * หนึ่งบรรทัดของ timeline = หนึ่งแถวใน review.review_task
@@ -183,7 +184,7 @@ export function Timeline({
               </p>
               {row.note ? (
                 <p className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-canvas px-3 py-2 text-[13px] leading-relaxed text-ink">
-                  {row.note}
+                  <LinkifiedText text={row.note} />
                 </p>
               ) : null}
             </div>
