@@ -4,6 +4,7 @@ import clsx from "clsx";
 import type {
   InputHTMLAttributes,
   ReactNode,
+  Ref,
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from "react";
@@ -107,7 +108,8 @@ export function TextField({
   className,
   ...rest
 }: InputHTMLAttributes<HTMLInputElement> &
-  Validatable & { label: string; error?: string; hint?: string }) {
+  // `ref` เป็น prop ธรรมดาใน React 19 — ไปถึง <input> ผ่าน `...rest` (หน้าแก้เทมเพลตอีเมลใช้แทรกตัวแปรที่ตำแหน่ง cursor)
+  Validatable & { label: string; error?: string; hint?: string; ref?: Ref<HTMLInputElement> }) {
   const showValid = Boolean(valid) && !error;
   return (
     <Field label={label} error={error} hint={hint} required={required} className={className}>

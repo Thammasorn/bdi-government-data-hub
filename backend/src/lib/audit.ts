@@ -482,6 +482,19 @@ export const AuditAction = {
    * ไม่ใช่ UUID (เหมือน `ADDRESS_MASTER`) metadata `key` บอกว่าค่าไหน before/after คือค่าเดิม/ค่าใหม่ (`value`, `is_default`)
    */
   SYSTEM_SETTING_UPDATED: "SYSTEM_SETTING_UPDATED",
+  /**
+   * เทมเพลตอีเมล (/console → ตั้งค่า › เทมเพลตอีเมล, การ์ด "[New Feature] Admin Email Template Edit") — subject คือแถวเวอร์ชัน
+   * (`administration.email_template_version`) metadata `template_key` · `version` ทุกตัว
+   *
+   * - PUBLISHED: ฉบับร่างกลายเป็นฉบับที่ใช้ส่งจริง — `metadata.reason`, `before.version` คือเวอร์ชันที่ถูกแทน
+   * - RESTORED: คัดลอกเวอร์ชันเก่าเป็นฉบับร่าง — `metadata.from_version`, `metadata.reason` (ยังไม่มีผลกับอีเมลจริงจนกว่าจะเผยแพร่)
+   * - TEST_SENT: ส่งอีเมลทดสอบถึงอีเมลของผู้ดูแลที่กด — `metadata.draft` บอกว่าส่งเนื้อหาที่ยังไม่บันทึก/ยังไม่เผยแพร่หรือไม่
+   *
+   * การบันทึกฉบับร่างไม่มีแถวของตัวเอง: ฉบับร่างไม่เคยถูกใช้ส่ง และคำขอ /api/admin ทุกครั้งลง ADMIN_API_REQUEST ใน Mongo อยู่แล้ว
+   */
+  EMAIL_TEMPLATE_PUBLISHED: "EMAIL_TEMPLATE_PUBLISHED",
+  EMAIL_TEMPLATE_RESTORED: "EMAIL_TEMPLATE_RESTORED",
+  EMAIL_TEMPLATE_TEST_SENT: "EMAIL_TEMPLATE_TEST_SENT",
 
   /** ลงนามอิเล็กทรอนิกส์บนเอกสารข้อตกลง (signature.signature_confirmation) */
   DOCUMENT_SIGNED: "DOCUMENT_SIGNED",
@@ -553,6 +566,8 @@ export const AuditSubject = {
   PUBLIC_DOCUMENT: "PUBLIC_DOCUMENT",
   /** ค่าตั้งระบบหนึ่งตัวใน `administration.system_setting` — ไม่มีใน sheet subject_id ว่าง key อยู่ใน metadata */
   SYSTEM_SETTING: "SYSTEM_SETTING",
+  /** เวอร์ชันหนึ่งของเทมเพลตอีเมลใน `administration.email_template_version` — ไม่มีใน sheet */
+  EMAIL_TEMPLATE: "EMAIL_TEMPLATE",
   NOTIFICATION: "NOTIFICATION",
   INTEGRATION_JOB: "INTEGRATION_JOB",
   /**
