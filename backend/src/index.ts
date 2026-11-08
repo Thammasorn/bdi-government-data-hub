@@ -36,6 +36,7 @@ import { adminJiraRouter } from "./routes/admin-jira.js";
 import { adminSettingRouter } from "./routes/admin-settings.js";
 import { adminEmailTemplateRouter } from "./routes/admin-email-templates.js";
 import { adminEmailImageRouter } from "./routes/admin-email-images.js";
+import { adminDeliveryRouter } from "./routes/admin-deliveries.js";
 import { addressRouter } from "./routes/address.js";
 import { authRouter } from "./routes/auth.js";
 import { clientErrorRouter } from "./routes/client-errors.js";
@@ -210,6 +211,7 @@ app.use("/api/admin/settings/jira", adminJiraRouter);
 app.use("/api/admin/settings", adminSettingRouter);
 app.use("/api/admin/email-templates", adminEmailTemplateRouter);
 app.use("/api/admin/email-images", adminEmailImageRouter);
+app.use("/api/admin/deliveries", adminDeliveryRouter);
 // เอกสารกฎหมายและตัวแปร template อยู่ที่ไฟล์ของมันเอง และต้องมาก่อน adminRouter ที่ใช้ guard ของผู้ดูแลระบบอย่างเดียว
 app.use("/api/admin", adminLegalDocumentRouter);
 app.use("/api/admin", adminRouter);

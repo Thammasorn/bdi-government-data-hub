@@ -9,7 +9,7 @@ import { Router } from "../lib/async-route.js";
 import { NotificationStatus } from "@prisma/client";
 
 import { prisma } from "../db.js";
-import { linkFor } from "../lib/notify.js";
+import { SYSTEM_EMAIL_TYPES, linkFor } from "../lib/notify.js";
 import { requireAuth } from "../middleware/auth.js";
 
 export const notificationRouter = Router();
@@ -21,7 +21,12 @@ notificationRouter.get("/", async (req, res) => {
   const recipientUserId = req.session!.sub;
   const [rows, unreadCount] = await Promise.all([
     prisma.notification.findMany({
-      where: { recipientUserId, status: { not: NotificationStatus.ARCHIVED } },
+      // แถวที่มีไว้พกอีเมลของระบบ (OTP ลิงก์ตั้งรหัสผ่าน คำเชิญ อีเมลทดสอบ) ไม่ใช่ข่าว — ไม่ขึ้นกระดิ่ง
+      where: {
+        recipientUserId,
+        status: { not: NotificationStatus.ARCHIVED },
+        notificationType: { notIn: [...SYSTEM_EMAIL_TYPES] },
+      },
       orderBy: { createdAt: "desc" },
       take: PAGE_SIZE,
       select: {
@@ -37,7 +42,7 @@ notificationRouter.get("/", async (req, res) => {
       },
     }),
     prisma.notification.count({
-      where: { recipientUserId, status: NotificationStatus.UNREAD },
+      where: { recipientUserId, status: NotificationStatus.UNREAD, notificationType: { notIn: [...SYSTEM_EMAIL_TYPES] } },
     }),
   ]);
 

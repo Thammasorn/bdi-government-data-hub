@@ -7,6 +7,7 @@ import { OrganizationPicker } from "@/components/console/OrganizationPicker";
 import { SelectField, TextField } from "@/components/ui/Field";
 import { BDI_ROLE_CODES, ORGANIZATION_ROLES, isReleasedEmail } from "@/lib/admin";
 import { ApiError, api } from "@/lib/api";
+import { useDeliveryTracker } from "@/components/console/DeliveryTracker";
 import { PREFIXES, ROLE_LABELS, formatThaiDate, type Role } from "@/lib/status";
 
 /** หน่วยงานที่กล่องเชิญถูกล็อกไว้ — เปิดจากหน้าของหน่วยงานนั้นเอง */
@@ -65,6 +66,7 @@ export function InviteDialog({
 }) {
   const [form, setForm] = useState({ email: "", cid: "", role: "" as Role | "", org: "", prefix: "", first: "", last: "" });
   const [reinvite, setReinvite] = useState<ReinviteAccount | null>(null);
+  const { track } = useDeliveryTracker();
   const panelRef = useRef<HTMLDivElement>(null);
   // แผงขึ้นเหนือฟอร์มขณะที่กล่องเลื่อนลงมาอยู่ที่ปุ่ม — ไม่เลื่อนขึ้นไปให้เห็น ผู้ดูแลจะกด "เชิญกลับ" โดยไม่ได้อ่านว่าเป็นใคร
   useEffect(() => {
@@ -107,16 +109,17 @@ export function InviteDialog({
       onConfirm={async (reason) => {
         const target = { role: form.role, ...(scoped ? { organizationId: form.org } : {}) };
         if (reinvite) {
-          await api.post(`/api/admin/users/${reinvite.userAccountId}/reinvite`, {
+          const res = await api.post<{ deliveryId?: string }>(`/api/admin/users/${reinvite.userAccountId}/reinvite`, {
             email: form.email.trim(),
             ...target,
             reason,
           });
+          track(res.deliveryId, `คำเชิญกลับเข้ามาถึง ${form.email.trim()}`);
           onDone(form.email.trim());
           return;
         }
         try {
-          await api.post("/api/admin/invitations", {
+          const res = await api.post<{ deliveryId?: string }>("/api/admin/invitations", {
             email: form.email.trim(),
             cid: form.cid,
             ...target,
@@ -124,6 +127,7 @@ export function InviteDialog({
             ...(form.first.trim() ? { firstnameTh: form.first.trim() } : {}),
             ...(form.last.trim() ? { lastnameTh: form.last.trim() } : {}),
           });
+          track(res.deliveryId, `คำเชิญถึง ${form.email.trim()}`);
         } catch (err) {
           if (!(err instanceof ApiError) || err.code !== "cid_deactivated") throw err;
           const d = err.details;

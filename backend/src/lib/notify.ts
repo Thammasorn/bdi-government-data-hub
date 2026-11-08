@@ -31,6 +31,7 @@ import { buildJourneyProgress, type JourneyProgress } from "./journey-steps.js";
 import { addBreadcrumb, correlationId } from "./context.js";
 import { activeAssignmentWhere } from "./iam.js";
 import { ROLE_LABELS } from "./roles.js";
+import { encryptSecret } from "./outbox-secret.js";
 import { ROLE_CODES, type RoleCode } from "./system.js";
 
 /** notification type code ตามตัวอย่างในภาพของ sheet `notification` */
@@ -77,12 +78,36 @@ export const NotificationType = {
   REPRESENTATIVE_CHANGE_REJECTED: "REPRESENTATIVE_CHANGE_REJECTED",
   REPRESENTATIVE_CHANGE_COMPLETED: "REPRESENTATIVE_CHANGE_COMPLETED",
   REPRESENTATIVE_CHANGE_FAILED: "REPRESENTATIVE_CHANGE_FAILED",
+  /**
+   * อีเมลของระบบที่พก secret (การ์ด "[Enhance] Send every email through the delivery worker", 2026-11-08) — เคยส่ง inline จากคำขอ
+   * ตอนนี้ผ่าน outbox โดย secret อยู่ใน `notification_delivery.secret_payload` แบบเข้ารหัส (lib/outbox-secret.ts)
+   * `USER_ACTIVATION_INVITATION` ข้างบนคือคำเชิญ (subject = activation key) สามตัวนี้คือ OTP ลิงก์ตั้งรหัสผ่าน และอีเมลทดสอบของหน้าแก้เทมเพลต
+   */
+  LOGIN_OTP: "LOGIN_OTP",
+  PASSWORD_RESET: "PASSWORD_RESET",
+  EMAIL_TEMPLATE_TEST: "EMAIL_TEMPLATE_TEST",
 } as const;
+
+/**
+ * ชนิดที่มีแถว notification เพียงเพื่อพกอีเมลไปถึง outbox (`notification_delivery.notification_id` NOT NULL) — ไม่ใช่ข่าวที่ผู้ใช้ต้องอ่าน
+ * กระดิ่งไม่แสดง และนับเป็นอ่านแล้วตั้งแต่เกิด (OTP ทุกครั้งที่เข้าสู่ระบบจะท่วมกระดิ่ง คำเชิญถึงคนที่ยังเข้าระบบไม่ได้)
+ */
+export const SYSTEM_EMAIL_TYPES: readonly string[] = [
+  "USER_ACTIVATION_INVITATION",
+  "LOGIN_OTP",
+  "PASSWORD_RESET",
+  "EMAIL_TEMPLATE_TEST",
+];
 
 export type NotificationTypeCode = (typeof NotificationType)[keyof typeof NotificationType];
 
 interface NotifyInput {
   type: NotificationTypeCode;
+  /**
+   * secret ที่อีเมลต้องพก — เก็บเข้ารหัสในแถว outbox และถูกลบเมื่อส่งเสร็จ ยกเลิก เลิกส่ง หรือเลย `expiresAt` (worker ลบทุกรอบ)
+   * ใช้กับผู้รับคนเดียวเท่านั้น (คำเชิญ ลิงก์ตั้งรหัสผ่าน OTP)
+   */
+  secret?: { payload: Record<string, unknown>; expiresAt: Date };
   title: string;
   message: string;
   subjectType?: string | null;
@@ -120,9 +145,11 @@ interface NotifyInput {
  * ผู้รับที่สถานะยัง PENDING ก็รับได้ — ภาพใน sheet `notification` ระบุไว้ชัด
  * ("recipient_user_id ต้องอ้างอิง User Account ที่มีอยู่ในระบบ รวมถึง Account ที่มีสถานะ PENDING")
  */
-export async function notifyUsers(userIds: Array<string | null | undefined>, input: NotifyInput) {
+/** คืน id ของแถว `notification_delivery` ที่สร้าง (ว่างถ้า `email: false`) — หน้าจอใช้ติดตามสถานะการส่ง */
+export async function notifyUsers(userIds: Array<string | null | undefined>, input: NotifyInput): Promise<string[]> {
   const unique = [...new Set(userIds.filter((id): id is string => Boolean(id)))];
-  if (unique.length === 0) return;
+  if (unique.length === 0) return [];
+  if (input.secret && unique.length > 1) throw new Error("notifyUsers: secret ใช้กับผู้รับคนเดียวเท่านั้น");
 
   const correlation = correlationId();
 
@@ -133,21 +160,27 @@ export async function notifyUsers(userIds: Array<string | null | undefined>, inp
 
   // breadcrumb: ชนิด จำนวนผู้รับ และว่าลงคิวอีเมลด้วยไหม — ไม่มีที่อยู่ผู้รับ
   const crumb = `${input.type} → ${recipients.length} คน${input.email !== false ? " + คิวอีเมล" : ""}`;
+  let deliveryIds: string[];
   try {
-    await writeNotifications(recipients, input, correlation);
+    deliveryIds = await writeNotifications(recipients, input, correlation);
   } catch (err) {
     addBreadcrumb("outbox", `${crumb} — เขียนไม่สำเร็จ`, false);
     throw err;
   }
   addBreadcrumb("outbox", crumb);
+  return deliveryIds;
 }
+
+/** ช่อง Postgres ที่ delivery-worker ฟัง (`LISTEN`) — แจ้งตอน commit worker หยิบงานทันทีแทนการรอรอบ 15 วินาที */
+export const OUTBOX_CHANNEL = "outbox_wakeup";
 
 async function writeNotifications(
   recipients: Array<{ id: string; email: string }>,
   input: NotifyInput,
   correlation: string,
-) {
-  await prisma.$transaction(async (tx) => {
+): Promise<string[]> {
+  return prisma.$transaction(async (tx) => {
+    const deliveryIds: string[] = [];
     for (const recipient of recipients) {
       const notification = await tx.notification.create({
         data: {
@@ -165,7 +198,7 @@ async function writeNotifications(
       });
 
       if (input.email !== false) {
-        await tx.notificationDelivery.create({
+        const delivery = await tx.notificationDelivery.create({
           data: {
             notificationId: notification.id,
             channel: DeliveryChannel.EMAIL,
@@ -173,10 +206,17 @@ async function writeNotifications(
             status: DeliveryStatus.PENDING,
             scheduledAt: input.scheduledAt ?? new Date(),
             correlationId: correlation,
+            secretPayload: input.secret ? encryptSecret(input.secret.payload) : null,
+            secretExpiresAt: input.secret?.expiresAt ?? null,
           },
+          select: { id: true },
         });
+        deliveryIds.push(delivery.id);
       }
     }
+    // NOTIFY ในธุรกรรมถูกส่งตอน commit เท่านั้น — worker ไม่มีทางหยิบแถวที่ยังไม่ commit (หรือที่ rollback ไปแล้ว)
+    if (deliveryIds.length) await tx.$executeRaw`SELECT pg_notify(${OUTBOX_CHANNEL}, '')`;
+    return deliveryIds;
   });
 }
 

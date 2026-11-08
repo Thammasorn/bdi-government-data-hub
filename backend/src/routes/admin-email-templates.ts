@@ -32,9 +32,9 @@ import {
   type TemplateContent,
   type TemplateDefinition,
 } from "../lib/email/catalogue.js";
-import { imageCodes, listImages, loadImages, referencedImages } from "../lib/email/images.js";
-import { renderEmail, validateContent, type ContentIssue } from "../lib/email/render.js";
-import { LAYOUT_PREVIEW_KEY, sampleContext } from "../lib/email/samples.js";
+import { imageCodes, listImages } from "../lib/email/images.js";
+import { validateContent, type ContentIssue } from "../lib/email/render.js";
+import { renderSample as renderSampleWith } from "../lib/email/sample-render.js";
 import {
   EmailTemplateError,
   listVersions,
@@ -46,7 +46,7 @@ import {
   templateSummaries,
   type VersionView,
 } from "../lib/email/store.js";
-import { sendRendered } from "../lib/mail.js";
+import { queueTemplateTestEmail } from "../lib/email-queue.js";
 import { fullNameTh } from "../lib/person-name.js";
 import { requireAdmin } from "../middleware/auth.js";
 
@@ -155,16 +155,8 @@ function definitionView(def: TemplateDefinition) {
   };
 }
 
-/** render เนื้อหาหนึ่งชุดด้วยข้อมูลตัวอย่าง — แม่แบบกลางแสดงกับอีเมล "หน่วยงานเปิดใช้งานแล้ว" ฉบับที่ใช้งานอยู่ */
-async function renderSample(def: TemplateDefinition, content: TemplateContent, preview: boolean) {
-  const ctx = sampleContext(def.key);
-  const [template, layout] =
-    def.key === LAYOUT_KEY
-      ? [(await liveContent(prisma, LAYOUT_PREVIEW_KEY)).content, content]
-      : [content, (await liveContent(prisma, LAYOUT_KEY)).content];
-  const images = await loadImages(prisma, referencedImages(template.bodyHtml, template.footnoteHtml, layout.bodyHtml));
-  return renderEmail({ content: template, layout, ctx, images, preview });
-}
+const renderSample = (def: TemplateDefinition, content: TemplateContent, preview: boolean) =>
+  renderSampleWith(prisma, def, content, preview);
 
 // ------------------------------------------------------------------ อ่าน
 
@@ -301,7 +293,8 @@ adminEmailTemplateRouter.post("/:key/test-send", async (req: Request, res) => {
   await handle(res, async () => {
     const def = requireDefinition(String(req.params.key));
     const to = req.session?.email;
-    if (!to) {
+    const userAccountId = req.session?.sub;
+    if (!to || !userAccountId) {
       // ทาง admin token ไม่มีตัวคน — ส่งทดสอบได้เฉพาะถึงอีเมลของผู้ดูแลที่ล็อกอิน การ์ดห้ามพิมพ์ที่อยู่อื่น
       throw new EmailTemplateError(400, "session_required", "ส่งอีเมลทดสอบได้เฉพาะเมื่อเข้าสู่ระบบด้วยบัญชีผู้ดูแลระบบ — อีเมลจะไปถึงบัญชีนั้น");
     }
@@ -311,8 +304,9 @@ adminEmailTemplateRouter.post("/:key/test-send", async (req: Request, res) => {
       validationFailure(res, check.issues);
       return;
     }
-    const rendered = await renderSample(def, check.clean, false);
-    await sendRendered(to, `[ทดสอบ] ${rendered.subject || def.label}`, rendered.html, rendered.attachments);
+    // ผ่าน delivery-worker เหมือนอีเมลจริง (การ์ด "Send every email through the delivery worker") — การทดสอบจึงพิสูจน์ด้วยว่า worker
+    // กับ SMTP ใช้งานได้ หน้าจอติดตามสถานะด้วย deliveryId worker render เนื้อหาที่ส่งมานี้ด้วยข้อมูลตัวอย่างชุดเดียวกับ preview
+    const deliveryId = await queueTemplateTestEmail({ userAccountId, templateKey: def.key, content: { ...check.clean } });
     const live = await liveContent(prisma, def.key);
     const unchanged = JSON.stringify(check.clean) === JSON.stringify(validateContent(def, live.content, await imageCodes(prisma)).clean);
     await logAudit({
@@ -320,6 +314,6 @@ adminEmailTemplateRouter.post("/:key/test-send", async (req: Request, res) => {
       subjectType: AuditSubject.EMAIL_TEMPLATE,
       metadata: { template_key: def.key, live_version: live.versionNumber, draft: !unchanged },
     });
-    res.json({ to, message: `ส่งอีเมลทดสอบถึง ${to} แล้ว — ใช้ข้อมูลตัวอย่าง หัวเรื่องขึ้นต้นด้วย [ทดสอบ]` });
+    res.json({ to, deliveryId, message: `เข้าคิวอีเมลทดสอบถึง ${to} แล้ว — ใช้ข้อมูลตัวอย่าง หัวเรื่องขึ้นต้นด้วย [ทดสอบ]` });
   });
 });

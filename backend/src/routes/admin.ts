@@ -42,7 +42,9 @@ import {
   roleSeatTaken,
 } from "../lib/iam.js";
 import { formerOrganizationOf, invitationTarget } from "../lib/invitation-target.js";
-import { sendInvitationEmail } from "../lib/mail.js";
+import { queueInvitationEmail } from "../lib/email-queue.js";
+import { latestBySubject } from "../lib/delivery-view.js";
+import { NotificationType } from "../lib/notify.js";
 import { organizationRegistryRules } from "../lib/organization-form.js";
 import { ORGANIZATION_FROZEN, isOrganizationFrozen } from "../lib/organization-freeze.js";
 import { ORGANIZATION_STATUS_LABELS, ROLE_LABELS } from "../lib/roles.js";
@@ -1246,14 +1248,17 @@ adminRouter.post("/invitations", async (req, res) => {
     metadata: { issued_via: "ADMIN_API", reason: "INVITATION" },
   });
 
-  await sendInvitationEmail(email, result.key, {
-    roleLabel: ROLE_LABELS[role],
-    organizationName: organization.nameTh,
+  // เข้า outbox — worker ส่ง (มี retry) หน้าจอติดตามสถานะการส่งด้วย deliveryId
+  const deliveryId = await queueInvitationEmail({
+    userAccountId: result.account.id,
+    activationKeyId: result.record.id,
+    rawKey: result.key,
     expiresAt: result.record.expiresAt,
-    internal: organizationId === BDI_ORGANIZATION_ID,
+    organizationId,
   });
 
   res.status(201).json({
+    deliveryId,
     activationKeyId: result.record.id,
     userAccountId: result.account.id,
     email,
@@ -1342,7 +1347,14 @@ adminRouter.get("/invitations", async (req, res) => {
     }),
   ]);
 
-  res.json({ invitations: keys, total, page, pageSize });
+  // อีเมลคำเชิญฉบับล่าสุดของคีย์แต่ละใบ — ป้ายสถานะการส่งในแถว (การ์ด "Send every email through the delivery worker" ข้อ 3.2)
+  const deliveries = await latestBySubject(prisma, NotificationType.USER_ACTIVATION_INVITATION, keys.map((k) => k.id));
+  res.json({
+    invitations: keys.map((k) => ({ ...k, emailDelivery: deliveries.get(k.id) ?? null })),
+    total,
+    page,
+    pageSize,
+  });
 });
 
 /**
@@ -1500,15 +1512,17 @@ adminRouter.post("/invitations/:id/resend", async (req, res) => {
     metadata: { issued_via: "ADMIN_API", reason: "RESEND", replaced_key_id: key.id },
   });
 
-  await sendInvitationEmail(key.userAccount.email, raw, {
-    roleLabel: ROLE_LABELS[roleCode],
-    organizationName: key.organization.nameTh,
-    // วันหมดอายุของ **คีย์ใบใหม่** ไม่ใช่ของใบที่เพิ่งถูกแทนที่
+  // คีย์ใบใหม่ — worker อ่านวันหมดอายุจากคีย์ใบนี้ ไม่ใช่ของใบที่เพิ่งถูกแทนที่
+  const deliveryId = await queueInvitationEmail({
+    userAccountId: key.userAccountId,
+    activationKeyId: record.id,
+    rawKey: raw,
     expiresAt: record.expiresAt,
-    internal: key.organizationId === BDI_ORGANIZATION_ID,
+    organizationId: key.organizationId,
   });
 
   res.status(201).json({
+    deliveryId,
     activationKeyId: record.id,
     replacedActivationKeyId: key.id,
     userAccountId: key.userAccountId,

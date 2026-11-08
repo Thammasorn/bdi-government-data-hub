@@ -41,7 +41,9 @@ import {
   frozenOrganizationMessage,
   isOrganizationFrozen,
 } from "../lib/organization-freeze.js";
-import { sendOtpEmail } from "../lib/mail.js";
+import { queueOtpEmail } from "../lib/email-queue.js";
+import { stateOf as deliveryStateOf } from "../lib/delivery-view.js";
+import { NotificationType } from "../lib/notify.js";
 import {
   findUsablePasswordResetToken,
   type PasswordResetLookupFailure,
@@ -92,8 +94,7 @@ const ACTIVATION_FAILURE_MESSAGES: Record<string, string> = {
 };
 
 /**
- * `LOGIN_OTP_ISSUED` เขียนหลังบันทึกรหัสและ **ก่อน** ส่งอีเมล — การส่งทำ inline และ throw ได้
- * ถ้าเขียนทีหลัง SMTP ที่ล้มจะพาแถวนี้หายไปด้วย ทั้งที่รหัสถูกออกไปแล้วจริง
+ * `LOGIN_OTP_ISSUED` เขียนหลังบันทึกรหัสและก่อนเข้าคิวอีเมล — อีเมลส่งโดย delivery-worker (คืน id ของแถว outbox ให้หน้าจอติดตาม)
  */
 async function issueOtp(
   email: string,
@@ -122,7 +123,10 @@ async function issueOtp(
     // ไม่มีตัวรหัสหรือ hash ของมัน — id ของแถวพอให้จับคู่กับความพยายามที่ขั้น OTP ได้
     metadata: { resend: audit.resend, otp_code_id: otp.id, expires_at: otp.expiresAt },
   });
-  await sendOtpEmail(email, code);
+  // เข้า outbox (การ์ด "Send every email through the delivery worker") — worker ถูกปลุกตอน commit อีเมลออกในราววินาที
+  // ไม่มีบัญชี (ส่งรหัสซ้ำของอีเมลที่หาบัญชีไม่เจอ) = ไม่มีผู้รับให้ผูกแถว outbox จึงไม่ส่ง — ขั้นรหัสผ่านไม่มีทางผ่านมาถึงแบบนั้น
+  if (!audit.userAccountId) return null;
+  return queueOtpEmail({ userAccountId: audit.userAccountId, otpId: otp.id, code, expiresAt: otp.expiresAt });
 }
 
 /** ปิดท้ายด้วยเลขสี่ตัวหลัง พอให้ผู้ใช้รู้ว่าต้องยืนยันด้วยบัตรใบไหน แต่ไม่เปิดเลขทั้งชุด */
@@ -1086,8 +1090,29 @@ authRouter.post("/login", async (req, res) => {
     return;
   }
 
-  await issueOtp(user.email, OtpPurpose.LOGIN, { userAccountId: user.id, resend: false });
-  res.status(202).json({ email: user.email, nextStep: "verify_otp" });
+  const otpDeliveryId = await issueOtp(user.email, OtpPurpose.LOGIN, { userAccountId: user.id, resend: false });
+  // otpDeliveryId: หน้าเข้าสู่ระบบถามสถานะการส่งได้ (`GET /api/auth/otp-delivery/:id`) — บอกผู้ใช้ถ้าส่งรหัสไม่สำเร็จ
+  res.status(202).json({ email: user.email, nextStep: "verify_otp", otpDeliveryId });
+});
+
+/**
+ * สถานะการส่งรหัส OTP — หน้าเข้าสู่ระบบถามซ้ำสั้น ๆ หลังกดเข้าสู่ระบบ เพื่อบอกผู้ใช้ถ้าส่งรหัสไม่สำเร็จ (การ์ด "Send every email through
+ * the delivery worker" ข้อ 3.5) ยังไม่ล็อกอิน จึงตอบแค่สถานะ ไม่มีอีเมล ไม่มีรายละเอียด และเฉพาะแถว OTP ที่อายุไม่เกิน 15 นาที —
+ * id ของแถวอื่น (คำเชิญ ลิงก์ตั้งรหัสผ่าน) ได้ 404 เหมือนไม่มีอยู่
+ */
+authRouter.get("/otp-delivery/:id", async (req, res) => {
+  const id = z.string().uuid().safeParse(req.params.id);
+  const row = id.success
+    ? await prisma.notificationDelivery.findUnique({
+        where: { id: id.data },
+        select: { status: true, createdAt: true, notification: { select: { notificationType: true } } },
+      })
+    : null;
+  if (!row || row.notification.notificationType !== NotificationType.LOGIN_OTP || row.createdAt < new Date(Date.now() - 15 * 60_000)) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ state: deliveryStateOf(row.status) });
 });
 
 /** ขั้นที่ 2 ของการเข้าสู่ระบบ — ตรวจ OTP แล้วออก session */
@@ -1217,11 +1242,11 @@ authRouter.post("/login/resend-otp", async (req, res) => {
   const account = await prisma.userAccount
     .findUnique({ where: { email: parsed.data.email }, select: { id: true } })
     .catch(() => null);
-  await issueOtp(parsed.data.email, OtpPurpose.LOGIN, {
+  const otpDeliveryId = await issueOtp(parsed.data.email, OtpPurpose.LOGIN, {
     userAccountId: account?.id ?? null,
     resend: true,
   });
-  res.status(202).json({ ok: true });
+  res.status(202).json({ ok: true, otpDeliveryId });
 });
 
 /**

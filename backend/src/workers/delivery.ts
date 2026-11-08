@@ -15,6 +15,7 @@
  *   ของ notification ไม่เก็บ payload ที่มีความลับ
  */
 import { DeliveryStatus, OrganizationStatus, PrismaClient, SubjectType } from "@prisma/client";
+import pg from "pg";
 
 import { runWithContext } from "../lib/context.js";
 import {
@@ -26,6 +27,10 @@ import {
   recordRuntimeEvent,
 } from "../lib/error-capture.js";
 import { closeLogStore, startLogStore } from "../lib/log-store.js";
+import { classifyDeliveryError } from "../lib/delivery-errors.js";
+import { OUTBOX_CHANNEL } from "../lib/notify.js";
+import { OutboxSecretError, decryptSecret } from "../lib/outbox-secret.js";
+import { env } from "../env.js";
 import { isOrganizationFrozen } from "../lib/organization-freeze.js";
 import { startErrorAlerts, stopErrorAlerts } from "./error-alerts.js";
 import { startInvitationReminders, stopInvitationReminders } from "./invitation-reminders.js";
@@ -49,7 +54,11 @@ interface Claimed {
   destination: string;
   attempt_count: number;
   correlation_id: string;
+  secret_payload: string | null;
 }
+
+/** สถานะที่จบแล้ว — secret ต้องไม่อยู่ต่อแม้วินาทีเดียว (`notification_delivery.secret_payload`) */
+const CLEAR_SECRET = { secretPayload: null, secretExpiresAt: null } as const;
 
 /**
  * หยิบงานที่ถึงเวลาส่งแล้ว และล็อกไว้ในคำสั่งเดียว
@@ -73,7 +82,32 @@ async function claimBatch(): Promise<Claimed[]> {
         LIMIT ${BATCH_SIZE}
           FOR UPDATE SKIP LOCKED
      )
-    RETURNING d.id, d.notification_id, d.destination, d.attempt_count, d.correlation_id`;
+    RETURNING d.id, d.notification_id, d.destination, d.attempt_count, d.correlation_id, d.secret_payload`;
+}
+
+/**
+ * secret ที่เลยอายุ — อีเมลที่ยังไม่ออก (รอคิวหรือรอ retry) ถูกยกเลิกพร้อมลบ secret: รหัส/ลิงก์ที่หมดอายุแล้วส่งไปก็ใช้ไม่ได้ และ secret
+ * ไม่ควรค้างในฐานข้อมูลนานกว่าที่มันใช้ได้ คำสั่งที่สองเป็นตาข่าย: แถวที่จบแล้วแต่ยังมี secret (ไม่ควรเกิด) ถูกลบทิ้ง
+ */
+async function expireSecrets(): Promise<void> {
+  await prisma.$executeRaw`
+    UPDATE notification.notification_delivery
+       SET status = ${DeliveryStatus.CANCELLED}::notification."DeliveryStatus",
+           secret_payload = NULL, secret_expires_at = NULL, next_retry_at = NULL,
+           last_error_code = 'SECRET_EXPIRED',
+           last_error_message = 'รหัสหรือลิงก์ในอีเมลหมดอายุก่อนส่งสำเร็จ จึงยกเลิกและลบทิ้ง',
+           updated_at = now()
+     WHERE secret_payload IS NOT NULL
+       AND secret_expires_at <= now()
+       AND status IN (${DeliveryStatus.PENDING}::notification."DeliveryStatus",
+                      ${DeliveryStatus.FAILED}::notification."DeliveryStatus")`;
+  await prisma.$executeRaw`
+    UPDATE notification.notification_delivery
+       SET secret_payload = NULL, secret_expires_at = NULL, updated_at = now()
+     WHERE secret_payload IS NOT NULL
+       AND status IN (${DeliveryStatus.SENT}::notification."DeliveryStatus",
+                      ${DeliveryStatus.CANCELLED}::notification."DeliveryStatus",
+                      ${DeliveryStatus.DEAD_LETTER}::notification."DeliveryStatus")`;
 }
 
 /**
@@ -138,6 +172,7 @@ async function deliver(row: Claimed) {
       await prisma.notificationDelivery.update({
         where: { id: row.id },
         data: {
+          ...CLEAR_SECRET,
           status: DeliveryStatus.CANCELLED,
           lastAttemptAt: new Date(),
           nextRetryAt: null,
@@ -149,11 +184,35 @@ async function deliver(row: Claimed) {
     }
 
     // เนื้ออีเมลถูกประกอบตอนนี้ ไม่ได้เก็บไว้ในตาราง — ดู workers/render.ts
-    const outcome = await renderAndSend(prisma, row.destination, notification);
+    // secret ของอีเมลระบบ (คำเชิญ ลิงก์ตั้งรหัสผ่าน OTP) — ถอดไม่ออก (กุญแจถูกหมุน แถวถูกแก้) = ยกเลิก ไม่ส่งของที่อาจผิด
+    let secret: Record<string, unknown> | null = null;
+    if (row.secret_payload) {
+      try {
+        secret = decryptSecret(row.secret_payload);
+      } catch (err) {
+        if (!(err instanceof OutboxSecretError)) throw err;
+        await prisma.notificationDelivery.update({
+          where: { id: row.id },
+          data: {
+            ...CLEAR_SECRET,
+            status: DeliveryStatus.CANCELLED,
+            lastAttemptAt: new Date(),
+            nextRetryAt: null,
+            lastErrorCode: "SECRET_UNREADABLE",
+            lastErrorMessage: err.message,
+          },
+        });
+        captureError(err, { level: "error", tag: "delivery.secret-unreadable", extra: { deliveryId: row.id, notificationType } });
+        return;
+      }
+    }
+
+    const outcome = await renderAndSend(prisma, row.destination, notification, secret);
     if (outcome?.cancelled) {
       await prisma.notificationDelivery.update({
         where: { id: row.id },
         data: {
+          ...CLEAR_SECRET,
           status: DeliveryStatus.CANCELLED,
           lastAttemptAt: new Date(),
           nextRetryAt: null,
@@ -167,6 +226,7 @@ async function deliver(row: Claimed) {
     await prisma.notificationDelivery.update({
       where: { id: row.id },
       data: {
+        ...CLEAR_SECRET,
         status: DeliveryStatus.SENT,
         sentAt: new Date(),
         attemptCount: attempt,
@@ -178,16 +238,20 @@ async function deliver(row: Claimed) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const exhausted = attempt >= MAX_ATTEMPTS;
+    // ปลายทางปฏิเสธถาวร (ไม่มีกล่องจดหมายนี้) — ลองอีกสี่ครั้งตลอด 45 นาทีก็ได้ผลเดิม และผู้ดูแลรอคำตอบอยู่ (lib/delivery-errors.ts)
+    const failure = classifyDeliveryError(err);
+    const exhausted = failure.permanent || attempt >= MAX_ATTEMPTS;
 
     await prisma.notificationDelivery.update({
       where: { id: row.id },
       data: {
+        ...(exhausted ? CLEAR_SECRET : {}),
         status: exhausted ? DeliveryStatus.DEAD_LETTER : DeliveryStatus.FAILED,
         attemptCount: attempt,
         lastAttemptAt: new Date(),
         nextRetryAt: exhausted ? null : new Date(Date.now() + backoffMs(attempt)),
-        lastErrorCode: exhausted ? "MAX_ATTEMPTS" : "SEND_FAILED",
+        // หมวดของความล้มเหลว ไม่ใช่ "ครบจำนวนครั้ง" — สถานะ DEAD_LETTER บอกอย่างหลังอยู่แล้ว หน้าจอแปลหมวดเป็นประโยคภาษาไทย
+        lastErrorCode: failure.code,
         // ข้อความ error ถูกตัดความยาว และไม่ควรมี credential อยู่แล้ว
         lastErrorMessage: message.slice(0, 500),
       },
@@ -229,9 +293,11 @@ async function deliver(row: Claimed) {
   }
 }
 
-async function tick() {
+/** คืนจำนวนแถวที่หยิบ — เต็ม batch แปลว่าอาจยังมีค้าง ลูปหลักจึงวนต่อทันทีไม่รอ */
+async function tick(): Promise<number> {
+  await expireSecrets();
   const batch = await claimBatch();
-  if (batch.length === 0) return;
+  if (batch.length === 0) return 0;
 
   console.log(`[delivery] หยิบงาน ${batch.length} รายการ`);
   for (const row of batch) {
@@ -241,6 +307,62 @@ async function tick() {
       () => deliver(row),
     );
   }
+  return batch.length;
+}
+
+/**
+ * ปลุก worker ทันทีที่มีอีเมลเข้าคิว — API ส่ง `pg_notify('outbox_wakeup')` ตอน commit (lib/notify.ts) OTP จึงถึงในราววินาที ไม่ต้องรอรอบ
+ * 15 วินาที รอบ 15 วินาทียังอยู่เป็นตาข่าย: การเชื่อมต่อ LISTEN หลุด (ต่อใหม่เองทุก 5 วินาที) หรืองานที่ตั้งเวลาไว้ (`scheduled_at`) ยังถูกหยิบตามรอบ
+ * Prisma ทำ LISTEN ไม่ได้ จึงใช้ `pg` หนึ่งการเชื่อมต่อแยก — ตัดพารามิเตอร์ของ Prisma (`?schema=…`) ออกจาก URL ก่อน
+ */
+let wake: (() => void) | null = null;
+let listener: pg.Client | null = null;
+let listening = true;
+
+function connectListener(): void {
+  if (!listening) return;
+  const client = new pg.Client({ connectionString: env.databaseUrl.split("?")[0] });
+  let retried = false;
+  const retry = () => {
+    if (retried) return;
+    retried = true;
+    if (listener === client) listener = null;
+    client.end().catch(() => undefined);
+    if (listening) setTimeout(connectListener, 5_000);
+  };
+  client.on("notification", () => wake?.());
+  client.on("error", (err) => {
+    console.error("[delivery] การเชื่อมต่อ LISTEN หลุด — ต่อใหม่ใน 5 วินาที (ระหว่างนี้ใช้รอบปกติ)");
+    captureError(err, { level: "warning", tag: "delivery.listen" });
+    retry();
+  });
+  client.on("end", () => {
+    if (listening) retry();
+  });
+  client
+    .connect()
+    .then(() => client.query(`LISTEN ${OUTBOX_CHANNEL}`))
+    .then(() => {
+      listener = client;
+      console.log(`[delivery] ฟังช่อง ${OUTBOX_CHANNEL} — อีเมลออกทันทีที่เข้าคิว`);
+    })
+    .catch((err: unknown) => {
+      captureError(err, { level: "warning", tag: "delivery.listen" });
+      retry();
+    });
+}
+
+/** รอจนครบรอบ หรือจนมีอีเมลเข้าคิว แล้วแต่อะไรมาก่อน */
+function sleepUntilWoken(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      wake = null;
+      resolve();
+    }
+    wake = done;
+  });
 }
 
 async function main() {
@@ -276,6 +398,9 @@ async function main() {
     stopErrorAlerts();
     stopInvitationReminders();
     stopJiraWorker();
+    listening = false;
+    wake?.();
+    await listener?.end().catch(() => undefined);
     // รอบของ relay ที่กำลังเขียนไม่เกิน 1.5 วินาที — ที่ค้างอ่านซ้ำตอนเริ่มใหม่ได้
     await stopLogRelay();
     // เข้าคิว และเขียนป้าย "ปิดตามปกติ" ลงไฟล์ใน container — บันทึกในคิวหายได้ถ้า Mongo หยุดพร้อมกัน ป้ายไม่หาย (lib/error-capture.ts)
@@ -289,15 +414,18 @@ async function main() {
   process.on("SIGTERM", () => void stop("SIGTERM"));
   process.on("SIGINT", () => void stop("SIGINT"));
 
+  connectListener();
   while (running) {
+    let claimed = 0;
     try {
-      await tick();
+      claimed = await tick();
     } catch (err) {
       // ไม่พิมพ์ `err` ดิบ — error ของ Prisma/SMTP ยกแถวหรือที่อยู่ผู้รับมาได้ captureError พิมพ์ฉบับที่กวาดแล้ว
       console.error("[delivery] รอบนี้ล้มเหลว — ดูบรรทัด [capture] ถัดไป");
       captureError(err, { tag: "delivery.tick" });
     }
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    if (claimed >= BATCH_SIZE) continue;
+    await sleepUntilWoken(POLL_INTERVAL_MS);
   }
 }
 

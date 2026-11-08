@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { DataTable, type Column } from "@/components/console/DataTable";
 import { useInvitationActions } from "@/components/console/InvitationsTable";
 import { Badge, Tag } from "@/components/console/ui";
+import { DeliveryChip } from "@/components/console/DeliveryChip";
 import {
   INVITATION_STATUS_META,
   USER_STATUS_META,
@@ -97,6 +98,11 @@ export function MembershipBadge({ m, user }: { m: ReturnType<typeof membershipOf
       <div>
         <Badge meta={INVITATION_STATUS_META.ISSUED} />
         <p className="mt-1 text-[12.5px] text-ink-muted">คำเชิญหมดอายุ {formatThaiDate(m.invitation.expiresAt)}</p>
+        {m.invitation.emailDelivery ? (
+          <div className="mt-1">
+            <DeliveryChip delivery={m.invitation.emailDelivery} />
+          </div>
+        ) : null}
       </div>
     );
   }

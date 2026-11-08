@@ -19,6 +19,7 @@ import { TextField } from "@/components/ui/Field";
 import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
 import { useToast } from "@/components/ui/Toast";
+import { useDeliveryTracker } from "@/components/console/DeliveryTracker";
 import { adminErrorView, type AdminErrorView } from "@/lib/admin-errors";
 import { api } from "@/lib/api";
 import {
@@ -58,6 +59,7 @@ export default function EmailTemplateEditorPage() {
   const path = `/api/admin/email-templates/${key}`;
   const { data, error, loading, reload } = useAdminData<TemplateDetail>(path);
   const { show } = useToast();
+  const { track } = useDeliveryTracker();
 
   const [tab, setTab] = useState<TabKey>("edit");
   const [form, setForm] = useState<TemplateContent>(EMPTY);
@@ -137,10 +139,10 @@ export default function EmailTemplateEditorPage() {
     setTesting(true);
     setActionError(null);
     try {
-      const res = await api.post<{ message: string }>(`${path}/test-send`, {
+      const res = await api.post<{ message: string; deliveryId?: string; to?: string }>(`${path}/test-send`, {
         content: form,
       });
-      show({ tone: "success", title: res.message });
+      track(res.deliveryId, `อีเมลทดสอบ "${template.label}" ถึง ${res.to ?? "คุณ"}`);
     } catch (err) {
       fail(err);
     } finally {

@@ -7,6 +7,7 @@ import { useEffect } from "react";
 import type { ReactNode } from "react";
 
 import { useSession } from "@/components/SessionProvider";
+import { DeliveryTrackerProvider } from "@/components/console/DeliveryTracker";
 import { Spinner } from "@/components/ui/Spinner";
 import { useRequireAuth } from "@/lib/require-auth";
 import { isDocumentAdmin, isSystemAdmin } from "@/lib/status";
@@ -97,6 +98,12 @@ export const CONSOLE_GROUPS: Group[] = [
         href: "/console/settings/email-templates",
         label: "เทมเพลตอีเมล",
         icon: icon("M3 5h14v10H3zM3 5l7 6 7-6"),
+      },
+      // การ์ด "[Enhance] Send every email through the delivery worker" — อีเมลทุกฉบับ สถานะ เหตุผลที่ส่งไม่สำเร็จ และส่งอีกครั้ง
+      {
+        href: "/console/email-deliveries",
+        label: "ประวัติการส่งอีเมล",
+        icon: icon("M3 5h14v10H3zM3 5l7 6 7-6M14 13l2 2 3-3"),
       },
       // การ์ด "[Enhance] JIRA integration" (2026-11-08) — ค่าตั้งการเชื่อมต่อ + บันทึกการทำงานกับ Jira
       { href: "/console/settings/jira", label: "Jira", icon: icon("M4 4h5v5H4zM11 4h5v5h-5zM4 11h5v5H4zM13.5 11v5M11 13.5h5") },
@@ -220,7 +227,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
             ))}
           </ul>
         </nav>
-        {children}
+        <DeliveryTrackerProvider>{children}</DeliveryTrackerProvider>
       </div>
     </div>
   );

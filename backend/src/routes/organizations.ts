@@ -77,10 +77,10 @@ import {
 import {
   sendActivated,
   sendFinalApprovalRequest,
-  sendInvitationEmail,
   sendRevisionRequested,
   sendSubmittedToOfficers,
 } from "../lib/mail.js";
+import { queueInvitationEmail } from "../lib/email-queue.js";
 import {
   NotificationType,
   announceProgress,
@@ -2863,6 +2863,17 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
             request_number: request.requestNumber,
           },
         });
+        // หลัง commit และหลังแถว audit — คำขอความเห็นชอบเข้าคิวช้ากว่านี้หนึ่งนาที (SIGNATORY_REQUEST_DELAY_MS) ลำดับจึงยังเหมือนเดิม
+        if (approver.invitation) {
+          await queueInvitationEmail({
+            userAccountId: approver.id,
+            activationKeyId: approver.activationKeyId,
+            rawKey: approver.invitation.rawKey,
+            expiresAt: approver.invitation.expiresAt,
+            organizationId: request.organizationId,
+            organizationName: approver.invitation.organizationName,
+          });
+        }
       }
       if (approver.roleAssignmentId) {
         await logAudit({
@@ -3134,6 +3145,11 @@ interface ApproverAccountOutcome {
   roleAssignmentId: string | null;
   /** คีย์ใบเก่าของบัญชี PENDING เดิมที่ถูกแทนที่ด้วยใบใหม่ */
   revokedKeys: RevokedKey[];
+  /**
+   * คีย์ดิบของคำเชิญที่ต้องเข้าคิวอีเมลหลัง commit — null ถ้าไม่ได้ออกคีย์ ถือได้แค่ในหน่วยความจำของคำขอนี้ ไม่ลงฐานข้อมูลแบบอ่านได้
+   * (แถว outbox เก็บแบบเข้ารหัส) เดิมอีเมลถูกส่งจากใน transaction ทันที ส่งออกไปได้แม้ transaction จะ rollback ทีหลัง
+   */
+  invitation: { rawKey: string; expiresAt: Date; organizationName: string } | null;
 }
 
 async function ensureApproverAccount(
@@ -3229,6 +3245,7 @@ async function ensureApproverAccount(
   /** ออกคำเชิญให้ในรอบนี้หรือไม่ — ผู้เรียกใช้ตัดสินว่าต้องหน่วงอีเมลฉบับถัดไป */
   let invited = false;
   let activationKeyId: string | null = null;
+  let invitation: ApproverAccountOutcome["invitation"] = null;
   let roleAssignmentId: string | null = null;
   let revokedKeys: RevokedKey[] = [];
 
@@ -3251,25 +3268,12 @@ async function ensureApproverAccount(
     });
     activationKeyId = issued.record.id;
     revokedKeys = issued.revokedKeys;
-    /**
-     * ส่งอีเมลนอก transaction ไม่ได้เพราะต้องใช้ raw key — ยอมส่งในนี้โดยไม่รอ
-     *
-     * ไม่มีใคร await สัญญานี้ ถ้าไม่ดักไว้ SMTP ที่ล้มคือ unhandled rejection ซึ่ง Node 22 ฆ่าทั้งโปรเซส
-     * พร้อมคำขออื่นที่ค้างอยู่ (Traps ใน CLAUDE.md) — คำเชิญที่ส่งไม่ถึงแก้ได้ด้วย resend ส่วนโปรเซสที่ตาย
-     * แก้ไม่ได้ ไม่พิมพ์ข้อความของ error เอง: ข้อความของ nodemailer ยกที่อยู่ผู้รับที่ถูกปฏิเสธมาได้ — captureError พิมพ์
-     * ฉบับที่กวาดแล้ว
-     */
-    void sendInvitationEmail(email, issued.key, {
-      roleLabel: ROLE_LABELS[ROLE_CODES.ORGANIZATION_APPROVER],
-      // ชื่อที่หน่วยงานกรอกมาในคำขอมาก่อนชื่อในทะเบียน — เป็นชื่อที่ผู้รับเพิ่งเห็นในฟอร์ม
-      organizationName: request.organizationNameTh ?? request.organization.nameTh,
+    // อีเมลเข้าคิวหลัง commit (ผู้เรียก) — ชื่อที่หน่วยงานกรอกในคำขอมาก่อนชื่อในทะเบียน เป็นชื่อที่ผู้รับเพิ่งเห็นในฟอร์ม
+    invitation = {
+      rawKey: issued.key,
       expiresAt: issued.record.expiresAt,
-      internal: false,
-    }).catch((err: unknown) => {
-      console.error("[organizations] ส่งอีเมลคำเชิญผู้มีอำนาจกระทำการแทนไม่สำเร็จ — ดูบรรทัด [capture] ถัดไป");
-      // ผู้มีอำนาจฯ ไม่ได้คีย์ และไม่มีใครรู้จนกว่าเขาจะโทรมาถาม — แก้ได้ด้วย resend ถ้ามีคนเห็น
-      captureError(err, { tag: "mail.approver-invitation" });
-    });
+      organizationName: request.organizationNameTh ?? request.organization.nameTh,
+    };
     invited = true;
   }
 
@@ -3287,6 +3291,7 @@ async function ensureApproverAccount(
     activationKeyId,
     roleAssignmentId,
     revokedKeys,
+    invitation,
   };
 }
 
