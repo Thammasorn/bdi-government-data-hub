@@ -42,6 +42,8 @@ export interface TemplateDefinitionView {
   variables: Array<{ name: string; label: string; sample: string }>;
   blocks: Array<{ name: string; label: string; required: boolean }>;
   layoutPlaceholders: Array<{ name: string; label: string }>;
+  /** รูปจากหน้า "รูปภาพในอีเมล" — แทรกเป็น `{{image.<code>}}` ในเนื้อหา */
+  images: Array<{ code: string; name: string }>;
 }
 
 export interface TemplateDetail {

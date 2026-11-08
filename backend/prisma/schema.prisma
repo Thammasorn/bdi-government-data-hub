@@ -2079,3 +2079,33 @@ model EmailTemplateVersion {
   @@map("email_template_version")
   @@schema("administration")
 }
+
+/// รูปภาพที่เทมเพลตอีเมลใช้ (`{{image.<code>}}`) — หน้า /console → ตั้งค่า › รูปภาพในอีเมล — ไม่มีใน sheet
+///
+/// เบี่ยงจากดีไซน์: เพิ่มพร้อมการ์ด "[New Feature] Admin Email Template Edit" (2026-11-08) เก็บไฟล์ในตารางนี้เลย (bytea) ไม่ใช่ blob storage
+/// เพราะรูปเล็ก (≤ 500 KB) และทั้ง API กับ delivery-worker อ่านมันทุกครั้งที่ส่งอีเมลที่อ้างถึง — ไม่ต้องพึ่ง Azure ตอนส่งอีเมล
+///
+/// `logo` เป็นรายการตายตัว: ไม่มีแถว = ไฟล์ `src/assets/brand/bdi-logo.png` ในโค้ด เปลี่ยนไฟล์ได้ คืนค่าตั้งต้นได้ ลบไม่ได้
+/// `code` เปลี่ยนไม่ได้ (เทมเพลตอ้างด้วยชื่อนี้) รูปที่เทมเพลตยังอ้างอยู่ลบไม่ได้
+model EmailImage {
+  code         String @id @db.VarChar(40)
+  name         String @db.VarChar(200)
+  altText      String @map("alt_text") @db.VarChar(300)
+  /// ความกว้างที่แสดงในอีเมล (px) — ความสูงคำนวณจากสัดส่วนของไฟล์ (`width_px` / `height_px`)
+  displayWidth Int    @map("display_width")
+
+  content     Bytes
+  contentType String @map("content_type") @db.VarChar(40)
+  sizeBytes   Int    @map("size_bytes")
+  widthPx     Int    @map("width_px")
+  heightPx    Int    @map("height_px")
+  contentHash String @map("content_hash") @db.VarChar(64)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  @@map("email_image")
+  @@schema("administration")
+}

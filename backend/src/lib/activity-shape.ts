@@ -140,6 +140,7 @@ const CATEGORY_BY_ACTION: Record<AuditActionCode, ActivityCategory> = {
   EMAIL_TEMPLATE_PUBLISHED: "config",
   EMAIL_TEMPLATE_RESTORED: "config",
   EMAIL_TEMPLATE_TEST_SENT: "config",
+  EMAIL_IMAGE_CHANGED: "config",
   DATASET_CHOICE_CHANGED: "config",
   ADDRESS_MASTER_CHANGED: "config",
   PUBLIC_DOCUMENT_CHANGED: "config",

@@ -13,7 +13,8 @@
 import sanitizeHtml from "sanitize-html";
 
 import { env } from "../../env.js";
-import { buttonBlock, escapeHtml, logoBlock, type ButtonSpec } from "./blocks.js";
+import { buttonBlock, escapeHtml, textLogo, type ButtonSpec } from "./blocks.js";
+import { LOGO_CODE, type EmailAttachment, type ImageAsset } from "./images.js";
 import {
   BLOCK_NAMES,
   GLOBAL_VARIABLES,
@@ -36,6 +37,8 @@ export interface EmailContext {
 export interface RenderedEmail {
   subject: string;
   html: string;
+  /** รูปที่อีเมลฉบับนี้อ้างจริง (`cid:`) — ส่งเป็นไฟล์แนบ */
+  attachments: EmailAttachment[];
 }
 
 const PLACEHOLDER = /\{\{\s*([^{}]+?)\s*\}\}/g;
@@ -49,16 +52,27 @@ function globalVars(): Record<string, string> {
   return { "support.contact": supportContact(), "support.email": env.support.email, "app.url": env.appUrl };
 }
 
-/** เติมเทมเพลตในบริบท HTML — ตัวแปร escape, บล็อกและ `extra` (content/footnote) วางตามที่ได้มา, ชื่อที่ไม่รู้จักกลายเป็นว่าง */
+/**
+ * `<img>` ของรูปหนึ่ง — width/height เป็น attribute (Outlook ไม่อ่านขนาดจาก CSS) `preview` = data URI เพราะ iframe ของหน้าแก้ไม่มีไฟล์แนบ
+ * ให้อ้าง อีเมลจริงไม่มีวันได้ data URI: Gmail บล็อกรูปแบบนั้น
+ */
+function imageTag(asset: ImageAsset, preview: boolean): string {
+  const src = preview ? `data:${asset.contentType};base64,${asset.content.toString("base64")}` : `cid:${asset.cid}`;
+  return `<img src="${src}" width="${asset.width}" height="${asset.height}" alt="${escapeHtml(asset.altText)}" style="display:block;border:0;outline:none;text-decoration:none;">`;
+}
+
+/** เติมเทมเพลตในบริบท HTML — ตัวแปร escape, บล็อก รูป และ `extra` (content/footnote) วางตามที่ได้มา, ชื่อที่ไม่รู้จักกลายเป็นว่าง */
 function fillHtml(
   template: string,
   vars: Record<string, string>,
   blocks: Partial<Record<string, string>>,
   extra: Record<string, string> = {},
+  images: Partial<Record<string, string>> = {},
 ): string {
   return template.replace(PLACEHOLDER, (_m, raw: string) => {
     const name = raw.trim();
     if (name.startsWith("block.")) return blocks[name.slice(6)] ?? "";
+    if (name.startsWith("image.")) return images[name.slice(6)] ?? "";
     if (name in extra) return extra[name] ?? "";
     return escapeHtml(vars[name] ?? "");
   });
@@ -85,20 +99,38 @@ export function renderEmail(opts: {
   content: TemplateContent;
   layout: TemplateContent;
   ctx: EmailContext;
+  /** รูปที่เทมเพลตอ้าง (`loadImages()`) — ไม่ส่งมา = ไม่มีรูป โลโก้กลายเป็นหัวจดหมายแบบตัวอักษร */
+  images?: Map<string, ImageAsset>;
   preview?: boolean;
 }): RenderedEmail {
+  const preview = opts.preview ?? false;
+  const assets = opts.images ?? new Map<string, ImageAsset>();
   const vars = { ...globalVars(), ...opts.ctx.vars };
-  const logo = logoBlock(opts.preview ?? false);
+  const imgs: Record<string, string> = {};
+  for (const [code, asset] of assets) imgs[code] = imageTag(asset, preview);
+  const logoAsset = assets.get(LOGO_CODE);
+  const logo = logoAsset ? imgs[LOGO_CODE]! : textLogo();
   const label = fillHtml(opts.content.buttonLabel ?? "", vars, {});
   const blocks: Partial<Record<string, string>> = {
     ...opts.ctx.blocks,
     logo,
     button: opts.ctx.button ? buttonBlock(opts.ctx.button, label) : "",
   };
-  const body = fillHtml(opts.content.bodyHtml, vars, blocks);
+  const body = fillHtml(opts.content.bodyHtml, vars, blocks, {}, imgs);
   const footnote = fillHtml(opts.content.footnoteHtml ?? "", vars, {});
-  const html = `<!doctype html>\n${fillHtml(opts.layout.bodyHtml, vars, { logo }, { content: body, footnote })}`;
-  return { subject: fillPlain(opts.content.subject, vars), html };
+  const html = `<!doctype html>\n${fillHtml(opts.layout.bodyHtml, vars, { logo }, { content: body, footnote }, imgs)}`;
+  // แนบเฉพาะรูปที่ html ฉบับนี้อ้างจริง — preview ไม่มีไฟล์แนบ (ใช้ data URI)
+  const attachments = preview
+    ? []
+    : [...assets.values()]
+        .filter((a) => html.includes(`cid:${a.cid}`))
+        .map((a) => ({
+          filename: `${a.code}.${a.contentType === "image/png" ? "png" : "jpg"}`,
+          content: a.content,
+          cid: a.cid,
+          contentType: a.contentType,
+        }));
+  return { subject: fillPlain(opts.content.subject, vars), html, attachments };
 }
 
 // ------------------------------------------------------------------ allowlist + การตรวจ
@@ -200,7 +232,12 @@ export interface ValidationResult {
 /**
  * ตรวจเนื้อหาของเทมเพลตหนึ่งตัว — ใช้ตอนบันทึก เผยแพร่ ส่งทดสอบ และ preview (preview แสดง issue แต่ไม่ปฏิเสธ)
  */
-export function validateContent(def: TemplateDefinition, input: TemplateContent): ValidationResult {
+export function validateContent(
+  def: TemplateDefinition,
+  input: TemplateContent,
+  /** รหัสรูปที่มีอยู่ (`imageCodes()`) — `{{image.<code>}}` อ้างได้เฉพาะในเนื้อหา */
+  imageCodes: ReadonlySet<string> = new Set([LOGO_CODE]),
+): ValidationResult {
   const layout = def.key === LAYOUT_KEY;
   const issues: ContentIssue[] = [];
   const warnings: string[] = [];
@@ -217,11 +254,21 @@ export function validateContent(def: TemplateDefinition, input: TemplateContent)
     for (const name of placeholders(text)) {
       if (vars.has(name)) continue;
       if (allowBlocks && name.startsWith("block.") && blocks.has(name.slice(6))) continue;
+      if (allowBlocks && name.startsWith("image.") && imageCodes.has(name.slice(6))) continue;
       if (layout && field === "bodyHtml" && (LAYOUT_PLACEHOLDERS as readonly string[]).includes(name)) continue;
       unknown.add(name);
     }
     for (const name of unknown) {
       const isBlock = name.startsWith("block.") && (BLOCK_NAMES as readonly string[]).includes(name.slice(6));
+      if (name.startsWith("image.")) {
+        issues.push({
+          field,
+          message: allowBlocks
+            ? `ไม่มีรูป {{${name}}} — เพิ่มรูปที่หน้า "รูปภาพในอีเมล" ก่อน`
+            : `ช่องนี้ใส่รูป {{${name}}} ไม่ได้ — รูปอยู่ในเนื้อหาเท่านั้น`,
+        });
+        continue;
+      }
       issues.push({
         field,
         message: isBlock

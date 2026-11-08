@@ -45,16 +45,9 @@ export const logo = ((): Buffer | null => {
   }
 })();
 
-/**
- * `{{block.logo}}` — `preview` ใช้รูปแบบ data URI แทน `cid:` เพราะ iframe ของหน้าแก้เทมเพลตไม่มีไฟล์แนบให้อ้าง
- * อีเมลจริงไม่มีวันได้ data URI: Gmail บล็อกรูปแบบนั้น
- */
-export function logoBlock(preview = false): string {
-  if (!logo) {
-    return `<div style="font:700 20px/1.3 ${FONT};color:${NAVY};letter-spacing:-0.01em;">BDI<span style="color:${CORAL};">.</span></div>`;
-  }
-  const src = preview ? `data:image/png;base64,${logo.toString("base64")}` : `cid:${LOGO_CID}`;
-  return `<img src="${src}" width="88" height="64" alt="สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)" style="display:block;border:0;outline:none;text-decoration:none;">`;
+/** หัวจดหมายแบบตัวอักษร — `{{block.logo}}` เมื่อไม่มีรูปโลโก้ให้ใช้เลย (build ลืม copy src/assets และไม่มีใครอัปโหลด) */
+export function textLogo(): string {
+  return `<div style="font:700 20px/1.3 ${FONT};color:${NAVY};letter-spacing:-0.01em;">BDI<span style="color:${CORAL};">.</span></div>`;
 }
 
 export interface ButtonSpec {

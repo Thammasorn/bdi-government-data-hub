@@ -98,6 +98,12 @@ export const CONSOLE_GROUPS: Group[] = [
         label: "เทมเพลตอีเมล",
         icon: icon("M3 5h14v10H3zM3 5l7 6 7-6"),
       },
+      // รูปที่เทมเพลตอีเมลใช้ รวมโลโก้ — ที่เดียวที่เปลี่ยนรูปของอีเมลทุกฉบับ
+      {
+        href: "/console/settings/email-images",
+        label: "รูปภาพในอีเมล",
+        icon: icon("M3 4h14v12H3zM3 13l4-4 3 3 2-2 5 5M13 7.5h.01"),
+      },
     ],
   },
 ];

@@ -495,6 +495,12 @@ export const AuditAction = {
   EMAIL_TEMPLATE_PUBLISHED: "EMAIL_TEMPLATE_PUBLISHED",
   EMAIL_TEMPLATE_RESTORED: "EMAIL_TEMPLATE_RESTORED",
   EMAIL_TEMPLATE_TEST_SENT: "EMAIL_TEMPLATE_TEST_SENT",
+  /**
+   * รูปภาพในอีเมล (`administration.email_image`, /console → ตั้งค่า › รูปภาพในอีเมล) — subject_id ว่าง รหัสรูปอยู่ใน `metadata.code`
+   * `metadata.operation` = CREATE · UPDATE · REPLACE_FILE · DELETE · RESET (โลโก้กลับเป็นไฟล์ในโค้ด) before/after เก็บ `content_hash`
+   * ของไฟล์ ไม่เก็บไบต์ — เปลี่ยนรูปหนึ่งครั้งเปลี่ยนอีเมลทุกฉบับที่อ้างรูปนั้น จึงต้องตอบได้ว่าใครเปลี่ยนเป็นไฟล์ไหนเมื่อไร
+   */
+  EMAIL_IMAGE_CHANGED: "EMAIL_IMAGE_CHANGED",
 
   /** ลงนามอิเล็กทรอนิกส์บนเอกสารข้อตกลง (signature.signature_confirmation) */
   DOCUMENT_SIGNED: "DOCUMENT_SIGNED",
@@ -568,6 +574,8 @@ export const AuditSubject = {
   SYSTEM_SETTING: "SYSTEM_SETTING",
   /** เวอร์ชันหนึ่งของเทมเพลตอีเมลใน `administration.email_template_version` — ไม่มีใน sheet */
   EMAIL_TEMPLATE: "EMAIL_TEMPLATE",
+  /** รูปหนึ่งรูปใน `administration.email_image` — ไม่มีใน sheet subject_id ว่าง (key เป็นข้อความ) รหัสอยู่ใน metadata */
+  EMAIL_IMAGE: "EMAIL_IMAGE",
   NOTIFICATION: "NOTIFICATION",
   INTEGRATION_JOB: "INTEGRATION_JOB",
   /**

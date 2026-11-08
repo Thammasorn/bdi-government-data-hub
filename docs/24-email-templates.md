@@ -24,7 +24,9 @@ mail.ts  send*(…)  ──►  *Context(…)  ──►  composeEmail(ctx)  ─
 | `lib/email/compose.ts` | ประกอบอีเมลจริง + ถอยไปเนื้อหาตั้งต้นเมื่อเวอร์ชันในฐานข้อมูลใช้ไม่ได้ |
 | `lib/email/samples.ts` | ข้อมูลตัวอย่างของ preview และอีเมลทดสอบ (ของสมมติทั้งหมด) |
 | `routes/admin-email-templates.ts` | `/api/admin/email-templates/*` |
-| `frontend/app/console/settings/email-templates/` | หน้ารายการ และหน้าแก้ (แก้ไข / ประวัติเวอร์ชัน) |
+| `lib/email/images.ts` · `routes/admin-email-images.ts` | รูปภาพในอีเมล (§3.1) |
+| `frontend/app/console/settings/email-templates/` | หน้ารายการ และหน้าแก้ (แก้ไข / ประวัติเวอร์ชัน) — คอลัมน์เดียว เนื้อหา → ตัวอย่าง → ปุ่ม ตัวแปรอยู่ใน popup |
+| `frontend/app/console/settings/email-images/` | หน้ารูปภาพในอีเมล |
 
 signature ของ `send*` ใน `mail.ts` ไม่เปลี่ยน ผู้เรียก (routes ทั้งหมด, `workers/render.ts`) จึงไม่ได้แก้
 
@@ -55,6 +57,20 @@ signature ของ `send*` ใน `mail.ts` ไม่เปลี่ยน ผ�
 
 **บล็อกบังคับ** — บันทึกไม่ได้ถ้าไม่มี: `otp` ต้องมี `block.otp` · คำเชิญทั้งสองต้องมี `block.activation` · `password_reset` และ
 `org_signatory_register` ต้องมี `block.button` · `layout` ต้องมี `{{content}}`
+
+## 3.1 รูปภาพในอีเมล — `{{image.<code>}}`
+
+หน้า `/console` → ตั้งค่าระบบ → **รูปภาพในอีเมล** (`/console/settings/email-images`, `routes/admin-email-images.ts`, `lib/email/images.ts`)
+คือที่เดียวที่เปลี่ยนรูปที่อีเมลใช้ (feedback ระหว่างทดสอบ 2026-11-08) เปลี่ยนไฟล์แล้วอีเมลทุกฉบับที่อ้างรูปนั้นได้ไฟล์ใหม่ทันที
+
+- ไฟล์อยู่ใน `administration.email_image` (bytea) ไม่ใช่ blob storage — รูปเล็ก และ API กับ worker อ่านมันทุกครั้งที่ส่ง
+- PNG/JPG เท่านั้น ตรวจจากไบต์แรกไม่ใช่ mimetype ≤ 500 KB อ่านขนาดภาพจาก header แล้วคำนวณความสูงจาก "ความกว้างที่แสดง" (16–600 px)
+- **ทุกรูปแนบไปกับอีเมลและอ้างด้วย `cid:`** อีเมลแต่ละฉบับแนบเฉพาะรูปที่ html ของมันอ้างจริง (`RenderedEmail.attachments`) preview ใช้ data URI
+- `logo` ตายตัว: ไม่มีแถว = ไฟล์ในโค้ด, `{{block.logo}}` ของแม่แบบกลาง = รูปนี้ (cid `bdi-logo` เดิม) เปลี่ยนไฟล์ได้ "ใช้รูปตั้งต้น" ได้ ลบไม่ได้
+- รหัสรูปเปลี่ยนไม่ได้ รูปที่เทมเพลตยังอ้าง (ฉบับใช้งานหรือฉบับร่าง) ลบไม่ได้ — 409 `image_in_use` พร้อมรายชื่อ
+- `{{image.x}}` ใช้ได้ในเนื้อหาและแม่แบบกลางเท่านั้น รหัสที่ไม่มีอยู่ถูกปฏิเสธตอนบันทึก
+- อ่านรูปไม่ได้ตอนส่ง = ส่งด้วยเนื้อหาตั้งต้นและโลโก้ในโค้ด (ทางเดียวกับเทมเพลตเสีย) `sendRaw()` ใช้โลโก้ในโค้ดเสมอ
+- audit `EMAIL_IMAGE_CHANGED` (`metadata.operation` CREATE · UPDATE · REPLACE_FILE · DELETE · RESET, เก็บ `content_hash` ไม่เก็บไบต์)
 
 ## 4. การตรวจตอนบันทึก (`validateContent()`)
 

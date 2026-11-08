@@ -610,6 +610,7 @@ function PalettePopup({
   const vars = template.variables
     .map((v) => ({ token: `{{${v.name}}}`, label: v.label, sample: v.sample }))
     .filter(match);
+  const images = template.images.map((i) => ({ token: `{{image.${i.code}}}`, label: i.name })).filter(match);
 
   return (
     <Modal
@@ -640,6 +641,19 @@ function PalettePopup({
             onPick={(t) => onPick(t, true)}
           />
         ) : null}
+        {images.length ? (
+          <div>
+            <PaletteGroup title="รูปภาพ (แนบไปกับอีเมล)" items={images} onPick={(t) => onPick(t, true)} />
+            <a
+              href="/console/settings/email-images"
+              target="_blank"
+              rel="noreferrer"
+              className="ml-2 text-[12.5px] text-navy-700 underline-offset-2 hover:underline"
+            >
+              เพิ่มหรือเปลี่ยนรูปที่หน้า &quot;รูปภาพในอีเมล&quot; ↗
+            </a>
+          </div>
+        ) : null}
         {vars.length ? (
           <PaletteGroup
             title="ตัวแปร (ระบบ escape ให้ — แทรก HTML ผ่านตัวแปรไม่ได้)"
@@ -647,7 +661,7 @@ function PalettePopup({
             onPick={(t) => onPick(t, false)}
           />
         ) : null}
-        {!layout.length && !blocks.length && !vars.length ? (
+        {!layout.length && !blocks.length && !vars.length && !images.length ? (
           <p className="text-[14px] text-ink-muted">
             ไม่พบรายการที่ตรงกับ "{q}"
           </p>

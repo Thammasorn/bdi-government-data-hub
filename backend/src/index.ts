@@ -34,6 +34,7 @@ import { adminRouter } from "./routes/admin.js";
 import { adminUserRouter } from "./routes/admin-users.js";
 import { adminSettingRouter } from "./routes/admin-settings.js";
 import { adminEmailTemplateRouter } from "./routes/admin-email-templates.js";
+import { adminEmailImageRouter } from "./routes/admin-email-images.js";
 import { addressRouter } from "./routes/address.js";
 import { authRouter } from "./routes/auth.js";
 import { clientErrorRouter } from "./routes/client-errors.js";
@@ -205,6 +206,7 @@ app.use("/api/admin/addresses", adminAddressRouter);
 app.use("/api/admin/public-documents", adminPublicDocumentRouter);
 app.use("/api/admin/settings", adminSettingRouter);
 app.use("/api/admin/email-templates", adminEmailTemplateRouter);
+app.use("/api/admin/email-images", adminEmailImageRouter);
 // เอกสารกฎหมายและตัวแปร template อยู่ที่ไฟล์ของมันเอง และต้องมาก่อน adminRouter ที่ใช้ guard ของผู้ดูแลระบบอย่างเดียว
 app.use("/api/admin", adminLegalDocumentRouter);
 app.use("/api/admin", adminRouter);

@@ -17,10 +17,8 @@ import { env } from "../env.js";
 import { addBreadcrumb } from "./context.js";
 import { thaiDuration } from "./duration.js";
 import {
-  LOGO_CID,
   activationBlock,
   escapeHtml,
-  logo,
   noteBlock,
   orgCodeBlock,
   otpBlock,
@@ -28,7 +26,8 @@ import {
   summaryBlock,
 } from "./email/blocks.js";
 import { INVITATION_SUBJECT_DEFAULT } from "./email/catalogue.js";
-import { composeEmail, defaultLayout } from "./email/compose.js";
+import { composeEmail, defaultImages, defaultLayout } from "./email/compose.js";
+import type { EmailAttachment } from "./email/images.js";
 import { renderEmail, renderSubject, type EmailContext } from "./email/render.js";
 import { contentAt } from "./email/store.js";
 import type { JourneyProgress } from "./journey-steps.js";
@@ -75,7 +74,13 @@ export class SendDeadlineError extends Error {
  * ส่งสำเร็จแล้วรอ QUIT ให้ socket ปิดก่อนคืน (`QUIT_WAIT_MS`) — ผู้เรียกที่ส่งทีละฉบับจึงไม่มีสองการเชื่อมต่อซ้อนกันแม้แต่ช่วงสั้น ๆ
  * ไม่เปลี่ยน transport ปกติ: อีเมลของ outbox กับอีเมลที่ส่งจากคำขอไม่มีเพดานเวลา และค่าที่สั้นลงเปลี่ยนพฤติกรรมของมัน
  */
-async function sendWithDeadline(to: string, subject: string, html: string, timeoutMs: number): Promise<void> {
+async function sendWithDeadline(
+  to: string,
+  subject: string,
+  html: string,
+  attachments: EmailAttachment[],
+  timeoutMs: number,
+): Promise<void> {
   const sockets: net.Socket[] = [];
   const tx = nodemailer.createTransport({
     host: env.smtp.host,
@@ -97,7 +102,7 @@ async function sendWithDeadline(to: string, subject: string, html: string, timeo
       reject(new SendDeadlineError(timeoutMs));
     }, timeoutMs);
   });
-  const work = sendMailVia(tx, to, subject, html);
+  const work = sendMailVia(tx, to, subject, html, attachments);
   // การส่งที่ถูกตัดล้มตามมาทีหลัง ("Connection closed") — ผลออกไปทาง deadline แล้ว ต้องไม่กลายเป็น unhandled rejection
   work.catch(() => undefined);
   try {
@@ -120,7 +125,13 @@ function closed(socket: net.Socket): Promise<void> {
   return new Promise((resolve) => socket.once("close", () => resolve()));
 }
 /** `timeoutMs`: เพดานเวลาทั้งฉบับ ครบแล้วปิดการเชื่อมต่อ (`sendWithDeadline`) — ไม่ส่งมา = transport ปกติ ไม่มีเพดาน */
-async function send(to: string, subject: string, html: string, timeoutMs?: number): Promise<void> {
+async function send(
+  to: string,
+  subject: string,
+  html: string,
+  attachments: EmailAttachment[],
+  timeoutMs?: number,
+): Promise<void> {
   const tx = getTransporter();
   if (!tx) {
     // ยังไม่ตั้งค่า SMTP — พิมพ์ลง log เพื่อให้ทดสอบ flow ได้โดยไม่ต้องมีเมลจริง
@@ -139,8 +150,8 @@ async function send(to: string, subject: string, html: string, timeoutMs?: numbe
    * breadcrumb ของ event ว่า audit เขียนแล้ว แล้วค่อยมาล้มที่อีเมล
    */
   try {
-    if (timeoutMs === undefined) await sendMailVia(tx, to, subject, html);
-    else await sendWithDeadline(to, subject, html, timeoutMs);
+    if (timeoutMs === undefined) await sendMailVia(tx, to, subject, html, attachments);
+    else await sendWithDeadline(to, subject, html, attachments, timeoutMs);
   } catch (err) {
     const code = (err as { responseCode?: unknown; code?: unknown }).responseCode ?? (err as { code?: unknown }).code;
     addBreadcrumb("smtp", `ส่งอีเมลไม่สำเร็จ${typeof code === "string" || typeof code === "number" ? ` (${code})` : ""}`, false);
@@ -149,7 +160,14 @@ async function send(to: string, subject: string, html: string, timeoutMs?: numbe
   addBreadcrumb("smtp", "ส่งอีเมลสำเร็จ");
 }
 
-async function sendMailVia(tx: Transporter, to: string, subject: string, html: string): Promise<void> {
+/** `attachments` คือรูปที่ html อ้างด้วย `cid:` (`RenderedEmail.attachments`) — แนบเฉพาะที่ฉบับนั้นใช้จริง */
+async function sendMailVia(
+  tx: Transporter,
+  to: string,
+  subject: string,
+  html: string,
+  attachments: EmailAttachment[],
+): Promise<void> {
   await tx.sendMail({
     from: env.smtp.from,
     /**
@@ -166,9 +184,7 @@ async function sendMailVia(tx: Transporter, to: string, subject: string, html: s
     to,
     subject,
     html,
-    attachments: logo
-      ? [{ filename: "bdi-logo.png", content: logo, cid: LOGO_CID, contentType: "image/png" }]
-      : [],
+    attachments,
   });
 }
 
@@ -195,13 +211,18 @@ const dateTimeMedium = (d: Date) =>
 async function deliver(to: string | string[], ctx: EmailContext): Promise<void> {
   const recipients = [...new Set((Array.isArray(to) ? to : [to]).filter(Boolean))];
   if (recipients.length === 0) return;
-  const { subject, html } = await composeEmail(ctx);
-  await Promise.all(recipients.map((addr) => send(addr, subject, html)));
+  const { subject, html, attachments } = await composeEmail(ctx);
+  await Promise.all(recipients.map((addr) => send(addr, subject, html, attachments)));
 }
 
 /** ส่งอีเมลที่ประกอบแล้ว — อีเมลทดสอบของหน้าแก้เทมเพลต (`POST /api/admin/email-templates/:key/test-send`) */
-export async function sendRendered(to: string, subject: string, html: string): Promise<void> {
-  await send(to, subject, html);
+export async function sendRendered(
+  to: string,
+  subject: string,
+  html: string,
+  attachments: EmailAttachment[],
+): Promise<void> {
+  await send(to, subject, html, attachments);
 }
 
 /**
@@ -218,7 +239,7 @@ export async function sendRaw(
 ): Promise<void> {
   const text = (s: string) => escapeHtml(s).replace(/\{/g, "&#123;");
   const intro = options.lineBreaks ? text(message).replace(/\n/g, "<br>") : text(message);
-  const { html } = renderEmail({
+  const { html, attachments } = renderEmail({
     content: {
       subject: "",
       bodyHtml:
@@ -230,8 +251,9 @@ export async function sendRaw(
     },
     layout: defaultLayout(),
     ctx: { key: "raw", vars: {}, blocks: {} },
+    images: defaultImages(),
   });
-  await send(to, title, html, options.timeoutMs);
+  await send(to, title, html, attachments, options.timeoutMs);
 }
 
 // ------------------------------------------------------------------ บัญชีผู้ใช้

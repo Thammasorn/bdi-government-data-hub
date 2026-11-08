@@ -32,6 +32,7 @@ import {
   type TemplateContent,
   type TemplateDefinition,
 } from "../lib/email/catalogue.js";
+import { imageCodes, listImages, loadImages, referencedImages } from "../lib/email/images.js";
 import { renderEmail, validateContent, type ContentIssue } from "../lib/email/render.js";
 import { LAYOUT_PREVIEW_KEY, sampleContext } from "../lib/email/samples.js";
 import {
@@ -157,12 +158,12 @@ function definitionView(def: TemplateDefinition) {
 /** render เนื้อหาหนึ่งชุดด้วยข้อมูลตัวอย่าง — แม่แบบกลางแสดงกับอีเมล "หน่วยงานเปิดใช้งานแล้ว" ฉบับที่ใช้งานอยู่ */
 async function renderSample(def: TemplateDefinition, content: TemplateContent, preview: boolean) {
   const ctx = sampleContext(def.key);
-  if (def.key === LAYOUT_KEY) {
-    const template = await liveContent(prisma, LAYOUT_PREVIEW_KEY);
-    return renderEmail({ content: template.content, layout: content, ctx, preview });
-  }
-  const layout = await liveContent(prisma, LAYOUT_KEY);
-  return renderEmail({ content, layout: layout.content, ctx, preview });
+  const [template, layout] =
+    def.key === LAYOUT_KEY
+      ? [(await liveContent(prisma, LAYOUT_PREVIEW_KEY)).content, content]
+      : [content, (await liveContent(prisma, LAYOUT_KEY)).content];
+  const images = await loadImages(prisma, referencedImages(template.bodyHtml, template.footnoteHtml, layout.bodyHtml));
+  return renderEmail({ content: template, layout, ctx, images, preview });
 }
 
 // ------------------------------------------------------------------ อ่าน
@@ -194,8 +195,9 @@ adminEmailTemplateRouter.get("/:key", async (req, res) => {
   await handle(res, async () => {
     const def = requireDefinition(String(req.params.key));
     const versions = await withNames(await listVersions(prisma, def.key));
+    const images = (await listImages(prisma)).map((i) => ({ code: i.code, name: i.name }));
     res.json({
-      template: definitionView(def),
+      template: { ...definitionView(def), images },
       live: versions.find((v) => v.status === "PUBLISHED") ?? null,
       draft: versions.find((v) => v.status === "DRAFT") ?? null,
       versions,
@@ -208,7 +210,7 @@ adminEmailTemplateRouter.get("/:key", async (req, res) => {
 adminEmailTemplateRouter.put("/:key/draft", async (req, res) => {
   await handle(res, async () => {
     const def = requireDefinition(String(req.params.key));
-    const result = validateContent(def, toContent(contentSchema.parse(req.body ?? {})));
+    const result = validateContent(def, toContent(contentSchema.parse(req.body ?? {})), await imageCodes(prisma));
     if (result.issues.length) {
       validationFailure(res, result.issues);
       return;
@@ -227,7 +229,7 @@ adminEmailTemplateRouter.post("/:key/publish", async (req, res) => {
     const versions = await listVersions(prisma, def.key);
     const draft = versions.find((v) => v.status === "DRAFT");
     if (!draft) throw new EmailTemplateError(409, "no_draft", "ยังไม่มีฉบับร่างให้เผยแพร่ — บันทึกฉบับร่างก่อน");
-    const check = validateContent(def, draft);
+    const check = validateContent(def, draft, await imageCodes(prisma));
     if (check.issues.length) {
       validationFailure(res, check.issues);
       return;
@@ -289,7 +291,7 @@ adminEmailTemplateRouter.post("/:key/preview", async (req, res) => {
       content = toContent(body.content);
     }
     // preview ไม่ปฏิเสธ: แสดง issue พร้อมผลที่ sanitize แล้ว ผู้ดูแลเห็นว่าอะไรจะถูกตัดขณะที่ยังพิมพ์อยู่
-    const check = validateContent(def, content);
+    const check = validateContent(def, content, await imageCodes(prisma));
     const rendered = await renderSample(def, check.clean, true);
     res.json({ ...rendered, issues: check.issues, warnings: check.warnings, bytes: Buffer.byteLength(rendered.html) });
   });
@@ -304,15 +306,15 @@ adminEmailTemplateRouter.post("/:key/test-send", async (req: Request, res) => {
       throw new EmailTemplateError(400, "session_required", "ส่งอีเมลทดสอบได้เฉพาะเมื่อเข้าสู่ระบบด้วยบัญชีผู้ดูแลระบบ — อีเมลจะไปถึงบัญชีนั้น");
     }
     const { content } = z.object({ content: contentSchema }).strict().parse(req.body ?? {});
-    const check = validateContent(def, toContent(content));
+    const check = validateContent(def, toContent(content), await imageCodes(prisma));
     if (check.issues.length) {
       validationFailure(res, check.issues);
       return;
     }
     const rendered = await renderSample(def, check.clean, false);
-    await sendRendered(to, `[ทดสอบ] ${rendered.subject || def.label}`, rendered.html);
+    await sendRendered(to, `[ทดสอบ] ${rendered.subject || def.label}`, rendered.html, rendered.attachments);
     const live = await liveContent(prisma, def.key);
-    const unchanged = JSON.stringify(check.clean) === JSON.stringify(validateContent(def, live.content).clean);
+    const unchanged = JSON.stringify(check.clean) === JSON.stringify(validateContent(def, live.content, await imageCodes(prisma)).clean);
     await logAudit({
       action: AuditAction.EMAIL_TEMPLATE_TEST_SENT,
       subjectType: AuditSubject.EMAIL_TEMPLATE,
