@@ -59,11 +59,7 @@ export function EmailImagesPanel() {
 
   return (
     <div>
-      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
-        <p className="max-w-3xl text-[14px] text-ink-muted">
-          รูปทุกรูปที่เทมเพลตอีเมลใช้ รวมโลโก้ — เปลี่ยนไฟล์ที่นี่แล้วอีเมลทุกฉบับที่ใช้รูปนั้นได้ไฟล์ใหม่ทันที ใส่รูปในเทมเพลตด้วย{" "}
-          {"{{image.<รหัส>}}"} รูปแนบไปกับอีเมล ผู้รับเห็นได้โดยไม่ต้องกดอนุญาตให้โหลดรูป
-        </p>
+      <div className="mb-6 flex justify-end">
         <Button onClick={() => setEditing("new")}>เพิ่มรูป</Button>
       </div>
 
