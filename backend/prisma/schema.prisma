@@ -2090,3 +2090,83 @@ model SystemSetting {
   @@map("system_setting")
   @@schema("administration")
 }
+
+/// สถานะของเวอร์ชันเทมเพลตอีเมล — ฉบับร่าง / ใช้งานอยู่ / เคยใช้
+enum EmailTemplateVersionStatus {
+  DRAFT
+  PUBLISHED
+  SUPERSEDED
+
+  @@schema("administration")
+}
+
+/// เวอร์ชันของเทมเพลตอีเมลที่ผู้ดูแลระบบแก้จาก /console → ตั้งค่า › เทมเพลตอีเมล — ไม่มีใน sheet
+///
+/// เบี่ยงจากดีไซน์: เพิ่มพร้อมการ์ด "[New Feature] Admin Email Template Edit" (2026-11-08) ก่อนหน้านี้เนื้ออีเมลทั้งหมดอยู่ใน
+/// `lib/mail.ts` แก้ได้ด้วยการ deploy เท่านั้น
+///
+/// รายการเทมเพลต ตัวแปร บล็อก และเนื้อหาตั้งต้นอยู่ที่ `lib/email/catalogue.ts` ไม่ใช่ที่ตารางนี้ — **ไม่มีแถว = เวอร์ชัน 1 คือเนื้อหาตั้งต้น
+/// ในโค้ด** แถวเกิดครั้งแรกตอนบันทึกฉบับร่าง (เวอร์ชัน 1 ถูกเขียนลงตารางพร้อมกัน) ไม่มีการลบแถว — ประวัติเป็นหลักฐานว่าอีเมลเคยพูดอะไร
+/// แต่ละ key มีฉบับร่างได้หนึ่งฉบับและฉบับที่ใช้งานได้หนึ่งฉบับ (partial unique index สองตัว เพิ่มมือใน migration)
+model EmailTemplateVersion {
+  id            String                     @id @default(uuid()) @db.Uuid
+  templateKey   String                     @map("template_key") @db.VarChar(64)
+  versionNumber Int                        @map("version_number")
+  status        EmailTemplateVersionStatus
+
+  subject      String
+  bodyHtml     String  @map("body_html")
+  buttonLabel  String? @map("button_label")
+  footnoteHtml String? @map("footnote_html")
+
+  /// นำกลับมาจากเวอร์ชันไหน (ฉบับร่างที่เกิดจาก "นำกลับมาใช้") และเหตุผลของการนำกลับ
+  restoredFromVersion Int?    @map("restored_from_version")
+  restoreReason       String? @map("restore_reason")
+
+  /// เวลาที่เวอร์ชันนี้เริ่มใช้งาน — อีเมลเตือนคำเชิญหาหัวเรื่องของคำเชิญฉบับที่ส่งไปจริงจากคอลัมน์นี้ (เวอร์ชันล่าสุดที่ published_at ≤ issued_at)
+  publishedAt   DateTime? @map("published_at") @db.Timestamptz(6)
+  publishedBy   String?   @map("published_by") @db.Uuid
+  publishReason String?   @map("publish_reason")
+  supersededAt  DateTime? @map("superseded_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  @@unique([templateKey, versionNumber])
+  @@index([templateKey, status])
+  @@index([templateKey, publishedAt])
+  @@map("email_template_version")
+  @@schema("administration")
+}
+
+/// รูปภาพที่เทมเพลตอีเมลใช้ (`{{image.<code>}}`) — หน้า /console → ตั้งค่า › รูปภาพในอีเมล — ไม่มีใน sheet
+///
+/// เบี่ยงจากดีไซน์: เพิ่มพร้อมการ์ด "[New Feature] Admin Email Template Edit" (2026-11-08) เก็บไฟล์ในตารางนี้เลย (bytea) ไม่ใช่ blob storage
+/// เพราะรูปเล็ก (≤ 500 KB) และทั้ง API กับ delivery-worker อ่านมันทุกครั้งที่ส่งอีเมลที่อ้างถึง — ไม่ต้องพึ่ง Azure ตอนส่งอีเมล
+///
+/// `logo` เป็นรายการตายตัว: ไม่มีแถว = ไฟล์ `src/assets/brand/bdi-logo.png` ในโค้ด เปลี่ยนไฟล์ได้ คืนค่าตั้งต้นได้ ลบไม่ได้
+/// `code` เปลี่ยนไม่ได้ (เทมเพลตอ้างด้วยชื่อนี้) รูปที่เทมเพลตยังอ้างอยู่ลบไม่ได้
+model EmailImage {
+  code         String @id @db.VarChar(40)
+  name         String @db.VarChar(200)
+  altText      String @map("alt_text") @db.VarChar(300)
+  /// ความกว้างที่แสดงในอีเมล (px) — ความสูงคำนวณจากสัดส่วนของไฟล์ (`width_px` / `height_px`)
+  displayWidth Int    @map("display_width")
+
+  content     Bytes
+  contentType String @map("content_type") @db.VarChar(40)
+  sizeBytes   Int    @map("size_bytes")
+  widthPx     Int    @map("width_px")
+  heightPx    Int    @map("height_px")
+  contentHash String @map("content_hash") @db.VarChar(64)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  @@map("email_image")
+  @@schema("administration")
+}

@@ -92,6 +92,12 @@ export const CONSOLE_GROUPS: Group[] = [
         label: "ตั้งค่าระบบ",
         icon: icon("M10 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"),
       },
+      // การ์ด "[New Feature] Admin Email Template Edit" (2026-11-08) — เนื้ออีเมลทุกฉบับที่ระบบส่ง
+      {
+        href: "/console/settings/email-templates",
+        label: "เทมเพลตอีเมล",
+        icon: icon("M3 5h14v10H3zM3 5l7 6 7-6"),
+      },
       // การ์ด "[Enhance] JIRA integration" (2026-11-08) — ค่าตั้งการเชื่อมต่อ + บันทึกการทำงานกับ Jira
       { href: "/console/settings/jira", label: "Jira", icon: icon("M4 4h5v5H4zM11 4h5v5h-5zM4 11h5v5H4zM13.5 11v5M11 13.5h5") },
     ],

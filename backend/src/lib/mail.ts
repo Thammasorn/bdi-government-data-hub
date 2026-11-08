@@ -1,51 +1,36 @@
-import { readFileSync } from "node:fs";
+/**
+ * ส่งอีเมล — transport (SMTP / dry-run) และอีเมลแต่ละชนิดที่ระบบส่ง
+ *
+ * **เนื้อความไม่ได้อยู่ที่นี่แล้ว** (การ์ด "[New Feature] Admin Email Template Edit", 2026-11-08): ทุกฉบับ render จากเทมเพลตที่ผู้ดูแลระบบแก้ได้
+ * ที่ /console → ตั้งค่า › เทมเพลตอีเมล (`lib/email/`) ฟังก์ชันในไฟล์นี้เหลือหน้าที่เตรียม**ค่า**ให้เทมเพลต — ตัวแปร (`vars`, ข้อความดิบ
+ * escape ตอนเติม) บล็อกของระบบ (`blocks`) และลิงก์ของปุ่ม — ผ่าน `*Context()` ซึ่ง preview กับอีเมลทดสอบเรียกด้วยข้อมูลตัวอย่าง
+ * (`lib/email/samples.ts`) อีเมลจริงกับ preview จึงประกอบด้วยโค้ดชุดเดียวกัน
+ *
+ * signature ของฟังก์ชัน `send*` ไม่เปลี่ยน ผู้เรียก (routes, workers/render.ts) จึงไม่ต้องรู้ว่ามีเทมเพลต
+ */
 import net from "node:net";
 
 import nodemailer, { type Transporter } from "nodemailer";
 
+import { prisma } from "../db.js";
 import { env } from "../env.js";
-import { thaiDuration } from "./duration.js";
 import { addBreadcrumb } from "./context.js";
+import { thaiDuration } from "./duration.js";
+import {
+  activationBlock,
+  escapeHtml,
+  noteBlock,
+  orgCodeBlock,
+  otpBlock,
+  stepsBlock,
+  summaryBlock,
+} from "./email/blocks.js";
+import { INVITATION_SUBJECT_DEFAULT } from "./email/catalogue.js";
+import { composeEmail, defaultImages, defaultLayout } from "./email/compose.js";
+import type { EmailAttachment } from "./email/images.js";
+import { renderEmail, renderSubject, type EmailContext } from "./email/render.js";
+import { contentAt } from "./email/store.js";
 import type { JourneyProgress } from "./journey-steps.js";
-
-/**
- * โลโก้ต้องแนบไปกับอีเมลแต่ละฉบับแล้วอ้างด้วย cid: ไม่ใช่ลิงก์ไปที่เว็บ
- * เพราะเมลไคลเอนต์ส่วนใหญ่บล็อกรูปจากภายนอกจนกว่าผู้รับจะกดอนุญาต
- *
- * อ่านไฟล์ครั้งเดียวตอนโหลดโมดูล ถ้าอ่านไม่ได้ (เช่น build ลืม copy src/assets)
- * จะถอยไปใช้หัวจดหมายแบบตัวอักษรแทน — ดีกว่าให้อีเมลทั้งระบบส่งไม่ออกเพราะรูปใบเดียว
- */
-const LOGO_CID = "bdi-logo";
-const logo = ((): Buffer | null => {
-  try {
-    return readFileSync(new URL("../assets/brand/bdi-logo.png", import.meta.url));
-  } catch (err) {
-    console.warn("[mail] อ่านไฟล์โลโก้ไม่ได้ จะใช้หัวจดหมายแบบตัวอักษรแทน", err);
-    return null;
-  }
-})();
-
-const NAVY = "#192768";
-const CORAL = "#E5775A";
-const TEXT = "#141A33";
-const MUTED = "#5B6178";
-const BORDER = "#E2E4EC";
-/** โทนคำเตือน — ค่าเดียวกับ --color-warning / --color-warning-bg ใน globals.css */
-const WARNING = "#B26A00";
-const WARNING_BG = "#FFF3E0";
-
-/**
- * ช่องทางติดต่อที่ท้ายอีเมลบอกไว้
- *
- * เบอร์โทรปล่อยว่างได้ และเมื่อว่าง **ทุกที่ที่พิมพ์มันต้องหายไปทั้งวรรค** ไม่ใช่พิมพ์
- * "ติดต่อโทรศัพท์  หรืออีเมล …" ทิ้งช่องโหว่ไว้ให้ผู้รับอ่าน
- */
-const SUPPORT_EMAIL = env.support.email;
-const SUPPORT_PHONE = env.support.phone;
-const contactLine = (lead: string) =>
-  SUPPORT_PHONE
-    ? `${lead}โทรศัพท์ ${escapeHtml(SUPPORT_PHONE)} หรืออีเมล ${SUPPORT_EMAIL}`
-    : `${lead}อีเมล ${SUPPORT_EMAIL}`;
 
 let transporter: Transporter | null = null;
 
@@ -89,7 +74,13 @@ export class SendDeadlineError extends Error {
  * ส่งสำเร็จแล้วรอ QUIT ให้ socket ปิดก่อนคืน (`QUIT_WAIT_MS`) — ผู้เรียกที่ส่งทีละฉบับจึงไม่มีสองการเชื่อมต่อซ้อนกันแม้แต่ช่วงสั้น ๆ
  * ไม่เปลี่ยน transport ปกติ: อีเมลของ outbox กับอีเมลที่ส่งจากคำขอไม่มีเพดานเวลา และค่าที่สั้นลงเปลี่ยนพฤติกรรมของมัน
  */
-async function sendWithDeadline(to: string, subject: string, html: string, timeoutMs: number): Promise<void> {
+async function sendWithDeadline(
+  to: string,
+  subject: string,
+  html: string,
+  attachments: EmailAttachment[],
+  timeoutMs: number,
+): Promise<void> {
   const sockets: net.Socket[] = [];
   const tx = nodemailer.createTransport({
     host: env.smtp.host,
@@ -111,7 +102,7 @@ async function sendWithDeadline(to: string, subject: string, html: string, timeo
       reject(new SendDeadlineError(timeoutMs));
     }, timeoutMs);
   });
-  const work = sendMailVia(tx, to, subject, html);
+  const work = sendMailVia(tx, to, subject, html, attachments);
   // การส่งที่ถูกตัดล้มตามมาทีหลัง ("Connection closed") — ผลออกไปทาง deadline แล้ว ต้องไม่กลายเป็น unhandled rejection
   work.catch(() => undefined);
   try {
@@ -133,163 +124,14 @@ function closed(socket: net.Socket): Promise<void> {
   if (socket.destroyed) return Promise.resolve();
   return new Promise((resolve) => socket.once("close", () => resolve()));
 }
-
-/**
- * หน่วยงานที่อีเมลฉบับหนึ่งพูดถึง — ชื่อกับรหัสเดินทางด้วยกันเสมอ
- *
- * แยกเป็นชนิดเดียวเพราะทุกฉบับของ Journey B ต้องพิมพ์ทั้งคู่ ถ้าปล่อยเป็นพารามิเตอร์
- * `orgName` เดี่ยว ๆ เหมือนเดิม การเพิ่มรหัสจะกลายเป็นการเติมอาร์กิวเมนต์ที่ห้าให้ทุกฟังก์ชัน
- * และที่เรียกใช้ลืมได้ทีละที่ · `code` เป็น null ได้จริง — คำขอที่ยังไม่ได้ออกรหัสให้
- */
-export interface OrgIdentity {
-  name: string;
-  /** รหัสหน่วยงาน — null ได้ ถ้าคำขอใบนั้นยังไม่มีรหัส */
-  code: string | null;
-}
-
-interface Button {
-  label: string;
-  url: string;
-  /**
-   * ลิงก์ที่พิมพ์ให้ตาเห็นใต้ปุ่ม เผื่อปุ่มกดไม่ได้
-   *
-   * ไม่ส่งมา = ใช้ `url` เหมือนเดิม · ส่ง `null` = ไม่ต้องพิมพ์บล็อกนี้เลย ซึ่งอีเมลคำเชิญ
-   * ใช้ เพราะที่อยู่สำหรับลงทะเบียนกับ Activation Key ถูกพิมพ์แยกกันไว้ในเนื้อความแล้ว
-   * และลิงก์ของมันมี token ต่อท้าย — ยาว อ่านไม่รู้เรื่อง และติดไปกับภาพที่ผู้รับแคปหน้าจอ
-   */
-  fallback?: string | null;
-}
-
-/**
- * เทมเพลตกลางตาม CI ของ BDI
- * ใช้ table layout กับ inline style เพราะ Gmail/Outlook ตัด <style> ทิ้ง
- */
-function layout(opts: {
-  title: string;
-  intro: string;
-  /**
-   * รหัสหน่วยงานที่เรื่องนี้เกี่ยวข้อง — พิมพ์ใต้ย่อหน้าเปิดเสมอ ไม่ว่าจะเป็นอีเมลฉบับไหน
-   *
-   * อยู่ที่ layout ไม่ใช่ที่ template แต่ละฉบับ เพื่อให้ตำแหน่งบนหน้าจดหมายเป็นที่เดียวกันหมด
-   * ผู้รับที่ดูแลหลายหน่วยงาน (เจ้าหน้าที่ BDI ทุกคน) จึงกวาดตาหาที่เดิมได้โดยไม่ต้องอ่านทั้งฉบับ
-   */
-  orgCode?: string | null;
-  body?: string;
-  /** บล็อกขั้นตอนจาก stepsBlock() — วางใต้ body และเหนือปุ่มเสมอ */
-  steps?: string;
-  button?: Button;
-  /**
-   * ข้อความที่ต้องอยู่ **ใต้ปุ่ม** — คำลงท้ายของหนังสือนำส่ง
-   *
-   * อีเมลคำเชิญเขียนเป็นหนังสือราชการ คำลงท้าย ("จึงเรียนมาเพื่อโปรดดำเนินการ /
-   * ขอแสดงความนับถือ") จึงต้องปิดท้ายจดหมายจริง ๆ ถ้าวางไว้ใน `body` ปุ่มจะไปโผล่
-   * ใต้ลายเซ็น ซึ่งอ่านแล้วเหมือนจดหมายจบไปแล้วแต่ยังมีของต่อท้าย
-   */
-  closing?: string;
-  /**
-   * บรรทัดหมายเหตุบรรทัดแรกของท้ายอีเมล — แทนที่ "ส่งจากระบบอัตโนมัติ กรุณาอย่าตอบกลับ"
-   *
-   * **ไม่ใช่ที่อยู่ของช่องทางติดต่อ** ช่องทางติดต่อพิมพ์ต่อจากบรรทัดนี้เสมอ ตอนที่ทั้งสองอย่าง
-   * ยังรวมกันอยู่ อีเมลทุกฉบับที่ส่ง footnote ของตัวเองมา (OTP, ถอดสิทธิ์, คำขอไม่ผ่าน,
-   * แจ้งความคืบหน้า) จึงไม่มีช่องทางติดต่อเลยสักช่องทางเดียว
-   */
-  footnote?: string;
-  /**
-   * พิมพ์ช่องทางติดต่อที่ท้ายอีเมลหรือไม่ — ปิดเฉพาะฉบับที่พิมพ์ไว้ในเนื้อจดหมายแล้ว
-   *
-   * อีเมลคำเชิญเขียนเป็นหนังสือนำส่ง ช่องทางติดต่อจึงอยู่เหนือคำลงท้ายตามรูปแบบหนังสือ
-   * ถ้าท้ายอีเมลพิมพ์ซ้ำอีกที ผู้รับจะเห็นเบอร์กับอีเมลชุดเดิมสองรอบห่างกันไม่กี่บรรทัด
-   */
-  contact?: boolean;
-}): string {
-  const {
-    title,
-    intro,
-    orgCode,
-    body = "",
-    steps = "",
-    button,
-    closing,
-    footnote,
-    contact = true,
-  } = opts;
-  return `<!doctype html>
-<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
-<body style="margin:0;padding:0;background:#F6F7FB;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F6F7FB;padding:32px 16px;">
-    <tr><td align="center">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-             style="max-width:560px;background:#FFFFFF;border:1px solid ${BORDER};border-radius:16px;overflow:hidden;">
-        <tr><td style="height:4px;background:linear-gradient(90deg,${CORAL},${NAVY});font-size:0;line-height:0;">&nbsp;</td></tr>
-        <tr><td style="padding:32px 32px 0;">
-          ${
-            logo
-              ? `<img src="cid:${LOGO_CID}" width="88" height="64" alt="สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)"
-                      style="display:block;border:0;outline:none;text-decoration:none;">`
-              : `<div style="font:700 20px/1.3 'Helvetica Neue',Arial,sans-serif;color:${NAVY};letter-spacing:-0.01em;">
-                   BDI<span style="color:${CORAL};">.</span>
-                 </div>`
-          }
-          <div style="margin-top:10px;font:600 14px/1.3 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-            ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)
-          </div>
-        </td></tr>
-        <tr><td style="padding:24px 32px 0;">
-          <h1 style="margin:0 0 12px;font:600 22px/1.4 'Helvetica Neue',Arial,sans-serif;color:${TEXT};">${title}</h1>
-          <p style="margin:0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">${intro}</p>
-          ${orgCodeLine(orgCode)}
-        </td></tr>
-        ${body ? `<tr><td style="padding:20px 32px 0;">${body}</td></tr>` : ""}
-        ${steps ? `<tr><td style="padding:20px 32px 0;">${steps}</td></tr>` : ""}
-        ${
-          button
-            ? `<tr><td style="padding:28px 32px 0;">
-                 <a href="${button.url}"
-                    style="display:inline-block;background:${CORAL};color:#FFFFFF;text-decoration:none;
-                           font:600 15px/1 'Helvetica Neue',Arial,sans-serif;padding:15px 28px;border-radius:999px;">
-                   ${button.label}
-                 </a>
-                 ${
-                   button.fallback === null
-                     ? ""
-                     : `<p style="margin:16px 0 0;font:400 12px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};word-break:break-all;">
-                   หากปุ่มด้านบนไม่ทำงาน กรุณาคัดลอกลิงก์ต่อไปนี้และเปิดในเบราว์เซอร์ของคุณ:<br>
-                   <span style="color:${NAVY};">${button.fallback ?? button.url}</span>
-                 </p>`
-                 }
-               </td></tr>`
-            : ""
-        }
-        ${closing ? `<tr><td style="padding:24px 32px 0;">${closing}</td></tr>` : ""}
-        <tr><td style="padding:32px;">
-          <div style="border-top:1px solid ${BORDER};padding-top:16px;
-                      font:400 12px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-            ${footnote ?? "อีเมลฉบับนี้ส่งจากระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลฉบับนี้"}<br>
-            ${contact ? `${contactLine("หากมีข้อสงสัยหรือประสบปัญหาในการดำเนินการ สามารถติดต่อ")}<br>` : ""}
-            สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) — Big Data Institute (Public Organization)
-          </div>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body></html>`;
-}
-
-/**
- * บรรทัด "รหัสหน่วยงาน" ใต้ย่อหน้าเปิด
- *
- * คืนสตริงว่างเมื่อไม่มีรหัส — ป้ายเปล่า ๆ ที่ตามด้วยความว่างอ่านเหมือนระบบทำข้อมูลหาย
- * ส่วนอีเมลที่ไม่ได้พูดถึงหน่วยงานใดเลย (OTP, สิ่งที่ตกมาที่ sendRaw) ไม่ส่งค่านี้มาตั้งแต่แรก
- */
-function orgCodeLine(code: string | null | undefined): string {
-  if (!code) return "";
-  return `<p style="margin:10px 0 0;font:400 13px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-            รหัสหน่วยงาน <strong style="color:${TEXT};">${escapeHtml(code)}</strong>
-          </p>`;
-}
-
 /** `timeoutMs`: เพดานเวลาทั้งฉบับ ครบแล้วปิดการเชื่อมต่อ (`sendWithDeadline`) — ไม่ส่งมา = transport ปกติ ไม่มีเพดาน */
-async function send(to: string, subject: string, html: string, timeoutMs?: number): Promise<void> {
+async function send(
+  to: string,
+  subject: string,
+  html: string,
+  attachments: EmailAttachment[],
+  timeoutMs?: number,
+): Promise<void> {
   const tx = getTransporter();
   if (!tx) {
     // ยังไม่ตั้งค่า SMTP — พิมพ์ลง log เพื่อให้ทดสอบ flow ได้โดยไม่ต้องมีเมลจริง
@@ -308,8 +150,8 @@ async function send(to: string, subject: string, html: string, timeoutMs?: numbe
    * breadcrumb ของ event ว่า audit เขียนแล้ว แล้วค่อยมาล้มที่อีเมล
    */
   try {
-    if (timeoutMs === undefined) await sendMailVia(tx, to, subject, html);
-    else await sendWithDeadline(to, subject, html, timeoutMs);
+    if (timeoutMs === undefined) await sendMailVia(tx, to, subject, html, attachments);
+    else await sendWithDeadline(to, subject, html, attachments, timeoutMs);
   } catch (err) {
     const code = (err as { responseCode?: unknown; code?: unknown }).responseCode ?? (err as { code?: unknown }).code;
     addBreadcrumb("smtp", `ส่งอีเมลไม่สำเร็จ${typeof code === "string" || typeof code === "number" ? ` (${code})` : ""}`, false);
@@ -318,7 +160,14 @@ async function send(to: string, subject: string, html: string, timeoutMs?: numbe
   addBreadcrumb("smtp", "ส่งอีเมลสำเร็จ");
 }
 
-async function sendMailVia(tx: Transporter, to: string, subject: string, html: string): Promise<void> {
+/** `attachments` คือรูปที่ html อ้างด้วย `cid:` (`RenderedEmail.attachments`) — แนบเฉพาะที่ฉบับนั้นใช้จริง */
+async function sendMailVia(
+  tx: Transporter,
+  to: string,
+  subject: string,
+  html: string,
+  attachments: EmailAttachment[],
+): Promise<void> {
   await tx.sendMail({
     from: env.smtp.from,
     /**
@@ -335,82 +184,52 @@ async function sendMailVia(tx: Transporter, to: string, subject: string, html: s
     to,
     subject,
     html,
-    attachments: logo
-      ? [{ filename: "bdi-logo.png", content: logo, cid: LOGO_CID, contentType: "image/png" }]
-      : [],
+    attachments,
   });
 }
 
 /**
- * บล็อก "ขั้นตอนทั้งหมด" ท้ายอีเมล
- *
- * ผู้รับอีเมลส่วนใหญ่ไม่ได้เปิดหน้าจอตาม จึงต้องเห็นตรงนี้ว่าคำขอมีทั้งหมดกี่ขั้น
- * อยู่ขั้นไหน และหลังจากนี้ใครทำอะไร — ข้อมูลชุดเดียวกับ stepper บนหน้าจอ
- *
- * เป็นตารางกับ inline style ล้วน: Gmail และ Outlook ตัด `<style>` ทิ้ง และรองรับ
- * flex/grid ไม่ได้ เครื่องหมายใช้ตัวอักษรธรรมดา ไม่ใช่อิโมจิ เพราะไคลเอนต์บางตัว
- * เรนเดอร์อิโมจิเป็นบิตแมปสีที่สูงกว่าบรรทัด
+ * หน่วยงานที่อีเมลฉบับหนึ่งพูดถึง — ชื่อกับรหัสเดินทางด้วยกันเสมอ
+ * `code` เป็น null ได้จริง — คำขอที่ยังไม่ได้ออกรหัสให้
  */
-export function stepsBlock(progress: JourneyProgress | null | undefined): string {
-  if (!progress || progress.steps.length === 0) return "";
+export interface OrgIdentity {
+  name: string;
+  /** รหัสหน่วยงาน — null ได้ ถ้าคำขอใบนั้นยังไม่มีรหัส */
+  code: string | null;
+}
 
-  /**
-   * หัวบล็อกบอกทั้งตำแหน่งและสิ่งที่คำขอกำลังรออยู่ — "ขั้นตอนที่ 4 จาก 4" ลอย ๆ
-   * ตอบได้แค่ว่าเดินมาไกลแค่ไหน ไม่ได้ตอบว่าตอนนี้ค้างอยู่ที่ใคร
-   */
-  const heading =
-    progress.currentOrder && progress.currentStep
-      ? `ขั้นตอนที่ ${progress.currentOrder} จาก ${progress.totalSteps} — ${escapeHtml(progress.currentStep.shortLabel)}`
-      : `กระบวนการนี้มีทั้งหมด ${progress.totalSteps} ขั้นตอน`;
+const BKK = "Asia/Bangkok";
+/** "11 กันยายน 2569" — อีเมลมีตัวจัดรูปแบบของตัวเอง ไม่พึ่ง thaiLongDate() ของเอกสารข้อตกลงที่ฝ่ายกฎหมายสั่งเปลี่ยนได้ */
+const dateLong = (d: Date) => new Intl.DateTimeFormat("th-TH", { dateStyle: "long", timeZone: BKK }).format(d);
+/** "11 กันยายน 2569 16:30" — ไม่มี "น." ต่อท้าย เทมเพลตเติมเองถ้าต้องการ */
+const dateTimeLong = (d: Date) =>
+  new Intl.DateTimeFormat("th-TH", { dateStyle: "long", timeStyle: "short", timeZone: BKK }).format(d);
+const dateTimeMedium = (d: Date) =>
+  new Intl.DateTimeFormat("th-TH", { dateStyle: "medium", timeStyle: "short", timeZone: BKK }).format(d);
 
-  const rows = progress.steps
-    .map((step) => {
-      const mark =
-        step.state === "DONE"
-          ? { glyph: "&#10003;", color: "#1B7F5A" }
-          : step.state === "REJECTED"
-            ? { glyph: "&#10007;", color: "#B3261E" }
-            : step.state === "CURRENT"
-              ? { glyph: "&#9654;", color: CORAL }
-              : { glyph: "&#9675;", color: MUTED };
-      const emphasis = step.state === "CURRENT" ? 600 : 400;
-      const color = step.state === "UPCOMING" ? MUTED : TEXT;
-      const number = step.order ? `${step.order}. ` : "";
-      const suffix = step.optional ? " (เมื่อผู้ประสานงานของ BDI มอบหมาย)" : "";
-      // ขั้นที่ยังไม่เกิดขึ้นต้องอ่านว่า "รอ" — เดิมทุกขั้นเขียน "โดย…" เหมือนกันหมด
-      // ขั้นที่คำขอค้างอยู่จึงอ่านเหมือนทำไปแล้ว
-      const doer = step.state === "CURRENT" ? "รอดำเนินการโดย" : "ดำเนินการโดย";
+/** ประกอบจากเทมเพลตที่ใช้งานอยู่แล้วส่งถึงทุกคน (ไม่ซ้ำ) — render ครั้งเดียว ทุกคนได้ฉบับเดียวกัน */
+async function deliver(to: string | string[], ctx: EmailContext): Promise<void> {
+  const recipients = [...new Set((Array.isArray(to) ? to : [to]).filter(Boolean))];
+  if (recipients.length === 0) return;
+  const { subject, html, attachments } = await composeEmail(ctx);
+  await Promise.all(recipients.map((addr) => send(addr, subject, html, attachments)));
+}
 
-      return `<tr>
-        <td width="24" valign="top" style="padding:6px 0;font:600 14px/1.6 'Helvetica Neue',Arial,sans-serif;color:${mark.color};">${mark.glyph}</td>
-        <td valign="top" style="padding:6px 0;font:${emphasis} 14px/1.6 'Helvetica Neue',Arial,sans-serif;color:${color};">
-          ${number}${escapeHtml(step.label)}${suffix}
-          <div style="font:400 12px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">${doer}${escapeHtml(step.roleLabel)}</div>
-        </td>
-      </tr>`;
-    })
-    .join("");
-
-  const next = progress.nextStep
-    ? `<div style="margin-top:12px;font:400 13px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-         ขั้นต่อไป: <span style="color:${TEXT};">${escapeHtml(progress.nextStep.label)}</span>
-       </div>`
-    : "";
-
-  return `<div style="font:600 16px/1.4 'Helvetica Neue',Arial,sans-serif;color:${TEXT};margin-bottom:12px;">สถานะคำขอ</div>
-  <div style="border:1px solid ${BORDER};border-radius:12px;padding:16px;">
-    <div style="font:600 13px/1.5 'Helvetica Neue',Arial,sans-serif;color:${NAVY};margin-bottom:12px;">${heading}</div>
-    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">${rows}</table>
-    ${next}
-  </div>`;
+/** ส่งอีเมลที่ประกอบแล้ว — อีเมลทดสอบของหน้าแก้เทมเพลต (`POST /api/admin/email-templates/:key/test-send`) */
+export async function sendRendered(
+  to: string,
+  subject: string,
+  html: string,
+  attachments: EmailAttachment[],
+): Promise<void> {
+  await send(to, subject, html, attachments);
 }
 
 /**
- * ส่งอีเมลจากแถวใน notification outbox
+ * ส่งอีเมลจากแถวใน notification outbox และสรุป error (workers/error-alerts.ts)
  *
- * delivery worker เรียกตัวนี้ — มันมีแค่ title กับ message ของ notification
- * ไม่ได้ถือ template ของแต่ละเหตุการณ์ จึงห่อด้วย layout กลางให้หน้าตาเหมือนฉบับอื่น
- * ไม่รับ HTML จากผู้เรียก เพราะข้อความมาจากฐานข้อมูล ต้อง escape ก่อนเสมอ
+ * **ไม่ใช่เทมเพลตที่แก้ได้** และใช้แม่แบบกลางฉบับตั้งต้นในโค้ด ไม่อ่านฐานข้อมูล: สรุป error ต้องส่งได้แม้ฐานข้อมูลล่ม ไม่รับ HTML จากผู้เรียก
+ * เพราะข้อความมาจากฐานข้อมูล ต้อง escape ก่อนเสมอ (`{` escape ด้วย เพื่อไม่ให้ข้อความที่มี `{{…}}` ถูกอ่านเป็น placeholder)
  */
 export async function sendRaw(
   to: string,
@@ -418,273 +237,216 @@ export async function sendRaw(
   message: string,
   options: { lineBreaks?: boolean; timeoutMs?: number } = {},
 ): Promise<void> {
-  // `lineBreaks`: ขึ้นบรรทัดใหม่ตาม `\n` ของข้อความ (สรุป error ของ workers/error-alerts.ts) — ผู้เรียกเดิมไม่ส่งมา อีเมลของ
-  // notification จึงหน้าตาเหมือนเดิมทุกตัว · `timeoutMs`: เพดานเวลาทั้งฉบับ ครบแล้วปิดการเชื่อมต่อแล้ว throw
-  // `SendDeadlineError` (`sendWithDeadline`)
-  const intro = options.lineBreaks ? escapeHtml(message).replace(/\n/g, "<br>") : escapeHtml(message);
-  await send(to, title, layout({ title, intro }), options.timeoutMs);
+  const text = (s: string) => escapeHtml(s).replace(/\{/g, "&#123;");
+  const intro = options.lineBreaks ? text(message).replace(/\n/g, "<br>") : text(message);
+  const { html, attachments } = renderEmail({
+    content: {
+      subject: "",
+      bodyHtml:
+        `<h1 style="margin:0 0 12px;font:600 22px/1.4 'Helvetica Neue',Arial,sans-serif;color:#141A33;">${text(title)}</h1>` +
+        `<p style="margin:0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:#5B6178;">${intro}</p>`,
+      buttonLabel: null,
+      footnoteHtml:
+        "อีเมลฉบับนี้ส่งจากระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลฉบับนี้<br>หากมีข้อสงสัยหรือประสบปัญหาในการดำเนินการ สามารถติดต่อ{{support.contact}}",
+    },
+    layout: defaultLayout(),
+    ctx: { key: "raw", vars: {}, blocks: {} },
+    images: defaultImages(),
+  });
+  await send(to, title, html, attachments, options.timeoutMs);
 }
 
-/**
- * ตารางสรุป "ป้าย: ค่า" — ใช้ยกข้อมูลที่ผู้อ่านต้องเห็นออกมาจากย่อหน้า
- *
- * เกิดมาเพื่ออีเมลของ Journey C แต่ไม่มีอะไรเป็นเรื่องชุดข้อมูลอยู่ในนี้เลย อีเมลคำเชิญ
- * ใช้ตัวเดียวกันยกบทบาทกับหน่วยงานขึ้นบรรทัดของตัวเอง (เดิมชื่อ `datasetSummary`)
- */
-function summaryTable(rows: Array<[string, string]>): string {
-  return `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border:1px solid ${BORDER};border-radius:12px;border-collapse:separate;overflow:hidden;">
-    ${rows
-      .map(
-        ([label, value]) => `<tr>
-          <td style="padding:10px 14px;background:#F6F7FB;font:400 13px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};width:38%;">${escapeHtml(label)}</td>
-          <td style="padding:10px 14px;font:600 13px/1.6 'Helvetica Neue',Arial,sans-serif;color:${TEXT};">${escapeHtml(value)}</td>
-        </tr>`,
-      )
-      .join("")}
-  </table>`;
+// ------------------------------------------------------------------ บัญชีผู้ใช้
+
+export interface InvitationInfo {
+  roleLabel: string;
+  organizationName: string;
+  expiresAt: Date;
+  internal: boolean;
 }
-
-// ------------------------------------------------------------------ อีเมลแต่ละชนิด
-
-/**
- * หัวข้อของอีเมลคำเชิญ — อีเมลเตือน (`sendInvitationReminderEmail`) พิมพ์หัวข้อนี้ให้ผู้รับใช้ค้นหาอีเมลฉบับเดิมในกล่องจดหมาย
- * สองฉบับจึงต้องอ่านค่าเดียวกัน แก้ที่นี่ที่เดียว
- */
-export const INVITATION_EMAIL_SUBJECT = "คำเชิญเข้าใช้งานระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)";
 
 /**
  * คำเชิญเข้าใช้งานระบบ — ฉบับเดียวที่ถือ Activation Key ตัวจริง
  *
- * เขียนใหม่ตามการ์ด "แก้เนื้อหา invitation email" ให้เป็นหนังสือนำส่งอย่างที่หน่วยงานรัฐ
- * คุ้นเคย ไม่ใช่ข้อความเชิญสั้น ๆ สิ่งที่การ์ดสั่งไว้และมีผลต่อรูปร่างของอีเมลฉบับนี้
- *
- * - **URL กับ Activation Key แยกบรรทัด** และ URL ที่พิมพ์ให้อ่านต้องเป็น `/activate` เปล่า ๆ
- *   ไม่ใช่ลิงก์ที่มี token ต่อท้าย (`fallback: null` จึงตัดบล็อกลิงก์สำรองใต้ปุ่มทิ้ง) —
- *   หน้า `/activate` มีช่องกรอกคีย์อยู่แล้ว เส้นทาง "เปิด URL แล้วกรอกคีย์" จึงเดินได้จริง
- *   ส่วนปุ่มยังพา token ไปให้เหมือนเดิม คนที่เปิดอีเมลบนเครื่องตัวเองกดครั้งเดียวจบ
- * - **ชื่อบทบาทต้องเด่น** เดิมฝังอยู่กลางย่อหน้า ตอนนี้อยู่ในตารางสรุปบรรทัดของตัวเอง
- * - **วันหมดอายุจริง** ไม่ใช่ "ใช้ได้ 7 วัน" ให้ผู้รับนับเอง ใช้ `expiresAt` ของคีย์ใบนั้น
- * - **คำเตือนคำเชิญที่ไม่ได้คาดหมาย** ผู้รับที่ไม่รู้จักเรื่องนี้ต้องมีทางไปที่ไม่ใช่การกดลิงก์
- *
- * `internal` แยกสำนวนของย่อหน้าเปิด: BDI ไม่ได้ "แจ้งความประสงค์ขอเชื่อมโยงระบบ" กับตัวเอง
- * ทุกอย่างที่เหลือ (คีย์ วันหมดอายุ บทบาท คำเตือน ท้ายจดหมาย) เหมือนกันทั้งสองฉบับ
+ * ปุ่มพา token ไปให้ (กดครั้งเดียวจบ) แต่ลิงก์สำรองใต้ปุ่มไม่พิมพ์ (`fallback: null`) เพราะ URL `/activate` เปล่า ๆ กับคีย์พิมพ์แยกกันไว้ใน
+ * `{{block.activation}}` แล้ว ลิงก์ที่มี token ต่อท้ายยาว อ่านไม่รู้เรื่อง และติดไปกับภาพที่ผู้รับแคปหน้าจอ
  */
-export async function sendInvitationEmail(
-  to: string,
-  key: string,
-  info: { roleLabel: string; organizationName: string; expiresAt: Date; internal: boolean },
-) {
-  const organizationName = escapeHtml(info.organizationName);
+export function invitationContext(key: string, info: InvitationInfo): EmailContext {
   const activateUrl = `${env.appUrl}/activate`;
-  // วันที่แบบ "11 กันยายน 2569" — อีเมลมีตัวจัดรูปแบบของตัวเอง ไม่พึ่ง thaiLongDate()
-  // ของเอกสารข้อตกลง เพราะอีเมลไม่ควรผูกกับรูปแบบที่ฝ่ายกฎหมายสั่งเปลี่ยนได้
-  const expiresOn = new Intl.DateTimeFormat("th-TH", {
-    dateStyle: "long",
-    timeZone: "Asia/Bangkok",
-  }).format(info.expiresAt);
+  return {
+    key: info.internal ? "invitation_internal" : "invitation_external",
+    vars: {
+      "org.name": info.organizationName,
+      "role.label": info.roleLabel,
+      "expires.date": dateLong(info.expiresAt),
+      "activation.validFor": thaiDuration(env.auth.activationKeyTtlSeconds),
+    },
+    blocks: {
+      summary: summaryBlock([
+        ["หน่วยงาน", info.organizationName],
+        ["บทบาทในระบบ", info.roleLabel],
+      ]),
+      activation: activationBlock(activateUrl, key),
+    },
+    button: { url: `${activateUrl}?token=${key}`, fallback: null },
+  };
+}
 
-  const paragraph = (html: string) =>
-    `<p style="margin:0 0 16px;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">${html}</p>`;
+export async function sendInvitationEmail(to: string, key: string, info: InvitationInfo) {
+  await deliver(to, invitationContext(key, info));
+}
 
-  const opening = info.internal
-    ? `ตามที่ท่านได้รับมอบหมายให้ปฏิบัติหน้าที่ในระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2) นั้น ` +
-      `สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) (สขญ) ขอนำส่ง Activation Key ` +
-      `สำหรับใช้ในการลงทะเบียนเข้าใช้งานระบบ`
-    : `ตามที่ <strong style="color:${TEXT};">${organizationName}</strong> ได้แจ้งความประสงค์` +
-      `ขอเชื่อมโยงระบบสารสนเทศของหน่วยงานกับระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2) นั้น ` +
-      `สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) (สขญ) ขอนำส่ง Activation Key ` +
-      `สำหรับใช้ในการลงทะเบียนเข้าใช้งานระบบ`;
+export interface InvitationReminderInfo {
+  roleLabel: string;
+  organizationName: string;
+  issuedAt: Date;
+  expiresAt: Date;
+  internal: boolean;
+}
 
-  await send(
-    to,
-    INVITATION_EMAIL_SUBJECT,
-    layout({
-      title: "ขอนำส่ง Activation Key สำหรับเข้าใช้งานระบบ",
-      intro: info.internal
-        ? `เรียน เจ้าหน้าที่${organizationName}`
-        : `เรียน ผู้ใช้งาน ${organizationName}`,
-      body: [
-        paragraph(opening),
-        summaryTable([
-          ["หน่วยงาน", info.organizationName],
-          ["บทบาทในระบบ", info.roleLabel],
-        ]),
-        `<div style="margin-top:20px;background:#F6F7FB;border:1px solid ${BORDER};border-radius:12px;padding:20px;">
-           <div style="font:400 13px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">URL สำหรับลงทะเบียน</div>
-           <div style="margin-top:4px;font:600 15px/1.6 'Helvetica Neue',Arial,sans-serif;color:${NAVY};word-break:break-all;">${activateUrl}</div>
-           <div style="margin-top:14px;font:400 13px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">Activation Key</div>
-           <div style="margin-top:4px;font:700 15px/1.6 'Courier New',Courier,monospace;color:${TEXT};word-break:break-all;">${escapeHtml(key)}</div>
-         </div>`,
-        `<p style="margin:20px 0 16px;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-           ท่านสามารถเริ่มต้นการใช้งานระบบได้จากปุ่มด้านล่าง หรือเปิด URL ข้างต้นแล้วกรอก Activation Key
-           ด้วยตนเอง จากนั้นยืนยันตัวตนด้วย ThaID และกำหนดรหัสผ่านสำหรับระบบ D2
-         </p>`,
-        paragraph(
-          `ทั้งนี้ ขอให้${info.internal ? "ท่าน" : "หน่วยงาน"}เก็บรักษา Activation Key ไว้เป็นความลับ และโปรดลงทะเบียนภายใน ` +
-            `${thaiDuration(env.auth.activationKeyTtlSeconds)} — <strong style="color:${TEXT};">Activation Key นี้ใช้ได้ถึงวันที่ ${expiresOn}</strong>`,
-        ),
-        `<div style="background:${WARNING_BG};border-left:3px solid ${WARNING};border-radius:8px;padding:16px;">
-           <div style="font:400 14px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};">
-             หากท่านไม่ได้คาดหมายว่าจะได้รับคำเชิญนี้ กรุณาอย่ากดลิงก์และอย่าใช้ Activation Key นี้
-             ${contactLine("และโปรดแจ้งสถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) ที่")}
-           </div>
-         </div>`,
-      ].join(""),
-      button: {
-        label: "เปิดใช้งานบัญชี",
-        url: `${activateUrl}?token=${key}`,
-        fallback: null,
-      },
-      closing: `<p style="margin:0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-           ${contactLine("หากมีข้อสงสัยหรือประสบปัญหาในการดำเนินการ สามารถติดต่อ")}<br><br>
-           จึงเรียนมาเพื่อโปรดดำเนินการ<br><br>
-           ขอแสดงความนับถือ<br>
-           <span style="color:${TEXT};">สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)</span>
-         </p>`,
-      contact: false,
-    }),
-  );
+export function invitationReminderContext(info: InvitationReminderInfo, invitationSubject: string): EmailContext {
+  const sentAt = `${dateTimeLong(info.issuedAt)} น.`;
+  const expiresAt = `${dateTimeLong(info.expiresAt)} น.`;
+  return {
+    key: "invitation_reminder",
+    vars: {
+      "org.name": info.organizationName,
+      "recipient.greeting": info.internal ? `เจ้าหน้าที่${info.organizationName}` : `ผู้ใช้งาน ${info.organizationName}`,
+      "role.label": info.roleLabel,
+      "invitation.subject": invitationSubject,
+      "invitation.sentAt": dateTimeLong(info.issuedAt),
+      "expires.dateTime": dateTimeLong(info.expiresAt),
+    },
+    blocks: {
+      summary: summaryBlock([
+        ["หน่วยงาน", info.organizationName],
+        ["บทบาทในระบบ", info.roleLabel],
+        ["หัวข้ออีเมลคำเชิญ", invitationSubject],
+        ["วันที่ส่งอีเมลคำเชิญ", sentAt],
+        ["ใช้ได้ถึง", expiresAt],
+      ]),
+    },
+  };
 }
 
 /**
- * เตือนว่าคำเชิญใกล้หมดอายุ — ส่งครั้งเดียวต่อคีย์ N วันก่อนหมดอายุ (`invitation_reminder_days`, การ์ด "อีเมลเตือนก่อนคำเชิญหมดอายุ" 2026-11-03)
+ * หัวเรื่องของคำเชิญฉบับที่ผู้รับได้รับจริง — เวอร์ชันของเทมเพลตคำเชิญที่ใช้งานอยู่ตอนออกคีย์ (`issuedAt`) ไม่ใช่เวอร์ชันปัจจุบัน
  *
- * **ไม่มีลิงก์และไม่มี Activation Key** ตาม requirement: ระบบเก็บแค่ HMAC ของคีย์ จึงสร้างลิงก์เดิมซ้ำไม่ได้ และการออกคีย์ใหม่จะยืดอายุคำเชิญ
- * ไปเงียบ ๆ อีเมลจึงบอกสิ่งที่ผู้รับใช้หาอีเมลคำเชิญฉบับเดิมได้ — หัวข้อ (`INVITATION_EMAIL_SUBJECT`) และวันเวลาที่ส่ง — พร้อมวันหมดอายุ
- * และช่องทางขอคีย์ใหม่ ส่วนที่เหลือเขียนเป็นหนังสือนำส่งแบบเดียวกับอีเมลคำเชิญ (คำขึ้นต้น ตารางสรุป คำเตือน คำลงท้าย) เพราะผู้รับจะอ่านสองฉบับคู่กัน
- *
- * `issuedAt` คือวันที่ของคีย์ใบที่ยังใช้ได้ — คำเชิญที่ถูกส่งซ้ำ (resend) ได้คีย์ใบใหม่ อีเมลฉบับที่ต้องหาจึงเป็นฉบับล่าสุด ไม่ใช่ฉบับแรก
+ * ผู้ดูแลอาจเปลี่ยนหัวเรื่องหลังส่งคำเชิญ ถ้าอีเมลเตือนพิมพ์หัวเรื่องใหม่ ผู้รับจะค้นกล่องจดหมายแล้วไม่เจอ อ่านไม่ได้ = หัวเรื่องตั้งต้น
  */
-export async function sendInvitationReminderEmail(
-  to: string,
-  info: { roleLabel: string; organizationName: string; issuedAt: Date; expiresAt: Date; internal: boolean },
-) {
-  const organizationName = escapeHtml(info.organizationName);
-  const dateTime = new Intl.DateTimeFormat("th-TH", { dateStyle: "long", timeStyle: "short", timeZone: "Asia/Bangkok" });
-  const sentAt = `${dateTime.format(info.issuedAt)} น.`;
-  const expiresAt = `${dateTime.format(info.expiresAt)} น.`;
-
-  const paragraph = (html: string) =>
-    `<p style="margin:0 0 16px;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">${html}</p>`;
-
-  await send(
-    to,
-    `Activation Key ของท่านใกล้หมดอายุ — ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)`,
-    layout({
-      title: "แจ้งเตือน Activation Key ใกล้หมดอายุ",
-      intro: info.internal ? `เรียน เจ้าหน้าที่${organizationName}` : `เรียน ผู้ใช้งาน ${organizationName}`,
-      body: [
-        paragraph(
-          `ตามที่สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) (สขญ) ได้นำส่ง Activation Key สำหรับใช้ในการลงทะเบียนเข้าใช้งาน` +
-            `ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2) ให้แก่ท่านทางอีเมลนั้น ขณะนี้ท่านยังมิได้ลงทะเบียน ` +
-            `และ <strong style="color:${TEXT};">Activation Key ดังกล่าวจะหมดอายุในวันที่ ${expiresAt}</strong>`,
-        ),
-        summaryTable([
-          ["หน่วยงาน", info.organizationName],
-          ["บทบาทในระบบ", info.roleLabel],
-          ["หัวข้ออีเมลคำเชิญ", INVITATION_EMAIL_SUBJECT],
-          ["วันที่ส่งอีเมลคำเชิญ", sentAt],
-          ["ใช้ได้ถึง", expiresAt],
-        ]),
-        `<p style="margin:20px 0 16px;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-           กรุณาค้นหาอีเมลที่มีหัวข้อและวันที่ส่งตามตารางข้างต้นในกล่องจดหมายของท่าน (รวมถึงโฟลเดอร์จดหมายขยะ)
-           แล้วลงทะเบียนตามขั้นตอนในอีเมลฉบับนั้นก่อนวันหมดอายุ
-         </p>`,
-        `<div style="margin-bottom:16px;background:#F6F7FB;border:1px solid ${BORDER};border-radius:12px;padding:16px;">
-           <div style="font:400 14px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};">
-             อีเมลฉบับนี้เป็นการแจ้งเตือนเท่านั้น จึงไม่มี Activation Key และไม่มีลิงก์สำหรับลงทะเบียน
-           </div>
-         </div>`,
-        paragraph(
-          `หากไม่พบอีเมลคำเชิญ หรือ Activation Key หมดอายุแล้ว ` +
-            `${contactLine("โปรดติดต่อสถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) ที่")} เพื่อขอ Activation Key ฉบับใหม่`,
-        ),
-        `<div style="background:${WARNING_BG};border-left:3px solid ${WARNING};border-radius:8px;padding:16px;">
-           <div style="font:400 14px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};">
-             หากท่านไม่ได้คาดหมายว่าจะได้รับคำเชิญนี้ กรุณาเพิกเฉยต่ออีเมลฉบับนี้
-             และโปรดแจ้งสถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) ตามช่องทางข้างต้น
-           </div>
-         </div>`,
-      ].join(""),
-      closing: `<p style="margin:0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-           จึงเรียนมาเพื่อโปรดดำเนินการ<br><br>
-           ขอแสดงความนับถือ<br>
-           <span style="color:${TEXT};">สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน)</span>
-         </p>`,
-      // ช่องทางติดต่ออยู่ในเนื้อจดหมายแล้ว (ย่อหน้าขอคีย์ใหม่) — เหมือนอีเมลคำเชิญ ท้ายอีเมลจึงไม่พิมพ์ซ้ำ
-      contact: false,
-    }),
-  );
+async function invitationSubjectAt(info: InvitationReminderInfo): Promise<string> {
+  const vars = {
+    "org.name": info.organizationName,
+    "role.label": info.roleLabel,
+    "expires.date": dateLong(info.expiresAt),
+    "activation.validFor": thaiDuration(env.auth.activationKeyTtlSeconds),
+  };
+  try {
+    const content = await contentAt(prisma, info.internal ? "invitation_internal" : "invitation_external", info.issuedAt);
+    return renderSubject(content.subject, vars);
+  } catch {
+    return renderSubject(INVITATION_SUBJECT_DEFAULT, vars);
+  }
 }
 
 /**
- * ลิงก์ตั้งรหัสผ่านใหม่ — ออกให้โดยผู้ดูแลระบบ ไม่ใช่เจ้าตัวกด "ลืมรหัสผ่าน" เอง
+ * เตือนว่าคำเชิญใกล้หมดอายุ — ส่งครั้งเดียวต่อคีย์ N วันก่อนหมดอายุ (`invitation_reminder_days`)
  *
- * บอกให้ชัดว่าใครเป็นคนสั่ง (สขญ) เพราะผู้รับไม่ได้ขอเอง อีเมลที่โผล่มาโดยไม่มีที่มา
- * อ่านเหมือนฟิชชิง — และบอกว่าถ้าไม่ได้ติดต่อขอไว้ให้เพิกเฉย รหัสผ่านเดิมยังใช้ได้ตามปกติ
- * ลิงก์ใช้ได้ครั้งเดียวและอายุเป็นนาที จึงพิมพ์เวลาหมดอายุเป็นเวลาไทยไม่ใช่แค่วันที่
+ * **ไม่มีลิงก์และไม่มี Activation Key** ระบบเก็บแค่ HMAC ของคีย์ จึงสร้างลิงก์เดิมซ้ำไม่ได้ อีเมลจึงบอกสิ่งที่ผู้รับใช้หาอีเมลคำเชิญฉบับเดิม
+ * ได้ — หัวเรื่องและวันเวลาที่ส่ง `issuedAt` คือวันที่ของคีย์ใบที่ยังใช้ได้ (คำเชิญที่ถูกส่งซ้ำได้คีย์ใบใหม่)
  */
-export async function sendPasswordResetEmail(
-  to: string,
-  token: string,
-  info: { displayName: string | null; expiresAt: Date },
-) {
-  const resetUrl = `${env.appUrl}/reset-password?token=${token}`;
-  const expiresAt = new Intl.DateTimeFormat("th-TH", {
-    dateStyle: "long",
-    timeStyle: "short",
-    timeZone: "Asia/Bangkok",
-  }).format(info.expiresAt);
-  const paragraph = (html: string) =>
-    `<p style="margin:0 0 16px;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">${html}</p>`;
+export async function sendInvitationReminderEmail(to: string, info: InvitationReminderInfo) {
+  await deliver(to, invitationReminderContext(info, await invitationSubjectAt(info)));
+}
 
-  await send(
-    to,
-    "ตั้งรหัสผ่านใหม่ — ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)",
-    layout({
-      title: "ตั้งรหัสผ่านใหม่สำหรับบัญชีของท่าน",
-      intro: info.displayName ? `เรียน ${escapeHtml(info.displayName)}` : "เรียน ผู้ใช้งานระบบ",
-      body: [
-        paragraph(
-          `สถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) (สขญ) ได้รับแจ้งให้ตั้งรหัสผ่านใหม่สำหรับบัญชี ` +
-            `<strong style="color:${TEXT};">${escapeHtml(to)}</strong> ในระบบ D2 ` +
-            `กรุณากดปุ่มด้านล่างเพื่อกำหนดรหัสผ่านใหม่ แล้วเข้าสู่ระบบด้วยรหัสผ่านนั้น`,
-        ),
-        paragraph(
-          `ลิงก์นี้ใช้ได้ครั้งเดียว และ<strong style="color:${TEXT};">ใช้ได้ถึง ${expiresAt}</strong> ` +
-            `หากเลยเวลาแล้ว กรุณาติดต่อผู้ประสานงานของ BDI เพื่อขอลิงก์ใหม่`,
-        ),
-        `<div style="background:${WARNING_BG};border-left:3px solid ${WARNING};border-radius:8px;padding:16px;">
-           <div style="font:400 14px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};">
-             หากท่านไม่ได้ติดต่อขอตั้งรหัสผ่านใหม่ กรุณาอย่ากดลิงก์นี้ — รหัสผ่านเดิมของท่านยังใช้ได้ตามปกติ
-             ${contactLine("และโปรดแจ้งสถาบันข้อมูลขนาดใหญ่ (องค์การมหาชน) ที่")}
-           </div>
-         </div>`,
-      ].join(""),
-      button: { label: "ตั้งรหัสผ่านใหม่", url: resetUrl },
-    }),
-  );
+export interface PasswordResetInfo {
+  displayName: string | null;
+  expiresAt: Date;
+}
+
+/**
+ * ลิงก์ตั้งรหัสผ่านใหม่ — ออกให้โดยผู้ดูแลระบบ ไม่ใช่เจ้าตัวกด "ลืมรหัสผ่าน" เอง ลิงก์ใช้ได้ครั้งเดียวและอายุเป็นนาที
+ * จึงพิมพ์เวลาหมดอายุเป็นเวลาไทยไม่ใช่แค่วันที่
+ */
+export function passwordResetContext(to: string, token: string, info: PasswordResetInfo): EmailContext {
+  return {
+    key: "password_reset",
+    vars: {
+      "recipient.name": info.displayName || "ผู้ใช้งานระบบ",
+      "account.email": to,
+      "expires.dateTime": dateTimeLong(info.expiresAt),
+    },
+    blocks: {},
+    button: { url: `${env.appUrl}/reset-password?token=${token}` },
+  };
+}
+
+export async function sendPasswordResetEmail(to: string, token: string, info: PasswordResetInfo) {
+  await deliver(to, passwordResetContext(to, token, info));
+}
+
+export function otpContext(code: string): EmailContext {
+  return {
+    key: "otp",
+    vars: { "otp.code": code, "otp.validFor": thaiDuration(env.auth.otpTtlSeconds) },
+    blocks: { otp: otpBlock(code) },
+  };
 }
 
 export async function sendOtpEmail(to: string, code: string) {
-  await send(
-    to,
-    `รหัสยืนยันตัวตน ${code} — ระบบกลางเพื่อการแบ่งปันข้อมูลดิจิทัล (D2)`,
-    layout({
-      title: "รหัสยืนยันตัวตน",
-      intro: "ใช้รหัสนี้เพื่อยืนยันตัวตนในระบบ:",
-      body: `<div style="background:#F6F7FB;border:1px solid ${BORDER};border-radius:12px;padding:20px;text-align:center;">
-               <span style="font:700 32px/1 'Helvetica Neue',Arial,sans-serif;color:${NAVY};letter-spacing:8px;">${code}</span>
-             </div>
-             <p style="margin:20px 0 0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-               รหัสนี้ใช้ได้ภายใน <strong style="color:${TEXT};">${thaiDuration(env.auth.otpTtlSeconds)}</strong>
-             </p>
-             <p style="margin:8px 0 0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-               กรุณาอย่าเปิดเผยรหัสนี้แก่ผู้อื่น
-             </p>`,
-      footnote: "หากคุณไม่ได้เป็นผู้ขอรหัสนี้ คุณสามารถเพิกเฉยต่ออีเมลฉบับนี้ได้",
-    }),
-  );
+  await deliver(to, otpContext(code));
+}
+
+export interface RoleRemovedInfo {
+  organizationName: string;
+  roleLabel: string;
+  successorName: string | null;
+  removedAt: Date | null;
+}
+
+/**
+ * แจ้งคนที่ถูกถอดออกจากหน่วยงานเพราะมีคนมารับ role แทน — ไม่มีปุ่มพาไปไหน คนรับอีเมลนี้ไม่มีหน่วยงานให้เปิดแล้ว
+ * และปุ่ม "สร้างหน่วยงาน" คือสิ่งที่ทำให้เกิดหน่วยงานซ้ำมาแล้ว ทางไปต่อที่ถูกคือติดต่อผู้ดูแลระบบ
+ */
+export function roleRemovedContext(info: RoleRemovedInfo): EmailContext {
+  return {
+    key: "role_removed",
+    vars: {
+      "org.name": info.organizationName,
+      "role.label": info.roleLabel,
+      "successor.name": info.successorName ?? "ผู้ใช้รายใหม่",
+      "removed.atPhrase": info.removedAt ? ` เมื่อ ${dateTimeLong(info.removedAt)}` : "",
+    },
+    blocks: {},
+  };
+}
+
+export async function sendRoleRemoved(to: string, info: RoleRemovedInfo) {
+  await deliver(to, roleRemovedContext(info));
+}
+
+// ------------------------------------------------------------------ คำขอหน่วยงาน (Journey B)
+
+function orgContext(
+  key: string,
+  org: OrgIdentity,
+  progress: JourneyProgress | null | undefined,
+  url: string,
+  extra: { vars?: Record<string, string>; blocks?: EmailContext["blocks"] } = {},
+): EmailContext {
+  return {
+    key,
+    vars: { "org.name": org.name, "org.code": org.code ?? "", ...extra.vars },
+    blocks: { orgCode: orgCodeBlock(org.code), steps: stepsBlock(progress), ...extra.blocks },
+    button: { url },
+  };
+}
+
+const orgAdminLink = (id: string) => `${env.appUrl}/admin/organizations/${id}`;
+const orgUserLink = (id: string) => `${env.appUrl}/organizations/${id}`;
+
+export function orgSubmittedContext(org: OrgIdentity, submitter: string, orgId: string, progress?: JourneyProgress | null) {
+  return orgContext("org_submitted", org, progress, orgAdminLink(orgId), { vars: { "submitter.name": submitter } });
 }
 
 export async function sendSubmittedToOfficers(
@@ -694,23 +456,13 @@ export async function sendSubmittedToOfficers(
   orgId: string,
   progress?: JourneyProgress | null,
 ) {
-  if (to.length === 0) return;
-  const orgName = escapeHtml(org.name);
-  await Promise.all(
-    to.map((addr) =>
-      send(
-        addr,
-        `มีคำขอสร้างหน่วยงานใหม่: ${org.name}`,
-        layout({
-          title: "มีคำขอสร้างหน่วยงานรอตรวจสอบ",
-          intro: `<strong style="color:${TEXT};">${orgName}</strong> ยื่นคำขอเข้ามาในระบบ โดย ${escapeHtml(submitter)}`,
-          orgCode: org.code,
-          steps: stepsBlock(progress),
-          button: { label: "เปิดดูคำขอ", url: `${env.appUrl}/admin/organizations/${orgId}` },
-        }),
-      ),
-    ),
-  );
+  await deliver(to, orgSubmittedContext(org, submitter, orgId, progress));
+}
+
+export function orgRevisionContext(org: OrgIdentity, note: string, orgId: string, progress?: JourneyProgress | null) {
+  return orgContext("org_revision", org, progress, orgUserLink(orgId), {
+    blocks: { note: noteBlock({ heading: "สิ่งที่ต้องแก้ไข", text: note, tone: "danger" }) },
+  });
 }
 
 export async function sendRevisionRequested(
@@ -720,21 +472,19 @@ export async function sendRevisionRequested(
   orgId: string,
   progress?: JourneyProgress | null,
 ) {
-  await send(
-    to,
-    `ต้องปรับปรุงข้อมูลหน่วยงาน: ${org.name}`,
-    layout({
-      title: "คำขอของคุณต้องปรับปรุง",
-      intro: `ผู้ตรวจสอบขอให้แก้ไขข้อมูลของ <strong style="color:${TEXT};">${escapeHtml(org.name)}</strong> ก่อนดำเนินการต่อ`,
-      orgCode: org.code,
-      body: `<div style="background:#FDECEA;border-left:3px solid #B3261E;border-radius:8px;padding:16px;">
-               <div style="font:600 13px/1 'Helvetica Neue',Arial,sans-serif;color:#B3261E;margin-bottom:8px;">สิ่งที่ต้องแก้ไข</div>
-               <div style="font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};white-space:pre-wrap;">${escapeHtml(note)}</div>
-             </div>`,
-      steps: stepsBlock(progress),
-      button: { label: "แก้ไขข้อมูล", url: `${env.appUrl}/organizations/${orgId}` },
-    }),
-  );
+  await deliver(to, orgRevisionContext(org, note, orgId, progress));
+}
+
+/** ผู้มีอำนาจที่ยังไม่มีบัญชีได้ปุ่มลงทะเบียน (`org_signatory_register`) — คนละเทมเพลตกับคนที่มีบัญชีแล้ว */
+export function signatoryRequestContext(
+  org: OrgIdentity,
+  orgId: string,
+  registerToken?: string,
+  progress?: JourneyProgress | null,
+) {
+  return registerToken
+    ? orgContext("org_signatory_register", org, progress, `${env.appUrl}/register?token=${registerToken}`)
+    : orgContext("org_signatory_request", org, progress, orgUserLink(orgId));
 }
 
 export async function sendSignatoryRequest(
@@ -744,25 +494,11 @@ export async function sendSignatoryRequest(
   registerToken?: string,
   progress?: JourneyProgress | null,
 ) {
-  const url = registerToken
-    ? `${env.appUrl}/register?token=${registerToken}`
-    : `${env.appUrl}/organizations/${orgId}`;
-  await send(
-    to,
-    `ขอความเห็นชอบการสร้างหน่วยงาน: ${org.name}`,
-    layout({
-      title: "ขอความเห็นชอบในฐานะผู้มีอำนาจอนุมัติของหน่วยงาน",
-      intro: `<strong style="color:${TEXT};">${escapeHtml(org.name)}</strong> ระบุว่าคุณเป็นผู้มีอำนาจอนุมัติของหน่วยงาน และคำขอผ่านการตรวจสอบจากผู้ประสานงานของ BDI แล้ว`,
-      orgCode: org.code,
-      body: registerToken
-        ? `<p style="margin:0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-             คุณยังไม่มีบัญชีในระบบ กรุณาลงทะเบียนเพื่อตรวจสอบเอกสารและให้ความเห็นชอบ
-           </p>`
-        : "",
-      steps: stepsBlock(progress),
-      button: { label: registerToken ? "ลงทะเบียนและตรวจสอบ" : "ตรวจสอบเอกสาร", url },
-    }),
-  );
+  await deliver(to, signatoryRequestContext(org, orgId, registerToken, progress));
+}
+
+export function finalApprovalContext(org: OrgIdentity, orgId: string, progress?: JourneyProgress | null) {
+  return orgContext("org_final_approval", org, progress, orgAdminLink(orgId));
 }
 
 export async function sendFinalApprovalRequest(
@@ -771,453 +507,227 @@ export async function sendFinalApprovalRequest(
   orgId: string,
   progress?: JourneyProgress | null,
 ) {
-  if (to.length === 0) return;
-  const orgName = escapeHtml(org.name);
-  await Promise.all(
-    to.map((addr) =>
-      send(
-        addr,
-        `รอลงนาม: ${org.name}`,
-        layout({
-          title: "มีคำขอรอการลงนาม",
-          intro: `ผู้มีอำนาจอนุมัติของ <strong style="color:${TEXT};">${orgName}</strong> ให้ความเห็นชอบแล้ว`,
-          orgCode: org.code,
-          steps: stepsBlock(progress),
-          button: { label: "ตรวจสอบและลงนาม", url: `${env.appUrl}/admin/organizations/${orgId}` },
-        }),
-      ),
-    ),
-  );
+  await deliver(to, finalApprovalContext(org, orgId, progress));
 }
 
-export async function sendActivated(
-  to: string[],
-  org: OrgIdentity,
-  orgId: string,
-  progress?: JourneyProgress | null,
-) {
-  const unique = [...new Set(to.filter(Boolean))];
-  if (unique.length === 0) return;
-  const orgName = escapeHtml(org.name);
-  await Promise.all(
-    unique.map((addr) =>
-      send(
-        addr,
-        `หน่วยงาน ${org.name} เปิดใช้งานแล้ว`,
-        layout({
-          title: "หน่วยงานของคุณเปิดใช้งานแล้ว",
-          intro: `<strong style="color:${TEXT};">${orgName}</strong> ผ่านการอนุมัติครบทุกขั้นตอนและพร้อมใช้งานบนแพลตฟอร์มแล้ว`,
-          orgCode: org.code,
-          steps: stepsBlock(progress),
-          button: { label: "เข้าสู่ระบบ", url: `${env.appUrl}/organizations/${orgId}` },
-        }),
-      ),
-    ),
-  );
+export function activatedContext(org: OrgIdentity, orgId: string, progress?: JourneyProgress | null) {
+  return orgContext("org_activated", org, progress, orgUserLink(orgId));
 }
 
-/**
- * แจ้งคนที่ถูกถอดออกจากหน่วยงานเพราะมีคนมารับ role แทน
- *
- * ไม่มีปุ่มพาไปไหน — คนรับอีเมลนี้ไม่มีหน่วยงานให้เปิดแล้ว และปุ่ม "สร้างหน่วยงาน"
- * คือสิ่งที่ทำให้เกิดหน่วยงานซ้ำมาแล้ว ทางไปต่อที่ถูกคือติดต่อผู้ดูแลระบบ
- */
-export async function sendRoleRemoved(
-  to: string,
-  info: { organizationName: string; roleLabel: string; successorName: string | null; removedAt: Date | null },
-) {
-  const when = info.removedAt
-    ? new Intl.DateTimeFormat("th-TH", { dateStyle: "long", timeStyle: "short" }).format(info.removedAt)
-    : null;
-  // ชื่อหน่วยงานและชื่อคนมาจากฐานข้อมูล ผู้ใช้พิมพ์เองได้ จึง escape ก่อนวางลง HTML เสมอ
-  const organizationName = escapeHtml(info.organizationName);
-  const roleLabel = escapeHtml(info.roleLabel);
-  const successor = escapeHtml(info.successorName ?? "ผู้ใช้รายใหม่");
-
-  await send(
-    to,
-    `บัญชีของคุณถูกถอดออกจาก ${info.organizationName}`,
-    layout({
-      title: "บัญชีของคุณถูกถอดออกจากหน่วยงาน",
-      intro:
-        `ผู้ดูแลระบบได้มอบหน้าที่ <strong style="color:${TEXT};">${roleLabel}</strong> ของ ` +
-        `<strong style="color:${TEXT};">${organizationName}</strong> ให้ ${successor} แทนคุณ` +
-        (when ? ` เมื่อ ${when}` : "") +
-        ` บัญชีของคุณจึงไม่ได้สังกัดหน่วยงานใดในระบบขณะนี้`,
-      body:
-        `<p style="margin:0;font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">` +
-        `ข้อมูลและคำขอทั้งหมดของ ${organizationName} ยังอยู่ครบ เพียงแต่คุณเปิดดูไม่ได้` +
-        `จนกว่าจะได้รับสิทธิ์คืน</p>`,
-      footnote: "หากคิดว่าไม่ถูกต้อง โปรดติดต่อผู้ดูแลระบบ BDI เพื่อขอสิทธิ์ในหน่วยงานเดิมคืน",
-    }),
-  );
+export async function sendActivated(to: string[], org: OrgIdentity, orgId: string, progress?: JourneyProgress | null) {
+  await deliver(to, activatedContext(org, orgId, progress));
 }
 
-// ------------------------------------------------------------------ Journey C — ชุดข้อมูล
+// ------------------------------------------------------------------ คำขอชุดข้อมูล (Journey C)
 
-/** ส่งฉบับเดียวกันให้หลายคน — ตัดอีเมลซ้ำออกก่อนเสมอ */
-async function sendMany(to: string[], subject: string, html: string) {
-  const unique = [...new Set(to.filter(Boolean))];
-  if (unique.length === 0) return;
-  await Promise.all(unique.map((addr) => send(addr, subject, html)));
+const datasetOrgLink = (id: string) => `${env.appUrl}/datasets/${id}`;
+const datasetBdiLink = (id: string) => `${env.appUrl}/admin/datasets/${id}`;
+
+interface DatasetBase {
+  requestNumber: string;
+  organizationCode: string | null;
+  datasetName: string;
+  id: string;
 }
 
-const orgLink = (id: string) => `${env.appUrl}/datasets/${id}`;
-const bdiLink = (id: string) => `${env.appUrl}/admin/datasets/${id}`;
+function datasetContext(
+  key: string,
+  info: DatasetBase & { organizationName?: string },
+  progress: JourneyProgress | null | undefined,
+  url: string,
+  extra: { vars?: Record<string, string>; blocks?: EmailContext["blocks"] } = {},
+): EmailContext {
+  return {
+    key,
+    vars: {
+      "request.number": info.requestNumber,
+      "dataset.name": info.datasetName,
+      "org.name": info.organizationName ?? "",
+      "org.code": info.organizationCode ?? "",
+      ...extra.vars,
+    },
+    blocks: { orgCode: orgCodeBlock(info.organizationCode), steps: stepsBlock(progress), ...extra.blocks },
+    button: { url },
+  };
+}
 
-/** หัวเรื่องอ้างเลขที่คำขอเสมอ เพื่อให้ผู้รับที่มีหลายคำขอแยกออกจากกันได้ */
-const datasetSubject = (requestNumber: string, text: string) => `[${requestNumber}] ${text}`;
+type WithOrg = DatasetBase & { organizationName: string };
 
-export async function sendDatasetSubmitted(
-  to: string[],
-  info: {
-    requestNumber: string;
-    organizationCode: string | null;
-    datasetName: string;
-    organizationName: string;
-    submitter: string;
-    id: string;
-  },
-  progress?: JourneyProgress | null,
-) {
-  await sendMany(
-    to,
-    datasetSubject(info.requestNumber, `มีคำขอลงทะเบียนชุดข้อมูลรอตรวจสอบ: ${info.datasetName}`),
-    layout({
-      title: "มีคำขอลงทะเบียนชุดข้อมูลรอตรวจสอบ",
-      orgCode: info.organizationCode,
-      intro: `<strong style="color:${TEXT};">${escapeHtml(info.organizationName)}</strong> นำส่งคำขอลงทะเบียนชุดข้อมูลเข้ามาในระบบ`,
-      body: summaryTable([
+export function datasetSubmittedContext(info: WithOrg & { submitter: string }, progress?: JourneyProgress | null) {
+  return datasetContext("dataset_submitted", info, progress, datasetBdiLink(info.id), {
+    vars: { "submitter.name": info.submitter },
+    blocks: {
+      summary: summaryBlock([
         ["เลขที่คำขอ", info.requestNumber],
         ["ชื่อชุดข้อมูล", info.datasetName],
         ["ผู้นำส่ง", info.submitter],
       ]),
-      steps: stepsBlock(progress),
-      button: { label: "เปิดดูคำขอ", url: bdiLink(info.id) },
-    }),
-  );
+    },
+  });
+}
+
+export async function sendDatasetSubmitted(
+  to: string[],
+  info: WithOrg & { submitter: string },
+  progress?: JourneyProgress | null,
+) {
+  await deliver(to, datasetSubmittedContext(info, progress));
+}
+
+export function datasetRevisionContext(
+  info: DatasetBase & { note: string; byName: string; at: Date },
+  progress?: JourneyProgress | null,
+) {
+  return datasetContext("dataset_revision", info, progress, datasetOrgLink(info.id), {
+    blocks: {
+      note: noteBlock({
+        heading: "สิ่งที่ต้องแก้ไข",
+        text: info.note,
+        tone: "danger",
+        byline: `โดย ${info.byName} · ${dateTimeMedium(info.at)}`,
+      }),
+    },
+  });
 }
 
 export async function sendDatasetRevisionRequested(
   to: string[],
-  info: {
-    requestNumber: string;
-    organizationCode: string | null;
-    datasetName: string;
-    note: string;
-    byName: string;
-    at: Date;
-    id: string;
-  },
+  info: DatasetBase & { note: string; byName: string; at: Date },
   progress?: JourneyProgress | null,
 ) {
-  const when = new Intl.DateTimeFormat("th-TH", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "Asia/Bangkok",
-  }).format(info.at);
-
-  await sendMany(
-    to,
-    datasetSubject(info.requestNumber, `ต้องปรับปรุงคำขอลงทะเบียนชุดข้อมูล: ${info.datasetName}`),
-    layout({
-      title: "คำขอของคุณต้องปรับปรุง",
-      orgCode: info.organizationCode,
-      intro: `ผู้ตรวจสอบขอให้แก้ไขคำขอ <strong style="color:${TEXT};">${escapeHtml(info.datasetName)}</strong> ก่อนดำเนินการต่อ`,
-      // สเปกกำหนดว่าต้องบอกให้ครบว่า "แก้เรื่องอะไร โดยใคร เมื่อไหร่"
-      body: `<div style="background:#FDECEA;border-left:3px solid #B3261E;border-radius:8px;padding:16px;">
-               <div style="font:600 13px/1 'Helvetica Neue',Arial,sans-serif;color:#B3261E;margin-bottom:8px;">สิ่งที่ต้องแก้ไข</div>
-               <div style="font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};white-space:pre-wrap;">${escapeHtml(info.note)}</div>
-               <div style="margin-top:12px;font:400 12px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-                 โดย ${escapeHtml(info.byName)} · ${when}
-               </div>
-             </div>`,
-      steps: stepsBlock(progress),
-      button: { label: "แก้ไขคำขอ", url: orgLink(info.id) },
-    }),
-  );
+  await deliver(to, datasetRevisionContext(info, progress));
 }
 
-/**
- * ผู้เชี่ยวชาญบันทึกความเห็นกลับมาแล้ว — ถึงผู้ประสานงานของ BDI
- *
- * โครงเดียวกับ sendDatasetRevisionRequested() (ความเห็น + ใคร + เมื่อไหร่) แต่กล่องเป็นสี navy
- * ไม่ใช่แดง เพราะนี่ไม่ใช่คำสั่งให้แก้อะไร และ **ด่านไม่ได้ขยับ** — คำขอยังอยู่ที่ผู้ประสานงาน
- * ของ BDI เหมือนเดิม ถ้อยคำจึงต้องไม่อ่านเหมือน "มีงานใหม่เข้าคิว"
- */
+const datasetSummary = (info: WithOrg, more: Array<[string, string]> = []) =>
+  summaryBlock([
+    ["เลขที่คำขอ", info.requestNumber],
+    ["ชื่อชุดข้อมูล", info.datasetName],
+    ["หน่วยงานเจ้าของข้อมูล", info.organizationName],
+    ...more,
+  ]);
+
+export function datasetSpecialistCommentedContext(
+  info: WithOrg & { note: string; byName: string; at: Date },
+  progress?: JourneyProgress | null,
+) {
+  return datasetContext("dataset_specialist_commented", info, progress, datasetBdiLink(info.id), {
+    blocks: {
+      note: noteBlock({
+        heading: "ความเห็นของผู้เชี่ยวชาญ",
+        text: info.note,
+        tone: "info",
+        byline: `โดย ${info.byName} · ${dateTimeMedium(info.at)}`,
+      }),
+      summary: datasetSummary(info),
+    },
+  });
+}
+
 export async function sendDatasetSpecialistCommented(
   to: string[],
-  info: {
-    requestNumber: string;
-    organizationCode: string | null;
-    datasetName: string;
-    organizationName: string;
-    note: string;
-    byName: string;
-    at: Date;
-    id: string;
-  },
+  info: WithOrg & { note: string; byName: string; at: Date },
   progress?: JourneyProgress | null,
 ) {
-  const when = new Intl.DateTimeFormat("th-TH", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "Asia/Bangkok",
-  }).format(info.at);
-
-  await sendMany(
-    to,
-    datasetSubject(info.requestNumber, `ผู้เชี่ยวชาญให้ความเห็นต่อชุดข้อมูล: ${info.datasetName}`),
-    layout({
-      title: "ผู้เชี่ยวชาญให้ความเห็นกลับมาแล้ว",
-      orgCode: info.organizationCode,
-      intro:
-        `ผู้เชี่ยวชาญด้านข้อมูลบันทึกความเห็นต่อคำขอ <strong style="color:${TEXT};">${escapeHtml(info.datasetName)}</strong> ` +
-        "ไว้ให้ประกอบการตัดสินใจแล้ว คำขอยังอยู่ที่ขั้นตรวจสอบของผู้ประสานงานของ BDI ตามเดิม",
-      body:
-        `<div style="background:#F3F5FB;border-left:3px solid ${NAVY};border-radius:8px;padding:16px;">
-           <div style="font:600 13px/1 'Helvetica Neue',Arial,sans-serif;color:${NAVY};margin-bottom:8px;">ความเห็นของผู้เชี่ยวชาญ</div>
-           <div style="font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};white-space:pre-wrap;">${escapeHtml(info.note)}</div>
-           <div style="margin-top:12px;font:400 12px/1.6 'Helvetica Neue',Arial,sans-serif;color:${MUTED};">
-             โดย ${escapeHtml(info.byName)} · ${when}
-           </div>
-         </div>` +
-        summaryTable([
-          ["เลขที่คำขอ", info.requestNumber],
-          ["ชื่อชุดข้อมูล", info.datasetName],
-          ["หน่วยงานเจ้าของข้อมูล", info.organizationName],
-        ]),
-      steps: stepsBlock(progress),
-      button: { label: "เปิดดูคำขอ", url: bdiLink(info.id) },
-    }),
-  );
+  await deliver(to, datasetSpecialistCommentedContext(info, progress));
 }
 
-export async function sendDatasetSpecialistAssigned(
-  to: string,
-  info: {
-    requestNumber: string;
-    organizationCode: string | null;
-    datasetName: string;
-    organizationName: string;
-    id: string;
-  },
-  progress?: JourneyProgress | null,
-) {
-  await sendMany(
-    [to],
-    datasetSubject(info.requestNumber, `ขอความเห็นต่อชุดข้อมูล: ${info.datasetName}`),
-    layout({
-      title: "ผู้ประสานงานของ BDI ขอความเห็นของคุณ",
-      orgCode: info.organizationCode,
-      /**
-       * ถ้อยคำต้องไม่ทำให้เข้าใจว่าคำขอมารอเขาอยู่ — มันยังอยู่ที่ผู้ประสานงานของ BDI และ
-       * เจ้าหน้าที่จะกดผ่านหรือส่งกลับเมื่อไรก็ได้ ไม่ว่าความเห็นจะมาแล้วหรือยัง
-       */
-      intro:
-        "ผู้ประสานงานของ BDI ขอความเห็นของคุณต่อคำขอนี้ในฐานะผู้เชี่ยวชาญด้านข้อมูล " +
-        "คุณเปิดดูรายละเอียดและบันทึกความเห็นไว้ให้ผู้ประสานงานของ BDI ได้ — การตัดสินผ่านหรือส่งกลับ " +
-        "ยังเป็นของผู้ประสานงานของ BDI ตามเดิม",
-      body: summaryTable([
-        ["เลขที่คำขอ", info.requestNumber],
-        ["ชื่อชุดข้อมูล", info.datasetName],
-        ["หน่วยงานเจ้าของข้อมูล", info.organizationName],
-      ]),
-      steps: stepsBlock(progress),
-      button: { label: "เปิดดูคำขอ", url: bdiLink(info.id) },
-    }),
-  );
+export function datasetSpecialistAssignedContext(info: WithOrg, progress?: JourneyProgress | null) {
+  return datasetContext("dataset_specialist_assigned", info, progress, datasetBdiLink(info.id), {
+    blocks: { summary: datasetSummary(info) },
+  });
 }
 
-export async function sendDatasetPendingOrgApprover(
-  to: string[],
-  info: {
-    requestNumber: string;
-    organizationCode: string | null;
-    datasetName: string;
-    organizationName: string;
-    id: string;
-  },
-  progress?: JourneyProgress | null,
-) {
-  await sendMany(
-    to,
-    datasetSubject(info.requestNumber, `ขอความเห็นชอบชุดข้อมูล: ${info.datasetName}`),
-    layout({
-      title: "ขอความเห็นชอบในฐานะผู้มีอำนาจอนุมัติของหน่วยงาน",
-      orgCode: info.organizationCode,
-      intro: `คำขอลงทะเบียนชุดข้อมูลของ <strong style="color:${TEXT};">${escapeHtml(info.organizationName)}</strong> ผ่านการตรวจสอบเบื้องต้นจากผู้ประสานงานของ BDI แล้ว`,
-      body: summaryTable([
+export async function sendDatasetSpecialistAssigned(to: string, info: WithOrg, progress?: JourneyProgress | null) {
+  await deliver(to, datasetSpecialistAssignedContext(info, progress));
+}
+
+export function datasetPendingOrgApproverContext(info: WithOrg, progress?: JourneyProgress | null) {
+  return datasetContext("dataset_pending_org_approver", info, progress, datasetOrgLink(info.id), {
+    blocks: {
+      summary: summaryBlock([
         ["เลขที่คำขอ", info.requestNumber],
         ["ชื่อชุดข้อมูล", info.datasetName],
       ]),
-      steps: stepsBlock(progress),
-      button: { label: "ตรวจสอบและลงนาม", url: orgLink(info.id) },
-    }),
-  );
+    },
+  });
 }
 
-/**
- * หน่วยงานลงนามแล้ว รอผู้อนุมัติ BDI
- *
- * ต่างจาก `sendDatasetPendingBdiApproval()` ตรงที่บอก **ชื่อผู้ลงนาม** ซึ่ง template กลางที่
- * delivery worker ประกอบเองจาก subject_id ไม่รู้จัก
- *
- * **ไม่มีใครเรียกแล้วตั้งแต่ 2026-09-22** — เดิม routes/dataset-requests.ts เรียกอินไลน์
- * หลัง transaction แล้วโดน Office 365 ตอบ 432 (connection พร้อมกันเกินโควตา) กลายเป็น 500
- * บนหน้าจอของผู้ลงนามที่ลงนามสำเร็จไปแล้ว ฉบับที่ส่งจริงตอนนี้คือ
- * `sendDatasetPendingBdiApproval()` ผ่าน outbox เก็บตัวนี้ไว้เผื่อวันที่ worker อ่าน
- * ชื่อผู้ลงนามจาก signature_confirmation ได้เอง — อย่าเรียกจาก request handler อีก
- */
+export async function sendDatasetPendingOrgApprover(to: string[], info: WithOrg, progress?: JourneyProgress | null) {
+  await deliver(to, datasetPendingOrgApproverContext(info, progress));
+}
+
+export function datasetSignedPendingContext(info: WithOrg & { signedBy: string }, progress?: JourneyProgress | null) {
+  return datasetContext("dataset_signed_pending", info, progress, datasetBdiLink(info.id), {
+    vars: { "signer.name": info.signedBy },
+    blocks: { summary: datasetSummary(info, [["ผู้ลงนามเห็นชอบ", info.signedBy]]) },
+  });
+}
+
 export async function sendDatasetSignedPendingApproval(
   to: string[],
-  info: {
-    requestNumber: string;
-    organizationCode: string | null;
-    datasetName: string;
-    organizationName: string;
-    signedBy: string;
-    id: string;
-  },
+  info: WithOrg & { signedBy: string },
   progress?: JourneyProgress | null,
 ) {
-  await sendMany(
-    to,
-    datasetSubject(info.requestNumber, `รอการพิจารณาชุดข้อมูล: ${info.datasetName}`),
-    layout({
-      title: "มีคำขอลงทะเบียนชุดข้อมูลรอการพิจารณา",
-      orgCode: info.organizationCode,
-      intro:
-        `ผู้มีอำนาจของ <strong style="color:${TEXT};">${escapeHtml(info.organizationName)}</strong> ` +
-        `ได้ลงนามเห็นชอบคำขอลงทะเบียนชุดข้อมูลแล้ว และคำขออยู่ระหว่างรอการพิจารณาจาก BDI`,
-      body: summaryTable([
-        ["เลขที่คำขอ", info.requestNumber],
-        ["ชื่อชุดข้อมูล", info.datasetName],
-        ["หน่วยงานเจ้าของข้อมูล", info.organizationName],
-        ["ผู้ลงนามเห็นชอบ", info.signedBy],
-      ]),
-      steps: stepsBlock(progress),
-      button: { label: "ตรวจสอบคำขอ", url: bdiLink(info.id) },
-    }),
-  );
+  await deliver(to, datasetSignedPendingContext(info, progress));
 }
 
-export async function sendDatasetPendingBdiApproval(
-  to: string[],
-  info: {
-    requestNumber: string;
-    organizationCode: string | null;
-    datasetName: string;
-    organizationName: string;
-    id: string;
-  },
-  progress?: JourneyProgress | null,
-) {
-  await sendMany(
-    to,
-    datasetSubject(info.requestNumber, `รอการพิจารณาชุดข้อมูล: ${info.datasetName}`),
-    layout({
-      title: "มีคำขอลงทะเบียนชุดข้อมูลรอการพิจารณา",
-      orgCode: info.organizationCode,
-      intro:
-        "คำขอลงทะเบียนชุดข้อมูลผ่านการตรวจสอบและการลงนามเห็นชอบของหน่วยงานครบแล้ว " +
-        "และอยู่ระหว่างรอการพิจารณาจาก BDI",
-      body: summaryTable([
-        ["เลขที่คำขอ", info.requestNumber],
-        ["ชื่อชุดข้อมูล", info.datasetName],
-        ["หน่วยงานเจ้าของข้อมูล", info.organizationName],
-      ]),
-      steps: stepsBlock(progress),
-      button: { label: "ตรวจสอบคำขอ", url: bdiLink(info.id) },
-    }),
-  );
+export function datasetPendingBdiContext(info: WithOrg, progress?: JourneyProgress | null) {
+  return datasetContext("dataset_pending_bdi", info, progress, datasetBdiLink(info.id), {
+    blocks: { summary: datasetSummary(info) },
+  });
 }
 
-export async function sendDatasetApproved(
-  to: string[],
-  info: {
-    requestNumber: string;
-    organizationCode: string | null;
-    datasetName: string;
-    organizationName: string;
-    id: string;
-  },
-  progress?: JourneyProgress | null,
-) {
-  await sendMany(
-    to,
-    datasetSubject(info.requestNumber, `อนุมัติชุดข้อมูลแล้ว: ${info.datasetName}`),
-    layout({
-      title: "ชุดข้อมูลได้รับอนุมัติแล้ว",
-      orgCode: info.organizationCode,
-      intro: `คำขอลงทะเบียนชุดข้อมูล <strong style="color:${TEXT};">${escapeHtml(info.datasetName)}</strong> ผ่านการอนุมัติครบทุกขั้นตอนแล้ว`,
-      body: summaryTable([
+export async function sendDatasetPendingBdiApproval(to: string[], info: WithOrg, progress?: JourneyProgress | null) {
+  await deliver(to, datasetPendingBdiContext(info, progress));
+}
+
+export function datasetApprovedContext(info: WithOrg, progress?: JourneyProgress | null) {
+  return datasetContext("dataset_approved", info, progress, datasetOrgLink(info.id), {
+    blocks: {
+      summary: summaryBlock([
         ["เลขที่คำขอ", info.requestNumber],
         ["หน่วยงานเจ้าของข้อมูล", info.organizationName],
       ]),
-      steps: stepsBlock(progress),
-      button: { label: "เปิดดูและดาวน์โหลดเอกสาร", url: orgLink(info.id) },
-    }),
-  );
+    },
+  });
+}
+
+export async function sendDatasetApproved(to: string[], info: WithOrg, progress?: JourneyProgress | null) {
+  await deliver(to, datasetApprovedContext(info, progress));
+}
+
+export function datasetRejectedContext(info: DatasetBase & { reason: string }, progress?: JourneyProgress | null) {
+  return datasetContext("dataset_rejected", info, progress, datasetOrgLink(info.id), {
+    blocks: { note: noteBlock({ heading: "เหตุผล", text: info.reason, tone: "danger" }) },
+  });
 }
 
 export async function sendDatasetRejected(
   to: string[],
-  info: {
-    requestNumber: string;
-    organizationCode: string | null;
-    datasetName: string;
-    reason: string;
-    id: string;
-  },
+  info: DatasetBase & { reason: string },
   progress?: JourneyProgress | null,
 ) {
-  await sendMany(
-    to,
-    datasetSubject(info.requestNumber, `ไม่อนุมัติชุดข้อมูล: ${info.datasetName}`),
-    layout({
-      title: "คำขอลงทะเบียนชุดข้อมูลไม่ได้รับอนุมัติ",
-      orgCode: info.organizationCode,
-      intro: `คำขอ <strong style="color:${TEXT};">${escapeHtml(info.datasetName)}</strong> สิ้นสุดกระบวนการโดยไม่ได้รับอนุมัติ`,
-      body: `<div style="background:#FDECEA;border-left:3px solid #B3261E;border-radius:8px;padding:16px;">
-               <div style="font:600 13px/1 'Helvetica Neue',Arial,sans-serif;color:#B3261E;margin-bottom:8px;">เหตุผล</div>
-               <div style="font:400 15px/1.7 'Helvetica Neue',Arial,sans-serif;color:${TEXT};white-space:pre-wrap;">${escapeHtml(info.reason)}</div>
-             </div>`,
-      steps: stepsBlock(progress),
-      button: { label: "เปิดดูรายละเอียด", url: orgLink(info.id) },
-      footnote: "หากต้องการยื่นใหม่ กรุณาสร้างคำขอฉบับใหม่และแก้ไขตามเหตุผลข้างต้น",
-    }),
-  );
+  await deliver(to, datasetRejectedContext(info, progress));
 }
 
-/**
- * "คำขอเดินหน้าไปอีกขั้น" — ฉบับที่ฝั่งหน่วยงานได้รับทุกครั้งที่คำขอผ่านด่านหนึ่ง
- *
- * ไม่มีปุ่มพาไปทำอะไร เพราะคนอ่านไม่ได้ต้องทำอะไร มีแค่ลิงก์ไปดูคำขอ — เจตนาคือ
- * ตอบคำถาม "เรื่องของเราไปถึงไหนแล้ว" ซึ่งเดิมไม่มีอีเมลฉบับไหนตอบเลย
- */
-export async function sendRequestProgressed(
-  to: string,
-  /** `path` คือ path ภายในแอปจาก linkFor() — โดเมนต่อให้ที่นี่ เพราะ appUrl เปลี่ยนได้ */
-  info: { title: string; message: string; path: string; orgCode: string | null },
-  progress?: JourneyProgress | null,
-): Promise<void> {
-  await send(
-    to,
-    info.title,
-    layout({
-      title: info.title,
-      intro: escapeHtml(info.message),
-      orgCode: info.orgCode,
-      steps: stepsBlock(progress),
-      button: { label: "เปิดดูคำขอ", url: `${env.appUrl}${info.path}` },
-      footnote: "อีเมลฉบับนี้แจ้งความคืบหน้าเท่านั้น ยังไม่มีสิ่งที่คุณต้องดำเนินการ",
-    }),
-  );
+// ------------------------------------------------------------------ ทั่วไป
+
+export interface ProgressInfo {
+  title: string;
+  message: string;
+  path: string;
+  orgCode: string | null;
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string,
-  );
+export function requestProgressedContext(info: ProgressInfo, progress?: JourneyProgress | null): EmailContext {
+  return {
+    key: "request_progressed",
+    vars: { "progress.title": info.title, "progress.message": info.message, "org.code": info.orgCode ?? "" },
+    blocks: { orgCode: orgCodeBlock(info.orgCode), steps: stepsBlock(progress) },
+    button: { url: `${env.appUrl}${info.path}` },
+  };
+}
+
+export async function sendRequestProgressed(to: string, info: ProgressInfo, progress?: JourneyProgress | null): Promise<void> {
+  await deliver(to, requestProgressedContext(info, progress));
 }

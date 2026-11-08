@@ -34,6 +34,10 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
 - `docs/23-session.md` — how a session lives and dies, end to end: cookie, the two expiries
   (`SESSION_TTL_SECONDS` / `SESSION_IDLE_SECONDS`, **in seconds** since 2026-10-20 — the old
   `SESSION_TTL_DAYS` / `SESSION_IDLE_HOURS` are gone and ignored if set), every revoke reason
+- `docs/24-email-templates.md` — **every email the system sends is a template the administrator edits** at `/console` →
+  ตั้งค่าระบบ → เทมเพลตอีเมล: the catalogue (`lib/email/catalogue.ts`, 23 templates, their variables, blocks and required
+  blocks), the allowlist HTML is checked against, draft → publish → restore with version history, preview and test send, and
+  why the invitation reminder reads the invitation's subject from the version that was live when the key was issued
 - `docs/10-admin-prefill-organization.md` — organizations an admin creates ahead of time,
   and how their data reaches the user's registration form
 - `docs/11-metadata-registration-form.md` — the dataset metadata form: which sheet of
@@ -1034,7 +1038,8 @@ so reactivation before expiry still gets them a reminder), and queues the mail t
 holds no secret, so it gets the outbox's retry for free, and `render.ts` rebuilds it from the key at send time and returns
 `{ cancelled }` (delivery `CANCELLED`) when the key is no longer pending. The mail cannot carry a link — only the key's HMAC is
 stored — and issuing a new key would extend the invitation silently, so it prints the invitation's subject
-(`INVITATION_EMAIL_SUBJECT`, the constant `sendInvitationEmail` itself uses) and its send time for the recipient to search by. The
+(the subject of the invitation template version that was live at the key's `issued_at` — `contentAt()` in `lib/email/store.ts`,
+since 2026-11-08 the administrator can change it) and its send time for the recipient to search by. The
 in-app row is written `READ` (`notifyUsers({ read: true })`): it exists to carry the outbox for someone who cannot log in yet. N is
 the first **system setting**: `administration.system_setting` (key/JSON value, a row only once someone sets it), declared with its
 range and default in `SYSTEM_SETTINGS` in `lib/system-settings.ts` — add a setting there and `/console/settings` (the new
@@ -1227,6 +1232,16 @@ be destroyed for our mistake. `docs/07-thaid-integration.md` §4.2 has the full 
 `backend/src/lib/mail.ts`. With `SMTP_USER` unset the mailer prints the body, the invite link
 and the OTP to stdout instead of sending — that is the normal way to exercise the flows.
 Templates are table-based with inline styles because Gmail and Outlook strip `<style>`.
+
+**The wording is not in `mail.ts` any more** (card "[New Feature] Admin Email Template Edit", 2026-11-08,
+`docs/24-email-templates.md`). Every `send*` builds an `EmailContext` (raw variable values, system blocks, the button's URL) in
+a `*Context()` function and `composeEmail()` renders it with the **published** version of that template plus the editable
+`layout` shell, read from `administration.email_template_version` on every send. No row means version 1, the default wording in
+`lib/email/catalogue.ts`, so a template nobody edited follows code changes and one BDI edited does not. Variables are always
+HTML-escaped; only `{{block.*}}` emits HTML. A stored version that fails to render falls back to the default and is captured,
+never dropped. To add a template or a variable: `catalogue.ts` + the `*Context()` in `mail.ts` + `lib/email/samples.ts`
+(preview and test send build through the same `*Context()` with fake data). `sendRaw()` and the error digest stay on the
+code-default shell and never touch the database. Change the dry-run OTP regex in `send()` and `otpBlock()` together.
 
 The error digest (`workers/error-alerts.ts`, on only when `ERROR_ALERT_EMAILS` is set, worker
 only) is the one mail that is neither inline nor outbox: its recipients are not accounts, and

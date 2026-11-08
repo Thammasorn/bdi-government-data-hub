@@ -59,6 +59,14 @@ const TITLES: Record<string, string> = {
   csrf_origin: "คำขอไม่ได้มาจากหน้านี้",
   forbidden: "ไม่มีสิทธิ์ทำคำสั่งนี้",
   unauthenticated: "เซสชันหมดอายุ",
+  concurrent_edit: "มีผู้ดูแลระบบอีกคนแก้พร้อมกัน",
+  no_draft: "ยังไม่มีฉบับร่าง",
+  is_draft: "เวอร์ชันนี้เป็นฉบับร่างอยู่แล้ว",
+  version_not_found: "ไม่พบเวอร์ชันนี้",
+  session_required: "ต้องเข้าสู่ระบบด้วยบัญชีผู้ดูแลระบบ",
+  image_in_use: "รูปนี้ยังถูกใช้อยู่",
+  logo_fixed: "ลบโลโก้ไม่ได้",
+  already_default: "ใช้รูปตั้งต้นอยู่แล้ว",
 };
 
 export function adminErrorView(err: unknown): AdminErrorView {
