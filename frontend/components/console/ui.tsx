@@ -194,7 +194,9 @@ export function Tabs<K extends string>({
   onChange: (key: K) => void;
 }) {
   return (
-    <div role="tablist" className="flex gap-1 overflow-x-auto border-b border-line">
+    // overflow-y-hidden: แท็บเลื่อน -mb-px ทับเส้นล่าง 1px — กล่องที่ overflow-x-auto ถูกบังคับให้ overflow-y เป็น auto ด้วย จึงขึ้น scrollbar แนวตั้ง
+    // (feedback 2026-11-08) 1px นั้นถูกตัดอยู่แล้วตั้งแต่ก่อนแก้ หน้าตาจึงไม่เปลี่ยน
+    <div role="tablist" className="flex gap-1 overflow-x-auto overflow-y-hidden border-b border-line">
       {tabs.map((t) => (
         <button
           key={t.key}
