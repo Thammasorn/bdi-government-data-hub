@@ -123,7 +123,7 @@ Content-Type: application/json
 | `GET /users` | ค้นด้วย `q` (อีเมล/ชื่อ) · `cid` (ตรงตัวเต็ม) · `status` · `role` · `organizationId` + แบ่งหน้า |
 | `GET /users/:id` | โปรไฟล์ + ประวัติ role + คำเชิญ + session ที่ยังเปิด + audit ล่าสุด |
 | `PATCH /users/:id` | แก้โปรไฟล์ (ชื่อ เบอร์ ตำแหน่ง ฝ่าย) |
-| `POST /users/:id/identity` | แก้ `email` / `cid` — แยกออกมาเพราะเป็น identity anchor · ปิด session ทุกใบ |
+| `POST /users/:id/identity` | แก้ `email` / `cid` — แยกออกมาเพราะเป็น identity anchor · ปิด session ทุกใบ · **บัญชีที่เคยเปิดใช้งานแล้วแก้จากหน้า /console ไม่ได้** (409 `identity_locked`) ทาง `x-admin-token` ยังแก้ได้พร้อม `warnings` |
 | `POST /users/:id/suspend` | ระงับชั่วคราว **role ยังอยู่ครบ** · ปิด session |
 | `POST /users/:id/reinstate` | คืนสถานะจาก `SUSPENDED` |
 | `POST /users/:id/deactivate` | ยุติการใช้งาน · ถอน role ทุกใบ ยกเลิกคำเชิญ ปิด session |
