@@ -710,7 +710,7 @@ const profileSchema = z
  *
  * สองค่านั้นเป็น identity anchor: อีเมลคือตัวล็อกอิน เลขบัตรคือค่าที่ ThaID §2.4
  * เอาไปเทียบตอนเปิดใช้งาน การแก้จึงต้องผ่าน `POST /:id/identity` ซึ่งบังคับเหตุผล
- * ปิด session ทิ้ง และเขียน audit before/after
+ * ปิด session ทิ้ง เขียน audit before/after และทางหน้า /console รับเฉพาะบัญชีที่ยังไม่เคยเปิดใช้งาน
  */
 adminUserRouter.patch("/:id", async (req, res) => {
   const account = await findAccount(req.params.id);
@@ -759,11 +759,20 @@ const identitySchema = z
   });
 
 /**
- * แก้อีเมล / เลขบัตรของบัญชีที่เปิดใช้งานแล้ว
+ * แก้อีเมล / เลขบัตรของบัญชี — ทางหน้า /console ได้เฉพาะบัญชีที่ **ยังไม่เคยเปิดใช้งาน** (แก้คำเชิญที่กรอกผิด)
  *
- * การ์ดคำเชิญตัดสินว่า "กรอกผิด = ลบแล้วเชิญใหม่" ซึ่งใช้ได้กับบัญชี `PENDING` เท่านั้น
- * บัญชีที่เปิดใช้งานแล้วลบไม่ได้ (FK สามใบเป็น RESTRICT) ถ้าไม่มีทางแก้ตรงนี้ การกรอก
- * อีเมลผิดตั้งแต่แรกจะกลายเป็นทางตันถาวร
+ * **บัญชีที่เคยเปิดใช้งานแล้ว (`activatedAt` มีค่า) แก้จากหน้า /console ไม่ได้อีก** ทาง session ตอบ 409
+ * `identity_locked` (Admin Action Effect › Issue "ปิดการแก้ไข email และบัตรประชาชน ใน admin console หลังจาก
+ * user เปิดใช้งานแล้ว", 2026-11-09) เพราะการเปิดใช้งานพิสูจน์ทั้งสองค่าแล้ว — ลิงก์ไปถึงกล่องจดหมายนั้นจริง
+ * และ ThaID ยืนยันว่าเลขบัตรเป็นของคนที่กดลิงก์ การแก้หลังจากนั้นคือการเขียนทับตัวตนที่ยืนยันแล้วด้วยค่าที่
+ * ไม่มีใครยืนยัน และเลขบัตรที่เปลี่ยนจะทำให้ลายมือชื่อที่บัญชีนี้เคยลงไว้ชี้ไปที่คนอื่น `activatedAt`
+ * ไม่เคยถูกล้าง บัญชีที่ยุติแล้วจึงยังล็อกอยู่ด้วย กล่องจดหมายที่เปลี่ยนจริงไปทาง "ยุติ → เชิญกลับ"
+ * (`POST /:id/reinvite`) ซึ่งพิสูจน์อีเมลใหม่ด้วยลิงก์และเลขบัตรเดิมด้วย ThaID อีกรอบ
+ *
+ * **ทาง `x-admin-token` ยังแก้ได้** ตามแบบเดียวกับ `PUT /api/admin/registrations/*` ที่ข้ามล็อกของฟอร์ม —
+ * เป็นทางออกของผู้ประสานงานที่ถือ token เมื่อทางเชิญกลับใช้ไม่ได้ (ThaID ยังกลับมาที่โดเมนสาธารณะไม่ได้
+ * คู่มือผู้ทดสอบ `docs/12` ข้อ 4 จึงยังต้องเปลี่ยนอีเมลของบัญชีตัวอย่างทางนี้) คำตอบแนบ `warnings`
+ * และ audit จด `after_activation: true` ให้เห็นว่าเขียนทับตัวตนที่ยืนยันแล้ว
  *
  * ปิด session ทุกใบหลังแก้ เพราะอีเมลคือตัวล็อกอิน — ใบที่ค้างอยู่ผูกกับตัวตนเดิม
  */
@@ -774,6 +783,17 @@ adminUserRouter.post("/:id/identity", async (req, res) => {
     return;
   }
   if (refuseSelfAction(res, account.id)) return;
+  const afterActivation = account.activatedAt !== null;
+  if (afterActivation && currentContext()?.adminVia === "SESSION") {
+    res.status(409).json({
+      error: "identity_locked",
+      message:
+        "บัญชีนี้เปิดใช้งานแล้ว อีเมลและเลขบัตรประชาชนผ่านการยืนยันตอนเปิดใช้งาน (ลิงก์ทางอีเมลและ ThaID) จึงแก้ไม่ได้อีก — " +
+        "ถ้ากล่องจดหมายของเจ้าของบัญชีเปลี่ยน ให้ยุติการใช้งานแล้วเชิญกลับเข้ามาด้วยอีเมลใหม่",
+      activatedAt: account.activatedAt,
+    });
+    return;
+  }
   const parsed = identitySchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
@@ -839,10 +859,26 @@ adminUserRouter.post("/:id/identity", async (req, res) => {
     subjectId: account.id,
     before: changed.before,
     after: changed.after,
-    metadata: { updated_via: "ADMIN_API", identity_change: true, reason },
+    metadata: {
+      updated_via: "ADMIN_API",
+      identity_change: true,
+      reason,
+      ...(afterActivation ? { after_activation: true } : {}),
+    },
   });
 
-  res.json({ user: updated, changed: true, sessionsRevoked: true });
+  res.json({
+    user: updated,
+    changed: true,
+    sessionsRevoked: true,
+    ...(afterActivation
+      ? {
+          warnings: [
+            "บัญชีนี้เปิดใช้งานแล้ว ค่าใหม่ไม่ผ่านการยืนยันจากลิงก์ทางอีเมลหรือ ThaID — หน้า /console ไม่เปิดให้แก้แบบนี้",
+          ],
+        }
+      : {}),
+  });
 });
 
 /**
@@ -879,7 +915,9 @@ adminUserRouter.post("/:id/release-identity", async (req, res) => {
       error: "not_deactivated",
       message:
         `ถอดอีเมลออกได้เฉพาะบัญชีที่ยุติการใช้งานแล้ว — บัญชีนี้อยู่สถานะ ${account.status} ` +
-        `ถ้าตั้งใจจะเปลี่ยนอีเมลของบัญชีที่ยังใช้งานอยู่ ให้ใช้ POST /api/admin/users/:id/identity แทน`,
+        (account.activatedAt
+          ? `ถ้ากล่องจดหมายของบัญชีที่เปิดใช้งานแล้วเปลี่ยน ให้ยุติการใช้งานแล้วเชิญกลับด้วยอีเมลใหม่ (POST /api/admin/users/:id/reinvite)`
+          : `ถ้าตั้งใจจะแก้อีเมลของคำเชิญที่ยังไม่เปิดใช้งาน ให้ใช้ POST /api/admin/users/:id/identity แทน`),
     });
     return;
   }

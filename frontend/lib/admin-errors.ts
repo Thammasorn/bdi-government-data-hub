@@ -40,6 +40,7 @@ const TITLES: Record<string, string> = {
   self_action: "ทำกับบัญชีของตัวเองไม่ได้",
   activated: "ผู้รับเปิดใช้งานบัญชีแล้ว",
   identity_released: "อีเมลของบัญชีนี้ถูกปล่อยไปแล้ว",
+  identity_locked: "บัญชีที่เปิดใช้งานแล้วแก้อีเมลและเลขบัตรไม่ได้",
   not_deactivated: "ต้องยุติการใช้งานบัญชีก่อน",
   already_approved: "คำขอนี้อนุมัติแล้ว",
   already_cancelled: "คำขอนี้ถูกยกเลิกแล้ว",

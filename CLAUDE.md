@@ -1038,6 +1038,17 @@ routes. In the console, `InviteDialog` turns the 409 into a second step (`Action
 `onConfirm` may return `false` to stay open), and a deactivated account's page has "เชิญกลับเข้ามา".
 `docs/09` §2.2.
 
+**Once an account has activated, the console cannot change its e-mail or CID** (Admin Action Effect › Issue
+"ปิดการแก้ไข email และบัตรประชาชน ใน admin console หลังจาก user เปิดใช้งานแล้ว", 2026-11-09). Activation proved both — the
+link reached that mailbox, ThaID matched that CID — so `POST /api/admin/users/:id/identity` answers 409 `identity_locked` on
+the **session path** whenever `activatedAt` is set (it is never cleared, so a deactivated account stays locked), and the
+user page drops "เปลี่ยนอีเมลหรือเลขบัตร" for such accounts and says why in its place. The button stays for never-activated
+accounts, where it fixes a mistyped invitation. A mailbox that really changed goes deactivate → invite back, which proves the
+new address and the old CID again. **The `x-admin-token` path still writes**, with `warnings` and `after_activation: true` in
+the audit metadata — the same "the token goes past the screen's lock" arrangement as `PUT /api/admin/registrations/*`, kept
+because the testers' manual (`docs/12` §4) still needs a seeded account's e-mail swapped for a real one while ThaID cannot
+return to the public domain.
+
 **An organisation changes its own representatives through a change request** (card "คำขอเปลี่ยนแปลงผู้แทนหน่วยงาน",
 2026-11-04; `routes/representative-changes.ts`, `lib/representative-change.ts`, screens under `/representatives`). One request
 removes and adds coordinators and approvers, one `BDI_OFFICER_REVIEW` gate decides it, and the system does the rest. It has its

@@ -1710,7 +1710,7 @@ operation คงรหัสเดิมไว้ ข้อความอิส
 | แบบ | เกิดเมื่อ | actor | organization_id | before / after | metadata |
 |---|---|---|---|---|---|
 | โปรไฟล์ | `PATCH /api/admin/users/:id` — มีช่องที่เปลี่ยนจริง (ไม่เปลี่ยน = 200 `changed:false` ไม่มีแถว) | **แถว admin** | null | `diffFields()` ของ `prefixTh` `firstnameTh` `lastnameTh` `displayName` `phoneNumber` `phoneNumberExtension` `positionTh` `departmentTh` เฉพาะช่องที่เปลี่ยน | `updated_via: "ADMIN_API"` |
-| อีเมล/เลขบัตร | `POST /api/admin/users/:id/identity` `{email?, cid?, reason}` — ไม่ชนบัญชีอื่น และ diff ไม่ว่าง | **แถว admin** | null | `diffFields(account, {email, cid})` **ดิบ ไม่ผ่าน sanitize** | `updated_via: "ADMIN_API"` · `identity_change: true` · `reason` |
+| อีเมล/เลขบัตร | `POST /api/admin/users/:id/identity` `{email?, cid?, reason}` — ไม่ชนบัญชีอื่น และ diff ไม่ว่าง · บัญชีที่เคยเปิดใช้งานแล้วผ่านได้เฉพาะทาง token (ทาง session ตอบ 409 `identity_locked` ไม่มีแถว) | **แถว admin** | null | `diffFields(account, {email, cid})` **ดิบ ไม่ผ่าน sanitize** | `updated_via: "ADMIN_API"` · `identity_change: true` · `reason` · `after_activation: true` เมื่อบัญชีเคยเปิดใช้งานแล้ว |
 | ชื่อจากบัตร | `POST /api/auth/thaid/callback` ขา activate — ชื่อบนบัตรต่างจากที่กรอกไว้ | **แถวนิรนาม** | หน่วยงานของคีย์ | `sanitizeDiff(diffFields())` ของ `prefixTh` `firstnameTh` `lastnameTh` | `updated_via: "THAID"` · `integration_operation_id` |
 
 | ช่อง | ค่า |
