@@ -67,6 +67,12 @@ import { DELIVERY_SELECT, latestBySubject, viewOf as deliveryViewOf } from "../l
 import { NotificationType, notifyUsers } from "../lib/notify.js";
 import { PASSWORD_RESET_VIA_ADMIN, issuePasswordResetToken } from "../lib/password-reset.js";
 import { ORGANIZATION_FROZEN, isOrganizationFrozen } from "../lib/organization-freeze.js";
+import {
+  OPEN_REGISTRATION_STATUSES,
+  cancelOpenRegistrations,
+  recordCancelledRegistration,
+  type CancelledRegistration,
+} from "../lib/organization-request-cancel.js";
 import { ORGANIZATION_STATUS_LABELS, ROLE_LABELS } from "../lib/roles.js";
 import { activeSessionsFor, revokeSessionsFor } from "../lib/session.js";
 import { ACTIVE_STATUSES, cancelActiveTask } from "../lib/workflow.js";
@@ -631,6 +637,20 @@ adminUserRouter.get("/:id", async (req, res) => {
     }),
   ]);
 
+  /**
+   * คำขอลงทะเบียนที่จะถูกยกเลิกถ้าเอาบัญชีนี้ออกจากที่นั่งผู้ประสานงาน (ยุติบัญชี · ถอนบทบาท · ย้าย) — กล่องยืนยันของทั้งสาม
+   * ปุ่มบอกเลขที่ไว้ก่อนกด ชุดสถานะเดียวกับ `cancelOpenRegistrations()` สิ่งที่หน้าจอบอกกับสิ่งที่เกิดจึงตรงกัน
+   */
+  const coordinatorOf = await coordinatorOrganizationIds(prisma, account.id);
+  const openRegistrations =
+    coordinatorOf.length === 0
+      ? []
+      : await prisma.organizationRegistrationRequest.findMany({
+          where: { organizationId: { in: coordinatorOf }, status: { in: OPEN_REGISTRATION_STATUSES } },
+          orderBy: { createdAt: "asc" },
+          select: { id: true, requestNumber: true, status: true, organizationId: true },
+        });
+
   // สถานะอีเมลของคีย์แต่ละใบ และลิงก์ตั้งรหัสผ่านฉบับล่าสุด — ป้ายบนหน้าผู้ใช้ (การ์ด "Send every email through the delivery worker")
   const [keyDeliveries, resetRow] = await Promise.all([
     latestBySubject(prisma, NotificationType.USER_ACTIVATION_INVITATION, keys.map((k) => k.id)),
@@ -646,6 +666,7 @@ adminUserRouter.get("/:id", async (req, res) => {
     roleAssignments: assignments.map((a) => ({ ...a, derivedStatus: derivedAssignmentStatus(a) })),
     activationKeys: keys.map((k) => ({ ...k, emailDelivery: keyDeliveries.get(k.id) ?? null })),
     passwordResetDelivery: resetRow ? deliveryViewOf(resetRow) : null,
+    openRegistrations,
     sessions: sessions.map((s) => ({
       id: s.id,
       createdAt: s.createdAt,
@@ -1013,10 +1034,15 @@ adminUserRouter.post("/:id/deactivate", async (req, res) => {
   if (!(await refuseLastHolder(res, account.id, "ยุติการใช้งาน"))) return;
 
   const result = await prisma.$transaction(async (tx) => {
+    const coordinatorOf = await coordinatorOrganizationIds(tx, account.id);
     const revoked = await revokeRoleAssignments(tx, {
       userAccountId: account.id,
       actorId: adminActorId(),
       reason: parsed.data.reason,
+    });
+    const cancelled = await cancelOpenRegistrations(tx, {
+      organizationIds: coordinatorOf,
+      reason: coordinatorChangeReason(parsed.data.reason),
     });
     // คีย์ที่ถูกเพิกถอนออกมากับผลของ transaction — `ACTIVATION_KEY_REVOKED` เขียนได้หลัง commit เท่านั้น
     const revokedKeys = await revokeIssuedKeys(
@@ -1037,7 +1063,7 @@ adminUserRouter.post("/:id/deactivate", async (req, res) => {
       },
       select: accountSelect,
     });
-    return { row, revoked, revokedKeys };
+    return { row, revoked, revokedKeys, cancelled };
   });
 
   await logAudit({
@@ -1050,16 +1076,27 @@ adminUserRouter.post("/:id/deactivate", async (req, res) => {
       reason: parsed.data.reason,
       deactivated_via: "ADMIN_API",
       roles_revoked: result.revoked.length,
+      registrations_cancelled: result.cancelled.map((c) => c.request.requestNumber),
     },
   });
   await logKeysRevoked(result.revokedKeys, { revokedVia: "ADMIN_API" });
+  await recordCoordinatorChangeCancels(result.cancelled, {
+    reason: parsed.data.reason,
+    trigger: "DEACTIVATE",
+    coordinatorId: account.id,
+  });
 
   res.json({
     user: result.row,
     rolesRevoked: result.revoked.length,
+    registrationsCancelled: cancelledShape(result.cancelled),
     message:
       "ยุติการใช้งานบัญชีแล้ว — อีเมลและเลขบัตรประชาชนยังผูกกับบัญชีนี้ไว้เพื่อให้ประวัติอ่านกลับได้ " +
-      "ถ้าคนเดิมกลับเข้ามาใหม่ ให้ใช้ reinvite ไม่ใช่สร้างบัญชีใหม่",
+      "ถ้าคนเดิมกลับเข้ามาใหม่ ให้ใช้ reinvite ไม่ใช่สร้างบัญชีใหม่" +
+      (result.cancelled.length > 0
+        ? ` · คำขอลงทะเบียนหน่วยงาน ${result.cancelled.map((c) => c.request.requestNumber).join(" ")} ถูกยกเลิก ` +
+          "เพราะผู้ประสานงานเปลี่ยน — เชิญผู้ประสานงานคนใหม่ให้หน่วยงาน แล้วเขาจะเริ่มคำขอใบใหม่ได้"
+        : ""),
   });
 });
 
@@ -1389,6 +1426,60 @@ async function revertStrandedWork(
   return reverted;
 }
 
+/**
+ * หน่วยงานที่บัญชีนี้เป็นผู้ประสานงานอยู่ — ถ้าบัญชีถูกเอาออกจากที่นั่งนั้น คำขอลงทะเบียนที่ยังไม่จบของหน่วยงานจะถูกยกเลิก
+ * (`cancelOpenRegistrations()`) ต้องอ่าน**ก่อน**ถอนบทบาท เพราะหลังถอนแล้วหาไม่เจอว่าเขาเคยนั่งที่ไหน
+ */
+async function coordinatorOrganizationIds(db: Db, userAccountId: string): Promise<string[]> {
+  const rows = await db.userRoleAssignment.findMany({
+    where: {
+      userAccountId,
+      role: { code: ROLE_CODES.ORGANIZATION_USER },
+      organizationId: { not: BDI_ORGANIZATION_ID },
+      ...activeAssignmentWhere(),
+    },
+    select: { organizationId: true },
+  });
+  return [...new Set(rows.map((r) => r.organizationId).filter((id): id is string => Boolean(id)))];
+}
+
+/** เหตุผลที่เขียนลง `cancellation_reason` ของคำขอ — หน้าคำขอแสดงข้อความนี้ จึงต้องบอกต้นเหตุ ไม่ใช่แค่เหตุผลที่พิมพ์ */
+function coordinatorChangeReason(reason: string) {
+  return `ผู้ดูแลระบบเปลี่ยนผู้ประสานงานของหน่วยงาน — ${reason}`;
+}
+
+/**
+ * ครึ่งหลัง commit ของคำขอที่ถูกยกเลิกเพราะเปลี่ยนผู้ประสานงาน — รหัส `REQUEST_CANCELLED` เดียวกับปุ่มยกเลิกคำขอ
+ * ต่างกันที่ `cancelled_via` และบอกว่าใครคือผู้ประสานงานที่ออกไป คนที่ไล่ประวัติของคำขอจะได้ไม่ต้องไปค้นแถวของบัญชีนั้น
+ */
+async function recordCoordinatorChangeCancels(
+  cancelled: CancelledRegistration[],
+  params: { reason: string; trigger: "DEACTIVATE" | "ROLE_REVOKED" | "TRANSFER"; coordinatorId: string },
+) {
+  for (const outcome of cancelled) {
+    await recordCancelledRegistration(outcome, {
+      reason: coordinatorChangeReason(params.reason),
+      via: "ADMIN_COORDINATOR_CHANGE",
+      recalledVia: "ADMIN_COORDINATOR_CHANGE",
+      metadata: { coordinator_user_account_id: params.coordinatorId, coordinator_change: params.trigger },
+      includeApprovers: true,
+      message:
+        `คำขอ ${outcome.request.requestNumber} ถูกยกเลิก เพราะผู้ดูแลระบบเปลี่ยนผู้ประสานงานของหน่วยงาน ` +
+        `ผู้ประสานงานคนใหม่เริ่มคำขอลงทะเบียนใบใหม่ได้ — เหตุผล: ${params.reason}`,
+    });
+  }
+}
+
+/** รูปที่คำตอบของทั้งสามคำสั่งส่งกลับ — หน้าคอนโซลนับและบอกผู้ดูแลระบบจากรายการนี้ */
+function cancelledShape(cancelled: CancelledRegistration[]) {
+  return cancelled.map((c) => ({
+    id: c.request.id,
+    requestNumber: c.request.requestNumber,
+    organizationId: c.request.organizationId,
+    previousStatus: c.request.status,
+  }));
+}
+
 /** คนที่ยังอยู่กับหน่วยงานนั้นและควรรู้ว่ามีคนย้ายออก */
 async function remainingStaff(db: Db, organizationId: string, exceptUserAccountId: string) {
   const rows = await db.userRoleAssignment.findMany({
@@ -1550,15 +1641,24 @@ adminUserRouter.delete("/:id/roles/:assignmentId", async (req, res) => {
     if (!(await refuseLastHolder(res, account.id, "ถอนบทบาท"))) return;
   }
 
-  await prisma.userRoleAssignment.update({
-    where: { id: assignment.id },
-    data: {
-      status: RoleAssignmentStatus.REVOKED,
-      revokedAt: new Date(),
-      revokedBy: adminActorId(),
-      revocationReason: parsed.data.reason,
-      updatedBy: adminActorId(),
-    },
+  const cancelled = await prisma.$transaction(async (tx) => {
+    await tx.userRoleAssignment.update({
+      where: { id: assignment.id },
+      data: {
+        status: RoleAssignmentStatus.REVOKED,
+        revokedAt: new Date(),
+        revokedBy: adminActorId(),
+        revocationReason: parsed.data.reason,
+        updatedBy: adminActorId(),
+      },
+    });
+    // ถอนที่นั่งผู้ประสานงาน = เปลี่ยนผู้ประสานงาน คำขอลงทะเบียนที่ยังไม่จบของหน่วยงานนั้นถูกยกเลิก
+    return assignment.role.code === ROLE_CODES.ORGANIZATION_USER && assignment.organizationId
+      ? cancelOpenRegistrations(tx, {
+          organizationIds: [assignment.organizationId],
+          reason: coordinatorChangeReason(parsed.data.reason),
+        })
+      : [];
   });
 
   await logAudit({
@@ -1568,7 +1668,16 @@ adminUserRouter.delete("/:id/roles/:assignmentId", async (req, res) => {
     organizationId: assignment.organizationId,
     before: { userAccountId: account.id, role: assignment.role.code, status: "ACTIVE" },
     after: { status: RoleAssignmentStatus.REVOKED },
-    metadata: { reason: parsed.data.reason, revoked_via: "ADMIN_API" },
+    metadata: {
+      reason: parsed.data.reason,
+      revoked_via: "ADMIN_API",
+      registrations_cancelled: cancelled.map((c) => c.request.requestNumber),
+    },
+  });
+  await recordCoordinatorChangeCancels(cancelled, {
+    reason: parsed.data.reason,
+    trigger: "ROLE_REVOKED",
+    coordinatorId: account.id,
   });
 
   await notifyUsers([account.id], {
@@ -1578,7 +1687,7 @@ adminUserRouter.delete("/:id/roles/:assignmentId", async (req, res) => {
     organizationId: assignment.organizationId,
   });
 
-  res.json({ ok: true });
+  res.json({ ok: true, registrationsCancelled: cancelledShape(cancelled) });
 });
 
 const transferSchema = z.object({
@@ -1680,6 +1789,12 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
   }
 
   const outcome = await prisma.$transaction(async (tx) => {
+    /**
+     * ที่นั่งผู้ประสานงานที่เขากำลังจะลุก — ทุกที่ ไม่ใช่เฉพาะ `sourceIds` เพราะเปลี่ยนบทบาทอยู่กับที่
+     * (ผู้ประสานงาน → ผู้มีอำนาจฯ ของหน่วยงานเดิม) ก็คือการเปลี่ยนผู้ประสานงานเหมือนกัน ส่วนกรณีที่ปลายทางเป็น
+     * ผู้ประสานงานของหน่วยงานเดิมเอง `already_there` ตัดไปแล้วข้างบน
+     */
+    const coordinatorOf = await coordinatorOrganizationIds(tx, account.id);
     const reverted = await revertStrandedWork(tx, {
       userAccountId: account.id,
       email: account.email,
@@ -1714,7 +1829,12 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
       reason: SessionRevokeReason.ROTATED,
     });
 
-    return { reverted };
+    const cancelled = await cancelOpenRegistrations(tx, {
+      organizationIds: coordinatorOf,
+      reason: coordinatorChangeReason(reason),
+    });
+
+    return { reverted, cancelled };
   });
 
   await logAudit({
@@ -1728,8 +1848,10 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
       reason,
       transferred_via: "ADMIN_API",
       requests_reverted_to_draft: outcome.reverted.map((r) => r.requestNumber),
+      registrations_cancelled: outcome.cancelled.map((c) => c.request.requestNumber),
     },
   });
+  await recordCoordinatorChangeCancels(outcome.cancelled, { reason, trigger: "TRANSFER", coordinatorId: account.id });
 
   /**
    * คำขอที่ถูกดันกลับเป็นร่างได้แถวของตัวเอง รหัสเดียวกับการสั่งกลับเป็นร่างของ
@@ -1806,6 +1928,7 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
       requestNumber,
       approverCleared,
     })),
+    registrationsCancelled: cancelledShape(outcome.cancelled),
     organizationsLeftWithoutStaff: vacancies,
     message:
       // เหตุผลเดียวกับ title ของ notification ข้างบน — ไม่มีหน่วยงานต้นทางคือเปลี่ยนบทบาทอยู่กับที่
@@ -1814,6 +1937,9 @@ adminUserRouter.post("/:id/transfer", async (req, res) => {
         : `เปลี่ยนบทบาทในหน่วยงาน ${target.nameTh} เป็น "${ROLE_LABELS[role]}" แล้ว`) +
       (outcome.reverted.length > 0
         ? ` · คำขอ ${outcome.reverted.length} ใบถูกปรับกลับเป็นฉบับร่างและแจ้งหน่วยงานเดิมแล้ว`
+        : "") +
+      (outcome.cancelled.length > 0
+        ? ` · คำขอลงทะเบียนหน่วยงาน ${outcome.cancelled.length} ใบถูกยกเลิก เพราะผู้ประสานงานเปลี่ยน`
         : "") +
       (vacancies.length > 0
         ? ` · หน่วยงานเดิมไม่เหลือผู้รับผิดชอบแล้ว กรุณาเชิญคนใหม่`

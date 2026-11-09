@@ -38,10 +38,12 @@ import {
   type AdminRoleAssignment,
   type AdminUser,
   type AdminUserDetail,
+  type CancelledRegistration,
+  type OpenRegistration,
 } from "@/lib/admin";
 import { adminErrorView } from "@/lib/admin-errors";
 import { api } from "@/lib/api";
-import { ROLE_LABELS, formatThaiDate, type Role } from "@/lib/status";
+import { REQUEST_STATUS_META, ROLE_LABELS, formatThaiDate, type Role } from "@/lib/status";
 import { phoneWithExtension } from "@/lib/types";
 import { accountName, useAdminData } from "@/lib/use-admin";
 
@@ -93,6 +95,7 @@ export default function ConsoleUserPage() {
   const u = data.user;
   const isSelf = me?.id === u.id;
   const activeRoles = data.roleAssignments.filter((a) => a.derivedStatus === "ACTIVE");
+  const openRegistrations = data.openRegistrations ?? [];
   const close = () => setDialog(null);
   const done = (title: string, detail?: string) => {
     show({ tone: "success", title, detail });
@@ -335,10 +338,13 @@ export default function ConsoleUserPage() {
         tone="danger"
         confirmPhrase={u.email}
         onConfirm={async (reason) => {
-          await post("/deactivate", { reason });
+          const res = await post("/deactivate", { reason });
+          setWarnings(cancelledWarnings(res.registrationsCancelled));
           done("ยุติการใช้งานบัญชีแล้ว");
         }}
-      />
+      >
+        <RegistrationCancelNotice registrations={openRegistrations} />
+      </ActionDialog>
       <ActionDialog
         open={dialog === "release"}
         onClose={close}
@@ -405,6 +411,7 @@ export default function ConsoleUserPage() {
         onClose={close}
         user={u}
         current={activeRoles}
+        openRegistrations={openRegistrations}
         onDone={(w) => {
           setWarnings(w);
           done("ย้ายบทบาทแล้ว");
@@ -426,10 +433,20 @@ export default function ConsoleUserPage() {
         reasonHint="เจ้าของบัญชีเห็นเหตุผลนี้"
         onConfirm={async (reason) => {
           if (typeof dialog !== "object" || !dialog || !("revoke" in dialog)) return;
-          await api.remove(`/api/admin/users/${u.id}/roles/${dialog.revoke.id}`, { reason });
+          const res = await api.remove<{ registrationsCancelled?: CancelledRegistration[] }>(
+            `/api/admin/users/${u.id}/roles/${dialog.revoke.id}`,
+            { reason },
+          );
+          setWarnings(cancelledWarnings(res.registrationsCancelled));
           done("ถอนบทบาทแล้ว");
         }}
-      />
+      >
+        {typeof dialog === "object" && dialog && "revoke" in dialog && dialog.revoke.role.code === "ORGANIZATION_USER" ? (
+          <RegistrationCancelNotice
+            registrations={openRegistrations.filter((r) => r.organizationId === dialog.revoke.organization?.id)}
+          />
+        ) : null}
+      </ActionDialog>
     </div>
   );
 }
@@ -777,17 +794,56 @@ function GrantDialog({
   );
 }
 
+/**
+ * บอกก่อนกดว่าคำขอลงทะเบียนใบไหนจะถูกยกเลิก — การเอาผู้ประสานงานออกจากหน่วยงาน (ยุติบัญชี ถอนบทบาท ย้าย) คือการเปลี่ยน
+ * ผู้ประสานงาน และคำขอที่ยังไม่จบของหน่วยงานนั้นถูกยกเลิกในคำสั่งเดียวกัน (Admin Action Effect › Issue 20261109-01)
+ * รายการมาจาก `openRegistrations` ของ API ซึ่งใช้ชุดสถานะเดียวกับที่ backend ยกเลิกจริง
+ */
+function RegistrationCancelNotice({ registrations }: { registrations: OpenRegistration[] }) {
+  if (registrations.length === 0) return null;
+  return (
+    <div className="rounded-xl bg-warning-bg px-4 py-3 text-[14px] text-ink">
+      <p className="font-medium text-navy-800">คำขอลงทะเบียนหน่วยงานต่อไปนี้จะถูกยกเลิก เพราะผู้ประสานงานเปลี่ยน</p>
+      <ul className="mt-1 list-disc space-y-1 pl-5">
+        {registrations.map((r) => (
+          <li key={r.id}>
+            <Link href={`/console/registrations/organizations/${r.id}`} className="font-medium text-navy-700 underline">
+              {r.requestNumber}
+            </Link>{" "}
+            ({REQUEST_STATUS_META[r.status].label})
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1">
+        ผู้ประสานงานคนใหม่จะเริ่มคำขอใบใหม่ได้ ถ้ายกเลิกผิด ให้ปรับคำขอกลับเป็นฉบับร่างที่หน้าคำขอนั้น
+      </p>
+    </div>
+  );
+}
+
+/** ข้อความเตือนหลังกด จาก `registrationsCancelled` ของคำตอบ — สิ่งที่เกิดจริง ไม่ใช่สิ่งที่หน้าจอคาดไว้ก่อนกด */
+function cancelledWarnings(cancelled: unknown): string[] {
+  const rows = Array.isArray(cancelled) ? (cancelled as CancelledRegistration[]) : [];
+  if (rows.length === 0) return [];
+  return [
+    `คำขอลงทะเบียนหน่วยงาน ${rows.map((r) => r.requestNumber).join(" ")} ถูกยกเลิก เพราะผู้ประสานงานเปลี่ยน — ` +
+      "เชิญผู้ประสานงานคนใหม่ให้หน่วยงาน แล้วเขาจะเริ่มคำขอใบใหม่ได้",
+  ];
+}
+
 function TransferDialog({
   open,
   onClose,
   user,
   current,
+  openRegistrations,
   onDone,
 }: {
   open: boolean;
   onClose: () => void;
   user: AdminUser;
   current: AdminRoleAssignment[];
+  openRegistrations: OpenRegistration[];
   onDone: (warnings: string[]) => void;
 }) {
   const [role, setRole] = useState<Role | "">("");
@@ -809,18 +865,22 @@ function TransferDialog({
       reasonHint="เจ้าของบัญชีและหน่วยงานเดิมเห็นเหตุผลนี้"
       canSubmit={role !== "" && org !== ""}
       onConfirm={async (reason) => {
-        const res = await api.post<{ requestsRevertedToDraft?: unknown[]; organizationsLeftWithoutStaff?: unknown[]; message?: string }>(
-          `/api/admin/users/${user.id}/transfer`,
-          { organizationId: org, role, reason },
-        );
+        const res = await api.post<{
+          requestsRevertedToDraft?: unknown[];
+          registrationsCancelled?: CancelledRegistration[];
+          organizationsLeftWithoutStaff?: unknown[];
+          message?: string;
+        }>(`/api/admin/users/${user.id}/transfer`, { organizationId: org, role, reason });
         const w: string[] = [];
         if (res.requestsRevertedToDraft?.length) w.push(`คำขอ ${res.requestsRevertedToDraft.length} ใบถูกคืนเป็นฉบับร่าง`);
+        w.push(...cancelledWarnings(res.registrationsCancelled));
         if (res.organizationsLeftWithoutStaff?.length) {
           w.push(`หน่วยงานเดิม ${res.organizationsLeftWithoutStaff.length} แห่งไม่เหลือผู้ใช้ — เชิญผู้ประสานงานคนใหม่ให้หน่วยงานนั้น`);
         }
         onDone(w);
       }}
     >
+      <RegistrationCancelNotice registrations={openRegistrations} />
       <RoleSelect value={role} onChange={setRole} roles={ORGANIZATION_ROLES} />
       <OrganizationPicker value={org} onChange={setOrg} label="หน่วยงานปลายทาง" required />
     </ActionDialog>

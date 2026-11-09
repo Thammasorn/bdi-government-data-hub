@@ -54,6 +54,11 @@ import { adminActorId } from "../lib/context.js";
 import { buildJourneyProgress, summariseProgress } from "../lib/journey-steps.js";
 import { NotificationType, notifyUsers, organizationMemberIds, submitterIfMember } from "../lib/notify.js";
 import { organizationDraftSchema, toRequestData } from "../lib/organization-form.js";
+import {
+  approverOutcomeCode,
+  cancelOrganizationRequest,
+  recordCancelledRegistration,
+} from "../lib/organization-request-cancel.js";
 import { revokeSessionsFor } from "../lib/session.js";
 import { ROLE_CODES } from "../lib/system.js";
 import { formatZodError, isUuid } from "../lib/validation.js";
@@ -659,97 +664,19 @@ adminRegistrationRouter.post("/organizations/:id/cancel", async (req, res) => {
     return;
   }
 
-  const approver = await activatedApprover(prisma, request);
-  const taskIds = (
-    await prisma.reviewTask.findMany({
-      where: { subjectType: ORG_SUBJECT, subjectId: request.id },
-      select: { id: true },
-    })
-  ).map((t) => t.id);
-
-  const outcome = await prisma.$transaction(async (tx) => {
-    const cancelled = await cancelActiveTask(tx, {
-      subjectType: ORG_SUBJECT,
-      subjectId: request.id,
-      actorId: adminActorId(),
-      reason,
-    });
-    const releasedSeat = approver
-      ? null
-      : await releaseApproverSeat(tx, {
-          email: request.approverEmail,
-          organizationId: request.organizationId,
-          taskIds,
-          actorId: adminActorId(),
-          reason,
-        });
-    await tx.organizationRegistrationRequest.update({
-      where: { id: request.id },
-      data: {
-        cancelledAt: new Date(),
-        cancelledBy: adminActorId(),
-        cancellationReason: reason,
-        updatedBy: adminActorId(),
-      },
-    });
-    const status = await deriveRequestStatus(tx, {
-      subjectType: ORG_SUBJECT,
-      subjectId: request.id,
-      hasSubmitted: Boolean(request.submittedAt),
-      cancelled: true,
-    });
-    const updated = await tx.organizationRegistrationRequest.update({
-      where: { id: request.id },
-      data: { status, updatedBy: adminActorId() },
-    });
-    return { updated, cancelled, releasedSeat };
-  });
-
-  const seat = outcome.releasedSeat;
-  await logAudit({
-    action: AuditAction.REQUEST_CANCELLED,
-    subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
-    subjectId: request.id,
-    organizationId: request.organizationId,
-    before: { status: request.status },
-    after: { status: outcome.updated.status },
-    metadata: {
-      reason,
-      cancelled_via: "ADMIN_API",
-      request_number: request.requestNumber,
-      cancelled_task_type: outcome.cancelled?.taskType ?? null,
-      approver_outcome: approverOutcomeCode(approver, false, seat),
-    },
-  });
-  if (seat) {
-    await logAudit({
-      action: AuditAction.APPROVER_INVITATION_RECALLED,
-      subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
-      subjectId: request.id,
-      organizationId: request.organizationId,
-      before: { email: seat.email, cid: seat.cid, displayName: seat.displayName, status: seat.status },
-      after: { accountDeleted: seat.accountDeleted, keptBecause: seat.keptBecause ?? undefined },
-      metadata: { reason, recalled_via: "ADMIN_CANCEL_API" },
-    });
-  }
-  await logKeysRevoked(seat?.revokedKeys ?? [], { revokedVia: "ADMIN_CANCEL_API" });
-
-  const members = await organizationMemberIds(request.organizationId);
-  await notifyUsers([...members.users, submitterIfMember(request.createdBy, members)], {
-    type: NotificationType.REQUEST_CANCELLED,
-    title: "คำขอลงทะเบียนหน่วยงานถูกยกเลิก",
+  const outcome = await prisma.$transaction((tx) => cancelOrganizationRequest(tx, request, reason));
+  const { approver, releasedSeat: seat } = outcome;
+  await recordCancelledRegistration(outcome, {
+    reason,
+    via: "ADMIN_API",
+    recalledVia: "ADMIN_CANCEL_API",
     message: `ผู้ดูแลระบบยกเลิกคำขอ ${request.requestNumber} เหตุผล: ${reason}`,
-    subjectType: ORG_SUBJECT,
-    subjectId: request.id,
-    organizationId: request.organizationId,
   });
 
   res.json({
     registration: organizationShape(outcome.updated),
     progress: await progressOf(ORG_SUBJECT, outcome.updated),
-    cancelledTask: outcome.cancelled
-      ? { id: outcome.cancelled.id, taskType: outcome.cancelled.taskType }
-      : null,
+    cancelledTask: outcome.cancelledTask,
     approver: {
       outcome: approverOutcomeCode(approver, false, seat),
       email: approver?.email ?? seat?.email ?? request.approverEmail,
@@ -765,23 +692,6 @@ adminRegistrationRouter.post("/organizations/:id/cancel", async (req, res) => {
     message: "ยกเลิกคำขอแล้ว — ถ้าสั่งผิด ให้ปรับกลับเป็นฉบับร่าง (reset) คำขอจะกลับไปอยู่ในมือหน่วยงาน",
   });
 });
-
-type ApproverOutcome =
-  | "NONE"
-  | "INVITATION_REVOKED"
-  | "ACCOUNT_DELETED"
-  | "KEPT_ACTIVE"
-  | "DEACTIVATED";
-
-function approverOutcomeCode(
-  approver: { id: string } | null,
-  isRemoveApprover: boolean,
-  seat: ReleasedSeat | null,
-): ApproverOutcome {
-  if (approver) return isRemoveApprover ? "DEACTIVATED" : "KEPT_ACTIVE";
-  if (!seat) return "NONE";
-  return seat.accountDeleted ? "ACCOUNT_DELETED" : "INVITATION_REVOKED";
-}
 
 function resetMessage(
   approver: { email: string } | null,

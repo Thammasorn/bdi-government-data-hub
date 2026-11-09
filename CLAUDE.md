@@ -936,6 +936,25 @@ address must have the three code columns removed explicitly or a one-field edit 
 them. The admin edit schemas are also `.strict()`, unlike the form's — a script that mistypes a
 field name must get a 400, not a 200 that changed nothing.
 
+**Removing a coordinator cancels the organisation's open registration request** (Admin Action Effect ›
+Issue 20261109-01 — BDI's answer to the question card 261101-01 left open: a request submitted by the old
+coordinator must not walk on to an agreement naming them). `deactivate`, `DELETE /users/:id/roles/:id` on an
+`ORGANIZATION_USER` assignment, and `transfer` out of that seat (to another organisation, or to approver in the
+same one) all call `cancelOpenRegistrations()` inside their own transaction, for every organisation the account
+was coordinator of — read **before** the roles are revoked. "Open" is `DRAFT` · `SUBMITTED` · `UNDER_REVIEW` ·
+`RETURNED` (`OPEN_REGISTRATION_STATUSES`), the same set `POST /api/organizations` treats as in flight, so the
+next coordinator can start a new request at once. It locks the request rows `FOR UPDATE` before reading their
+status, so a submit or approval writing the row commits first and is seen. Each request goes through
+`cancelOrganizationRequest()` in `lib/organization-request-cancel.ts`, which the admin `…/cancel` endpoint now
+calls too — one effect, two causes, told apart by `cancelled_via` (`ADMIN_API` vs `ADMIN_COORDINATOR_CHANGE`,
+plus `coordinator_change` and `coordinator_user_account_id`). The coordinator-change notice also goes to the
+organisation's activated approvers, because usually no coordinator is left to tell and the approver may be
+about to sign. Not triggered by suspend (the role stays) or by the representative change request (`ACTIVE`
+organisations only, which have no registration in flight); dataset requests are untouched. Before
+`ACTIVE` there is one coordinator seat and a newcomer's invitation occupies it, so removal is always the
+moment the change happens. `GET /users/:id` returns `openRegistrations` so the console's three dialogs name
+the requests before the click, and the three commands answer `registrationsCancelled`.
+
 **A request reset to `DRAFT` shows step 1 again**, which took a third clause in
 `lib/journey-steps.ts`: a cleared round is recognised by a `RETURNED` row, by
 `phase === "WAITING_REVISION"`, and by `phase === "DRAFT"`. A reset leaves no `RETURNED` row
@@ -1848,7 +1867,10 @@ the old coordinator back into the snapshot. The account is read **only while the
 `RETURNED`**; a submitted request shows its snapshot, which is what was submitted and what A0 prints. A0
 is rendered from `toApiShape()` on every read, so reading the account there too would let a change of
 coordinator rewrite an agreement under review. An empty seat answers `null` and the snapshot shows,
-unlocked; it never falls back to the creator, whose e-mail may be the released placeholder.
+unlocked; it never falls back to the creator, whose e-mail may be the released placeholder. Since
+2026-11-09 an administrator replacing the coordinator also **cancels** the organisation's open request
+(see "Removing a coordinator cancels" under **Auth**), so the newcomer normally starts a fresh draft; this
+rule still decides what they see on a request an administrator reset back to `DRAFT` afterwards.
 
 **Never split `formatThaiDate()`'s output on spaces to get one half of it.** Both list tables
 did (`.split(" ").slice(0, 3)`) while they wanted the date alone, and it worked only by accident:

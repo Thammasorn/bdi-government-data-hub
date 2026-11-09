@@ -115,8 +115,28 @@ export interface AdminUserDetail {
   }>;
   /** ลิงก์ตั้งรหัสผ่านใหม่ฉบับล่าสุดที่ส่งให้บัญชีนี้ */
   passwordResetDelivery?: DeliveryView | null;
+  /**
+   * คำขอลงทะเบียนหน่วยงานที่ยังไม่จบ ของหน่วยงานที่บัญชีนี้เป็นผู้ประสานงาน — ยุติบัญชี ถอนบทบาทผู้ประสานงาน หรือย้าย
+   * จะยกเลิกทุกใบในรายการนี้ (`cancelOpenRegistrations()` ฝั่ง backend) กล่องยืนยันจึงบอกไว้ก่อนกด
+   */
+  openRegistrations?: OpenRegistration[];
   sessions: AdminSession[];
   recentAudit: AdminAuditRow[];
+}
+
+export interface OpenRegistration {
+  id: string;
+  requestNumber: string;
+  status: RequestStatus;
+  organizationId: string;
+}
+
+/** `registrationsCancelled` ในคำตอบของยุติบัญชี · ถอนบทบาท · ย้าย */
+export interface CancelledRegistration {
+  id: string;
+  requestNumber: string;
+  organizationId: string;
+  previousStatus: RequestStatus;
 }
 
 export interface AdminInvitation {
