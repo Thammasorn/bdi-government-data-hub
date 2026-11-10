@@ -22,7 +22,8 @@
 | `backend/src/lib/jira-config.ts` | ค่าตั้ง (แถว `jira_config` ใน `administration.system_setting`) · เข้ารหัส token · สถานะการเชื่อมต่อ (แถว `jira_status`) |
 | `backend/src/lib/jira-client.ts` | ไฟล์เดียวที่รู้จัก REST API ของ Jira · แปลง error เป็น RETRY / RATE_LIMIT / AUTH / PERMANENT · ADF ⇄ ข้อความ |
 | `backend/src/lib/jira.ts` | สิ่งที่ route เรียกใน transaction: `jiraOnAssign()`, `endJiraLinks()` · ข้อความ comment · `jiraStatusForRequest()` |
-| `backend/src/workers/jira.ts` | ลูปส่งงาน (ทุก 15 วินาที) และลูปติดตาม Done (ทุก `jira_sync_interval_seconds`) ใน delivery-worker |
+| `backend/src/workers/jira.ts` | ลูปส่งงาน (ทุก 15 วินาที) และลูปติดตาม Done (ตามตารางเวลา cron ในค่าตั้ง) ใน delivery-worker |
+| `backend/src/lib/jira-schedule.ts` | ตรวจ cron · รอบถัดไป (เวลาไทย) |
 | `backend/src/routes/admin-jira.ts` | `/api/admin/settings/jira` — ค่าตั้ง, ทดสอบ, บันทึกการทำงาน, ลองใหม่ |
 | `frontend/app/console/settings/jira/page.tsx` | หน้า /console → ตั้งค่าระบบ → Jira |
 | `frontend/components/dataset/DetailView.tsx` | บรรทัด "การ์ด Jira" ในกล่องผู้เชี่ยวชาญ · คำเตือนในกล่องยืนยัน (`JiraLine`, `JiraOpenWarning`) |
@@ -83,21 +84,37 @@ project ไม่ได้รับการ์ด (การ์ดไม่ม�
 |---|---|---|
 | เปิด/ปิด, domain, อีเมล, project key, สถานะ Done, สถานะเก็บการ์ด | `system_setting.jira_config` | เปิดได้เมื่อกรอกครบ |
 | API token | ในแถวเดียวกัน เข้ารหัส AES-256-GCM | กุญแจ = HKDF(`ACTIVATION_KEY_SECRET`) — เปลี่ยน secret แล้วต้องกรอก token ใหม่ API ตอบแค่ `tokenSet` |
-| ตรวจสถานะการ์ดทุก (วินาที) | `system_setting.jira_sync_interval_seconds` (`SYSTEM_SETTINGS`) | ค่าเริ่มต้น 900 ช่วง 60–86,400 |
+| ตารางเวลาตรวจสถานะการ์ด (cron) | ในแถว `jira_config` (`syncCron`) | ค่าเริ่มต้น `*/15 * * * *` — ดู §6.1 |
 
 การแก้ค่าตั้งเขียน `SYSTEM_SETTING_UPDATED` (`metadata.key = jira_config`) โดยไม่มี token — ตรวจแล้วว่าไม่มีแถว audit ไหนมี token
 
 ระยะนี้ dev และ production ใช้บัญชี `jira-vela@bdi.or.th` และ project D2share (D2S) — ก่อนปล่อยจริงจะตั้ง Jira ของ production ผ่านหน้านี้ ไม่ต้องแก้โค้ด
 
+### 6.1 ตารางเวลาแบบ cron (การ์ด "[Enhance] Jira sync schedule เป็น cron" 2026-11-10)
+
+แทนค่า "ทุก N วินาที" เดิม (`jira_sync_interval_seconds` ถูกเอาออก — production ยังใช้ค่าเริ่มต้นอยู่ จึงไม่มีข้อมูลต้องย้าย)
+
+- ตัวแปล `cron-parser` 4.9.0 รับ 5 ช่อง, 6 ช่อง (วินาทีนำหน้า), ช่วง/รายการ/ขั้น, ชื่อวันและเดือน (`MON-FRI`, `JAN`), `L`, `#`, `?`,
+  และ `@hourly` `@daily` `@weekly` `@monthly` `@yearly` — **ไม่รับ `W`** (nearest weekday ของ Quartz) ตัวแปลไม่รู้จัก
+- **เวลาไทยเสมอ** (`tz: Asia/Bangkok`) — container ใช้ UTC
+- **ถี่สุดนาทีละครั้ง:** รูป 6 ช่องต้องมีช่องวินาทีเป็นตัวเลขเดียว สองรอบติดกันจึงอยู่คนละนาที — ตรวจตรงแน่นอน ไม่ใช่สุ่มดูรอบถัดไป
+- worker ตื่นทุก 30 วินาที แล้วถามว่า "มีเวลาของตารางที่อยู่หลังการตรวจครั้งล่าสุดและผ่านมาแล้วไหม" (`nextRunAfter(cron, lastSyncAt)`)
+  worker ที่หยุดไปหลายรอบตรวจครั้งเดียวเมื่อกลับมา ไม่ไล่ตาม · ยังไม่เคยตรวจ → รอบแรกคือรอบถัดจากตอน worker เริ่ม
+- ค่าในฐานข้อมูลที่ใช้ไม่ได้ (แก้ด้วยมือ) → ใช้ค่าเริ่มต้นพร้อมเตือนใน log ลูปไม่ล้ม
+- หน้าจอเรียก `schedule-preview` ระหว่างพิมพ์ (หน่วง 400 ms) แสดงสามรอบถัดไป หรือข้อความ error และปิดปุ่มบันทึก — กติกาอยู่ที่ backend ที่เดียว
+
+ทดสอบ 2026-11-10 (dev, Jira จริง): `*/15 8-18 * * MON-FRI` ตอน 21:17 → รอบถัดไป 08:00 วันพุธ · `*/5 * * * * *`, `abc`, `61 * * * *`, `15W`
+ถูกปฏิเสธ · บันทึก `* * * * *` แล้ว `lastSyncAt` ขยับทุกนาทีพอดี · D2S-17 ย้ายไป Done ถูกคัดลอกในรอบนาทีถัดไป (31 วินาที)
+
 ## 7. API
 
 ```
 GET  /api/admin/settings/jira                       ค่าตั้ง + สถานะ + จำนวนงานล้ม/รอ
-PUT  /api/admin/settings/jira                       {enabled?, domain?, email?, token?, projectKey?, doneStatus?, archiveStatus?}
+PUT  /api/admin/settings/jira                       {enabled?, domain?, email?, token?, projectKey?, doneStatus?, archiveStatus?, syncCron?}
 POST /api/admin/settings/jira/test                  ช่องที่ส่งมาแทนค่าที่บันทึกไว้ (ทดสอบฟอร์มที่ยังไม่บันทึกได้)
 GET  /api/admin/settings/jira/operations            ?status=failed|pending|all&page&pageSize — ย้อนหลัง 30 วัน
 POST /api/admin/settings/jira/operations/:id/retry
-PUT  /api/admin/settings/jira_sync_interval_seconds {value}
+POST /api/admin/settings/jira/schedule-preview     {cron} → {ok, nextRuns} หรือ {ok:false, error} — ไม่บันทึก
 ```
 
 `GET /api/dataset-requests/:id` มี `jira` (ฝั่ง BDI เท่านั้น): `issueKey`, `url`, `state`, `assigneeFound`, `delivery` (`sent` / `pending` / `failed`)

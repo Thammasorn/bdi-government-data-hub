@@ -3,7 +3,7 @@
  *
  * เก็บเป็นแถวเดียวใน `administration.system_setting` (key `jira_config`, ค่าเป็น JSON) ไม่ใช่ใน `SYSTEM_SETTINGS` ของ
  * `lib/system-settings.ts` ซึ่งรองรับแค่จำนวนเต็มในช่วง — ค่านี้มีหลายช่องและมีความลับ จึงมี route ของตัวเอง
- * (`routes/admin-jira.ts`) ช่วงตรวจสถานะการ์ด (`jira_sync_interval_seconds`) เป็นจำนวนเต็มธรรมดา จึงอยู่ใน `SYSTEM_SETTINGS`
+ * (`routes/admin-jira.ts`) ตารางเวลาตรวจสถานะการ์ด (`syncCron`) อยู่ในแถวเดียวกันนี้ (`lib/jira-schedule.ts`)
  *
  * **API token ไม่เคยถูกเก็บหรือส่งออกเป็นข้อความเปล่า** — เข้ารหัส AES-256-GCM ด้วยกุญแจที่ derive จาก
  * `ACTIVATION_KEY_SECRET` (HKDF, info แยกของตัวเอง) ไม่เพิ่ม env ตัวใหม่ที่ต้องจำตั้งตอน deploy ผลข้างเคียงที่ยอมรับ: ถ้าเปลี่ยน
@@ -17,6 +17,7 @@ import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:cr
 import type { Prisma, PrismaClient } from "@prisma/client";
 
 import { env } from "../env.js";
+import { DEFAULT_JIRA_SYNC_CRON } from "./jira-schedule.js";
 import { SYSTEM_USER_ID } from "./system.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -33,6 +34,8 @@ interface StoredJiraConfig {
   projectKey: string;
   doneStatus: string;
   archiveStatus: string;
+  /** ตารางเวลาตรวจสถานะการ์ด (cron, เวลาไทย) — `lib/jira-schedule.ts` */
+  syncCron: string;
   /** เวลาที่ domain / อีเมล / token เปลี่ยนครั้งล่าสุด — งานที่ค้างเพราะ token ใช้ไม่ได้ก่อนเวลานี้ถูกส่งใหม่ */
   credentialsChangedAt: string | null;
 }
@@ -48,6 +51,7 @@ export interface JiraConfig {
   projectKey: string;
   doneStatus: string;
   archiveStatus: string;
+  syncCron: string;
   credentialsChangedAt: Date | null;
   updatedAt: Date | null;
   updatedBy: string | null;
@@ -62,6 +66,7 @@ const DEFAULTS: StoredJiraConfig = {
   /** ชื่อสถานะใน workflow ของ project D2share — production ที่ตั้ง Jira ใหม่อาจตั้งชื่ออื่น จึงแก้ได้ */
   doneStatus: "Done",
   archiveStatus: "Archived",
+  syncCron: DEFAULT_JIRA_SYNC_CRON,
   credentialsChangedAt: null,
 };
 
@@ -97,6 +102,7 @@ function asStored(value: unknown): StoredJiraConfig {
     projectKey: typeof v.projectKey === "string" ? v.projectKey : DEFAULTS.projectKey,
     doneStatus: typeof v.doneStatus === "string" && v.doneStatus ? v.doneStatus : DEFAULTS.doneStatus,
     archiveStatus: typeof v.archiveStatus === "string" && v.archiveStatus ? v.archiveStatus : DEFAULTS.archiveStatus,
+    syncCron: typeof v.syncCron === "string" && v.syncCron.trim() ? v.syncCron.trim() : DEFAULTS.syncCron,
     credentialsChangedAt: typeof v.credentialsChangedAt === "string" ? v.credentialsChangedAt : null,
   };
 }
@@ -114,6 +120,7 @@ export async function readJiraConfig(db: Db): Promise<JiraConfig> {
     projectKey: stored.projectKey,
     doneStatus: stored.doneStatus,
     archiveStatus: stored.archiveStatus,
+    syncCron: stored.syncCron,
     credentialsChangedAt: stored.credentialsChangedAt ? new Date(stored.credentialsChangedAt) : null,
     updatedAt: row?.updatedAt ?? null,
     updatedBy: row ? row.updatedBy : null,
@@ -136,6 +143,7 @@ export function publicJiraConfig(config: JiraConfig) {
     projectKey: config.projectKey,
     doneStatus: config.doneStatus,
     archiveStatus: config.archiveStatus,
+    syncCron: config.syncCron,
     updatedAt: config.updatedAt,
     updatedBy: config.updatedBy,
   };
@@ -150,6 +158,8 @@ export interface JiraConfigPatch {
   projectKey?: string;
   doneStatus?: string;
   archiveStatus?: string;
+  /** ตรวจด้วย `checkSyncCron()` ก่อนเรียก — ฟังก์ชันนี้ไม่ตรวจซ้ำ */
+  syncCron?: string;
 }
 
 /** `https://x.atlassian.net/` → `https://x.atlassian.net` — ทุกที่ต่อ path ด้วย `/rest/...` */
@@ -171,11 +181,12 @@ export async function saveJiraConfig(db: Db, patch: JiraConfigPatch, actorId: st
     ...(patch.projectKey !== undefined ? { projectKey: patch.projectKey.trim() } : {}),
     ...(patch.doneStatus !== undefined ? { doneStatus: patch.doneStatus.trim() } : {}),
     ...(patch.archiveStatus !== undefined ? { archiveStatus: patch.archiveStatus.trim() } : {}),
+    ...(patch.syncCron !== undefined ? { syncCron: patch.syncCron.trim() } : {}),
     ...(patch.token !== undefined ? { tokenCipher: encryptToken(patch.token.trim()) } : {}),
   };
 
   const changed: string[] = [];
-  for (const field of ["enabled", "domain", "email", "projectKey", "doneStatus", "archiveStatus"] as const) {
+  for (const field of ["enabled", "domain", "email", "projectKey", "doneStatus", "archiveStatus", "syncCron"] as const) {
     if (before[field] !== next[field]) changed.push(field);
   }
   if (patch.token !== undefined) changed.push("token");
@@ -197,6 +208,7 @@ export async function saveJiraConfig(db: Db, patch: JiraConfigPatch, actorId: st
     projectKey: c.projectKey,
     doneStatus: c.doneStatus,
     archiveStatus: c.archiveStatus,
+    syncCron: c.syncCron,
     tokenSet: Boolean(c.tokenCipher),
   });
   return { changed, credentialsChanged, before: auditable(before), after: auditable(next) };

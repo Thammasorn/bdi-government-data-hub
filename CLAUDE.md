@@ -1196,7 +1196,9 @@ derived from `ACTIVATION_KEY_SECRET` (change that secret and the token must be r
 `tokenSet`. **A wrong token is not always a 401** — Jira runs the call anonymously and answers 400 "project not found";
 `jira-client.ts` reads `x-seraph-loginreason: AUTHENTICATED_FAILED` first. Auth failures stop all Jira jobs
 (`jira_status.authFailedAt`) until new credentials are saved, which requeues them. The assignee is looked up with
-`user/assignable/search?project=` — `user/search` finds nobody by e-mail with the `jira-vela` account.
+`user/assignable/search?project=` — `user/search` finds nobody by e-mail with the `jira-vela` account. The Done poller runs on a
+**cron schedule** (`syncCron` in `jira_config`, `lib/jira-schedule.ts`, card "[Enhance] Jira sync schedule เป็น cron" 2026-11-10),
+always in **Asia/Bangkok**, and at most once a minute: a 6-field expression must have a single number in its seconds field.
 
 ### One person, one name — `lib/person-name.ts`
 
