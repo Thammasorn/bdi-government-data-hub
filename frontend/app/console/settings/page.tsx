@@ -18,6 +18,9 @@ interface SystemSetting {
   label: string;
   description: string;
   unit: string;
+  /** ค่าที่วางรวมในกล่องเดียวกัน — คีย์ของ `groups` ในคำตอบเดียวกัน */
+  group: string | null;
+  fieldLabel: string | null;
   value: number;
   defaultValue: number;
   isDefault: boolean;
@@ -35,7 +38,10 @@ interface SystemSetting {
  * ฝั่ง backend ขึ้นที่นี่เองโดยไม่ต้องแก้หน้า ช่วงที่ใช้ได้มาจาก API เช่นกัน และ API ตรวจซ้ำเสมอ
  */
 export default function ConsoleSettingsPage() {
-  const { data, error, loading, reload } = useAdminData<{ settings: SystemSetting[] }>("/api/admin/settings");
+  const { data, error, loading, reload } = useAdminData<{
+    settings: SystemSetting[];
+    groups: Record<string, { title: string; description: string }>;
+  }>("/api/admin/settings");
 
   if (loading && !data) return <Spinner />;
   if (error && !data) return <ErrorNotice view={adminErrorView(error)} />;
@@ -45,9 +51,24 @@ export default function ConsoleSettingsPage() {
     <div>
       <PageHeader eyebrow="ตั้งค่าระบบ" title="ตั้งค่าระบบ" />
       <div className="space-y-6">
-        {data.settings.map((setting) => (
-          <SettingForm key={`${setting.key}:${setting.value}`} setting={setting} onSaved={reload} />
-        ))}
+        {/* ค่าที่อยู่กลุ่มเดียวกันขึ้นเป็นกล่องเดียว ณ ตำแหน่งของค่าแรกในกลุ่ม */}
+        {data.settings.map((setting, index) => {
+          if (!setting.group) {
+            return <SettingForm key={`${setting.key}:${setting.value}`} setting={setting} onSaved={reload} />;
+          }
+          if (data.settings.findIndex((s) => s.group === setting.group) !== index) return null;
+          const members = data.settings.filter((s) => s.group === setting.group);
+          const group = data.groups[setting.group];
+          return (
+            <SettingGroupForm
+              key={`${setting.group}:${members.map((m) => m.value).join(",")}`}
+              title={group?.title ?? setting.label}
+              description={group?.description ?? ""}
+              settings={members}
+              onSaved={reload}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -127,6 +148,112 @@ function SettingForm({ setting, onSaved }: { setting: SystemSetting; onSaved: ()
             ยกเลิกการแก้ไข
           </Button>
           <Button type="submit" loading={busy} disabled={!dirty || parsed === null || Boolean(localError)}>
+            บันทึก
+          </Button>
+        </div>
+      </form>
+    </Panel>
+  );
+}
+
+/** ช่วงที่ยอมรับ — ข้อความเดียวกับที่ API ตอบ */
+function rangeError(setting: SystemSetting, text: string): string | undefined {
+  const trimmed = text.trim();
+  const parsed = /^\d+$/.test(trimmed) ? Number(trimmed) : null;
+  return trimmed !== "" && (parsed === null || parsed < setting.min || parsed > setting.max)
+    ? `ต้องเป็นจำนวนเต็ม ${setting.min}–${setting.max} ${setting.unit}`
+    : undefined;
+}
+
+/**
+ * หลายค่าในกล่องเดียว ปุ่มบันทึกเดียว — บันทึกเฉพาะค่าที่เปลี่ยน ทีละค่า
+ *
+ * API รับทีละ key ถ้าค่าที่สองไม่ผ่าน ค่าแรกถูกบันทึกไปแล้ว หน้าจอจึงโหลดใหม่ทุกครั้ง ไม่ว่าสำเร็จหรือไม่
+ */
+function SettingGroupForm({
+  title,
+  description,
+  settings,
+  onSaved,
+}: {
+  title: string;
+  description: string;
+  settings: SystemSetting[];
+  onSaved: () => void;
+}) {
+  const [texts, setTexts] = useState<Record<string, string>>(() =>
+    Object.fromEntries(settings.map((s) => [s.key, String(s.value)])),
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<AdminErrorView | null>(null);
+  const { show } = useToast();
+
+  const errors = Object.fromEntries(settings.map((s) => [s.key, rangeError(s, texts[s.key] ?? "")]));
+  const changed = settings.filter((s) => (texts[s.key] ?? "").trim() !== String(s.value));
+  const invalid = settings.some((s) => errors[s.key] || (texts[s.key] ?? "").trim() === "");
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      for (const setting of changed) {
+        await api.put(`/api/admin/settings/${setting.key}`, { value: Number(texts[setting.key].trim()) });
+      }
+      show({ tone: "success", title: `บันทึก${title}แล้ว` });
+      onSaved();
+    } catch (err) {
+      setError(adminErrorView(err));
+      onSaved();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const latest = settings
+    .filter((s) => !s.isDefault && s.updatedAt)
+    .sort((a, b) => Date.parse(b.updatedAt!) - Date.parse(a.updatedAt!))[0];
+
+  return (
+    <Panel title={title} description={description}>
+      <form
+        className="space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
+        <div className="grid gap-4 sm:grid-cols-2">
+          {settings.map((setting) => (
+            <TextField
+              key={setting.key}
+              label={setting.fieldLabel ?? setting.label}
+              inputMode="numeric"
+              value={texts[setting.key] ?? ""}
+              onChange={(e) => setTexts((t) => ({ ...t, [setting.key]: e.target.value }))}
+              error={errors[setting.key]}
+              hint={`${setting.min}–${setting.max} ${setting.unit} · ค่าเริ่มต้น ${setting.defaultValue} ${setting.unit}`}
+            />
+          ))}
+        </div>
+        <p className="text-[13px] text-ink-muted">
+          {latest
+            ? `แก้ไขล่าสุด ${formatThaiDate(latest.updatedAt!)}${latest.updatedBy ? ` โดย ${latest.updatedBy}` : ""}`
+            : "ใช้ค่าเริ่มต้นของระบบ ยังไม่มีผู้ตั้งค่า"}
+        </p>
+        {error ? <ErrorNotice view={error} /> : null}
+        <div className="flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={changed.length === 0 || busy}
+            onClick={() => {
+              setTexts(Object.fromEntries(settings.map((s) => [s.key, String(s.value)])));
+              setError(null);
+            }}
+          >
+            ยกเลิกการแก้ไข
+          </Button>
+          <Button type="submit" loading={busy} disabled={changed.length === 0 || invalid}>
             บันทึก
           </Button>
         </div>
