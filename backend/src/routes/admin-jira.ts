@@ -5,6 +5,7 @@
  *   GET  /                       ค่าตั้ง (ไม่มี token) + สถานะการเชื่อมต่อ + จำนวนงานที่ล้ม/รอ
  *   PUT  /                       บันทึกค่าตั้ง — token ส่งเฉพาะตอนพิมพ์ใหม่ บันทึก credential ใหม่แล้วงานที่ค้างเพราะ token กลับเข้าคิวเอง
  *   POST /test                   ทดสอบการเชื่อมต่อด้วยค่าที่บันทึกไว้ หรือค่าที่ยังไม่บันทึกจากฟอร์ม
+ *   POST /schedule-preview       ตรวจ cron ที่กำลังพิมพ์ — ใช้ได้ไหม และสามรอบถัดไปตามเวลาไทย (ไม่บันทึกอะไร)
  *   GET  /operations             บันทึกการทำงานกับ Jira ย้อนหลัง 30 วัน (?status=failed|pending|all)
  *   POST /operations/:id/retry   ส่งงานที่ล้มอีกครั้ง
  *
@@ -35,7 +36,7 @@ import {
 import { JIRA_OPERATION_LABELS, issueUrl, type JiraOperation, type JiraPayload } from "../lib/jira.js";
 import { formatZodError } from "../lib/validation.js";
 import { fullNameTh } from "../lib/person-name.js";
-import { readSystemSetting } from "../lib/system-settings.js";
+import { JIRA_SYNC_TIMEZONE, checkSyncCron } from "../lib/jira-schedule.js";
 import { requireAdmin } from "../middleware/auth.js";
 
 export const adminJiraRouter = Router();
@@ -60,6 +61,11 @@ const configSchema = z
     }),
     doneStatus: optionalText(64).min(1, "กรุณากรอกชื่อสถานะ"),
     archiveStatus: optionalText(64).min(1, "กรุณากรอกชื่อสถานะ"),
+    /** ตารางเวลาตรวจสถานะการ์ด — กติกาทั้งหมดอยู่ใน `checkSyncCron()` ข้อความ error เดียวกับที่ preview ตอบ */
+    syncCron: z.string().superRefine((v, ctx) => {
+      const check = checkSyncCron(v);
+      if (!check.ok) ctx.addIssue({ code: z.ZodIssueCode.custom, message: check.error });
+    }),
   })
   .partial()
   .strict();
@@ -91,12 +97,8 @@ async function pendingCounts() {
 }
 
 async function snapshot() {
-  const [config, status, syncIntervalSeconds, counts] = await Promise.all([
-    readJiraConfig(prisma),
-    readJiraStatus(prisma),
-    readSystemSetting(prisma, "jira_sync_interval_seconds"),
-    pendingCounts(),
-  ]);
+  const [config, status, counts] = await Promise.all([readJiraConfig(prisma), readJiraStatus(prisma), pendingCounts()]);
+  const schedule = checkSyncCron(config.syncCron);
   const authBlocked =
     Boolean(status.authFailedAt) &&
     (!config.credentialsChangedAt || config.credentialsChangedAt <= new Date(status.authFailedAt!));
@@ -116,7 +118,12 @@ async function snapshot() {
       authBlocked,
       usable: isJiraUsable(config),
     },
-    syncIntervalSeconds,
+    schedule: {
+      cron: config.syncCron,
+      timezone: JIRA_SYNC_TIMEZONE,
+      nextRuns: schedule.ok ? schedule.nextRuns : [],
+      error: schedule.ok ? null : schedule.error,
+    },
     counts,
   };
 }
@@ -200,7 +207,21 @@ adminJiraRouter.put("/", async (req, res) => {
   });
 });
 
-const testSchema = configSchema.omit({ enabled: true });
+const testSchema = configSchema.omit({ enabled: true, syncCron: true });
+
+adminJiraRouter.post("/schedule-preview", async (req, res) => {
+  const parsed = z.object({ cron: z.string().max(500) }).strict().safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
+    return;
+  }
+  const check = checkSyncCron(parsed.data.cron);
+  res.json(
+    check.ok
+      ? { ok: true, nextRuns: check.nextRuns, timezone: JIRA_SYNC_TIMEZONE }
+      : { ok: false, error: check.error, timezone: JIRA_SYNC_TIMEZONE },
+  );
+});
 
 interface TestStep {
   label: string;

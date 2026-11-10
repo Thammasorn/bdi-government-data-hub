@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { DataTable, EmptyState, type Column } from "@/components/console/DataTable";
 import { ErrorNotice, PageHeader, Panel, Tabs } from "@/components/console/ui";
@@ -38,7 +38,7 @@ interface JiraSnapshot {
     authBlocked: boolean;
     usable: boolean;
   };
-  syncIntervalSeconds: number;
+  schedule: { cron: string; timezone: string; nextRuns: string[]; error: string | null };
   counts: { failed: number; pending: number };
 }
 
@@ -92,7 +92,7 @@ export default function ConsoleJiraSettingsPage() {
       <PageHeader eyebrow="ตั้งค่าระบบ" title="Jira" />
       <div className="space-y-6">
         <ConnectionPanel key={data.config.updatedAt ?? "new"} snapshot={data} onSaved={refresh} />
-        <IntervalPanel key={`interval:${data.syncIntervalSeconds}`} snapshot={data} onSaved={reload} />
+        <SchedulePanel key={`schedule:${data.schedule.cron}`} snapshot={data} onSaved={reload} />
         <OperationsPanel counts={data.counts} round={logRound} onChanged={refresh} />
       </div>
     </div>
@@ -307,30 +307,64 @@ function ConnectionPanel({ snapshot, onSaved }: { snapshot: JiraSnapshot; onSave
   );
 }
 
-const MIN_INTERVAL = 60;
-const MAX_INTERVAL = 86_400;
+/** ตัวอย่างใต้ช่อง — กดแล้วใส่ลงช่องให้ ไม่ต้องจำไวยากรณ์ */
+const CRON_EXAMPLES: Array<{ cron: string; label: string }> = [
+  { cron: "*/15 * * * *", label: "ทุก 15 นาที (ค่าเริ่มต้น)" },
+  { cron: "*/15 8-18 * * MON-FRI", label: "ทุก 15 นาที 08:00–18:59 วันจันทร์–ศุกร์" },
+  { cron: "0 9,13,17 * * *", label: "วันละ 3 ครั้ง 09:00 13:00 17:00" },
+  { cron: "@hourly", label: "ทุกชั่วโมง" },
+];
 
-/** ค่าตั้งระบบ `jira_sync_interval_seconds` — endpoint เดียวกับหน้าตั้งค่าระบบ แสดงที่นี่ด้วยเพื่อให้เรื่อง Jira อยู่ที่เดียว */
-function IntervalPanel({ snapshot, onSaved }: { snapshot: JiraSnapshot; onSaved: () => void }) {
-  const [text, setText] = useState(String(snapshot.syncIntervalSeconds));
+type Preview = { ok: true; nextRuns: string[] } | { ok: false; error: string };
+
+/**
+ * ตารางเวลาตรวจสถานะการ์ด (cron, เวลาไทย) — การ์ด "[Enhance] Jira sync schedule เป็น cron" (2026-11-10)
+ *
+ * ตรวจและแสดงสามรอบถัดไปทันทีที่พิมพ์ (`POST /schedule-preview` หน่วง 400 ms) เพื่อให้ผู้ดูแลระบบเห็นว่าพิมพ์ตรงกับที่ตั้งใจ
+ * ก่อนกดบันทึก — ไม่มีสำเนากติกาที่ฝั่งหน้าจอ backend ตัดสินที่เดียว (`checkSyncCron()`) และตรวจซ้ำตอนบันทึก
+ */
+function SchedulePanel({ snapshot, onSaved }: { snapshot: JiraSnapshot; onSaved: () => void }) {
+  const saved = snapshot.schedule;
+  const [text, setText] = useState(saved.cron);
+  const [preview, setPreview] = useState<Preview | null>(
+    saved.error ? { ok: false, error: saved.error } : { ok: true, nextRuns: saved.nextRuns },
+  );
+  const [checking, setChecking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<AdminErrorView | null>(null);
   const { show } = useToast();
 
   const trimmed = text.trim();
-  const parsed = /^\d+$/.test(trimmed) ? Number(trimmed) : null;
-  const localError =
-    trimmed !== "" && (parsed === null || parsed < MIN_INTERVAL || parsed > MAX_INTERVAL)
-      ? `ต้องเป็นจำนวนเต็ม ${MIN_INTERVAL}–${MAX_INTERVAL.toLocaleString("th-TH")} วินาที`
-      : undefined;
+  const dirty = trimmed !== saved.cron;
+
+  useEffect(() => {
+    if (!dirty) {
+      setPreview(saved.error ? { ok: false, error: saved.error } : { ok: true, nextRuns: saved.nextRuns });
+      return;
+    }
+    let alive = true;
+    setChecking(true);
+    const timer = setTimeout(() => {
+      api
+        .post<Preview>("/api/admin/settings/jira/schedule-preview", { cron: trimmed })
+        .then((p) => alive && setPreview(p))
+        .catch((err) => alive && setPreview({ ok: false, error: adminErrorView(err).message }))
+        .finally(() => alive && setChecking(false));
+    }, 400);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+    // saved.* เปลี่ยนเมื่อบันทึก ซึ่งทำให้กล่องนี้ถูกสร้างใหม่ทั้งกล่อง (key) อยู่แล้ว
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trimmed, dirty]);
 
   const save = async () => {
-    if (parsed === null) return;
     setBusy(true);
     setError(null);
     try {
-      const res = await api.put<{ message: string }>("/api/admin/settings/jira_sync_interval_seconds", { value: parsed });
-      show({ tone: "success", title: res.message });
+      await api.put<{ message: string }>("/api/admin/settings/jira", { syncCron: trimmed });
+      show({ tone: "success", title: "บันทึกตารางเวลาแล้ว — มีผลรอบถัดไป" });
       onSaved();
     } catch (err) {
       setError(adminErrorView(err));
@@ -339,38 +373,89 @@ function IntervalPanel({ snapshot, onSaved }: { snapshot: JiraSnapshot; onSaved:
     }
   };
 
-  const minutes = parsed !== null && parsed >= 60 ? ` (ประมาณ ${Math.round(parsed / 60).toLocaleString("th-TH")} นาที)` : "";
+  const fieldError = error?.fields.syncCron ?? (preview && !preview.ok ? preview.error : undefined);
 
   return (
     <Panel
-      title="ตรวจสถานะการ์ดทุก"
-      description="ระบบถาม Jira เป็นระยะว่าการ์ดใบไหนถึงสถานะตรวจเสร็จแล้ว หนึ่งรอบใช้การค้นครั้งเดียว ไม่ว่าการ์ดจะเปิดอยู่กี่ใบ"
+      title="ตารางเวลาตรวจสถานะการ์ด"
+      description="ระบบถาม Jira ตามตารางเวลานี้ว่าการ์ดใบไหนถึงสถานะตรวจเสร็จแล้ว หนึ่งรอบใช้การค้นครั้งเดียว ไม่ว่าการ์ดจะเปิดอยู่กี่ใบ"
     >
       <form
-        className="flex flex-wrap items-end gap-4"
+        className="space-y-4"
         onSubmit={(e) => {
           e.preventDefault();
           void save();
         }}
       >
-        <div className="w-full max-w-xs">
-          <TextField
-            label="จำนวนวินาที"
-            inputMode="numeric"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            error={localError ?? error?.fields.value}
-            hint={`${MIN_INTERVAL}–${MAX_INTERVAL.toLocaleString("th-TH")} วินาที · ค่าเริ่มต้น 900${minutes}`}
-          />
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="w-full max-w-md">
+            <TextField
+              label="ตารางเวลา (cron)"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              spellCheck={false}
+              autoComplete="off"
+              error={fieldError}
+              hint="นาที ชั่วโมง วันที่ เดือน วันในสัปดาห์ · เวลาไทย · ถี่สุดนาทีละครั้ง"
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={!dirty || busy}
+              onClick={() => {
+                setText(saved.cron);
+                setError(null);
+              }}
+            >
+              ยกเลิกการแก้ไข
+            </Button>
+            <Button type="submit" loading={busy} disabled={!dirty || checking || !preview?.ok}>
+              บันทึก
+            </Button>
+          </div>
         </div>
-        <Button type="submit" loading={busy} disabled={parsed === null || Boolean(localError) || parsed === snapshot.syncIntervalSeconds}>
-          บันทึก
-        </Button>
+
+        <div className="rounded-xl bg-canvas px-4 py-3 text-[14px]">
+          <p className="font-medium text-ink">
+            {checking ? "กำลังตรวจ…" : dirty ? "รอบถัดไปถ้าบันทึกค่านี้" : "รอบถัดไป"}
+            <span className="font-normal text-ink-muted"> (เวลาไทย)</span>
+          </p>
+          {preview?.ok ? (
+            <ul className="mt-1 space-y-0.5 text-ink">
+              {preview.nextRuns.map((r) => (
+                <li key={r}>{formatThaiDate(r)}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-1 text-ink-muted">—</p>
+          )}
+        </div>
+
+        <div className="text-[13px] text-ink-muted">
+          <p>ตัวอย่าง (กดเพื่อใส่ในช่อง):</p>
+          <ul className="mt-1 space-y-0.5">
+            {CRON_EXAMPLES.map((ex) => (
+              <li key={ex.cron}>
+                <button
+                  type="button"
+                  className="font-mono text-navy-700 underline hover:text-navy-900"
+                  onClick={() => setText(ex.cron)}
+                >
+                  {ex.cron}
+                </button>{" "}
+                — {ex.label}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <p className="text-[13px] text-ink-muted">
+          {snapshot.status.lastSyncAt ? `ตรวจล่าสุด ${formatThaiDate(snapshot.status.lastSyncAt)}` : "ยังไม่เคยตรวจ"}
+        </p>
+        {error && !error.fields.syncCron ? <ErrorNotice view={error} /> : null}
       </form>
-      <p className="mt-3 text-[13px] text-ink-muted">
-        {snapshot.status.lastSyncAt ? `ตรวจล่าสุด ${formatThaiDate(snapshot.status.lastSyncAt)}` : "ยังไม่เคยตรวจ"}
-      </p>
-      {error && !error.fields.value ? <ErrorNotice view={error} className="mt-3" /> : null}
     </Panel>
   );
 }

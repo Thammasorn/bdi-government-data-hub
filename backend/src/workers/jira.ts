@@ -12,7 +12,7 @@
  *   ไม่มีวันผ่าน (400/404)              → DEAD_LETTER ทันที
  * ทุกครั้งที่เลิกลองเป็น error ใน log store (อีเมลสรุป error ไปถึงผู้ดูแลระบบตามระบบเดิม)
  *
- * **ลูปติดตาม** ถามสถานะของการ์ดทุกใบที่ OPEN และมีเลขแล้ว ในคำสั่งค้นเดียว ทุก `jira_sync_interval_seconds` (ค่าตั้งระบบ) การ์ดที่ถึง
+ * **ลูปติดตาม** ถามสถานะของการ์ดทุกใบที่ OPEN และมีเลขแล้ว ในคำสั่งค้นเดียว ตามตารางเวลา cron ในค่าตั้ง Jira (`lib/jira-schedule.ts`) การ์ดที่ถึง
  * สถานะ Done → เข้าคิว SYNC_STATUS ซึ่งคัดลอก comment ทั้งหมดเข้าไทม์ไลน์เป็นความเห็นของผู้เชี่ยวชาญ การ์ดที่ถูกย้ายไปสถานะเก็บหรือถูกลบใน
  * Jira → เลิกติดตาม ไม่คัดลอกอะไร และเขียนแถวบันทึกไว้หนึ่งแถว
  *
@@ -59,12 +59,12 @@ import {
   type JiraPayload,
 } from "../lib/jira.js";
 import { NotificationType, bdiOfficerIds, notifyUsers } from "../lib/notify.js";
-import { readSystemSetting } from "../lib/system-settings.js";
+import { DEFAULT_JIRA_SYNC_CRON, checkSyncCron, nextRunAfter } from "../lib/jira-schedule.js";
 import { ROLE_CODES, SYSTEM_USER_ID } from "../lib/system.js";
 import { deriveRequestStatus, recordAdvisoryNote } from "../lib/workflow.js";
 
 const QUEUE_TICK_MS = Number(process.env.JIRA_QUEUE_POLL_MS ?? 15_000);
-/** ลูปติดตามตื่นทุก 30 วินาทีเพื่อดูว่าครบรอบที่ตั้งไว้หรือยัง — ค่าตั้งเปลี่ยนแล้วมีผลโดยไม่ต้อง restart */
+/** ลูปติดตามตื่นทุก 30 วินาทีเพื่อดูว่าถึงรอบของตารางเวลา (cron) หรือยัง — ค่าตั้งเปลี่ยนแล้วมีผลโดยไม่ต้อง restart */
 const SYNC_CHECK_MS = 30_000;
 const FIRST_TICK_MS = 20_000;
 const BATCH_SIZE = 10;
@@ -79,6 +79,9 @@ let timers: NodeJS.Timeout[] = [];
 let queueRunning = false;
 let syncRunning = false;
 let choicesLoaded = false;
+/** ฐานของรอบแรกเมื่อยังไม่เคยตรวจเลย — รอบแรกคือรอบของตารางเวลาที่ถัดจากตอน worker เริ่ม */
+const workerStartedAt = new Date();
+let warnedCron: string | null = null;
 
 export function startJiraWorker(prisma: PrismaClient): void {
   if (timers.length > 0) return;
@@ -552,9 +555,19 @@ async function syncTick(prisma: PrismaClient): Promise<void> {
     const config = await readJiraConfig(prisma);
     if (await pausedReason(prisma, config)) return;
 
-    const intervalSeconds = await readSystemSetting(prisma, "jira_sync_interval_seconds");
+    /**
+     * ถึงรอบไหม = มีเวลาของตารางที่อยู่หลังการตรวจครั้งล่าสุดและผ่านมาแล้วหรือยัง worker ที่หยุดไปหลายรอบจึงตรวจครั้งเดียวเมื่อกลับมา
+     * ไม่ไล่ตามทุกรอบที่พลาด ค่าในฐานข้อมูลที่ใช้ไม่ได้ (มีคนแก้ด้วยมือ) ตกกลับไปใช้ค่าเริ่มต้นพร้อมเตือน ไม่ทำให้ลูปล้ม
+     */
+    let cron = config.syncCron;
+    if (!checkSyncCron(cron).ok) {
+      if (warnedCron !== cron) console.warn(`[jira] ตารางเวลา "${cron}" ใช้ไม่ได้ — ใช้ค่าเริ่มต้น ${DEFAULT_JIRA_SYNC_CRON}`);
+      warnedCron = cron;
+      cron = DEFAULT_JIRA_SYNC_CRON;
+    }
     const status = await readJiraStatus(prisma);
-    if (status.lastSyncAt && Date.now() - new Date(status.lastSyncAt).getTime() < intervalSeconds * 1000) return;
+    const base = status.lastSyncAt ? new Date(status.lastSyncAt) : workerStartedAt;
+    if (nextRunAfter(cron, base).getTime() > Date.now()) return;
 
     await runWithContext({ correlationId: randomUUID(), sourceComponent: "jira-sync" }, () => syncOnce(prisma, config));
   } catch (err) {
