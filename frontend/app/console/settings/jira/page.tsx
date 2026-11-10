@@ -307,20 +307,12 @@ function ConnectionPanel({ snapshot, onSaved }: { snapshot: JiraSnapshot; onSave
   );
 }
 
-/** ตัวอย่างใต้ช่อง — กดแล้วใส่ลงช่องให้ ไม่ต้องจำไวยากรณ์ */
-const CRON_EXAMPLES: Array<{ cron: string; label: string }> = [
-  { cron: "*/15 * * * *", label: "ทุก 15 นาที (ค่าเริ่มต้น)" },
-  { cron: "*/15 8-18 * * MON-FRI", label: "ทุก 15 นาที 08:00–18:59 วันจันทร์–ศุกร์" },
-  { cron: "0 9,13,17 * * *", label: "วันละ 3 ครั้ง 09:00 13:00 17:00" },
-  { cron: "@hourly", label: "ทุกชั่วโมง" },
-];
-
 type Preview = { ok: true; nextRuns: string[] } | { ok: false; error: string };
 
 /**
  * ตารางเวลาตรวจสถานะการ์ด (cron, เวลาไทย) — การ์ด "[Enhance] Jira sync schedule เป็น cron" (2026-11-10)
  *
- * ตรวจและแสดงสามรอบถัดไปทันทีที่พิมพ์ (`POST /schedule-preview` หน่วง 400 ms) เพื่อให้ผู้ดูแลระบบเห็นว่าพิมพ์ตรงกับที่ตั้งใจ
+ * ตรวจและแสดงรอบถัดไปทันทีที่พิมพ์ (`POST /schedule-preview` หน่วง 400 ms) เพื่อให้ผู้ดูแลระบบเห็นว่าพิมพ์ตรงกับที่ตั้งใจ
  * ก่อนกดบันทึก — ไม่มีสำเนากติกาที่ฝั่งหน้าจอ backend ตัดสินที่เดียว (`checkSyncCron()`) และตรวจซ้ำตอนบันทึก
  */
 function SchedulePanel({ snapshot, onSaved }: { snapshot: JiraSnapshot; onSaved: () => void }) {
@@ -387,73 +379,55 @@ function SchedulePanel({ snapshot, onSaved }: { snapshot: JiraSnapshot; onSaved:
           void save();
         }}
       >
-        <div className="flex flex-wrap items-end gap-4">
-          <div className="w-full max-w-md">
+        {/*
+          ช่องกับปุ่มอยู่แถวเดียวกัน ชิดล่าง (items-end) — ช่องจึงต้องไม่มี hint หรือ error ห้อยใต้ตัว ไม่งั้นปุ่มจะไปเสมอขอบล่างของ
+          ข้อความแทนขอบล่างของช่อง (feedback 2026-11-10) ข้อความทั้งหมดอยู่บรรทัดถัดไปแทน
+        */}
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-[16rem] flex-1 sm:max-w-md">
             <TextField
               label="ตารางเวลา (cron)"
               value={text}
               onChange={(e) => setText(e.target.value)}
               spellCheck={false}
               autoComplete="off"
-              error={fieldError}
-              hint="นาที ชั่วโมง วันที่ เดือน วันในสัปดาห์ · เวลาไทย · ถี่สุดนาทีละครั้ง"
+              aria-invalid={fieldError ? true : undefined}
+              aria-describedby="jira-cron-status"
             />
           </div>
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={!dirty || busy}
-              onClick={() => {
-                setText(saved.cron);
-                setError(null);
-              }}
-            >
-              ยกเลิกการแก้ไข
-            </Button>
-            <Button type="submit" loading={busy} disabled={!dirty || checking || !preview?.ok}>
-              บันทึก
-            </Button>
-          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={!dirty || busy}
+            onClick={() => {
+              setText(saved.cron);
+              setError(null);
+            }}
+          >
+            ยกเลิกการแก้ไข
+          </Button>
+          <Button type="submit" loading={busy} disabled={!dirty || checking || !preview?.ok}>
+            บันทึก
+          </Button>
         </div>
 
-        <div className="rounded-xl bg-canvas px-4 py-3 text-[14px]">
-          <p className="font-medium text-ink">
-            {checking ? "กำลังตรวจ…" : dirty ? "รอบถัดไปถ้าบันทึกค่านี้" : "รอบถัดไป"}
-            <span className="font-normal text-ink-muted"> (เวลาไทย)</span>
-          </p>
-          {preview?.ok ? (
-            <ul className="mt-1 space-y-0.5 text-ink">
-              {preview.nextRuns.map((r) => (
-                <li key={r}>{formatThaiDate(r)}</li>
-              ))}
-            </ul>
+        <div id="jira-cron-status" className="space-y-1 text-[14px]">
+          {fieldError ? (
+            <p role="alert" className="text-danger">
+              {fieldError}
+            </p>
           ) : (
-            <p className="mt-1 text-ink-muted">—</p>
+            <p className="text-ink">
+              <span className="text-ink-muted">{dirty ? "รอบถัดไปถ้าบันทึกค่านี้: " : "รอบถัดไป: "}</span>
+              {checking ? "กำลังตรวจ…" : preview?.ok && preview.nextRuns[0] ? `${formatThaiDate(preview.nextRuns[0])} (เวลาไทย)` : "—"}
+            </p>
           )}
+          <p className="text-[13px] text-ink-muted">
+            นาที ชั่วโมง วันที่ เดือน วันในสัปดาห์ · เวลาไทย · ถี่สุดนาทีละครั้ง ·{" "}
+            {snapshot.status.lastSyncAt ? `ตรวจล่าสุด ${formatThaiDate(snapshot.status.lastSyncAt)}` : "ยังไม่เคยตรวจ"}
+          </p>
         </div>
 
-        <div className="text-[13px] text-ink-muted">
-          <p>ตัวอย่าง (กดเพื่อใส่ในช่อง):</p>
-          <ul className="mt-1 space-y-0.5">
-            {CRON_EXAMPLES.map((ex) => (
-              <li key={ex.cron}>
-                <button
-                  type="button"
-                  className="font-mono text-navy-700 underline hover:text-navy-900"
-                  onClick={() => setText(ex.cron)}
-                >
-                  {ex.cron}
-                </button>{" "}
-                — {ex.label}
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <p className="text-[13px] text-ink-muted">
-          {snapshot.status.lastSyncAt ? `ตรวจล่าสุด ${formatThaiDate(snapshot.status.lastSyncAt)}` : "ยังไม่เคยตรวจ"}
-        </p>
         {error && !error.fields.syncCron ? <ErrorNotice view={error} /> : null}
       </form>
     </Panel>
