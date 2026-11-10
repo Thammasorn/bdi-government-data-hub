@@ -67,6 +67,11 @@ export const CONSOLE_GROUPS: Group[] = [
         label: "คำขอส่งชุดข้อมูล",
         icon: icon("M4 5c0-1.1 2.7-2 6-2s6 .9 6 2-2.7 2-6 2-6-.9-6-2Zm0 0v10c0 1.1 2.7 2 6 2s6-.9 6-2V5M4 10c0 1.1 2.7 2 6 2s6-.9 6-2"),
       },
+      {
+        href: "/console/registrations/representatives",
+        label: "คำขอเปลี่ยนแปลงผู้แทนหน่วยงาน",
+        icon: icon("M7 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm-4 8c.5-2.8 2-4.5 4-4.5s3.5 1.7 4 4.5M14 7v6M11 10h6"),
+      },
     ],
   },
   {
