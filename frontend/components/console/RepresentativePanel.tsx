@@ -3,31 +3,18 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
-import { ActionDialog } from "@/components/console/ActionDialog";
 import { Panel } from "@/components/console/ui";
 import { ChangeStatusBadge } from "@/components/representatives/Shell";
-import { Button } from "@/components/ui/Button";
-import { TextField } from "@/components/ui/Field";
-import { useToast } from "@/components/ui/Toast";
 import { api } from "@/lib/api";
-import type { ChangeRow } from "@/lib/representatives";
+import type { ChangeRow, SeatSummary } from "@/lib/representatives";
 
-/** จำนวนผู้แทนสูงสุดของหน่วยงาน และคำขอเปลี่ยนแปลงผู้แทนของหน่วยงานนี้ */
-export function RepresentativePanel({
-  organizationId,
-  maxUsers,
-  maxApprovers,
-  onChanged,
-}: {
-  organizationId: string;
-  maxUsers: number;
-  maxApprovers: number;
-  onChanged: () => void;
-}) {
-  const { show } = useToast();
-  const [open, setOpen] = useState(false);
-  const [users, setUsers] = useState(String(maxUsers));
-  const [approvers, setApprovers] = useState(String(maxApprovers));
+/**
+ * ผู้แทนของหน่วยงานเทียบกับจำนวนสูงสุด และคำขอเปลี่ยนแปลงผู้แทนของหน่วยงานนี้
+ *
+ * จำนวนสูงสุดเป็นค่าเดียวทั้งระบบตั้งแต่ 2026-11-10 แก้ที่ ตั้งค่าระบบ ไม่ใช่ที่หน่วยงาน — แผงนี้จึงแสดงอย่างเดียว
+ * ตัวเลขมาจาก API (`representativeSeats`) เพราะหน่วยงานที่ยังไม่ ACTIVE ใช้ 1 ต่อบทบาท ไม่ใช่ค่าตั้ง
+ */
+export function RepresentativePanel({ organizationId, seats }: { organizationId: string; seats: SeatSummary[] }) {
   const [requests, setRequests] = useState<ChangeRow[]>([]);
 
   const load = useCallback(() => {
@@ -40,24 +27,21 @@ export function RepresentativePanel({
   useEffect(load, [load]);
 
   return (
-    <Panel
-      title="ผู้แทนหน่วยงาน"
-      actions={
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => {
-            setUsers(String(maxUsers));
-            setApprovers(String(maxApprovers));
-            setOpen(true);
-          }}
-        >
-          ตั้งจำนวนสูงสุด
-        </Button>
-      }
-    >
-      <p className="text-sm">
-        ผู้ประสานงานสูงสุด <b>{maxUsers}</b> คน · ผู้มีอำนาจสูงสุด <b>{maxApprovers}</b> คน
+    <Panel title="ผู้แทนหน่วยงาน">
+      <ul className="space-y-1 text-sm">
+        {seats.map((seat) => (
+          <li key={seat.roleCode} className={seat.over ? "text-danger" : undefined}>
+            {seat.roleLabel} <b>{seat.current}</b> / {seat.max} คน
+            {seat.over ? ` — เกินจำนวนสูงสุด ${seat.current - seat.max} คน` : ""}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-[13px] text-ink-muted">
+        จำนวนสูงสุดใช้ค่าเดียวกันทุกหน่วยงาน แก้ได้ที่{" "}
+        <Link className="font-medium text-navy-700 underline" href="/console/settings">
+          ตั้งค่าระบบ
+        </Link>{" "}
+        · หน่วยงานที่ยังไม่เปิดใช้งานมีได้บทบาทละ 1 คน
       </p>
       {requests.length ? (
         <ul className="mt-3 divide-y divide-line text-sm">
@@ -73,29 +57,6 @@ export function RepresentativePanel({
       ) : (
         <p className="mt-3 text-sm text-ink-muted">ยังไม่มีคำขอเปลี่ยนแปลงผู้แทน</p>
       )}
-
-      <ActionDialog
-        open={open}
-        onClose={() => setOpen(false)}
-        title="ตั้งจำนวนผู้แทนสูงสุด"
-        description="ลดต่ำกว่าจำนวนที่มีอยู่ได้ ไม่มีใครถูกถอดออก ค่าใหม่มีผลกับการเชิญและคำขอที่ยืนยันหลังจากนี้"
-        confirmLabel="บันทึก"
-        canSubmit={Number(users) >= 1 && Number(approvers) >= 1}
-        onConfirm={async (reason) => {
-          await api.put(`/api/admin/organizations/${organizationId}/representative-limits`, {
-            maxOrganizationUserCount: Number(users),
-            maxOrganizationApproverCount: Number(approvers),
-            reason,
-          });
-          show({ tone: "success", title: "บันทึกจำนวนผู้แทนแล้ว" });
-          onChanged();
-        }}
-      >
-        <div className="grid gap-3 sm:grid-cols-2">
-          <TextField label="ผู้ประสานงานสูงสุด" type="number" min={1} value={users} onChange={(e) => setUsers(e.target.value)} />
-          <TextField label="ผู้มีอำนาจสูงสุด" type="number" min={1} value={approvers} onChange={(e) => setApprovers(e.target.value)} />
-        </div>
-      </ActionDialog>
     </Panel>
   );
 }

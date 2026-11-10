@@ -144,6 +144,7 @@ export const AuditAction = {
    */
   ORGANIZATION_UPDATED: "ORGANIZATION_UPDATED",
   /** ผู้ดูแลระบบตั้งจำนวนผู้แทนสูงสุดของหน่วยงาน */
+  /** ไม่มีใครเขียนแล้วตั้งแต่ 2026-11-10 (จำนวนสูงสุดเป็นค่าตั้งระบบ — SYSTEM_SETTING_UPDATED) คงไว้ให้อ่านแถวเก่า */
   ORGANIZATION_REPRESENTATIVE_LIMITS_CHANGED: "ORGANIZATION_REPRESENTATIVE_LIMITS_CHANGED",
   /**
    * หน่วยงานเปิดใช้งาน — BDI อนุมัติขั้นสุดท้ายของคำขอจดทะเบียน (`POST /api/organizations/:id/review`)

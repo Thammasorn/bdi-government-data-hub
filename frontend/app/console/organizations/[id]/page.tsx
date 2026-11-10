@@ -341,12 +341,7 @@ export default function ConsoleOrganizationPage() {
           ) : null}
         </Panel>
 
-        <RepresentativePanel
-          organizationId={org.id}
-          maxUsers={org.maxOrganizationUserCount}
-          maxApprovers={org.maxOrganizationApproverCount}
-          onChanged={reload}
-        />
+        <RepresentativePanel organizationId={org.id} seats={data.representativeSeats} />
 
         <Panel title="คำขอลงทะเบียนหน่วยงาน" flush>
           {data.registrationRequests.length === 0 ? (

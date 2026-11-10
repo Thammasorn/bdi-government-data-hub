@@ -2516,36 +2516,6 @@
       "description": "ผู้ดูแลระบบทำทุกอย่างที่ BDI Officer ทำได้กับคำขอเปลี่ยนแปลงผู้แทนหน่วยงาน ใช้ตรรกะเดียวกับ `/api/representative-changes`",
       "item": [
         {
-          "name": "C1 · Set representative limits",
-          "request": {
-            "method": "PUT",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/admin/organizations/{{organizationId}}/representative-limits",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "admin",
-                "organizations",
-                "{{organizationId}}",
-                "representative-limits"
-              ]
-            },
-            "description": "ลดต่ำกว่าจำนวนที่มีอยู่ได้ ไม่มีใครถูกถอดออก",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"maxOrganizationUserCount\": 3,\n  \"maxOrganizationApproverCount\": 1,\n  \"reason\": \"ตั้งจำนวนผู้แทนตามคำขอของหน่วยงาน\"\n}"
-            }
-          }
-        },
-        {
           "name": "C2 · List requests",
           "request": {
             "method": "GET",

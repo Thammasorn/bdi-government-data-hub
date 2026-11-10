@@ -13,6 +13,7 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "../db.js";
+import { representativeSummary } from "../lib/representative-change.js";
 import { adminActorId } from "../lib/context.js";
 import { fullNameTh } from "../lib/person-name.js";
 import { countsByStatus, registrationCounts } from "../lib/statistics.js";
@@ -175,8 +176,6 @@ async function toAdminOrganizationShape(org: {
   phoneExtension: string | null;
   email: string | null;
   websiteUrl: string | null;
-  maxOrganizationUserCount: number;
-  maxOrganizationApproverCount: number;
   parentOrganizationId: string | null;
   activatedAt: Date | null;
   suspendedAt: Date | null;
@@ -206,8 +205,6 @@ async function toAdminOrganizationShape(org: {
     phoneExtension: org.phoneExtension,
     email: org.email,
     websiteUrl: org.websiteUrl,
-    maxOrganizationUserCount: org.maxOrganizationUserCount,
-    maxOrganizationApproverCount: org.maxOrganizationApproverCount,
     parentOrganizationId: org.parentOrganizationId,
     activatedAt: org.activatedAt,
     suspendedAt: org.suspendedAt,
@@ -699,6 +696,8 @@ adminRouter.get("/organizations/:id", async (req, res) => {
     registrationRequests: requests,
     datasetRequests,
     invitations,
+    // ปัจจุบัน / สูงสุดต่อบทบาท — สูงสุดมาจากค่าตั้งระบบ หรือ 1 ถ้ายังไม่ ACTIVE
+    representativeSeats: await representativeSummary(prisma, organization.id),
   });
 });
 
@@ -855,54 +854,6 @@ async function organizationLeftovers(organizationId: string): Promise<string[]> 
   }
   return warnings;
 }
-
-const representativeLimit = (label: string) =>
-  z.number({ error: `กรุณาระบุจำนวน${label}สูงสุด` }).int(`จำนวน${label}ต้องเป็นจำนวนเต็ม`).min(1, `จำนวน${label}ต้องอย่างน้อย 1 คน`).max(100, `จำนวน${label}ต้องไม่เกิน 100 คน`);
-
-const representativeLimitsSchema = adminReasonSchema.extend({
-  maxOrganizationUserCount: representativeLimit("ผู้ประสานงาน"),
-  maxOrganizationApproverCount: representativeLimit("ผู้มีอำนาจ"),
-});
-
-/**
- * ตั้งจำนวนผู้แทนสูงสุดของหน่วยงาน
- *
- * ลดต่ำกว่าจำนวนที่มีอยู่ได้ และไม่มีใครถูกถอดออก ค่าใหม่มีผลกับการเชิญและคำขอเปลี่ยนแปลงผู้แทน
- * ที่ยืนยันหลังจากนี้เท่านั้น
- */
-adminRouter.put("/organizations/:id/representative-limits", async (req, res) => {
-  const parsedId = z.string().uuid().safeParse(req.params.id);
-  const before = parsedId.success
-    ? await prisma.organization.findUnique({ where: { id: parsedId.data } })
-    : null;
-  if (!before) {
-    res.status(404).json({ error: "not_found", message: "ไม่พบหน่วยงานที่ระบุ" });
-    return;
-  }
-  const parsed = representativeLimitsSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
-    return;
-  }
-  const { maxOrganizationUserCount, maxOrganizationApproverCount, reason } = parsed.data;
-  const organization = await prisma.organization.update({
-    where: { id: before.id },
-    data: { maxOrganizationUserCount, maxOrganizationApproverCount, updatedBy: adminActorId() },
-  });
-  await logAudit({
-    action: AuditAction.ORGANIZATION_REPRESENTATIVE_LIMITS_CHANGED,
-    subjectType: AuditSubject.ORGANIZATION,
-    subjectId: before.id,
-    organizationId: before.id,
-    before: {
-      maxOrganizationUserCount: before.maxOrganizationUserCount,
-      maxOrganizationApproverCount: before.maxOrganizationApproverCount,
-    },
-    after: { maxOrganizationUserCount, maxOrganizationApproverCount },
-    metadata: { reason },
-  });
-  res.json({ organization: await toAdminOrganizationShape(organization) });
-});
 
 adminRouter.post("/organizations/:id/suspend", organizationStatusRoute("suspend"));
 adminRouter.post("/organizations/:id/deactivate", organizationStatusRoute("deactivate"));

@@ -1791,7 +1791,7 @@ operation คงรหัสเดิมไว้ ข้อความอิส
 | `USER_ACCOUNT_SUSPENDED` | `POST /api/admin/users/:id/suspend` `{reason}` — บัญชี `ACTIVE` และไม่ใช่ผู้ถือ role ของ BDI คนสุดท้าย | `{status: "ACTIVE"}` → `{status: "SUSPENDED"}` | `reason` · `suspended_via: "ADMIN_API"` |
 | `USER_ACCOUNT_REINSTATED` | `POST /api/admin/users/:id/reinstate` (ไม่มี body) — บัญชี `SUSPENDED` | `{status: "SUSPENDED", suspensionReason}` → `{status: "ACTIVE"}` | `reinstated_via: "ADMIN_API"` (**ไม่มี** `reason`) |
 | `USER_ACCOUNT_REACTIVATED` | แถวเก่าเท่านั้น — `POST /api/admin/users/:id/reactivate` ถูกลบเมื่อ 2026-11-04 | – |
-| `ORGANIZATION_REPRESENTATIVE_LIMITS_CHANGED` | `PUT /api/admin/organizations/:id/representative-limits` `{maxOrganizationUserCount, maxOrganizationApproverCount, reason}` | ค่าเดิม/ค่าใหม่, `metadata.reason` |
+| `ORGANIZATION_REPRESENTATIVE_LIMITS_CHANGED` | ไม่มีใครเขียนแล้วตั้งแต่ 2026-11-10 (จำนวนสูงสุดเป็นค่าตั้งระบบ บันทึกเป็น `SYSTEM_SETTING_UPDATED`) — เดิม `PUT /api/admin/organizations/:id/representative-limits` `{maxOrganizationUserCount, maxOrganizationApproverCount, reason}` | ค่าเดิม/ค่าใหม่, `metadata.reason` |
 | `REPRESENTATIVE_CHANGE_CREATED` · `_DRAFT_SAVED` · `_SUBMITTED` · `_RETURNED` · `_REJECTED` · `_CONFIRMED` · `_CANCELLED` | คำขอเปลี่ยนแปลงผู้แทน `routes/representative-changes.ts` — subject `REPRESENTATIVE_CHANGE_REQUEST` | จำนวนรายการหรือเลขคำขอเท่านั้น ไม่มีเลขบัตร · ส่งกลับ/ปฏิเสธ `metadata.note` · ยกเลิก `metadata.reason` |
 
 - **ข้อมูลส่วนบุคคล** `reason` และ `suspensionReason` เป็นข้อความอิสระที่อาจเอ่ยชื่อคน

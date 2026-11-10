@@ -21,6 +21,7 @@ import { env } from "../env.js";
 import { AuditAction, AuditSubject, logAudit } from "./audit.js";
 import { generateActivationKey, hashActivationKey } from "./auth.js";
 import { ROLE_LABELS } from "./roles.js";
+import { readSystemSetting } from "./system-settings.js";
 import {
   BDI_ORGANIZATION_ID,
   ORGANIZATION_SCOPED_ROLES,
@@ -267,16 +268,17 @@ export async function roleSeatLimit(
   const [organization, role] = await Promise.all([
     db.organization.findUnique({
       where: { id: params.organizationId },
-      select: { status: true, maxOrganizationUserCount: true, maxOrganizationApproverCount: true },
+      select: { status: true },
     }),
     db.role.findUnique({ where: { id: params.roleId }, select: { code: true } }),
   ]);
   if (!organization || !role) return Number.POSITIVE_INFINITY;
   if (!ORGANIZATION_SCOPED_ROLES.includes(role.code as RoleCode)) return Number.POSITIVE_INFINITY;
   if (organization.status === OrganizationStatus.PENDING_REGISTRATION) return 1;
-  return role.code === ROLE_CODES.ORGANIZATION_APPROVER
-    ? organization.maxOrganizationApproverCount
-    : organization.maxOrganizationUserCount;
+  return readSystemSetting(
+    db,
+    role.code === ROLE_CODES.ORGANIZATION_APPROVER ? "organization_max_approvers" : "organization_max_coordinators",
+  );
 }
 
 /** ผู้ถือ role ที่ยังนับเป็นคนของหน่วยงาน — บัญชีที่ถูกระงับยังนับ เพราะเขาคืนสถานะได้ */

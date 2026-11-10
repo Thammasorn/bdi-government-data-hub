@@ -1,3 +1,4 @@
+import type { SeatSummary } from "./representatives";
 /**
  * ชนิดข้อมูลและป้ายของหน้า /console — สิ่งที่ /api/admin/* ตอบกลับมา
  *
@@ -155,8 +156,6 @@ export interface AdminInvitation {
 
 export interface AdminOrganization {
   id: string;
-  maxOrganizationUserCount: number;
-  maxOrganizationApproverCount: number;
   organizationCode: string;
   organizationType: string | null;
   nameTh: string;
@@ -191,6 +190,8 @@ export interface AdminOrganizationDetail {
   }>;
   /** คำขอส่งชุดข้อมูลของหน่วยงาน ใหม่สุดก่อน — ใบที่อนุมัติแล้วพกชุดข้อมูลที่มันสร้างมาใน `dataset` */
   datasetRequests: AdminOrganizationDatasetRow[];
+  /** ปัจจุบัน / สูงสุดต่อบทบาท — สูงสุดมาจากค่าตั้งระบบ หรือ 1 ก่อนเปิดใช้งาน */
+  representativeSeats: SeatSummary[];
   invitations: Array<{
     id: string;
     status: ActivationKeyStatus;
