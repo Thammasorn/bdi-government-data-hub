@@ -24,7 +24,23 @@ interface IntegerSetting {
   min: number;
   /** ฟังก์ชัน ไม่ใช่ค่าคงที่ — เพดานบางตัวมาจาก env ที่เปลี่ยนได้ระหว่าง deploy */
   max: () => number;
+  /** ค่าที่หน้าจอวางรวมในกล่องเดียวกัน (`SETTING_GROUPS`) — `fieldLabel` คือป้ายของช่องในกล่องนั้น */
+  group?: SettingGroupKey;
+  fieldLabel?: string;
 }
+
+/** กล่องที่รวมหลายค่าไว้ด้วยกันบนหน้า ตั้งค่าระบบ */
+export const SETTING_GROUPS = {
+  representatives: {
+    title: "จำนวนผู้แทนหน่วยงาน",
+    description:
+      "จำนวนสูงสุดต่อหน่วยงาน ใช้กับทุกหน่วยงานที่เปิดใช้งานแล้ว ตอนยืนยันคำขอเปลี่ยนแปลงผู้แทน และตอนเชิญ เพิ่มบทบาท หรือย้ายผู้ใช้เข้าหน่วยงาน " +
+      "ลดต่ำกว่าจำนวนที่มีอยู่ได้ ไม่มีใครถูกถอดออก แต่คำขอที่ยืนยันหลังจากนี้จะถูกตรวจกับค่าใหม่ " +
+      "ขั้นต่ำบทบาทละ 1 คนเสมอ และหน่วยงานที่ยังไม่เปิดใช้งานมีได้บทบาทละ 1 คน",
+  },
+} as const;
+
+export type SettingGroupKey = keyof typeof SETTING_GROUPS;
 
 export const SYSTEM_SETTINGS = {
   /**
@@ -58,6 +74,8 @@ export const SYSTEM_SETTINGS = {
     defaultValue: 3,
     min: 1,
     max: () => 20,
+    group: "representatives",
+    fieldLabel: "ผู้ประสานงานสูงสุดต่อหน่วยงาน",
   },
   organization_max_approvers: {
     label: "จำนวนผู้มีอำนาจสูงสุดต่อหน่วยงาน",
@@ -68,6 +86,8 @@ export const SYSTEM_SETTINGS = {
     defaultValue: 1,
     min: 1,
     max: () => 20,
+    group: "representatives",
+    fieldLabel: "ผู้มีอำนาจสูงสุดต่อหน่วยงาน",
   },
 } as const satisfies Record<string, IntegerSetting>;
 
@@ -103,7 +123,7 @@ export async function listSystemSettings(db: Db) {
   const byKey = new Map(rows.map((r) => [r.key, r]));
   return Promise.all(
     (Object.keys(SYSTEM_SETTINGS) as SystemSettingKey[]).map(async (key) => {
-      const spec = SYSTEM_SETTINGS[key];
+      const spec: IntegerSetting = SYSTEM_SETTINGS[key];
       const value = await readSystemSetting(db, key);
       const row = byKey.get(key);
       return {
@@ -111,6 +131,8 @@ export async function listSystemSettings(db: Db) {
         label: spec.label,
         description: spec.description,
         unit: spec.unit,
+        group: spec.group ?? null,
+        fieldLabel: spec.fieldLabel ?? null,
         value,
         defaultValue: spec.defaultValue,
         isDefault: !row,

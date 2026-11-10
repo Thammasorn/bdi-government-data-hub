@@ -15,6 +15,7 @@ import {
   SYSTEM_SETTINGS,
   isSystemSettingKey,
   listSystemSettings,
+  SETTING_GROUPS,
   parseSettingValue,
   readSystemSetting,
 } from "../lib/system-settings.js";
@@ -38,7 +39,7 @@ async function settingsWithNames() {
 }
 
 adminSettingRouter.get("/", async (_req, res) => {
-  res.json({ settings: await settingsWithNames() });
+  res.json({ settings: await settingsWithNames(), groups: SETTING_GROUPS });
 });
 
 const putSchema = z.object({ value: z.unknown() }).strict();
