@@ -47,7 +47,7 @@ export function RepresentativePanel({ organizationId, seats }: { organizationId:
         <ul className="mt-3 divide-y divide-line text-sm">
           {requests.map((row) => (
             <li key={row.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
-              <Link className="text-navy-700 underline" href={`/representatives/requests/${row.id}`}>
+              <Link className="text-navy-700 underline" href={`/console/registrations/representatives/${row.id}`}>
                 {row.requestNumber}
               </Link>
               <ChangeStatusBadge status={row.status} />

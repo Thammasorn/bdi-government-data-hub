@@ -17,7 +17,7 @@ import { isBdiStaff } from "@/lib/status";
 import { useRequestList } from "@/lib/use-request-list";
 
 /** ตารางคำขอเปลี่ยนแปลงผู้แทน — ใช้ชิ้นส่วนใน components/list ชุดเดียวกับสองรายการคำขอเดิม */
-export function ChangeRequestTable() {
+export function ChangeRequestTable({ basePath = "/representatives/requests" }: { basePath?: string } = {}) {
   const router = useRouter();
   const { user } = useSession();
   const roles = user?.roles ?? [];
@@ -27,7 +27,8 @@ export function ChangeRequestTable() {
     hasQueue: roles.includes("ORGANIZATION_USER") || roles.includes("BDI_OFFICER"),
   });
   const showQueue = list.summary?.nodes.some((n) => n.mine) ?? false;
-  const bdi = isBdiStaff(roles);
+  // ผู้ดูแลระบบเห็นทุกหน่วยงานเหมือน BDI จึงต้องมีชื่อหน่วยงานในแถวด้วย
+  const bdi = isBdiStaff(roles) || roles.includes("SYSTEM_ADMINISTRATOR");
 
   return (
     <>
@@ -79,7 +80,7 @@ export function ChangeRequestTable() {
                 <li key={row.id}>
                   <button
                     type="button"
-                    onClick={() => router.push(`/representatives/requests/${row.id}`)}
+                    onClick={() => router.push(`${basePath}/${row.id}`)}
                     className="grid w-full grid-cols-1 items-center gap-2 px-6 py-4 text-left transition-colors hover:bg-navy-50/60 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1.1fr)_13rem_7rem_7rem] md:gap-4"
                   >
                     <span className="min-w-0">
