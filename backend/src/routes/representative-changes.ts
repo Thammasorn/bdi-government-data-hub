@@ -225,7 +225,13 @@ async function detailOf(request: ChangeRequestRow, options: { bdiView: boolean; 
     }),
   ]);
   const showFullCid = options.bdiView || (options.canEdit && editable(request.status));
-  const evaluation = options.bdiView ? await evaluateChangeRequest(prisma, request) : null;
+  /**
+   * การตรวจ (จำนวน บัญชี คำขอซ้อน) มีความหมายเฉพาะตอนรอ BDI ตัดสิน — หลังยืนยันแล้ว ผู้แทนใหม่มีคำเชิญที่คำขอนี้ส่งเอง
+   * ถ้ายังคำนวณต่อ หน้าจอจะบอกว่าคนที่เพิ่งผ่านการตรวจ "ตรวจบัญชีไม่ผ่าน: มีคำเชิญค้างอยู่แล้ว"
+   */
+  const underReview =
+    request.status === RepresentativeChangeStatus.SUBMITTED || request.status === RepresentativeChangeStatus.UNDER_REVIEW;
+  const evaluation = options.bdiView && underReview ? await evaluateChangeRequest(prisma, request) : null;
   return {
     id: request.id,
     requestNumber: request.requestNumber,
