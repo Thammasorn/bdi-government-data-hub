@@ -744,9 +744,10 @@ for BDI staff.
 
 The number of active `ORGANIZATION_USER` and `ORGANIZATION_APPROVER` an organisation may have is
 enforced in `assignRole`, not by a database index: one of each before it is `ACTIVE` (the Excel's
-rule), and after that whatever `maxOrganizationUserCount` / `maxOrganizationApproverCount` say
-(defaults 3 and 1, `PUT /api/admin/organizations/:id/representative-limits`, `roleSeatLimit()` in
-`lib/iam.ts`). `uq_active_org_scoped_role_assignment`
+rule), and after that the two **system settings** `organization_max_coordinators` /
+`organization_max_approvers` (defaults 3 and 1, range 1–20, `/console` → ตั้งค่าระบบ, `roleSeatLimit()` in
+`lib/iam.ts`) — one value for every organisation since 2026-11-10; the per-organisation columns and
+`PUT /api/admin/organizations/:id/representative-limits` that came first are gone. `uq_active_org_scoped_role_assignment`
 covered *every* role rather than those two, and only missed BDI staff because their
 organisation was NULL and Postgres counts NULLs as distinct; giving them a real organisation
 would have capped BDI at one officer in total. A partial index cannot express "these two roles"
