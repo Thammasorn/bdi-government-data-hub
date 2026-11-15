@@ -14,7 +14,13 @@ const MENU = [
   { href: "/representatives/requests", label: "ฟอร์มเปลี่ยนแปลงผู้แทนหน่วยงาน" },
 ];
 
-/** เมนูซ้ายของ "ผู้แทนหน่วยงาน" ตาม wireframe */
+/**
+ * แท็บย่อยของ "ผู้แทนหน่วยงาน" — เดิมเป็นเมนูซ้ายตาม wireframe ซึ่งกินความกว้างไป 15rem
+ * จนตารางรายชื่อและตารางคำขอต้องเลื่อนแนวนอน ย้ายขึ้นมาเป็นแท็บใต้หัวหน้าแล้วเนื้อหาจึงได้เต็มความกว้าง
+ *
+ * ทรงเป็นปุ่มกลุ่ม (segmented) ไม่ใช่เส้นใต้ เพราะหน้าคำขอมีแถบ "ที่ต้องดำเนินการ | ทั้งหมด"
+ * (QueueTabs) แบบเส้นใต้อยู่แล้ว สองแถวหน้าตาเดียวกันจะอ่านเหมือนเป็นตัวกรองชั้นเดียวกัน
+ */
 export function RepresentativeShell({
   title,
   description,
@@ -31,28 +37,29 @@ export function RepresentativeShell({
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
       {breadcrumb ? <div className="mb-5">{breadcrumb}</div> : null}
       <ListPageHeader tone="organization" eyebrow="ผู้แทนหน่วยงาน" title={title} description={description} />
-      <div className="mt-6 grid gap-6 md:grid-cols-[15rem_1fr]">
-        <nav aria-label="เมนูผู้แทนหน่วยงาน" className="flex flex-col gap-2">
-          {MENU.map((item) => {
-            const active =
-              item.href === "/representatives" ? pathname === item.href : pathname.startsWith(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                aria-current={active ? "page" : undefined}
-                className={clsx(
-                  "rounded-xl px-4 py-3 text-sm font-medium ring-1 ring-line",
-                  active ? "bg-navy-800 text-white" : "bg-white text-navy-800 hover:bg-navy-50",
-                )}
-              >
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
-        <div className="min-w-0">{children}</div>
-      </div>
+      <nav
+        aria-label="เมนูผู้แทนหน่วยงาน"
+        className="flex gap-1 rounded-2xl bg-white p-1 ring-1 ring-line sm:inline-flex"
+      >
+        {MENU.map((item) => {
+          const active =
+            item.href === "/representatives" ? pathname === item.href : pathname.startsWith(item.href);
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              aria-current={active ? "page" : undefined}
+              className={clsx(
+                "flex-1 rounded-xl px-4 py-2.5 text-center text-sm font-medium transition-colors sm:flex-none",
+                active ? "bg-navy-800 text-white" : "text-navy-800 hover:bg-navy-50",
+              )}
+            >
+              {item.label}
+            </Link>
+          );
+        })}
+      </nav>
+      <div className="mt-6 min-w-0">{children}</div>
     </div>
   );
 }
