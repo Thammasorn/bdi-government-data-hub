@@ -94,6 +94,7 @@ export interface HeadcountRow {
   max: number;
   changed: boolean;
   problem: string | null;
+  remedy: string | null;
 }
 
 export interface RemovalItem {

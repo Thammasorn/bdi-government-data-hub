@@ -41,6 +41,13 @@ export const OPEN_CHANGE_STATUSES: RepresentativeChangeStatus[] = [
   RepresentativeChangeStatus.RETURNED,
 ];
 
+/**
+ * ชื่อส่วนของฟอร์มแก้ไขคำขอ (`SECTIONS` ใน app/representatives/requests/[id]/edit/page.tsx) — ข้อความแก้ไข
+ * ชี้ไปที่ส่วนที่ต้องกดจริง เปลี่ยนชื่อส่วนที่หน้าฟอร์มแล้วต้องเปลี่ยนตรงนี้ด้วย
+ */
+const SECTION_REMOVALS = 'ส่วนที่ 1 "ยกเลิกรายชื่อผู้แทนเดิม"';
+const SECTION_ADDITIONS = 'ส่วนที่ 2 "เพิ่มรายชื่อผู้แทนใหม่"';
+
 const PERSON = {
   id: true,
   email: true,
@@ -152,8 +159,10 @@ export interface HeadcountRow {
   max: number;
   /** คำขอนี้เปลี่ยนบทบาทนี้หรือไม่ — บทบาทที่ไม่เปลี่ยนไม่ถูกตรวจ */
   changed: boolean;
-  /** ข้อความเมื่อไม่ผ่าน `null` = ผ่าน */
+  /** ข้อความเมื่อไม่ผ่าน `null` = ผ่าน — สั้นพอให้อยู่ในช่องของตารางจำนวน */
   problem: string | null;
+  /** สิ่งที่หน่วยงานต้องแก้ในคำขอเพื่อให้ผ่าน ต่อท้าย `problem` ในเหตุผลที่ยืนยันไม่ได้และข้อความส่งกลับ */
+  remedy: string | null;
 }
 
 export type AccountState =
@@ -310,12 +319,14 @@ async function staleRemovalMessage(db: Db, removal: RemovalRow, requestId: strin
     },
     select: { changeRequest: { select: { requestNumber: true } } },
   });
-  if (done) return `${name} ถูกยกเลิกไปแล้วด้วยคำขอ ${done.changeRequest.requestNumber}`;
-  if (!pendingInvitee) return `${name} ไม่ได้ถือบทบาทนี้แล้ว`;
+  const dropIt = `ต้องกด "เอาออก" ที่รายชื่อนี้ใน${SECTION_REMOVALS}`;
+  if (done) return `${name} ถูกยกเลิกไปแล้วด้วยคำขอ ${done.changeRequest.requestNumber} ${dropIt}`;
+  if (!pendingInvitee) return `${name} ไม่ได้ถือบทบาทนี้แล้ว ${dropIt}`;
   const key = removal.activationKey;
+  // เปิดใช้งานแล้ว = กลายเป็นผู้ถือบทบาท ยกเลิกได้ แต่ต้องเลือกจากรายชื่อใหม่ ไม่ใช่จากคำเชิญเดิม
   return key?.status === ActivationKeyStatus.USED
-    ? `${name} เปิดใช้งานบัญชีไปแล้ว คำเชิญนี้จึงยกเลิกไม่ได้ ต้องส่งกลับให้แก้ไข`
-    : `คำเชิญของ ${name} หมดอายุหรือถูกยกเลิกไปแล้ว`;
+    ? `${name} เปิดใช้งานบัญชีไปแล้ว คำเชิญนี้จึงยกเลิกไม่ได้ ${dropIt} แล้วเลือก ${name} ใหม่จากรายชื่อผู้แทนปัจจุบัน`
+    : `คำเชิญของ ${name} หมดอายุหรือถูกยกเลิกไปแล้ว ${dropIt}`;
 }
 
 export interface OverlapWarning {
@@ -374,6 +385,28 @@ export async function findOverlaps(db: Db, request: ChangeRequestRow): Promise<O
   return warnings;
 }
 
+/**
+ * บอกหน่วยงานว่าต้องลดกี่คนและลดจากตรงไหน — ข้อความเดิมบอกแค่ว่าเกิน หน่วยงานที่ต้องการเปลี่ยนตัวผู้มีอำนาจ
+ * จึงไม่รู้ว่าต้องยกเลิกคนเดิมในคำขอเดียวกันด้วย (รายการยกเลิกทำก่อนรายการเพิ่มตอนยืนยัน ที่นั่งจึงว่างทัน)
+ *
+ * จำนวนที่ต้องลดตามกติกาเดียวกับข้างบน: ปกติต้องลงมาไม่เกินเพดาน ส่วนหน่วยงานที่เกินอยู่แล้ว
+ * แค่ต้องน้อยกว่าปัจจุบัน การยกเลิกคนเดิมหนึ่งคนกับการไม่เพิ่มคนใหม่หนึ่งคนลดได้เท่ากัน
+ */
+function overLimitRemedy(used: number, removed: number, added: number, after: number, limit: number) {
+  const excess = used > limit ? after - used + 1 : after - limit;
+  const more = removed > 0 ? "เพิ่มอีก" : "";
+  const removeMore = `เลือกคนเดิม${more} ${excess} คนใน${SECTION_REMOVALS} เพื่อยกเลิกพร้อมกันในคำขอนี้`;
+  const addFewer = `ลดคนที่ขอเพิ่มลง ${excess} คนใน${SECTION_ADDITIONS}`;
+  const canRemove = used - removed >= excess;
+  const canAddFewer = added >= excess;
+  if (canRemove && canAddFewer) {
+    return `ถ้าต้องการเปลี่ยนตัว ต้อง${removeMore} ถ้าไม่ได้ต้องการเปลี่ยนตัว ต้อง${addFewer}`;
+  }
+  if (canRemove) return `ต้อง${removeMore}`;
+  if (canAddFewer) return `ต้อง${addFewer}`;
+  return `ต้องยกเลิกคนเดิมใน${SECTION_REMOVALS} และลดคนที่ขอเพิ่มใน${SECTION_ADDITIONS} รวมกันอีก ${excess} คน`;
+}
+
 /** ตารางจำนวนก่อน/หลังต่อบทบาท — §3.6 และ §4 ของการ์ด */
 export async function computeHeadcount(db: Db, request: ChangeRequestRow): Promise<HeadcountRow[]> {
   const rows: HeadcountRow[] = [];
@@ -389,16 +422,33 @@ export async function computeHeadcount(db: Db, request: ChangeRequestRow): Promi
     const label = ROLE_LABELS[roleCode];
 
     let problem: string | null = null;
+    let remedy: string | null = null;
     if (changed) {
       if (after < 1) {
         problem = `หลังดำเนินการจะไม่เหลือ${label} ต้องมีอย่างน้อย 1 คน`;
+        remedy = `ต้องเพิ่ม${label}คนใหม่ใน${SECTION_ADDITIONS}ของคำขอนี้ หรือกด "เอาออก" อย่างน้อย 1 คนใน${SECTION_REMOVALS}`;
       } else if (after > limit) {
         // หน่วยงานที่เกินอยู่แล้วเพราะผู้ดูแลระบบลดเพดาน ลดจำนวนลงได้แม้ยังเกิน แต่เพิ่มหรือคงเดิมไม่ได้
         const movingCloser = used > limit && after < used;
-        if (!movingCloser) problem = `หลังดำเนินการจะมี${label} ${after} คน เกินที่กำหนด ${limit} คน`;
+        if (!movingCloser) {
+          problem = `หลังดำเนินการจะมี${label} ${after} คน เกินที่กำหนด ${limit} คน`;
+          remedy = overLimitRemedy(used, removed, added, after, limit);
+        }
       }
     }
-    rows.push({ roleCode, roleLabel: label, current: used, removed, added, after, min: 1, max: limit, changed, problem });
+    rows.push({
+      roleCode,
+      roleLabel: label,
+      current: used,
+      removed,
+      added,
+      after,
+      min: 1,
+      max: limit,
+      changed,
+      problem,
+      remedy,
+    });
   }
   return rows;
 }
@@ -443,13 +493,14 @@ export async function evaluateChangeRequest(db: Db, request: ChangeRequestRow): 
   for (const removal of request.removals) {
     if (!removalStillValid(removal)) staleRemovals.push(await staleRemovalMessage(db, removal, request.id));
   }
+  const headcountProblems = headcount.flatMap((row) => (row.problem ? [`${row.problem} ${row.remedy}`] : []));
   const blockers = [
-    ...headcount.flatMap((row) => (row.problem ? [row.problem] : [])),
+    ...headcountProblems,
     ...accountChecks.filter((c) => !c.ok).map((c) => `${c.name}: ${c.message}`),
     ...staleRemovals,
   ];
   const returnReasons = [
-    ...headcount.flatMap((row) => (row.problem ? [row.problem] : [])),
+    ...headcountProblems,
     ...accountChecks.filter((c) => !c.ok).map((c) => `${c.name}: ${organizationMessage(c.state)}`),
     ...staleRemovals,
   ];
