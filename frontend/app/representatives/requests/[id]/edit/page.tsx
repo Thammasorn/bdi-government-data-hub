@@ -352,13 +352,13 @@ export default function ChangeRequestFormPage() {
                     </div>
                     <TextField label="เลขประจำตัวประชาชน" required inputMode="numeric" maxLength={13} value={row.cid} error={errors.cid} onChange={(e) => update(index, { cid: e.target.value.replace(/\D/g, "") })} />
                     <div className="grid gap-5 sm:grid-cols-2">
-                      <TextField label="ตำแหน่ง" required value={row.positionTh} error={errors.positionTh} onChange={(e) => update(index, { positionTh: e.target.value })} />
-                      <TextField label="ฝ่าย/กอง/สำนัก" required value={row.departmentTh} error={errors.departmentTh} onChange={(e) => update(index, { departmentTh: e.target.value })} />
+                      <TextField label="ตำแหน่ง (ชื่อเต็มภาษาไทย)" required value={row.positionTh} error={errors.positionTh} hint="ชื่อตำแหน่งเต็มเป็นภาษาไทย" onChange={(e) => update(index, { positionTh: e.target.value })} />
+                      <TextField label="ฝ่าย/กอง/สำนัก (ชื่อเต็มภาษาไทย)" required value={row.departmentTh} error={errors.departmentTh} hint="ชื่อฝ่าย/กอง/สำนักเต็มเป็นภาษาไทย" onChange={(e) => update(index, { departmentTh: e.target.value })} />
                     </div>
                     <div className="grid gap-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_8rem]">
                       <TextField label="อีเมล" required type="email" value={row.email} error={errors.email} onChange={(e) => update(index, { email: e.target.value })} />
                       <TextField label="เบอร์โทรศัพท์" required inputMode="tel" value={row.phoneNumber} error={errors.phoneNumber} onChange={(e) => update(index, { phoneNumber: e.target.value })} />
-                      <TextField label="ต่อ" inputMode="numeric" maxLength={MAX_PHONE_EXTENSION} value={row.phoneNumberExtension} onChange={(e) => update(index, { phoneNumberExtension: e.target.value.replace(/\D/g, "") })} />
+                      <TextField label="ต่อ" inputMode="numeric" maxLength={MAX_PHONE_EXTENSION} value={row.phoneNumberExtension} error={errors.phoneNumberExtension} onChange={(e) => update(index, { phoneNumberExtension: e.target.value.replace(/\D/g, "") })} />
                     </div>
                   </div>
                 );

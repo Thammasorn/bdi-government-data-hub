@@ -1,5 +1,13 @@
 import type { OrgEvent, TimelineCreator } from "@/components/organization/Timeline";
-import { isValidThaiNationalId } from "./organization-form";
+import {
+  containsThai,
+  isValidEmail,
+  isValidPhoneExtension,
+  isValidThaiNationalId,
+  isValidThaiPhone,
+  PHONE_EXTENSION_MESSAGE,
+  PHONE_MESSAGE,
+} from "./organization-form";
 import { REQUEST_STATUS_META, TASK_TYPE_META, type OrganizationStatus } from "./status";
 import type { JourneyProgress } from "./types";
 
@@ -184,9 +192,21 @@ export function validateAddition(a: AdditionForm): Partial<Record<keyof Addition
   if (!a.firstnameTh.trim()) errors.firstnameTh = "กรุณากรอกชื่อ";
   if (!a.lastnameTh.trim()) errors.lastnameTh = "กรุณากรอกนามสกุล";
   if (!isValidThaiNationalId(a.cid.trim())) errors.cid = "เลขบัตรประชาชนไม่ถูกต้อง";
+  // ตำแหน่งกับฝ่าย/กอง/สำนักต้องมีภาษาไทย — positionSchema / departmentSchema ฝั่ง API
   if (!a.positionTh.trim()) errors.positionTh = "กรุณากรอกตำแหน่ง";
+  else if (!containsThai(a.positionTh))
+    errors.positionTh =
+      "ตำแหน่งต้องเป็นชื่อเต็มภาษาไทย (มีภาษาอังกฤษปนได้ เช่น ผู้อำนวยการศูนย์เทคโนโลยีสารสนเทศและการสื่อสาร (ICT))";
   if (!a.departmentTh.trim()) errors.departmentTh = "กรุณากรอกฝ่าย/กอง/สำนัก";
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.email.trim())) errors.email = "กรุณากรอกอีเมลให้ถูกต้อง";
-  if (!/^\d{9,10}$/.test(a.phoneNumber.replace(/\D/g, ""))) errors.phoneNumber = "กรุณากรอกเบอร์โทรศัพท์ 9–10 หลัก";
+  else if (!containsThai(a.departmentTh))
+    errors.departmentTh =
+      "ฝ่าย/กอง/สำนักต้องเป็นชื่อเต็มภาษาไทย (มีภาษาอังกฤษปนได้ เช่น ศูนย์เทคโนโลยีสารสนเทศและการสื่อสาร (ICT))";
+  if (!a.email.trim()) errors.email = "กรุณากรอกอีเมล";
+  else if (!isValidEmail(a.email)) errors.email = "รูปแบบอีเมลไม่ถูกต้อง";
+  // phoneSchema ฝั่ง API ตรวจรูปแบบเบอร์ไทยจริง ไม่ใช่แค่นับหลัก — ถ้าตรงนี้หลวมกว่า ฟอร์มจะผ่านแล้วไปล้มตอนนำส่ง
+  if (!a.phoneNumber.trim()) errors.phoneNumber = "กรุณากรอกเบอร์โทรศัพท์";
+  else if (!isValidThaiPhone(a.phoneNumber)) errors.phoneNumber = PHONE_MESSAGE;
+  if (a.phoneNumberExtension.trim() && !isValidPhoneExtension(a.phoneNumberExtension.trim()))
+    errors.phoneNumberExtension = PHONE_EXTENSION_MESSAGE;
   return errors;
 }

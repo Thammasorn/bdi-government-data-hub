@@ -76,11 +76,13 @@ import { ROLE_LABELS } from "../lib/roles.js";
 import { revokeSessionsFor } from "../lib/session.js";
 import { BDI_ORGANIZATION_ID, ROLE_CODES, type RoleCode } from "../lib/system.js";
 import {
+  departmentSchema,
   emailSchema,
   formatZodError,
   nationalIdSchema,
   phoneExtensionSchema,
   phoneSchema,
+  positionSchema,
 } from "../lib/validation.js";
 import {
   activeTask,
@@ -835,8 +837,9 @@ const additionSubmitSchema = z.object({
   userEmail: emailSchema,
   userPhoneNumber: phoneSchema,
   userPhoneNumberExtension: phoneExtensionSchema.nullish(),
-  userPositionTh: z.string({ error: "กรุณากรอกตำแหน่ง" }).min(1, "กรุณากรอกตำแหน่ง"),
-  userDepartmentTh: z.string({ error: "กรุณากรอกฝ่าย/กอง/สำนัก" }).min(1, "กรุณากรอกฝ่าย/กอง/สำนัก"),
+  // ต้องมีภาษาไทย — กฎเดียวกับตำแหน่งในฟอร์มลงทะเบียนหน่วยงาน (คู่ของ validateAddition() ฝั่งหน้าเว็บ)
+  userPositionTh: positionSchema,
+  userDepartmentTh: departmentSchema,
 });
 
 function validateForSubmit(request: ChangeRequestRow, hasLetter: boolean) {
