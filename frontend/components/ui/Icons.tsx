@@ -42,3 +42,21 @@ export function EyeSlashIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+/**
+ * ถังขยะเป็น SVG ไม่ใช่อักขระ — ฟอนต์ไทยดันเส้นฐานลงต่ำกว่าปุ่มเล็ก ๆ ทุกครั้ง
+ * ตัวอักษรสัญลักษณ์ในปุ่มความสูงเท่านี้จึงลอยต่ำกว่าข้อความข้าง ๆ เสมอ
+ */
+export function TrashIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" fill="none">
+      <path
+        d="M4 7h16M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7m-9 0 .8 11.2A2 2 0 0 0 8.8 20h6.4a2 2 0 0 0 2-1.8L18 7M10 11v5m4-5v5"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

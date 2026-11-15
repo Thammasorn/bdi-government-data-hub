@@ -77,7 +77,7 @@ export interface ChangeRow {
   status: ChangeStatus;
   submittedAt: string | null;
   updatedAt: string;
-  organization: { id: string; nameTh: string };
+  organization: { id: string; nameTh: string; status: OrganizationStatus };
   removalCount: number;
   additionCount: number;
   documentName: string | null;
