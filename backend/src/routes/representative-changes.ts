@@ -336,7 +336,8 @@ async function listRequests(
         status: true,
         submittedAt: true,
         updatedAt: true,
-        organization: { select: { id: true, nameTh: true } },
+        // สถานะหน่วยงานให้ตารางซ่อนปุ่มยกเลิกเมื่อหน่วยงานถูกระงับ (server ตอบ 409 organization_frozen อยู่แล้ว)
+        organization: { select: { id: true, nameTh: true, status: true } },
         _count: { select: { removals: true, additions: true } },
       },
     }),
