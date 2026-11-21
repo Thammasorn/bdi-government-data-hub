@@ -11,7 +11,7 @@ import { CHANGE_STATUS_META,
 
 const MENU = [
   { href: "/representatives", label: "รายชื่อผู้แทนหน่วยงาน" },
-  { href: "/representatives/requests", label: "ฟอร์มเปลี่ยนแปลงผู้แทนหน่วยงาน" },
+  { href: "/representatives/requests", label: "คำขอเปลี่ยนแปลงผู้แทนหน่วยงาน" },
 ];
 
 /**
