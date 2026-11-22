@@ -155,6 +155,8 @@ export interface Organization {
   contactPhoneExtension: string | null;
 
   revisionNote: string | null;
+  /** BDI เผยแพร่เอกสารกฎหมายเวอร์ชันใหม่หลังผู้มีอำนาจอนุมัติแล้ว — คำขอกลับมาที่ผู้มีอำนาจอนุมัติของหน่วยงาน */
+  legalDocsChanged?: boolean;
   submittedAt: string | null;
   activatedAt: string | null;
   createdAt: string;
@@ -308,6 +310,10 @@ export interface LegalDocument {
    * ฉบับที่ถูกข้ามจะไม่ถูกส่งต่อไปให้ฝ่าย BDI เห็นชอบด้วย
    */
   isRequired: boolean;
+  /** เลขเวอร์ชันที่ผู้ใช้เห็น (`display_version_number`) ของฉบับที่คำขอถือ */
+  displayVersionNumber?: string;
+  /** เวอร์ชันที่เผยแพร่อยู่ตอนนี้ ถ้าใหม่กว่าฉบับของคำขอ — มีเฉพาะเอกสารของคำขอลงทะเบียนหน่วยงาน */
+  newerVersion?: { displayVersionNumber: string } | null;
 }
 
 /**

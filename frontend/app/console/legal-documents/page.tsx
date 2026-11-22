@@ -97,7 +97,7 @@ export default function ConsoleLegalDocumentsPage() {
 
   return (
     <div>
-      <PageHeader eyebrow="ตั้งค่าเอกสาร" title="เอกสารข้อตกลง" />
+      <PageHeader eyebrow="ตั้งค่าเอกสาร" title="เอกสารทางกฎหมาย" />
 
       <div className="space-y-6">
         {SCOPE_ORDER.map((scope) => {
@@ -109,12 +109,15 @@ export default function ConsoleLegalDocumentsPage() {
               key={scope}
               title={SCOPE_TITLES[scope]}
               actions={
+                // เอกสารของคำขอลงทะเบียนมีแค่ A0–A3 ที่ระบบกำหนด (card "[Enhance] Legal Document Management") — backend ตอบ 409 fixed_scope
+                scope === "ORGANIZATION_REGISTRATION" ? undefined : (
                 <Link
                   href={`/console/legal-documents/new/${scope}`}
                   className="inline-flex h-9 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-medium text-navy-800 hover:bg-navy-50"
                 >
                   เพิ่มเอกสาร
                 </Link>
+                )
               }
               flush
             >

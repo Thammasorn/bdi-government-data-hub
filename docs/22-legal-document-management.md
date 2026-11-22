@@ -46,7 +46,7 @@ docker compose exec backend npm run backfill:document-snapshots:prod -- --write 
 - **รายการ** `/console/legal-documents` — สองหัวข้อ (เอกสารของคำขอลงทะเบียนหน่วยงาน / ของคำขอส่งชุดข้อมูล) แต่ละแถวมีแค่ชื่อ อัปโหลดฉบับใหม่ และแก้ไข
   ปุ่ม **เพิ่มเอกสาร** ต่อท้ายลำดับเสมอ เอกสารที่ปิดใช้ยังอยู่ในรายการ (จางลง ท้ายหัวข้อ)
 - **แก้ไข** `/console/legal-documents/:code` — ข้อมูลเอกสาร (`name_th` `short_name` `legal_notice` `is_required`) · เปิด/ปิดใช้ · เวอร์ชันที่ใช้อยู่ ·
-  **Version History** (แบ่งหน้า ดูตัวอย่าง PDF ก่อน/หลัง render ดาวน์โหลด .docx "ใช้เวอร์ชันนี้" สำหรับฉบับร่าง "เผยแพร่อีกครั้ง" สำหรับฉบับที่ถูกแทนที่ — ทั้งสองพลิกแถวเดิมกลับเป็น `PUBLISHED` ไม่ออกเวอร์ชันใหม่)
+  **Version History** (แบ่งหน้า ดูตัวอย่าง PDF ก่อน/หลัง render ดาวน์โหลด .docx "ใช้เวอร์ชันนี้" สำหรับฉบับร่าง — พลิกแถวเดิมเป็น `PUBLISHED` ไม่ออกเวอร์ชันใหม่ · ฉบับที่ถูกแทนที่ดูได้อย่างเดียว: "เผยแพร่อีกครั้ง" (ย้อนเวอร์ชัน) ถูกตัดออก 2026-11-22 card "[Enhance] Legal Document Management" ต้องอัปโหลดเป็นเวอร์ชันใหม่)
 - **modal อัปโหลด** (ใช้ทั้งเวอร์ชันใหม่และเอกสารใหม่) — เลือกไฟล์ → ระบบตรวจชื่อตัวแปร → ปุ่ม **ดูตัวอย่างก่อน render** (ตามที่พิมพ์ เห็น `{{…}}`) และ **หลัง render**
   (เติมข้อมูลตัวอย่างที่เป็นทางการ ไฮไลต์เหลืองเฉพาะส่วนที่ระบบเติม) → ติ๊ก **ใช้ทันที** (ค่าตั้งต้น) → ยืนยัน ไฟล์ไม่ถูกเก็บจนกดยืนยัน
 - **ใช้ทันที** ออก = เก็บเป็น `DRAFT` ไม่มีผลกับใคร เผยแพร่ภายหลังด้วย "ใช้เวอร์ชันนี้" · เอกสารใหม่ที่ไม่ติ๊ก = สร้างแต่ปิดใช้ (`legal_document.status = DRAFT`)
@@ -87,7 +87,7 @@ docker compose exec backend npm run backfill:document-snapshots:prod -- --write 
 | `GET …/legal-documents` | เพิ่ม `isActive` `hasPublishedVersion` `activeVersion` `draftVersionCount` `versionCount` |
 | `GET …/legal-documents/:code/versions?page&pageSize` | ประวัติเวอร์ชันแบ่งหน้า |
 | `POST …/legal-documents/:code/versions` | เพิ่ม `apply` (ค่าตั้งต้น true; false = `DRAFT`) |
-| `POST …/versions/:versionId/activate` | ใช้ฉบับร่าง (`DRAFT`) หรือฉบับที่ถูกแทนที่ (`SUPERSEDED`) เป็นฉบับที่เผยแพร่ — แถวเดิม ไม่สร้างเวอร์ชันใหม่ (`…/restore` เหมือนกัน แต่รับเหตุผล) |
+| `POST …/versions/:versionId/activate` | ใช้ฉบับร่าง (`DRAFT`) เป็นฉบับที่เผยแพร่ — แถวเดิม ไม่สร้างเวอร์ชันใหม่ · ฉบับที่ถูกแทนที่ตอบ 409 `not_draft` (`…/restore` ถูกลบ 2026-11-22 — ไม่มีการย้อนเวอร์ชัน) |
 | `GET …/versions/:versionId/preview?mode=raw\|rendered` | PDF ตัวอย่างของเวอร์ชันที่เก็บไว้ |
 | `POST …/legal-documents/inspect` · `…/preview` | ตรวจ / ดูตัวอย่างไฟล์ที่เพิ่งเลือก (ยังไม่เก็บ) — multipart `file` `scope` (`mode`) |
 | `GET /api/admin/template-variables` | รายการตัวแปรจัดกลุ่ม พร้อม scope ที่ใช้ได้ |

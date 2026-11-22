@@ -41,6 +41,8 @@ import {
   sendRequestProgressed,
   sendRoleRemoved,
   sendSignatoryRequest,
+  sendLegalNotice,
+  type LegalTemplateKey,
 } from "../lib/mail.js";
 import { buildJourneyProgress, type JourneyProgress } from "../lib/journey-steps.js";
 import { NotificationType, linkFor } from "../lib/notify.js";
@@ -72,6 +74,7 @@ const TASK_FIELDS = {
   status: true,
   result: true,
   completedAt: true,
+  cancellationReason: true,
 } as const;
 
 async function journeyProgress(
@@ -169,6 +172,47 @@ async function sendInvitationReminder(prisma: PrismaClient, destination: string,
  * ส่งอีเมลหนึ่งฉบับ โดยเลือก template จากชนิดของ notification
  * ชนิดที่ยังไม่มี template เฉพาะจะตกมาที่ sendRaw ซึ่งใช้ layout กลางกับ title/message
  */
+/** การแจ้งเตือนของการลงนามเอกสารกฎหมายเวอร์ชันใหม่ → เทมเพลต (lib/legal-reacceptance.ts) */
+const LEGAL_TEMPLATE: Partial<Record<string, LegalTemplateKey>> = {
+  [NotificationType.LEGAL_REACCEPTANCE_REQUESTED_OFFICER]: "legal_reacceptance_officer",
+  [NotificationType.LEGAL_REACCEPTANCE_REQUESTED_APPROVER]: "legal_reacceptance_approver",
+  [NotificationType.LEGAL_REACCEPTANCE_SIGNED]: "legal_reacceptance_signed",
+  [NotificationType.LEGAL_REACCEPTANCE_COMPLETED]: "legal_reacceptance_completed",
+  [NotificationType.LEGAL_ACCESS_RESTORED]: "legal_access_restored",
+};
+
+/** อีเมลของงานลงนาม — ประกอบจากงานตอนส่ง (ชื่อหน่วยงาน เอกสาร เวอร์ชัน) ไม่ได้เก็บเนื้อหาไว้ในคิว */
+async function sendLegalApprovalNotice(
+  prisma: PrismaClient,
+  destination: string,
+  approvalId: string,
+  key: LegalTemplateKey,
+): Promise<RenderOutcome> {
+  const approval = await prisma.organizationLegalApproval.findUnique({
+    where: { id: approvalId },
+    select: {
+      organization: { select: { nameTh: true } },
+      legalDocument: { select: { documentCode: true, nameTh: true } },
+      legalDocumentVersion: { select: { displayVersionNumber: true } },
+    },
+  });
+  if (!approval) return { cancelled: { code: "APPROVAL_GONE", message: "งานลงนามถูกลบไปก่อนถึงคิวส่ง" } };
+  const path =
+    key === "legal_reacceptance_approver" || key === "legal_reacceptance_signed"
+      ? `/legal-documents/approvals/${approvalId}`
+      : key === "legal_access_restored"
+        ? "/"
+        : "/legal-documents";
+  await sendLegalNotice(destination, key, {
+    organizationName: approval.organization.nameTh,
+    documentLabel: `${approval.legalDocument.documentCode} ${approval.legalDocument.nameTh}`,
+    versionDisplay: approval.legalDocumentVersion.displayVersionNumber,
+    requestNumber: "",
+    path,
+  });
+  return undefined;
+}
+
 export async function renderAndSend(
   prisma: PrismaClient,
   destination: string,
@@ -184,6 +228,25 @@ export async function renderAndSend(
 
   if (n.notificationType === NotificationType.INVITATION_REMINDER && n.subjectId) {
     return sendInvitationReminder(prisma, destination, n.subjectId);
+  }
+
+  const legalKey = LEGAL_TEMPLATE[n.notificationType];
+  if (legalKey && n.subjectId) return sendLegalApprovalNotice(prisma, destination, n.subjectId, legalKey);
+
+  if (n.notificationType === NotificationType.REGISTRATION_DOCUMENTS_CHANGED && n.subjectId) {
+    const request = await prisma.organizationRegistrationRequest.findUnique({
+      where: { id: n.subjectId },
+      select: { id: true, requestNumber: true, organization: { select: { nameTh: true } } },
+    });
+    if (!request) return { cancelled: { code: "REQUEST_GONE", message: "คำขอถูกลบไปก่อนถึงคิวส่ง" } };
+    await sendLegalNotice(destination, "registration_documents_changed", {
+      organizationName: request.organization.nameTh,
+      documentLabel: "",
+      versionDisplay: "",
+      requestNumber: request.requestNumber,
+      path: `/organizations/${request.id}`,
+    });
+    return undefined;
   }
 
   if (n.subjectType === SubjectType.DATASET_REGISTRATION_REQUEST && n.subjectId) {

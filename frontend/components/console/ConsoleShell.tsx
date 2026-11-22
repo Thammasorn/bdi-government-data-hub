@@ -77,15 +77,22 @@ export const CONSOLE_GROUPS: Group[] = [
   {
     title: "ตั้งค่าเอกสาร",
     items: [
-      { href: "/console/legal-documents", label: "เอกสารข้อตกลง", icon: icon("M5 3h7l3 3v11H5zM8 9h4M8 12h4M8 15h2") },
+      // card "[Enhance] Legal Document Management" — ดูอย่างเดียว ผู้ดูแลระบบและผู้เชี่ยวชาญด้านกฎหมายของ BDI
+      // อยู่บนสุดของหมวด ตามที่ BDI ขอ — ผู้เชี่ยวชาญด้านกฎหมายเห็นแค่หมวดนี้ จึงเป็นเมนูแรกของเขา
+      {
+        href: "/console/legal-status",
+        label: "สถานะเอกสารทางกฎหมายของหน่วยงาน",
+        icon: icon("M5 3h7l3 3v11H5zM7.5 11l2 2 3.5-4"),
+      },
+      { href: "/console/legal-documents", label: "จัดการเอกสารทางกฎหมาย", icon: icon("M5 3h7l3 3v11H5zM8 9h4M8 12h4M8 15h2") },
       { href: "/console/dataset-choices", label: "ตัวเลือกเอกสารชุดข้อมูล", icon: icon("M4 5h2m3 0h7M4 10h2m3 0h7M4 15h2m3 0h7") },
-      { href: "/console/public-documents", label: "เอกสารดาวน์โหลด", icon: icon("M10 3v9m-4-4 4 4 4-4M4 15v2h12v-2") },
-      // อยู่ใต้ "เอกสารดาวน์โหลด" ตามที่ BDI ขอ — เป็นหน้าอ้างอิงของคนเขียนเอกสารเหมือนกัน
       {
         href: "/console/template-variables",
         label: "ตัวแปรที่ใช้ใน template",
         icon: icon("M7 4C5.5 4 5 5 5 6.5v1.2C5 8.6 4.4 9.5 3.5 10c.9.5 1.5 1.4 1.5 2.3v1.2C5 15 5.5 16 7 16M13 4c1.5 0 2 1 2 2.5v1.2c0 .9.6 1.8 1.5 2.3-.9.5-1.5 1.4-1.5 2.3v1.2c0 1.5-.5 2.5-2 2.5"),
       },
+      // ท้ายหมวด ตามที่ BDI ขอ (2026-11-22)
+      { href: "/console/public-documents", label: "จัดการเอกสารดาวน์โหลด", icon: icon("M10 3v9m-4-4 4 4 4-4M4 15v2h12v-2") },
     ],
   },
   // ค่าที่ผู้ดูแลระบบแก้ได้โดยไม่ต้อง deploy (การ์ด "อีเมลเตือนก่อนคำเชิญหมดอายุ" 2026-11-03) — ผู้ดูแลระบบเท่านั้น API อยู่หลัง requireAdmin
@@ -115,6 +122,11 @@ export const CONSOLE_GROUPS: Group[] = [
     ],
   },
 ];
+
+/** เมนูของผู้เชี่ยวชาญด้านกฎหมายของ BDI บนแถบหัว (AppShell) — หมวดที่ไม่ใช่ `adminOnly` เรียงต่อกัน */
+export function legalOfficerMenu(): { href: string; label: string }[] {
+  return CONSOLE_GROUPS.filter((g) => !g.adminOnly).flatMap((g) => g.items.map(({ href, label }) => ({ href, label })));
+}
 
 /** หมวดที่ผู้ดูแลเห็น — ผู้เชี่ยวชาญด้านกฎหมายของ BDI ได้เฉพาะที่ไม่ใช่ `adminOnly` */
 function groupsFor(roles: string[]): Group[] {
@@ -171,6 +183,15 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
         >
           {outsideScope ? "ไปที่ตั้งค่าเอกสาร" : "กลับหน้าแรก"}
         </Link>
+      </div>
+    );
+  }
+
+  // ผู้เชี่ยวชาญด้านกฎหมายใช้เมนู "เอกสารทางกฎหมาย" บนแถบหัวแทน — ไม่มีเมนูด้านซ้ายและแถบเลื่อนของจอแคบ
+  if (!isSystemAdmin(user.roles)) {
+    return (
+      <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:py-10">
+        <DeliveryTrackerProvider>{children}</DeliveryTrackerProvider>
       </div>
     );
   }

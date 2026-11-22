@@ -13,6 +13,7 @@ import { RowDetailCard, useRowDetail } from "@/components/list/RowDetailCard";
 import { QueueTabs } from "@/components/list/QueueTabs";
 import { SortSelect } from "@/components/list/SortSelect";
 import { StepDots } from "@/components/review/ApprovalSteps";
+import { isLegalLocked } from "@/components/legal/LegalLockNotice";
 import { useSession } from "@/components/SessionProvider";
 import { Button } from "@/components/ui/Button";
 import { Card, DatasetStatusBadge } from "@/components/ui/Card";
@@ -286,7 +287,8 @@ export function DatasetRequestTable({
                   {/* หน่วยงานถูกระงับหรือยุติ — ยกเลิกเองไม่ได้ (409) แถวยังแสดงอยู่ตามเดิม */}
                   {canDelete &&
                   CLOSEABLE_STATUSES.includes(row.status) &&
-                  !isOrganizationFrozen(row.organization.status) ? (
+                  !isOrganizationFrozen(row.organization.status) &&
+                  !isLegalLocked(user?.organization) ? (
                     /* บนจอแคบแถวเรียงลงเป็นชั้น ปุ่มจึงเกาะบรรทัดบนสุดแทนกึ่งกลางแถว */
                     <button
                       type="button"

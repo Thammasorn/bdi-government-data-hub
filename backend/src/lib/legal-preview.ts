@@ -85,7 +85,7 @@ export const SAMPLE_ORGANIZATION: AgreementInput = {
   printedByName: "นางสาว สมหญิง ตัวอย่างมั่นคง",
   printedAt: SAMPLE_PRINTED,
 
-  documentVersionNumber: 1,
+  documentVersionNumber: "1",
   documentEffectiveAt: SAMPLE_EFFECTIVE,
 };
 
@@ -131,7 +131,7 @@ export function sampleDataset(): DatasetDocumentInput {
     printedByName: SAMPLE_ORGANIZATION.printedByName,
     printedAt: SAMPLE_PRINTED,
 
-    documentVersionNumber: 1,
+    documentVersionNumber: "1",
     documentEffectiveAt: SAMPLE_EFFECTIVE,
   };
 }

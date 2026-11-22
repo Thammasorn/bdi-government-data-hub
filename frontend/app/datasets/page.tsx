@@ -11,6 +11,7 @@ import { api } from "@/lib/api";
 import { useDatasetRegistration } from "@/lib/use-dataset-registration";
 import { useRequireAuth } from "@/lib/require-auth";
 import { OrganizationFrozenNotice } from "@/components/review/OrganizationFrozenNotice";
+import { LegalLockNotice, isLegalLocked } from "@/components/legal/LegalLockNotice";
 import { isBdiStaff, isOrganizationFrozen, type OrganizationStatus } from "@/lib/status";
 
 export default function DatasetsPage() {
@@ -65,6 +66,9 @@ function DatasetList() {
           (eligibility ก็ตอบเหตุผลเดียวกัน แต่กล่องเหลืองเขียนว่า "ยัง" ซึ่งไม่ใช่เรื่องที่รอได้เอง) */}
       {organizationStatus && isOrganizationFrozen(organizationStatus) ? (
         <OrganizationFrozenNotice status={organizationStatus} />
+      ) : isLegalLocked(user.organization) ? (
+        // ทุกคนในหน่วยงานเห็น ไม่ใช่แค่ผู้ประสานงาน — คนที่ทำให้ปลดล็อกได้คือผู้มีอำนาจอนุมัติ
+        <LegalLockNotice />
       ) : canCreate && eligibility && !eligibility.eligible ? (
         <div className="mb-6 rounded-xl border-l-[3px] border-warning bg-warning-bg p-5">
           <p className="text-[13px] font-semibold text-warning">ยังลงทะเบียนชุดข้อมูลไม่ได้</p>

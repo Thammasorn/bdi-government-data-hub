@@ -55,7 +55,7 @@ export interface DatasetDocumentInput extends MetadataValues {
   printedAt: Date;
 
   /** เวอร์ชันของเอกสารฉบับที่กำลัง render — ดูคำอธิบายใน lib/legal-values.ts */
-  documentVersionNumber: number | null;
+  documentVersionNumber: string | null;
   documentEffectiveAt: Date | null;
 }
 
@@ -146,7 +146,7 @@ export function datasetDocumentValues(input: DatasetDocumentInput): Record<strin
 
     // ── ตัวเอกสารเอง ──
     "document.version":
-      input.documentVersionNumber === null ? "" : String(input.documentVersionNumber),
+      input.documentVersionNumber ?? "",
     "document.effectiveDate": date(input.documentEffectiveAt),
 
     // ── ระบบ ──

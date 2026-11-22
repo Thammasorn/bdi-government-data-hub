@@ -36,7 +36,16 @@ export interface JourneyTaskRow {
   status: ReviewTaskStatus;
   result: ReviewResult | null;
   completedAt: Date | null;
+  /** ใช้แยกการปิดด่านเพราะเอกสารกฎหมายเปลี่ยน (`LEGAL_DOCS_CHANGED_REASON`) ออกจากการยกเลิกที่ล้างทั้งรอบ */
+  cancellationReason: string | null;
 }
+
+/**
+ * เหตุผลบนด่าน BDI ที่ระบบปิดเพราะ BDI เปลี่ยนเวอร์ชันเอกสารกฎหมาย (lib/legal-reacceptance.ts ส่งคำขอกลับไปที่ผู้มีอำนาจ)
+ * ไม่ใช่ตัวล้างรอบ — ผลการตรวจของเจ้าหน้าที่ BDI ยังใช้ได้ ทำใหม่แค่ด่านผู้มีอำนาจของหน่วยงานกับด่านสุดท้าย
+ * อยู่ที่นี่เพราะไฟล์นี้ไม่ import อะไรของ workflow — legal-reacceptance.ts import ค่านี้ไปใช้
+ */
+export const LEGAL_DOCS_CHANGED_REASON = "LEGAL_DOCS_CHANGED";
 
 /**
  * `RETURNED` = "ด่านนี้เคยถูกทำไปแล้ว แต่ผลของรอบนั้นถูกล้างไปเพราะคำขอเดินถอยกลับ"
@@ -232,10 +241,25 @@ const DATASET_PLAN: StepPlan[] = [
   },
 ];
 
+/**
+ * การลงนามเอกสารกฎหมายเวอร์ชันใหม่ (card "[Enhance] Legal Document Management") — ตรงกับ lib/legal-reacceptance.ts
+ * ขั้นที่ 1 คือ BDI เผยแพร่ (ไม่มี review_task เหมือนขั้นนำส่งของสองเส้นทางแรก) แล้วสองด่านเดิมของการลงนาม
+ */
+const LEGAL_APPROVAL_PLAN: StepPlan[] = [
+  {
+    ...SUBMISSION_STEP,
+    label: "BDI เผยแพร่เอกสารเวอร์ชันใหม่",
+    shortLabel: "เผยแพร่แล้ว",
+    waitingLabel: "รอ BDI เผยแพร่เอกสาร",
+    roleCode: ROLE_CODES.BDI_LEGAL_OFFICER,
+  },
+  ...ORGANIZATION_PLAN.filter((step) => step.key === "ORGANIZATION_APPROVAL" || step.key === "FINAL_APPROVAL"),
+];
+
 export function planFor(subjectType: SubjectType): StepPlan[] {
-  return subjectType === SubjectType.ORGANIZATION_REGISTRATION_REQUEST
-    ? ORGANIZATION_PLAN
-    : DATASET_PLAN;
+  if (subjectType === SubjectType.ORGANIZATION_REGISTRATION_REQUEST) return ORGANIZATION_PLAN;
+  if (subjectType === SubjectType.ORGANIZATION_LEGAL_APPROVAL) return LEGAL_APPROVAL_PLAN;
+  return DATASET_PLAN;
 }
 
 /**
@@ -245,7 +269,11 @@ export function planFor(subjectType: SubjectType): StepPlan[] {
  * ฝั่งหน้าเว็บก็จะเป็นตารางคำใบที่สองที่ต้องคอยไล่ให้ตรงกัน
  */
 export const journeyUnit = (subjectType: SubjectType): string =>
-  subjectType === SubjectType.ORGANIZATION_REGISTRATION_REQUEST ? "หน่วยงาน" : "ชุดข้อมูล";
+  subjectType === SubjectType.ORGANIZATION_REGISTRATION_REQUEST
+    ? "หน่วยงาน"
+    : subjectType === SubjectType.ORGANIZATION_LEGAL_APPROVAL
+      ? "เอกสาร"
+      : "ชุดข้อมูล";
 
 /**
  * ผลที่ถือว่า "ผ่านด่านนี้ไปแล้ว"
@@ -316,6 +344,9 @@ function latestBySlot(tasks: JourneyTaskRow[], plan: StepPlan[]) {
  * คำขอยังเป็นร่าง พอหน่วยงานนำส่งใหม่ ด่านลงนามที่ผ่านในรอบที่ถูก reset ก็กลับมาขึ้นเขียว
  * "เสร็จสิ้น" ทั้งที่คำขออยู่ขั้นที่ 2 (การ์ด "ขั้นตอนการอนุมัติสลับ")
  *
+ * ไม่นับแถวที่ระบบปิดเพราะเอกสารกฎหมายเปลี่ยน (`LEGAL_DOCS_CHANGED_REASON`) — คำขอไม่ได้กลับไปที่หน่วยงาน
+ * แค่ผู้มีอำนาจต้องอนุมัติชุดเอกสารใหม่ ขั้น "BDI ตรวจสอบคำขอ" ที่ผ่านแล้วจึงต้องยังเป็น "เสร็จสิ้น" (feedback 2026-11-22)
+ *
  * ยกเว้นแถวเดียว: คำขอที่**ยังปิดอยู่**ในสถานะยกเลิก แถว CANCELLED ล่าสุดของมันคือตัวปิดเรื่อง
  * ไม่ใช่ตัวล้างรอบ — ไม่มีใครนำส่งใหม่ ด่านที่ผ่านไปก่อนยกเลิกจึงยังผ่านจริง และ "ส่งกลับแก้ไข"
  * บนคำขอที่ปิดไปแล้วไม่จริง เมื่อผู้ดูแลระบบ reset คำขอนั้นกลับมาเป็นร่าง phase ก็ไม่ใช่
@@ -330,7 +361,10 @@ function lastReturnSequence(tasks: JourneyTaskRow[], phase: JourneyPhase): numbe
   for (const task of tasks) {
     if (
       (task.status === ReviewTaskStatus.COMPLETED && task.result === ReviewResult.RETURNED) ||
-      (task.status === ReviewTaskStatus.CANCELLED && task.sequenceNumber !== closing)
+      (task.status === ReviewTaskStatus.CANCELLED &&
+        task.sequenceNumber !== closing &&
+        // เอกสารกฎหมายเปลี่ยน: ด่านที่ผ่านไปแล้ว (เจ้าหน้าที่ BDI) ยังผ่านอยู่ — ด่านผู้มีอำนาจเปิดใหม่เป็นขั้นปัจจุบันเอง
+        task.cancellationReason !== LEGAL_DOCS_CHANGED_REASON)
     ) {
       if (last === null || task.sequenceNumber > last) last = task.sequenceNumber;
     }

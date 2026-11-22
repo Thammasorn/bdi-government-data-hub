@@ -57,6 +57,8 @@ export const VARIABLES = {
   "support.contact": { label: "ช่องทางติดต่อ เช่น \"โทรศัพท์ 02-… หรืออีเมล …\" (ไม่มีเบอร์ = อีเมลอย่างเดียว)", sample: "โทรศัพท์ 02-480-8833 หรืออีเมล d2share-support@bdi.or.th" },
   "support.email": { label: "อีเมลฝ่ายสนับสนุน", sample: "d2share-support@bdi.or.th" },
   "app.url": { label: "ที่อยู่เว็บของระบบ", sample: "https://d2.bdi.or.th" },
+  "legal.document": { label: "เอกสารกฎหมาย (รหัสและชื่อ)", sample: "A0 ข้อตกลงหลักในการบริหารจัดการและการแบ่งปันข้อมูล" },
+  "legal.version": { label: "เลขเวอร์ชันที่แสดงให้ผู้ใช้เห็น", sample: "2.0" },
 } as const;
 export type VariableName = keyof typeof VARIABLES;
 
@@ -674,6 +676,139 @@ export const TEMPLATES: TemplateDefinition[] = [
       bodyHtml: standardBody({ title: "{{progress.title}}", intro: "{{progress.message}}" }),
       buttonLabel: "เปิดดูคำขอ",
       footnoteHtml: footnote("อีเมลฉบับนี้แจ้งความคืบหน้าเท่านั้น ยังไม่มีสิ่งที่คุณต้องดำเนินการ"),
+    },
+  },
+  // ---------------------------------------------------------------- เอกสารกฎหมายเวอร์ชันใหม่ (card "[Enhance] Legal Document Management")
+  {
+    key: "legal_reacceptance_officer",
+    group: "organization",
+    label: "เอกสารกฎหมายเวอร์ชันใหม่ รอผู้มีอำนาจอนุมัติ",
+    description: "ถึงเจ้าหน้าที่ของหน่วยงาน เมื่อ BDI เผยแพร่เอกสารกฎหมายเวอร์ชันใหม่ที่หน่วยงานต้องลงนาม — หน่วยงานทำรายการชุดข้อมูลไม่ได้จนกว่าจะลงนาม",
+    variables: ["org.name","legal.document","legal.version"],
+    blocks: ["logo", "button"],
+    required: [],
+    hasButton: true,
+    defaults: {
+      subject: "มีเอกสารกฎหมายเวอร์ชันใหม่ รอผู้มีอำนาจอนุมัติ: {{legal.document}}",
+      // ไม่ใช่อีเมลของเส้นทางคำขอ — ไม่มีบล็อกรหัสหน่วยงานและขั้นตอน (blocks อนุญาตแค่ logo, button)
+      bodyHtml: standardBody({
+        orgCode: false,
+        steps: false,
+        title: "มีเอกสารกฎหมายเวอร์ชันใหม่",
+        intro: `เอกสาร ${strong("{{legal.document}}")} เวอร์ชัน ${strong("{{legal.version}}")} ของ ${strong("{{org.name}}")} รอผู้มีอำนาจอนุมัติของหน่วยงานลงนาม ระหว่างนี้หน่วยงานยังทำรายการชุดข้อมูลไม่ได้`,
+      }),
+      buttonLabel: "เปิดดูเอกสารทางกฎหมาย",
+      footnoteHtml: null,
+    },
+  },
+  {
+    key: "legal_reacceptance_approver",
+    group: "organization",
+    label: "เอกสารกฎหมายเวอร์ชันใหม่ ให้ดำเนินการอนุมัติ",
+    description: "ถึงผู้มีอำนาจอนุมัติของหน่วยงาน เมื่อ BDI เผยแพร่เอกสารกฎหมายเวอร์ชันใหม่ที่หน่วยงานต้องลงนาม",
+    variables: ["org.name","legal.document","legal.version"],
+    blocks: ["logo", "button"],
+    required: [],
+    hasButton: true,
+    defaults: {
+      subject: "กรุณาอนุมัติเอกสารกฎหมายเวอร์ชันใหม่: {{legal.document}}",
+      // ไม่ใช่อีเมลของเส้นทางคำขอ — ไม่มีบล็อกรหัสหน่วยงานและขั้นตอน (blocks อนุญาตแค่ logo, button)
+      bodyHtml: standardBody({
+        orgCode: false,
+        steps: false,
+        title: "มีเอกสารกฎหมายเวอร์ชันใหม่ ให้ดำเนินการอนุมัติ",
+        intro: `เอกสาร ${strong("{{legal.document}}")} เวอร์ชัน ${strong("{{legal.version}}")} ของ ${strong("{{org.name}}")} ต้องได้รับการอนุมัติจากผู้มีอำนาจอนุมัติของหน่วยงาน`,
+      }),
+      buttonLabel: "อ่านและอนุมัติเอกสาร",
+      footnoteHtml: null,
+    },
+  },
+  {
+    key: "legal_reacceptance_signed",
+    group: "organization",
+    label: "หน่วยงานลงนามเอกสารกฎหมายเวอร์ชันใหม่แล้ว",
+    description: "ถึงผู้มีอำนาจอนุมัติของ BDI เมื่อผู้มีอำนาจของหน่วยงานลงนามเอกสารกฎหมายเวอร์ชันใหม่แล้ว",
+    variables: ["org.name","legal.document","legal.version"],
+    blocks: ["logo", "button"],
+    required: [],
+    hasButton: true,
+    defaults: {
+      subject: "รอ BDI อนุมัติ: {{legal.document}} ของ {{org.name}}",
+      // ไม่ใช่อีเมลของเส้นทางคำขอ — ไม่มีบล็อกรหัสหน่วยงานและขั้นตอน (blocks อนุญาตแค่ logo, button)
+      bodyHtml: standardBody({
+        orgCode: false,
+        steps: false,
+        title: "หน่วยงานลงนามเอกสารกฎหมายเวอร์ชันใหม่แล้ว",
+        intro: `${strong("{{org.name}}")} ลงนามเอกสาร ${strong("{{legal.document}}")} เวอร์ชัน ${strong("{{legal.version}}")} แล้ว รอผู้มีอำนาจอนุมัติของ BDI อนุมัติ`,
+      }),
+      buttonLabel: "อ่านและอนุมัติเอกสาร",
+      footnoteHtml: null,
+    },
+  },
+  {
+    key: "legal_reacceptance_completed",
+    group: "organization",
+    label: "การยืนยันลงนามเอกสารกฎหมายเสร็จสมบูรณ์",
+    description: "ถึงผู้มีอำนาจของหน่วยงานที่ลงนาม เมื่อผู้มีอำนาจอนุมัติของ BDI อนุมัติแล้ว",
+    variables: ["org.name","legal.document","legal.version"],
+    blocks: ["logo", "button"],
+    required: [],
+    hasButton: true,
+    defaults: {
+      subject: "การยืนยันลงนามเอกสาร {{legal.document}} เวอร์ชัน {{legal.version}} เสร็จสมบูรณ์",
+      // ไม่ใช่อีเมลของเส้นทางคำขอ — ไม่มีบล็อกรหัสหน่วยงานและขั้นตอน (blocks อนุญาตแค่ logo, button)
+      bodyHtml: standardBody({
+        orgCode: false,
+        steps: false,
+        title: "การยืนยันลงนามเสร็จสมบูรณ์",
+        intro: `การยืนยันลงนามเอกสาร ${strong("{{legal.document}}")} เวอร์ชัน ${strong("{{legal.version}}")} ของ ${strong("{{org.name}}")} ได้รับการอนุมัติจาก BDI แล้ว`,
+      }),
+      buttonLabel: "เปิดดูเอกสารทางกฎหมาย",
+      footnoteHtml: null,
+    },
+  },
+  {
+    key: "legal_access_restored",
+    group: "organization",
+    label: "หน่วยงานกลับมาใช้งานได้ตามปกติ",
+    description: "ถึงทุกคนในหน่วยงาน เมื่อไม่มีเอกสารกฎหมายที่ต้องลงนามค้างแล้ว — ลงนามและ BDI อนุมัติครบทุกฉบับแล้ว",
+    variables: ["org.name"],
+    blocks: ["logo", "button"],
+    required: [],
+    hasButton: true,
+    defaults: {
+      subject: "{{org.name}} กลับมาใช้งานได้ตามปกติ",
+      // ไม่ใช่อีเมลของเส้นทางคำขอ — ไม่มีบล็อกรหัสหน่วยงานและขั้นตอน (blocks อนุญาตแค่ logo, button)
+      bodyHtml: standardBody({
+        orgCode: false,
+        steps: false,
+        title: "หน่วยงานกลับมาใช้งานได้ตามปกติ",
+        intro: `${strong("{{org.name}}")} ไม่มีเอกสารกฎหมายที่ต้องลงนามค้างอยู่แล้ว หน่วยงานทำรายการชุดข้อมูลได้ตามปกติ`,
+      }),
+      buttonLabel: "เข้าสู่ระบบ",
+      footnoteHtml: null,
+    },
+  },
+  {
+    key: "registration_documents_changed",
+    group: "organization",
+    label: "เอกสารมีการเปลี่ยนแปลง ต้องอนุมัติใหม่อีกครั้ง",
+    description: "ถึงเจ้าหน้าที่และผู้มีอำนาจของหน่วยงาน เมื่อ BDI เผยแพร่เอกสารกฎหมายเวอร์ชันใหม่หลังผู้มีอำนาจอนุมัติคำขอลงทะเบียนไปแล้ว — คำขอกลับมาที่ผู้มีอำนาจอนุมัติของหน่วยงาน",
+    variables: ["org.name","request.number"],
+    blocks: ["logo", "button"],
+    required: [],
+    hasButton: true,
+    defaults: {
+      subject: "[{{request.number}}] เอกสารมีการเปลี่ยนแปลง ต้องอนุมัติใหม่อีกครั้ง",
+      // ไม่ใช่อีเมลของเส้นทางคำขอ — ไม่มีบล็อกรหัสหน่วยงานและขั้นตอน (blocks อนุญาตแค่ logo, button)
+      bodyHtml: standardBody({
+        orgCode: false,
+        steps: false,
+        title: "เอกสารมีการเปลี่ยนแปลง ต้องอนุมัติใหม่อีกครั้ง",
+        intro: `BDI เปลี่ยนเวอร์ชันเอกสารกฎหมายระหว่างที่คำขอ ${strong("{{request.number}}")} ของ ${strong("{{org.name}}")} รอการอนุมัติ ผู้มีอำนาจอนุมัติของหน่วยงานต้องอนุมัติคำขออีกครั้งด้วยเอกสารชุดปัจจุบัน`,
+      }),
+      buttonLabel: "เปิดดูคำขอ",
+      footnoteHtml: null,
     },
   },
 ];

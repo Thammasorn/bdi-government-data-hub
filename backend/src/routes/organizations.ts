@@ -101,6 +101,7 @@ import {
 import { DocumentRenderError } from "../lib/document-render.js";
 import { captureError } from "../lib/error-capture.js";
 import { LEGAL_SCOPES, documentsAwaitingRender, pinRequestDocuments, requestDocuments } from "../lib/legal.js";
+import { REGISTRATION_REOPEN_REASON } from "../lib/legal-reacceptance.js";
 import {
   FROZEN_ORGANIZATION_STATUSES,
   assertOrganizationOperable,
@@ -850,6 +851,7 @@ organizationRouter.get("/", async (req, res) => {
       status: true,
       result: true,
       completedAt: true,
+      cancellationReason: true,
     },
   });
   const stageBySubject = new Map(
@@ -1140,6 +1142,21 @@ organizationRouter.post("/", async (req, res) => {
  * ลิงก์ "แก้ไข"/"ตรวจสอบ" ที่หน้านั้นสร้างต่อจึงชี้ถูกที่อยู่แล้ว และการตรวจสิทธิ์
  * ยังเป็น `canView` ตัวเดิมบนคำขอที่หาเจอ ไม่ได้เปิดช่องให้ใครเห็นเพิ่ม
  */
+/**
+ * คำขอลงทะเบียนที่อนุมัติแล้วของหน่วยงาน ในรูปที่ `agreementPdf()` ใช้
+ *
+ * การลงนามเอกสารกฎหมายเวอร์ชันใหม่ (lib/legal-reacceptance.ts) เติม A0 ด้วยข้อมูลชุดเดียวกับตอนลงทะเบียน
+ * อยู่ที่นี่เพราะ `toApiShape()` เป็นของไฟล์นี้ — สำเนารูปของข้อมูลชุดที่สองจะหลุดกันเมื่อเพิ่มคอลัมน์
+ */
+export async function approvedAgreementRequest(organizationId: string) {
+  const request = await prisma.organizationRegistrationRequest.findFirst({
+    where: { organizationId, status: RequestStatus.APPROVED },
+    include: { organization: true },
+    orderBy: { approvedAt: "desc" },
+  });
+  return request ? toApiShape(request) : null;
+}
+
 async function findRequestByRequestOrOrganizationId(id: string) {
   const byRequest = await prisma.organizationRegistrationRequest.findUnique({
     where: { id },
@@ -1258,10 +1275,28 @@ organizationRouter.get("/:id", async (req, res) => {
     ? ((await recallRefusal(session, active, request))?.message ?? null)
     : null;
 
+  /**
+   * ป้าย "เอกสารมีการเปลี่ยนแปลง ต้องอนุมัติใหม่อีกครั้ง" — ด่านของผู้มีอำนาจของหน่วยงานเปิดอยู่ หลังด่าน BDI ถูกปิด
+   * เพราะเอกสารกฎหมายเปลี่ยน (lib/legal-reacceptance.ts) ด่านถัดไปผ่านแล้วป้ายก็หายเอง
+   */
+  const legalDocsChanged =
+    active?.taskType === ReviewTaskType.ORGANIZATION_APPROVAL &&
+    (await prisma.reviewTask.count({
+      where: {
+        subjectType: SUBJECT,
+        subjectId: request.id,
+        taskType: ReviewTaskType.BDI_FINAL_APPROVAL,
+        status: "CANCELLED",
+        cancellationReason: REGISTRATION_REOPEN_REASON,
+        sequenceNumber: { lt: active.sequenceNumber },
+      },
+    })) > 0;
+
   res.json({
     organization: {
       ...(await toApiShape(request)),
       revisionNote,
+      legalDocsChanged,
       // หน้ารายละเอียดเขียนว่า "ยื่นโดย <ชื่อ>" และใช้ id ตัดสินว่าเป็นเจ้าของคำขอไหม
       // ตกหล่นไปตอนย้ายสคีมา เหลือแต่ createdBy ที่เป็น uuid เปล่า
       createdBy: creator
@@ -1332,6 +1367,12 @@ organizationRouter.get("/:id", async (req, res) => {
          * หนึ่งครั้ง ค่านี้จึงเป็นชื่อผู้ประสานงานที่กดนำส่งในรอบนั้น (ดู `taskOpeners()`)
          */
         openedBy: openers.get(t.id) ?? null,
+        /**
+         * ด่าน BDI ที่ระบบปิดเพราะ BDI เปลี่ยนเวอร์ชันเอกสารกฎหมาย (lib/legal-reacceptance.ts) — ไม่มี result จึงไม่ถูกวาดตามกติกาปกติ
+         * ประวัติต้องบอกว่าทำไมคำขอกลับไปที่ผู้มีอำนาจ (feedback 2026-11-22) · การยกเลิกแบบอื่น (reset ของผู้ดูแลระบบ) ไม่ใช่เหตุนี้
+         */
+        legalDocsChanged: t.status === "CANCELLED" && t.cancellationReason === REGISTRATION_REOPEN_REASON,
+        cancelledAt: t.cancelledAt,
         assignedAt: t.assignedAt,
         startedAt: t.startedAt,
         completedAt: t.completedAt,
@@ -1886,9 +1927,24 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
 
   const versions = await prisma.legalDocumentVersion.findMany({
     where: { id: { in: documents.map((d) => d.versionId) } },
-    select: { id: true, publishedAt: true },
+    select: { id: true, publishedAt: true, legalDocumentId: true },
   });
   const publishedAt = new Map(versions.map((v) => [v.id, v.publishedAt]));
+
+  /**
+   * เวอร์ชันที่เผยแพร่อยู่ตอนนี้ ถ้าไม่ใช่ฉบับที่คำขอถือ — หน้ารายละเอียดบอกว่า "มีเวอร์ชันใหม่" ข้างเวอร์ชันที่ลงนามตอนลงทะเบียน
+   * (card "[Enhance] Legal Document Management", feedback 2026-11-22) · การลงนามฉบับใหม่ทำที่หน้า "เอกสารทางกฎหมาย" ไม่ใช่ที่คำขอ
+   */
+  const documentOfVersion = new Map(versions.map((v) => [v.id, v.legalDocumentId]));
+  const live = await prisma.legalDocumentVersion.findMany({
+    where: { legalDocumentId: { in: versions.map((v) => v.legalDocumentId) }, status: "PUBLISHED" },
+    select: { id: true, legalDocumentId: true, displayVersionNumber: true },
+  });
+  const liveByDocument = new Map(live.map((v) => [v.legalDocumentId, v]));
+  const newerVersionOf = (versionId: string) => {
+    const current = liveByDocument.get(documentOfVersion.get(versionId) ?? "");
+    return current && current.id !== versionId ? { displayVersionNumber: current.displayVersionNumber } : null;
+  };
 
   const accepted = await prisma.legalAcceptance.findMany({
     where: { subjectType: SUBJECT, subjectId: request.id },
@@ -1907,11 +1963,14 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
     legalNotice: string | null;
     versionId: string;
     versionNumber: number;
+    displayVersionNumber: string;
     fromRequest: boolean;
     fileUrl: string | null;
     acceptedAt: Date | null;
     /** false = ผู้มีอำนาจกด "ไม่เกี่ยวข้อง" ข้ามฉบับนี้ได้ */
     isRequired: boolean;
+    /** เวอร์ชันที่เผยแพร่อยู่ตอนนี้ ถ้าใหม่กว่าฉบับของคำขอ — null = คำขอถือฉบับล่าสุดอยู่แล้ว */
+    newerVersion: { displayVersionNumber: string } | null;
   }> = [];
 
   for (const doc of documents) {
@@ -1927,10 +1986,12 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
         legalNotice: doc.legalNotice,
         versionId: doc.versionId,
         versionNumber: doc.versionNumber,
+        displayVersionNumber: doc.displayVersionNumber,
         fromRequest: false,
         fileUrl: `/api/organizations/${request.id}/legal-documents/${doc.versionId}/file`,
         acceptedAt: acceptedAt.get(doc.versionId) ?? null,
         isRequired: doc.isRequired,
+        newerVersion: newerVersionOf(doc.versionId),
       });
       continue;
     }
@@ -1981,6 +2042,7 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
           nameTh: doc.nameTh,
           versionId: doc.versionId,
           versionNumber: doc.versionNumber,
+          displayVersionNumber: doc.displayVersionNumber,
           effectiveAt: doc.effectiveAt,
         },
         printedByName: fullName(data.contactPrefix, data.contactFirstName, data.contactLastName),
@@ -1996,12 +2058,14 @@ organizationRouter.get("/:id/legal-documents", async (req, res) => {
       legalNotice: doc.legalNotice,
       versionId: doc.versionId,
       versionNumber: doc.versionNumber,
+      displayVersionNumber: doc.displayVersionNumber,
       fromRequest: true,
       fileUrl: rendered
         ? `/api/organizations/${request.id}/legal-documents/${doc.versionId}/file`
         : null,
       acceptedAt: acceptedAt.get(doc.versionId) ?? null,
       isRequired: doc.isRequired,
+      newerVersion: newerVersionOf(doc.versionId),
     });
   }
 
@@ -2097,6 +2161,7 @@ organizationRouter.get("/:id/legal-documents/:versionId/file", async (req, res) 
           nameTh: version.legalDocument.nameTh,
           versionId: version.id,
           versionNumber: version.versionNumber,
+          displayVersionNumber: version.displayVersionNumber,
           effectiveAt: version.effectiveAt,
         },
         printedByName: await accountNameTh(prisma, session.sub),

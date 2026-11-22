@@ -195,6 +195,8 @@ async function seedLegalDocuments() {
       docx,
       filename: doc.template,
       actorId: SYSTEM_USER_ID,
+      // เวอร์ชันแรกที่ seed สร้าง — เวอร์ชันถัดไปผู้ดูแลกรอกเลขที่แสดงเองตอนเผยแพร่
+      displayVersionNumber: "1",
     });
     // publishVersion() ไม่เปิดใช้เอกสารให้แล้ว — เอกสารที่ seed สร้างเป็น DRAFT เปิดใช้ที่นี่หลังมีเวอร์ชันแรก
     await prisma.legalDocument.update({

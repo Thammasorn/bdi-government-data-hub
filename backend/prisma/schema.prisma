@@ -135,6 +135,7 @@ model UserAccount {
   assignedReviewTasks  ReviewTask[]            @relation("ReviewTaskAssignee")
   delegatedReviewTasks ReviewTask[]            @relation("ReviewTaskAssigner")
   completedReviewTasks ReviewTask[]            @relation("ReviewTaskCompleter")
+  requestedLegalApprovals OrganizationLegalApproval[] @relation("LegalApprovalRequester")
   legalAcceptances     LegalAcceptance[]
   signatures           SignatureConfirmation[]
   notifications        Notification[]
@@ -382,6 +383,15 @@ enum OrganizationStatus {
   @@schema("organization")
 }
 
+/// การเข้าถึงบริการของหน่วยงาน — แยกจาก `status` (วงจรชีวิต) โดยตั้งใจ (card "[Enhance] Legal Document Management")
+/// LEGAL_DOCS_UPDATE_REQUIRED = มีเอกสารกฎหมาย version ใหม่ที่หน่วยงานต้องลงนามก่อนทำรายการชุดข้อมูล
+enum OrganizationAccessStatus {
+  ACTIVE
+  LEGAL_DOCS_UPDATE_REQUIRED
+
+  @@schema("organization")
+}
+
 /// หน่วยงานที่ลงทะเบียนในระบบ — sheet `organization`
 /// เก็บ **สถานะปัจจุบัน** ส่วน snapshot ของคำขออยู่ที่ OrganizationRegistrationRequest
 model Organization {
@@ -403,6 +413,10 @@ model Organization {
   nameEn String? @map("name_en") @db.VarChar(255)
 
   status OrganizationStatus @default(PENDING_REGISTRATION)
+
+  /// การเข้าถึงบริการ — เขียนในทรานแซกชันเดียวกับงาน organization_legal_approval ที่ทำให้มันเปลี่ยน
+  accessStatus          OrganizationAccessStatus @default(ACTIVE) @map("access_status")
+  accessStatusChangedAt DateTime?                @map("access_status_changed_at") @db.Timestamptz(6)
 
   /// เบี่ยงจากดีไซน์: กว้าง 2000 ไม่ใช่ 500
   /// ที่อยู่ราชการเต็มรูป (ชื่ออาคาร ชั้น เลขห้อง ซอย พร้อมวงเล็บอธิบายทางเข้า) ชน 500 ได้จริง
@@ -445,6 +459,7 @@ model Organization {
   activationKeys              ActivationKey[]
   roleAssignments             UserRoleAssignment[]
   legalAcceptances            LegalAcceptance[]
+  legalApprovals              OrganizationLegalApproval[]
   signatures                  SignatureConfirmation[]
   notifications               Notification[]
   integrationOperations       IntegrationOperation[]
@@ -465,6 +480,8 @@ enum SubjectType {
   DATASET_REGISTRATION_REQUEST
   DATASET_REQUEST
   REPRESENTATIVE_CHANGE_REQUEST
+  /// งานลงนามเอกสารกฎหมาย version ใหม่ — subject_id = organization_legal_approval.id
+  ORGANIZATION_LEGAL_APPROVAL
 
   @@schema("review")
 }
@@ -626,6 +643,8 @@ model ReviewTask {
 
   legalAcceptances LegalAcceptance[]
   signatures       SignatureConfirmation[]
+  orgApprovalOf    OrganizationLegalApproval[] @relation("OrgApprovalTask")
+  bdiApprovalOf    OrganizationLegalApproval[] @relation("BdiApprovalTask")
 
   @@index([subjectType, subjectId, sequenceNumber])
   @@index([assignedUserId, status])
@@ -1410,7 +1429,8 @@ model LegalDocument {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   createdBy String   @map("created_by") @db.Uuid
 
-  versions LegalDocumentVersion[]
+  versions       LegalDocumentVersion[]
+  legalApprovals OrganizationLegalApproval[]
 
   @@index([applicationScope, status, displayOrder])
   @@map("legal_document")
@@ -1429,7 +1449,10 @@ model LegalDocumentVersion {
   legalDocumentId String        @map("legal_document_id") @db.Uuid
   legalDocument   LegalDocument @relation(fields: [legalDocumentId], references: [id], onDelete: Cascade)
 
-  versionNumber Int @map("version_number")
+  /// เลขระบบ — ผู้ใช้ไม่เห็น
+  versionNumber        Int    @map("version_number")
+  /// เลขที่ผู้ใช้เห็น — ผู้ดูแลกรอกเองตอนเผยแพร่ ข้อความอิสระ ไม่ตรวจซ้ำ
+  displayVersionNumber String @map("display_version_number") @db.VarChar(64)
 
   attachmentId String     @map("attachment_id") @db.Uuid
   attachment   Attachment @relation(fields: [attachmentId], references: [id])
@@ -1451,6 +1474,9 @@ model LegalDocumentVersion {
 
   acceptances LegalAcceptance[]
   snapshots   RequestDocumentSnapshot[]
+
+  approvalsForVersion OrganizationLegalApproval[] @relation("ApprovalVersion")
+  approvalsSupersede  OrganizationLegalApproval[] @relation("ApprovalPreviousVersion")
 
   @@unique([legalDocumentId, versionNumber])
   @@index([status])
@@ -1534,6 +1560,66 @@ model LegalAcceptance {
   @@index([subjectType, subjectId])
   @@index([reviewTaskId, acceptedAt])
   @@map("legal_acceptance")
+  @@schema("legal")
+}
+
+enum OrganizationLegalApprovalStatus {
+  PENDING_ORG_APPROVAL
+  PENDING_BDI_APPROVAL
+  ACTIVE
+  SUPERSEDED
+  CANCELLED
+
+  @@schema("legal")
+}
+
+/// งานลงนามเอกสารกฎหมาย version ใหม่ของหน่วยงานที่ลงทะเบียนแล้ว — หนึ่งแถวต่อหน่วยงานต่อเอกสารต่อรอบ
+///
+/// ด่าน ORGANIZATION_APPROVAL → BDI_FINAL_APPROVAL เป็น review_task เดิม (subject_type ORGANIZATION_LEGAL_APPROVAL)
+/// เวลาและผู้อนุมัติอ่านจาก review_task.completed_at / completed_by ไม่เก็บซ้ำ
+/// ไม่มีงานค้างซ้ำของเอกสารเดียวกันต่อหน่วยงาน และ ACTIVE ได้ฉบับเดียว — partial unique index ใน migration (Prisma เขียนไม่ได้)
+model OrganizationLegalApproval {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  legalDocumentId String        @map("legal_document_id") @db.Uuid
+  legalDocument   LegalDocument @relation(fields: [legalDocumentId], references: [id])
+
+  legalDocumentVersionId String               @map("legal_document_version_id") @db.Uuid
+  legalDocumentVersion   LegalDocumentVersion @relation("ApprovalVersion", fields: [legalDocumentVersionId], references: [id])
+
+  /// version ที่ถูกแทน — ว่างเมื่อหน่วยงานขอเข้าร่วมเอกสาร optional ที่ไม่เคยลงนาม
+  previousVersionId String?               @map("previous_version_id") @db.Uuid
+  previousVersion   LegalDocumentVersion? @relation("ApprovalPreviousVersion", fields: [previousVersionId], references: [id], onDelete: SetNull)
+
+  status OrganizationLegalApprovalStatus @default(PENDING_ORG_APPROVAL)
+
+  /// ผู้มีอำนาจของหน่วยงานที่ขอเข้าร่วมเอกสาร optional เอง — NULL เมื่อเกิดจาก BDI เผยแพร่ version ใหม่
+  requestedByUserId String?      @map("requested_by_user_id") @db.Uuid
+  requestedByUser   UserAccount? @relation("LegalApprovalRequester", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+
+  orgApprovalReviewTaskId String?     @map("org_approval_review_task_id") @db.Uuid
+  orgApprovalReviewTask   ReviewTask? @relation("OrgApprovalTask", fields: [orgApprovalReviewTaskId], references: [id])
+
+  bdiApprovalReviewTaskId String?     @map("bdi_approval_review_task_id") @db.Uuid
+  bdiApprovalReviewTask   ReviewTask? @relation("BdiApprovalTask", fields: [bdiApprovalReviewTaskId], references: [id])
+
+  /// เวลาที่ version นี้มีผลกับหน่วยงาน (ตอนเป็น ACTIVE)
+  activatedAt DateTime? @map("activated_at") @db.Timestamptz(6)
+
+  /// optimistic lock — ตามตารางอื่นในระบบ
+  version Int @default(0)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String   @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy String   @map("updated_by") @db.Uuid
+
+  @@index([organizationId, status])
+  @@index([status])
+  @@map("organization_legal_approval")
   @@schema("legal")
 }
 

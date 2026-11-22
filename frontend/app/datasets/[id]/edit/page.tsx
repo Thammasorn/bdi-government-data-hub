@@ -15,6 +15,7 @@ import { useToast } from "@/components/ui/Toast";
 import { api, ApiError } from "@/lib/api";
 import { takeSubmitErrors, touchedFromValues } from "@/lib/submit-errors";
 import { useRequireAuth } from "@/lib/require-auth";
+import { isLegalLocked } from "@/components/legal/LegalLockNotice";
 import { labelOf, useDatasetChoices } from "@/lib/dataset-choices";
 import {
   ASSIGN_LABELS,
@@ -159,7 +160,7 @@ export default function EditDatasetRequestPage() {
   const router = useRouter();
   const { id } = useParams<{ id: string }>();
   const { show } = useToast();
-  const { ready } = useRequireAuth();
+  const { ready, user } = useRequireAuth();
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [fields, setFields] = useState<Record<string, string>>({});
@@ -189,6 +190,16 @@ export default function EditDatasetRequestPage() {
       .get<{ request: DatasetRequest }>(`/api/dataset-requests/${id}`)
       .then(({ request }) => {
         // หน่วยงานถูกระงับหรือยุติ — PATCH / นำส่งตอบ 409 อยู่แล้ว พาไปหน้ารายละเอียดที่มี banner แทนฟอร์มที่บันทึกไม่ได้
+        // หน่วยงานต้องลงนามเอกสารกฎหมายเวอร์ชันใหม่ — บันทึก/นำส่งตอบ 409 อยู่แล้ว ไม่เปิดฟอร์มให้กรอกเสียเปล่า
+        if (isLegalLocked(user?.organization)) {
+          show({
+            tone: "info",
+            title: "หน่วยงานต้องลงนามเอกสารกฎหมายเวอร์ชันใหม่ก่อน จึงแก้ไขคำขอไม่ได้",
+            detail: "ผู้มีอำนาจอนุมัติของหน่วยงานอนุมัติได้ที่หน้าเอกสารทางกฎหมาย",
+          });
+          router.replace(`/datasets/${request.id}`);
+          return;
+        }
         if (isOrganizationFrozen(request.organization.status)) {
           show({
             tone: "info",

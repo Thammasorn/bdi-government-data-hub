@@ -1329,12 +1329,14 @@ async function sessionOrganization(organizationId: string | null) {
   if (!organizationId) return null;
   const organization = await prisma.organization.findUnique({
     where: { id: organizationId },
-    select: { id: true, nameTh: true, status: true },
+    select: { id: true, nameTh: true, status: true, accessStatus: true },
   });
   return organization && {
     id: organization.id,
     name: organization.nameTh,
     status: organization.status,
+    /** LEGAL_DOCS_UPDATE_REQUIRED = ต้องลงนามเอกสารกฎหมายเวอร์ชันใหม่ก่อน (lib/legal-reacceptance.ts) — หน้าจอใช้วาดกล่องแจ้ง */
+    accessStatus: organization.accessStatus,
   };
 }
 

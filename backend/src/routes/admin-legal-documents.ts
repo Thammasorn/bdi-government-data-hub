@@ -43,6 +43,7 @@ import {
   variableScopeOf,
   type LegalScope,
 } from "../lib/legal.js";
+import { startReacceptance } from "../lib/legal-reacceptance.js";
 import { previewPdf, type PreviewMode } from "../lib/legal-preview.js";
 import { fullNameTh } from "../lib/person-name.js";
 import { formatZodError } from "../lib/validation.js";
@@ -266,6 +267,7 @@ adminLegalDocumentRouter.get("/legal-documents", async (_req, res) => {
           ? {
               id: active.id,
               versionNumber: active.versionNumber,
+              displayVersionNumber: active.displayVersionNumber,
               usageCount: usage.get(active.id) ?? 0,
               publishedAt: active.publishedAt,
               publishedBy: active.publishedBy ? (names.get(active.publishedBy) ?? null) : null,
@@ -282,6 +284,8 @@ adminLegalDocumentRouter.get("/legal-documents", async (_req, res) => {
         versions: doc.versions.map((v) => ({
           id: v.id,
           versionNumber: v.versionNumber,
+          displayVersionNumber: v.displayVersionNumber,
+          requiresReacceptance: v.requiresReacceptance,
           status: v.status,
           usageCount: usage.get(v.id) ?? 0,
           contentHash: v.contentHash,
@@ -391,8 +395,16 @@ adminLegalDocumentRouter.post("/legal-documents/preview", templateUpload.single(
 
 // ------------------------------------------------------------------ สร้างเอกสาร
 
+/** เลขที่ผู้ใช้เห็น — บังคับกรอก ข้อความอิสระ ไม่ตรวจซ้ำ */
+const displayVersionSchema = z
+  .string({ error: "ต้องระบุเลขเวอร์ชันที่แสดงให้ผู้ใช้เห็น" })
+  .trim()
+  .min(1, { error: "ต้องระบุเลขเวอร์ชันที่แสดงให้ผู้ใช้เห็น" })
+  .max(64, { error: "เลขเวอร์ชันยาวไม่เกิน 64 ตัวอักษร" });
+
 const createDocumentSchema = z.object({
   scope: scopeSchema,
+  displayVersionNumber: displayVersionSchema,
   documentCode: z
     .string({ error: "ต้องระบุรหัสเอกสาร" })
     .trim()
@@ -457,6 +469,11 @@ adminLegalDocumentRouter.post("/legal-documents", templateUpload.single("file"),
     return;
   }
   const { scope, documentCode, nameTh } = parsed.data;
+  // เอกสารของคำขอลงทะเบียนมีแค่ A0–A3 ที่ระบบกำหนด (card "[Enhance] Legal Document Management")
+  if (scope === "ORGANIZATION_REGISTRATION") {
+    res.status(409).json({ error: "fixed_scope", message: "เพิ่มเอกสารให้คำขอลงทะเบียนหน่วยงานไม่ได้ มีเฉพาะ A0–A3 ที่ระบบกำหนด" });
+    return;
+  }
   const shortname = blankToNull(parsed.data.shortname) ?? null;
   const legalNotice = blankToNull(parsed.data.legalNotice) ?? null;
   const isRequired = formBool(req.body?.isRequired, true);
@@ -519,6 +536,7 @@ adminLegalDocumentRouter.post("/legal-documents", templateUpload.single("file"),
       docx: file.buffer,
       filename: file.originalname,
       actorId,
+      displayVersionNumber: parsed.data.displayVersionNumber,
       status: apply ? "PUBLISHED" : "DRAFT",
     });
     if (apply) {
@@ -982,6 +1000,8 @@ adminLegalDocumentRouter.get("/legal-documents/:code/versions", async (req, res)
     versions: rows.map((v) => ({
       id: v.id,
       versionNumber: v.versionNumber,
+      displayVersionNumber: v.displayVersionNumber,
+      requiresReacceptance: v.requiresReacceptance,
       status: v.status,
       /** true = ฉบับที่ใช้อยู่ตอนนี้ */
       isActive: v.status === LegalDocumentVersionStatus.PUBLISHED,
@@ -1125,14 +1145,31 @@ adminLegalDocumentRouter.post("/legal-documents/:code/versions", templateUpload.
   const file = requireFile(req, res);
   if (!file) return;
   const apply = formBool(req.body?.apply, true);
+  const display = displayVersionSchema.safeParse(req.body?.displayVersionNumber);
+  if (!display.success) {
+    res.status(400).json({ error: "validation", fields: { displayVersionNumber: display.error.issues[0]?.message ?? "" } });
+    return;
+  }
+  // เอกสารของคำขอลงทะเบียน (A0–A3) — หน่วยงานที่ลงนามฉบับนั้นแล้วต้องลงนามเวอร์ชันใหม่ทุกครั้งที่เผยแพร่ BDI ไม่ได้เลือกเอง
+  // รวม A3 optional ด้วย: หน่วยงานที่เคยเข้าร่วมถูกล็อกเหมือนเอกสารบังคับ ส่วนหน่วยงานที่ข้ามไว้ไม่มีลายมือชื่อจึงไม่ถูกนับ (BDI ตัดสิน 2026-11-22)
+  // เอกสารของคำขอชุดข้อมูลไม่ต้อง · ฉบับร่างเก็บค่านี้ไว้ งานลงนามเริ่มเมื่อกด "ใช้เวอร์ชันนี้"
+  const target = await prisma.legalDocument.findUnique({
+    where: { documentCode: code },
+    select: { applicationScope: true },
+  });
+  const reacceptance = target?.applicationScope === "ORGANIZATION_REGISTRATION";
 
   const published = await publishVersion(prisma, {
     documentCode: code,
     docx: file.buffer,
     filename: file.originalname,
     actorId: adminActorId(),
+    displayVersionNumber: display.data,
+    requiresReacceptance: reacceptance,
     status: apply ? "PUBLISHED" : "DRAFT",
   });
+  // ฉบับร่างยังไม่มีผลกับใคร — งานลงนามเริ่มเมื่อกด "ใช้เวอร์ชันนี้"
+  const reacceptanceSummary = apply && reacceptance ? await startReacceptance({ versionId: published.versionId, actorId: adminActorId() }) : null;
 
   await logAudit({
     action: AuditAction.LEGAL_DOCUMENT_PUBLISHED,
@@ -1150,7 +1187,9 @@ adminLegalDocumentRouter.post("/legal-documents/:code/versions", templateUpload.
   res.status(201).json({
     documentCode: code,
     versionId: published.versionId,
+    reacceptance: reacceptanceSummary,
     versionNumber: published.versionNumber,
+    displayVersionNumber: display.data,
     status: apply ? LegalDocumentVersionStatus.PUBLISHED : LegalDocumentVersionStatus.DRAFT,
     /** placeholder ที่พบในไฟล์ — ให้คนอัปโหลดยืนยันได้ว่าช่องที่ตั้งใจใส่ถูกอ่านเจอครบ */
     placeholders: published.placeholders,
@@ -1159,8 +1198,8 @@ adminLegalDocumentRouter.post("/legal-documents/:code/versions", templateUpload.
     /** สิ่งที่ระบบจัดรูปให้ก่อนเก็บ (ย่อหน้าตัวเลือก ไฮไลต์) */
     normalised: published.normalised,
     message: apply
-      ? `เผยแพร่ Version ${published.versionNumber} แล้ว`
-      : `เก็บ Version ${published.versionNumber} เป็นฉบับร่างแล้ว`,
+      ? `เผยแพร่ Version ${display.data} แล้ว`
+      : `เก็บ Version ${display.data} เป็นฉบับร่างแล้ว`,
     ...(published.deprecatedPlaceholders.length > 0
       ? {
           warning:
@@ -1187,13 +1226,14 @@ adminLegalDocumentRouter.post("/legal-documents/:code/versions/:versionId/activa
     });
     return;
   }
-  if (
-    version.status !== LegalDocumentVersionStatus.DRAFT &&
-    version.status !== LegalDocumentVersionStatus.SUPERSEDED
-  ) {
+  // ใช้ได้เฉพาะฉบับร่าง — ไม่มีการนำเวอร์ชันที่ถูกแทนที่กลับมาใช้ (BDI ตัดฟีเจอร์ย้อนเวอร์ชันออก 2026-11-22) ต้องอัปโหลดเป็นเวอร์ชันใหม่
+  if (version.status !== LegalDocumentVersionStatus.DRAFT) {
     res.status(409).json({
       error: "not_draft",
-      message: `Version ${version.versionNumber} เก็บถาวรแล้ว ใช้ไม่ได้`,
+      message:
+        version.status === LegalDocumentVersionStatus.SUPERSEDED
+          ? `Version ${version.displayVersionNumber} ถูกแทนที่แล้ว นำกลับมาใช้ไม่ได้ — อัปโหลดเป็นเวอร์ชันใหม่แทน`
+          : `Version ${version.displayVersionNumber} เก็บถาวรแล้ว ใช้ไม่ได้`,
     });
     return;
   }
@@ -1226,7 +1266,8 @@ adminLegalDocumentRouter.post("/legal-documents/:code/versions/:versionId/activa
     documentCode: code,
     versionId: activated.id,
     versionNumber: activated.versionNumber,
-    message: `ใช้ Version ${activated.versionNumber} แล้ว`,
+    message: `ใช้ Version ${activated.displayVersionNumber} แล้ว`,
+    reacceptance: activated.requiresReacceptance ? await startReacceptance({ versionId: activated.id, actorId: adminActorId() }) : null,
   });
 });
 
@@ -1348,72 +1389,3 @@ adminLegalDocumentRouter.get("/legal-documents/:code/versions/:versionId/preview
   sendRenderedPdf(res, pdf, `ตัวอย่าง-${code}-v${version.versionNumber}.pdf`);
 });
 
-const adminReasonSchema = z.object({
-  reason: z
-    .string({ error: "ต้องระบุ reason — เหตุผลนี้ถูกบันทึกลง audit" })
-    .trim()
-    .min(10, "กรุณาระบุเหตุผลอย่างน้อย 10 ตัวอักษร — เหตุผลนี้ถูกบันทึกไว้เป็นหลักฐาน")
-    .max(500),
-});
-
-/**
- * เผยแพร่เวอร์ชันเก่าอีกครั้ง พร้อมเหตุผล — เหมือน `…/:versionId/activate` ทุกประการ (แถวเดิมกลับเป็น PUBLISHED ไม่ออกเวอร์ชันใหม่)
- * เก็บไว้เพราะ Postman collection เรียกเส้นทางนี้ และเหตุผลลง audit
- */
-adminLegalDocumentRouter.post("/legal-documents/:code/versions/:versionId/restore", async (req, res) => {
-  const code = String(req.params.code ?? "").toUpperCase();
-  const version = await legalVersionOf(code, String(req.params.versionId));
-  if (!version) {
-    res.status(404).json({ error: "not_found", message: "ไม่พบเวอร์ชันนี้ของเอกสาร" });
-    return;
-  }
-  const parsed = adminReasonSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
-    return;
-  }
-  if (version.status === LegalDocumentVersionStatus.PUBLISHED) {
-    res.status(409).json({
-      error: "already_current",
-      message: `Version ${version.versionNumber} เป็นฉบับที่เผยแพร่อยู่แล้ว`,
-    });
-    return;
-  }
-  if (version.status !== LegalDocumentVersionStatus.SUPERSEDED) {
-    res.status(409).json({
-      error: "not_draft",
-      message: `Version ${version.versionNumber} ไม่ใช่ฉบับที่ถูกแทนที่ — ใช้ …/activate`,
-    });
-    return;
-  }
-  assertKnownPlaceholders(
-    normaliseTemplate(await readAttachment(await templateAttachment(prisma, version.id))).docx,
-    variableScopeOf(version.legalDocument.applicationScope),
-  );
-
-  const activated = await prisma.$transaction(async (tx) => {
-    await lockScope(tx, version.legalDocument.applicationScope);
-    return activateVersion(tx, version.id, adminActorId());
-  });
-
-  await logAudit({
-    action: AuditAction.LEGAL_DOCUMENT_CHANGED,
-    subjectType: AuditSubject.LEGAL_DOCUMENT,
-    subjectId: version.legalDocument.id,
-    after: { documentCode: code, versionNumber: activated.versionNumber },
-    metadata: {
-      operation: "VERSION_ACTIVATED",
-      document_code: code,
-      version_id: version.id,
-      from_status: version.status,
-      reason: parsed.data.reason,
-    },
-  });
-
-  res.json({
-    documentCode: code,
-    versionId: activated.id,
-    versionNumber: activated.versionNumber,
-    message: `เผยแพร่ Version ${activated.versionNumber} อีกครั้งแล้ว`,
-  });
-});

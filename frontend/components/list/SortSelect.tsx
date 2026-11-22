@@ -64,7 +64,8 @@ export function SortSelect({
   );
 }
 
-function Dropdown({
+/** กล่องเลือกทรงเม็ดยาของหน้ารายการ — ใช้ร่วมกับตัวกรองอื่นบนหน้ารายการ เพื่อหน้าตาเดียวกัน */
+export function Dropdown({
   label,
   value,
   onChange,

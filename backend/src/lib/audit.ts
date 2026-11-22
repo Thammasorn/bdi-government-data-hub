@@ -478,6 +478,18 @@ export const AuditAction = {
    * โดยไม่ใช่การอัปโหลดไฟล์ (อันนั้นคือ LEGAL_DOCUMENT_PUBLISHED) `metadata.operation` = CREATE · UPDATE · ACTIVATE · DEACTIVATE · VERSION_ACTIVATED
    */
   LEGAL_DOCUMENT_CHANGED: "LEGAL_DOCUMENT_CHANGED",
+  /** เปิดงานลงนามเอกสารกฎหมายเวอร์ชันใหม่ให้หน่วยงาน (BDI เผยแพร่ หรือหน่วยงานขอเข้าร่วมเอกสาร optional) — lib/legal-reacceptance.ts */
+  LEGAL_REACCEPTANCE_STARTED: "LEGAL_REACCEPTANCE_STARTED",
+  /** ผู้มีอำนาจของหน่วยงานลงนามเวอร์ชันใหม่ (ด่าน ORGANIZATION_APPROVAL) */
+  LEGAL_REACCEPTANCE_SIGNED: "LEGAL_REACCEPTANCE_SIGNED",
+  /** ผู้มีอำนาจอนุมัติของ BDI อนุมัติ — เวอร์ชันนั้นมีผลกับหน่วยงาน */
+  LEGAL_REACCEPTANCE_APPROVED: "LEGAL_REACCEPTANCE_APPROVED",
+  /** งานลงนามที่ค้างอยู่ถูกปิดเพราะ BDI นำเวอร์ชันก่อนหน้ากลับมาใช้ — ฟีเจอร์ย้อนเวอร์ชันถูกตัดออก 2026-11-22 เก็บรหัสไว้อ่านแถวเก่า */
+  LEGAL_REACCEPTANCE_CANCELLED: "LEGAL_REACCEPTANCE_CANCELLED",
+  /** organization.access_status เปลี่ยน (ล็อก / ปลดล็อก) */
+  ORGANIZATION_ACCESS_CHANGED: "ORGANIZATION_ACCESS_CHANGED",
+  /** คำขอลงทะเบียนที่ยังเปิดอยู่ได้ชุดเอกสารใหม่ หรือถูกย้อนกลับไปที่ผู้มีอำนาจของหน่วยงาน เพราะเอกสารกฎหมายเปลี่ยน */
+  REQUEST_DOCUMENTS_CHANGED: "REQUEST_DOCUMENTS_CHANGED",
   /**
    * ผู้ดูแลระบบเปลี่ยนค่าตั้งระบบ (`PUT /api/admin/settings/:key`, หน้า /console → ตั้งค่าระบบ) — subject_id ว่างเพราะ key เป็นข้อความ
    * ไม่ใช่ UUID (เหมือน `ADDRESS_MASTER`) metadata `key` บอกว่าค่าไหน before/after คือค่าเดิม/ค่าใหม่ (`value`, `is_default`)
@@ -551,6 +563,7 @@ export const AuditSubject = {
   /** แถว `iam.session` หนึ่งใบ — เพิ่มพร้อมตารางนั้น ไม่มีใน sheet */
   SESSION: "SESSION",
   ORGANIZATION: "ORGANIZATION",
+  ORGANIZATION_LEGAL_APPROVAL: "ORGANIZATION_LEGAL_APPROVAL",
   ORGANIZATION_REGISTRATION_REQUEST: "ORGANIZATION_REGISTRATION_REQUEST",
   REPRESENTATIVE_CHANGE_REQUEST: "REPRESENTATIVE_CHANGE_REQUEST",
   DATASET: "DATASET",

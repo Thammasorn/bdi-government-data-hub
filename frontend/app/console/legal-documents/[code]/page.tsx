@@ -57,7 +57,7 @@ export default function ConsoleLegalDocumentPage() {
     return (
       <PageHeader
         title="ไม่พบเอกสาร"
-        back={{ href: "/console/legal-documents", label: "เอกสารข้อตกลง" }}
+        back={{ href: "/console/legal-documents", label: "เอกสารทางกฎหมาย" }}
         description={`ไม่มีเอกสารรหัส ${code} ในระบบ`}
       />
     );
@@ -104,7 +104,7 @@ export default function ConsoleLegalDocumentPage() {
             <Tag>{doc.code}</Tag>
           </span>
         }
-        back={{ href: "/console/legal-documents", label: "เอกสารข้อตกลง" }}
+        back={{ href: "/console/legal-documents", label: "เอกสารทางกฎหมาย" }}
       />
 
       <div className="space-y-6">
@@ -379,10 +379,10 @@ function ActiveVersion({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="flex items-center gap-2 font-medium text-ink">
-              Version {v.versionNumber} <Badge meta={VERSION_META.PUBLISHED} className="leading-5" />
+              Version {v.displayVersionNumber} <Badge meta={VERSION_META.PUBLISHED} className="leading-5" />
             </p>
             <p className="text-[13.5px] text-ink-muted">
-              เผยแพร่ {formatThaiDate(v.publishedAt)}
+              เผยแพร่ล่าสุด {formatThaiDate(v.publishedAt)}
               {v.publishedBy ? ` โดย ${v.publishedBy}` : ""}
               {doc.draftVersionCount > 0 ? ` · มีฉบับร่างรอเผยแพร่ ${doc.draftVersionCount} ฉบับ` : ""}
             </p>
@@ -452,7 +452,6 @@ function VersionHistory({
     `/api/admin/legal-documents/${doc.code}/versions?page=${page}&pageSize=${pageSize}`,
   );
   const [activating, setActivating] = useState<LegalVersionRow | null>(null);
-  const [restoring, setRestoring] = useState<LegalVersionRow | null>(null);
   const [deleting, setDeleting] = useState<LegalVersionRow | null>(null);
   const { show } = useToast();
 
@@ -479,7 +478,12 @@ function VersionHistory({
                 <li key={v.id} className="px-4 py-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="flex items-center gap-2 font-medium text-ink">
-                      Version {v.versionNumber} <Badge meta={VERSION_META[v.status]} />
+                      {/*
+                        ป้ายเฉพาะเวอร์ชันที่ใช้งานอยู่และฉบับร่าง (BDI ขอ 2026-11-22) — "ฉบับก่อน" กับ "ให้หน่วยงานลงนามซ้ำ" อ่านแล้วเข้าใจผิด:
+                        เวอร์ชันที่ไม่มีป้ายคือเวอร์ชันเก่าอยู่แล้ว และเอกสารของคำขอลงทะเบียนทุกเวอร์ชันให้หน่วยงานลงนามซ้ำเสมอ ไม่ใช่สิ่งที่ต้องบอกรายเวอร์ชัน
+                      */}
+                      Version {v.displayVersionNumber}{" "}
+                      {v.status === "PUBLISHED" || v.status === "DRAFT" ? <Badge meta={VERSION_META[v.status]} /> : null}
                     </p>
                     <div className="flex flex-wrap items-center gap-1">
                       <button
@@ -512,15 +516,7 @@ function VersionHistory({
                           ใช้เวอร์ชันนี้
                         </button>
                       ) : null}
-                      {v.status === "SUPERSEDED" ? (
-                        <button
-                          type="button"
-                          onClick={() => setRestoring(v)}
-                          className="rounded-full px-2.5 py-1 text-[13px] font-medium text-coral-600 hover:bg-coral-50"
-                        >
-                          เผยแพร่อีกครั้ง
-                        </button>
-                      ) : null}
+                      {/* ไม่มี "เผยแพร่อีกครั้ง" — ประวัติดูได้อย่างเดียว เวอร์ชันที่ถูกแทนที่นำกลับมาใช้ไม่ได้ (BDI ตัดฟีเจอร์ย้อนเวอร์ชันออก 2026-11-22) */}
                       <DeleteButton
                         small
                         reason={
@@ -544,7 +540,7 @@ function VersionHistory({
                     ใช้งานใน <span className="tabular-nums font-medium text-ink">{v.usageCount.toLocaleString("th-TH")}</span> คำขอ
                   </p>
                   <p className="text-[13px] text-ink-muted">
-                    {v.publishedAt ? `เผยแพร่ ${formatThaiDate(v.publishedAt)}${v.publishedBy ? ` โดย ${v.publishedBy}` : ""}` : "ยังไม่เผยแพร่"}
+                    {v.publishedAt ? `เผยแพร่ล่าสุด ${formatThaiDate(v.publishedAt)}${v.publishedBy ? ` โดย ${v.publishedBy}` : ""}` : "ยังไม่เผยแพร่"}
                     {v.supersededAt ? ` · แทนที่เมื่อ ${formatThaiDate(v.supersededAt)}` : ""}
                   </p>
                 </li>
@@ -566,7 +562,7 @@ function VersionHistory({
       <ActionDialog
         open={activating !== null}
         onClose={() => setActivating(null)}
-        title={activating ? `ใช้ Version ${activating.versionNumber} ของ ${doc.code}` : ""}
+        title={activating ? `ใช้ Version ${activating.displayVersionNumber} ของ ${doc.code}` : ""}
         confirmLabel="ใช้เวอร์ชันนี้"
         reason={false}
         onConfirm={async () => {
@@ -579,24 +575,9 @@ function VersionHistory({
         }}
       />
       <ActionDialog
-        open={restoring !== null}
-        onClose={() => setRestoring(null)}
-        title={restoring ? `เผยแพร่ Version ${restoring.versionNumber} ของ ${doc.code} อีกครั้ง` : ""}
-        confirmLabel="เผยแพร่อีกครั้ง"
-        reason={false}
-        onConfirm={async () => {
-          if (!restoring) return;
-          const res = await api.post<{ message: string }>(
-            `/api/admin/legal-documents/${doc.code}/versions/${restoring.id}/activate`,
-          );
-          show({ tone: "success", title: res.message });
-          refresh();
-        }}
-      />
-      <ActionDialog
         open={deleting !== null}
         onClose={() => setDeleting(null)}
-        title={deleting ? `ลบ Version ${deleting.versionNumber} ของ ${doc.code} ถาวร` : ""}
+        title={deleting ? `ลบ Version ${deleting.displayVersionNumber} ของ ${doc.code} ถาวร` : ""}
         description="ไฟล์ต้นฉบับและ PDF ของเวอร์ชันนี้จะถูกลบออกจากระบบ ย้อนกลับไม่ได้"
         confirmLabel="ลบถาวร"
         tone="danger"

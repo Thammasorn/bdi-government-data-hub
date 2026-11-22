@@ -148,6 +148,8 @@ export function useTemplateUpload(scope: LegalScope | null) {
   const [file, setFileState] = useState<File | null>(null);
   const [inspect, setInspect] = useState<InspectState>({ status: "idle" });
   const [apply, setApply] = useState(true);
+  /** เลขเวอร์ชันที่ผู้ใช้เห็น — บังคับกรอก ข้อความอิสระ ไม่ตรวจซ้ำ */
+  const [displayVersion, setDisplayVersion] = useState("");
   const preview = usePdfPreview();
   const run = useRef(0);
 
@@ -198,10 +200,23 @@ export function useTemplateUpload(scope: LegalScope | null) {
     setFileState(null);
     setInspect({ status: "idle" });
     setApply(true);
+    setDisplayVersion("");
     preview.clear();
   };
 
-  return { file, setFile, inspect, apply, setApply, preview, showPreview, reset, formOf };
+  return {
+    file,
+    setFile,
+    inspect,
+    apply,
+    setApply,
+    displayVersion,
+    setDisplayVersion,
+    preview,
+    showPreview,
+    reset,
+    formOf,
+  };
 }
 
 export type TemplateUpload = ReturnType<typeof useTemplateUpload>;
@@ -210,9 +225,17 @@ export type TemplateUpload = ReturnType<typeof useTemplateUpload>;
 export function TemplateUploadFields({
   upload,
   applyHint,
+  displayVersionError,
+  reacceptance = false,
 }: {
   upload: TemplateUpload;
   applyHint?: ReactNode;
+  displayVersionError?: string;
+  /**
+   * เอกสารบังคับของคำขอลงทะเบียน (A0–A2) — เผยแพร่แล้วหน่วยงานต้องลงนามซ้ำเสมอ BDI ไม่ได้เลือก (backend ตัดสินจากเอกสาร)
+   * หน้าจอแค่บอกให้รู้ก่อนกดยืนยัน · เอกสาร optional (A3) และเอกสารของคำขอชุดข้อมูลไม่มี
+   */
+  reacceptance?: boolean;
 }) {
   const { file, inspect } = upload;
   const ticks = inspect.status === "ok" ? inspect.data.placeholders.filter((p) => p.startsWith("tick.")).length : 0;
@@ -270,11 +293,28 @@ export function TemplateUploadFields({
         </Button>
       </div>
 
+      <TextField
+        label="เลขเวอร์ชัน"
+        required
+        value={upload.displayVersion}
+        maxLength={64}
+        onChange={(e) => upload.setDisplayVersion(e.target.value)}
+        hint="เลขที่ผู้ใช้เห็นบนหน้าจอและในเอกสาร เช่น 2.0"
+        error={displayVersionError}
+      />
+
       <label className="flex items-start gap-2.5 rounded-xl bg-canvas px-4 py-3 text-[14px]">
         <input type="checkbox" className="mt-1" checked={upload.apply} onChange={(e) => upload.setApply(e.target.checked)} />
         <span>
           <span className="font-medium text-ink">ใช้ทันที</span>
           {applyHint ? <span className="block text-[13px] text-ink-muted">{applyHint}</span> : null}
+          {reacceptance ? (
+            <span className="mt-1 block text-[13px] text-warning">
+              {upload.apply
+                ? "เมื่อเผยแพร่ หน่วยงานที่ลงนามเอกสารนี้แล้วต้องลงนามเวอร์ชันใหม่ และทำรายการชุดข้อมูลไม่ได้จนกว่า BDI จะอนุมัติ"
+                : "เมื่อกด \"ใช้เวอร์ชันนี้\" ภายหลัง หน่วยงานที่ลงนามเอกสารนี้แล้วต้องลงนามเวอร์ชันใหม่"}
+            </span>
+          ) : null}
         </span>
       </label>
     </div>
@@ -285,6 +325,8 @@ export function TemplateUploadFields({
 
 interface VersionResult {
   versionNumber: number;
+  displayVersionNumber: string;
+  reacceptance: { organizations: number; registrationsRefreshed: number; registrationsReopened: number } | null;
   status: "PUBLISHED" | "DRAFT";
   message: string;
   placeholders: string[];
@@ -320,7 +362,10 @@ export function UploadVersionModal({
     try {
       const res = await api.upload<VersionResult>(
         `/api/admin/legal-documents/${doc.code}/versions`,
-        upload.formOf(upload.file, { apply: String(upload.apply) }),
+        upload.formOf(upload.file, {
+          apply: String(upload.apply),
+          displayVersionNumber: upload.displayVersion.trim(),
+        }),
       );
       setResult(res);
       onDone();
@@ -343,14 +388,22 @@ export function UploadVersionModal({
           <p className="text-[15px] text-ink">
             {result.status === "PUBLISHED" ? (
               <>
-                เผยแพร่เป็น <strong>Version {result.versionNumber}</strong> แล้ว
+                เผยแพร่เป็น <strong>Version {result.displayVersionNumber}</strong> แล้ว
               </>
             ) : (
               <>
-                เก็บเป็น <strong>ฉบับร่าง Version {result.versionNumber}</strong> แล้ว
+                เก็บเป็น <strong>ฉบับร่าง Version {result.displayVersionNumber}</strong> แล้ว
               </>
             )}
           </p>
+          {result.reacceptance ? (
+            <p className="text-[14px] text-ink-muted">
+              ส่งให้หน่วยงานลงนามซ้ำ {result.reacceptance.organizations} หน่วยงาน
+              {result.reacceptance.registrationsReopened > 0
+                ? ` · คำขอลงทะเบียนที่ต้องอนุมัติใหม่ ${result.reacceptance.registrationsReopened} คำขอ`
+                : ""}
+            </p>
+          ) : null}
           <WarningList warnings={result.warning ? [result.warning] : []} />
           <div className="flex justify-end">
             <Button onClick={close}>เสร็จสิ้น</Button>
@@ -361,13 +414,20 @@ export function UploadVersionModal({
           <div className="space-y-4">
             <TemplateUploadFields
               upload={upload}
+              displayVersionError={error?.fields.displayVersionNumber}
+              // ทุกเอกสารของคำขอลงทะเบียน รวม A3 optional — เฉพาะหน่วยงานที่ลงนามฉบับนั้นแล้ว (BDI ตัดสิน 2026-11-22)
+              reacceptance={doc?.scope === "ORGANIZATION_REGISTRATION"}
             />
-            {error ? <ErrorNotice view={error} /> : null}
+            {error ? <ErrorNotice view={error} hideFields={["displayVersionNumber"]} /> : null}
             <div className="flex justify-end gap-2">
               <Button variant="secondary" onClick={close} disabled={busy}>
                 ยกเลิก
               </Button>
-              <Button onClick={() => void confirm()} loading={busy} disabled={upload.inspect.status !== "ok"}>
+              <Button
+                onClick={() => void confirm()}
+                loading={busy}
+                disabled={upload.inspect.status !== "ok" || upload.displayVersion.trim() === ""}
+              >
                 {upload.apply ? "ยืนยันและเผยแพร่" : "ยืนยันและเก็บเป็นฉบับร่าง"}
               </Button>
             </div>
@@ -407,7 +467,8 @@ export function AddDocumentForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<AdminErrorView | null>(null);
 
-  const filled = code.trim() !== "" && name.trim() !== "" && upload.inspect.status === "ok";
+  const filled =
+    code.trim() !== "" && name.trim() !== "" && upload.displayVersion.trim() !== "" && upload.inspect.status === "ok";
 
   const confirm = async () => {
     if (!upload.file) return;
@@ -419,6 +480,7 @@ export function AddDocumentForm({
         nameTh: name.trim(),
         isRequired: String(required),
         apply: String(upload.apply),
+        displayVersionNumber: upload.displayVersion.trim(),
       });
       if (shortname.trim()) form.append("shortname", shortname.trim());
       if (notice.trim()) form.append("legalNotice", notice.trim());
@@ -479,10 +541,10 @@ export function AddDocumentForm({
             <span className="block text-[13px] text-ink-muted">เอาออกให้ผู้ลงนามข้ามได้</span>
           </span>
         </label>
-        <TemplateUploadFields
-          upload={upload}
-        />
-        {error ? <ErrorNotice view={error} hideFields={["documentCode", "nameTh", "shortname", "legalNotice"]} /> : null}
+        <TemplateUploadFields upload={upload} displayVersionError={error?.fields.displayVersionNumber} />
+        {error ? (
+          <ErrorNotice view={error} hideFields={["documentCode", "nameTh", "shortname", "legalNotice", "displayVersionNumber"]} />
+        ) : null}
         <div className="flex justify-end">
           <Button type="submit" loading={busy} disabled={!filled}>
             ยืนยันสร้างเอกสาร

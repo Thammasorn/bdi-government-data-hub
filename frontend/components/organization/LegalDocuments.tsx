@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { PdfViewer } from "@/components/organization/PdfViewer";
@@ -70,7 +71,22 @@ export function useLegalDocuments(
  * กดแล้วค่อยโหลดยังตอบโจทย์เดิมของแท็บด้วย — เอกสารทั้งชุดรวมกันสิบเจ็ดหน้า หน้าที่ต้อง
  * เลื่อนผ่านเอกสารทั้งชุดเพื่อไปหาปุ่มนำส่งคือหน้าที่ไม่มีใครอ่านเอกสารเลย
  */
+export interface DocumentSection {
+  key: string;
+  title: string;
+  document: LegalDocument | null;
+  facts: { label: string; value: string }[];
+  emptyText?: string;
+  /** ป้ายข้างหัวข้อ — บอกว่าฉบับนี้ใช้อยู่ หรือรอใครอยู่ */
+  badge?: { label: string; className: string };
+  /** ส่วนที่ต้องดำเนินการ — แถบสีเดียวกับการ์ด "รอการพิจารณาของคุณ" */
+  highlight?: boolean;
+  /** บรรทัดบอกว่าต้องทำอะไรกับฉบับนี้ */
+  note?: string;
+}
+
 export function LegalDocumentsCard({
+  sections,
   documents,
   notApplicable = [],
   description,
@@ -78,6 +94,8 @@ export function LegalDocumentsCard({
   error = null,
   onRetry,
   regenerateLabel = "ตรวจสอบและสร้าง PDF",
+  statusHref = null,
+  versionCaption,
 }: {
   documents: LegalDocument[] | null;
   /** ฉบับที่หน่วยงานระบุว่าไม่เกี่ยวข้อง — แสดงเป็นบรรทัดบอก ไม่ใช่แท็บให้เปิดอ่าน */
@@ -93,6 +111,21 @@ export function LegalDocumentsCard({
    * ซึ่งตั้งชื่อปุ่มไม่เหมือนกัน บอกให้กดปุ่มที่ไม่มีอยู่บนหน้าจอคือทางตันสำหรับผู้ใช้
    */
   regenerateLabel?: string;
+  /**
+   * ลิงก์ "ดูสถานะเอกสารทางกฎหมายของหน่วยงาน" — หน้ารายละเอียดคำขอลงทะเบียนหน่วยงาน (card "[Enhance] Legal Document Management")
+   * ส่ง URL ที่กรองหน่วยงานของคำขอนั้นไว้แล้ว · null = ไม่แสดงลิงก์
+   */
+  statusHref?: string | null;
+  /**
+   * บรรทัดเวอร์ชันใต้ชื่อเอกสาร เช่น "เวอร์ชันที่อนุมัติตอนลงทะเบียน" → "เวอร์ชันที่อนุมัติตอนลงทะเบียน 2.0" และป้าย "มีเวอร์ชันใหม่"
+   * เมื่อ BDI เผยแพร่ฉบับที่ใหม่กว่า · ไม่ส่ง = ไม่แสดง (หน้าตรวจสอบก่อนนำส่ง หน้าชุดข้อมูล)
+   */
+  versionCaption?: string;
+  /**
+   * แบ่งการ์ดเป็นส่วน แต่ละส่วนมีหัวข้อ รายละเอียดของเวอร์ชัน และปุ่ม "ดูเอกสาร" ตัวเดียวกัน — หน้างานลงนามเอกสารเวอร์ชันใหม่
+   * (เวอร์ชันปัจจุบัน / เวอร์ชันใหม่) ส่งมาแทน `documents` · `document: null` = ส่วนนั้นไม่มีเอกสาร แสดง `emptyText`
+   */
+  sections?: DocumentSection[];
 }) {
   /** ฉบับที่เปิดอ่านอยู่ — null คือยังไม่ได้กดเปิดฉบับไหน จึงยังไม่มีการ render */
   const [open, setOpen] = useState<LegalDocument | null>(null);
@@ -116,6 +149,64 @@ export function LegalDocumentsCard({
             </button>
           ) : null}
         </div>
+      </Card>
+    );
+  }
+
+  if (sections) {
+    return (
+      <Card>
+        <CardHeader title="เอกสารที่เกี่ยวข้อง" description={description} />
+        <div className="divide-y divide-line">
+          {sections.map((section) => (
+            <section
+              key={section.key}
+              className={
+                section.highlight
+                  ? "border-l-[3px] border-l-coral-500 bg-coral-50/40 py-5 pl-[21px] pr-6"
+                  : "px-6 py-5"
+              }
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-ink-muted">
+                    {section.title}
+                    {section.badge ? (
+                      <span
+                        className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[12px] font-medium ${section.badge.className}`}
+                      >
+                        <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" aria-hidden="true" />
+                        {section.badge.label}
+                      </span>
+                    ) : null}
+                  </h3>
+                  {section.document ? (
+                    <p className="mt-1 text-[15px] font-medium text-navy-800">{documentLabel(section.document)}</p>
+                  ) : (
+                    <p className="mt-1 text-[14px] text-ink-muted">{section.emptyText ?? "—"}</p>
+                  )}
+                </div>
+                {section.document?.fileUrl ? (
+                  <Button size="sm" variant="secondary" onClick={() => setOpen(section.document)}>
+                    ดูเอกสาร
+                  </Button>
+                ) : null}
+              </div>
+              {section.document && section.facts.length > 0 ? (
+                <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
+                  {section.facts.map((fact) => (
+                    <div key={fact.label}>
+                      <dt className="text-[12.5px] text-ink-muted">{fact.label}</dt>
+                      <dd className="mt-0.5 text-ink">{fact.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : null}
+              {section.note ? <p className="mt-3 text-[13px] font-medium text-coral-700">{section.note}</p> : null}
+            </section>
+          ))}
+        </div>
+        <DocumentModal open={open} onClose={() => setOpen(null)} reloadKey={reloadKey} />
       </Card>
     );
   }
@@ -176,6 +267,19 @@ export function LegalDocumentsCard({
             */}
             <div className="min-w-0">
               <p className="text-[15px] font-medium text-navy-800">{documentLabel(doc)}</p>
+              {versionCaption && doc.displayVersionNumber ? (
+                <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-ink-muted">
+                  <span>
+                    {versionCaption} <span className="font-medium text-ink">{doc.displayVersionNumber}</span>
+                  </span>
+                  {doc.newerVersion ? (
+                    <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-coral-50 px-2.5 py-0.5 text-[12px] font-medium text-coral-700">
+                      <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" aria-hidden="true" />
+                      มีเวอร์ชันใหม่ {doc.newerVersion.displayVersionNumber}
+                    </span>
+                  ) : null}
+                </p>
+              ) : null}
             </div>
             {doc.fileUrl ? (
               <Button size="sm" variant="secondary" onClick={() => setOpen(doc)}>
@@ -191,14 +295,37 @@ export function LegalDocumentsCard({
         ))}
       </ul>
       {skippedNote ? <div className="border-t border-line px-6 py-4">{skippedNote}</div> : null}
+      {statusHref ? (
+        <div className="border-t border-line px-6 py-4">
+          <Link href={statusHref} className="text-sm font-medium text-navy-700 underline-offset-4 hover:underline">
+            ดูสถานะเอกสารทางกฎหมายของหน่วยงาน →
+          </Link>
+        </div>
+      ) : null}
 
       {/*
         การ์ดนี้เป็นตัวอ่านอย่างเดียว ไม่มีปุ่ม "ไม่เกี่ยวข้อง" และไม่แสดง `legal_notice` —
         คำเตือนของผนวก 3 สั่งให้กดปุ่มนั้น ซึ่งมีอยู่ในกล่องลงนามของผู้มีอำนาจเท่านั้น
       */}
+      <DocumentModal open={open} onClose={() => setOpen(null)} reloadKey={reloadKey} />
+    </Card>
+  );
+}
+
+/** อ่านเอกสารหนึ่งฉบับใน modal — ทั้งรายการปกติและแบบแบ่งส่วนใช้ตัวเดียวกัน */
+function DocumentModal({
+  open,
+  onClose,
+  reloadKey,
+}: {
+  open: LegalDocument | null;
+  onClose: () => void;
+  reloadKey: number;
+}) {
+  return (
       <Modal
         open={open !== null}
-        onClose={() => setOpen(null)}
+        onClose={onClose}
         size="lg"
         title={open ? documentLabel(open) : ""}
         description={open?.name}
@@ -216,11 +343,10 @@ export function LegalDocumentsCard({
           />
         ) : null}
         <div className="mt-5 flex justify-end">
-          <Button variant="secondary" onClick={() => setOpen(null)}>
+          <Button variant="secondary" onClick={onClose}>
             ปิด
           </Button>
         </div>
       </Modal>
-    </Card>
   );
 }
