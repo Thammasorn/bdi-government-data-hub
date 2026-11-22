@@ -22,7 +22,8 @@ export interface SessionUser {
   lastName: string | null;
   roles: Role[];
   organizationId: string | null;
-  organization?: { id: string; name: string; status: string } | null;
+  /** `accessStatus` แยกจาก `status`: หน่วยงานที่ใช้งานอยู่แต่ต้องลงนามเอกสารกฎหมายเวอร์ชันใหม่ก่อน */
+  organization?: { id: string; name: string; status: string; accessStatus?: "ACTIVE" | "LEGAL_DOCS_UPDATE_REQUIRED" } | null;
   /**
    * มีค่าเมื่อผู้ใช้ **เคย** สังกัดหน่วยงาน แล้วถูกถอดออกเพราะมีคนมารับหน้าที่แทน
    * ต่างจาก `organizationId === null` เฉย ๆ ซึ่งแปลว่ายังไม่เคยมีหน่วยงานเลย —

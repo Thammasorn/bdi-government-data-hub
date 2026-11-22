@@ -21,7 +21,7 @@ export default function ConsoleNewLegalDocumentPage() {
     return (
       <PageHeader
         title="ไม่พบหมวดเอกสาร"
-        back={{ href: "/console/legal-documents", label: "เอกสารข้อตกลง" }}
+        back={{ href: "/console/legal-documents", label: "เอกสารทางกฎหมาย" }}
         description="เลือกหมวดจากปุ่ม “เพิ่มเอกสาร” ในหน้าเอกสารข้อตกลง"
       />
     );
@@ -33,7 +33,7 @@ export default function ConsoleNewLegalDocumentPage() {
         eyebrow="ตั้งค่าเอกสาร"
         title="เพิ่มเอกสาร"
         description={SCOPE_TITLES[scope]}
-        back={{ href: "/console/legal-documents", label: "เอกสารข้อตกลง" }}
+        back={{ href: "/console/legal-documents", label: "เอกสารทางกฎหมาย" }}
       />
       <AddDocumentForm
         scope={scope}

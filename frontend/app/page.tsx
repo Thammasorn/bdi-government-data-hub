@@ -10,6 +10,7 @@ import { DatasetSection } from "@/components/home/DatasetSection";
 import { LandingPage } from "@/components/landing/LandingPage";
 import { ApprovalStepsCompact } from "@/components/review/ApprovalSteps";
 import { OrganizationFrozenNotice } from "@/components/review/OrganizationFrozenNotice";
+import { LegalLockNotice, isLegalLocked } from "@/components/legal/LegalLockNotice";
 import { useSession, type SessionUser } from "@/components/SessionProvider";
 import { Button } from "@/components/ui/Button";
 import { Card, DotDecoration, OrganizationStatusBadge } from "@/components/ui/Card";
@@ -394,7 +395,7 @@ function HomeHeader({
   hideInactiveNotice = false,
 }: {
   name: string;
-  organization: { id: string; name: string; status: string } | null;
+  organization: { id: string; name: string; status: string; accessStatus?: string } | null;
   onRegister?: () => void;
   registering?: boolean;
   /**
@@ -446,6 +447,8 @@ function HomeHeader({
         {/* ระงับหรือยุติ — แทนทั้งกล่องส่งกลับแก้ไขและกล่องเหลือง: ทั้งสองชวนให้แก้หรือกรอกฟอร์ม ซึ่งทำไม่ได้แล้ว */}
         {status && isOrganizationFrozen(status) ? (
           <OrganizationFrozenNotice status={status} className="mt-5" />
+        ) : isLegalLocked(organization) ? (
+          <LegalLockNotice className="mt-5" />
         ) : returnedRegistration ? (
           <RegistrationReturnedNotice request={returnedRegistration} />
         ) : status &&

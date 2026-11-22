@@ -47,6 +47,14 @@ export const ATTESTATION_TEXT = "ข้าพเจ้าได้อ่าน�
  * กด "ปิด" กลับไปหน้าที่มีปุ่มส่งผลการตรวจสอบ ตามที่การ์ดกำหนด — และการเห็นชอบที่กดค้าง
  * ไว้จะถูกล้าง ไม่ใช่เก็บไว้ครึ่งทาง เพราะยังไม่มีการลงนามเกิดขึ้นเลย
  */
+/** สิ่งที่กล่องลงนามส่ง — รูปเดียวกับ `signature` ของ POST /api/organizations/:id/review */
+export interface SigningPayload {
+  acknowledgements: { versionId: string; attestedAt: string }[];
+  notApplicable: { versionId: string }[];
+  attestationText?: string;
+  confirmationText: string;
+}
+
 export function SigningDialog({
   open,
   onClose,
@@ -56,6 +64,7 @@ export function SigningDialog({
   documents,
   perDocument,
   signLabel,
+  submit,
 }: {
   open: boolean;
   onClose: () => void;
@@ -66,6 +75,11 @@ export function SigningDialog({
   documents: LegalDocument[];
   perDocument: boolean;
   signLabel: string;
+  /**
+   * ส่งลายมือชื่อไปที่อื่นแทนด่านของคำขอลงทะเบียน — การลงนามเอกสารกฎหมายเวอร์ชันใหม่ใช้กล่องเดียวกันนี้
+   * (หน้า /legal-documents/approvals/:id) เพื่อให้ขั้นตอนอ่าน ติ๊ก เห็นชอบ และข้อความยืนยันเป็นชุดเดียวกับตอนลงทะเบียน
+   */
+  submit?: (payload: SigningPayload) => Promise<void>;
 }) {
   /** จำนวนฉบับที่กดเห็นชอบไปแล้ว — เป็น index ของฉบับที่กำลังแสดงด้วย */
   const [acknowledged, setAcknowledged] = useState(0);
@@ -103,27 +117,26 @@ export function SigningDialog({
     setBusy(true);
     setError(null);
     try {
-      await api.post(`/api/organizations/${requestId}/review`, {
-        action: "approve",
-        signature: {
-          acknowledgements: documents
-            .filter((d) => !notApplicable.includes(d.versionId))
-            .map((d) => ({
-              versionId: d.versionId,
-              // ฝ่าย BDI ไม่มีการติ๊กรายฉบับ จึงใช้เวลาที่กดลงนามเป็นเวลายอมรับ
-              attestedAt: attested[d.versionId] ?? new Date().toISOString(),
-            })),
-          notApplicable: notApplicable.map((versionId) => ({ versionId })),
-          ...(perDocument ? { attestationText: ATTESTATION_TEXT } : {}),
-          confirmationText: CONFIRMATION_TEXT,
-        },
-      });
+      const signature: SigningPayload = {
+        acknowledgements: documents
+          .filter((d) => !notApplicable.includes(d.versionId))
+          .map((d) => ({
+            versionId: d.versionId,
+            // ฝ่าย BDI ไม่มีการติ๊กรายฉบับ จึงใช้เวลาที่กดลงนามเป็นเวลายอมรับ
+            attestedAt: attested[d.versionId] ?? new Date().toISOString(),
+          })),
+        notApplicable: notApplicable.map((versionId) => ({ versionId })),
+        ...(perDocument ? { attestationText: ATTESTATION_TEXT } : {}),
+        confirmationText: CONFIRMATION_TEXT,
+      };
+      if (submit) await submit(signature);
+      else await api.post(`/api/organizations/${requestId}/review`, { action: "approve", signature });
       reset();
       onSigned();
     } catch (err) {
       // คำขอถูกปิดด่านไปแล้วระหว่างที่หน้านี้เปิดอยู่ — ปิดกล่องแล้วให้หน้าโหลดสถานะจริง
       // ค้างกล่องไว้กับข้อความ error จะทำให้เขากดลงนามซ้ำไปเรื่อย ๆ กับด่านที่ปิดแล้ว
-      if (err instanceof ApiError && err.code === "stage_completed") {
+      if (err instanceof ApiError && (err.code === "stage_completed" || err.code === "task_closed")) {
         reset();
         onStale(err.message);
         return;

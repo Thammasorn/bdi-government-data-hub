@@ -9,6 +9,8 @@ export type LegalVersionStatus = "DRAFT" | "PUBLISHED" | "SUPERSEDED" | "RETIRED
 export interface LegalVersionSummary {
   id: string;
   versionNumber: number;
+  /** เลขที่ผู้ใช้เห็น — BDI กรอกเองตอนอัปโหลด (ข้อความอิสระ) */
+  displayVersionNumber: string;
   /** จำนวนคำขอที่ผูกเวอร์ชันนี้ไว้ */
   usageCount: number;
   status: LegalVersionStatus;
@@ -44,6 +46,9 @@ export interface LegalDocument {
 export interface LegalVersionRow {
   id: string;
   versionNumber: number;
+  displayVersionNumber: string;
+  /** BDI ติ๊กให้หน่วยงานลงนามซ้ำตอนเผยแพร่ (A0–A3 เท่านั้น) */
+  requiresReacceptance: boolean;
   status: LegalVersionStatus;
   /** true = ฉบับที่ใช้อยู่ตอนนี้ */
   isActive: boolean;

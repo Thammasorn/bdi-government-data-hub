@@ -216,6 +216,7 @@ async function main() {
   await prisma.notificationDelivery.deleteMany();
   await prisma.notification.deleteMany();
   await prisma.integrationOperation.deleteMany();
+  await prisma.organizationLegalApproval.deleteMany();
   await prisma.requestDocumentSnapshot.deleteMany();
   await prisma.legalAcceptance.deleteMany();
   await prisma.signatureConfirmation.deleteMany();

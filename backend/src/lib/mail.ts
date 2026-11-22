@@ -731,3 +731,40 @@ export function requestProgressedContext(info: ProgressInfo, progress?: JourneyP
 export async function sendRequestProgressed(to: string, info: ProgressInfo, progress?: JourneyProgress | null): Promise<void> {
   await deliver(to, requestProgressedContext(info, progress));
 }
+
+// ------------------------------------------------------------------ เอกสารกฎหมายเวอร์ชันใหม่
+
+export type LegalTemplateKey =
+  | "legal_reacceptance_officer"
+  | "legal_reacceptance_approver"
+  | "legal_reacceptance_signed"
+  | "legal_reacceptance_completed"
+  | "legal_access_restored"
+  | "registration_documents_changed";
+
+export interface LegalNoticeInfo {
+  organizationName: string;
+  /** "A0 ข้อตกลงหลัก…" — ว่างได้กับอีเมลที่ไม่พูดถึงเอกสารฉบับเดียว */
+  documentLabel: string;
+  versionDisplay: string;
+  requestNumber: string;
+  path: string;
+}
+
+export function legalNoticeContext(key: LegalTemplateKey, info: LegalNoticeInfo): EmailContext {
+  return {
+    key,
+    vars: {
+      "org.name": info.organizationName,
+      "legal.document": info.documentLabel,
+      "legal.version": info.versionDisplay,
+      "request.number": info.requestNumber,
+    },
+    blocks: {},
+    button: { url: `${env.appUrl}${info.path}` },
+  };
+}
+
+export async function sendLegalNotice(to: string, key: LegalTemplateKey, info: LegalNoticeInfo): Promise<void> {
+  await deliver(to, legalNoticeContext(key, info));
+}

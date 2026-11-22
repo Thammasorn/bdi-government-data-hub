@@ -124,7 +124,7 @@ export interface AgreementInput {
    * คำขอหนึ่งใบมีเอกสารหลายฉบับที่เผยแพร่คนละรอบกัน ค่าคู่นี้จึงต่างกันได้ในคำขอเดียวกัน
    * และเป็นเหตุผลที่มันมาเป็น argument ต่อการ render ไม่ได้อยู่ในข้อมูลของคำขอ
    */
-  documentVersionNumber: number | null;
+  documentVersionNumber: string | null;
   documentEffectiveAt: Date | null;
 }
 
@@ -234,7 +234,7 @@ export function agreementValues(input: AgreementInput): TemplateValues {
 
     // ── ตัวเอกสารเอง ──
     "document.version":
-      input.documentVersionNumber === null ? "" : String(input.documentVersionNumber),
+      input.documentVersionNumber ?? "",
     "document.effectiveDate": date(input.documentEffectiveAt),
 
     // ── ระบบ ──

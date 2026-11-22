@@ -14,6 +14,11 @@ export interface Column<T> {
   header: string;
   cell: (row: T) => ReactNode;
   className?: string;
+  /**
+   * เซลล์ที่ผสานลงหลายแถว (rowspan) — คืนจำนวนแถวที่เซลล์นี้คลุม หรือ 0 ถ้าแถวนี้อยู่ใต้เซลล์ของแถวก่อนหน้า (ไม่วาด `<td>`)
+   * ใช้กับแถวที่เรียงมาเป็นกลุ่มแล้ว เช่น หลายเอกสารของหน่วยงานเดียว
+   */
+  rowSpan?: (row: T, index: number, rows: T[]) => number;
 }
 
 /**
@@ -67,17 +72,32 @@ export function DataTable<T>({
           </thead>
           {showSkeleton ? null : (
             <tbody className={clsx("divide-y divide-line", loading && "opacity-60 transition-opacity")}>
-              {(rows ?? []).map((row) => (
+              {(rows ?? []).map((row, index, all) => (
                 <tr
                   key={rowKey(row)}
                   onClick={rowHref ? () => router.push(rowHref(row)) : undefined}
                   className={clsx("align-top", rowHref && "cursor-pointer hover:bg-navy-50/50")}
                 >
-                  {columns.map((c) => (
-                    <td key={c.key} className={clsx("px-4 py-3 first:pl-5 last:pr-5", c.className)}>
-                      {c.cell(row)}
-                    </td>
-                  ))}
+                  {columns.map((c, ci) => {
+                    const span = c.rowSpan ? c.rowSpan(row, index, all) : 1;
+                    if (span === 0) return null;
+                    // ระยะขอบตามตำแหน่งคอลัมน์ ไม่ใช่ `first:` — แถวที่เซลล์แรกถูกผสานขึ้นไป `<td>` ตัวแรกคือคอลัมน์ที่สอง
+                    return (
+                      <td
+                        key={c.key}
+                        rowSpan={span > 1 ? span : undefined}
+                        className={clsx(
+                          "px-4 py-3",
+                          ci === 0 && "pl-5",
+                          ci === columns.length - 1 && "pr-5",
+                          span > 1 && "border-r border-line bg-white",
+                          c.className,
+                        )}
+                      >
+                        {c.cell(row)}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>

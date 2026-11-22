@@ -8,6 +8,7 @@ import { DatasetSigningDialog } from "@/components/dataset/DatasetSigningDialog"
 import { LegalDocumentsCard, useLegalDocuments } from "@/components/organization/LegalDocuments";
 import { Timeline } from "@/components/organization/Timeline";
 import { ApprovalSteps } from "@/components/review/ApprovalSteps";
+import { LegalLockNotice, isLegalLocked } from "@/components/legal/LegalLockNotice";
 import { OrganizationFrozenNotice } from "@/components/review/OrganizationFrozenNotice";
 import { RequestMovedNotice } from "@/components/review/RequestMovedNotice";
 import { Button } from "@/components/ui/Button";
@@ -288,7 +289,12 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
    * ทุกด่านรวมทั้งความเห็นของผู้เชี่ยวชาญและการมอบหมาย และฝั่งหน่วยงานแก้ไขหรือยกเลิกไม่ได้ banner บอกเหตุผลแทน
    */
   const frozen = isOrganizationFrozen(request.organization.status);
-  const ability = frozen ? null : decideAbility(request, user.roles, user.id);
+  /**
+   * หน่วยงานต้องลงนามเอกสารกฎหมายเวอร์ชันใหม่ — ฝั่งหน่วยงานแก้ไข นำส่ง ยกเลิก และอนุมัติไม่ได้ (backend ตอบ 409 อยู่แล้ว)
+   * จึงไม่วาดปุ่มเลย · อ่านจาก session ของผู้ใช้เอง: ล็อกมีแต่หน่วยงานภายนอก BDI จึงเห็นปุ่มของด่านตัวเองตามปกติ
+   */
+  const legalLocked = isLegalLocked(user.organization) && user.organizationId === request.organization.id;
+  const ability = frozen || legalLocked ? null : decideAbility(request, user.roles, user.id);
   // ชีท conditions ตัดสินว่าช่องไหนถูกถามจริง — หน้ารายละเอียดจึงไม่ขึ้นหัวข้อที่ระบบไม่ได้ถาม
   // (เช่น รายละเอียดข้อมูลส่วนบุคคล เมื่อชุดข้อมูลตอบว่าไม่มีข้อมูลส่วนบุคคล)
   const rules = formRules(toFormState(request as unknown as Record<string, unknown>));
@@ -299,6 +305,7 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
   const mayEdit =
     editable &&
     !frozen &&
+    !legalLocked &&
     (request.createdBy?.id === user.id ||
       (user.roles.includes("ORGANIZATION_USER") && user.organizationId === request.organization.id));
 
@@ -517,7 +524,11 @@ export function DatasetDetailView({ id, backHref }: { id: string; backHref?: str
         <RequestMovedNotice message={movedNotice} onDismiss={() => setMovedNotice(null)} />
       ) : null}
 
-      {frozen ? <OrganizationFrozenNotice status={request.organization.status} /> : null}
+      {frozen ? (
+        <OrganizationFrozenNotice status={request.organization.status} />
+      ) : legalLocked ? (
+        <LegalLockNotice />
+      ) : null}
 
       {/*
         กล่องนี้ไม่ผูกกับการมีข้อความส่งกลับอีกแล้ว — มันเป็นที่อยู่ของปุ่ม "ยกเลิกคำขอ" ด้วย

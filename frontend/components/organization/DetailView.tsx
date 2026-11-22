@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { LegalLockNotice, isLegalLocked } from "@/components/legal/LegalLockNotice";
 import { LegalDocumentsCard, useLegalDocuments } from "@/components/organization/LegalDocuments";
 import { SigningDialog } from "@/components/organization/SigningDialog";
 import { Timeline } from "@/components/organization/Timeline";
@@ -394,6 +395,16 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         </Card>
       ) : null}
 
+      {/* BDI เผยแพร่เอกสารกฎหมายเวอร์ชันใหม่หลังผู้มีอำนาจอนุมัติแล้ว — คำขอกลับมาที่ผู้มีอำนาจของหน่วยงาน (lib/legal-reacceptance.ts) */}
+      {org.legalDocsChanged ? (
+        <div role="status" className="mb-6 rounded-xl border-l-[3px] border-warning bg-warning-bg p-5">
+          <p className="text-[13px] font-semibold text-warning">เอกสารมีการเปลี่ยนแปลง ต้องอนุมัติใหม่อีกครั้ง</p>
+          <p className="mt-1.5 text-[15px] leading-relaxed text-ink">
+            BDI เผยแพร่เอกสารกฎหมายเวอร์ชันใหม่ระหว่างที่คำขอนี้รอการอนุมัติ ผู้มีอำนาจอนุมัติของหน่วยงานต้องอนุมัติคำขออีกครั้งด้วยเอกสารเวอร์ชันใหม่
+          </p>
+        </div>
+      ) : null}
+
       {movedNotice ? (
         <RequestMovedNotice message={movedNotice} onDismiss={() => setMovedNotice(null)} />
       ) : null}
@@ -449,7 +460,10 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
         </Card>
       ) : null}
 
-      {isMember && organizationActive ? <DatasetEntryCard /> : null}
+      {/* ล็อกเพราะต้องลงนามเอกสารเวอร์ชันใหม่ — กล่องสีเหลืองตัวเดียวกับหน้าแรกแทนการ์ดที่ปุ่มกดไม่ได้ (feedback 2026-11-22) */}
+      {isMember && organizationActive ? (
+        isLegalLocked(user.organization) ? <LegalLockNotice /> : <DatasetEntryCard />
+      ) : null}
 
       <div className="flex flex-col gap-6">
         <Card>
@@ -529,6 +543,11 @@ export function OrganizationDetailView({ id, backHref }: { id: string; backHref?
             error={legalDocumentsError}
             onRetry={reloadLegalDocuments}
             regenerateLabel="ตรวจสอบข้อมูล"
+            // BDI เห็นทุกหน่วยงาน — เปิดตารางที่กรองหน่วยงานของคำขอนี้ไว้ (ฝั่งหน่วยงานเห็นแต่ของตัวเองอยู่แล้ว backend ไม่สนค่านี้)
+            // เฉพาะคำขอที่อนุมัติแล้ว: ก่อนนั้นหน่วยงานยังไม่มีเอกสารที่มีผล หน้านั้นจึงว่าง — กติกาเดียวกับเมนู "เอกสารทางกฎหมาย" (AppShell)
+            statusHref={org.status === "APPROVED" ? `/legal-documents?organizationIds=${org.organizationId}` : null}
+            // อนุมัติแล้ว = ฉบับที่ลงนามตอนลงทะเบียน · ยังไม่อนุมัติ = ฉบับที่คำขอถืออยู่ (feedback 2026-11-22)
+            versionCaption={org.status === "APPROVED" ? "เวอร์ชันที่อนุมัติตอนลงทะเบียน" : "เวอร์ชัน"}
           />
         ) : null}
 
