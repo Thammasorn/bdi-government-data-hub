@@ -292,6 +292,9 @@ export const AuditAction = {
    *   `transferred_user_account_id` ชี้คนที่ย้าย และ `approver_cleared: true` แปลว่าอีเมลผู้มีอำนาจฯ ใน
    *   snapshot ถูกล้างเพราะเป็นคนที่ย้ายเอง — แถวนี้ไม่เก็บอีเมลนั้น `reason` คือเหตุผลของการย้าย
    *   แถวแบบนี้ที่เขียนก่อนการ์ดไม่มี เหลือแค่เลขคำขอใน `ROLE_ASSIGNED` ของคนที่ย้าย
+   * - `ADMIN_DEACTIVATE` / `ADMIN_ROLE_REVOKED` (bug scan 2026-11-15 ข้อ 13): ผลข้างเคียงแบบเดียวกันของ
+   *   `POST /api/admin/users/:id/deactivate` และ `DELETE /api/admin/users/:id/roles/:assignmentId` เมื่อคนนั้นคือ
+   *   ผู้มีอำนาจฯ ที่คำขอรอลงนามอยู่ รูปเดียวกับ `ADMIN_TRANSFER` แต่ชี้คนด้วย `removed_user_account_id`
    *
    * ทั้งสองทาง `before` คือสถานะกับ `submittedAt` เดิม แยกจาก `REQUEST_RETURNED` เพราะคนละคนสั่งและคนละ
    * ความหมาย: การส่งกลับเป็น**ผล**ของด่านหนึ่ง มีผู้ตัดสินและเหตุผลที่หน่วยงานอ่านได้ ส่วนอันนี้คือการลบรอบที่

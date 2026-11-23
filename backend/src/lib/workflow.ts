@@ -88,6 +88,34 @@ export const TASK_TYPE_ROLES: Record<ReviewTaskType, RoleCode[]> = {
 };
 
 /**
+ * ด่านของฝั่งหน่วยงาน — ถือ role อย่างเดียวไม่พอ ต้องเป็นคนของหน่วยงานเจ้าของคำขอด้วย
+ *
+ * role ฝั่ง BDI มีชุดเดียวทั้งระบบ แต่ `ORGANIZATION_APPROVER` มีหนึ่งชุดต่อหน่วยงาน
+ * ตารางข้างบนจึงตอบได้แค่ "ตำแหน่งไหน" ไม่ได้ตอบว่า "ของหน่วยงานไหน"
+ */
+const ORGANIZATION_SIDE_TASKS: ReviewTaskType[] = [
+  ReviewTaskType.ORGANIZATION_APPROVAL,
+  ReviewTaskType.ORGANIZATION_REVISION,
+];
+
+/**
+ * ผู้ใช้คนนี้ปิดด่านชนิดนี้ของคำขอของหน่วยงานนี้ได้ไหม — จุดเดียวที่ review handler ทั้งสองเส้นทางถาม
+ *
+ * เดิมแต่ละ route เช็คแค่ role ผู้มีอำนาจฯ ของหน่วยงาน ข จึงลงนาม ส่งกลับ หรือปฏิเสธคำขอของ
+ * หน่วยงาน ก ได้ถ้ารู้ id ของคำขอ (bug scan 2026-11-15 ข้อ 2) `session.organizationId`
+ * คำนวณจาก role assignment ที่ยัง ACTIVE ทุก request จึงใช้เทียบได้ตรง ๆ
+ */
+export function mayCloseTask(
+  session: { roles: RoleCode[]; organizationId: string | null },
+  taskType: ReviewTaskType,
+  requestOrganizationId: string,
+): boolean {
+  if (!session.roles.some((r) => TASK_TYPE_ROLES[taskType].includes(r))) return false;
+  if (!ORGANIZATION_SIDE_TASKS.includes(taskType)) return true;
+  return session.organizationId === requestOrganizationId;
+}
+
+/**
  * ด่านที่แต่ละ role เป็นคนทำ — **คำนวณจาก TASK_TYPE_ROLES ไม่ได้เขียนซ้ำ**
  *
  * หน้ารายการต้องตอบว่า "ใบไหนค้างอยู่ที่ตำแหน่งของฉัน" ซึ่งเป็นคำถามกลับด้านของ

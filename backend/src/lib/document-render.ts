@@ -16,6 +16,8 @@
  * เรียก soffice ตรง ๆ จาก process นี้ก็ได้ แต่ต้องจัดการ user profile ที่ชนกันเมื่อมี
  * หลาย request พร้อมกัน กับ process ที่ค้างเอง
  */
+import { inflateRawSync } from "node:zlib";
+
 import Docxtemplater from "docxtemplater";
 import PizZip from "pizzip";
 
@@ -412,9 +414,68 @@ function textOf(xml: string): string {
   return xml.replace(/<[^>]*>/g, "");
 }
 
+/** เพดานของ .docx หลังคลายการบีบอัด — เอกสารจริงของฝ่ายกฎหมายคลายแล้วไม่ถึง 5 MB และมีไม่ถึง 100 ไฟล์ย่อย */
+const MAX_DOCX_ENTRIES = 2000;
+const MAX_DOCX_UNPACKED_BYTES = 100 * 1024 * 1024;
+
+/** สิ่งที่ PizZip เก็บไว้ต่อไฟล์ย่อยหลังอ่านสารบัญของ zip — ยังไม่ได้คลายเนื้อไฟล์ */
+type ZipEntryData = {
+  uncompressedSize?: number;
+  compressedSize?: number;
+  compressionMethod?: string;
+  getCompressedContent?: () => string | Uint8Array;
+};
+
+const DEFLATE = "\x08\x00";
+
+function docxTooLarge(): DocumentRenderError {
+  return new DocumentRenderError(
+    "docx_too_large",
+    "ไฟล์นี้มีขนาดหลังคลายการบีบอัดใหญ่เกินกว่าที่ระบบรับได้ กรุณาตรวจสอบไฟล์แล้วอัปโหลดใหม่",
+    400,
+    { file: "ไฟล์มีขนาดหลังคลายการบีบอัดใหญ่เกินไป" },
+  );
+}
+
+/**
+ * ปฏิเสธ .docx ที่คลายออกมาแล้วใหญ่ผิดปกติ **ก่อน** จะมีใครอ่านเนื้อไฟล์
+ *
+ * อัปโหลดถูกจำกัดที่ 20 MB แต่ .docx คือ zip ไฟล์ขนาดไม่กี่ร้อย KB คลายออกมาเป็นหลาย GB ได้
+ * และ PizZip คลายทั้งก้อนลงหน่วยความจำบน thread ของ request (bug scan 2026-11-15 ข้อ 21)
+ *
+ * ตรวจสองชั้น: ขนาดที่สารบัญของ zip ประกาศไว้ แล้วคลายจริงด้วย zlib โดยตั้งเพดานไว้ที่ขนาดที่ประกาศ
+ * เพราะสารบัญเป็นสิ่งที่คนสร้างไฟล์เขียนเอง จะประกาศเล็กกว่าจริงเท่าไรก็ได้ ชั้นที่สองใช้หน่วยความจำ
+ * ไม่เกินเพดานรวม และทิ้งผลไปทีละไฟล์ย่อย
+ */
+function assertDocxUnpacksSafely(zip: PizZip): void {
+  const entries = Object.values(zip.files as Record<string, { dir?: boolean; _data?: ZipEntryData }>);
+  if (entries.length > MAX_DOCX_ENTRIES) throw docxTooLarge();
+
+  let total = 0;
+  for (const entry of entries) {
+    total += entry._data?.uncompressedSize ?? 0;
+    if (total > MAX_DOCX_UNPACKED_BYTES) throw docxTooLarge();
+  }
+
+  for (const entry of entries) {
+    const data = entry._data;
+    if (!data?.getCompressedContent || data.compressionMethod !== DEFLATE || !data.compressedSize) continue;
+    const packed = data.getCompressedContent();
+    try {
+      inflateRawSync(typeof packed === "string" ? Buffer.from(packed, "binary") : Buffer.from(packed), {
+        maxOutputLength: (data.uncompressedSize ?? 0) + 1,
+      });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ERR_BUFFER_TOO_LARGE") throw docxTooLarge();
+      // เนื้อไฟล์เสียแบบอื่น — ปล่อยให้ผู้อ่านตัวจริงข้างล่างเป็นคนรายงานตามเดิม
+    }
+  }
+}
+
 function openDocx(docx: Buffer): PizZip {
+  let zip: PizZip;
   try {
-    return new PizZip(docx);
+    zip = new PizZip(docx);
   } catch {
     throw new DocumentRenderError(
       "not_a_docx",
@@ -423,6 +484,8 @@ function openDocx(docx: Buffer): PizZip {
       { file: "รองรับเฉพาะไฟล์ .docx" },
     );
   }
+  assertDocxUnpacksSafely(zip);
+  return zip;
 }
 
 /**

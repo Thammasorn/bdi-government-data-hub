@@ -1073,6 +1073,19 @@ adminUserRouter.post("/:id/deactivate", async (req, res) => {
 
   const result = await prisma.$transaction(async (tx) => {
     const coordinatorOf = await coordinatorOrganizationIds(tx, account.id);
+    /**
+     * คำขอที่ค้างรอเขาลงนามกลับเป็นร่างให้หน่วยงานระบุคนใหม่ — เหมือน `transfer` ทุกอย่าง
+     *
+     * เดิมมีแต่ `transfer` ที่เรียก ยุติบัญชีผู้มีอำนาจฯ จึงทิ้งด่านลงนามไว้กับบัญชีที่เข้าระบบไม่ได้แล้ว
+     * ไม่มีคำเตือน และเชิญผู้มีอำนาจฯ คนใหม่ก็ไม่ได้เพราะหน่วยงานยังไม่ ACTIVE (bug scan 2026-11-15 ข้อ 13)
+     * ต้องอ่านหน่วยงานของเขา**ก่อน**ถอนบทบาท เหตุผลเดียวกับ `coordinatorOf`
+     */
+    const reverted = await revertStrandedWork(tx, {
+      userAccountId: account.id,
+      email: account.email,
+      organizationIds: await memberOrganizationIds(tx, account.id),
+      reason: `ผู้รับผิดชอบถูกยุติการใช้งานบัญชี — ${parsed.data.reason}`,
+    });
     const revoked = await revokeRoleAssignments(tx, {
       userAccountId: account.id,
       actorId: adminActorId(),
@@ -1101,7 +1114,7 @@ adminUserRouter.post("/:id/deactivate", async (req, res) => {
       },
       select: accountSelect,
     });
-    return { row, revoked, revokedKeys, cancelled };
+    return { row, revoked, revokedKeys, cancelled, reverted };
   });
 
   await logAudit({
@@ -1115,6 +1128,7 @@ adminUserRouter.post("/:id/deactivate", async (req, res) => {
       deactivated_via: "ADMIN_API",
       roles_revoked: result.revoked.length,
       registrations_cancelled: result.cancelled.map((c) => c.request.requestNumber),
+      requests_reverted_to_draft: result.reverted.map((r) => r.requestNumber),
     },
   });
   await logKeysRevoked(result.revokedKeys, { revokedVia: "ADMIN_API" });
@@ -1123,14 +1137,21 @@ adminUserRouter.post("/:id/deactivate", async (req, res) => {
     trigger: "DEACTIVATE",
     coordinatorId: account.id,
   });
+  await recordStrandedReverts(result.reverted, {
+    reason: parsed.data.reason,
+    resetVia: "ADMIN_DEACTIVATE",
+    account,
+  });
 
   res.json({
     user: result.row,
     rolesRevoked: result.revoked.length,
     registrationsCancelled: cancelledShape(result.cancelled),
+    requestsRevertedToDraft: revertedShape(result.reverted),
     message:
       "ยุติการใช้งานบัญชีแล้ว — อีเมลและเลขบัตรประชาชนยังผูกกับบัญชีนี้ไว้เพื่อให้ประวัติอ่านกลับได้ " +
       "ถ้าคนเดิมกลับเข้ามาใหม่ ให้ใช้ reinvite ไม่ใช่สร้างบัญชีใหม่" +
+      revertedSentence(result.reverted) +
       (result.cancelled.length > 0
         ? ` · คำขอลงทะเบียนหน่วยงาน ${result.cancelled.map((c) => c.request.requestNumber).join(" ")} ถูกยกเลิก ` +
           "เพราะผู้ประสานงานเปลี่ยน — เชิญผู้ประสานงานคนใหม่ให้หน่วยงาน แล้วเขาจะเริ่มคำขอใบใหม่ได้"
@@ -1464,6 +1485,71 @@ async function revertStrandedWork(
   return reverted;
 }
 
+type RevertedRequest = Awaited<ReturnType<typeof revertStrandedWork>>[number];
+
+/** หน่วยงาน (ที่ไม่ใช่ BDI) ที่บัญชีนี้ถือบทบาทอยู่ — ขอบเขตของ `revertStrandedWork()` ตอนยุติบัญชี */
+async function memberOrganizationIds(db: Db, userAccountId: string): Promise<string[]> {
+  const rows = await db.userRoleAssignment.findMany({
+    where: { userAccountId, organizationId: { not: BDI_ORGANIZATION_ID }, ...activeAssignmentWhere() },
+    select: { organizationId: true },
+  });
+  return [...new Set(rows.map((r) => r.organizationId).filter((id): id is string => Boolean(id)))];
+}
+
+/**
+ * ครึ่งหลัง commit ของคำขอที่ถูกดันกลับเป็นร่างเพราะผู้มีอำนาจฯ ถูกยุติบัญชีหรือถูกถอนบทบาท
+ *
+ * แถว `REQUEST_RESET_TO_DRAFT` รูปเดียวกับของ `transfer` ต่างกันที่ `reset_via` และบอกคนที่ยังอยู่กับ
+ * หน่วยงานว่าคำขอกลับมาเป็นร่างเพราะอะไร ไม่งั้นเขาจะเห็นคำขอเปลี่ยนสถานะเองโดยไม่มีใครบอก
+ */
+async function recordStrandedReverts(
+  reverted: RevertedRequest[],
+  params: {
+    reason: string;
+    resetVia: "ADMIN_DEACTIVATE" | "ADMIN_ROLE_REVOKED";
+    account: { id: string; email: string } & Parameters<typeof fullNameTh>[0];
+  },
+) {
+  for (const request of reverted) {
+    await logAudit({
+      action: AuditAction.REQUEST_RESET_TO_DRAFT,
+      subjectType: AuditSubject.ORGANIZATION_REGISTRATION_REQUEST,
+      subjectId: request.id,
+      organizationId: request.organizationId,
+      before: request.before,
+      after: { status: RequestStatus.DRAFT },
+      metadata: {
+        reason: params.reason,
+        reset_via: params.resetVia,
+        request_number: request.requestNumber,
+        removed_user_account_id: params.account.id,
+        approver_cleared: request.approverCleared,
+      },
+    });
+    await notifyUsers(await remainingStaff(prisma, request.organizationId, params.account.id), {
+      type: NotificationType.ROLE_ASSIGNMENT_CHANGED,
+      title: "คำขอถูกปรับกลับเป็นฉบับร่าง",
+      message:
+        `${fullNameTh(params.account) || params.account.email} ไม่ได้เป็นผู้มีอำนาจอนุมัติของหน่วยงานแล้ว ` +
+        `คำขอ ${request.requestNumber} ที่รอลงนามจึงถูกปรับกลับเป็นฉบับร่าง ` +
+        `กรุณาระบุผู้มีอำนาจอนุมัติของหน่วยงานคนใหม่แล้วนำส่งอีกครั้ง — เหตุผล: ${params.reason}`,
+      organizationId: request.organizationId,
+    });
+  }
+}
+
+/** รูปเดียวกับที่ `transfer` ตอบ — หน้าคอนโซลนับและบอกผู้ดูแลระบบจากรายการนี้ */
+function revertedShape(reverted: RevertedRequest[]) {
+  return reverted.map(({ id, requestNumber, approverCleared }) => ({ id, requestNumber, approverCleared }));
+}
+
+function revertedSentence(reverted: RevertedRequest[]) {
+  return reverted.length > 0
+    ? ` · คำขอ ${reverted.map((r) => r.requestNumber).join(" ")} ที่รอบัญชีนี้ลงนามถูกปรับกลับเป็นฉบับร่าง ` +
+        "และแจ้งหน่วยงานให้ระบุผู้มีอำนาจอนุมัติคนใหม่แล้ว"
+    : "";
+}
+
 /**
  * หน่วยงานที่บัญชีนี้เป็นผู้ประสานงานอยู่ — ถ้าบัญชีถูกเอาออกจากที่นั่งนั้น คำขอลงทะเบียนที่ยังไม่จบของหน่วยงานจะถูกยกเลิก
  * (`cancelOpenRegistrations()`) ต้องอ่าน**ก่อน**ถอนบทบาท เพราะหลังถอนแล้วหาไม่เจอว่าเขาเคยนั่งที่ไหน
@@ -1679,7 +1765,17 @@ adminUserRouter.delete("/:id/roles/:assignmentId", async (req, res) => {
     if (!(await refuseLastHolder(res, account.id, "ถอนบทบาท"))) return;
   }
 
-  const cancelled = await prisma.$transaction(async (tx) => {
+  const { cancelled, reverted } = await prisma.$transaction(async (tx) => {
+    // ถอนบทบาทผู้มีอำนาจฯ = คำขอที่รอเขาลงนามไม่มีใครปิดได้อีก — กลับเป็นร่างเหมือน `transfer` และ `deactivate`
+    const reverted =
+      assignment.role.code === ROLE_CODES.ORGANIZATION_APPROVER && assignment.organizationId
+        ? await revertStrandedWork(tx, {
+            userAccountId: account.id,
+            email: account.email,
+            organizationIds: [assignment.organizationId],
+            reason: `ผู้รับผิดชอบถูกถอนบทบาท — ${parsed.data.reason}`,
+          })
+        : [];
     await tx.userRoleAssignment.update({
       where: { id: assignment.id },
       data: {
@@ -1691,12 +1787,14 @@ adminUserRouter.delete("/:id/roles/:assignmentId", async (req, res) => {
       },
     });
     // ถอนที่นั่งผู้ประสานงาน = เปลี่ยนผู้ประสานงาน คำขอลงทะเบียนที่ยังไม่จบของหน่วยงานนั้นถูกยกเลิก
-    return assignment.role.code === ROLE_CODES.ORGANIZATION_USER && assignment.organizationId
-      ? cancelOpenRegistrations(tx, {
-          organizationIds: [assignment.organizationId],
-          reason: coordinatorChangeReason(parsed.data.reason),
-        })
-      : [];
+    const cancelled =
+      assignment.role.code === ROLE_CODES.ORGANIZATION_USER && assignment.organizationId
+        ? await cancelOpenRegistrations(tx, {
+            organizationIds: [assignment.organizationId],
+            reason: coordinatorChangeReason(parsed.data.reason),
+          })
+        : [];
+    return { cancelled, reverted };
   });
 
   await logAudit({
@@ -1710,12 +1808,18 @@ adminUserRouter.delete("/:id/roles/:assignmentId", async (req, res) => {
       reason: parsed.data.reason,
       revoked_via: "ADMIN_API",
       registrations_cancelled: cancelled.map((c) => c.request.requestNumber),
+      requests_reverted_to_draft: reverted.map((r) => r.requestNumber),
     },
   });
   await recordCoordinatorChangeCancels(cancelled, {
     reason: parsed.data.reason,
     trigger: "ROLE_REVOKED",
     coordinatorId: account.id,
+  });
+  await recordStrandedReverts(reverted, {
+    reason: parsed.data.reason,
+    resetVia: "ADMIN_ROLE_REVOKED",
+    account,
   });
 
   await notifyUsers([account.id], {
@@ -1725,7 +1829,11 @@ adminUserRouter.delete("/:id/roles/:assignmentId", async (req, res) => {
     organizationId: assignment.organizationId,
   });
 
-  res.json({ ok: true, registrationsCancelled: cancelledShape(cancelled) });
+  res.json({
+    ok: true,
+    registrationsCancelled: cancelledShape(cancelled),
+    requestsRevertedToDraft: revertedShape(reverted),
+  });
 });
 
 const transferSchema = z.object({

@@ -20,7 +20,14 @@ import {
 import { publicAttachment, storeAttachment } from "./attachment.js";
 import { DocumentRenderError, renderTemplateToPdf } from "./document-render.js";
 import { datasetDocumentValues, type DatasetDocumentInput } from "./dataset-values.js";
-import { LEGAL_SCOPES, documentsForRequest, publishedDocuments, templateDocx, type RenderedDocument } from "./legal.js";
+import {
+  LEGAL_SCOPES,
+  documentsForRequest,
+  lastVoidSequence,
+  publishedDocuments,
+  templateDocx,
+  type RenderedDocument,
+} from "./legal.js";
 import { NAME_FIELDS, fullNameTh } from "./person-name.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -46,11 +53,22 @@ export type DatasetDocumentRequest = Omit<
 > & { id: string };
 
 async function signaturesOf(db: Db, requestId: string) {
-  const rows = await db.signatureConfirmation.findMany({
+  const signed = await db.signatureConfirmation.findMany({
     where: { subjectType: SUBJECT, subjectId: requestId },
     orderBy: { confirmedAt: "asc" },
-    include: { userAccount: { select: NAME_FIELDS } },
+    include: {
+      userAccount: { select: NAME_FIELDS },
+      reviewTask: { select: { sequenceNumber: true } },
+    },
   });
+  /**
+   * ใบลงนามของรอบที่ถูกส่งกลับหรือถูกยกเลิกไม่นับ — เนื้อหาที่เขาลงนามไม่ใช่เนื้อหาที่กำลังพิมพ์
+   *
+   * เดิมหยิบใบล่าสุดของแต่ละฝ่ายโดยไม่ดูรอบ คำขอที่ BDI ส่งกลับหลังลงนามแล้วถูกแก้ไข เอกสารของ
+   * เนื้อหาใหม่จึงพิมพ์ชื่อและวันที่ลงนามของรอบเก่า (bug scan 2026-11-15 ข้อ 8)
+   */
+  const lastVoid = await lastVoidSequence(db, { subjectType: SUBJECT, subjectId: requestId });
+  const rows = signed.filter((r) => lastVoid === null || r.reviewTask.sequenceNumber > lastVoid);
 
   const pick = (type: ConfirmationType) => {
     const row = rows.filter((r) => r.confirmationType === type).at(-1);

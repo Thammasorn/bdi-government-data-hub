@@ -274,6 +274,14 @@ export default function EditOrganizationPage() {
   const [subdistricts, setSubdistricts] = useState<Array<{ name: string; zipcode: string }>>([]);
 
   const formRef = useRef<HTMLFormElement>(null);
+  /**
+   * ค่าที่เซิร์ฟเวอร์เก็บอยู่ตามที่หน้านี้รู้ล่าสุด — `null` จนกว่าจะโหลดสำเร็จ
+   *
+   * `persist()` ใช้ตัดสินว่าช่องว่างช่องไหนคือ "ผู้กรอกลบค่าที่เคยบันทึกไว้" ซึ่งต้องส่งไปให้ API ลบ
+   * กับช่องไหนแค่ "ยังไม่ได้กรอก" ซึ่งไม่ต้องส่ง ถ้าโหลดไม่สำเร็จจะไม่มีช่องว่างไหนถูกส่งเลย
+   * ฟอร์มเปล่าที่เปิดขึ้นมาหลังโหลดล้มเหลวจึงลบร่างทั้งใบไม่ได้
+   */
+  const savedRef = useRef<FormState | null>(null);
 
   // ---------- โหลดข้อมูลเดิม ----------
   useEffect(() => {
@@ -308,6 +316,7 @@ export default function EditOrganizationPage() {
           if (typeof value === "string") next[key] = value;
         }
         setForm(next);
+        savedRef.current = next;
         setNameLocked(Boolean(organization.nameLocked));
         setContactLocked((organization.contactLocked as ContactLocked | undefined) ?? {});
         setApproverLocked((organization.approverLocked as ApproverLocked | undefined) ?? {});
@@ -486,15 +495,26 @@ export default function EditOrganizationPage() {
      *
      * ชื่อหน่วยงานที่ระบบเป็นเจ้าของก็ไม่ส่งด้วยเหตุผลเดียวกัน — API ตอบ 400 ถ้าค่าต่างจากเดิม
      */
+    /**
+     * ช่องว่างส่งไปเฉพาะช่องที่เซิร์ฟเวอร์มีค่าอยู่ — นั่นคือช่องที่ผู้กรอกเพิ่งลบ API จะเขียน null ให้
+     * เดิมกรองช่องว่างทิ้งทั้งหมด ช่องที่ไม่บังคับอย่าง "ถนน" จึงลบไม่ออก: บันทึกแล้วค่าเดิมกลับมา
+     */
+    const saved = savedRef.current;
+    const sent = { ...form };
     const payload = Object.fromEntries(
-      Object.entries(form).filter(
+      Object.entries(sent).filter(
         ([k, v]) =>
-          (v !== "" || SENT_WHEN_EMPTY.has(k as keyof FormState)) &&
+          (v !== "" ||
+            SENT_WHEN_EMPTY.has(k as keyof FormState) ||
+            Boolean(saved?.[k as keyof FormState])) &&
           k !== "organizationCode" &&
           !(k === "name" && nameLocked),
       ),
     );
-    return api.patch<{ organization: unknown }>(`/api/organizations/${orgId}`, payload);
+    const result = await api.patch<{ organization: unknown }>(`/api/organizations/${orgId}`, payload);
+    // โหลดไม่สำเร็จตั้งแต่ต้น (saved เป็น null) ก็ยังไม่รู้ว่าเซิร์ฟเวอร์มีอะไร จึงไม่ตั้งค่าจากฟอร์มเปล่า
+    if (saved) savedRef.current = sent;
+    return result;
   };
 
   const saveDraft = async () => {

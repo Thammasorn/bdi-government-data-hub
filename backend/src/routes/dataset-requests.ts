@@ -120,7 +120,7 @@ import {
   nodeWhere,
 } from "../lib/queue.js";
 import {
-  TASK_TYPE_ROLES,
+  mayCloseTask,
   ACTIVE_STATUSES,
   TASK_TAKEN_MESSAGE,
   WorkflowError,
@@ -1405,6 +1405,34 @@ datasetRequestRouter.post("/:id/submit", async (req, res) => {
     res.status(400).json({ error: "no_form", message: "กรุณาสร้างและตรวจสอบ PDF ก่อนนำส่ง" });
     return;
   }
+  /**
+   * แบบฟอร์มที่เก็บไว้ต้องสร้างจากข้อมูลชุดที่กำลังนำส่ง
+   *
+   * เดิมเช็คแค่ว่า "มีไฟล์" ผู้กรอกที่สร้าง PDF แล้วกลับไปบันทึกร่างใหม่ (หรือบันทึกจากอีกแท็บ)
+   * แล้วกดนำส่ง จึงได้คำขอที่ PDF เป็นค่าเก่าแต่ข้อมูลเป็นค่าใหม่ (bug scan 2026-11-15 ข้อ 19)
+   * ปุ่ม "ตรวจสอบคำขอ" บันทึกก่อนแล้วจึงสร้าง PDF ไฟล์จึงใหม่กว่าข้อมูลเสมอในเส้นทางปกติ
+   * ไม่ render ใหม่ให้เองตรงนี้ เพราะเอกสารที่นำส่งต้องเป็นฉบับที่ผู้กรอกเห็นแล้ว
+   */
+  // คำขอหนึ่งใบมีไฟล์ที่ render ไว้ได้หลายฉบับ (หนึ่งฉบับต่อเวอร์ชันเอกสาร) — เทียบกับฉบับที่สร้างล่าสุด
+  const newestForm = await prisma.attachment.findFirst({
+    where: {
+      ownerType: OWNER,
+      ownerId: request.id,
+      attachmentType: AttachmentType.GENERATED_FORM,
+      status: AttachmentStatus.ACTIVE,
+    },
+    orderBy: { uploadedAt: "desc" },
+    select: { uploadedAt: true },
+  });
+  if (request.metadata && newestForm && request.metadata.updatedAt > newestForm.uploadedAt) {
+    res.status(409).json({
+      error: "form_outdated",
+      message:
+        "ข้อมูลคำขอถูกแก้ไขหลังจากที่สร้าง PDF กรุณากลับไปที่แบบฟอร์ม " +
+        "กด “ตรวจสอบคำขอ” เพื่อสร้างและตรวจสอบ PDF อีกครั้ง แล้วนำส่งใหม่",
+    });
+    return;
+  }
 
   // เหตุผลเดียวกับ POST /api/organizations/:id/submit — เอกสารที่นำส่งต้องเป็นฉบับที่ผู้กรอกเพิ่งเห็น
   const awaiting = await documentsAwaitingRender(prisma, LEGAL_SCOPES.DATASET_REGISTRATION, OWNER, request.id);
@@ -1977,10 +2005,9 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
 
     // ตารางเดียวกับที่ lib/queue.ts ใช้ตอบว่า "ใบไหนเป็นงานของตำแหน่งฉัน" — เดิมเขียนซ้ำไว้ตรงนี้
     // ถ้าสองที่ไม่ตรงกัน หน้ารายการจะโชว์ใบที่กดต่อไม่ได้ หรือซ่อนใบที่กดได้
-    const allowedRoles = TASK_TYPE_ROLES;
-    /** ผู้ใช้คนนี้ปิดด่านชนิดนี้ของคำขอนี้ได้ไหม */
+    /** ผู้ใช้คนนี้ปิดด่านชนิดนี้ของคำขอนี้ได้ไหม — ด่านของหน่วยงานต้องเป็นคนของหน่วยงานนั้นด้วย */
     const canAction = (taskType: ReviewTaskType) =>
-      session.roles.some((r) => allowedRoles[taskType].includes(r));
+      mayCloseTask(session, taskType, request.organizationId);
 
     if (!canAction(task.taskType)) {
       /**

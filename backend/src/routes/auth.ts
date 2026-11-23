@@ -1163,17 +1163,42 @@ authRouter.post("/login/verify-otp", async (req, res) => {
     res.status(400).json({ error: "otp_expired", message: "รหัสหมดอายุแล้ว กรุณากดขอรหัสใหม่" });
     return;
   }
-  if (otp.attempts >= env.auth.otpMaxAttempts) {
-    await prisma.otpCode.update({ where: { id: otp.id }, data: { consumedAt: new Date() } });
-    await otpFailed("OTP_LOCKED", { otp_code_id: otp.id, attempts: otp.attempts });
+  /**
+   * จองสิทธิ์เดา **ก่อน** เทียบรหัส ด้วย UPDATE ที่มีเงื่อนไขอยู่ใน WHERE
+   *
+   * เดิมอ่าน `attempts` มาเทียบก่อน แล้วค่อยบวกหลังเทียบรหัสผิด คำขอที่ยิงพร้อมกันหลายสิบตัว
+   * จึงอ่านได้ค่าเดียวกัน ผ่านเงื่อนไข "ยังไม่ถึงห้าครั้ง" ทุกตัว และรหัสใบเดียวถูกเดาได้เกินห้าครั้ง
+   * (bug scan 2026-11-15 ข้อ 6) แบบนี้ฐานข้อมูลเป็นคนนับ ผ่านได้ไม่เกิน `otpMaxAttempts` ตัว
+   * รหัสที่ถูกก็นับเป็นหนึ่งครั้งด้วย ซึ่งไม่มีผลอะไร เพราะแถวถูกปิดทันทีหลังจากนั้น
+   */
+  const claimed = await prisma.otpCode.updateMany({
+    where: { id: otp.id, consumedAt: null, attempts: { lt: env.auth.otpMaxAttempts } },
+    data: { attempts: { increment: 1 } },
+  });
+  if (claimed.count === 0) {
+    /**
+     * จองไม่ได้มีสองเหตุ: เดาครบแล้ว หรือคำขออีกตัวเพิ่งใช้รหัสนี้ไปในเสี้ยววินาทีเดียวกัน
+     *
+     * ไม่ปิดแถว (`consumedAt`) ตรงนี้เหมือนเดิม: คำขอที่จองสิทธิ์ครั้งสุดท้ายได้และถือรหัสถูกอาจยัง
+     * เทียบรหัสอยู่ ถ้าปิดแถวตัดหน้า เขาจะถูกปฏิเสธทั้งที่กรอกถูก แถวที่เดาครบแล้วใช้ต่อไม่ได้อยู่ดี
+     * เพราะจองไม่ผ่าน และ `resend-otp` ไม่นับแถวแบบนี้เป็นรหัสที่ค้างอยู่
+     */
+    const row = await prisma.otpCode.findUnique({ where: { id: otp.id }, select: { consumedAt: true } });
+    if (!row || row.consumedAt) {
+      await otpFailed("OTP_NOT_PENDING", { otp_code_id: otp.id });
+      res.status(400).json({ error: "otp_expired", message: "รหัสหมดอายุแล้ว กรุณากดขอรหัสใหม่" });
+      return;
+    }
+    await otpFailed("OTP_LOCKED", { otp_code_id: otp.id, attempts: env.auth.otpMaxAttempts });
     res
       .status(429)
       .json({ error: "otp_locked", message: "กรอกรหัสผิดเกินจำนวนที่กำหนด กรุณาขอรหัสใหม่" });
     return;
   }
   if (!(await bcrypt.compare(parsed.data.code, otp.codeHash))) {
-    await prisma.otpCode.update({ where: { id: otp.id }, data: { attempts: { increment: 1 } } });
-    const left = env.auth.otpMaxAttempts - otp.attempts - 1;
+    // ค่าที่อ่านมาตอนต้นอาจเก่าไปแล้วถ้ามีคำขอซ้อนกัน จึงอ่านจำนวนจริงหลังจองมาบอกผู้ใช้
+    const now = await prisma.otpCode.findUnique({ where: { id: otp.id }, select: { attempts: true } });
+    const left = env.auth.otpMaxAttempts - (now?.attempts ?? otp.attempts + 1);
     await otpFailed("OTP_INVALID", { otp_code_id: otp.id, attempts_left: Math.max(left, 0) });
     res.status(400).json({
       error: "otp_invalid",
@@ -1202,7 +1227,16 @@ authRouter.post("/login/verify-otp", async (req, res) => {
     return;
   }
 
-  await prisma.otpCode.update({ where: { id: otp.id }, data: { consumedAt: new Date() } });
+  // รหัสหนึ่งใบเปิด session ได้ครั้งเดียว — คำขอที่ซ้อนกันสองตัวซึ่งถือรหัสถูกทั้งคู่ ตัวที่ช้ากว่าไม่ได้ session
+  const consumed = await prisma.otpCode.updateMany({
+    where: { id: otp.id, consumedAt: null },
+    data: { consumedAt: new Date() },
+  });
+  if (consumed.count === 0) {
+    await otpFailed("OTP_NOT_PENDING", { otp_code_id: otp.id });
+    res.status(400).json({ error: "otp_expired", message: "รหัสหมดอายุแล้ว กรุณากดขอรหัสใหม่" });
+    return;
+  }
   await prisma.userAccount.update({
     where: { id: user.id },
     data: { lastLoginAt: new Date(), updatedBy: user.id },
@@ -1230,8 +1264,14 @@ authRouter.post("/login/resend-otp", async (req, res) => {
     res.status(400).json({ error: "validation", fields: formatZodError(parsed.error) });
     return;
   }
+  // รหัสที่ถูกเดาครบจำนวนแล้วไม่นับว่าค้างอยู่ — ต้องผ่านขั้นรหัสผ่านใหม่ เหมือนตอนที่การล็อกปิดแถวทิ้ง
   const pending = await prisma.otpCode.findFirst({
-    where: { email: parsed.data.email, purpose: OtpPurpose.LOGIN, consumedAt: null },
+    where: {
+      email: parsed.data.email,
+      purpose: OtpPurpose.LOGIN,
+      consumedAt: null,
+      attempts: { lt: env.auth.otpMaxAttempts },
+    },
   });
   if (!pending) {
     res.status(409).json({ error: "no_pending", message: "กรุณาเข้าสู่ระบบด้วยรหัสผ่านอีกครั้ง" });

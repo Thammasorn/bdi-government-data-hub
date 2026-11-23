@@ -103,6 +103,8 @@ export interface HeadcountRow {
   changed: boolean;
   problem: string | null;
   remedy: string | null;
+  /** คำเตือนที่ไม่ขวางการยืนยัน — API เป็นคนตัดสิน หน้าจอแค่แสดง */
+  notice?: string | null;
 }
 
 export interface RemovalItem {
