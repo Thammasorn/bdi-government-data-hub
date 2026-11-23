@@ -30,7 +30,14 @@ import {
 
 import { publicAttachment, storeAttachment } from "./attachment.js";
 import { DocumentRenderError, renderTemplateToPdf } from "./document-render.js";
-import { LEGAL_SCOPES, documentsForRequest, publishedDocuments, templateDocx, type RenderedDocument } from "./legal.js";
+import {
+  LEGAL_SCOPES,
+  documentsForRequest,
+  lastVoidSequence,
+  publishedDocuments,
+  templateDocx,
+  type RenderedDocument,
+} from "./legal.js";
 import { agreementValues, type AgreementInput } from "./legal-values.js";
 import { NAME_FIELDS, fullNameTh } from "./person-name.js";
 import { BDI_ORGANIZATION_ID } from "./system.js";
@@ -73,11 +80,25 @@ export type AgreementRequest = Omit<
  * `signature_confirmation` มีได้ฝ่ายละหนึ่งแถวต่อคำขอ (หนึ่งแถวต่อ review_task)
  */
 async function signaturesOf(db: Db, subject: { subjectType: SubjectType; subjectId: string }) {
-  const rows = await db.signatureConfirmation.findMany({
+  const signed = await db.signatureConfirmation.findMany({
     where: { subjectType: subject.subjectType, subjectId: subject.subjectId },
     orderBy: { confirmedAt: "asc" },
-    include: { userAccount: { select: NAME_FIELDS } },
+    include: {
+      userAccount: { select: NAME_FIELDS },
+      reviewTask: { select: { sequenceNumber: true } },
+    },
   });
+  /**
+   * ใบลงนามของรอบที่ถูกส่งกลับหรือถูกยกเลิกไม่นับ — เนื้อหาที่เขาลงนามไม่ใช่เนื้อหาที่กำลังพิมพ์
+   *
+   * เดิมหยิบใบล่าสุดของแต่ละฝ่ายโดยไม่ดูรอบ คำขอที่ BDI ส่งกลับหลังลงนามแล้วถูกแก้ไข เอกสารของ
+   * เนื้อหาใหม่จึงพิมพ์ชื่อและวันที่ลงนามของรอบเก่า (bug scan 2026-11-15 ข้อ 8)
+   *
+   * เฉพาะคำขอลงทะเบียนหน่วยงาน งานลงนามเอกสารเวอร์ชันใหม่ (`ORGANIZATION_LEGAL_APPROVAL`) มีกฎของตัวเองใน
+   * lib/legal-reacceptance.ts ว่างานที่ถูกยกเลิกนับหรือไม่นับ และประวัติของมันยังต้องเปิดดูฉบับที่ลงนามไว้ได้
+   */
+  const lastVoid = subject.subjectType === SUBJECT ? await lastVoidSequence(db, subject) : null;
+  const rows = signed.filter((r) => lastVoid === null || r.reviewTask.sequenceNumber > lastVoid);
 
   const pick = (type: ConfirmationType) => {
     const row = rows.filter((r) => r.confirmationType === type).at(-1);

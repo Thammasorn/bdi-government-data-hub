@@ -345,7 +345,10 @@ export default function ConsoleUserPage() {
         confirmPhrase={u.email}
         onConfirm={async (reason) => {
           const res = await post("/deactivate", { reason });
-          setWarnings(cancelledWarnings(res.registrationsCancelled));
+          setWarnings([
+            ...cancelledWarnings(res.registrationsCancelled),
+            ...revertedWarnings(res.requestsRevertedToDraft),
+          ]);
           done("ยุติการใช้งานบัญชีแล้ว");
         }}
       >
@@ -439,11 +442,14 @@ export default function ConsoleUserPage() {
         reasonHint="เจ้าของบัญชีเห็นเหตุผลนี้"
         onConfirm={async (reason) => {
           if (typeof dialog !== "object" || !dialog || !("revoke" in dialog)) return;
-          const res = await api.remove<{ registrationsCancelled?: CancelledRegistration[] }>(
-            `/api/admin/users/${u.id}/roles/${dialog.revoke.id}`,
-            { reason },
-          );
-          setWarnings(cancelledWarnings(res.registrationsCancelled));
+          const res = await api.remove<{
+            registrationsCancelled?: CancelledRegistration[];
+            requestsRevertedToDraft?: unknown[];
+          }>(`/api/admin/users/${u.id}/roles/${dialog.revoke.id}`, { reason });
+          setWarnings([
+            ...cancelledWarnings(res.registrationsCancelled),
+            ...revertedWarnings(res.requestsRevertedToDraft),
+          ]);
           done("ถอนบทบาทแล้ว");
         }}
       >
@@ -834,6 +840,16 @@ function cancelledWarnings(cancelled: unknown): string[] {
   return [
     `คำขอลงทะเบียนหน่วยงาน ${rows.map((r) => r.requestNumber).join(" ")} ถูกยกเลิก เพราะผู้ประสานงานเปลี่ยน — ` +
       "เชิญผู้ประสานงานคนใหม่ให้หน่วยงาน แล้วเขาจะเริ่มคำขอใบใหม่ได้",
+  ];
+}
+
+/** คำขอที่รอบัญชีนี้ลงนามและถูกคืนเป็นฉบับร่าง — จาก `requestsRevertedToDraft` ของคำตอบ */
+function revertedWarnings(reverted: unknown): string[] {
+  const rows = Array.isArray(reverted) ? (reverted as Array<{ requestNumber?: string }>) : [];
+  if (rows.length === 0) return [];
+  return [
+    `คำขอ ${rows.map((r) => r.requestNumber).join(" ")} ที่รอบัญชีนี้ลงนามถูกคืนเป็นฉบับร่าง — ` +
+      "หน่วยงานต้องระบุผู้มีอำนาจอนุมัติคนใหม่แล้วนำส่งอีกครั้ง",
   ];
 }
 

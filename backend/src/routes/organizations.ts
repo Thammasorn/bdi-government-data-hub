@@ -149,7 +149,7 @@ import {
   nodeWhere,
 } from "../lib/queue.js";
 import {
-  TASK_TYPE_ROLES,
+  mayCloseTask,
   ACTIVE_STATUSES,
   WorkflowError,
   activeTask,
@@ -2454,9 +2454,9 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
     // ใครมีสิทธิ์ปิด task นี้ — role ที่ตรงกับด่าน หรือเป็นผู้รับมอบหมายโดยตรง
     // ตารางเดียวกับที่ lib/queue.ts ใช้ตอบว่า "ใบไหนเป็นงานของตำแหน่งฉัน" — เดิมเขียนซ้ำไว้ตรงนี้
     // ถ้าสองที่ไม่ตรงกัน หน้ารายการจะโชว์ใบที่กดต่อไม่ได้ หรือซ่อนใบที่กดได้
-    const allowedRoles = TASK_TYPE_ROLES;
     /**
-     * ผู้ใช้คนนี้ปิดด่านชนิดนี้ของคำขอนี้ได้ไหม — **ตัดสินจาก role เท่านั้น**
+     * ผู้ใช้คนนี้ปิดด่านชนิดนี้ของคำขอนี้ได้ไหม — **ตัดสินจาก role** และด่านของฝั่งหน่วยงาน
+     * ต้องเป็นคนของหน่วยงานเจ้าของคำขอด้วย (`mayCloseTask()`)
      *
      * เดิมด่าน `ORGANIZATION_APPROVAL` มีทางที่สองต่อท้ายด้วย OR: อีเมลของผู้ใช้ตรงกับ
      * `request.approverEmail` ที่กรอกไว้ในฟอร์ม ก็ปิดด่านได้โดยไม่ต้องมี role
@@ -2470,7 +2470,7 @@ organizationRouter.post("/:id/review", async (req, res, next) => {
      * พอถึงเวลาที่กดได้ เขาถือ role นั้นเสมอ อีเมลที่กรอกในฟอร์มไม่ใช่หลักฐานของสิทธิ์
      */
     const canAction = (taskType: ReviewTaskType) =>
-      session.roles.some((r) => allowedRoles[taskType].includes(r));
+      mayCloseTask(session, taskType, request.organizationId);
 
     /**
      * `recall` — ทางออกเดียวของคำขอที่ค้างอยู่กับผู้มีอำนาจฯ ที่เข้าระบบไม่ได้

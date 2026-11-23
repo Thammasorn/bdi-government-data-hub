@@ -163,6 +163,15 @@ export interface HeadcountRow {
   problem: string | null;
   /** สิ่งที่หน่วยงานต้องแก้ในคำขอเพื่อให้ผ่าน ต่อท้าย `problem` ในเหตุผลที่ยืนยันไม่ได้และข้อความส่งกลับ */
   remedy: string | null;
+  /**
+   * คำเตือนที่ไม่ขวางการยืนยัน — หลังดำเนินการบทบาทนี้จะเหลือแต่คนที่ยังไม่เปิดใช้งานบัญชี
+   *
+   * จำนวนใน `after` นับคำเชิญเป็นที่นั่งด้วย การเปลี่ยนตัวคนสุดท้ายจึงผ่านเกณฑ์ "อย่างน้อย 1 คน" ทั้งที่คนเดิม
+   * ถูกยุติบัญชีทันทีตอนยืนยัน ส่วนคนใหม่ถือแค่คำเชิญ ถ้าเขาไม่เปิดใช้งาน หน่วยงานไม่มีใครทำงานบทบาทนี้ได้
+   * (bug scan 2026-11-15 ข้อ 15) ไม่ขวาง เพราะเพดานผู้มีอำนาจฯ ตั้งต้นคือ 1 คน การเปลี่ยนตัวคนเดียวที่มีจึง
+   * เป็นกรณีปกติของคำขอนี้ — แต่ทั้งหน่วยงานและเจ้าหน้าที่ต้องเห็นก่อนกด
+   */
+  notice: string | null;
 }
 
 export type AccountState =
@@ -436,6 +445,29 @@ export async function computeHeadcount(db: Db, request: ChangeRequestRow): Promi
         }
       }
     }
+    let notice: string | null = null;
+    if (changed && !problem) {
+      // คนที่ใช้งานได้จริงตอนนี้ (ไม่นับคนถูกระงับและคนที่มีแค่คำเชิญ) ลบด้วยคนที่คำขอนี้จะยกเลิก
+      const active = await db.userRoleAssignment.findMany({
+        where: {
+          organizationId: request.organizationId,
+          roleId,
+          userAccount: { status: UserAccountStatus.ACTIVE },
+          ...activeAssignmentWhere(),
+        },
+        select: { id: true },
+      });
+      const leaving = new Set(
+        request.removals
+          .filter((r) => removalTarget(r).roleCode === roleCode && removalStillValid(r))
+          .flatMap((r) => (r.userRoleAssignmentId ? [r.userRoleAssignmentId] : [])),
+      );
+      if (active.length > 0 && active.every((a) => leaving.has(a.id))) {
+        notice =
+          `หลังดำเนินการ หน่วยงานจะไม่มี${label}ที่ใช้งานระบบได้ จนกว่าผู้ที่ได้รับเชิญจะเปิดใช้งานบัญชี ` +
+          `— คนเดิมถูกยุติการใช้งานทันทีที่คำขอได้รับการยืนยัน`;
+      }
+    }
     rows.push({
       roleCode,
       roleLabel: label,
@@ -448,6 +480,7 @@ export async function computeHeadcount(db: Db, request: ChangeRequestRow): Promi
       changed,
       problem,
       remedy,
+      notice,
     });
   }
   return rows;

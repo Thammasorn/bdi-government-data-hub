@@ -167,13 +167,15 @@ export type OrganizationDraftInput = z.infer<typeof organizationDraftSchema>;
 export async function toRequestData(input: OrganizationDraftInput) {
   const codes = await resolveAddressCodes(prisma, input);
 
+  // "" = ผู้กรอกลบรหัสไปรษณีย์ออก และไม่มีที่อยู่ให้หาแทน — ต้องลบจริง ไม่ใช่คงค่าเดิม
   const postalCode =
     input.postalCode ||
     (input.province && input.district && input.subdistrict
       ? (lookupZipcode(input.province, input.district, input.subdistrict) ?? undefined)
-      : undefined);
+      : undefined) ||
+    (input.postalCode === "" ? null : undefined);
 
-  return {
+  return clearedAsNull({
     /**
      * ไม่มี organizationCode ที่นี่โดยตั้งใจ — รหัสหน่วยงานแก้ผ่านฟอร์มไม่ได้
      * ค่าที่ถูกต้องมาจากแถว organization เท่านั้น (prefillFromOrganization ตอนเปิดคำขอ
@@ -213,6 +215,19 @@ export async function toRequestData(input: OrganizationDraftInput) {
     userPhoneNumber: draftPhone(input.contactPhone),
     userPhoneNumberExtension: input.contactPhoneExtension,
     userCid: input.contactNationalId,
-  };
+  });
+}
+
+/**
+ * ช่องที่ส่งมาเป็นค่าว่าง = "ลบค่านี้ออก" จึงเขียน null — ช่องที่ไม่ได้ส่งมา (`undefined`) คงค่าเดิม
+ *
+ * เดิมหน้าฟอร์มไม่ส่งช่องว่างมาเลย ช่องที่ไม่บังคับ (ถนน ฯลฯ) ซึ่งเคยบันทึกค่าไว้แล้วจึงลบไม่ออก:
+ * หน้าจอบอกว่าบันทึกแล้ว โหลดใหม่ค่าเดิมกลับมา และถูกพิมพ์ลง A0 (bug scan 2026-11-15 ข้อ 18)
+ * เก็บ null ไม่ใช่ "" ให้ตรงกับคอลัมน์เลขต่อ และ `blankAsNull()` ที่ audit ใช้ก็นับสองค่านี้เท่ากันอยู่แล้ว
+ */
+function clearedAsNull<T extends Record<string, unknown>>(row: T): { [K in keyof T]: T[K] | null } {
+  return Object.fromEntries(
+    Object.entries(row).map(([key, value]) => [key, value === "" ? null : value]),
+  ) as { [K in keyof T]: T[K] | null };
 }
 

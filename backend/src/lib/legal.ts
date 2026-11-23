@@ -457,6 +457,25 @@ export async function documentsForRequest(
 }
 
 /**
+ * `sequence_number` ของแถวล่าสุดที่ล้างรอบทิ้ง — ผล `RETURNED` หรือ task ที่ถูก `CANCELLED`
+ *
+ * ใบลงนาม (`signature_confirmation`) ที่ผูกกับ task ลำดับไม่เกินค่านี้เป็นของรอบที่ถูกยกเลิกไปแล้ว
+ * ใช้ร่วมกันสองที่: ชุดเอกสารที่ถูกข้าม (`skippedDocumentCodes()`) และชื่อ-วันที่ลงนามที่พิมพ์ลงเอกสาร
+ * (`signaturesOf()` ของทั้งสองเส้นทาง) เหตุผลของกฎอยู่ในคอมเมนต์ของ `skippedDocumentCodes()`
+ */
+export async function lastVoidSequence(db: Db, subject: DocumentSubject): Promise<number | null> {
+  const lastVoid = await db.reviewTask.findFirst({
+    where: {
+      ...subject,
+      OR: [{ result: ReviewResult.RETURNED }, { status: ReviewTaskStatus.CANCELLED }],
+    },
+    orderBy: { sequenceNumber: "desc" },
+    select: { sequenceNumber: true },
+  });
+  return lastVoid?.sequenceNumber ?? null;
+}
+
+/**
  * ฉบับที่หน่วยงานกด "ไม่เกี่ยวข้อง" ไปแล้ว คืนมาเป็นชุดของ**รหัสเอกสาร** ไม่ใช่ version id
  *
  * เทียบด้วยรหัสเพราะการตัดสินใจของหน่วยงานเป็นเรื่องของ**ตัวเอกสาร** ไม่ใช่ของเวอร์ชัน —
@@ -491,15 +510,8 @@ export async function skippedDocumentCodes(db: Db, subject: DocumentSubject): Pr
    * 2026-10-29; ก่อนหน้านั้นนับแค่ RETURNED และสองที่นี้ตอบไม่ตรงกัน) การ recall ของเจ้าหน้าที่ BDI ปิดแบบนั้นเช่นกัน
    * แต่ `recallRefusal()` ยอมเฉพาะตอน task ยัง `PENDING` ซึ่งยังไม่มีใบลงนามให้ยกเลิกอยู่แล้ว
    */
-  const lastVoid = await db.reviewTask.findFirst({
-    where: {
-      ...subject,
-      OR: [{ result: ReviewResult.RETURNED }, { status: ReviewTaskStatus.CANCELLED }],
-    },
-    orderBy: { sequenceNumber: "desc" },
-    select: { sequenceNumber: true },
-  });
-  if (lastVoid && confirmation.reviewTask.sequenceNumber <= lastVoid.sequenceNumber) {
+  const lastVoid = await lastVoidSequence(db, subject);
+  if (lastVoid !== null && confirmation.reviewTask.sequenceNumber <= lastVoid) {
     return new Set();
   }
 
