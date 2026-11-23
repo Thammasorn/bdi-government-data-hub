@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { BDI_WEBSITE_URL, D2Mark, Logo, LogoImage } from "@/components/brand/Logo";
 import { NotificationBell } from "@/components/NotificationBell";
+import { legalOfficerMenu } from "@/components/console/ConsoleShell";
 import { SessionChangedDialog } from "@/components/SessionChangedDialog";
 import { announceSignOut, sessionUserName, useSession } from "@/components/SessionProvider";
 import { api } from "@/lib/api";
@@ -16,6 +17,7 @@ import {
   isDocumentAdmin,
   isOrganizationFrozen,
   isSpecialistOnly,
+  isSystemAdmin,
   type Role,
 } from "@/lib/status";
 
@@ -85,6 +87,9 @@ const isGroup = (entry: NavEntry): entry is NavGroup => "children" in entry;
  */
 const PROJECT_INFO_ITEM: NavItem = { href: "/about", label: "ข้อมูลโครงการ" };
 
+/** สถานะเอกสารทางกฎหมายของหน่วยงาน — ต่อจากชุดข้อมูล ก่อนข้อมูลโครงการ (card "[Enhance] Legal Document Management") */
+const LEGAL_ITEM: NavItem = { href: "/legal-documents", label: "เอกสารทางกฎหมาย" };
+
 /** ช่องของทุกบทบาท ต่อท้ายช่องที่แต่ละบทบาทเห็นไม่เหมือนกัน */
 function navItems(
   roles: string[],
@@ -104,6 +109,11 @@ function roleNavItems(
    * ผู้ดูแลระบบและผู้เชี่ยวชาญด้านกฎหมายของ BDI มีงานอยู่ที่ /console ที่เดียว — เมนูของหน้านั้นอยู่ในหน้าเอง (ConsoleShell) แถบหัวจึงมีช่องเดียว
    * ต้องเช็กก่อน `hasOrganization` ข้างล่าง เพราะบทบาทของเขาผูกกับแถวหน่วยงาน BDI และจะได้เมนูของผู้ใช้หน่วยงานไป
    */
+  // ผู้เชี่ยวชาญด้านกฎหมายของ BDI ไม่มีเมนูด้านซ้ายใน /console — ทุกหน้าของเขาอยู่ใต้ "เอกสารทางกฎหมาย" บนแถบนี้แทน
+  // (card "[Enhance] Legal Document Management") ชุดเดียวกับหมวด "ตั้งค่าเอกสาร" ของ ConsoleShell จึงไม่มีสำเนารายการ
+  if (isDocumentAdmin(roles) && !isSystemAdmin(roles)) {
+    return [{ label: "เอกสารทางกฎหมาย", children: legalOfficerMenu() }];
+  }
   if (isDocumentAdmin(roles)) {
     return [{ href: "/console", label: "ระบบจัดการ" }];
   }
@@ -133,6 +143,7 @@ function roleNavItems(
         ],
       },
       { label: DATASET_GROUP, children: [{ href: "/admin/datasets", label: DATASET_LABEL }] },
+      LEGAL_ITEM,
       // ผู้ประสานงานและผู้มีอำนาจอนุมัติของ BDI (feedback "features 1 full" แถว 15) — ไม่ใช่ "ภาพรวม" เพราะจะอ่านซ้ำกับ
       // "หน้าแรก" ที่อยู่ติดกัน ผู้ดูแลระบบเห็นตัวเลขชุดเดียวกันบนหน้า ภาพรวม ของ /console แทน
       { href: "/admin/statistics", label: "สถิติ" },
@@ -189,6 +200,8 @@ function roleNavItems(
             },
           ],
         },
+        // มีเอกสารที่ลงนามแล้วเมื่อหน่วยงานลงทะเบียนเสร็จ — ระงับแล้วยังดูได้เหมือนเมนูอื่น
+        ...(organizationStatus === "ACTIVE" || frozen ? [LEGAL_ITEM] : []),
       ]
     : [];
 }
@@ -428,7 +441,7 @@ function NavDropdown({ group, pathname }: { group: NavGroup; pathname: string })
         </svg>
       </button>
       {open ? (
-        <ul className="animate-in-up absolute left-0 mt-2 w-64 overflow-hidden rounded-xl bg-white py-1 shadow-pop ring-1 ring-line">
+        <ul className="animate-in-up absolute left-0 mt-2 w-max min-w-64 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl bg-white py-1 shadow-pop ring-1 ring-line">
           {group.children.map((child) => (
             <li key={child.href}>
               {child.disabledReason ? (

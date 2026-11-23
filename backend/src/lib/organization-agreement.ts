@@ -79,9 +79,9 @@ export type AgreementRequest = Omit<
  * ลายมือชื่อที่มีอยู่แล้วของคำขอนี้ — ชื่อและเวลาตามที่บันทึกไว้ตอนลงนาม
  * `signature_confirmation` มีได้ฝ่ายละหนึ่งแถวต่อคำขอ (หนึ่งแถวต่อ review_task)
  */
-async function signaturesOf(db: Db, requestId: string) {
+async function signaturesOf(db: Db, subject: { subjectType: SubjectType; subjectId: string }) {
   const signed = await db.signatureConfirmation.findMany({
-    where: { subjectType: SUBJECT, subjectId: requestId },
+    where: { subjectType: subject.subjectType, subjectId: subject.subjectId },
     orderBy: { confirmedAt: "asc" },
     include: {
       userAccount: { select: NAME_FIELDS },
@@ -93,8 +93,11 @@ async function signaturesOf(db: Db, requestId: string) {
    *
    * เดิมหยิบใบล่าสุดของแต่ละฝ่ายโดยไม่ดูรอบ คำขอที่ BDI ส่งกลับหลังลงนามแล้วถูกแก้ไข เอกสารของ
    * เนื้อหาใหม่จึงพิมพ์ชื่อและวันที่ลงนามของรอบเก่า (bug scan 2026-11-15 ข้อ 8)
+   *
+   * เฉพาะคำขอลงทะเบียนหน่วยงาน งานลงนามเอกสารเวอร์ชันใหม่ (`ORGANIZATION_LEGAL_APPROVAL`) มีกฎของตัวเองใน
+   * lib/legal-reacceptance.ts ว่างานที่ถูกยกเลิกนับหรือไม่นับ และประวัติของมันยังต้องเปิดดูฉบับที่ลงนามไว้ได้
    */
-  const lastVoid = await lastVoidSequence(db, { subjectType: SUBJECT, subjectId: requestId });
+  const lastVoid = subject.subjectType === SUBJECT ? await lastVoidSequence(db, subject) : null;
   const rows = signed.filter((r) => lastVoid === null || r.reviewTask.sequenceNumber > lastVoid);
 
   const pick = (type: ConfirmationType) => {
@@ -147,6 +150,8 @@ export interface AgreementDocumentVersion {
   nameTh: string;
   versionId: string;
   versionNumber: number;
+  /** เลขที่ผู้ใช้เห็น — ค่าที่ {{document.version}} พิมพ์ */
+  displayVersionNumber: string;
   effectiveAt: Date | null;
 }
 
@@ -166,10 +171,15 @@ export async function agreementPdf(
     printedByName: string | null;
     /** เวลาที่พิมพ์ — ค่าปริยายคือตอนนี้ */
     printedAt?: Date;
+    /**
+     * ลายมือชื่อของใคร — ค่าปริยายคือคำขอลงทะเบียนนี้ การลงนามเอกสารกฎหมายเวอร์ชันใหม่ส่งงานลงนามของตัวเอง
+     * (subject ORGANIZATION_LEGAL_APPROVAL) เอกสารจึงพิมพ์ชื่อผู้ที่ลงนามเวอร์ชันนั้น ไม่ใช่ผู้ลงนามตอนลงทะเบียน
+     */
+    signatureSubject?: { subjectType: SubjectType; subjectId: string };
   },
 ): Promise<Buffer> {
   const docx = await templateDocx(db, params.document.versionId);
-  const signatures = await signaturesOf(db, params.request.id);
+  const signatures = await signaturesOf(db, params.signatureSubject ?? { subjectType: SUBJECT, subjectId: params.request.id });
   // ข้อมูลสำนักงานมาจากแถว organization ของ BDI เอง ไม่ได้ hardcode ทั้งชุด —
   // ที่ยัง hardcode คือช่องที่ตารางไม่มี (ที่อยู่ ชื่อผู้อำนวยการ) ดู OFFICE_DEFAULTS
   const office = await db.organization.findUnique({
@@ -195,7 +205,7 @@ export async function agreementPdf(
     officePhoneExtension: office?.phoneExtension ?? null,
     printedByName: params.printedByName,
     printedAt: params.printedAt ?? now,
-    documentVersionNumber: params.document.versionNumber,
+    documentVersionNumber: params.document.displayVersionNumber,
     documentEffectiveAt: params.document.effectiveAt,
   });
 
@@ -278,6 +288,7 @@ export async function renderPlaceholderDocuments(
         nameTh: doc.nameTh,
         versionId: doc.versionId,
         versionNumber: doc.versionNumber,
+        displayVersionNumber: doc.displayVersionNumber,
         effectiveAt: doc.effectiveAt,
       },
       printedByName: params.printedByName,

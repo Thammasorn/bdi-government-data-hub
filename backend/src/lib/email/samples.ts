@@ -25,6 +25,7 @@ import {
   orgSubmittedContext,
   otpContext,
   passwordResetContext,
+  legalNoticeContext,
   requestProgressedContext,
   roleRemovedContext,
   signatoryRequestContext,
@@ -132,6 +133,12 @@ const SAMPLES: Record<string, () => EmailContext> = {
   dataset_approved: () => datasetApprovedContext(DATASET, PROGRESS),
   dataset_rejected: () =>
     datasetRejectedContext({ ...DATASET, reason: "ชุดข้อมูลซ้ำกับที่ลงทะเบียนไว้แล้ว (DS-2568-0042)" }, PROGRESS),
+  legal_reacceptance_officer: () => legalNoticeContext("legal_reacceptance_officer", { organizationName: "กรมตัวอย่าง", documentLabel: "A0 ข้อตกลงหลักในการบริหารจัดการและการแบ่งปันข้อมูล", versionDisplay: "2.0", requestNumber: "ORG-REG-2026-0001", path: "/legal-documents" }),
+  legal_reacceptance_approver: () => legalNoticeContext("legal_reacceptance_approver", { organizationName: "กรมตัวอย่าง", documentLabel: "A0 ข้อตกลงหลักในการบริหารจัดการและการแบ่งปันข้อมูล", versionDisplay: "2.0", requestNumber: "ORG-REG-2026-0001", path: "/legal-documents" }),
+  legal_reacceptance_signed: () => legalNoticeContext("legal_reacceptance_signed", { organizationName: "กรมตัวอย่าง", documentLabel: "A0 ข้อตกลงหลักในการบริหารจัดการและการแบ่งปันข้อมูล", versionDisplay: "2.0", requestNumber: "ORG-REG-2026-0001", path: "/legal-documents" }),
+  legal_reacceptance_completed: () => legalNoticeContext("legal_reacceptance_completed", { organizationName: "กรมตัวอย่าง", documentLabel: "A0 ข้อตกลงหลักในการบริหารจัดการและการแบ่งปันข้อมูล", versionDisplay: "2.0", requestNumber: "ORG-REG-2026-0001", path: "/legal-documents" }),
+  legal_access_restored: () => legalNoticeContext("legal_access_restored", { organizationName: "กรมตัวอย่าง", documentLabel: "A0 ข้อตกลงหลักในการบริหารจัดการและการแบ่งปันข้อมูล", versionDisplay: "2.0", requestNumber: "ORG-REG-2026-0001", path: "/legal-documents" }),
+  registration_documents_changed: () => legalNoticeContext("registration_documents_changed", { organizationName: "กรมตัวอย่าง", documentLabel: "A0 ข้อตกลงหลักในการบริหารจัดการและการแบ่งปันข้อมูล", versionDisplay: "2.0", requestNumber: "ORG-REG-2026-0001", path: "/legal-documents" }),
   request_progressed: () =>
     requestProgressedContext(
       {

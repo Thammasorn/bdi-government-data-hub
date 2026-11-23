@@ -1552,59 +1552,6 @@
       ]
     },
     {
-      "name": "L6 · Restore an old version (publishes it again as N+1)",
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "url": {
-          "raw": "{{baseUrl}}/api/admin/legal-documents/A0/versions/VERSION_ID/restore",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "api",
-            "admin",
-            "legal-documents",
-            "A0",
-            "versions",
-            "VERSION_ID",
-            "restore"
-          ]
-        },
-        "description": "นำเนื้อหาของเวอร์ชันเก่ากลับมาใช้ — เผยแพร่ .docx ของเวอร์ชันนั้นเป็นเวอร์ชันใหม่ ไม่ลบหรือพลิกสถานะของแถวไหน ไฟล์ถูกตรวจ placeholder กับรายชื่อตัวแปรของวันนี้อีกครั้ง (อาจได้ 400 ถ้าใช้ชื่อที่เลิกไปแล้ว)\n\n| Status | Error | Cause |\n| --- | --- | --- |\n| 404 | `not_found` | ไม่มีเวอร์ชันนี้ของเอกสารนี้ |\n| 409 | `already_current` | เป็นฉบับที่เผยแพร่อยู่แล้ว |",
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"reason\": \"ระบุเหตุผลที่ชัดเจนอย่างน้อยสิบตัวอักษร\"\n}"
-        }
-      },
-      "response": [],
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "try {",
-              "    const b = pm.response.json();",
-              "    if (pm.response.code >= 300) {",
-              "        console.warn(pm.response.code, b.error, '·', b.message || JSON.stringify(b.fields));",
-              "    } else {",
-              "        console.log(b.message);",
-              "    }",
-              "} catch (e) {",
-              "    // ไม่ใช่ JSON (เช่นไฟล์ที่ดาวน์โหลด) — ดูที่แท็บ Body",
-              "}"
-            ]
-          }
-        }
-      ]
-    },
-    {
       "name": "R1 · Reset an organization registration to draft",
       "request": {
         "method": "POST",

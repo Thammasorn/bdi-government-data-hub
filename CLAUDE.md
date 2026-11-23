@@ -68,6 +68,11 @@ The spec lives in Notion, not here. `docs/` holds the expanded, buildable versio
   ประจำตัว" (`shortname` · `legalNotice` · `isRequired`) สร้างด้วย
   `docs/tools/build-template-manual.py` แล้วพิมพ์ด้วย `../../render-manual-pdf.py` —
   **ตารางตัวแปรมาจาก `TEMPLATE_VARIABLES` ในโค้ดโดยตรง อย่าพิมพ์เพิ่มด้วยมือ**
+- `docs/26-legal-reacceptance-test-cases.md` — **การลงนามเอกสารกฎหมายเวอร์ชันใหม่** (card "[Enhance] Legal Document Management"):
+  BDI เผยแพร่เอกสารของคำขอลงทะเบียน A0–A3 (ทุกครั้ง ไม่มีช่องให้เลือก — A3 optional ด้วย แต่นับเฉพาะหน่วยงานที่เคยลงนามฉบับนั้น ที่ข้ามไว้ไม่เกี่ยว และคำขอลงทะเบียนที่กด "ไม่เกี่ยวข้อง" กับฉบับนั้นในรอบนี้ไม่ถูกส่งกลับ) → หน่วยงานที่เคยลงนามถูกล็อก (`organization.access_status`, แยกจาก `status`)
+  จนผู้มีอำนาจของหน่วยงานลงนามและผู้มีอำนาจอนุมัติของ BDI อนุมัติ (`legal.organization_legal_approval` + review_task สองด่าน,
+  `lib/legal-reacceptance.ts`, `/api/legal-status`) · ล็อกกันเฉพาะงานชุดข้อมูล · คำขอลงทะเบียนที่เปิดอยู่ได้ชุดเอกสารใหม่ หรือถูกย้อนกลับไปที่ผู้มีอำนาจ
+  ถ้าผ่านด่านนั้นแล้ว · `display_version_number` คือเลขที่ผู้ใช้เห็น (`{{document.version}}`) · กรณีทดสอบและ `seed:legal-reacceptance`
 - `docs/17-legal-document-rendering.md` — เอกสารข้อตกลง A0–A3: ทำไมต้องเดินทาง
   `.docx` → LibreOffice → PDF, template อยู่ในฐานข้อมูลไม่ใช่ใน repo, รายชื่อ placeholder
   ที่ใช้ได้, การลงนามที่ฝังอยู่ใน `POST /:id/review`, และคำถามที่ยังค้าง
@@ -304,7 +309,10 @@ rule". One row is exempt: the latest `CANCELLED` row of a request whose phase is
 `CANCELLED` is what closed it, not a void — nothing was resubmitted, so the gates passed before
 it did pass, and "ส่งกลับแก้ไข" on a closed request would be untrue. Reset that request to draft
 and the same row voids its round as usual. **Ask "which row voided the round?", never "what
-phase is it in now?"** — the phase answers only until the next submit. Steps never reached keep "ยังไม่เริ่ม",
+phase is it in now?"** One more exemption: a `BDI_FINAL_APPROVAL` closed with `cancellation_reason = LEGAL_DOCS_CHANGED`
+(`LEGAL_DOCS_CHANGED_REASON`, written when BDI publishes a document the request must re-sign — `docs/26`) voids nothing — the
+officer's check stands and only the signatory's gate reopens; the timeline draws that row as "เอกสารมีการเปลี่ยนแปลง ต้องอนุมัติใหม่อีกครั้ง",
+which is why `JourneyTaskRow` carries `cancellationReason`. — the phase answers only until the next submit. Steps never reached keep "ยังไม่เริ่ม",
 and no date is printed on a `RETURNED` step because `completedAt` belongs to the discarded round.
 
 `currentStep` is still found by `state === "CURRENT"` alone, so `currentOrder`, `nextStep`, the

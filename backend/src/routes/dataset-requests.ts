@@ -146,6 +146,7 @@ import {
   refuseIfOrganizationFrozen,
 } from "../lib/organization-freeze.js";
 import { NAME_FIELDS, accountNameTh, fullNameTh } from "../lib/person-name.js";
+import { LEGAL_LOCK_MESSAGE, refuseIfLegalLocked } from "../lib/legal-reacceptance.js";
 
 export const datasetRequestRouter = Router();
 datasetRequestRouter.use(requireAuth);
@@ -248,7 +249,7 @@ async function prerequisiteError(session: Session): Promise<string | null> {
 
   const org = await prisma.organization.findUnique({
     where: { id: session.organizationId },
-    select: { status: true },
+    select: { status: true, accessStatus: true },
   });
   if (!org) return "ไม่พบหน่วยงานของคุณ";
   // ถูกระงับหรือยุติ — บอกเหตุผลจริง ไม่ใช่ "ต้องผ่านการอนุมัติก่อน" ซึ่งอ่านเหมือนหน่วยงานไม่เคยได้รับอนุมัติ
@@ -256,6 +257,8 @@ async function prerequisiteError(session: Session): Promise<string | null> {
   if (org.status !== OrganizationStatus.ACTIVE) {
     return "หน่วยงานของคุณต้องผ่านการอนุมัติและเปิดใช้งานก่อนจึงจะลงทะเบียนชุดข้อมูลได้";
   }
+  // ปุ่มสร้างคำขอและกล่องเหตุผลในหน้ารายการอ่านจากที่นี่ — การล็อกจึงแสดงผลโดยไม่ต้องแก้หน้าจอ
+  if (org.accessStatus === "LEGAL_DOCS_UPDATE_REQUIRED") return LEGAL_LOCK_MESSAGE;
 
   const members = await organizationMemberIds(session.organizationId);
   if (members.users.length === 0) return "หน่วยงานต้องมีผู้ใช้ที่เปิดใช้งานแล้วอย่างน้อยหนึ่งคน";
@@ -448,6 +451,7 @@ datasetRequestRouter.get("/", async (req, res) => {
       status: true,
       result: true,
       completedAt: true,
+      cancellationReason: true,
       assignedUserId: true,
       // ป้าย "มีความเห็นแล้ว" ในแถว — อ่านจากชุดนี้ที่ดึงมาอยู่แล้ว ไม่มีคิวรีเพิ่ม
       resultComment: true,
@@ -586,6 +590,8 @@ datasetRequestRouter.get("/specialists", async (req, res) => {
 
 datasetRequestRouter.post("/", async (req, res) => {
   const session = req.session! as Session;
+  // หน่วยงานที่ต้องลงนามเอกสารกฎหมายเวอร์ชันใหม่สร้างคำขอไม่ได้ (lib/legal-reacceptance.ts)
+  if (session.organizationId && (await refuseIfLegalLocked(res, session.organizationId))) return;
   const reason = await prerequisiteError(session);
   if (reason) {
     res.status(403).json({ error: "not_eligible", message: reason });
@@ -826,6 +832,7 @@ datasetRequestRouter.patch("/:id", async (req, res) => {
     return;
   }
   if (await refuseIfOrganizationFrozen(res, request.organizationId)) return;
+  if (await refuseIfLegalLocked(res, request.organizationId)) return;
   if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
     res.status(409).json({ error: "locked", message: editLockedMessage(request.status) });
     return;
@@ -964,6 +971,8 @@ datasetRequestRouter.delete("/:id", async (req, res, next) => {
     return;
   }
   if (await refuseIfOrganizationFrozen(res, request.organizationId)) return;
+  // หน่วยงานต้องลงนามเอกสารกฎหมายเวอร์ชันใหม่ — งานชุดข้อมูลทุกอย่างของหน่วยงานหยุด รวมทั้งการยกเลิกคำขอเอง
+  if (await refuseIfLegalLocked(res, request.organizationId)) return;
   // 403 ไม่ใช่ 404 ตรงนี้ และไม่ขัดกับบรรทัดบน: คนนอกหน่วยงานถูกตัดไปตั้งแต่ด่านแรกแล้ว
   // คนที่มาถึงบรรทัดนี้เห็นคำขอใบนี้อยู่ในรายการของตัวเอง การบอกว่า "ไม่พบ" จึงเป็นคำโกหก
   // ไม่ใช่การปกปิด — และไม่บอกด้วยว่าต้องเป็นใครถึงจะยกเลิกได้
@@ -1070,6 +1079,7 @@ datasetRequestRouter.post("/:id/attachments", upload.single("file"), async (req,
     return;
   }
   if (await refuseIfOrganizationFrozen(res, request.organizationId)) return;
+  if (await refuseIfLegalLocked(res, request.organizationId)) return;
   /**
    * เงื่อนไขเดียวกับ PATCH /:id และ DELETE /:id/attachments/:attachmentId
    *
@@ -1177,6 +1187,7 @@ datasetRequestRouter.delete("/:id/attachments/:attachmentId", async (req, res) =
     return;
   }
   if (await refuseIfOrganizationFrozen(res, request.organizationId)) return;
+  if (await refuseIfLegalLocked(res, request.organizationId)) return;
   // เงื่อนไขเดียวกับ PATCH /:id — นำส่งไปแล้วห้ามถอนไฟล์ออกจากคำขอที่ผู้ตรวจกำลังอ่าน
   if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
     res.status(409).json({ error: "locked", message: editLockedMessage(request.status) });
@@ -1264,6 +1275,7 @@ datasetRequestRouter.post("/:id/generate-form", async (req, res) => {
     return;
   }
   if (await refuseIfOrganizationFrozen(res, request.organizationId)) return;
+  if (await refuseIfLegalLocked(res, request.organizationId)) return;
 
   const shape = toApiShape(request);
   const parsed = parseRequestSnapshot(datasetSubmitSchema, shape);
@@ -1375,6 +1387,7 @@ datasetRequestRouter.post("/:id/submit", async (req, res) => {
     return;
   }
   if (await refuseIfOrganizationFrozen(res, request.organizationId)) return;
+  if (await refuseIfLegalLocked(res, request.organizationId)) return;
   if (request.status !== RequestStatus.DRAFT && request.status !== RequestStatus.RETURNED) {
     res.status(409).json({
       error: "locked",
@@ -1703,6 +1716,7 @@ datasetRequestRouter.get("/:id/legal-documents", async (req, res) => {
         legalNotice: doc.legalNotice,
         versionId: doc.versionId,
         versionNumber: doc.versionNumber,
+        displayVersionNumber: doc.displayVersionNumber,
         fromRequest: false,
         fileUrl: `/api/dataset-requests/${request.id}/legal-documents/${doc.versionId}/file`,
         acceptedAt: acceptedAt.get(doc.versionId) ?? null,
@@ -1728,6 +1742,7 @@ datasetRequestRouter.get("/:id/legal-documents", async (req, res) => {
           nameTh: doc.nameTh,
           versionId: doc.versionId,
           versionNumber: doc.versionNumber,
+          displayVersionNumber: doc.displayVersionNumber,
           effectiveAt: doc.effectiveAt,
         },
         printedByName: await submitterNameOf(request),
@@ -1743,6 +1758,7 @@ datasetRequestRouter.get("/:id/legal-documents", async (req, res) => {
       legalNotice: doc.legalNotice,
       versionId: doc.versionId,
       versionNumber: doc.versionNumber,
+      displayVersionNumber: doc.displayVersionNumber,
       fromRequest: true,
       fileUrl: rendered
         ? `/api/dataset-requests/${request.id}/legal-documents/${doc.versionId}/file`
@@ -1798,6 +1814,7 @@ datasetRequestRouter.get("/:id/legal-documents/:versionId/file", async (req, res
           nameTh: version.legalDocument.nameTh,
           versionId: version.id,
           versionNumber: version.versionNumber,
+          displayVersionNumber: version.displayVersionNumber,
           effectiveAt: version.effectiveAt,
         },
         printedByName: await accountNameTh(prisma, session.sub),
@@ -1904,6 +1921,9 @@ datasetRequestRouter.post("/:id/review", async (req, res, next) => {
         .json({ error: "invalid_state", message: "สถานะปัจจุบันไม่รองรับการดำเนินการนี้" });
       return;
     }
+
+    // ด่านของหน่วยงานถูกล็อกเมื่อเอกสารกฎหมายเวอร์ชันใหม่ยังไม่ได้ลงนาม — ด่านของ BDI เดินตามปกติ
+    if (task.taskType === ReviewTaskType.ORGANIZATION_APPROVAL && (await refuseIfLegalLocked(res, request.organizationId))) return;
 
     /**
      * บันทึกความเห็นโดยไม่แตะด่าน — ผู้เชี่ยวชาญที่ถูกขอความเห็นกับคำขอใบนี้เท่านั้น

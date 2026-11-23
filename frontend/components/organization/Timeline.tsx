@@ -32,6 +32,9 @@ export interface OrgEvent {
   actor: { id: string; name: string; email: string } | null;
   /** ผู้ที่ทำให้ด่านนี้ถูกเปิด — ของ BDI_OFFICER_REVIEW คือผู้ที่กดนำส่งคำขอรอบนั้น */
   openedBy?: { id: string; name: string; email: string } | null;
+  /** ระบบปิดด่านนี้เพราะ BDI เปลี่ยนเวอร์ชันเอกสารกฎหมาย — คำขอลงทะเบียนหน่วยงานเท่านั้น */
+  legalDocsChanged?: boolean;
+  cancelledAt?: string | null;
 }
 
 /** ผู้ยื่นคำขอ — รูปแบบเดียวกันทั้งสองเส้นทาง */
@@ -125,6 +128,21 @@ export function Timeline({
         actor: e.openedBy ? e.openedBy.name || e.openedBy.email : null,
         at: e.assignedAt ?? e.createdAt,
       });
+    }
+
+    /**
+     * ด่านที่ระบบปิดเพราะเอกสารกฎหมายเปลี่ยน ไม่มี result แต่เป็นสิ่งที่เกิดขึ้นแล้ว — ถ้าไม่วาด ผู้ใช้เห็นขั้นตอนถอยกลับโดยไม่มีเหตุผล
+     * ข้อความเดียวกับป้ายบนหน้าและการแจ้งเตือน · ไม่มีชื่อผู้กระทำ: ระบบทำตามการเผยแพร่ของ BDI ไม่ใช่คนกด
+     */
+    if (e.legalDocsChanged && e.cancelledAt) {
+      rows.push({
+        key: `${e.id}-legal-docs-changed`,
+        label: "เอกสารมีการเปลี่ยนแปลง ต้องอนุมัติใหม่อีกครั้ง",
+        actor: null,
+        at: e.cancelledAt,
+        note: `BDI เปลี่ยนเวอร์ชันเอกสารกฎหมายระหว่างที่คำขอรอการอนุมัติ คำขอจึงกลับไปที่${ROLE_LABELS.ORGANIZATION_APPROVER}`,
+      });
+      continue;
     }
 
     // ยังไม่มีผล = ยังไม่เกิดขึ้น — เป็นเรื่องของตัวติดตามขั้นตอน ไม่ใช่ของประวัติ

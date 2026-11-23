@@ -19,11 +19,18 @@ export function Modal({
   size?: "md" | "lg" | "xl";
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  /**
+   * onClose ตัวล่าสุด — ไม่ใส่ใน deps ของ effect ข้างล่าง ผู้เรียกส่งฟังก์ชันใหม่ทุก render (เช่น `busy ? … : close`)
+   * ถ้าอยู่ใน deps effect จะวิ่งใหม่ทุกครั้งที่พิมพ์ แล้วดึงโฟกัสกลับไปที่ช่องแรก — พิมพ์ "2" แล้วพิมพ์ ".0" ต่อไม่ได้
+   * (ช่อง "เลขเวอร์ชัน" ในกล่องอัปโหลดเวอร์ชันใหม่ ซึ่งอยู่ใต้ช่องเลือกไฟล์ — feedback 2026-11-22)
+   */
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") onCloseRef.current();
     };
     document.addEventListener("keydown", onKey);
     // กันหน้าเลื่อนอยู่ข้างหลัง modal
@@ -46,7 +53,8 @@ export function Modal({
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = previous;
     };
-  }, [open, onClose]);
+    // โฟกัสครั้งเดียวตอนเปิด — ดู onCloseRef
+  }, [open]);
 
   if (!open) return null;
 

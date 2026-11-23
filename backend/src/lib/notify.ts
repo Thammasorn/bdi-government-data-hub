@@ -73,6 +73,18 @@ export const NotificationType = {
    */
   INVITATION_REMINDER: "INVITATION_REMINDER",
   LEGAL_DOCUMENT_UPDATED: "LEGAL_DOCUMENT_UPDATED",
+  /** เอกสารกฎหมายเวอร์ชันใหม่ต้องลงนาม — ถึงเจ้าหน้าที่ของหน่วยงาน (รอผู้มีอำนาจลงนาม) · lib/legal-reacceptance.ts */
+  LEGAL_REACCEPTANCE_REQUESTED_OFFICER: "LEGAL_REACCEPTANCE_REQUESTED_OFFICER",
+  /** เอกสารกฎหมายเวอร์ชันใหม่ต้องลงนาม — ถึงผู้มีอำนาจอนุมัติของหน่วยงาน (ให้ดำเนินการ) */
+  LEGAL_REACCEPTANCE_REQUESTED_APPROVER: "LEGAL_REACCEPTANCE_REQUESTED_APPROVER",
+  /** หน่วยงานลงนามแล้ว — ถึงผู้มีอำนาจอนุมัติของ BDI */
+  LEGAL_REACCEPTANCE_SIGNED: "LEGAL_REACCEPTANCE_SIGNED",
+  /** BDI อนุมัติแล้ว — ถึงผู้มีอำนาจของหน่วยงานที่ลงนาม */
+  LEGAL_REACCEPTANCE_COMPLETED: "LEGAL_REACCEPTANCE_COMPLETED",
+  /** หน่วยงานกลับมาใช้งานได้ตามปกติ — ถึงทุกคนในหน่วยงาน */
+  LEGAL_ACCESS_RESTORED: "LEGAL_ACCESS_RESTORED",
+  /** คำขอลงทะเบียนถูกย้อนกลับเพราะเอกสารเปลี่ยน — ถึงเจ้าหน้าที่และผู้มีอำนาจของหน่วยงาน */
+  REGISTRATION_DOCUMENTS_CHANGED: "REGISTRATION_DOCUMENTS_CHANGED",
   REPRESENTATIVE_CHANGE_SUBMITTED: "REPRESENTATIVE_CHANGE_SUBMITTED",
   REPRESENTATIVE_CHANGE_RETURNED: "REPRESENTATIVE_CHANGE_RETURNED",
   REPRESENTATIVE_CHANGE_REJECTED: "REPRESENTATIVE_CHANGE_REJECTED",
@@ -351,6 +363,7 @@ export async function announceProgress(params: {
         status: true,
         result: true,
         completedAt: true,
+        cancellationReason: true,
       },
     }),
     prisma.reviewTask.findFirst({
@@ -367,6 +380,7 @@ export async function announceProgress(params: {
         status: true,
         result: true,
         completedAt: true,
+        cancellationReason: true,
       },
     }),
   ]);
@@ -442,6 +456,8 @@ export function linkFor(subjectType: string | null, subjectId: string | null): s
       return `/datasets/${subjectId}`;
     case "REPRESENTATIVE_CHANGE_REQUEST":
       return `/representatives/requests/${subjectId}`;
+    case "ORGANIZATION_LEGAL_APPROVAL":
+      return `/legal-documents/approvals/${subjectId}`;
     default:
       return null;
   }

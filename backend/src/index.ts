@@ -47,6 +47,7 @@ import { notificationRouter } from "./routes/notifications.js";
 import { organizationRouter } from "./routes/organizations.js";
 import { adminRepresentativeChangeRouter, representativeChangeRouter } from "./routes/representative-changes.js";
 import { statisticsRouter } from "./routes/statistics.js";
+import { legalStatusRouter } from "./routes/legal-status.js";
 import { ensureContainer } from "./storage.js";
 
 const app = express();
@@ -223,6 +224,7 @@ app.use("/api/representative-changes", representativeChangeRouter);
 app.use("/api/dataset-requests", datasetRequestRouter);
 app.use("/api/notifications", notificationRouter);
 app.use("/api/statistics", statisticsRouter);
+app.use("/api/legal-status", legalStatusRouter);
 
 app.use((_req, res) => {
   res.status(404).json({ error: "not_found", message: "ไม่พบเส้นทางนี้" });

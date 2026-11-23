@@ -13,6 +13,7 @@ import { api, ApiError } from "@/lib/api";
 import { isOrganizationFrozen } from "@/lib/status";
 import { stashSubmitErrors } from "@/lib/submit-errors";
 import { useRequireAuth } from "@/lib/require-auth";
+import { isLegalLocked } from "@/components/legal/LegalLockNotice";
 import {
   DATASET_ATTACHMENT_LABELS,
   datasetTitle,
@@ -25,7 +26,7 @@ export default function DatasetPreviewPage() {
   const router = useRouter();
   const { show } = useToast();
 
-  const { ready } = useRequireAuth();
+  const { ready, user } = useRequireAuth();
   const [request, setRequest] = useState<DatasetRequest | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // ผูกกับ id ของคำขอที่โหลดมาแล้ว ไม่ใช่พารามิเตอร์บน URL
@@ -43,6 +44,16 @@ export default function DatasetPreviewPage() {
       .get<{ request: DatasetRequest }>(`/api/dataset-requests/${id}`)
       .then((d) => {
         // หน่วยงานถูกระงับหรือยุติ — นำส่งไม่ได้ (409) ไปหน้ารายละเอียดที่บอกเหตุผล
+        // หน่วยงานต้องลงนามเอกสารกฎหมายเวอร์ชันใหม่ — บันทึก/นำส่งตอบ 409 อยู่แล้ว ไม่เปิดฟอร์มให้กรอกเสียเปล่า
+        if (isLegalLocked(user?.organization)) {
+          show({
+            tone: "info",
+            title: "หน่วยงานต้องลงนามเอกสารกฎหมายเวอร์ชันใหม่ก่อน จึงแก้ไขคำขอไม่ได้",
+            detail: "ผู้มีอำนาจอนุมัติของหน่วยงานอนุมัติได้ที่หน้าเอกสารทางกฎหมาย",
+          });
+          router.replace(`/datasets/${d.request.id}`);
+          return;
+        }
         if (isOrganizationFrozen(d.request.organization.status)) {
           show({
             tone: "info",

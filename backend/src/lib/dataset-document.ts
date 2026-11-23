@@ -114,6 +114,7 @@ export interface DatasetDocumentVersion {
   nameTh: string;
   versionId: string;
   versionNumber: number;
+  displayVersionNumber: string;
   effectiveAt: Date | null;
 }
 
@@ -146,7 +147,7 @@ export async function datasetPdf(
     bdiSignedAt: signatures.bdi.at,
     printedByName: params.printedByName,
     printedAt: params.printedAt ?? new Date(),
-    documentVersionNumber: params.document.versionNumber,
+    documentVersionNumber: params.document.displayVersionNumber,
     documentEffectiveAt: params.document.effectiveAt,
   });
 
@@ -201,6 +202,7 @@ export async function renderDatasetDocuments(
         nameTh: doc.nameTh,
         versionId: doc.versionId,
         versionNumber: doc.versionNumber,
+        displayVersionNumber: doc.displayVersionNumber,
         effectiveAt: doc.effectiveAt,
       },
       printedByName: params.printedByName,

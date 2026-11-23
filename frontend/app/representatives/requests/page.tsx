@@ -41,7 +41,7 @@ function ChangeRequests() {
 
   return (
     <RepresentativeShell
-      title="ฟอร์มเปลี่ยนแปลงผู้แทนหน่วยงาน"
+      title="คำขอเปลี่ยนแปลงผู้แทนหน่วยงาน"
       description="คำขอยกเลิกผู้แทนเดิมและเพิ่มผู้แทนใหม่ของหน่วยงาน"
     >
       {user.roles.includes("ORGANIZATION_USER") ? (

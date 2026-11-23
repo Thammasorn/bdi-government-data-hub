@@ -156,7 +156,7 @@ export function ChangeRequestDetailView({ id }: { id: string }) {
               ]
             : [
                 { label: "ผู้แทนหน่วยงาน", href: "/representatives" },
-                { label: "ฟอร์มเปลี่ยนแปลงผู้แทนหน่วยงาน", href: "/representatives/requests" },
+                { label: "คำขอเปลี่ยนแปลงผู้แทนหน่วยงาน", href: "/representatives/requests" },
                 { label: request.requestNumber },
               ]
         }

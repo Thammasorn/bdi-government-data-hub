@@ -93,6 +93,8 @@ export interface PublishedDocument {
   displayOrder: number;
   versionId: string;
   versionNumber: number;
+  /** เลขที่ผู้ใช้เห็น — เอกสารพิมพ์ค่านี้ที่ {{document.version}} */
+  displayVersionNumber: string;
   /** วันที่เวอร์ชันนี้เริ่มมีผล — เอกสารพิมพ์ค่านี้ได้ผ่าน {{document.effectiveDate}} */
   effectiveAt: Date | null;
   /** PDF ที่ render ไว้ให้เปิดอ่าน — ผนวกที่ไม่มีช่องให้เติมใช้ไฟล์นี้ได้ตรง ๆ */
@@ -118,7 +120,7 @@ interface DocumentVersionRow {
     legalNotice: string | null;
     applicationScope: string;
   };
-  version: { id: string; versionNumber: number; effectiveAt: Date | null };
+  version: { id: string; versionNumber: number; displayVersionNumber: string; effectiveAt: Date | null };
   displayOrder: number;
   isRequired: boolean;
 }
@@ -181,6 +183,7 @@ async function toPublishedDocument(db: Db, row: DocumentVersionRow): Promise<Pub
     isRequired: row.isRequired,
     versionId: version.id,
     versionNumber: version.versionNumber,
+    displayVersionNumber: version.displayVersionNumber,
     effectiveAt: version.effectiveAt,
     pdfAttachmentId: pdf?.id ?? null,
     hasPlaceholders: source
@@ -392,6 +395,7 @@ async function pinnedDocuments(db: Db, subject: DocumentSubject): Promise<Publis
         select: {
           id: true,
           versionNumber: true,
+          displayVersionNumber: true,
           effectiveAt: true,
           legalDocument: {
             select: {
@@ -480,7 +484,7 @@ export async function lastVoidSequence(db: Db, subject: DocumentSubject): Promis
  *
  * **แต่การกดนั้นมีอายุเท่ารอบของมัน** — รอบที่ถูกยกเลิกไม่เหลือการตัดสินใจอะไรไว้เลย
  */
-async function skippedDocumentCodes(db: Db, subject: DocumentSubject): Promise<Set<string>> {
+export async function skippedDocumentCodes(db: Db, subject: DocumentSubject): Promise<Set<string>> {
   const confirmation = await db.signatureConfirmation.findFirst({
     where: { ...subject, confirmationType: ConfirmationType.ORGANIZATION_APPROVAL },
     orderBy: { confirmedAt: "desc" },
@@ -604,9 +608,8 @@ async function supersedeOthers(db: Db, documentId: string, keepVersionId: string
 /**
  * ใช้เวอร์ชันที่มีอยู่แล้วเป็นฉบับที่เผยแพร่ — ฉบับที่เผยแพร่อยู่เดิมกลายเป็น SUPERSEDED ไม่สร้างเวอร์ชันใหม่
  *
- * รับ DRAFT ("ใช้เวอร์ชันนี้") และ SUPERSEDED ("เผยแพร่อีกครั้ง") — แถวเดิมกลับเป็น PUBLISHED เลขเวอร์ชันและไฟล์ไม่เปลี่ยน
- * `legal_acceptance` และ snapshot ของคำขอที่ชี้เวอร์ชันนี้อยู่จึงยังชี้ตัวเดิม (เดิม restore ออกเป็นเวอร์ชัน N+1 ที่เนื้อหาเหมือนกัน)
- * `supersededAt` ถูกล้าง เพราะเวอร์ชันนี้กลับมาเป็นฉบับปัจจุบันแล้ว
+ * ฉบับร่างเท่านั้น ("ใช้เวอร์ชันนี้") — แถวเดิมกลายเป็น PUBLISHED เลขเวอร์ชันและไฟล์ไม่เปลี่ยน
+ * ไม่มีการนำเวอร์ชันที่ถูกแทนที่กลับมาใช้แล้ว (BDI ตัดฟีเจอร์ย้อนเวอร์ชันออก 2026-11-22) — route ตรวจสถานะก่อนเรียก
  */
 export async function activateVersion(db: Db, versionId: string, actorId: string) {
   const now = new Date();
@@ -640,6 +643,13 @@ export async function publishVersion(
     docx: Buffer;
     filename: string;
     actorId: string;
+    /** เลขที่ผู้ใช้เห็น — ผู้ดูแลกรอกทุกครั้งที่เผยแพร่ (ข้อความอิสระ ไม่ตรวจซ้ำ) */
+    displayVersionNumber: string;
+    /**
+     * ให้หน่วยงานที่เคยลงนามเอกสารนี้ลงนาม version นี้ซ้ำ — BDI ตั้งเองตอนเผยแพร่ ใช้ได้กับ A0–A3 เท่านั้น
+     * งานลงนามเริ่มที่ `startReacceptance()` หลังเผยแพร่ ไม่ใช่ที่นี่
+     */
+    requiresReacceptance?: boolean;
     /**
      * `DRAFT` = เก็บเป็นฉบับร่างโดยไม่เผยแพร่ ไม่แตะเวอร์ชันที่ใช้อยู่ (ติ๊ก "ใช้ทันที" ออกในหน้า /console) ค่าตั้งต้นคือเผยแพร่ทันที
      * ฉบับร่างเผยแพร่ภายหลังด้วย `activateVersion()`
@@ -657,6 +667,10 @@ export async function publishVersion(
   normalised: { optionParagraphs: number; highlights: number };
 }> {
   assertReadableDocx(params.docx);
+  const displayVersionNumber = params.displayVersionNumber.trim();
+  if (displayVersionNumber.length === 0 || displayVersionNumber.length > 64) {
+    throw new DocumentRenderError("invalid_display_version", "กรอกเลขเวอร์ชันที่แสดงให้ผู้ใช้เห็น (ไม่เกิน 64 ตัวอักษร)", 400);
+  }
   /**
    * จัดรูปก่อนทำอย่างอื่น — ตรวจ placeholder แปลง PDF และเก็บไฟล์ จากฉบับที่จัดรูปแล้วฉบับเดียว ไฟล์ที่ผู้ดูแลดาวน์โหลดกลับไป
    * ภายหลังจึงเป็นฉบับเดียวกับที่ระบบใช้จริง (เดิมต้องรัน docs/tools/normalise-template.py เองก่อนอัปโหลด)
@@ -728,6 +742,8 @@ export async function publishVersion(
       id: versionId,
       legalDocumentId: document.id,
       versionNumber,
+      displayVersionNumber,
+      requiresReacceptance: params.requiresReacceptance ?? false,
       attachmentId: source.id,
       contentHash: source.contentHash,
       status: publish ? LegalDocumentVersionStatus.PUBLISHED : LegalDocumentVersionStatus.DRAFT,
